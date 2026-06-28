@@ -1121,7 +1121,20 @@ class GameSession:
                 if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
                     # 恢复窗确认不即时落库（事务外落真表，后续 settle 中止不回滚=半写）。
                     # 动作留 pending，由推进回合的终端 atomic 统一落（所有权规则，ship-pre r2）。
-                    pass
+                    for pending_directive in directive_confirm_targets:
+                        try:
+                            payload = json.loads(pending_directive.get("payload_json") or "{}")
+                        except (ValueError, TypeError):
+                            payload = {}
+                        if not isinstance(payload, dict):
+                            payload = {}
+                        payload["_directive_status"] = "pending"
+                        self.db.conn.execute(
+                            "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                            (json.dumps(payload, ensure_ascii=False), int(pending_directive["id"])),
+                        )
+                    if directive_confirm_targets:
+                        self.db.conn.commit()
                 else:
                     self.db.commit_pending_actions(
                         self.state, minister_name=minister_name,

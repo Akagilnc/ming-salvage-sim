@@ -1897,3 +1897,34 @@ def test_chat_confirm_defers_commit_at_front_half_done(game, monkeypatch):
     title = db.conn.execute(
         "SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()["title"]
     assert title == "原标题"  # 真表未动
+
+
+def test_front_half_done_directive_confirmation_preserves_pending_status(game, monkeypatch):
+    """恢复窗应允 directive 不即时 commit，但终端提交时仍进入 later 准/驳 pending。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name, target_id=None,
+        payload={"text": "着户部清核辽饷。", "actor": name},
+    )
+    state.turn_phase = "settling"
+
+    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "应允")
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="准了", answer="臣遵旨。",
+        has_directive=False, secret_order_id=None)
+
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1 and pending[0]["status"] == "pending"
+    assert json.loads(pending[0]["payload_json"])["_directive_status"] == "pending"
+
+    db.commit_pending_actions(state)
+
+    row = db.conn.execute(
+        "SELECT status, text FROM turn_directives WHERE turn=?",
+        (state.turn,),
+    ).fetchone()
+    assert row["status"] == "pending"
+    assert row["text"] == "着户部清核辽饷。"
