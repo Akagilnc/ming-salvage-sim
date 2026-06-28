@@ -6,6 +6,8 @@
 
 **worker 真源边界：issue = 需求真源，worktree = 代码真源，image/soul/skill = 流程真源，runner = 调度真源。** runner 只负责切/挂 worktree、注入 `ORCHESTRATOR_ISSUE_NUMBER` / `ISSUE_NUMBER` / `ORCHESTRATOR_REPO` / `ORCHESTRATOR_SOUL` / 可用 auth、落必要运行参数文件（如 `.cmr-focus.md` / `.ship-focus.md`），然后读结构化终态。worker 必须用 `gh`  live fetch issue body + comments；临时离线先重试，auth 失败就 escalate 要人登录，禁止把旧 snapshot / 旧 prompt / 本地猜测当需求真源。worktree 已经挂进容器，worker 只看当前 worktree；runner 不把 issue 正文、wiki 摘抄、方法步骤塞进 prompt。
 
+**编排器实跑默认先起一个 family worktree。** 无论输入是父 issue 还是看似单个 issue，runner 都先为本轮创建/挂载独立的家族 worktree，把后续 slice、merge、integrated cmr、ship 都限制在这个隔离代码真源里；不要在主工作区或临时散 worktree 上直接跑。
+
 **`sc.run()` 严禁用 `prompt` 参数；传指令只准用 `promptFile`。** `prompt`（inline 字符串）是「临时把 method 手搓进调用点」的唯一入口——堵死它 = 手搓在 API 层就不可能。指令一律走 **`promptFile`**（指向一个**版本化、可评审**的 `.md` 文件）。而且 `promptFile` 的**内容必须 thin**：只准「读 baked soul / 触发对应 skill（`/tdd`、`/ak-cross-m-review`、`gstack-ship` …）+ 指向落盘运行参数文件 + 输出契约」，**绝不写 method**。怎么 review / 怎么 fix / 怎么收敛 / Claude 和 Codex 如何 invoke skill，全住在 versioned soul / skill / 镜像里；runner 不感知、不每轮换 prompt。理由实证：本仓三道 cmr 闸（step 4/5/6）全栽在「promptFile 里手搓 review-only / no-loop」而不是让 `invoke /ak-cross-m-review` 跑它自己的 loop。runner 退回纯调度（派容器 + 落参数文件 + 读终态 verdict），method/纪律全在 skill。**如果 promptFile 开始长成 mini-wiki，就是回归。**
 
 **容器内（`sc.run`）产生的 commit 自动冠 `sandcastle:` 前缀**，由烤进镜像的 `image/hooks/commit-msg`（经 `git config --global core.hooksPath`）确定性强制——不靠 soul / promptFile 指示（那样会漏：gstack-ship 自己的 commit 绕过 soul）。用途：`git log --grep '^sandcastle:'` 框出某次 family run 的全部机器产出。可与模型层 `claude:` / `codex:` 前缀叠（`sandcastle: claude: …`，`sandcastle:` 在最前）。
