@@ -439,6 +439,47 @@ def test_covert_task_without_secret_order_keyword_stages_pending_candidate(game,
     assert "不可声张" in payload["content"]
 
 
+def test_secret_order_status_query_does_not_stage_new_hidden_order(game, monkeypatch):
+    """问现有密令进展/状态不是新下密令，不能生成隐藏的新密令候选。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    db.create_secret_order(state, name, "暗查辽饷", "密查辽饷侵冒。", [], deadline_months=0)
+    calls = []
+
+    def _extractors(prompt, llm_config=None, tag=""):
+        calls.append(tag)
+        if tag == "secret_extract":
+            return (json.dumps({
+                "标题": "误建进展查询",
+                "内容": "给朕查一下密令进展。",
+                "承办人": name,
+                "期限月数": 0,
+                "标签": [],
+            }, ensure_ascii=False), 1)
+        return (json.dumps({
+            "动作类型": "无",
+            "确认": "无",
+            "密令动作": "无",
+            "目标密令编号": 0,
+            "拟旨意图": "无",
+            "任免动作": "无",
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _extractors)
+
+    out = GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="给朕查一下密令进展。",
+        answer="臣查得密令仍在暗访账册，尚未办结。",
+        has_directive=False, secret_order_id=None,
+    )
+
+    assert out.get("pending_action_id") in (None, 0)
+    assert db.list_pending_actions(state.turn) == []
+    assert "secret_extract" not in calls
+
+
 def test_dialogue_reject_drops_pending_new_secret_order(game, monkeypatch):
     """#413：皇帝拒绝待确认的新密令时，只删除暂存候选，不得稍后落成密令。"""
     db, state, content = game

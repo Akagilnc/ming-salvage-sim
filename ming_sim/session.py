@@ -1105,6 +1105,13 @@ class GameSession:
                 return False
             explicit_secret = any(term in text for term in ("密令", "密旨", "密谕"))
             if explicit_secret and any(token in text for token in (
+                "密令进展", "密旨进展", "密谕进展",
+                "密令状态", "密旨状态", "密谕状态",
+                "查一下密令", "查一查密令",
+                "问问密令", "奏报密令", "回报密令",
+            )):
+                return False
+            if explicit_secret and any(token in text for token in (
                 "下密令", "下密旨", "下密谕",
                 "发密令", "发密旨", "发密谕",
                 "下一道密令", "下一道密旨", "下一道密谕",
