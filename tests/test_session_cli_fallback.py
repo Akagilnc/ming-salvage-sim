@@ -236,6 +236,56 @@ def test_tool_call_staged_new_secret_order_merges_missing_metadata(game, monkeyp
     assert payload["deadline_months"] == 3
 
 
+def test_secret_order_tool_progress_stages_pending_action_not_direct_write(game):
+    """function-call 密令进展工具也要过 pending 确认闸门，不得直接改真实表。"""
+    db, state, content = game
+    minister = "毕自严"
+    oid = db.create_secret_order(state, minister, "查辽饷", "查辽饷侵冒。", [], deadline_months=0)
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (state.turn - 1, oid))
+    db.conn.commit()
+
+    tool_payload = json.dumps({
+        "action": "记进展",
+        "order_id": oid,
+        "payload": {"note": "已封存兵部辽饷册。"},
+    }, ensure_ascii=False)
+
+    class Agent:
+        def run(self, _message):
+            return SimpleNamespace(
+                content="臣已记下进展，请陛下定夺。",
+                tools=[SimpleNamespace(tool_name="secret_order", result=f"__secret_action__{tool_payload}")],
+            )
+
+    class Registry:
+        def get(self, _character):
+            return Agent()
+
+        def build_draft_line(self):
+            return "无"
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = Registry()
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message: message
+    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
+    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
+
+    result = GameSession.chat(sess, minister, "奏报密令进展。")
+
+    assert result.pending_action_id
+    assert "已封存兵部辽饷册" not in (
+        db.conn.execute("SELECT result FROM secret_orders WHERE id=?", (oid,)).fetchone()["result"] or ""
+    )
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1
+    assert pending[0]["action"] == "记进展"
+
+
 def test_secret_order_extract_fallback_preserves_structured_metadata(game, monkeypatch):
     """API/按钮兼容文本带出的标签/期限，在 extractor 空结果时也不能丢。"""
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
@@ -249,6 +299,14 @@ def test_secret_order_extract_fallback_preserves_structured_metadata(game, monke
 
     assert out["tags"] == ["辽饷", "关宁"]
     assert out["deadline_months"] == 3
+
+    negative = cb._extract_secret_order(
+        "密令如下：暗查辽饷侵冒。\n期限：-5月",
+        "臣领旨。",
+        "魏忠贤",
+        llm_config=SimpleNamespace(channel="cli"),
+    )
+    assert negative["deadline_months"] == 0
 
 
 def test_draft_prefix_with_pending_confirmation_runs_zero_llm(game, monkeypatch):

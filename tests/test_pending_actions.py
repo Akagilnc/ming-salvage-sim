@@ -825,6 +825,46 @@ def test_retry_failed_secret_order_status_failure_rolls_back_created_order(game,
     assert db.list_secret_orders() == []
 
 
+def test_retry_api_retire_failure_rolls_back_created_order(game, monkeypatch):
+    """API retry 成功写密令但退休原确认轮失败时，应整体回滚，避免 undo 复活 failed row。"""
+    import asyncio
+    import web_app
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 0,
+        },
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        session=types.SimpleNamespace(content=content, registry=None),
+        can_undo_last_chat=lambda _minister: False,
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+    monkeypatch.setattr(
+        db,
+        "retire_chat_turn_for_pending_action_retry",
+        lambda _action_id: (_ for _ in ()).throw(RuntimeError("retire failed")),
+    )
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(web_app.api_retry_pending_action(pending_id))
+
+    assert db.list_secret_orders() == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pending_id
+
+
 def test_retry_failed_secret_order_refresh_failure_does_not_duplicate(game):
     """密令已写入 DB 后 registry 刷新失败,不得留下 failed 入口导致再次重试重复建令。"""
     db, state, content = game

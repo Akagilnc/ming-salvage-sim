@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import List
+from typing import Dict, List
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
@@ -423,6 +423,12 @@ def build_minister_tools(character: Character, context: CourtContext,
             deadline = 0
         return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee, 'deadline_months': deadline}, ensure_ascii=False)}"
 
+    def _pending_secret_action(action_name: str, order_id: int, payload: Dict[str, object]) -> str:
+        return "__secret_action__" + json.dumps(
+            {"action": action_name, "order_id": int(order_id), "payload": payload},
+            ensure_ascii=False,
+        )
+
     def _own_secret_order(order_id: int):
         """取本承办人名下密令；非承办人或不存在返回 (None, 提示串)。"""
         oid = int(order_id) if str(order_id).isdigit() else 0
@@ -446,22 +452,14 @@ def build_minister_tools(character: Character, context: CourtContext,
         )
         is_issuing_turn = int(order.get("turn_issued") or 0) == int(context.state.turn)
         note = (progress or "").strip()[:200]
-        saved = False
         if note and not is_issuing_turn:
-            # 同月再报 = 替换当月进度行（修改最新进度），非建档当月即可
-            saved = context.db.update_secret_order_progress(
-                order["id"], note, year=context.state.year, period=context.state.period
-            )
+            return _pending_secret_action("记进展", int(order["id"]), {"note": note})
         order = context.db.get_secret_order(order["id"]) or order
         parts = [f"密令 #{order['id']}「{order['title']}」状态：{order['status']}。"]
         parts.append(f"查办经过（按月，末行最新）：\n{order['result'] or '尚无进展记录。'}")
         if order.get("sim_note"):
             parts.append(f"外间动静（按月，末行最新）：\n{order['sim_note']}")
-        if saved and already_advanced:
-            parts.append(f"✅ 本月进度已更新（替换当月旧记）：{note}")
-        elif saved:
-            parts.append(f"✅ 本月新进展已落档：{note}")
-        elif is_issuing_turn:
+        if is_issuing_turn:
             parts.append("⚠️ 本月即建档当月，须待下月起才可查得头绪——本次未落档。")
         elif not note:
             parts.append("ℹ️ 未提供 progress，本月仍未推进。")
@@ -476,12 +474,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         text = (claim or "").strip()
         if not text:
             return "提交失败：claim 为空。"
-        ok = context.db.submit_secret_order_for_review(
-            order["id"], text, year=context.state.year, period=context.state.period
-        )
-        if not ok:
-            return f"密令 #{order['id']} 提交失败。"
-        return f"密令 #{order['id']}「{order['title']}」已提交待推演核议，本月不再可推进。"
+        return _pending_secret_action("提交核议", int(order["id"]), {"claim": text[:200]})
 
     def _secret_order_rush(order_id: int, deadline_months: int = 1, reason: str = "") -> str:
         order, err = _own_secret_order(order_id)
@@ -490,15 +483,12 @@ def build_minister_tools(character: Character, context: CourtContext,
         if order["status"] != "active":
             return f"密令 #{order['id']} 当前状态 {order['status']}，不能再催办。"
         try:
-            rushed = context.db.rush_secret_order(
-                order["id"], context.state, deadline_months=deadline_months, reason=reason
-            )
-        except Exception as exc:
-            return f"密令 #{order['id']} 催办失败：{exc}"
-        if rushed["status"] == "pending_review":
-            return f"密令 #{order['id']}「{order['title']}」已奉旨即核，转入待核议。"
-        remain = max(0, int(rushed["due_turn"]) - int(context.state.turn))
-        return f"密令 #{order['id']}「{order['title']}」已奉旨加急，限 {remain} 个月内核议。"
+            deadline = max(0, min(int(deadline_months or 0), 36))
+        except (TypeError, ValueError):
+            deadline = 1
+        return _pending_secret_action(
+            "催办", int(order["id"]), {"deadline_months": deadline, "reason": (reason or "").strip()[:120]}
+        )
 
     def dismiss_minister() -> str:
         """结束本次召见，退朝。"""

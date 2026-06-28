@@ -885,8 +885,28 @@ class GameSession:
                 tool_name == "secret_order"
                 or tool_result.startswith("__secret_order_registered__")
                 or tool_result.startswith("__secret_order__")
+                or tool_result.startswith("__secret_action__")
             ):
-                if tool_result.startswith("__secret_order__"):
+                if tool_result.startswith("__secret_action__"):
+                    payload_json = tool_result.removeprefix("__secret_action__").strip()
+                    try:
+                        data = json.loads(payload_json) if payload_json else {}
+                    except (ValueError, TypeError):
+                        data = {}
+                    if isinstance(data, dict):
+                        action = str(data.get("action") or "").strip()
+                        try:
+                            order_id = int(data.get("order_id") or 0)
+                        except (TypeError, ValueError):
+                            order_id = 0
+                        payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+                        if action and order_id:
+                            result.pending_action_id = self.db.stage_pending_action(
+                                self.state.turn, kind="secret_order", action=action,
+                                minister_name=character.name, target_id=order_id,
+                                payload=payload,
+                            )
+                elif tool_result.startswith("__secret_order__"):
                     payload_json = tool_result.removeprefix("__secret_order__").strip()
                     try:
                         payload = json.loads(payload_json) if payload_json else {}
