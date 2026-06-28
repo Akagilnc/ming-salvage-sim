@@ -266,6 +266,8 @@ def test_api_set_llm_config_explicit_cli_channel_switch(monkeypatch):
     assert result["channel"] == "cli"
     assert result["cli_runner"] == "agy"
     assert result["reasoning_strength"] == "off"
+    assert result["reasoning_supported"] is False
+    assert result["reasoning_strengths"] == list(web_app.REASONING_STRENGTH_CHOICES)
     assert result["has_api_key"] is False
 
 
