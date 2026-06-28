@@ -1162,7 +1162,7 @@ def extract_confirmation_intent(
             compact in {"准", "可", "允", "好", "行", "善"}
             or any(token in compact for token in ("准奏", "照准", "准了", "照办", "依卿", "便如此", "就这么办"))
         ) and not negated_approval_hit
-        if reject_hit and not approve_hit:
+        if (reject_hit or negated_approval_hit) and not approve_hit:
             return "拒绝"
         if approve_hit and not reject_hit:
             return "应允"
