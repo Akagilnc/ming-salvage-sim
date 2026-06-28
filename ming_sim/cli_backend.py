@@ -1141,6 +1141,14 @@ def extract_confirmation_intent(
 ) -> str:
     """皇帝本轮对【上一轮经大臣领命确认、尚未落库的暂存动作】是应允/拒绝/未表态。
     对话确认(ADR 0006 重设计)：应允 → 当场 commit，拒绝 → 丢，无 → 留。失败/无 → 「无」。"""
+    compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", player_message or "")
+    if compact:
+        if any(token in compact for token in ("不准", "不允", "不许", "拒绝", "作罢", "罢了", "不必", "撤了", "撤回", "再议", "算了")):
+            return "拒绝"
+        if compact in {"准", "可", "允", "好", "行", "善"}:
+            return "应允"
+        if any(token in compact for token in ("准奏", "照准", "准了", "照办", "依卿", "便如此", "就这么办")):
+            return "应允"
     summ = "；".join(pending_summaries) or "（无）"
     prompt = (
         "你是信息抽取器，不扮演。皇帝上一轮经大臣领命确认后，有几条【尚未落库的暂存政务动作】"

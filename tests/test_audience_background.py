@@ -205,6 +205,26 @@ def test_stream_tool_staged_secret_order_merges_minister_reply(game):
     assert "封存兵部辽饷册" in staged["content"]
 
 
+def test_stream_secret_order_plain_tool_result_does_not_stage_empty_candidate(game):
+    """secret_order 工具的普通查询文本不是 sentinel，stream 路不得误建空 pending 新密令。"""
+    db, state, content = game
+    minister_name = "毕自严"
+    agent = _FakeAgent([ToolExec("secret_order", "密令 #1 状态：active。")])
+    web_game = _web_game(db, state, content, agent)
+
+    payload = web_game._chat_stream_payload(
+        minister_name,
+        "查一下密令进展。",
+        chat_turn_id=0,
+        before_snapshot={},
+        accepted_turn=state.turn,
+        emit_delta=lambda _chunk: None,
+    )
+
+    assert payload["pending_action_id"] == 0
+    assert db.list_pending_actions(state.turn) == []
+
+
 def test_chat_stream_uses_session_augmented_audience_prompt(game):
     """web streaming 应与非流式召对一样把记忆/草案增强 prompt 送给大臣 agent。"""
     db, state, content = game
