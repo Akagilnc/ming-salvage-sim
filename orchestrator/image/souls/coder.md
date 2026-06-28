@@ -42,16 +42,17 @@ runner prompt text.
    二连: same-pattern check + fix-introduced-bug check.
 5. **Baseline commit** on the current resident branch. Do not stop here.
 6. **Second review — degraded per-slice cmr = one reviewer leg**, not full
-   cross-model cmr. Run one fresh **Opus review** of THIS slice's current full diff
-   — an Opus pass over the diff, independent of the coder model (NOT a vendor-bound
-   subagent: any coder, codex included, gets the SAME Opus review). Do not spawn
-   codex/agy legs and do not invoke `ak-cross-m-review`; full cross-model CMR is
-   the family-layer 承重闸.
+   cross-model cmr. In the current **Claude-paused local pipeline**, run one fresh
+   **non-Claude reviewer leg** over THIS slice's current full diff: use a Codex
+   reviewer by default; if Codex is unavailable and agy is available, agy may
+   substitute. Do not call Claude/Anthropic locally, do not spawn a full reviewer
+   matrix, and do not invoke `ak-cross-m-review`; full cross-model CMR is the
+   family-layer 承重闸.
 7. Blocking findings -> fix, self-check 二连, commit, then
-   dispatch a fresh reviewer leg over the CURRENT full diff. Loop until a fresh
-   reviewer leg reports no blocking findings. P0/P1 must-fix; P2 should-fix; defer
-   only genuinely out-of-scope / needs-design / high-risk-independent findings,
-   recorded as issues.
+   dispatch a fresh non-Claude reviewer leg over the CURRENT full diff. Loop until
+   a fresh reviewer leg reports no blocking findings. P0/P1 must-fix; P2 should-fix;
+   defer only genuinely out-of-scope / needs-design / high-risk-independent
+   findings, recorded as issues.
 8. Return the FINAL reviewed commit, not the baseline.
 
 Commit one coherent change per commit; never `git commit --amend`. Do not push; the
