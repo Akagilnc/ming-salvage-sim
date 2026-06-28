@@ -696,6 +696,50 @@ def test_retry_failed_secret_order_retires_confirmation_chat_undo(game):
     assert db.list_pending_actions(state.turn, status="failed") == []
 
 
+def test_retry_pending_action_endpoint_returns_fresh_undo_state(game, monkeypatch):
+    """重试成功会 retire 原确认召对,端点须返回刷新后的撤回可用性给前端。"""
+    import asyncio
+    import web_app
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+    chat_turn_id = db.create_chat_turn(state, name, "sess-retry-api", 0)
+    db.update_chat_turn_messages(
+        chat_turn_id,
+        db.append_chat_message(name, state.turn, "user", "准"),
+        db.append_chat_message(name, state.turn, "minister", "臣即密办。"),
+    )
+    before = db.capture_chat_rollback_snapshot()
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    db.record_chat_turn_rollback_diffs(chat_turn_id, before, db.capture_chat_rollback_snapshot())
+    assert db.can_undo_last_chat_turn(name, state.turn)
+
+    game_obj = types.SimpleNamespace(
+        db=db,
+        state=state,
+        session=types.SimpleNamespace(content=content, registry=None),
+        can_undo_last_chat=lambda minister_name: db.can_undo_last_chat_turn(minister_name, state.turn),
+        pending_action_failures_for=lambda minister_name: [
+            action for action in db.list_pending_actions(
+                state.turn, status="failed", minister_name=minister_name)
+            if action["kind"] == "secret_order"
+        ],
+    )
+    monkeypatch.setattr(web_app, "get_game", lambda: game_obj)
+
+    out = asyncio.run(web_app.api_retry_pending_action(pending_id))
+
+    assert out["retry"]["committed"] is True
+    assert out["can_undo_last_chat"] is False
+    assert out["pending_action_failures"] == []
+
+
 def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):
     """玩家无视失败密令时,同一大臣后续普通召对仍可继续,不会被 failed 行卡住。"""
     db, state, content = game
