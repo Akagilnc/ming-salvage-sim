@@ -80,7 +80,7 @@ def _new_secret_order_failure_payloads(
         action_id = int(action.get("id") or 0)
         if action_id in before_ids:
             continue
-        failures.append(_pending_action_failure_payload(action))
+        failures.append(_pending_action_failure_payload(action, session.state))
     return failures
 
 

@@ -89,6 +89,7 @@ function App() {
   // Tracks the current selected minister across async boundaries.
   // State closures capture stale values; this ref always reflects the latest.
   const selectedMinisterRef = React.useRef<string>("");
+  const suppressNextReportRef = React.useRef(false);
   // AbortController for the in-flight minister chat stream; null when idle.
   const chatAbortRef = React.useRef<AbortController | null>(null);
 
@@ -101,7 +102,7 @@ function App() {
     setReport(data.last_report || "");
   }, [selectedMinister]);
 
-  const loadMinisterChat = React.useCallback(async (ministerName: string) => {
+  const loadMinisterChat = React.useCallback(async (ministerName: string, options?: { mergeFailures?: boolean }) => {
     const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[]; can_undo_last_chat: boolean; pending_action_failures?: PendingActionFailure[] }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
     // Staleness guard (#325, broad-scope): the player may have switched ministers
     // while this history fetch was in flight. Dropping the UI write prevents the
@@ -118,7 +119,11 @@ function App() {
     setChat(data.history);
     setSuggestions(data.suggestions);
     setCanUndoLastChat(!!data.can_undo_last_chat);
-    setChatFailures(data.pending_action_failures || []);
+    if (options?.mergeFailures) {
+      setChatFailures((items) => mergePendingActionFailures(items, data.pending_action_failures || []));
+    } else {
+      setChatFailures(data.pending_action_failures || []);
+    }
   }, [state]);
 
   const uploadPortrait = React.useCallback(async (ministerName: string, file: File) => {
@@ -222,6 +227,11 @@ function App() {
     if (!summary) return;
     if (summary.startsWith("登基伊始")) return;
     if (currentTurn === gazetteShown) return;
+    if (suppressNextReportRef.current) {
+      suppressNextReportRef.current = false;
+      setGazetteShown(currentTurn);
+      return;
+    }
     setGazetteReport(summary);
     setActiveModal("report");
     setGazetteShown(currentTurn);
@@ -361,14 +371,16 @@ function App() {
     if (!failures.length) return false;
     setChatFailures((items) => mergePendingActionFailures(items, failures));
     const targetName = failures.find((failure) => failure.minister_name)?.minister_name || "";
+    suppressNextReportRef.current = true;
     await loadState();
     if (targetName) {
+      selectedMinisterRef.current = targetName;
       setSelectedMinister(targetName);
       setActiveModal("chat");
       setChatNotice("");
       setPendingUserMessage("");
       setStreamingMinisterMessage("");
-      loadMinisterChat(targetName).catch((err) => setError(err.message));
+      loadMinisterChat(targetName, { mergeFailures: true }).catch((err) => setError(err.message));
     }
     setBusy("");
     return true;

@@ -1113,6 +1113,18 @@ def test_non_secret_pending_failure_payload_does_not_promise_retry():
     assert "重试" not in failure["message"]
 
 
+def test_settling_secret_failure_payload_is_not_retryable(game):
+    """settling/awaiting 阶段写闸关闭，failure payload 不应承诺立即 retry。"""
+    _db, state, _content = game
+    state.turn_phase = "settling"
+    failure = _pending_action_failure_payload(
+        {"id": 1, "kind": "secret_order", "action": "新建", "minister_name": "毕自严"},
+        state,
+    )
+
+    assert failure["retryable"] is False
+
+
 def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):
     """玩家无视失败密令时,同一大臣后续普通召对仍可继续,不会被 failed 行卡住。"""
     db, state, content = game

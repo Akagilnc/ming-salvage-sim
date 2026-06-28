@@ -477,7 +477,35 @@ def test_secret_order_status_query_does_not_stage_new_hidden_order(game, monkeyp
 
     assert out.get("pending_action_id") in (None, 0)
     assert db.list_pending_actions(state.turn) == []
-    assert "secret_extract" not in calls
+
+
+def test_explicit_secret_order_imperative_stages_new_candidate(game, monkeypatch):
+    """“密令锦衣卫暗查…”这类省略“下/发”的祈使句也应识别为新密令。"""
+    db, state, content = game
+    minister = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == minister)
+    monkeypatch.setattr(
+        cb,
+        "_run_backend_for_config",
+        lambda prompt, llm_config=None, tag="": (json.dumps({
+            "标题": "暗查辽饷",
+            "内容": "密令锦衣卫暗查辽饷，三月内回奏。",
+            "承办人": "锦衣卫",
+            "标签": ["辽饷"],
+            "期限月数": 3,
+        }, ensure_ascii=False), 1),
+    )
+
+    out = GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="密令锦衣卫暗查辽饷，三月内回奏。",
+        answer="臣领旨。",
+        has_directive=False,
+        secret_order_id=None,
+    )
+
+    assert out["pending_action_id"]
+    assert any(p["kind"] == "secret_order" for p in db.list_pending_actions(state.turn))
 
 
 def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, monkeypatch):

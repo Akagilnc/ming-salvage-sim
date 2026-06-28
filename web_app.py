@@ -2648,7 +2648,7 @@ def _new_secret_order_failure_payloads_for_turn(
     game: WebGame, turn: int, before_ids: set[int],
 ) -> List[Dict[str, Any]]:
     return [
-        _pending_action_failure_payload(action)
+        _pending_action_failure_payload(action, game.state)
         for action in game.db.list_pending_actions(int(turn), status="failed")
         if action.get("kind") == "secret_order" and int(action.get("id") or 0) not in before_ids
     ]
