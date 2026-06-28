@@ -357,6 +357,23 @@ function App() {
     loadMinisterChat(minister.name).catch((err) => setError(err.message));
   };
 
+  const surfacePendingActionFailures = React.useCallback(async (failures: PendingActionFailure[] = []) => {
+    if (!failures.length) return false;
+    setChatFailures((items) => mergePendingActionFailures(items, failures));
+    const targetName = failures.find((failure) => failure.minister_name)?.minister_name || "";
+    await loadState();
+    if (targetName) {
+      setSelectedMinister(targetName);
+      setActiveModal("chat");
+      setChatNotice("");
+      setPendingUserMessage("");
+      setStreamingMinisterMessage("");
+      loadMinisterChat(targetName).catch((err) => setError(err.message));
+    }
+    setBusy("");
+    return true;
+  }, []);
+
   const selectMapNode = (nodeId: string) => {
     setSelectedNodeId(nodeId);
     setMapIntelOpen(true);
@@ -666,8 +683,8 @@ function App() {
     setError("");
     try {
       const data = await api<{ state: GameState; pending_action_failures?: PendingActionFailure[] }>("/api/decree/advance_without_edict", { method: "POST" });
-      if (data.pending_action_failures) {
-        setChatFailures((items) => mergePendingActionFailures(items, data.pending_action_failures || []));
+      if (await surfacePendingActionFailures(data.pending_action_failures || [])) {
+        return;
       }
       window.location.reload();
     } catch (err) {
@@ -755,15 +772,16 @@ function App() {
       }
       const outcome = await consumeSettleStream(response);
       if (outcome.kind === "error") {
-        if (outcome.data?.pending_action_failures) {
-          setChatFailures((items) => mergePendingActionFailures(items, outcome.data.pending_action_failures || []));
+        if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
+          setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "颁诏失败。"));
+          return;
         }
         setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "颁诏失败。"));
         setBusy("");
         return;
       }
-      if (outcome.data?.pending_action_failures) {
-        setChatFailures((items) => mergePendingActionFailures(items, outcome.data.pending_action_failures || []));
+      if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
+        return;
       }
       if (outcome.kind === "decisions") {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
@@ -797,15 +815,16 @@ function App() {
       });
       const outcome = await consumeSettleStream(response);
       if (outcome.kind === "error") {
-        if (outcome.data?.pending_action_failures) {
-          setChatFailures((items) => mergePendingActionFailures(items, outcome.data.pending_action_failures || []));
+        if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
+          setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。"));
+          return;
         }
         setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。"));
         setBusy("");
         return;
       }
-      if (outcome.data?.pending_action_failures) {
-        setChatFailures((items) => mergePendingActionFailures(items, outcome.data.pending_action_failures || []));
+      if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
+        return;
       }
       await forwardSteamEvents(outcome.data);
       window.location.reload();

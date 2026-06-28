@@ -370,6 +370,8 @@ export type PendingActionFailure = {
   id: number;
   kind: string;
   action: string;
+  minister_name?: string;
+  retryable?: boolean;
   message: string;
 };
 
