@@ -170,6 +170,12 @@ def test_tool_call_pending_secret_order_reply_gets_confirmation_cue(game):
     assert "请陛下定夺准驳" in result.answer
 
 
+def test_generic_please_your_majesty_does_not_suppress_confirmation_cue():
+    answer = GameSession._ensure_confirmation_cue("臣已拟妥，请陛下放心。")
+
+    assert "请陛下定夺准驳" in answer
+
+
 def test_tool_call_staged_new_secret_order_merges_minister_reply(game, monkeypatch):
     """#413/#405：tool-call 已暂存的新密令仍要把玩家任务和大臣补充并入正文真源。"""
     db, state, _ = game
