@@ -377,7 +377,7 @@ def build_minister_tools(character: Character, context: CourtContext,
     ) -> str:
         """密令统一入口。action 取值：
         - "issue"：下达新密令。需填 title、content；assignee 留空默认当前大臣；deadline_months=0 无硬限。
-        - "progress"：汇报进展（兼查历史）。填 order_id；progress 非空且本月未推进则落档。
+        - "progress"：汇报进展（兼查历史）。填 order_id；progress 非空且非建档当月则暂存落档，同月补充会修正本月行。
         - "submit"：提交结案。填 order_id、claim（办结陈词200字内）。
         - "rush"：催办加急。填 order_id；deadline_months=1 下月核议，0=本月即核。
         """
@@ -447,12 +447,9 @@ def build_minister_tools(character: Character, context: CourtContext,
             return err
         if order["status"] != "active":
             return f"密令 #{order['id']} 已{order['status']}，不能再记进展。"
-        already_advanced = context.db._has_secret_order_period_line(
-            order["id"], "result", context.state.year, context.state.period
-        )
         is_issuing_turn = int(order.get("turn_issued") or 0) == int(context.state.turn)
         note = (progress or "").strip()[:200]
-        if note and not is_issuing_turn and not already_advanced:
+        if note and not is_issuing_turn:
             return _pending_secret_action("记进展", int(order["id"]), {"note": note})
         order = context.db.get_secret_order(order["id"]) or order
         parts = [f"密令 #{order['id']}「{order['title']}」状态：{order['status']}。"]
@@ -461,8 +458,6 @@ def build_minister_tools(character: Character, context: CourtContext,
             parts.append(f"外间动静（按月，末行最新）：\n{order['sim_note']}")
         if is_issuing_turn:
             parts.append("⚠️ 本月即建档当月，须待下月起才可查得头绪——本次未落档。")
-        elif note and already_advanced:
-            parts.append("ℹ️ 本月已有进展记录，本次未重复落档。")
         elif not note:
             parts.append("ℹ️ 未提供 progress，本月仍未推进。")
         return "\n".join(parts)

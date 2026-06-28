@@ -400,6 +400,48 @@ def test_secret_order_tool_progress_stages_pending_action_not_direct_write(game)
     assert pending[0]["action"] == "记进展"
 
 
+def test_propose_directive_tool_arguments_stages_draft(game):
+    """session 路 tool 参数兼容 arguments/tool_args，避免丢 Agno/Phidata decree_text。"""
+    db, state, content = game
+    minister = "毕自严"
+
+    class Agent:
+        def run(self, _message):
+            return SimpleNamespace(
+                content="臣已拟旨，请陛下定夺。",
+                tools=[SimpleNamespace(
+                    tool_name="propose_directive",
+                    result="",
+                    arguments={"decree_text": "着户部清核辽饷。"},
+                )],
+            )
+
+    class Registry:
+        def get(self, _character):
+            return Agent()
+
+        def build_draft_line(self):
+            return "无"
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = Registry()
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message: message
+    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
+    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
+
+    result = GameSession.chat(sess, minister, "拟一道清查辽饷的旨。")
+
+    assert result.pending_action_id
+    pending = [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
+    assert len(pending) == 1
+    assert json.loads(pending[0]["payload_json"])["text"] == "着户部清核辽饷。"
+
+
 def test_api_channel_rejects_existing_pending_action(game):
     """API/function-call 通道已暂存动作后，下一句拒绝也必须删除 pending，不能早退默认同意。"""
     db, state, _ = game
