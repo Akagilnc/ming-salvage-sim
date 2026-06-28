@@ -332,6 +332,37 @@ def test_secret_order_endpoint_delegates_to_chat_confirmation_flow(game, monkeyp
     assert db.list_pending_actions(state.turn) == []
 
 
+def test_api_create_secret_order_ignores_malformed_tags(game, monkeypatch):
+    """旧按钮端点遇到非 list tags 时不崩溃，按无标签继续走召对闸门。"""
+    import asyncio
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    calls = []
+
+    def _chat(minister_name, message):
+        calls.append((minister_name, message))
+        return {"answer": "臣领旨。", "pending_action_id": 7, "secret_order_id": 0}
+
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(
+            state=state, content=content, registry=None, temporary_characters=set()),
+        character_power_id=lambda c: web_app._character_power_id(c, db),
+        _chat_with_write_gate_held=_chat,
+    )
+    req = web_app.SecretOrderRequest(title="暗查辽饷", content="密查辽东军饷侵冒。")
+    req.tags = None  # type: ignore[assignment]
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    result = asyncio.run(web_app.api_create_secret_order(name, req))
+
+    assert calls == [(name, "密令如下：暗查辽饷\n密查辽东军饷侵冒。")]
+    assert result["pending_action_id"] == 7
+
+
 def test_commit_marks_unapplicable_failed_not_orphan(game, monkeypatch):
     """branch 覆盖:无 target/未知动作 → _apply 返 False → 标 failed(不留 pending 成孤儿、不静默吞);
     可落的照落;再 commit 不重跑(幂等,failed/committed 都不在 pending)。"""

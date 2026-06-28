@@ -560,6 +560,19 @@ def test_mixed_directive_secret_confirmation_does_not_commit_unmentioned_office(
     assert directives[0]["text"] == "着户部清核辽饷。"
 
 
+def test_confirmation_all_regex_does_not_treat_preparing_as_all_targets():
+    """“都准备好了”里的“准”不是确认“都准”，不能把 directive 一并卷入。"""
+    pending = [
+        {"id": 1, "kind": "directive", "action": "拟旨"},
+        {"id": 2, "kind": "secret_order", "action": "新建"},
+        {"id": 3, "kind": "office", "action": "任命"},
+    ]
+
+    targets = session_mod._confirmation_targets_for_message(pending, "都准备好了。")
+
+    assert [item["id"] for item in targets] == [2, 3]
+
+
 def test_duchayuan_does_not_confirm_directive_as_all_targets(game):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
