@@ -1110,6 +1110,102 @@ def test_retry_failed_secret_order_apply_exception_rolls_back_side_effects(game,
     assert len(failed) == 1 and failed[0]["id"] == pending_id
 
 
+def test_commit_pending_action_false_rolls_back_side_effects(game, monkeypatch):
+    """commit 中 _apply_pending_action 半途写入后返回 False，也必须回滚半写入。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 0,
+        },
+    )
+
+    def partial_apply(_state, _pa, _payload, **_kwargs):
+        db.create_secret_order(state, name, "半写密令", "不应留下。", [], deadline_months=0)
+        return False
+
+    monkeypatch.setattr(db, "_apply_pending_action", partial_apply)
+
+    applied = db.commit_pending_actions(state)
+
+    assert applied == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM secret_orders WHERE title='半写密令'"
+    ).fetchone()[0] == 0
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pending_id
+
+
+def test_retry_failed_secret_order_false_rolls_back_side_effects(game, monkeypatch):
+    """retry 中 _apply_pending_action 半途写入后返回 False，也必须回滚半写入。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 0,
+        },
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+
+    def partial_apply(_state, _pa, _payload, **_kwargs):
+        db.create_secret_order(state, name, "半写密令", "不应留下。", [], deadline_months=0)
+        return False
+
+    monkeypatch.setattr(db, "_apply_pending_action", partial_apply)
+
+    result = db.retry_failed_pending_action(state, pending_id)
+
+    assert result["committed"] is False
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM secret_orders WHERE title='半写密令'"
+    ).fetchone()[0] == 0
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pending_id
+
+
+def test_commit_conversational_draft_false_rolls_back_side_effects(game, monkeypatch):
+    """拟旨专用提交路径遇到 False 也不能留下半写入 draft。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name, target_id=None,
+        payload={"text": "严查辽饷。", "actor": name},
+    )
+
+    def partial_apply(_state, _pa, _payload, **_kwargs):
+        db.conn.execute(
+            """
+            INSERT INTO turn_directives
+            (turn, year, period, event_id, actor, skill_id, text, source, status, notes)
+            VALUES (?, ?, ?, '', ?, '', ?, '测试半写', 'draft', '')
+            """,
+            (state.turn, state.year, state.period, name, "半写拟旨"),
+        )
+        return False
+
+    monkeypatch.setattr(db, "_apply_pending_action", partial_apply)
+
+    applied = db.commit_pending_actions(state, kind_filter="directive")
+
+    assert applied == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE text='半写拟旨'"
+    ).fetchone()[0] == 0
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pending_id
+
+
 def test_retry_api_retire_failure_rolls_back_created_order(game, monkeypatch):
     """API retry 成功写密令但退休原确认轮失败时，应整体回滚，避免 undo 复活 failed row。"""
     import asyncio
