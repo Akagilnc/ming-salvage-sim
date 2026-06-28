@@ -1562,11 +1562,13 @@ class GameSession:
         if fallback_tags and not (isinstance(tags, list) and any(str(t).strip() for t in tags)):
             payload["tags"] = fallback_tags
             changed = True
+        raw_deadline = payload.get("deadline_months")
+        explicit_zero_deadline = raw_deadline in (0, "0")
         try:
-            deadline = int(payload.get("deadline_months") or 0)
+            deadline = int(raw_deadline or 0)
         except (TypeError, ValueError):
             deadline = 0
-        if fallback_deadline and not deadline:
+        if fallback_deadline and not deadline and not explicit_zero_deadline:
             payload["deadline_months"] = fallback_deadline
             changed = True
         if not changed:
