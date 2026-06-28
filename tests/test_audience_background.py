@@ -28,13 +28,14 @@ class ToolExec:
 
 
 class _FakeAgent:
-    def __init__(self, tools=None) -> None:
+    def __init__(self, tools=None, chunks=None) -> None:
         self.completed = threading.Event()
         self.tools = tools or []
+        self.chunks = chunks or ["臣", "遵旨。"]
 
     def run(self, *_args, **_kwargs):
-        yield RunContent("臣")
-        yield RunContent("遵旨。")
+        for chunk in self.chunks:
+            yield RunContent(chunk)
         self.completed.set()
         yield RunOutput(self.tools)
 
@@ -161,6 +162,42 @@ def test_background_audience_reply_keeps_staged_edict_after_observer_departure(g
         for row in db.list_directives(state, statuses=("pending", "draft"))
     )
     assert _wait_for(lambda: db.can_undo_last_chat_turn(minister_name, state.turn))
+
+
+def test_stream_tool_staged_secret_order_merges_minister_reply(game):
+    """#413/#405：web streaming tool-call 新密令也要保留玩家任务 + 大臣补充正文。"""
+    db, state, content = game
+    minister_name = "毕自严"
+    tool_payload = json.dumps({
+        "title": "密查辽饷",
+        "content": "密查辽饷去向。",
+        "assignee": minister_name,
+        "tags": ["辽饷"],
+        "deadline_months": 3,
+    }, ensure_ascii=False)
+    agent = _FakeAgent(
+        [ToolExec("issue_secret_order", f"__secret_order__{tool_payload}")],
+        chunks=["臣当", "先封存兵部辽饷册，再密访关宁诸将。"],
+    )
+    web_game = _web_game(db, state, content, agent)
+
+    payload = web_game._chat_stream_payload(
+        minister_name,
+        "密令如下：密查辽饷去向，三月内回奏，不可声张。",
+        chat_turn_id=0,
+        before_snapshot={},
+        accepted_turn=state.turn,
+        emit_delta=lambda _chunk: None,
+    )
+
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1
+    assert payload["pending_action_id"] == pending[0]["id"]
+    staged = json.loads(pending[0]["payload_json"])
+    assert "密查辽饷去向" in staged["content"]
+    assert "三月内回奏" in staged["content"]
+    assert "不可声张" in staged["content"]
+    assert "封存兵部辽饷册" in staged["content"]
 
 
 class _CliActionSession(_FakeSession):
