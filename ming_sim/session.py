@@ -429,9 +429,6 @@ def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], mes
         return family_targets
     if all_mentioned:
         return pending_actions
-    if non_directive and directive:
-        if directive_mentioned:
-            return directive
     return non_directive or directive
 
 
@@ -1613,8 +1610,7 @@ class GameSession:
             result.pending_action_id = res["pending_action_id"]
         if getattr(result, "pending_action_id", 0):
             if preexisting_pending_id:
-                GameSession._merge_staged_new_secret_order_content(
-                    self,
+                self._merge_staged_new_secret_order_content(
                     preexisting_pending_id,
                     character.name,
                     player_message,

@@ -1763,8 +1763,7 @@ class WebGame:
         pending_action_id = pending_action_id or int(res.get("pending_action_id") or 0)
         if pending_action_id:
             if tool_pending_action_id:
-                GameSession._merge_staged_new_secret_order_content(
-                    self.session,
+                self.session._merge_staged_new_secret_order_content(
                     tool_pending_action_id,
                     character.name,
                     text,

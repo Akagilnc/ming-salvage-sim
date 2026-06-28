@@ -740,8 +740,14 @@ function App() {
         return;
       }
       window.location.reload();
-    } catch (err) {
+    } catch (err: any) {
+      const failures = err?.detail?.pending_action_failures;
+      if (Array.isArray(failures) && await surfacePendingActionFailures(failures)) {
+        setError(err?.detail?.message || "退朝失败。");
+        return;
+      }
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
       setBusy("");
     }
   };

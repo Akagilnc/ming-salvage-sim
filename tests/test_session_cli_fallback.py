@@ -56,6 +56,8 @@ def _session(db, state, registry=None, llm_config=None, content=None):
         GameSession.apply_cli_conversation_actions, s)
     s._cli_backend_fallback_actions = types.MethodType(
         GameSession._cli_backend_fallback_actions, s)
+    s._merge_staged_new_secret_order_content = types.MethodType(
+        GameSession._merge_staged_new_secret_order_content, s)
     return s
 
 

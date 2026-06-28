@@ -406,6 +406,7 @@ export type ApiErrorDetail = {
   message?: string;
   provider_message?: string;
   status_code?: number | null;
+  pending_action_failures?: PendingActionFailure[];
 };
 
 export type AppView = "menu" | "game";
