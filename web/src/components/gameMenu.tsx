@@ -1,6 +1,7 @@
 import React from "react";
 import { Check, Loader2, LogOut, Power, RotateCcw, Save, Settings, Trash2, Upload, X } from "lucide-react";
 import { ApiRequestError, api } from "../api";
+import { resolveReasoningSupported } from "../reasoningSupport";
 import type { LLMConfigInfo, SaveEntry } from "../types";
 import { CliModelField } from "./cliModelField";
 
@@ -361,16 +362,25 @@ export function LLMConfigTab() {
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState("");
   const [err, setErr] = React.useState("");
-  const apiReasoningSupported = (() => {
-    const effectiveBase = (advancedModel.trim() ? (advancedBaseUrl.trim() || baseUrl) : baseUrl).toLowerCase();
-    const modelName = (advancedModel.trim() || model).toLowerCase();
-    const base = effectiveBase;
-    if (base.includes("deepseek.com")) return false;
-    return modelName.startsWith("o1") || modelName.startsWith("o3") || modelName.startsWith("o4") ||
-      modelName.startsWith("gpt-5") || base.includes("dashscope") || base.includes("aliyuncs") ||
-      base.includes("minimaxi.com") || base.includes("minimax.io");
-  })();
-  const cliReasoningSupported = cliRunner === "codex" || cliRunner === "claude";
+  const backendChannel = info?.channel === "cli" ? "cli" : "api";
+  const backendReasoningSupportCurrent = channel === backendChannel && (
+    channel === "cli"
+      ? cliRunner === (info?.cli_runner || "agy")
+      : baseUrl === (info?.base_url || "") &&
+        model === (info?.model || "") &&
+        advancedBaseUrl === (info?.advanced_base_url || "") &&
+        advancedModel === (info?.advanced_model || "")
+  );
+  const reasoningSupported = resolveReasoningSupported({
+    backendSupported: info?.reasoning_supported,
+    backendCurrent: backendReasoningSupportCurrent,
+    currentChannel: channel,
+    baseUrl,
+    model,
+    advancedBaseUrl,
+    advancedModel,
+    cliRunner,
+  });
   const reasoningChoices = info?.reasoning_strengths || [
     { value: "", label: "默认" },
     { value: "off", label: "关" },
@@ -500,14 +510,14 @@ export function LLMConfigTab() {
               className="menu-input"
               name="reasoning_strength"
               value={reasoningStrength}
-              disabled={!cliReasoningSupported}
+              disabled={!reasoningSupported}
               onChange={(e) => setReasoningStrength(e.target.value)}
             >
               {reasoningChoices.map((choice) => (
                 <option key={choice.value} value={choice.value}>{choice.label}</option>
               ))}
             </select>
-            {!cliReasoningSupported ? (
+            {!reasoningSupported ? (
               <small className="menu-hint">该后端不支持推理强度设置。</small>
             ) : null}
           </label>
@@ -564,14 +574,14 @@ export function LLMConfigTab() {
               className="menu-input"
               name="reasoning_strength"
               value={reasoningStrength}
-              disabled={!apiReasoningSupported}
+              disabled={!reasoningSupported}
               onChange={(e) => setReasoningStrength(e.target.value)}
             >
               {reasoningChoices.map((choice) => (
                 <option key={choice.value} value={choice.value}>{choice.label}</option>
               ))}
             </select>
-            {!apiReasoningSupported ? (
+            {!reasoningSupported ? (
               <small className="menu-hint">该后端不支持推理强度设置。</small>
             ) : null}
           </label>

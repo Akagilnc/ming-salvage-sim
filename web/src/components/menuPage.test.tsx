@@ -468,4 +468,61 @@ describe("ApiSettingsModal reasoning strength", () => {
     expect(strength?.disabled).toBe(false);
     cleanup();
   });
+
+  it("trusts backend reasoning_supported over local API model heuristics", () => {
+    const cleanup = render(
+      <MenuPage
+        status={{
+          has_api_key: true,
+          llm_ready: true,
+          has_running_game: false,
+          has_main_db: false,
+          saves: [],
+          campaigns: [],
+          llm: {
+            channel: "api",
+            base_url: "https://api.example.com/v1",
+            model: "gpt-5",
+            has_api_key: true,
+            cli_runner: "agy",
+            cli_model: "",
+            cli_model_saved: "",
+            cli_model_choices: { agy: [{ value: "", label: "默认 · gemini" }] },
+            cli_timeout_seconds: 240,
+            reasoning_strength: "",
+            reasoning_supported: false,
+            reasoning_strengths: [
+              { value: "", label: "默认" },
+              { value: "off", label: "关" },
+              { value: "low", label: "低" },
+              { value: "medium", label: "中" },
+              { value: "high", label: "高" },
+            ],
+            max_tokens: 8000,
+            timeout_seconds: 180,
+            thinking_level: "",
+            advanced_model: "",
+            advanced_base_url: "",
+            has_advanced_api_key: false,
+            advanced_thinking_level: "",
+          },
+        }}
+        onRefresh={async () => ({} as any)}
+        onEnterGame={async () => {}}
+        error=""
+        setError={() => {}}
+      />
+    );
+
+    act(() => {
+      Array.from(document.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("设置 API")
+      )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(true);
+    expect(document.body.textContent).toContain("该后端不支持推理强度设置");
+    cleanup();
+  });
 });
