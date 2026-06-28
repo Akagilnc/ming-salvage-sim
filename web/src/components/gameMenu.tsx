@@ -451,7 +451,30 @@ export function LLMConfigTab() {
           cli_timeout_seconds: channel === "cli" ? parseFloat(cliTimeout) || CLI_DEFAULT_TIMEOUT : 0,
         }),
       });
-      setInfo((cur) => (cur ? { ...cur, ...data } : data));
+      setInfo((cur) => ({
+        ...(cur || data),
+        ...data,
+        persisted: data.persisted || cur?.persisted || {
+          channel: data.channel,
+          base_url: data.base_url,
+          model: data.model,
+          has_api_key: data.has_api_key,
+          max_tokens: data.max_tokens,
+          timeout_seconds: data.timeout_seconds,
+          thinking_level: data.thinking_level,
+          advanced_model: data.advanced_model,
+          advanced_base_url: data.advanced_base_url,
+          has_advanced_api_key: data.has_advanced_api_key,
+          advanced_thinking_level: data.advanced_thinking_level,
+          reasoning_strength: data.reasoning_strength,
+          api_reasoning_strength: data.api_reasoning_strength,
+          cli_reasoning_strength: data.cli_reasoning_strength,
+          cli_runner: data.cli_runner,
+          cli_model: data.cli_model,
+          cli_timeout_seconds: data.cli_timeout_seconds,
+        },
+        cli_model_choices: data.cli_model_choices || cur?.cli_model_choices || {},
+      }));
       setBaseUrl(data.base_url);
       setModel(data.model);
       setAdvancedModel(data.advanced_model || "");
