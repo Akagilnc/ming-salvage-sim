@@ -11,6 +11,7 @@ import json
 import math
 import re
 import sqlite3
+import sys
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ming_sim.applier import atomic, safe_json_dumps, sanitize_sqlite_text
@@ -6042,6 +6043,10 @@ class GameDB:
         if action_ids is not None:
             allowed_ids = {int(action_id) for action_id in action_ids}
             rows = [r for r in rows if int(r["id"]) in allowed_ids]
+        owns_transaction = not (
+            bool(getattr(self.conn, "_commit_suspended", False))
+            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
+        )
         for pa in rows:
             try:
                 payload = json.loads(pa["payload_json"] or "{}")
@@ -6058,25 +6063,45 @@ class GameDB:
                 continue
             # apply 抛错(如 催办 对已转 pending_review 的密令)= 当 False:下面标 failed、
             # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
+            cm = atomic(self) if owns_transaction else None
+            if cm is not None:
+                cm.__enter__()
+            savepoint = f"pending_action_apply_{int(pa['id'])}"
+            ok = False
             try:
-                ok = self._apply_pending_action(
-                    state, pa, payload, content=content, registry=registry)
-            except Exception as exc:
-                tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-                ok = False
+                self.conn.execute(f"SAVEPOINT {savepoint}")
+                try:
+                    ok = self._apply_pending_action(
+                        state, pa, payload, content=content, registry=registry)
+                    if ok:
+                        self.conn.execute(
+                            "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
+                    else:
+                        # 落不了的(目标已转 pending_review、未知动作、坏 payload)标 failed,不留 pending——
+                        # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
+                        self.conn.execute(
+                            "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
+                except Exception as exc:
+                    self.conn.execute(f"ROLLBACK TO {savepoint}")
+                    tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+                    ok = False
+                    self.conn.execute(
+                        "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
+                finally:
+                    self.conn.execute(f"RELEASE {savepoint}")
+                # 逐条提交状态:_apply 内部 commit 在 atomic 内会被暂停，真实表改动与状态标记
+                # 同事务落定；否则崩在循环中途会让"真实表已改但状态未 committed"→重跑重复落库。
+                self.conn.commit()
+            except BaseException:
+                if cm is not None:
+                    cm.__exit__(*sys.exc_info())
+                raise
+            else:
+                if cm is not None:
+                    cm.__exit__(None, None, None)
             if ok:
-                self.conn.execute(
-                    "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
                 applied.append({"id": pa["id"], "kind": pa["kind"], "action": pa["action"],
                                 "target_id": pa["target_id"]})
-            else:
-                # 落不了的(目标已转 pending_review、未知动作、坏 payload)标 failed,不留 pending——
-                # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
-                self.conn.execute(
-                    "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
-            # 逐条提交状态:_apply 内部已 commit 真实表改动,状态标记必须同步落库,
-            # 否则崩在循环中途会让"真实表已改但状态未 committed"→重跑重复落库(pr-loop gemini)。
-            self.conn.commit()
         return applied
 
     def retry_failed_pending_action(
