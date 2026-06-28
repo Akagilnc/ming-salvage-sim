@@ -106,6 +106,68 @@ describe("召对陈旧守卫（staleness guard）", () => {
   });
 });
 
+/** Mirrors sendChat success path after streamChat returns: global state refresh
+ * may await, so minister-panel writes after that await need a second stale guard. */
+function SendPostLoadGuardFixture({
+  getResponse,
+  loadState,
+}: {
+  getResponse: () => Promise<{ failures: string }>;
+  loadState: () => Promise<void>;
+}) {
+  const [selected, setSelected] = React.useState("甲");
+  const selectedRef = React.useRef("甲");
+  React.useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+  const [globalApplied, setGlobalApplied] = React.useState(0);
+  const [failures, setFailures] = React.useState("");
+  const send = async (targetMinister: string) => {
+    const result = await getResponse();
+    if (selectedRef.current !== targetMinister) return;
+    setGlobalApplied((n) => n + 1);
+    await loadState();
+    if (selectedRef.current !== targetMinister) return;
+    setFailures(result.failures);
+  };
+  return (
+    <div>
+      <div data-testid="global">{globalApplied}</div>
+      <div data-testid="failures">{failures}</div>
+      <button data-testid="send" onClick={() => send(selected)}>
+        发送
+      </button>
+      <button data-testid="switch" onClick={() => setSelected("乙")}>
+        切换至乙
+      </button>
+    </div>
+  );
+}
+
+describe("召对陈旧守卫 — sendChat 成功后全局刷新窗口", () => {
+  it("loadState 等待期间切人后，失败列表不写入新大臣面板", async () => {
+    let resolveResponse!: (v: { failures: string }) => void;
+    let resolveLoad!: () => void;
+    const response = new Promise<{ failures: string }>((r) => (resolveResponse = r));
+    const loading = new Promise<void>((r) => (resolveLoad = r));
+    const host = render(
+      <SendPostLoadGuardFixture getResponse={() => response} loadState={() => loading} />
+    );
+    act(() => (host.querySelector("[data-testid=send]") as HTMLButtonElement).click());
+    await act(async () => {
+      resolveResponse({ failures: "甲的失败密令" });
+      await response;
+    });
+    act(() => (host.querySelector("[data-testid=switch]") as HTMLButtonElement).click());
+    await act(async () => {
+      resolveLoad();
+      await loading;
+    });
+    expect(host.querySelector("[data-testid=global]")?.textContent).toBe("1");
+    expect(host.querySelector("[data-testid=failures]")?.textContent).toBe("");
+  });
+});
+
 /**
  * Broad-scope (#325, dogfood self-check): the bleed has THREE async→minister-panel
  * write paths, not just sendChat. These fixtures mirror the other two guards.
