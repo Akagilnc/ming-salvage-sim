@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { Crown, Loader2, X } from "lucide-react";
 import { api, streamChat } from "./api";
+import { mergePendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { ExtractionModal } from "./components/extraction";
 import { GameMenuModal } from "./components/gameMenu";
@@ -13,7 +14,7 @@ import { SituationPanel } from "./components/situation";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
-import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingDecision, SecretOrder, Suggestion } from "./types";
+import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
 
 function App() {
@@ -54,6 +55,7 @@ function App() {
   const [pendingUserMessage, setPendingUserMessage] = React.useState("");
   const [streamingMinisterMessage, setStreamingMinisterMessage] = React.useState("");
   const [chatNotice, setChatNotice] = React.useState("");
+  const [chatFailures, setChatFailures] = React.useState<PendingActionFailure[]>([]);
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
@@ -100,7 +102,7 @@ function App() {
   }, [selectedMinister]);
 
   const loadMinisterChat = React.useCallback(async (ministerName: string) => {
-    const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[]; can_undo_last_chat: boolean }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
+    const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[]; can_undo_last_chat: boolean; pending_action_failures?: PendingActionFailure[] }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
     // Staleness guard (#325, broad-scope): the player may have switched ministers
     // while this history fetch was in flight. Dropping the UI write prevents the
     // late history from bleeding into the now-selected minister's panel — this path
@@ -116,6 +118,7 @@ function App() {
     setChat(data.history);
     setSuggestions(data.suggestions);
     setCanUndoLastChat(!!data.can_undo_last_chat);
+    setChatFailures(data.pending_action_failures || []);
   }, [state]);
 
   const uploadPortrait = React.useCallback(async (ministerName: string, file: File) => {
@@ -235,6 +238,7 @@ function App() {
       setPendingUserMessage("");
       setStreamingMinisterMessage("");
       setChatNotice("");
+      setChatFailures([]);
       setCanUndoLastChat(false);
       setComposerHint("");
       return;
@@ -243,6 +247,7 @@ function App() {
     setSuggestions([]);
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
+    setChatFailures([]);
     setCanUndoLastChat(false);
     setComposerHint("");
     loadMinisterChat(selectedMinister).catch((err) => setError(err.message));
@@ -345,6 +350,7 @@ function App() {
     setError("");
     setComposerHint("");
     setChatNotice("");
+    setChatFailures([]);
     setCanUndoLastChat(false);
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
@@ -401,6 +407,7 @@ function App() {
       if (data.secret_order_id) {
         setChatNotice(`密令已秘密交付${targetMinisterName}，编号 #${data.secret_order_id}。`);
       }
+      setChatFailures((items) => mergePendingActionFailures(items, data.pending_action_failures || []));
       if (data.proposed_directive) {
         setChatNotice(`${targetMinisterName}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
       }
@@ -409,6 +416,7 @@ function App() {
         setSuggestions([]);
         setStreamingMinisterMessage("");
         setCanUndoLastChat(false);
+        setChatFailures([]);
         setSelectedMinister(data.next_minister);
         setActiveModal("chat");
         setChatNotice(`已传${data.next_minister}入殿。`);
@@ -458,6 +466,7 @@ function App() {
     setBusy("撤回召对");
     setError("");
     setChatNotice("");
+    setChatFailures([]);
     setComposerHint("");
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
@@ -480,10 +489,52 @@ function App() {
         setChat(data.history);
         setSuggestions(data.suggestions);
         setCanUndoLastChat(!!data.can_undo_last_chat);
+        setChatFailures([]);
         setChatNotice("已撤回最近一轮召对。");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const retryPendingAction = async (failure: PendingActionFailure) => {
+    if (busy) return;
+    const targetMinisterName = activeMinister?.name || selectedMinisterRef.current;
+    setBusy("重试密令下达");
+    setError("");
+    try {
+      const data = await api<{
+        retry: { committed: boolean };
+        secret_orders: SecretOrder[];
+        can_undo_last_chat?: boolean;
+        pending_action_failures?: PendingActionFailure[];
+      }>(
+        `/api/pending_actions/${failure.id}/retry`,
+        { method: "POST" },
+      );
+      if (!data.retry?.committed) {
+        if (selectedMinisterRef.current === targetMinisterName) {
+          setError("密令仍未能正式落库，请稍后再试。");
+        }
+        return;
+      }
+      setSecretOrders(data.secret_orders || []);
+      await loadState();
+      if (selectedMinisterRef.current !== targetMinisterName) return;
+      if (data.pending_action_failures) {
+        setChatFailures(data.pending_action_failures);
+      } else {
+        setChatFailures((items) => items.filter((item) => item.id !== failure.id));
+      }
+      if (typeof data.can_undo_last_chat === "boolean") {
+        setCanUndoLastChat(data.can_undo_last_chat);
+      }
+    } catch (err) {
+      if (selectedMinisterRef.current === targetMinisterName) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setBusy("");
     }
@@ -954,6 +1005,7 @@ function App() {
             pendingUserMessage={pendingUserMessage}
             streamingMinisterMessage={streamingMinisterMessage}
             chatNotice={chatNotice}
+            chatFailures={chatFailures}
             canUndoLastChat={canUndoLastChat}
             composerHint={composerHint}
             input={input}
@@ -962,6 +1014,7 @@ function App() {
             secretOrders={secretOrders.filter((o) => o.minister_name === activeMinister.name && (o.status === "active" || o.status === "pending_review"))}
             onInput={setInput}
             onSend={sendChat}
+            onRetryFailure={retryPendingAction}
             onUndo={undoLastChat}
             onHint={setComposerHint}
             onFavorite={() => toggleFavorite(activeMinister)}

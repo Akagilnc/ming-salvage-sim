@@ -4,7 +4,7 @@ import { api } from "../api";
 import { ExtractionView } from "./extraction";
 import { FullscreenModal, MinisterPortrait, cacheBust } from "./hud";
 import { formatClosedEffect } from "../format";
-import type { ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, SecretOrder, Suggestion } from "../types";
+import type { ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, PendingActionFailure, SecretOrder, Suggestion } from "../types";
 
 export function ReportModal({
   report,
@@ -538,6 +538,7 @@ export function ChatModal({
   pendingUserMessage,
   streamingMinisterMessage,
   chatNotice,
+  chatFailures,
   canUndoLastChat,
   composerHint,
   input,
@@ -546,6 +547,7 @@ export function ChatModal({
   secretOrders,
   onInput,
   onSend,
+  onRetryFailure,
   onUndo,
   onHint,
   onFavorite,
@@ -560,6 +562,7 @@ export function ChatModal({
   pendingUserMessage: string;
   streamingMinisterMessage: string;
   chatNotice: string;
+  chatFailures: PendingActionFailure[];
   canUndoLastChat: boolean;
   composerHint: string;
   input: string;
@@ -568,6 +571,7 @@ export function ChatModal({
   secretOrders: SecretOrder[];
   onInput: (value: string) => void;
   onSend: (text?: string) => void;
+  onRetryFailure: (failure: PendingActionFailure) => void;
   onUndo: () => void;
   onHint: (value: string) => void;
   onFavorite: () => void;
@@ -617,7 +621,7 @@ export function ChatModal({
     if (node) {
       node.scrollTop = node.scrollHeight;
     }
-  }, [minister.name, chat, pendingUserMessage, streamingMinisterMessage, chatNotice, busy, error]);
+  }, [minister.name, chat, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error]);
 
   const handleSend = () => {
     onSend(input);
@@ -695,6 +699,16 @@ export function ChatModal({
             </div>
           )}
           {chatNotice && <div className="chat-system-note">{chatNotice}</div>}
+          {chatFailures.map((failure) => (
+            <div className="chat-system-note danger chat-failure-note" role="alert" key={failure.id}>
+              <span>{failure.message}</span>
+              {failure.kind === "secret_order" && (
+                <button type="button" onClick={() => onRetryFailure(failure)} disabled={!!busy}>
+                  重试
+                </button>
+              )}
+            </div>
+          ))}
           {error && <div className="chat-system-note danger" role="alert">{error}</div>}
         </div>
         <div className="chat-composer">

@@ -5046,6 +5046,46 @@ class GameDB:
             return False
         return self.is_global_last_active_chat_turn(int(row["id"]))
 
+    def retire_chat_turn_for_pending_action_retry(self, action_id: int) -> int:
+        """Make the confirmation turn for a successfully retried action non-undoable.
+
+        Manual retry happens after the original chat rollback diff was recorded. Keeping
+        that chat turn active would let undo restore the pre-retry pending row while the
+        retried durable write remains, so retire only the turn that marked this action
+        failed. Chat messages stay persisted; only the undo affordance is removed.
+        """
+        rows = self.conn.execute(
+            """
+            SELECT i.chat_turn_id, i.after_json
+            FROM chat_turn_rollback_items i
+            JOIN chat_turns t ON t.id = i.chat_turn_id
+            WHERE t.status = 'active'
+              AND i.target_table = 'pending_actions'
+              AND i.target_id = ?
+            ORDER BY i.chat_turn_id DESC, i.id DESC
+            """,
+            (str(int(action_id)),),
+        ).fetchall()
+        retired_ids: List[int] = []
+        for row in rows:
+            after_row = self._json_load_row(row["after_json"] or "")
+            if str(after_row.get("kind") or "") != "secret_order":
+                continue
+            if str(after_row.get("status") or "") not in {"pending", "failed"}:
+                continue
+            chat_turn_id = int(row["chat_turn_id"])
+            if chat_turn_id in retired_ids:
+                continue
+            self.conn.execute(
+                "UPDATE chat_turns SET status = 'failed' WHERE id = ? AND status = 'active'",
+                (chat_turn_id,),
+            )
+            retired_ids.append(chat_turn_id)
+        if retired_ids:
+            self.conn.commit()
+            return retired_ids[0]
+        return 0
+
     def _restore_row_in_tx(self, table: str, row: Dict[str, Any]) -> None:
         if not row:
             return
@@ -5997,6 +6037,64 @@ class GameDB:
             self.conn.commit()
         return applied
 
+    def retry_failed_pending_action(
+        self, state: GameState, action_id: int, *, content=None, registry=None,
+    ) -> Dict[str, object]:
+        """重试本回合 failed 的密令暂存动作，用原 payload 再走正常 durable 落库路径。"""
+        row = self.conn.execute(
+            "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
+            "FROM pending_actions WHERE id=?",
+            (int(action_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError("该待确认动作不存在。")
+        pa = {
+            "id": int(row["id"]),
+            "turn": int(row["turn"]),
+            "kind": row["kind"],
+            "action": row["action"],
+            "target_id": None if row["target_id"] is None else int(row["target_id"]),
+            "minister_name": row["minister_name"],
+            "payload_json": row["payload_json"],
+            "status": row["status"],
+        }
+        if int(pa["turn"]) != int(state.turn):
+            raise ValueError("该失败动作不属于当前回合，不能重试。")
+        if pa["status"] != "failed":
+            raise ValueError("只有 failed 的待确认动作可以重试。")
+        if pa["kind"] != "secret_order":
+            raise ValueError("当前只支持重试失败的密令下达。")
+        try:
+            payload = json.loads(pa["payload_json"] or "{}")
+        except (ValueError, TypeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        try:
+            ok = self._apply_pending_action(
+                state, pa, payload, content=content, registry=registry)
+        except Exception as exc:
+            tlog(f"[pending_actions] 重试落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+            ok = False
+        if ok:
+            self.conn.execute(
+                "UPDATE pending_actions SET status='committed' WHERE id=?",
+                (int(pa["id"]),),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE pending_actions SET status='failed' WHERE id=?",
+                (int(pa["id"]),),
+            )
+        self.conn.commit()
+        return {
+            "id": pa["id"],
+            "kind": pa["kind"],
+            "action": pa["action"],
+            "target_id": pa["target_id"],
+            "committed": bool(ok),
+        }
+
     def _commit_conversational_draft(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         *, content=None, registry=None, directive_status: str = "draft",
@@ -6057,7 +6155,10 @@ class GameDB:
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline)
                 if registry is not None:
-                    registry.refresh(assignee)
+                    try:
+                        registry.refresh(assignee)
+                    except Exception as exc:
+                        tlog(f"[pending_actions] 密令已落库但刷新 Agent 失败 assignee={assignee}：{exc}")
                 return bool(order_id)
             if oid is None:
                 return False
