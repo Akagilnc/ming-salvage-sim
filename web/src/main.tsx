@@ -341,6 +341,9 @@ function App() {
   const activeMinister = selectedMinister
     ? allCharacters.find((m) => m.name === selectedMinister) || temporaryActiveMinister
     : null;
+  const activeChatFailures = activeMinister
+    ? chatFailures.filter((failure) => !failure.minister_name || failure.minister_name === activeMinister.name)
+    : [];
   const mapIntelStyle = selectedNode ? getMapIntelStyle(selectedNode) : undefined;
 
   const openChat = (minister: Minister) => {
@@ -530,7 +533,7 @@ function App() {
 
   const retryPendingAction = async (failure: PendingActionFailure) => {
     if (busy) return;
-    const targetMinisterName = activeMinister?.name || selectedMinisterRef.current;
+    const targetMinisterName = failure.minister_name || activeMinister?.name || selectedMinisterRef.current;
     setBusy("重试密令下达");
     setError("");
     try {
@@ -551,12 +554,15 @@ function App() {
       }
       setSecretOrders(data.secret_orders || []);
       await loadState();
-      if (selectedMinisterRef.current !== targetMinisterName) return;
       if (data.pending_action_failures) {
-        setChatFailures(data.pending_action_failures);
+        setChatFailures((items) => mergePendingActionFailures(
+          items.filter((item) => item.id !== failure.id && item.minister_name !== targetMinisterName),
+          data.pending_action_failures || [],
+        ));
       } else {
         setChatFailures((items) => items.filter((item) => item.id !== failure.id));
       }
+      if (selectedMinisterRef.current !== targetMinisterName) return;
       if (typeof data.can_undo_last_chat === "boolean") {
         setCanUndoLastChat(data.can_undo_last_chat);
       }
@@ -1063,7 +1069,7 @@ function App() {
             pendingUserMessage={pendingUserMessage}
             streamingMinisterMessage={streamingMinisterMessage}
             chatNotice={chatNotice}
-            chatFailures={chatFailures}
+            chatFailures={activeChatFailures}
             canUndoLastChat={canUndoLastChat}
             composerHint={composerHint}
             input={input}

@@ -249,6 +249,7 @@ describe("ChatModal — placeholder switches on character type", () => {
       id: 7,
       kind: "secret_order",
       action: "新建",
+      retryable: true,
       message: "密令未能正式落库，请重试；若暂不处理，也不会阻断继续召对。",
     };
     const retry = vi.fn();

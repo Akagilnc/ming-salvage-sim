@@ -517,6 +517,53 @@ def test_confirmation_turn_ignores_same_turn_secret_order_tool_output(game, monk
     ).fetchone()
 
 
+def test_secret_prefix_ignores_mismatched_directive_tool_output(game, monkeypatch):
+    """显式密令前缀是权威 intent；错家族 propose_directive tool 不得压掉密令 fallback。"""
+    db, state, content = game
+    minister = "毕自严"
+    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: (json.dumps({
+        "密令": {
+            "标题": "暗查辽饷",
+            "内容": "暗查辽饷侵冒。",
+            "承办人": minister,
+            "标签": ["辽饷"],
+            "期限月数": 0,
+        },
+    }, ensure_ascii=False), 1))
+
+    class Agent:
+        def run(self, _message):
+            return SimpleNamespace(
+                content="臣领旨。",
+                tools=[SimpleNamespace(tool_name="propose_directive", result="__pending_directive__着户部清核辽饷。")],
+            )
+
+    class Registry:
+        def get(self, _character):
+            return Agent()
+
+        def build_draft_line(self):
+            return "无"
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = Registry()
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message: message
+    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
+    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
+
+    result = GameSession.chat(sess, minister, "密令如下：暗查辽饷侵冒。")
+
+    assert result.pending_action_id
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1
+    assert pending[0]["kind"] == "secret_order"
+
+
 def test_confirmation_commit_only_visible_pending_ids(game):
     """同句新 stage 的动作即便同大臣同 kind，也不能被本句确认顺手提交。"""
     db, state, _content = game
