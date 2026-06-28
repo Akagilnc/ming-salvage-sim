@@ -566,6 +566,7 @@ function App() {
       }
       setSecretOrders(data.secret_orders || []);
       await loadState();
+      if (selectedMinisterRef.current !== targetMinisterName) return;
       if (data.pending_action_failures) {
         setChatFailures((items) => refreshRetriedPendingActionFailures(
           items,
@@ -576,7 +577,6 @@ function App() {
       } else {
         setChatFailures((items) => items.filter((item) => item.id !== failure.id));
       }
-      if (selectedMinisterRef.current !== targetMinisterName) return;
       if (typeof data.can_undo_last_chat === "boolean") {
         setCanUndoLastChat(data.can_undo_last_chat);
       }
