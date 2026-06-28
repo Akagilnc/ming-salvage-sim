@@ -2682,7 +2682,7 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
 
 @app.post("/api/ministers/{minister_name}/secret_order")
 async def api_create_secret_order(minister_name: str, request: SecretOrderRequest) -> Dict[str, Any]:
-    """皇帝直接下达密令，不经 LLM，直接落库。"""
+    """皇帝直接录入密令候选，不经 LLM；正式落库仍走统一确认闸门。"""
     game = get_game()
     character = game.session.content.characters.get(minister_name)
     if not character:
@@ -2699,19 +2699,29 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     if not title or not content:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="title 和 content 不能为空")
-    # 直接下达=显式新建一道密令（create，非 upsert）：皇帝点「下密令」按钮给确切 title+content
-    # 就是要一道新令，同大臣可有多条 active；upsert 会静默覆盖最新 active 那条（codexC-2）。
-    # 「更新已有密令」走会话路径(LLM 判意图 → update_secret_order_by_id 精确改)，不在此端点。
+    # 显式录入也只是候选：统一确认闸门要求新密令在确认/颁诏 checkpoint 前不进入
+    # 玩家密令列表；正式落地由 commit_pending_actions 统一 create。
     with _serialized_web_write(game):
-        order_id = game.db.create_secret_order(
-            game.session.state, minister_name, title, content, request.tags, deadline_months=request.deadline_months
+        pending_action_id = game.db.stage_pending_action(
+            game.session.state.turn,
+            kind="secret_order",
+            action="新建",
+            minister_name=minister_name,
+            target_id=None,
+            payload={
+                "title": title,
+                "content": content,
+                "assignee": minister_name,
+                "tags": request.tags,
+                "deadline_months": request.deadline_months,
+            },
         )
-        # registry.refresh 也留在门内：否则提前释放锁后留下 DB 已建密令、内存 agent 上下文仍旧
-        # 的撕裂窗口（cmr Gate2 r3 Finding2，同 consort/admin 那类 DB/内存撕裂）。
-        if game.session.registry is not None:
-            game.session.registry.refresh(minister_name)  # 上下文带上最新密令
-    print(f"[secret_order/api] 新建 minister={minister_name} title={title!r} id={order_id}")
-    return {"order_id": order_id, "minister_name": minister_name, "title": title, "status": "active"}
+    print(f"[secret_order/api] 暂存 minister={minister_name} title={title!r} pending_id={pending_action_id}")
+    return {
+        "pending_action_id": pending_action_id,
+        "minister_name": minister_name,
+        "title": title,
+    }
 
 
 @app.post("/api/ministers/{minister_name}/chat")
