@@ -2,7 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { Crown, Loader2, X } from "lucide-react";
 import { api, streamChat } from "./api";
-import { mergePendingActionFailures } from "./chatFailures";
+import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { ExtractionModal } from "./components/extraction";
 import { GameMenuModal } from "./components/gameMenu";
@@ -567,8 +567,10 @@ function App() {
       setSecretOrders(data.secret_orders || []);
       await loadState();
       if (data.pending_action_failures) {
-        setChatFailures((items) => mergePendingActionFailures(
-          items.filter((item) => item.id !== failure.id && item.minister_name !== targetMinisterName),
+        setChatFailures((items) => refreshRetriedPendingActionFailures(
+          items,
+          failure.id,
+          targetMinisterName,
           data.pending_action_failures || [],
         ));
       } else {
