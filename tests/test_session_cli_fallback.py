@@ -750,6 +750,8 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
         "name": appointee,
         "office": "户部尚书",
         "action": "任命",
+        "faction": "阉党",
+        "reason": "吏部举荐",
     }, ensure_ascii=False)
 
     class Agent:
@@ -765,6 +767,9 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
 
         def build_draft_line(self):
             return "无"
+
+        def register(self, _character):
+            return None
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -789,10 +794,17 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
     assert len(pending) == 1
     assert pending[0]["kind"] == "office"
     assert pending[0]["action"] == "任命"
-    assert json.loads(pending[0]["payload_json"])["name"] == appointee
+    pending_payload = json.loads(pending[0]["payload_json"])
+    assert pending_payload["name"] == appointee
+    assert pending_payload["faction"] == "阉党"
+    assert pending_payload["reason"] == "吏部举荐"
     assert db.conn.execute(
         "SELECT name FROM characters WHERE name=?", (appointee,)
     ).fetchone() is None
+
+    db.commit_pending_actions(state, content=content, registry=sess.registry)
+
+    assert content.characters[appointee].faction == "阉党"
 
 
 def test_confirmation_turn_ignores_same_turn_secret_order_tool_output(game, monkeypatch):

@@ -87,11 +87,15 @@ def _new_secret_order_failure_payloads(
 def _print_pending_action_failures(failures: List[dict]) -> None:
     for failure in failures:
         message = str(failure.get("message") or "密令落库失败。")
-        failure_id = int(failure.get("id") or 0)
-        suffix = f" #{failure_id}" if failure_id else ""
+        raw_failure_id = failure.get("id")
+        try:
+            failure_id = int(raw_failure_id) if raw_failure_id is not None else None
+        except (TypeError, ValueError):
+            failure_id = None
+        suffix = f" #{failure_id}" if failure_id is not None else ""
         print(f"【密令落库失败{suffix}】{wrap(message)}")
         if failure.get("retryable"):
-            command = f"retry {failure_id}" if failure_id else "retry <id>"
+            command = f"retry {failure_id}" if failure_id is not None else "retry <id>"
             print(f"可输入 {command} 重试；本次失败不会阻断继续召对。\n")
 
 
