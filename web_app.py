@@ -3224,6 +3224,13 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
+    reasoning_supported = (
+        cli_supports_reasoning_strength(cfg.cli_runner)
+        if cfg.channel == "cli"
+        else _api_reasoning_supported_for_effective_model(
+            cfg.base_url, cfg.model, cfg.advanced_base_url, cfg.advanced_model
+        )
+    )
     return {
         "base_url": cfg.base_url,
         "model": cfg.model,
@@ -3231,6 +3238,8 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
         "timeout_seconds": cfg.timeout_seconds,
         "thinking_level": cfg.thinking_level,
         "reasoning_strength": cfg.reasoning_strength,
+        "reasoning_supported": reasoning_supported,
+        "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
         "advanced_model": cfg.advanced_model,
         "advanced_base_url": cfg.advanced_base_url,
         "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key),

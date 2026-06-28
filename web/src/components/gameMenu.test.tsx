@@ -1,7 +1,8 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LLMConfigTab } from "./gameMenu";
+import type { LLMConfigInfo } from "../types";
+import { LLMConfigTab, mergePersistedSaveSnapshot } from "./gameMenu";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -66,6 +67,12 @@ function render(element: React.ReactNode) {
       host.remove();
     },
   };
+}
+
+function changeInput(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 afterEach(() => {
@@ -148,6 +155,33 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("CLI Runner");
     expect(text).not.toContain("Base URL");
+    cleanup();
+  });
+
+  it("labels codex off reasoning as the codex low floor", async () => {
+    mockFetch({
+      ...BASE_LLM_RESPONSE,
+      channel: "cli",
+      cli_runner: "codex",
+      reasoning_strength: "off",
+      reasoning_supported: true,
+      persisted: {
+        ...BASE_LLM_RESPONSE.persisted,
+        channel: "cli",
+        cli_runner: "codex",
+        cli_model: "gpt-5.5",
+        cli_timeout_seconds: 240,
+        cli_reasoning_strength: "off",
+      },
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(false);
+    expect(strength?.value).toBe("off");
+    const offOption = Array.from(strength?.options || []).find((option) => option.value === "off");
+    expect(offOption?.textContent).toBe("关（codex 最低=低）");
     cleanup();
   });
 
@@ -353,6 +387,266 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     await act(async () => {});
 
     const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(false);
+    cleanup();
+  });
+
+  it("trusts backend reasoning_supported over local API model heuristics", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...BASE_LLM_RESPONSE,
+        base_url: "https://api.example.com/v1",
+        model: "gpt-5",
+        reasoning_supported: false,
+      }),
+    } as Response);
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(true);
+    expect(document.body.textContent).toContain("该后端不支持推理强度设置");
+    cleanup();
+  });
+
+  it("keeps trusting backend reasoning support for whitespace-only API edits", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...BASE_LLM_RESPONSE,
+        base_url: "https://api.example.com/v1",
+        model: "gpt-5",
+        reasoning_supported: false,
+      }),
+    } as Response);
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(true);
+    const modelInput = document.querySelector<HTMLInputElement>('input[placeholder="gpt-4o-mini"]');
+    expect(modelInput).toBeTruthy();
+    act(() => {
+      changeInput(modelInput!, " gpt-5 ");
+    });
+
+    expect(strength?.disabled).toBe(true);
+    cleanup();
+  });
+
+  it("keeps the save snapshot when initial load failed and the response has no persisted block", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (!init?.method) {
+        return Promise.reject(new Error("load failed"));
+      }
+      const response: Partial<LLMConfigInfo> = {
+        ...BASE_LLM_RESPONSE,
+        base_url: "https://api.example.com/v1",
+        model: "gpt-5",
+        reasoning_supported: true,
+      };
+      delete response.persisted;
+      delete response.cli_model_choices;
+      return Promise.resolve({
+        ok: true,
+        json: async () => response,
+      } as Response);
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const baseUrlInput = document.querySelector<HTMLInputElement>('input[placeholder="https://api.openai.com/v1"]');
+    const modelInput = document.querySelector<HTMLInputElement>('input[placeholder="gpt-4o-mini"]');
+    expect(baseUrlInput).toBeTruthy();
+    expect(modelInput).toBeTruthy();
+    act(() => {
+      changeInput(baseUrlInput!, "https://api.example.com/v1");
+      changeInput(modelInput!, "gpt-5");
+    });
+
+    const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("保存并应用")
+    );
+    expect(saveBtn).toBeTruthy();
+    await act(async () => {
+      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(false);
+    expect(calls.some((call) => call.init?.method === "POST")).toBe(true);
+    cleanup();
+  });
+
+  it("merges save response fields into existing persisted snapshot when the response omits persisted", () => {
+    const current: LLMConfigInfo = {
+      ...BASE_LLM_RESPONSE,
+      persisted: {
+        ...BASE_LLM_RESPONSE.persisted,
+        base_url: "https://old.example.com/v1",
+        model: "old-model",
+        api_reasoning_strength: "low",
+        cli_reasoning_strength: "medium",
+        cli_runner: "codex",
+        cli_model: "raw-cli-model",
+        cli_timeout_seconds: 120,
+      },
+    };
+    const response: Partial<LLMConfigInfo> = {
+      ...BASE_LLM_RESPONSE,
+      base_url: "https://api.example.com/v1",
+      model: "gpt-5",
+      reasoning_strength: "high",
+      reasoning_supported: true,
+    };
+    delete response.persisted;
+
+    expect(mergePersistedSaveSnapshot(response as LLMConfigInfo, current)).toMatchObject({
+      base_url: "https://api.example.com/v1",
+      model: "gpt-5",
+      api_reasoning_strength: "high",
+      cli_reasoning_strength: "medium",
+      cli_runner: "codex",
+      cli_model: "raw-cli-model",
+      cli_timeout_seconds: 120,
+    });
+  });
+
+  it("refreshes reasoning support from the save response before trusting the saved backend snapshot", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      const response = init?.method === "POST"
+        ? {
+            ...BASE_LLM_RESPONSE,
+            base_url: "https://api.deepseek.com/v1",
+            model: "deepseek-chat",
+            reasoning_strength: "",
+            reasoning_supported: false,
+          }
+        : {
+            ...BASE_LLM_RESPONSE,
+            base_url: "https://api.example.com/v1",
+            model: "gpt-5",
+            reasoning_strength: "high",
+            reasoning_supported: true,
+          };
+      return Promise.resolve({
+        ok: true,
+        json: async () => response,
+      } as Response);
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(false);
+    const baseUrlInput = document.querySelector<HTMLInputElement>('input[placeholder="https://api.openai.com/v1"]');
+    const modelInput = document.querySelector<HTMLInputElement>('input[placeholder="gpt-4o-mini"]');
+    expect(baseUrlInput).toBeTruthy();
+    expect(modelInput).toBeTruthy();
+    act(() => {
+      changeInput(baseUrlInput!, "https://api.deepseek.com/v1");
+      changeInput(modelInput!, "deepseek-chat");
+    });
+    expect(strength?.disabled).toBe(true);
+
+    const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("保存并应用")
+    );
+    expect(saveBtn).toBeTruthy();
+    await act(async () => {
+      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
+    expect(post).toBeTruthy();
+    expect(strength?.disabled).toBe(true);
+    expect(document.body.textContent).toContain("该后端不支持推理强度设置");
+    cleanup();
+  });
+
+  it("uses normalized save response fields when deciding whether backend reasoning support is current", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      const response = init?.method === "POST"
+        ? {
+            ...BASE_LLM_RESPONSE,
+            base_url: "https://api.example.com/v1",
+            model: "gpt-5",
+            reasoning_strength: "",
+            reasoning_supported: true,
+          }
+        : {
+            ...BASE_LLM_RESPONSE,
+            base_url: "https://api.deepseek.com/v1",
+            model: "deepseek-chat",
+            reasoning_strength: "",
+            reasoning_supported: false,
+          };
+      return Promise.resolve({
+        ok: true,
+        json: async () => response,
+      } as Response);
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(true);
+    const baseUrlInput = document.querySelector<HTMLInputElement>('input[placeholder="https://api.openai.com/v1"]');
+    const modelInput = document.querySelector<HTMLInputElement>('input[placeholder="gpt-4o-mini"]');
+    expect(baseUrlInput).toBeTruthy();
+    expect(modelInput).toBeTruthy();
+    act(() => {
+      changeInput(baseUrlInput!, "https://api.example.com");
+      changeInput(modelInput!, " gpt-5 ");
+    });
+
+    const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("保存并应用")
+    );
+    expect(saveBtn).toBeTruthy();
+    await act(async () => {
+      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
+    expect(post).toBeTruthy();
+    expect(baseUrlInput?.value).toBe("https://api.example.com/v1");
+    expect(modelInput?.value).toBe("gpt-5");
+    expect(strength?.disabled).toBe(false);
+    cleanup();
+  });
+
+  it("falls back to local API capability when the loaded backend setting is edited", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...BASE_LLM_RESPONSE,
+        base_url: "https://api.deepseek.com/v1",
+        model: "deepseek-chat",
+        reasoning_supported: false,
+      }),
+    } as Response);
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(true);
+    const baseUrlInput = document.querySelector<HTMLInputElement>('input[placeholder="https://api.openai.com/v1"]');
+    const modelInput = document.querySelector<HTMLInputElement>('input[placeholder="gpt-4o-mini"]');
+    expect(baseUrlInput).toBeTruthy();
+    expect(modelInput).toBeTruthy();
+    act(() => {
+      changeInput(baseUrlInput!, "https://api.example.com/v1");
+      changeInput(modelInput!, "gpt-5");
+    });
+
     expect(strength?.disabled).toBe(false);
     cleanup();
   });
