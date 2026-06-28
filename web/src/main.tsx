@@ -121,7 +121,8 @@ function App() {
     setSuggestions(data.suggestions);
     setCanUndoLastChat(!!data.can_undo_last_chat);
     if (options?.mergeFailures) {
-      setChatFailures((items) => mergePendingActionFailures(items, data.pending_action_failures || []));
+      const responseFailures = data.pending_action_failures || [];
+      setChatFailures((items) => mergePendingActionFailures(items, responseFailures));
     } else {
       setChatFailures(data.pending_action_failures || []);
     }
@@ -447,14 +448,15 @@ function App() {
       api<{ orders: SecretOrder[] }>("/api/secret_orders")
         .then(({ orders }) => setSecretOrders(orders))
         .catch(() => {});
+      const responseFailures = data.pending_action_failures || [];
       if (data.secret_order_id) {
         setChatNotice(`密令已秘密交付${targetMinisterName}，编号 #${data.secret_order_id}。`);
       }
-      setChatFailures((items) => mergePendingActionFailures(items, data.pending_action_failures || []));
+      setChatFailures((items) => mergePendingActionFailures(items, responseFailures));
       if (data.proposed_directive) {
         setChatNotice(`${targetMinisterName}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
       }
-      if (data.next_minister) {
+      if (data.next_minister && !responseFailures.length) {
         setChat([]);
         setSuggestions([]);
         setStreamingMinisterMessage("");

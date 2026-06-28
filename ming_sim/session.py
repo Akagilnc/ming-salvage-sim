@@ -1198,10 +1198,10 @@ class GameSession:
                     verb in text and any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查办"))
                     for verb in ("下", "发", "给", "交办", "传", "命", "着", "派", "遣")
                 )
-            covert_terms = ("暗查", "密查", "密访", "暗访", "侦缉")
+            covert_terms = ("暗查", "密查", "密访", "暗访", "侦缉", "私下", "密办", "查访")
             imperative_terms = ("着", "命", "令", "派", "遣", "让", "交办", "交")
             secrecy_or_return_terms = (
-                "不可声张", "不得声张", "勿使", "不得外泄", "不可外泄",
+                "不可声张", "不得声张", "别声张", "不要声张", "勿使", "不得外泄", "不可外泄",
                 "暗中", "秘密", "回奏", "奏报", "月内", "日内", "限期",
             )
             return (
@@ -1441,7 +1441,7 @@ class GameSession:
         if not text:
             return "臣已拟妥，请陛下定夺准驳。"
         if any(term in text for term in (
-            "定夺", "准驳", "准否", "准不准", "请旨", "请陛下", "是否准",
+            "定夺", "准驳", "准否", "准不准", "请旨", "是否准",
         )):
             return text
         return text + "\n请陛下定夺准驳。"
