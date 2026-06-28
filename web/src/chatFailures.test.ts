@@ -57,6 +57,20 @@ describe("refreshRetriedPendingActionFailures", () => {
       { ...failure(5, "同臣新密令失败"), minister_name: "张居正" },
     ]);
   });
+
+  it("does not drop unscoped secret-order failures when no minister is selected", () => {
+    expect(refreshRetriedPendingActionFailures(
+      [
+        { ...failure(1, "已重试") },
+        { ...failure(2, "仍需保留") },
+      ],
+      1,
+      undefined,
+      [],
+    )).toEqual([
+      { ...failure(2, "仍需保留") },
+    ]);
+  });
 });
 
 describe("normalizeApiError", () => {

@@ -3038,6 +3038,10 @@ async def api_advance_without_edict() -> Dict[str, Any]:
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail: Any = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=400, detail=detail) from None
+    except SettlementAbort as e:
+        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
+        raise HTTPException(status_code=409, detail=detail) from None
     return {
         "state": game.state_payload(),
         "pending_action_failures": _new_secret_order_failure_payloads_for_turn(

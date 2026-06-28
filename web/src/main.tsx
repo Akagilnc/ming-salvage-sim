@@ -741,9 +741,10 @@ function App() {
       }
       window.location.reload();
     } catch (err: any) {
-      const failures = err?.detail?.pending_action_failures;
+      const detail = err?.detail && typeof err.detail === "object" ? err.detail : err;
+      const failures = detail?.pending_action_failures;
       if (Array.isArray(failures) && await surfacePendingActionFailures(failures)) {
-        setError(err?.detail?.message || "退朝失败。");
+        setError(detail?.message || "退朝失败。");
         return;
       }
       setError(err instanceof Error ? err.message : String(err));
