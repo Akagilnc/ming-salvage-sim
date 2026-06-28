@@ -1373,15 +1373,32 @@ class GameSession:
         reply = (minister_reply or "").strip()
         existing_key = GameSession._normalized_content_key(content)
         parts = [content]
+        changed = False
         for material in (command, reply):
             material_key = GameSession._normalized_content_key(material)
             if material_key and material_key not in existing_key:
                 parts.append(material)
-        if len(parts) == 1:
-            return
-        from ming_sim.cli_backend import _merge_secret_content
+        if len(parts) > 1:
+            from ming_sim.cli_backend import _merge_secret_content
 
-        payload["content"] = _merge_secret_content(*parts)
+            payload["content"] = _merge_secret_content(*parts)
+            changed = True
+        from ming_sim.cli_backend import _secret_metadata_from_command
+
+        fallback_tags, fallback_deadline = _secret_metadata_from_command(command)
+        tags = payload.get("tags")
+        if fallback_tags and not (isinstance(tags, list) and any(str(t).strip() for t in tags)):
+            payload["tags"] = fallback_tags
+            changed = True
+        try:
+            deadline = int(payload.get("deadline_months") or 0)
+        except (TypeError, ValueError):
+            deadline = 0
+        if fallback_deadline and not deadline:
+            payload["deadline_months"] = fallback_deadline
+            changed = True
+        if not changed:
+            return
         self.db.conn.execute(
             "UPDATE pending_actions SET payload_json=? WHERE id=?",
             (json.dumps(payload, ensure_ascii=False), int(row["id"])),

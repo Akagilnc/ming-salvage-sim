@@ -135,6 +135,7 @@ function baseGameState(overrides: Partial<GameState> = {}): GameState {
     pending_count: 0,
     pending_directive_count: 0,
     pending_secret_order_count: 0,
+    pending_non_directive_action_count: 0,
     last_decree: "",
     last_report: "",
     ...overrides,
@@ -191,7 +192,7 @@ describe("EdictModal — hidden secret-order default approval", () => {
   it("shows no-edict advance when only hidden secret orders are pending", () => {
     const onAdvance = vi.fn();
     const { host } = renderEdictModal({
-      state: baseGameState({ pending_secret_order_count: 1 }),
+      state: baseGameState({ pending_secret_order_count: 1, pending_non_directive_action_count: 1 }),
       onAdvanceWithoutEdict: onAdvance,
     });
     const button = Array.from(host.querySelectorAll("button")).find((item) =>
@@ -204,6 +205,19 @@ describe("EdictModal — hidden secret-order default approval", () => {
     });
 
     expect(onAdvance).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows no-edict advance for non-directive pending actions beyond new secret orders", () => {
+    const onAdvance = vi.fn();
+    const { host } = renderEdictModal({
+      state: baseGameState({ pending_non_directive_action_count: 1 }),
+      onAdvanceWithoutEdict: onAdvance,
+    });
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("退朝")
+    ) as HTMLButtonElement | undefined;
+
+    expect(button).toBeTruthy();
   });
 });
 

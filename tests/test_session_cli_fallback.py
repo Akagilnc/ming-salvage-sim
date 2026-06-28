@@ -205,6 +205,37 @@ def test_tool_call_staged_new_secret_order_merges_minister_reply(game, monkeypat
     assert "封存兵部辽饷册" in payload["content"]
 
 
+def test_tool_call_staged_new_secret_order_merges_missing_metadata(game, monkeypatch):
+    """tool 已暂存但漏掉可选字段时，从按钮/前缀文本回填标签与期限。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "工具密令元数据承办官"
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": minister,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+
+    result = _result()
+    result.pending_action_id = pid
+    result.answer = "臣领旨。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="api"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：暗查辽饷侵冒。\n标签：辽饷, 关宁\n期限：3月",
+    )
+
+    payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
+    assert payload["tags"] == ["辽饷", "关宁"]
+    assert payload["deadline_months"] == 3
+
+
 def test_secret_order_extract_fallback_preserves_structured_metadata(game, monkeypatch):
     """API/按钮兼容文本带出的标签/期限，在 extractor 空结果时也不能丢。"""
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))

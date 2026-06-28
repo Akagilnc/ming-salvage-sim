@@ -274,6 +274,7 @@ export type GameState = {
   pending_count: number;
   pending_directive_count?: number;  // 对话式拟旨暂存数（pending_actions kind=directive）
   pending_secret_order_count?: number;  // 隐藏的新密令候选数（不作为 pending 列表展示）
+  pending_non_directive_action_count?: number;  // 可退朝默认提交的非拟旨 pending_actions
   pending_decisions?: PendingDecision[];
   last_decree: string;
   last_report: string;
