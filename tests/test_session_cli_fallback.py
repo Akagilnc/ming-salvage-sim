@@ -313,6 +313,79 @@ def test_api_channel_rejects_existing_pending_action(game):
     assert db.list_pending_actions(state.turn) == []
 
 
+def test_api_channel_uses_api_extractor_for_nonliteral_confirmation(game, monkeypatch):
+    """API 通道的非关键词准驳语义应走 API extractor，不应退回 CLI-only backend 后变成无。"""
+    db, state, _ = game
+    minister = "魏忠贤"
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": minister,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+    monkeypatch.setattr(cb, "_run_api_for_config", lambda *a, **k: (json.dumps({"确认": "拒绝"}, ensure_ascii=False), 1))
+    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: (_ for _ in ()).throw(AssertionError("API confirmation should not use CLI backend")))
+
+    GameSession.apply_cli_conversation_actions(
+        _session(db, state, llm_config=SimpleNamespace(channel="api")),
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        player_message="此事且停一停。",
+        answer="臣候旨。",
+        has_directive=False,
+        secret_order_id=None,
+    )
+
+    assert db.list_pending_actions(state.turn) == []
+
+
+def test_tool_staged_action_is_not_confirmed_in_same_chat_turn(game):
+    """本轮 tool 刚 stage 的 pending action 不能被同一句“准了”立即提交。"""
+    db, state, content = game
+    minister = "毕自严"
+    tool_payload = json.dumps({
+        "title": "暗查辽饷",
+        "content": "暗查辽饷侵冒。",
+        "assignee": minister,
+        "tags": [],
+        "deadline_months": 0,
+    }, ensure_ascii=False)
+
+    class Agent:
+        def run(self, _message):
+            return SimpleNamespace(
+                content="臣领旨，请陛下定夺。",
+                tools=[SimpleNamespace(tool_name="secret_order", result=f"__secret_order__{tool_payload}")],
+            )
+
+    class Registry:
+        def get(self, _character):
+            return Agent()
+
+        def build_draft_line(self):
+            return "无"
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = Registry()
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message: message
+    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
+    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
+
+    result = GameSession.chat(sess, minister, "准了，密查辽饷。")
+
+    assert result.pending_action_id
+    assert db.list_secret_orders() == []
+    assert len(db.list_pending_actions(state.turn)) == 1
+
+
 def test_legacy_registered_secret_order_marker_parser_restages(game):
     """旧 __secret_order_registered__<id>__ marker 经 chat parser 也要反转回 pending。"""
     db, state, content = game

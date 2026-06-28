@@ -831,6 +831,9 @@ class GameSession:
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
         answer = extract_agent_text(run_output)
         result = ChatTurnResult(answer=answer)
+        preexisting_pending_action_ids = {
+            int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
+        }
         for tool_exec in getattr(run_output, "tools", None) or []:
             tool_name = getattr(tool_exec, "tool_name", "")
             tool_result = str(getattr(tool_exec, "result", "") or "")
@@ -938,6 +941,7 @@ class GameSession:
         self._cli_backend_fallback_actions(
             result, character, message,
             preclassified_intent=self._finish_cli_action_intent(action_intent_future),
+            confirm_target_ids=preexisting_pending_action_ids,
         )
         return result
 
@@ -954,6 +958,7 @@ class GameSession:
         self, character: Character, player_message: str, answer: str,
         has_directive: bool, secret_order_id: Optional[int],
         preclassified_intent: Optional[Dict[str, Any]] = None,
+        confirm_target_ids: Optional[set[int]] = None,
     ) -> Dict[str, Any]:
         """CLI 后端（无 function-calling）会话落地的【唯一真源】，session.chat 非流式路径与
         web streaming 路径共用，杜绝两边逻辑漂移（CMR F3 / codexC-1）。
@@ -996,6 +1001,9 @@ class GameSession:
         # 只在该大臣有 outstanding 暂存时才判(省 token)，commit/drop 按该大臣过滤、不波及他人。
         pend_for_minister = self.db.list_pending_actions(
             self.state.turn, minister_name=minister_name)
+        if confirm_target_ids is not None:
+            allowed_confirm_ids = {int(pid) for pid in confirm_target_ids}
+            pend_for_minister = [p for p in pend_for_minister if int(p["id"]) in allowed_confirm_ids]
         # 若同一大臣同时有非 directive 暂存与 directive 草案，确认优先处理非 directive，避免
         # 对别的政务应允/拒绝时误扫草案；只有 directive 是唯一待确认对象时，按 #412 处理拟旨确认。
         non_directive_confirm_targets = [p for p in pend_for_minister if p["kind"] != "directive"]
@@ -1433,6 +1441,7 @@ class GameSession:
     def _cli_backend_fallback_actions(
         self, result: "ChatTurnResult", character: Character, player_message: str = "",
         preclassified_intent: Optional[Dict[str, Any]] = None,
+        confirm_target_ids: Optional[set[int]] = None,
     ) -> None:
         """session.chat 非流式路径：调共享会话落地，映射回 ChatTurnResult（agno 工具不触发时）。"""
         preexisting_pending_id = int(getattr(result, "pending_action_id", 0) or 0)
@@ -1441,6 +1450,7 @@ class GameSession:
             has_directive=result.proposed_directive is not None or bool(result.pending_action_id),
             secret_order_id=result.secret_order_id,
             preclassified_intent=preclassified_intent,
+            confirm_target_ids=confirm_target_ids,
         )
         if result.proposed_directive is None and res["directive"]:
             d = res["directive"]
