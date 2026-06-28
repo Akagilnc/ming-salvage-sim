@@ -1334,6 +1334,9 @@ class WebGame:
             "pending_secret_order_count": sum(
                 1 for a in self.db.list_pending_actions(int(self.state.turn))
                 if a["kind"] == "secret_order" and a["action"] == "新建"),
+            "pending_non_directive_action_count": sum(
+                1 for a in self.db.list_pending_actions(int(self.state.turn))
+                if a["kind"] != "directive"),
             "pending_decisions": (
                 self.session.pending_decisions()
                 if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value else []

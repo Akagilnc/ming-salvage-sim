@@ -12,7 +12,7 @@ import re
 import sqlite3
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from ming_sim.applier import safe_json_dumps, sanitize_sqlite_text
+from ming_sim.applier import atomic, safe_json_dumps, sanitize_sqlite_text
 from ming_sim.assets import format_money, format_money_delta
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
@@ -6097,23 +6097,24 @@ class GameDB:
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
-        try:
-            ok = self._apply_pending_action(
-                state, pa, payload, content=content, registry=registry)
-        except Exception as exc:
-            tlog(f"[pending_actions] 重试落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-            ok = False
-        if ok:
-            self.conn.execute(
-                "UPDATE pending_actions SET status='committed' WHERE id=?",
-                (int(pa["id"]),),
-            )
-        else:
-            self.conn.execute(
-                "UPDATE pending_actions SET status='failed' WHERE id=?",
-                (int(pa["id"]),),
-            )
-        self.conn.commit()
+        with atomic(self):
+            try:
+                ok = self._apply_pending_action(
+                    state, pa, payload, content=content, registry=registry)
+            except Exception as exc:
+                tlog(f"[pending_actions] 重试落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+                ok = False
+            if ok:
+                self.conn.execute(
+                    "UPDATE pending_actions SET status='committed' WHERE id=?",
+                    (int(pa["id"]),),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE pending_actions SET status='failed' WHERE id=?",
+                    (int(pa["id"]),),
+                )
+            self.conn.commit()
         return {
             "id": pa["id"],
             "kind": pa["kind"],

@@ -794,6 +794,37 @@ def test_retry_failed_secret_order_reuses_stored_payload(game):
     assert json.loads(row["tags"]) == ["辽饷"]
 
 
+def test_retry_failed_secret_order_status_failure_rolls_back_created_order(game, monkeypatch):
+    """retry 的 durable 创建与 failed 行状态转换必须同事务，避免失败后重复创建。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 0,
+        },
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    original_execute = db.conn.execute
+
+    def fail_status_update(sql, *args, **kwargs):
+        if "UPDATE pending_actions SET status='committed'" in str(sql):
+            raise RuntimeError("status update failed")
+        return original_execute(sql, *args, **kwargs)
+
+    monkeypatch.setattr(db.conn, "execute", fail_status_update)
+
+    with pytest.raises(RuntimeError):
+        db.retry_failed_pending_action(state, pending_id)
+
+    assert db.list_secret_orders() == []
+
+
 def test_retry_failed_secret_order_refresh_failure_does_not_duplicate(game):
     """密令已写入 DB 后 registry 刷新失败,不得留下 failed 入口导致再次重试重复建令。"""
     db, state, content = game
