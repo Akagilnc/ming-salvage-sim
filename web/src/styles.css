@@ -2919,6 +2919,42 @@ select {
   background: rgba(255, 255, 255, 0.95);
 }
 
+.failure-recovery-panel {
+  width: min(760px, 92vw);
+  margin: 0 auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.failure-recovery-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid rgba(164, 64, 54, 0.32);
+  border-radius: 8px;
+  background: rgba(255, 248, 236, 0.92);
+  color: #7c251d;
+  line-height: 1.55;
+}
+
+.failure-recovery-minister {
+  margin-right: 8px;
+  font-weight: 700;
+}
+
+.failure-recovery-item button {
+  flex: 0 0 auto;
+  padding: 7px 13px;
+  border-radius: 6px;
+  border: 1px solid rgba(130, 41, 31, 0.38);
+  color: #7c251d;
+  background: rgba(255, 255, 255, 0.82);
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.48;

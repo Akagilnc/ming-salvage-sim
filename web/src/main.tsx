@@ -1114,6 +1114,16 @@ function App() {
         </FullscreenModal>
       ) : null}
 
+      {activeModal === "chat" && !activeMinister && failureRecoveryMode && chatFailures.length ? (
+        <FullscreenModal title="政务失败恢复" subtitle="承办人暂不可召见" bgClass="modal-bg-chat" onClose={guardClose(() => setActiveModal("none"))}>
+          <PendingFailureRecoveryPanel
+            failures={chatFailures}
+            busy={busy}
+            onRetryFailure={retryPendingAction}
+          />
+        </FullscreenModal>
+      ) : null}
+
       {activeModal === "edict" ? (
         <FullscreenModal title="诏书草案" subtitle="本月指令、拟诏与颁布" bgClass="modal-bg-edict" onClose={guardClose(() => setActiveModal("none"))}>
           <EdictModal
@@ -1224,6 +1234,37 @@ function App() {
         <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} />
       ) : null}
     </main>
+  );
+}
+
+
+function PendingFailureRecoveryPanel({
+  failures,
+  busy,
+  onRetryFailure,
+}: {
+  failures: PendingActionFailure[];
+  busy: string;
+  onRetryFailure: (failure: PendingActionFailure) => void;
+}) {
+  return (
+    <div className="failure-recovery-panel">
+      {failures.map((failure) => (
+        <div className="failure-recovery-item" role="alert" key={failure.id}>
+          <div>
+            {failure.minister_name ? (
+              <span className="failure-recovery-minister">{failure.minister_name}</span>
+            ) : null}
+            <span>{failure.message}</span>
+          </div>
+          {failure.retryable ? (
+            <button type="button" onClick={() => onRetryFailure(failure)} disabled={!!busy}>
+              重试
+            </button>
+          ) : null}
+        </div>
+      ))}
+    </div>
   );
 }
 
