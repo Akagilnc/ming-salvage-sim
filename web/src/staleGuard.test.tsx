@@ -139,7 +139,11 @@ function LoadGuardFixture({ getHistory }: { getHistory: () => Promise<string> })
 }
 
 /** Mirrors undoLastChat: GLOBAL effect always applies, PANEL write is guarded. */
-function UndoGuardFixture({ getResult }: { getResult: () => Promise<string> }) {
+function UndoGuardFixture({
+  getResult,
+}: {
+  getResult: () => Promise<{ notice: string; failures?: string[] }>;
+}) {
   const [selected, setSelected] = React.useState("甲");
   const selectedRef = React.useRef("甲");
   React.useEffect(() => {
@@ -147,17 +151,20 @@ function UndoGuardFixture({ getResult }: { getResult: () => Promise<string> }) {
   }, [selected]);
   const [globalApplied, setGlobalApplied] = React.useState(0);
   const [panel, setPanel] = React.useState("");
+  const [failures, setFailures] = React.useState(["旧失败"]);
   const undo = async (targetMinister: string) => {
     const result = await getResult();
     setGlobalApplied((n) => n + 1); // global undo effect — always applies
     if (selectedRef.current === targetMinister) {
-      setPanel(`${targetMinister}：${result}`);
+      setPanel(`${targetMinister}：${result.notice}`);
+      setFailures(result.failures || []);
     }
   };
   return (
     <div>
       <div data-testid="global">{globalApplied}</div>
       <div data-testid="panel">{panel}</div>
+      <div data-testid="failures">{failures.join("|")}</div>
       <button data-testid="undo" onClick={() => undo(selected)}>
         撤回
       </button>
@@ -360,13 +367,13 @@ describe("召对陈旧守卫 — 密令失败重试响应", () => {
 
 describe("召对陈旧守卫 — 广范围（undoLastChat 全局生效、面板守卫）", () => {
   it("切人后撤回的全局效果照样生效，但旧面板写被守卫丢弃", async () => {
-    let resolve!: (v: string) => void;
-    const pending = new Promise<string>((r) => (resolve = r));
+    let resolve!: (v: { notice: string; failures?: string[] }) => void;
+    const pending = new Promise<{ notice: string; failures?: string[] }>((r) => (resolve = r));
     const host = render(<UndoGuardFixture getResult={() => pending} />);
     act(() => (host.querySelector("[data-testid=undo]") as HTMLButtonElement).click());
     act(() => (host.querySelector("[data-testid=switch]") as HTMLButtonElement).click());
     await act(async () => {
-      resolve("已撤回");
+      resolve({ notice: "已撤回", failures: ["旧失败"] });
       await pending;
     });
     // global undo effect applied (state mutated) ...
@@ -376,15 +383,28 @@ describe("召对陈旧守卫 — 广范围（undoLastChat 全局生效、面板�
   });
 
   it("未切人时撤回的全局效果与面板写都生效", async () => {
-    let resolve!: (v: string) => void;
-    const pending = new Promise<string>((r) => (resolve = r));
+    let resolve!: (v: { notice: string; failures?: string[] }) => void;
+    const pending = new Promise<{ notice: string; failures?: string[] }>((r) => (resolve = r));
     const host = render(<UndoGuardFixture getResult={() => pending} />);
     act(() => (host.querySelector("[data-testid=undo]") as HTMLButtonElement).click());
     await act(async () => {
-      resolve("已撤回");
+      resolve({ notice: "已撤回", failures: ["旧失败"] });
       await pending;
     });
     expect(host.querySelector("[data-testid=global]")?.textContent).toBe("1");
     expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("甲：已撤回");
+  });
+
+  it("撤回响应必须刷新失败列表，不能隐藏仍可重试的旧密令失败", async () => {
+    let resolve!: (v: { notice: string; failures?: string[] }) => void;
+    const pending = new Promise<{ notice: string; failures?: string[] }>((r) => (resolve = r));
+    const host = render(<UndoGuardFixture getResult={() => pending} />);
+    expect(host.querySelector("[data-testid=failures]")?.textContent).toBe("旧失败");
+    act(() => (host.querySelector("[data-testid=undo]") as HTMLButtonElement).click());
+    await act(async () => {
+      resolve({ notice: "已撤回", failures: ["旧失败"] });
+      await pending;
+    });
+    expect(host.querySelector("[data-testid=failures]")?.textContent).toBe("旧失败");
   });
 });

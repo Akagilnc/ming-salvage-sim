@@ -83,6 +83,12 @@ class _FakeSession:
     def pending_count(self) -> int:
         return 0
 
+    def note_chat_rollback(self, **_kwargs):
+        return None
+
+    def refresh_runtime_after_chat_rollback(self):
+        return None
+
 
 def _web_game(db, state, content, agent: _FakeAgent) -> WebGame:
     bind_skills_content(content)
@@ -142,6 +148,31 @@ def test_chat_reload_exposes_retryable_failed_secret_order(game):
     assert len(failures) == 1
     assert failures[0]["id"] == secret_id
     assert failures[0]["kind"] == "secret_order"
+    assert "密令" in failures[0]["message"]
+
+
+def test_undo_chat_response_preserves_retryable_failed_secret_order(game):
+    db, state, content = game
+    minister_name = "毕自严"
+    web_game = _web_game(db, state, content, _FakeAgent())
+    failed_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister_name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": minister_name},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (failed_id,))
+    db.conn.commit()
+    chat_turn_id = db.create_chat_turn(state, minister_name, "undo-failure-refresh", 0)
+    db.update_chat_turn_messages(
+        chat_turn_id,
+        db.append_chat_message(minister_name, state.turn, "user", "无关问话"),
+        db.append_chat_message(minister_name, state.turn, "minister", "臣谨奏。"),
+    )
+    assert db.can_undo_last_chat_turn(minister_name, state.turn)
+
+    out = web_game.undo_last_chat(minister_name)
+
+    failures = out["pending_action_failures"]
+    assert [f["id"] for f in failures] == [failed_id]
     assert "密令" in failures[0]["message"]
 
 

@@ -466,7 +466,6 @@ function App() {
     setBusy("撤回召对");
     setError("");
     setChatNotice("");
-    setChatFailures([]);
     setComposerHint("");
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
@@ -489,7 +488,7 @@ function App() {
         setChat(data.history);
         setSuggestions(data.suggestions);
         setCanUndoLastChat(!!data.can_undo_last_chat);
-        setChatFailures([]);
+        setChatFailures(data.pending_action_failures || []);
         setChatNotice("已撤回最近一轮召对。");
       }
     } catch (err) {

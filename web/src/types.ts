@@ -395,6 +395,7 @@ export type ChatUndoResponse = {
   pending_count: number;
   secret_orders: SecretOrder[];
   can_undo_last_chat: boolean;
+  pending_action_failures?: PendingActionFailure[];
 };
 
 export type ApiErrorDetail = {

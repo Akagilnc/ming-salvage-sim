@@ -342,6 +342,27 @@ def test_api_channel_uses_api_extractor_for_nonliteral_confirmation(game, monkey
     assert db.list_pending_actions(state.turn) == []
 
 
+def test_confirmation_mixed_rejection_and_approval_cues_uses_semantic_extractor(monkeypatch):
+    """“不必多言，准了”这类混合句不能被拒绝子串抢先误删 pending。"""
+    calls = []
+
+    def _semantic_confirmation(prompt, llm_config=None, tag=""):
+        calls.append((prompt, tag))
+        return (json.dumps({"确认": "应允"}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_json_extractor_for_config", _semantic_confirmation)
+
+    result = cb.extract_confirmation_intent(
+        player_message="不必多言，准了。",
+        minister_reply="臣候旨。",
+        pending_summaries=["新建密令：暗查辽饷"],
+        llm_config=SimpleNamespace(channel="api"),
+    )
+
+    assert result == "应允"
+    assert calls and calls[0][1] == "confirmation"
+
+
 def test_tool_staged_action_is_not_confirmed_in_same_chat_turn(game):
     """本轮 tool 刚 stage 的 pending action 不能被同一句“准了”立即提交。"""
     db, state, content = game
