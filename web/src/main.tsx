@@ -661,6 +661,18 @@ function App() {
     }
   };
 
+  const advanceWithoutEdict = async () => {
+    setBusy("退朝");
+    setError("");
+    try {
+      await api<{ state: GameState }>("/api/decree/advance_without_edict", { method: "POST" });
+      window.location.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy("");
+    }
+  };
+
   const saveDecree = async (text: string) => {
     setBusy("存改诏书");
     setError("");
@@ -1044,6 +1056,7 @@ function App() {
             onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
             onWriteDecree={writeDecree}
+            onAdvanceWithoutEdict={advanceWithoutEdict}
             onSaveDecree={saveDecree}
             onResetDecree={resetDecree}
             onIssueDecree={issueDecree}

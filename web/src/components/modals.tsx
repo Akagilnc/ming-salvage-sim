@@ -784,6 +784,7 @@ export function EdictModal({
   onSaveDirective,
   onDeleteDirective,
   onWriteDecree,
+  onAdvanceWithoutEdict,
   onSaveDecree,
   onResetDecree,
   onIssueDecree,
@@ -806,6 +807,7 @@ export function EdictModal({
   onSaveDirective: (directive: Directive) => void;
   onDeleteDirective: (directiveId: number) => void;
   onWriteDecree: () => void;
+  onAdvanceWithoutEdict: () => void;
   onSaveDecree: (text: string) => void;
   onResetDecree: () => void;
   onIssueDecree: () => void;
@@ -816,6 +818,7 @@ export function EdictModal({
   const draftDirectives = state.directives.filter((d) => d.status !== "pending");
   const hasPending = pendingDirectives.length > 0;
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
+  const hasHiddenPendingSecretOrders = (state.pending_secret_order_count ?? 0) > 0;
   const [decreeDraft, setDecreeDraft] = React.useState(decree);
   React.useEffect(() => {
     setDecreeDraft(decree);
@@ -927,8 +930,9 @@ export function EdictModal({
                 )}
               </div>
             ))}
-            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && <div className="empty-note">本月不可空过。请先召见大臣，或在右侧御笔自拟一道指令。</div>}
+            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && !hasHiddenPendingSecretOrders && <div className="empty-note">本月不可空过。请先召见大臣，或在右侧御笔自拟一道指令。</div>}
             {!draftDirectives.length && !hasPending && hasPendingConversationalDraft && <div className="empty-note pending-draft-hint">大臣已奉旨起草，点「拟诏」即可正式成稿。</div>}
+            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && hasHiddenPendingSecretOrders && <div className="empty-note">密令已候旨，退朝后按沉默准行处理。</div>}
           </div>
         </section>
 
@@ -949,13 +953,23 @@ export function EdictModal({
 
       <div className="desk-footer">
         {hasPending && <small className="pending-hint">尚有 {pendingDirectives.length} 道大臣拟旨待朱批（准/驳），核定后方可拟诏。</small>}
-        <button
-          className="seal-btn-compose"
-          onClick={onWriteDecree}
-          disabled={!!busy || (!draftDirectives.length && !hasPendingConversationalDraft) || hasPending}
-        >
-          拟诏 →
-        </button>
+        {(!draftDirectives.length && !hasPendingConversationalDraft && hasHiddenPendingSecretOrders) ? (
+          <button
+            className="seal-btn-compose"
+            onClick={onAdvanceWithoutEdict}
+            disabled={!!busy || hasPending}
+          >
+            退朝 →
+          </button>
+        ) : (
+          <button
+            className="seal-btn-compose"
+            onClick={onWriteDecree}
+            disabled={!!busy || (!draftDirectives.length && !hasPendingConversationalDraft) || hasPending}
+          >
+            拟诏 →
+          </button>
+        )}
       </div>
     </div>
   );

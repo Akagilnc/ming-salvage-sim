@@ -1,8 +1,8 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChatModal, ReportModal } from "./modals";
-import type { Minister, PendingActionFailure } from "../types";
+import { ChatModal, EdictModal, ReportModal } from "./modals";
+import type { BudgetAccount, GameState, Minister, PendingActionFailure } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -98,6 +98,85 @@ function renderReportModal(props: { report: string; accountReport?: string }) {
   mountedRoots.push({ root, host });
 }
 
+const EMPTY_BUDGET_ACCOUNT: BudgetAccount = {
+  balance: 0,
+  income: [],
+  expense: [],
+  income_total: 0,
+  expense_total: 0,
+  net: 0,
+  movements: [],
+  movements_total: 0,
+};
+
+function baseGameState(overrides: Partial<GameState> = {}): GameState {
+  return {
+    turn: { year: 1627, period: 10, turn: 1, phase: "summoning" },
+    metrics: {},
+    previous_summary: "",
+    treasury: "",
+    issues: [],
+    legacies: [],
+    closed_this_turn: [],
+    budget: { 国库: EMPTY_BUDGET_ACCOUNT, 内库: EMPTY_BUDGET_ACCOUNT },
+    region_warning: "",
+    army_warning: "",
+    power_warning: "",
+    powers: [],
+    victory_status: { status: "ongoing", summary: "" },
+    ending: null,
+    events: [],
+    regions: [],
+    armies: [],
+    map_nodes: [],
+    ministers: [],
+    consorts: [],
+    directives: [],
+    pending_count: 0,
+    pending_directive_count: 0,
+    pending_secret_order_count: 0,
+    last_decree: "",
+    last_report: "",
+    ...overrides,
+  };
+}
+
+function renderEdictModal(props: { state: GameState; onAdvanceWithoutEdict?: () => void }) {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  act(() =>
+    root.render(
+      <EdictModal
+        state={props.state}
+        directiveText=""
+        editingDirectiveId={null}
+        editingDirectiveText=""
+        decree=""
+        report=""
+        busy=""
+        error=""
+        onDirectiveTextChange={() => {}}
+        onEditingTextChange={() => {}}
+        onCreateDirective={() => {}}
+        onStartEdit={() => {}}
+        onCancelEdit={() => {}}
+        onSaveDirective={() => {}}
+        onDeleteDirective={() => {}}
+        onWriteDecree={() => {}}
+        onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
+        onSaveDecree={() => {}}
+        onResetDecree={() => {}}
+        onIssueDecree={() => {}}
+        onConfirmDirective={() => {}}
+        onRejectDirective={() => {}}
+      />
+    )
+  );
+  mountedRoots.push({ root, host });
+  return { host, root };
+}
+
 afterEach(() => {
   // Unmount every root rendered this test (whether the body passed or threw).
   for (const { root, host } of mountedRoots) {
@@ -106,6 +185,26 @@ afterEach(() => {
   }
   mountedRoots.length = 0;
   document.body.innerHTML = "";
+});
+
+describe("EdictModal — hidden secret-order default approval", () => {
+  it("shows no-edict advance when only hidden secret orders are pending", () => {
+    const onAdvance = vi.fn();
+    const { host } = renderEdictModal({
+      state: baseGameState({ pending_secret_order_count: 1 }),
+      onAdvanceWithoutEdict: onAdvance,
+    });
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("退朝")
+    ) as HTMLButtonElement | undefined;
+
+    expect(button).toBeTruthy();
+    act(() => {
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onAdvance).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("ChatModal — placeholder switches on character type", () => {
