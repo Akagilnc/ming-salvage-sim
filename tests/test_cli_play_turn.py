@@ -111,3 +111,44 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
         ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
         ("魏忠贤", 7, "minister", "臣领密旨，当令东厂暗中护送赈银。"),
     ]
+
+
+def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(monkeypatch):
+    """失败的 CLI 召对不能留下 user-only 半轮 chat_messages。"""
+
+    class Db:
+        def __init__(self):
+            self.messages = []
+
+        def append_chat_message(self, minister_name, turn, role, content):
+            self.messages.append((minister_name, turn, role, content))
+            return len(self.messages)
+
+        def delete_chat_messages(self, message_ids):
+            doomed = {int(mid) for mid in message_ids}
+            self.messages = [
+                msg for idx, msg in enumerate(self.messages, 1)
+                if idx not in doomed
+            ]
+
+    class Session:
+        def __init__(self):
+            self.db = Db()
+            self.state = SimpleNamespace(turn=7)
+            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
+            self.temporary_characters = set()
+
+        def chat(self, minister_name, question):
+            assert self.db.messages == [
+                ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。")
+            ]
+            raise RuntimeError("LLM down")
+
+    answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    session = Session()
+
+    with pytest.raises(RuntimeError, match="LLM down"):
+        term.minister_chat(session, SimpleNamespace(name="魏忠贤"))
+
+    assert session.db.messages == []

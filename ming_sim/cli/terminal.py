@@ -245,11 +245,17 @@ def minister_chat(session: GameSession, character: Character) -> str:
         # 内部的密令短确认上下文读取（web 路已有同款持久化）。
         persistent_chat = character.name not in session.temporary_characters
         accepted_turn = int(session.state.turn)
+        user_message_id: int | None = None
         if persistent_chat:
-            session.db.append_chat_message(character.name, accepted_turn, "user", question)
-        result = session.chat(character.name, question)
-        if persistent_chat:
-            session.db.append_chat_message(character.name, accepted_turn, "minister", result.answer)
+            user_message_id = session.db.append_chat_message(character.name, accepted_turn, "user", question)
+        try:
+            result = session.chat(character.name, question)
+            if persistent_chat:
+                session.db.append_chat_message(character.name, accepted_turn, "minister", result.answer)
+        except Exception:
+            if user_message_id is not None:
+                session.db.delete_chat_messages([user_message_id])
+            raise
         print(wrap(result.answer))
         print()
         if result.proposed_directive is not None:
