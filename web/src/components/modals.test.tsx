@@ -142,7 +142,11 @@ function baseGameState(overrides: Partial<GameState> = {}): GameState {
   };
 }
 
-function renderEdictModal(props: { state: GameState; onAdvanceWithoutEdict?: () => void }) {
+function renderEdictModal(props: {
+  state: GameState;
+  onAdvanceWithoutEdict?: () => void;
+  onOpenFailureRecovery?: () => void;
+}) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -171,6 +175,7 @@ function renderEdictModal(props: { state: GameState; onAdvanceWithoutEdict?: () 
         onIssueDecree={() => {}}
         onConfirmDirective={() => {}}
         onRejectDirective={() => {}}
+        onOpenFailureRecovery={props.onOpenFailureRecovery ?? (() => {})}
       />
     )
   );
@@ -221,6 +226,24 @@ describe("EdictModal — hidden secret-order default approval", () => {
     ) as HTMLButtonElement | undefined;
 
     expect(button).toBeTruthy();
+  });
+
+  it("offers durable recovery entry for failed secret orders", () => {
+    const onOpenFailureRecovery = vi.fn();
+    const { host } = renderEdictModal({
+      state: baseGameState({ failed_secret_order_count: 1 }),
+      onOpenFailureRecovery,
+    });
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("处理")
+    ) as HTMLButtonElement | undefined;
+
+    expect(host.textContent).toContain("密令落库失败");
+    expect(button).toBeTruthy();
+    act(() => {
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onOpenFailureRecovery).toHaveBeenCalledTimes(1);
   });
 });
 

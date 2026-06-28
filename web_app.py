@@ -1340,8 +1340,7 @@ class WebGame:
             "pending_secret_order_count": 0,
             "pending_non_directive_action_count": len(visible_non_directive_pending),
             "failed_secret_order_count": sum(
-                1 for a in self.db.list_pending_actions(int(self.state.turn), status="failed")
-                if a["kind"] == "secret_order"),
+                1 for _a in self.db.list_failed_secret_order_actions()),
             "pending_decisions": (
                 self.session.pending_decisions()
                 if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value else []
@@ -1372,6 +1371,13 @@ class WebGame:
         return [
             _pending_action_failure_payload(action, getattr(self, "state", None))
             for action in self.db.list_failed_secret_order_actions(minister_name)
+        ]
+
+    def pending_action_failures(self) -> List[Dict[str, Any]]:
+        """所有仍可由玩家处理的失败密令动作，不依赖承办人当前是否可召见。"""
+        return [
+            _pending_action_failure_payload(action, getattr(self, "state", None))
+            for action in self.db.list_failed_secret_order_actions()
         ]
 
     def _audience_turn_in_flight(self, minister_name: str) -> bool:
@@ -2670,6 +2676,12 @@ async def api_pending_actions() -> Dict[str, Any]:
     game = get_game()
     return {"actions": _player_visible_pending_actions(
         game.db.list_pending_actions(int(game.state.turn)))}
+
+
+@app.get("/api/pending_actions/failures")
+async def api_pending_action_failures() -> Dict[str, Any]:
+    game = get_game()
+    return {"pending_action_failures": game.pending_action_failures()}
 
 
 @app.post("/api/pending_actions/{action_id}/withdraw")

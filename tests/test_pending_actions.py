@@ -1163,6 +1163,29 @@ def test_retry_pending_action_endpoint_returns_fresh_undo_state(game, monkeypatc
     assert out["pending_action_failures"] == []
 
 
+def test_pending_action_failures_endpoint_lists_all_failed_secret_orders(game, monkeypatch):
+    import asyncio
+    import types
+    import web_app
+
+    db, state, _content = game
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name="离席大臣", target_id=None,
+        payload={"title": "暗查辽饷", "content": "暗查辽饷侵冒。", "assignee": "离席大臣"},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    game_obj = types.SimpleNamespace(db=db, state=state)
+    game_obj.pending_action_failures = types.MethodType(web_app.WebGame.pending_action_failures, game_obj)
+    monkeypatch.setattr(web_app, "get_game", lambda: game_obj)
+
+    out = asyncio.run(web_app.api_pending_action_failures())
+
+    failures = out["pending_action_failures"]
+    assert [failure["id"] for failure in failures] == [pending_id]
+    assert failures[0]["minister_name"] == "离席大臣"
+
+
 def test_non_secret_pending_failure_payload_does_not_promise_retry():
     """非密令失败没有重试端点/按钮,提示不得承诺「请重试」。"""
     failure = _pending_action_failure_payload(

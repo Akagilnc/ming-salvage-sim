@@ -2955,6 +2955,22 @@ select {
   background: rgba(255, 255, 255, 0.82);
 }
 
+.failed-secret-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.failed-secret-note button {
+  flex: 0 0 auto;
+  padding: 5px 11px;
+  border-radius: 6px;
+  border: 1px solid rgba(130, 41, 31, 0.34);
+  color: #7c251d;
+  background: rgba(255, 255, 255, 0.82);
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
