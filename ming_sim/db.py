@@ -6044,6 +6044,21 @@ class GameDB:
             return self._commit_office_action(state, pa, payload, content, registry)
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
+            if pa["action"] == "新建":
+                title = str(payload.get("title") or "").strip()
+                content_text = str(payload.get("content") or "").strip()
+                assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
+                tags_raw = payload.get("tags") or []
+                tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
+                try:
+                    deadline = max(0, min(int(payload.get("deadline_months") or 0), 36))
+                except (TypeError, ValueError):
+                    deadline = 0
+                order_id = self.create_secret_order(
+                    state, assignee, title, content_text, tags, deadline_months=deadline)
+                if registry is not None:
+                    registry.refresh(assignee)
+                return bool(order_id)
             if oid is None:
                 return False
             if pa["action"] == "更新":

@@ -1632,7 +1632,22 @@ class WebGame:
                         if not payload_json:
                             args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                             payload_json = json.dumps(args, ensure_ascii=False)
-                        secret_order_id = self.session._apply_secret_order(payload_json, minister_name)
+                        try:
+                            payload = json.loads(payload_json) if payload_json else {}
+                        except (ValueError, TypeError):
+                            payload = {}
+                        if isinstance(payload, dict):
+                            pending_action_id = self.db.stage_pending_action(
+                                self.state.turn, kind="secret_order", action="新建",
+                                minister_name=character.name, target_id=None,
+                                payload={
+                                    "title": str(payload.get("title") or "").strip(),
+                                    "content": str(payload.get("content") or "").strip(),
+                                    "assignee": str(payload.get("assignee") or character.name).strip(),
+                                    "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
+                                    "deadline_months": payload.get("deadline_months") or 0,
+                                },
+                            )
                 # 密令结案不再走大臣工具，由月末推演 + extractor 写入
         # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
         # CLI 后端会话落地走共享真源 session.apply_cli_conversation_actions(同 session.chat 非流式路径)，
