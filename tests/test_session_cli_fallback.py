@@ -482,6 +482,47 @@ def test_mixed_directive_and_secret_confirmation_commits_both(game):
     assert directives[0]["text"] == "着户部清核辽饷。"
 
 
+def test_mixed_directive_secret_confirmation_does_not_commit_unmentioned_office(game):
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    ch = SimpleNamespace(name=minister, office_type="兵部")
+    db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
+        payload={"text": "着户部清核辽饷。", "actor": minister},
+    )
+    db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=minister, target_id=None,
+        payload={"name": "史可法", "office": "兵部主事"},
+    )
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": minister,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+
+    GameSession.apply_cli_conversation_actions(
+        _session(db, state, content=content),
+        ch,
+        player_message="圣旨和密令都准。",
+        answer="臣领旨。",
+        has_directive=False,
+        secret_order_id=None,
+        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+    )
+
+    pending = db.list_pending_actions(state.turn)
+    assert [(p["kind"], p["action"]) for p in pending] == [("office", "任命")]
+    assert [order["title"] for order in db.list_secret_orders()] == ["暗查辽饷"]
+    directives = db.list_directives(state, statuses=("pending",))
+    assert len(directives) == 1
+    assert directives[0]["text"] == "着户部清核辽饷。"
+
+
 def test_duchayuan_does_not_confirm_directive_as_all_targets(game):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
