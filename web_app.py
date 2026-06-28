@@ -1338,6 +1338,9 @@ class WebGame:
             "pending_non_directive_action_count": sum(
                 1 for a in self.db.list_pending_actions(int(self.state.turn))
                 if a["kind"] != "directive"),
+            "failed_secret_order_count": sum(
+                1 for a in self.db.list_pending_actions(int(self.state.turn), status="failed")
+                if a["kind"] == "secret_order"),
             "pending_decisions": (
                 self.session.pending_decisions()
                 if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value else []
@@ -1366,7 +1369,7 @@ class WebGame:
     def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
         """该召对对象仍可由玩家处理的失败密令动作。"""
         return [
-            _pending_action_failure_payload(action)
+            _pending_action_failure_payload(action, getattr(self, "state", None))
             for action in self.db.list_failed_secret_order_actions(minister_name)
         ]
 
@@ -1601,6 +1604,10 @@ class WebGame:
         preclassified_intent = self.session._finish_cli_action_intent(action_intent_future)
         preclassified_intent = self.session._confirmation_intent_for_preexisting_pending(
             character.name, text, answer, preclassified_intent, preexisting_pending_action_ids)
+        message_text = (text or "").strip()
+        from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
+        explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
+        explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
         confirmation_turn = (
             isinstance(preclassified_intent, dict)
             and str(preclassified_intent.get("kind") or "") == "confirmation"
@@ -1611,7 +1618,7 @@ class WebGame:
                 res = str(getattr(tool_exec, "result", "") or "")
                 tool_name = getattr(tool_exec, "tool_name", "")
                 if tool_name == "propose_directive" or res.startswith("__pending_directive__"):
-                    if confirmation_turn:
+                    if confirmation_turn or explicit_secret_prefix:
                         continue
                     draft_text = res.removeprefix("__pending_directive__").strip()
                     if not draft_text:
@@ -1625,7 +1632,7 @@ class WebGame:
                             payload={"text": draft_text, "actor": character.name},
                         )
                 elif tool_name == "propose_appointment" or res.startswith("__pending_appointment__"):
-                    if confirmation_turn:
+                    if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                         continue
                     payload_json = res.removeprefix("__pending_appointment__").strip()
                     if not payload_json:
@@ -1633,7 +1640,7 @@ class WebGame:
                         payload_json = json.dumps(args, ensure_ascii=False)
                     appointed, displaced = self.session._apply_appointment(payload_json, character)
                 elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
-                    if confirmation_turn:
+                    if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                         continue
                     payload_json = res.removeprefix("__pending_unlisted_person__").strip()
                     if not payload_json:
@@ -1667,7 +1674,7 @@ class WebGame:
                     or res.startswith("__secret_order__")
                     or res.startswith("__secret_action__")
                 ):
-                    if confirmation_turn:
+                    if confirmation_turn or explicit_draft_prefix:
                         continue
                     if res.startswith("__secret_action__"):
                         payload_json = res.removeprefix("__secret_action__").strip()

@@ -890,6 +890,10 @@ class GameSession:
         preclassified_intent = self._finish_cli_action_intent(action_intent_future)
         preclassified_intent = self._confirmation_intent_for_preexisting_pending(
             character.name, message, answer, preclassified_intent, preexisting_pending_action_ids)
+        message_text = (message or "").strip()
+        from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
+        explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
+        explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
         confirmation_turn = (
             isinstance(preclassified_intent, dict)
             and str(preclassified_intent.get("kind") or "") == "confirmation"
@@ -916,7 +920,7 @@ class GameSession:
                             result.court_action = "summon"
                             result.next_minister = target.name
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
-                if confirmation_turn:
+                if confirmation_turn or explicit_secret_prefix:
                     continue
                 draft_text = tool_result.removeprefix("__pending_directive__").strip()
                 if not draft_text:
@@ -930,7 +934,7 @@ class GameSession:
                         payload={"text": draft_text, "actor": character.name},
                     )
             elif tool_name == "propose_appointment" or tool_result.startswith("__pending_appointment__"):
-                if confirmation_turn:
+                if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                     continue
                 payload = tool_result.removeprefix("__pending_appointment__").strip()
                 appointed, displaced = self._apply_appointment(payload, character)
@@ -941,7 +945,7 @@ class GameSession:
                     result.displaced_minister = displaced
                     result.refresh_ministers.append(displaced)
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
-                if confirmation_turn:
+                if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                     continue
                 payload = tool_result.removeprefix("__pending_unlisted_person__").strip()
                 registered, summon_after = self._apply_unlisted_person_registration(payload)
@@ -957,7 +961,7 @@ class GameSession:
                 or tool_result.startswith("__secret_order__")
                 or tool_result.startswith("__secret_action__")
             ):
-                if confirmation_turn:
+                if confirmation_turn or explicit_draft_prefix:
                     continue
                 if tool_result.startswith("__secret_action__"):
                     payload_json = tool_result.removeprefix("__secret_action__").strip()

@@ -702,7 +702,7 @@ export function ChatModal({
           {chatFailures.map((failure) => (
             <div className="chat-system-note danger chat-failure-note" role="alert" key={failure.id}>
               <span>{failure.message}</span>
-              {failure.kind === "secret_order" && (
+              {failure.kind === "secret_order" && failure.retryable && (
                 <button type="button" onClick={() => onRetryFailure(failure)} disabled={!!busy}>
                   重试
                 </button>
@@ -819,6 +819,7 @@ export function EdictModal({
   const hasPending = pendingDirectives.length > 0;
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
   const hasNoEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
+  const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
   const [decreeDraft, setDecreeDraft] = React.useState(decree);
   React.useEffect(() => {
     setDecreeDraft(decree);
@@ -955,7 +956,7 @@ export function EdictModal({
 
       <div className="desk-footer">
         {hasPending && <small className="pending-hint">尚有 {pendingDirectives.length} 道大臣拟旨待朱批（准/驳），核定后方可拟诏。</small>}
-        {(!draftDirectives.length && !hasPendingConversationalDraft && hasNoEdictPendingActions) ? (
+        {(!draftDirectives.length && !hasPendingConversationalDraft && (hasNoEdictPendingActions || hasFailedSecretOrders)) ? (
           <button
             className="seal-btn-compose"
             onClick={onAdvanceWithoutEdict}
