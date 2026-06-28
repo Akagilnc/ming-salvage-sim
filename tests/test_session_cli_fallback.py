@@ -401,6 +401,27 @@ def test_confirmation_mixed_rejection_and_approval_cues_uses_semantic_extractor(
     assert calls and calls[0][1] == "confirmation"
 
 
+def test_confirmation_question_with_approval_words_uses_semantic_extractor(monkeypatch):
+    """“若准奏会如何？”只是追问后果，不能因含“准奏”走快路提交 pending。"""
+    calls = []
+
+    def _semantic_confirmation(prompt, llm_config=None, tag=""):
+        calls.append((prompt, tag))
+        return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_json_extractor_for_config", _semantic_confirmation)
+
+    result = cb.extract_confirmation_intent(
+        player_message="若准奏会如何？",
+        minister_reply="臣候旨。",
+        pending_summaries=["草拟圣旨：清核辽饷"],
+        llm_config=SimpleNamespace(channel="api"),
+    )
+
+    assert result == "无"
+    assert calls and calls[0][1] == "confirmation"
+
+
 def test_confirmation_negated_approval_phrase_is_rejection():
     """“不可照办”不能因包含“照办”走快路误判应允。"""
     result = cb.extract_confirmation_intent(
@@ -704,6 +725,60 @@ def test_tool_staged_action_is_not_confirmed_in_same_chat_turn(game):
     assert result.pending_action_id
     assert db.list_secret_orders() == []
     assert len(db.list_pending_actions(state.turn)) == 1
+
+
+def test_non_streaming_appointment_tool_stages_pending_action(game):
+    """session.chat 的 propose_appointment 工具路也只暂存任免候选，不绕过确认闸门直写人物表。"""
+    db, state, content = game
+    minister = "毕自严"
+    appointee = "工具候选乙"
+    payload = json.dumps({
+        "name": appointee,
+        "office": "户部尚书",
+        "action": "任命",
+    }, ensure_ascii=False)
+
+    class Agent:
+        def run(self, _message):
+            return SimpleNamespace(
+                content="臣遵旨，请陛下定夺。",
+                tools=[SimpleNamespace(tool_name="propose_appointment", result=f"__pending_appointment__{payload}")],
+            )
+
+    class Registry:
+        def get(self, _character):
+            return Agent()
+
+        def build_draft_line(self):
+            return "无"
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = Registry()
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message: message
+    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
+    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
+
+    def forbidden_direct_apply(*_args, **_kwargs):
+        raise AssertionError("appointment tool results must not apply before confirmation")
+
+    sess._apply_appointment = forbidden_direct_apply
+
+    result = GameSession.chat(sess, minister, "拟以工具候选乙为户部尚书。")
+
+    assert result.pending_action_id
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1
+    assert pending[0]["kind"] == "office"
+    assert pending[0]["action"] == "任命"
+    assert json.loads(pending[0]["payload_json"])["name"] == appointee
+    assert db.conn.execute(
+        "SELECT name FROM characters WHERE name=?", (appointee,)
+    ).fetchone() is None
 
 
 def test_confirmation_turn_ignores_same_turn_secret_order_tool_output(game, monkeypatch):

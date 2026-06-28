@@ -958,13 +958,7 @@ class GameSession:
                 if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                     continue
                 payload = tool_result.removeprefix("__pending_appointment__").strip()
-                appointed, displaced = self._apply_appointment(payload, character)
-                if appointed:
-                    result.appointed_minister = appointed
-                    result.refresh_ministers.append(appointed)
-                if displaced:
-                    result.displaced_minister = displaced
-                    result.refresh_ministers.append(displaced)
+                result.pending_action_id = self._stage_appointment_candidate(payload, character)
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
                 if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                     continue
@@ -1636,6 +1630,35 @@ class GameSession:
         except (ValueError, TypeError):
             return ("", "")
         return apply_appointment(self.db, self.state, self.content, self.registry, data, llm_config=self.llm_config)
+
+    def _stage_appointment_candidate(self, payload: str, appointer: Character) -> int:
+        """把吏部 propose_appointment 工具结果接入与口头任免相同的确认闸门。"""
+        if GameSession._proposal_blocked(self.state):
+            return 0
+        import json as _json
+        try:
+            data = _json.loads(payload) if payload else {}
+        except (ValueError, TypeError):
+            return 0
+        if not isinstance(data, dict):
+            return 0
+        name = str(data.get("name") or data.get("姓名") or "").strip()[:20]
+        office = str(data.get("office") or data.get("官职") or "").strip()[:40]
+        action = str(data.get("action") or data.get("任免动作") or "任命").strip()
+        if action not in {"任命", "罢免"}:
+            action = "任命"
+        if not name:
+            return 0
+        if action == "任命" and not office:
+            return 0
+        return self.db.stage_pending_action(
+            self.state.turn,
+            kind="office",
+            action=action,
+            minister_name=appointer.name,
+            target_id=None,
+            payload={"name": name, "office": office, "appointer": appointer.name},
+        )
 
     def _apply_unlisted_person_registration(self, payload: str) -> Tuple[str, bool]:
         """登记史实未预设/用户确认背景的人物，进入本局正式可召见人物池。
