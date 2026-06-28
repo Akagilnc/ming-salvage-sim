@@ -10,7 +10,7 @@ import json
 import math
 import re
 import sqlite3
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ming_sim.applier import safe_json_dumps, sanitize_sqlite_text
 from ming_sim.assets import format_money, format_money_delta
@@ -4749,6 +4749,17 @@ class GameDB:
         )
         self.conn.commit()
         return int(cur.lastrowid)
+
+    def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
+        ids = [int(mid) for mid in message_ids if mid]
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        with self.conn:
+            self.conn.execute(
+                f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
+                ids,
+            )
 
     def load_all_chat_history(self) -> Dict[str, List[Dict[str, str]]]:
         """读出全部召对记录，按大臣分组，供进程启动时恢复内存缓存。"""
