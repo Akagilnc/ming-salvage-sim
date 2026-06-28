@@ -137,6 +137,35 @@ def test_secret_order_rush_intent_stages_and_commits(game, monkeypatch):
     assert db.list_pending_actions(state.turn) == []
 
 
+def test_secret_order_rush_intent_preserves_zero_deadline(game, monkeypatch):
+    """自然语言催办抽取到 deadline=0 时，暂存 payload 必须保留本月即核语义。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=6)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                            {"密令动作": "催办", "目标密令编号": 0, "期限月数": 0}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="即刻送核议", answer="臣即办。",
+        has_directive=False, secret_order_id=None)
+
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1 and pending[0]["action"] == "催办"
+    payload = json.loads(pending[0]["payload_json"])
+    assert payload["deadline_months"] == 0
+
+    db.commit_pending_actions(state)
+
+    row = db.conn.execute(
+        "SELECT status, due_turn FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()
+    assert row["status"] == "pending_review"
+    assert row["due_turn"] == state.turn
+
+
 def test_secret_order_rush_deadline_zero_commits_immediate_review(game):
     """暂存催办 deadline_months=0 表示本月即核，commit 时不能被缺省值改成 1。"""
     db, state, content = game

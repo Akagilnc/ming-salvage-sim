@@ -1192,7 +1192,7 @@ class GameSession:
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="催办",
                             minister_name=minister_name, target_id=oid,
-                            payload={"reason": player_message[:80]})
+                            payload={"deadline_months": act["deadline_months"], "reason": player_message[:80]})
                     elif target_active and sa == "提交核议":
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="提交核议",
