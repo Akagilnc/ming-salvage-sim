@@ -6200,8 +6200,12 @@ class GameDB:
                     tags=None, deadline_months=int(payload.get("deadline_months") or 0),
                 )
             if pa["action"] == "催办":
+                try:
+                    deadline = max(0, min(int(payload.get("deadline_months") or 1), 36))
+                except (TypeError, ValueError):
+                    deadline = 1
                 self.rush_secret_order(
-                    int(oid), state, deadline_months=1, reason=str(payload.get("reason") or ""))
+                    int(oid), state, deadline_months=deadline, reason=str(payload.get("reason") or ""))
                 return True
             if pa["action"] == "提交核议":
                 return self.submit_secret_order_for_review(

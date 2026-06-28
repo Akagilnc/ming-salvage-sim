@@ -37,6 +37,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from ming_sim.applier import atomic
 from ming_sim.constants import ROOT_DIR
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
 from ming_sim.exceptions import ExitGame, LLMUnavailable, SettlementAbort
@@ -1640,8 +1641,33 @@ class WebGame:
                                 next_minister = target.name
                 elif tool_name == "dismiss_minister" or res == "__dismiss__":
                     court_action = "dismiss"
-                elif tool_name == "issue_secret_order" or res.startswith("__secret_order_registered__") or res.startswith("__secret_order__"):
-                    if res.startswith("__secret_order_registered__"):
+                elif (
+                    tool_name in ("issue_secret_order", "secret_order")
+                    or res.startswith("__secret_order_registered__")
+                    or res.startswith("__secret_order__")
+                    or res.startswith("__secret_action__")
+                ):
+                    if res.startswith("__secret_action__"):
+                        payload_json = res.removeprefix("__secret_action__").strip()
+                        try:
+                            data = json.loads(payload_json) if payload_json else {}
+                        except (ValueError, TypeError):
+                            data = {}
+                        if isinstance(data, dict):
+                            action = str(data.get("action") or "").strip()
+                            try:
+                                order_id = int(data.get("order_id") or 0)
+                            except (TypeError, ValueError):
+                                order_id = 0
+                            payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+                            if action and order_id:
+                                pending_action_id = self.db.stage_pending_action(
+                                    self.state.turn, kind="secret_order", action=action,
+                                    minister_name=character.name, target_id=order_id,
+                                    payload=payload,
+                                )
+                                tool_pending_action_id = pending_action_id
+                    elif res.startswith("__secret_order_registered__"):
                         try:
                             registered_id = int(res.split("__")[3])
                         except Exception:
@@ -2624,13 +2650,14 @@ async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
             ).fetchone()
             if row is not None:
                 minister_name = str(row["minister_name"] or "")
-            result = game.db.retry_failed_pending_action(
-                game.state, int(action_id),
-                content=getattr(game.session, "content", None),
-                registry=getattr(game.session, "registry", None),
-            )
-            if result.get("committed"):
-                game.db.retire_chat_turn_for_pending_action_retry(int(action_id))
+            with atomic(game.db):
+                result = game.db.retry_failed_pending_action(
+                    game.state, int(action_id),
+                    content=getattr(game.session, "content", None),
+                    registry=getattr(game.session, "registry", None),
+                )
+                if result.get("committed"):
+                    game.db.retire_chat_turn_for_pending_action_retry(int(action_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
         except ValueError as exc:

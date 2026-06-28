@@ -1707,7 +1707,7 @@ def _secret_metadata_from_command(text: str) -> Tuple[List[str], int]:
             continue
         m_deadline = re.match(r"^(?:期限|限期|deadline)\s*[：:]\s*(.+)$", line, flags=re.IGNORECASE)
         if m_deadline:
-            match = re.search(r"(\d+)\s*(?:个)?月", m_deadline.group(1))
+            match = re.search(r"([+-]?\d+)\s*(?:个)?月", m_deadline.group(1))
             if match:
                 deadline = max(0, min(int(match.group(1)), 36))
     return tags, deadline
