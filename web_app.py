@@ -1452,6 +1452,7 @@ class WebGame:
         displaced_minister: str = "",
         secret_order_id: int = 0,
         pending_action_id: int = 0,
+        pending_action_failures: Optional[List[Dict[str, Any]]] = None,
         chat_turn_id: int = 0,
         accepted_turn: Optional[int] = None,
     ) -> Dict[str, Any]:
@@ -1474,6 +1475,7 @@ class WebGame:
             "displaced_minister": displaced_minister,
             "secret_order_id": secret_order_id or 0,
             "pending_action_id": pending_action_id or 0,
+            "pending_action_failures": pending_action_failures or [],
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "suggestions": self.suggestions_for(character),
@@ -1515,6 +1517,7 @@ class WebGame:
                     displaced_minister=result.displaced_minister,
                     secret_order_id=result.secret_order_id,
                     pending_action_id=getattr(result, "pending_action_id", 0),
+                    pending_action_failures=getattr(result, "pending_action_failures", []),
                     chat_turn_id=chat_turn_id,
                     accepted_turn=accepted_turn,
                 )
@@ -1666,6 +1669,7 @@ class WebGame:
         if res["secret_order_id"]:
             secret_order_id = res["secret_order_id"]
         pending_action_id = pending_action_id or int(res.get("pending_action_id") or 0)
+        pending_action_failures = list(res.get("pending_action_failures") or [])
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         return self._chat_payload(
             minister_name, answer, court_action=court_action, next_minister=next_minister,
@@ -1674,6 +1678,7 @@ class WebGame:
             displaced_minister=displaced,
             secret_order_id=secret_order_id,
             pending_action_id=pending_action_id,
+            pending_action_failures=pending_action_failures,
             chat_turn_id=chat_turn_id,
             accepted_turn=accepted_turn,
         )
@@ -2567,6 +2572,28 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
     if row is None:
         raise HTTPException(status_code=404, detail="该待确认动作不存在。")
     raise HTTPException(status_code=409, detail="该动作已落库或非本回合，无法撤回。")
+
+
+@app.post("/api/pending_actions/{action_id}/retry")
+async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
+    """重试本回合失败的密令下达，用已存 pending_actions payload 重新落库。"""
+    game = get_game()
+    with _serialized_web_write(game):
+        try:
+            result = game.db.retry_failed_pending_action(
+                game.state, int(action_id),
+                content=getattr(game.session, "content", None),
+                registry=getattr(game.session, "registry", None),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+    return {
+        "retry": result,
+        "actions": game.db.list_pending_actions(int(game.state.turn)),
+        "secret_orders": game.db.list_secret_orders(),
+    }
 
 
 @app.get("/api/turn_extraction")

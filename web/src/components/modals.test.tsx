@@ -2,7 +2,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatModal, ReportModal } from "./modals";
-import type { Minister } from "../types";
+import type { Minister, PendingActionFailure } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -42,6 +42,8 @@ function renderModal(props: {
   portraitPrefix: string;
   busy?: string;
   onCancel?: () => void;
+  chatFailures?: PendingActionFailure[];
+  onRetryFailure?: (failure: PendingActionFailure) => void;
 }) {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -57,6 +59,7 @@ function renderModal(props: {
         pendingUserMessage=""
         streamingMinisterMessage=""
         chatNotice=""
+        chatFailures={props.chatFailures ?? []}
         canUndoLastChat={false}
         composerHint=""
         input=""
@@ -64,6 +67,7 @@ function renderModal(props: {
         secretOrders={[]}
         onInput={() => {}}
         onSend={() => {}}
+        onRetryFailure={props.onRetryFailure ?? (() => {})}
         onUndo={() => {}}
         onHint={() => {}}
         onFavorite={() => {}}
@@ -123,6 +127,29 @@ describe("ChatModal — placeholder switches on character type", () => {
     renderModal({ minister: CONSORT_MOCK, portraitPrefix: "consort_" });
     const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
     expect(textarea.placeholder.length).toBeGreaterThan(5);
+  });
+
+  it("shows secret-order landing failure with retry action", () => {
+    const failure: PendingActionFailure = {
+      id: 7,
+      kind: "secret_order",
+      action: "新建",
+      message: "密令未能正式落库，请重试；若暂不处理，也不会阻断继续召对。",
+    };
+    const retry = vi.fn();
+
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      chatFailures: [failure],
+      onRetryFailure: retry,
+    });
+
+    expect(document.querySelector(".chat-failure-note")?.textContent).toContain("密令未能正式落库");
+    const button = Array.from(document.querySelectorAll("button")).find((node) => node.textContent === "重试");
+    expect(button).toBeTruthy();
+    act(() => button?.click());
+    expect(retry).toHaveBeenCalledWith(failure);
   });
 });
 

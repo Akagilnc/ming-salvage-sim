@@ -584,6 +584,128 @@ def test_dialogue_reject_drops_staged(game, monkeypatch):
         "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "原内容"
 
 
+def test_dialogue_affirm_secret_order_landing_failure_is_reported(game, monkeypatch):
+    """密令已被应允但正式落库失败 → 召对结果必须显眼报告失败,不可静默吞掉。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                            {"确认": "应允"}, ensure_ascii=False), 1))
+    monkeypatch.setattr(db, "create_secret_order",
+                        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("durable write failed")))
+
+    out = GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch, player_message="准",
+        answer="臣即密办。", has_directive=False, secret_order_id=None)
+
+    failures = out.get("pending_action_failures")
+    assert failures and failures[0]["id"] == pending_id
+    assert "密令" in failures[0]["message"]
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pending_id
+
+
+def test_retry_failed_secret_order_reuses_stored_payload(game):
+    """重试失败密令用 pending_actions 里已存 payload 落库,不需要重跑召对/抽取。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": ["辽饷"], "deadline_months": 0},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+
+    result = db.retry_failed_pending_action(state, pending_id)
+
+    assert result["committed"] is True
+    assert db.list_pending_actions(state.turn, status="failed") == []
+    row = db.conn.execute(
+        "SELECT minister_name, title, content, tags FROM secret_orders ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row["minister_name"] == name
+    assert row["title"] == "暗查辽饷"
+    assert row["content"] == "密查辽饷去向"
+    assert json.loads(row["tags"]) == ["辽饷"]
+
+
+def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):
+    """玩家无视失败密令时,同一大臣后续普通召对仍可继续,不会被 failed 行卡住。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed'")
+    db.conn.commit()
+
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                            {"密令动作": "无"}, ensure_ascii=False), 1))
+    out = GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch, player_message="说说户部钱粮",
+        answer="臣谨奏钱粮尚可周转。", has_directive=False, secret_order_id=None)
+
+    assert out.get("pending_action_failures") == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["kind"] == "secret_order"
+
+
+def test_unresolved_failed_secret_order_is_ignored_after_turn_boundary(game):
+    """未处理的 failed 密令暂存跨回合后不再进入当前回合 pending,不阻断退朝推进。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    old_turn = state.turn
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+
+    advance_without_edict(state, db)
+
+    assert state.turn == old_turn + 1
+    assert db.list_pending_actions(state.turn) == []
+    old_failed = db.list_pending_actions(old_turn, status="failed")
+    assert len(old_failed) == 1 and old_failed[0]["id"] == pending_id
+
+
+def test_successful_secret_order_confirmation_stays_quiet(game, monkeypatch):
+    """成功落库只通过密令表可见,不新增聊天成功通知。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                            {"确认": "应允"}, ensure_ascii=False), 1))
+    out = GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch, player_message="准",
+        answer="臣即密办。", has_directive=False, secret_order_id=None)
+
+    assert out.get("pending_action_failures") == []
+    assert not out.get("secret_order_id")
+    assert db.list_secret_orders(status="active")[-1]["title"] == "暗查辽饷"
+
+
 def test_dialogue_affirm_commits_office_now(game, monkeypatch):
     """口头任命暂存后,皇帝应允 → 当场建档(office commit 需 content/registry,真实 session 恒有)。"""
     db, state, content = game
