@@ -230,17 +230,35 @@ def test_silent_new_secret_order_lands_at_checkpoint_without_pending_visibility(
     assert db.list_secret_orders(status="pending") == []
 
 
-def test_secret_order_endpoint_stages_candidate_without_player_visible_order(game, monkeypatch):
-    """#414: 直连端点也不得绕过统一确认闸门把新密令提前放进玩家密令列表。"""
+def test_secret_order_endpoint_delegates_to_chat_confirmation_flow(game, monkeypatch):
+    """#413/#414: 兼容端点只能进入召对确认流,不得直写 pending action 绕过大臣回话。"""
     import asyncio
 
     db, state, content = game
     name = _active_minister_name(db, content)
+    calls = []
+
+    def _chat(minister_name, message):
+        calls.append((minister_name, message))
+        return {
+            "minister": minister_name,
+            "answer": "臣领密旨，拟先封存账册，再密访诸将，请陛下定夺。",
+            "history": [
+                {"role": "user", "content": message},
+                {"role": "minister", "content": "臣领密旨，请陛下定夺。"},
+            ],
+            "pending_action_id": 42,
+            "secret_order_id": 0,
+        }
+
     stub = types.SimpleNamespace(
         db=db,
         state=state,
-        session=types.SimpleNamespace(state=state, content=content, registry=None),
+        content=content,
+        session=types.SimpleNamespace(
+            state=state, content=content, registry=None, temporary_characters=set()),
         character_power_id=lambda c: web_app._character_power_id(c, db),
+        chat=_chat,
     )
     monkeypatch.setattr(web_app, "web_game", stub)
 
@@ -254,13 +272,12 @@ def test_secret_order_endpoint_stages_candidate_without_player_visible_order(gam
         ),
     ))
 
-    assert result["pending_action_id"]
-    assert "order_id" not in result
+    assert calls == [(name, "密令如下：暗查辽饷\n密查辽东军饷侵冒。\n标签：辽饷\n期限：3月")]
+    assert result["answer"] == "臣领密旨，拟先封存账册，再密访诸将，请陛下定夺。"
+    assert result["pending_action_id"] == 42
+    assert result["secret_order_id"] == 0
     assert db.list_secret_orders() == []
-    pending = db.list_pending_actions(state.turn)
-    assert len(pending) == 1
-    assert pending[0]["kind"] == "secret_order"
-    assert pending[0]["action"] == "新建"
+    assert db.list_pending_actions(state.turn) == []
 
 
 def test_commit_marks_unapplicable_failed_not_orphan(game, monkeypatch):

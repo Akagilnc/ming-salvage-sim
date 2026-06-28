@@ -116,6 +116,30 @@ def test_draft_prefix_with_active_secret_order_runs_zero_llm(game, monkeypatch):
     assert result.secret_order_id is None
 
 
+def test_staged_action_reply_gets_confirmation_cue(game, monkeypatch):
+    """#412/#413 completeness: staged chat actions must visibly ask the emperor to approve/reject."""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    who = "确认提示承办官"
+
+    def _forbidden(*a, **k):
+        raise AssertionError("显式拟旨前缀不应触发后置 LLM 抽取器")
+
+    monkeypatch.setattr(cb, "extract_minister_actions", _forbidden)
+    monkeypatch.setattr(cb, "extract_draft_intent", _forbidden)
+    monkeypatch.setattr(cb, "extract_appointment_action", _forbidden)
+    monkeypatch.setattr(cb, "extract_confirmation_intent", _forbidden)
+
+    result = _result()
+    result.answer = "奉天承运皇帝诏曰，着户部清核辽饷。"
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result, SimpleNamespace(name=who, office_type="兵部"),
+        "拟旨如下：着户部清核辽饷。")
+
+    assert result.pending_action_id
+    assert "请陛下定夺准驳" in result.answer
+
+
 def test_draft_prefix_with_pending_confirmation_runs_zero_llm(game, monkeypatch):
     """#344「按钮前缀路零 LLM」(US3)——确认闸门面：该大臣有非 directive 待确认暂存动作时，
     玩家发 '拟旨如下：' 前缀不得触发 extract_confirmation_intent(LLM)，也不得被误判应允/拒绝
@@ -1111,7 +1135,8 @@ def test_draft_prefix_stages_directive(game, monkeypatch):
     assert result.pending_action_id
     pending = db.list_pending_actions(state.turn)
     assert len(pending) == 1 and pending[0]["kind"] == "directive"
-    assert json.loads(pending[0]["payload_json"])["text"] == result.answer
+    assert json.loads(pending[0]["payload_json"])["text"] == "臣领旨。敕谕户部与陕西巡抚发太仓银三万两亲督赈发。钦此。"
+    assert "请陛下定夺准驳" in result.answer
     assert db.conn.execute(
         "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)
     ).fetchone()[0] == 0
@@ -1131,7 +1156,8 @@ def test_runtime_cli_channel_without_env_stages_directive(game, monkeypatch):
     assert result.pending_action_id
     pending = db.list_pending_actions(state.turn)
     assert len(pending) == 1 and pending[0]["kind"] == "directive"
-    assert json.loads(pending[0]["payload_json"])["text"] == result.answer
+    assert json.loads(pending[0]["payload_json"])["text"] == "臣领旨。敕谕户部与陕西巡抚发太仓银三万两亲督赈发。钦此。"
+    assert "请陛下定夺准驳" in result.answer
     assert db.conn.execute(
         "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)
     ).fetchone()[0] == 0
