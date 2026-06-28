@@ -116,7 +116,7 @@ def test_chat_stream_observer_departure_after_acceptance_still_completes_turn(ga
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
 
 
-def test_background_audience_reply_keeps_drafted_edict_after_observer_departure(game):
+def test_background_audience_reply_keeps_staged_edict_after_observer_departure(game):
     db, state, content = game
     minister_name = "毕自严"
     draft_text = "着户部清核辽饷。"
@@ -129,9 +129,14 @@ def test_background_audience_reply_keeps_drafted_edict_after_observer_departure(
 
     assert agent.completed.wait(1.0)
     assert _wait_for(lambda: any(
+        row["kind"] == "directive"
+        and json.loads(row["payload_json"])["text"] == draft_text
+        for row in db.list_pending_actions(state.turn)
+    ))
+    assert not any(
         row["text"] == draft_text
         for row in db.list_directives(state, statuses=("pending", "draft"))
-    ))
+    )
     assert _wait_for(lambda: db.can_undo_last_chat_turn(minister_name, state.turn))
 
 
@@ -274,7 +279,12 @@ def test_background_audience_failure_after_action_rolls_back_cleanly(game):
     events = list(web_game.chat_stream(minister_name, "拟一道清核辽饷的旨。"))
 
     assert events[-1]["type"] == "error"
-    # 已写入的拟旨被回滚——不留不可撤回的半成品政务结果
+    # 已暂存的拟旨被回滚——不留不可撤回的半成品政务结果
+    assert not any(
+        row["kind"] == "directive"
+        and json.loads(row["payload_json"])["text"] == draft_text
+        for row in db.list_pending_actions(state.turn)
+    )
     assert not any(
         row["text"] == draft_text
         for row in db.list_directives(state, statuses=("pending", "draft"))

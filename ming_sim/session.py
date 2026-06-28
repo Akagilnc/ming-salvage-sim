@@ -764,7 +764,9 @@ class GameSession:
             return None
         minister_name = character.name
         pend_for_minister = self.db.list_pending_actions(self.state.turn, minister_name=minister_name)
-        confirm_targets = [p for p in pend_for_minister if p["kind"] != "directive"]
+        non_directive_confirm_targets = [p for p in pend_for_minister if p["kind"] != "directive"]
+        directive_confirm_targets = [p for p in pend_for_minister if p["kind"] == "directive"]
+        confirm_targets = non_directive_confirm_targets or directive_confirm_targets
         if GameSession._proposal_blocked(self.state) and not confirm_targets:
             return None
         summaries = [_pending_action_brief(p) for p in confirm_targets]
@@ -792,8 +794,8 @@ class GameSession:
 
     def chat(self, minister_name: str, message: str) -> ChatTurnResult:
         """与大臣对话一轮，统一处理 court tool 截获。
-        大臣 propose_directive 产生的草案以 status='pending' 入库，
-        作为 proposed_directive 返回，确认/驳回由调用方下达。"""
+        大臣 propose_directive 产生的草案先进 pending_actions 闸门，
+        作为 pending_action_id 返回，确认/驳回由对话或颁诏 checkpoint 处理。"""
         if self.registry is None:
             raise RuntimeError("GameSession.begin_turn() 未调用。")
         character = self._character(minister_name)
@@ -839,13 +841,9 @@ class GameSession:
                 if draft_text and self._proposal_blocked(self.state):
                     draft_text = ""  # 恢复窗婉拒：不入档（见 _proposal_blocked）
                 if draft_text:
-                    directive_id = self.db.add_directive(
-                        self.state, None, draft_text, "大臣拟旨",
-                        actor=character.name, notes=f"由{character.name}拟旨入档", status="pending",
-                    )
-                    result.proposed_directive = DirectiveView(
-                        id=directive_id, text=draft_text, status="pending",
-                        source="大臣拟旨", notes=f"由{character.name}拟旨入档",
+                    result.pending_action_id = self.db.upsert_pending_directive(
+                        self.state.turn, character.name,
+                        payload={"text": draft_text, "actor": character.name},
                     )
             elif tool_name == "propose_appointment" or tool_result.startswith("__pending_appointment__"):
                 payload = tool_result.removeprefix("__pending_appointment__").strip()
@@ -919,12 +917,11 @@ class GameSession:
         # 只在该大臣有 outstanding 暂存时才判(省 token)，commit/drop 按该大臣过滤、不波及他人。
         pend_for_minister = self.db.list_pending_actions(
             self.state.turn, minister_name=minister_name)
-        # 召对确认闸门只管【召对期】暂存（密令/任免/调教）；kind=directive 拟旨的接受/搁置是
-        # 颁诏期语义（不回=颁诏默认同意，ADR 0006），不能被召对期的应允/拒绝裹挟（BUG 1）：
-        # 否则同大臣后一轮对【别的】暂存的应允会把对话草案提前 commit 成 draft，拒绝会静默删草案。
-        # 故确认闸门用排除 directive 的视图，且 commit/drop 都带 kind_filter 排除 directive，
-        # 让对话式拟旨穿过本闸门、活到颁诏。
-        confirm_targets = [p for p in pend_for_minister if p["kind"] != "directive"]
+        # 若同一大臣同时有非 directive 暂存与 directive 草案，确认优先处理非 directive，避免
+        # 对别的政务应允/拒绝时误扫草案；只有 directive 是唯一待确认对象时，按 #412 处理拟旨确认。
+        non_directive_confirm_targets = [p for p in pend_for_minister if p["kind"] != "directive"]
+        directive_confirm_targets = [p for p in pend_for_minister if p["kind"] == "directive"]
+        confirm_targets = non_directive_confirm_targets or directive_confirm_targets
         if confirm_targets and not explicit_prefixed:
             summaries = [_pending_action_brief(p) for p in confirm_targets]
             if intent is not None:
@@ -942,12 +939,15 @@ class GameSession:
                 else:
                     self.db.commit_pending_actions(
                         self.state, minister_name=minister_name,
-                        kind_filter_exclude="directive",
+                        kind_filter_exclude="directive" if non_directive_confirm_targets else None,
+                        kind_filter="directive" if not non_directive_confirm_targets else None,
+                        directive_status="pending" if not non_directive_confirm_targets else "draft",
                         content=getattr(self, "content", None),
                         registry=getattr(self, "registry", None))
             elif confirm == "拒绝":
                 self.db.drop_pending_actions_for_minister(
-                    self.state.turn, minister_name, kind_filter_exclude="directive")
+                    self.state.turn, minister_name,
+                    kind_filter_exclude="directive" if non_directive_confirm_targets else None)
             if confirm in ("应允", "拒绝"):
                 # 本轮是对暂存的确认：大臣回话已【复述】该动作(领命 prompt 所致),若继续走下面的
                 # 抽取,会把刚 commit 的动作从复述里重抽成新暂存→颁诏二次落库,或重建刚拒的动作。
@@ -975,12 +975,11 @@ class GameSession:
             acts = {"decree_text": None, "secret_order": None}
         if not has_directive and acts["decree_text"]:
             text = acts["decree_text"]
-            did = self.db.add_directive(
-                self.state, None, text, "大臣拟旨",
-                actor=minister_name, notes=f"由{minister_name}拟旨入档", status="pending",
+            pid = self.db.upsert_pending_directive(
+                self.state.turn, minister_name,
+                payload={"text": text, "actor": minister_name},
             )
-            out["directive"] = {"id": did, "text": text, "status": "pending",
-                                "notes": f"由{minister_name}拟旨入档"}
+            out["pending_action_id"] = pid
         if not out["secret_order_id"] and acts["secret_order"]:
             so = acts["secret_order"]
             assignee = so.get("assignee") or minister_name
@@ -1211,7 +1210,7 @@ class GameSession:
         """session.chat 非流式路径：调共享会话落地，映射回 ChatTurnResult（agno 工具不触发时）。"""
         res = self.apply_cli_conversation_actions(
             character, player_message, result.answer or "",
-            has_directive=result.proposed_directive is not None,
+            has_directive=result.proposed_directive is not None or bool(result.pending_action_id),
             secret_order_id=result.secret_order_id,
             preclassified_intent=preclassified_intent,
         )

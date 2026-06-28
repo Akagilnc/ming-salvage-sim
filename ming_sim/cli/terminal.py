@@ -1,8 +1,7 @@
 """CLI 终端层：input()/print() 驱动，调 GameSession 跑回合。L9。
 
 play_turn 状态机搬入此处；GameSession 持游戏状态，terminal 只做 I/O。
-拟旨 draft 待确认：大臣 propose_directive → session 返回 pending 草案
-→ 终端打印草稿 → 皇帝 可/准→confirm，驳→reject。
+拟旨候选先进 pending_actions 闸门；皇帝可在对话里准/驳，不回则颁诏 checkpoint 默认同意。
 """
 
 from __future__ import annotations
