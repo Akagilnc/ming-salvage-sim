@@ -4,6 +4,18 @@
 
 ## [未发布]
 
+## [0.15.1.0] - 2026-06-28
+
+### 变更
+- **codex 推理强度文案校准**：codex 通道下的「关」现在标明「codex 最低=低」，避免玩家误以为可完全关闭模型推理预算。
+
+### 修复
+- **CLI 召对上下文持久化**：terminal 召对现在与 web 路径一样先落玩家发言、再调用大臣后端，并在失败时回滚半轮消息，密令短确认可以读取本回合前文。
+- **推理能力状态刷新**：保存 LLM 配置后，菜单页与局中设置页会信任后端返回的 `reasoning_supported` / `reasoning_strengths`，并同步服务端归一后的 base URL、model 与 advanced 设置，避免保存后仍用旧启发式误启用推理强度。
+
+### 测试
+- 新增 CLI 召对落库/失败回滚、LLM 配置保存响应、菜单页推理能力刷新、codex 推理文案和 reasoning support helper 覆盖；ship 验证为 `1771 passed, 13 skipped`，web Vitest `108 passed`。
+
 ## [0.15.0.0] - 2026-06-27
 
 ### 新增

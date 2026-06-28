@@ -1,7 +1,9 @@
 import React from "react";
 import { Check, Loader2, LogOut, Power, RotateCcw, Save, Settings, Trash2, Upload, X } from "lucide-react";
 import { ApiRequestError, api } from "../api";
+import { resolveReasoningSupported } from "../reasoningSupport";
 import type { LLMConfigInfo, SaveEntry } from "../types";
+import { visibleReasoningStrengthChoices } from "../reasoningStrength";
 import { CliModelField } from "./cliModelField";
 
 export function GameMenuModal({
@@ -335,6 +337,37 @@ export function SavesList({
 // CLI 子进程默认超时（秒），与后端 llm_config.CLI_DEFAULT_TIMEOUT_SECONDS 对齐（#55 跨语言）。
 const CLI_DEFAULT_TIMEOUT = 300;
 
+type LLMConfigSavePayload = Omit<LLMConfigInfo, "persisted"> & Partial<Pick<LLMConfigInfo, "persisted">>;
+
+export function mergePersistedSaveSnapshot(
+  data: LLMConfigSavePayload,
+  cur: LLMConfigInfo | null
+): LLMConfigInfo["persisted"] {
+  if (data.persisted) return data.persisted;
+  const current = cur?.persisted;
+  const savedCliSlot = data.channel === "cli";
+  return {
+    ...(current || {}),
+    channel: data.channel,
+    base_url: data.base_url,
+    model: data.model,
+    has_api_key: data.has_api_key,
+    max_tokens: data.max_tokens,
+    timeout_seconds: data.timeout_seconds,
+    thinking_level: data.thinking_level,
+    advanced_model: data.advanced_model,
+    advanced_base_url: data.advanced_base_url,
+    has_advanced_api_key: data.has_advanced_api_key,
+    advanced_thinking_level: data.advanced_thinking_level,
+    reasoning_strength: data.reasoning_strength,
+    api_reasoning_strength: data.api_reasoning_strength ?? (savedCliSlot ? current?.api_reasoning_strength : data.reasoning_strength),
+    cli_reasoning_strength: data.cli_reasoning_strength ?? (savedCliSlot ? data.reasoning_strength : current?.cli_reasoning_strength),
+    cli_runner: savedCliSlot ? (data.cli_runner || current?.cli_runner) : current?.cli_runner,
+    cli_model: savedCliSlot ? (data.cli_model ?? current?.cli_model) : current?.cli_model,
+    cli_timeout_seconds: savedCliSlot ? (data.cli_timeout_seconds || current?.cli_timeout_seconds) : current?.cli_timeout_seconds,
+  };
+}
+
 export function LLMConfigTab() {
   const [info, setInfo] = React.useState<LLMConfigInfo | null>(null);
   const [baseUrl, setBaseUrl] = React.useState("");
@@ -361,16 +394,29 @@ export function LLMConfigTab() {
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState("");
   const [err, setErr] = React.useState("");
-  const apiReasoningSupported = (() => {
-    const effectiveBase = (advancedModel.trim() ? (advancedBaseUrl.trim() || baseUrl) : baseUrl).toLowerCase();
-    const modelName = (advancedModel.trim() || model).toLowerCase();
-    const base = effectiveBase;
-    if (base.includes("deepseek.com")) return false;
-    return modelName.startsWith("o1") || modelName.startsWith("o3") || modelName.startsWith("o4") ||
-      modelName.startsWith("gpt-5") || base.includes("dashscope") || base.includes("aliyuncs") ||
-      base.includes("minimaxi.com") || base.includes("minimax.io");
-  })();
-  const cliReasoningSupported = cliRunner === "codex" || cliRunner === "claude";
+  const backendChannel = info?.channel === "cli" ? "cli" : "api";
+  const normalizedBaseUrl = baseUrl.trim();
+  const normalizedModel = model.trim();
+  const normalizedAdvancedBaseUrl = advancedBaseUrl.trim();
+  const normalizedAdvancedModel = advancedModel.trim();
+  const backendReasoningSupportCurrent = channel === backendChannel && (
+    channel === "cli"
+      ? cliRunner === (info?.cli_runner || "agy")
+      : normalizedBaseUrl === (info?.base_url || "").trim() &&
+        normalizedModel === (info?.model || "").trim() &&
+        normalizedAdvancedBaseUrl === (info?.advanced_base_url || "").trim() &&
+        normalizedAdvancedModel === (info?.advanced_model || "").trim()
+  );
+  const reasoningSupported = resolveReasoningSupported({
+    backendSupported: info?.reasoning_supported,
+    backendCurrent: backendReasoningSupportCurrent,
+    currentChannel: channel,
+    baseUrl,
+    model,
+    advancedBaseUrl,
+    advancedModel,
+    cliRunner,
+  });
   const reasoningChoices = info?.reasoning_strengths || [
     { value: "", label: "默认" },
     { value: "off", label: "关" },
@@ -380,6 +426,7 @@ export function LLMConfigTab() {
   ];
   const reasoningStrength = channel === "cli" ? cliReasoningStrength : apiReasoningStrength;
   const setReasoningStrength = channel === "cli" ? setCliReasoningStrength : setApiReasoningStrength;
+  const visibleReasoningChoices = visibleReasoningStrengthChoices(reasoningChoices, channel, cliRunner);
 
   React.useEffect(() => {
     api<LLMConfigInfo>("/api/llm/config")
@@ -435,7 +482,16 @@ export function LLMConfigTab() {
           cli_timeout_seconds: channel === "cli" ? parseFloat(cliTimeout) || CLI_DEFAULT_TIMEOUT : 0,
         }),
       });
-      setInfo((cur) => (cur ? { ...cur, ...data } : null));
+      setInfo((cur) => ({
+        ...(cur || data),
+        ...data,
+        persisted: mergePersistedSaveSnapshot(data, cur),
+        cli_model_choices: data.cli_model_choices || cur?.cli_model_choices || {},
+      }));
+      setBaseUrl(data.base_url);
+      setModel(data.model);
+      setAdvancedModel(data.advanced_model || "");
+      setAdvancedBaseUrl(data.advanced_base_url || "");
       // 用服务端归一后的响应同步本地通道/CLI 状态,避免与 info 漂移(Sourcery R1)。
       setChannel(data.channel === "cli" ? "cli" : "api");
       if (data.channel === "cli") {
@@ -500,14 +556,14 @@ export function LLMConfigTab() {
               className="menu-input"
               name="reasoning_strength"
               value={reasoningStrength}
-              disabled={!cliReasoningSupported}
+              disabled={!reasoningSupported}
               onChange={(e) => setReasoningStrength(e.target.value)}
             >
-              {reasoningChoices.map((choice) => (
+              {visibleReasoningChoices.map((choice) => (
                 <option key={choice.value} value={choice.value}>{choice.label}</option>
               ))}
             </select>
-            {!cliReasoningSupported ? (
+            {!reasoningSupported ? (
               <small className="menu-hint">该后端不支持推理强度设置。</small>
             ) : null}
           </label>
@@ -564,14 +620,14 @@ export function LLMConfigTab() {
               className="menu-input"
               name="reasoning_strength"
               value={reasoningStrength}
-              disabled={!apiReasoningSupported}
+              disabled={!reasoningSupported}
               onChange={(e) => setReasoningStrength(e.target.value)}
             >
-              {reasoningChoices.map((choice) => (
+              {visibleReasoningChoices.map((choice) => (
                 <option key={choice.value} value={choice.value}>{choice.label}</option>
               ))}
             </select>
-            {!apiReasoningSupported ? (
+            {!reasoningSupported ? (
               <small className="menu-hint">该后端不支持推理强度设置。</small>
             ) : null}
           </label>

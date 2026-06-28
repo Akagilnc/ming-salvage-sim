@@ -217,6 +217,30 @@ def test_set_llm_config_cli_placeholder_not_real_api_key(monkeypatch):
     assert result["channel"] == "cli"
 
 
+def test_api_set_llm_config_response_reports_reasoning_capability(monkeypatch):
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.deepseek.com/v1",
+        model="deepseek-chat",
+        channel="api",
+    )
+    fake = SimpleNamespace(
+        build_llm_config=lambda *a, **k: cfg,
+        commit_llm_config=lambda c: c,
+    )
+    monkeypatch.setattr(web_app, "get_game", lambda: fake)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+
+    result = asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(
+        base_url="https://api.deepseek.com/v1",
+        model="deepseek-chat",
+        api_key="sk-test",
+    )))
+
+    assert result["reasoning_supported"] is False
+    assert result["reasoning_strengths"] == list(web_app.REASONING_STRENGTH_CHOICES)
+
+
 def test_api_set_llm_config_explicit_cli_channel_switch(monkeypatch):
     """#51:in-game 显式选 CLI 通道(channel=cli + cli_runner)→ build 收到 cli 通道参数,
     回报 cli 配置(不要求 API key)。"""
@@ -242,6 +266,8 @@ def test_api_set_llm_config_explicit_cli_channel_switch(monkeypatch):
     assert result["channel"] == "cli"
     assert result["cli_runner"] == "agy"
     assert result["reasoning_strength"] == "off"
+    assert result["reasoning_supported"] is False
+    assert result["reasoning_strengths"] == list(web_app.REASONING_STRENGTH_CHOICES)
     assert result["has_api_key"] is False
 
 
