@@ -496,6 +496,55 @@ describe("结算决策暂停 — 密令失败提示", () => {
   });
 });
 
+function SurfaceFailuresFixture({ loadState }: { loadState: () => Promise<void> }) {
+  const [selected, setSelected] = React.useState("甲");
+  const selectedRef = React.useRef("甲");
+  const [activeModal, setActiveModal] = React.useState("none");
+  const [busy, setBusy] = React.useState("月末结算");
+  const [recovery, setRecovery] = React.useState(false);
+  React.useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+  const surface = async () => {
+    const targetName = "";
+    setRecovery(true);
+    const initialMinister = selectedRef.current;
+    try {
+      await loadState();
+      if (selectedRef.current !== initialMinister) return;
+      selectedRef.current = targetName;
+      setSelected(targetName);
+      setActiveModal("chat");
+    } finally {
+      setBusy("");
+    }
+  };
+  return (
+    <div>
+      <div data-testid="selected">{selected}</div>
+      <div data-testid="active">{activeModal}</div>
+      <div data-testid="busy">{busy}</div>
+      <div data-testid="recovery">{String(recovery)}</div>
+      <button data-testid="surface" onClick={surface}>失败</button>
+    </div>
+  );
+}
+
+describe("失败恢复入口 — 无承办人", () => {
+  it("没有 minister_name 的失败也会打开全局恢复面板", async () => {
+    const host = render(<SurfaceFailuresFixture loadState={() => Promise.resolve()} />);
+
+    await act(async () => {
+      (host.querySelector("[data-testid=surface]") as HTMLButtonElement).click();
+    });
+
+    expect(host.querySelector("[data-testid=selected]")?.textContent).toBe("");
+    expect(host.querySelector("[data-testid=active]")?.textContent).toBe("chat");
+    expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
+    expect(host.querySelector("[data-testid=recovery]")?.textContent).toBe("true");
+  });
+});
+
 describe("召对陈旧守卫 — 广范围（undoLastChat 全局生效、面板守卫）", () => {
   it("切人后撤回的全局效果照样生效，但旧面板写被守卫丢弃", async () => {
     let resolve!: (v: { notice: string; failures?: string[] }) => void;
