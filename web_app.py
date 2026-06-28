@@ -65,7 +65,7 @@ from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.memories import effect_brief
 from ming_sim.session import GameSession
-from ming_sim.session import AUTO_SAVE_PREFIX
+from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
@@ -1355,6 +1355,15 @@ class WebGame:
             return False
         return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
 
+    def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
+        """当前回合该召对对象仍可由玩家处理的失败动作。"""
+        return [
+            _pending_action_failure_payload(action)
+            for action in self.db.list_pending_actions(
+                int(self.state.turn), status="failed", minister_name=minister_name)
+            if action["kind"] == "secret_order"
+        ]
+
     def _audience_turn_in_flight(self, minister_name: str) -> bool:
         """#383 背景召对契约：同一大臣已有「已受理、尚未完成回奏」的 turn 时，不得再开新轮。
 
@@ -1452,6 +1461,7 @@ class WebGame:
         displaced_minister: str = "",
         secret_order_id: int = 0,
         pending_action_id: int = 0,
+        pending_action_failures: Optional[List[Dict[str, Any]]] = None,
         chat_turn_id: int = 0,
         accepted_turn: Optional[int] = None,
     ) -> Dict[str, Any]:
@@ -1474,6 +1484,7 @@ class WebGame:
             "displaced_minister": displaced_minister,
             "secret_order_id": secret_order_id or 0,
             "pending_action_id": pending_action_id or 0,
+            "pending_action_failures": pending_action_failures or [],
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "suggestions": self.suggestions_for(character),
@@ -1515,6 +1526,7 @@ class WebGame:
                     displaced_minister=result.displaced_minister,
                     secret_order_id=result.secret_order_id,
                     pending_action_id=getattr(result, "pending_action_id", 0),
+                    pending_action_failures=getattr(result, "pending_action_failures", []),
                     chat_turn_id=chat_turn_id,
                     accepted_turn=accepted_turn,
                 )
@@ -1666,6 +1678,7 @@ class WebGame:
         if res["secret_order_id"]:
             secret_order_id = res["secret_order_id"]
         pending_action_id = pending_action_id or int(res.get("pending_action_id") or 0)
+        pending_action_failures = list(res.get("pending_action_failures") or [])
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         return self._chat_payload(
             minister_name, answer, court_action=court_action, next_minister=next_minister,
@@ -1674,6 +1687,7 @@ class WebGame:
             displaced_minister=displaced,
             secret_order_id=secret_order_id,
             pending_action_id=pending_action_id,
+            pending_action_failures=pending_action_failures,
             chat_turn_id=chat_turn_id,
             accepted_turn=accepted_turn,
         )
@@ -2569,6 +2583,39 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
     raise HTTPException(status_code=409, detail="该动作已落库或非本回合，无法撤回。")
 
 
+@app.post("/api/pending_actions/{action_id}/retry")
+async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
+    """重试本回合失败的密令下达，用已存 pending_actions payload 重新落库。"""
+    game = get_game()
+    minister_name = ""
+    with _serialized_web_write(game):
+        try:
+            row = game.db.conn.execute(
+                "SELECT minister_name FROM pending_actions WHERE id=?",
+                (int(action_id),),
+            ).fetchone()
+            if row is not None:
+                minister_name = str(row["minister_name"] or "")
+            result = game.db.retry_failed_pending_action(
+                game.state, int(action_id),
+                content=getattr(game.session, "content", None),
+                registry=getattr(game.session, "registry", None),
+            )
+            if result.get("committed"):
+                game.db.retire_chat_turn_for_pending_action_retry(int(action_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+    return {
+        "retry": result,
+        "actions": game.db.list_pending_actions(int(game.state.turn)),
+        "secret_orders": game.db.list_secret_orders(),
+        "can_undo_last_chat": game.can_undo_last_chat(minister_name) if minister_name else False,
+        "pending_action_failures": game.pending_action_failures_for(minister_name) if minister_name else [],
+    }
+
+
 @app.get("/api/turn_extraction")
 async def api_turn_extraction(turn: int = -1) -> Dict[str, Any]:
     """读 turn_extractions：默认上一回合（state.turn-1，因 resolve 已 next_period）。"""
@@ -2677,6 +2724,7 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
         "history": get_game().chat_history.get(minister_name, []),
         "suggestions": get_game().suggestions_for(character),
         "can_undo_last_chat": get_game().can_undo_last_chat(minister_name),
+        "pending_action_failures": get_game().pending_action_failures_for(minister_name),
     }
 
 

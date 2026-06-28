@@ -2899,6 +2899,26 @@ select {
   background: rgba(185, 73, 55, 0.1);
 }
 
+.chat-failure-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-style: solid;
+}
+
+.chat-failure-note button {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border-radius: 6px;
+  border: 1px solid rgba(130, 41, 31, 0.38);
+  color: #7c251d;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.chat-failure-note button:hover {
+  background: rgba(255, 255, 255, 0.95);
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
