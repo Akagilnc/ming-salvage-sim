@@ -68,6 +68,12 @@ function render(element: React.ReactNode) {
   };
 }
 
+function changeInput(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 afterEach(() => {
   document.body.innerHTML = "";
   vi.restoreAllMocks();
@@ -353,6 +359,53 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     await act(async () => {});
 
     const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(false);
+    cleanup();
+  });
+
+  it("trusts backend reasoning_supported over local API model heuristics", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...BASE_LLM_RESPONSE,
+        base_url: "https://api.example.com/v1",
+        model: "gpt-5",
+        reasoning_supported: false,
+      }),
+    } as Response);
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(true);
+    expect(document.body.textContent).toContain("该后端不支持推理强度设置");
+    cleanup();
+  });
+
+  it("falls back to local API capability when the loaded backend setting is edited", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...BASE_LLM_RESPONSE,
+        base_url: "https://api.deepseek.com/v1",
+        model: "deepseek-chat",
+        reasoning_supported: false,
+      }),
+    } as Response);
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(true);
+    const baseUrlInput = document.querySelector<HTMLInputElement>('input[placeholder="https://api.openai.com/v1"]');
+    const modelInput = document.querySelector<HTMLInputElement>('input[placeholder="gpt-4o-mini"]');
+    expect(baseUrlInput).toBeTruthy();
+    expect(modelInput).toBeTruthy();
+    act(() => {
+      changeInput(baseUrlInput!, "https://api.example.com/v1");
+      changeInput(modelInput!, "gpt-5");
+    });
+
     expect(strength?.disabled).toBe(false);
     cleanup();
   });

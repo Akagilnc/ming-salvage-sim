@@ -1,6 +1,7 @@
 import React from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { api, normalizeApiError } from "../api";
+import { resolveReasoningSupported } from "../reasoningSupport";
 import type { CliModelChoices, MenuCampaign, MenuStatus, ReasoningStrengthChoice } from "../types";
 import { CliModelField } from "./cliModelField";
 
@@ -274,24 +275,25 @@ export function ApiSettingsModal({
     { value: "medium", label: "中" },
     { value: "high", label: "高" },
   ];
-  const apiReasoningSupported = (() => {
-    const effectiveBase = (advancedModel.trim() ? (advancedBaseUrl.trim() || baseUrl) : baseUrl).toLowerCase();
-    const modelName = (advancedModel.trim() || model).toLowerCase();
-    const base = effectiveBase;
-    if (base.includes("deepseek.com")) return false;
-    return (
-      modelName.startsWith("o1") ||
-      modelName.startsWith("o3") ||
-      modelName.startsWith("o4") ||
-      modelName.startsWith("gpt-5") ||
-      base.includes("dashscope") ||
-      base.includes("aliyuncs") ||
-      base.includes("minimaxi.com") ||
-      base.includes("minimax.io")
-    );
-  })();
-  const cliReasoningSupported = cliRunner === "codex" || cliRunner === "claude";
-  const reasoningSupported = channel === "cli" ? cliReasoningSupported : apiReasoningSupported;
+  const backendChannel = initial?.channel === "cli" ? "cli" : "api";
+  const backendReasoningSupportCurrent = channel === backendChannel && (
+    channel === "cli"
+      ? cliRunner === (initial?.cli_runner || "agy")
+      : baseUrl === (initial?.base_url || "") &&
+        model === (initial?.model || "") &&
+        advancedBaseUrl === (initial?.advanced_base_url || "") &&
+        advancedModel === (initial?.advanced_model || "")
+  );
+  const reasoningSupported = resolveReasoningSupported({
+    backendSupported: initial?.reasoning_supported,
+    backendCurrent: backendReasoningSupportCurrent,
+    currentChannel: channel,
+    baseUrl,
+    model,
+    advancedBaseUrl,
+    advancedModel,
+    cliRunner,
+  });
   const reasoningStrength = channel === "cli" ? cliReasoningStrength : apiReasoningStrength;
   const setReasoningStrength = channel === "cli" ? setCliReasoningStrength : setApiReasoningStrength;
 
