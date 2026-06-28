@@ -122,6 +122,7 @@ class ChatTurnResult:
     refresh_ministers: List[str] = field(default_factory=list)
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
     pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
+    pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -399,6 +400,24 @@ def _pending_action_brief(pa: Dict[str, Any]) -> str:
         text = str(payload.get("text") or "")
         return f"草拟圣旨：{text[:30]}"
     return f"{action}密令"
+
+
+def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
+    """把落库失败的暂存动作翻成可给玩家看的失败状态。"""
+    kind = str(pa.get("kind") or "")
+    action = str(pa.get("action") or "")
+    noun = {
+        "secret_order": "密令",
+        "office": "任免",
+        "consort": "后宫安排",
+        "directive": "拟旨",
+    }.get(kind, "政务动作")
+    return {
+        "id": int(pa.get("id") or 0),
+        "kind": kind,
+        "action": action,
+        "message": f"{noun}未能正式落库，请重试；若暂不处理，也不会阻断继续召对。",
+    }
 
 
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
@@ -920,7 +939,11 @@ class GameSession:
             extract_appointment_action, extract_confirmation_intent, extract_draft_intent,
             _extract_secret_order,
         )
-        out: Dict[str, Any] = {"directive": None, "secret_order_id": secret_order_id}
+        out: Dict[str, Any] = {
+            "directive": None,
+            "secret_order_id": secret_order_id,
+            "pending_action_failures": [],
+        }
         intent = preclassified_intent if isinstance(preclassified_intent, dict) else None
         intent_kind = str((intent or {}).get("kind") or "none")
         minister_name = character.name
@@ -962,6 +985,7 @@ class GameSession:
                     # 动作留 pending，由推进回合的终端 atomic 统一落（所有权规则，ship-pre r2）。
                     pass
                 else:
+                    attempted_ids = {int(p["id"]) for p in confirm_targets}
                     self.db.commit_pending_actions(
                         self.state, minister_name=minister_name,
                         kind_filter_exclude="directive" if non_directive_confirm_targets else None,
@@ -969,6 +993,14 @@ class GameSession:
                         directive_status="pending" if not non_directive_confirm_targets else "draft",
                         content=getattr(self, "content", None),
                         registry=getattr(self, "registry", None))
+                    failures = [
+                        _pending_action_failure_payload(p)
+                        for p in self.db.list_pending_actions(
+                            int(self.state.turn), status="failed", minister_name=minister_name)
+                        if int(p["id"]) in attempted_ids
+                    ]
+                    if failures:
+                        out["pending_action_failures"] = failures
             elif confirm == "拒绝":
                 self.db.drop_pending_actions_for_minister(
                     self.state.turn, minister_name,
@@ -1288,6 +1320,8 @@ class GameSession:
         if res.get("pending_action_id"):
             # 非流式路径与流式同 surface 暂存信号,杜绝两边漂移(ship-pre CMR)。
             result.pending_action_id = res["pending_action_id"]
+        if res.get("pending_action_failures"):
+            result.pending_action_failures = list(res["pending_action_failures"])
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。

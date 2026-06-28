@@ -364,6 +364,13 @@ export type SecretOrder = {
 
 export type ProposedDirective = { id: number; text: string; status: string; notes: string };
 
+export type PendingActionFailure = {
+  id: number;
+  kind: string;
+  action: string;
+  message: string;
+};
+
 export type ChatResponse = {
   answer: string;
   history: ChatMessage[];
@@ -376,6 +383,7 @@ export type ChatResponse = {
   registered_minister?: string;
   proposed_directive?: ProposedDirective | null;
   secret_order_id?: number;
+  pending_action_failures?: PendingActionFailure[];
 };
 
 export type ChatUndoResponse = {
