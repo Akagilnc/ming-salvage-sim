@@ -151,6 +151,23 @@ describe("ChatModal — placeholder switches on character type", () => {
     act(() => button?.click());
     expect(retry).toHaveBeenCalledWith(failure);
   });
+
+  it("does not show retry action for unsupported failure kinds", () => {
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      chatFailures: [{
+        id: 8,
+        kind: "office",
+        action: "任命",
+        message: "任免未能正式落库，请重试；若暂不处理，也不会阻断继续召对。",
+      }],
+    });
+
+    expect(document.querySelector(".chat-failure-note")?.textContent).toContain("任免未能正式落库");
+    const button = Array.from(document.querySelectorAll("button")).find((node) => node.textContent === "重试");
+    expect(button).toBeUndefined();
+  });
 });
 
 describe("ChatModal — thinking/loading text switches on character type (gemini cmr r1)", () => {

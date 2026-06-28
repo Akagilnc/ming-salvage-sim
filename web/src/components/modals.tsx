@@ -702,9 +702,11 @@ export function ChatModal({
           {chatFailures.map((failure) => (
             <div className="chat-system-note danger chat-failure-note" role="alert" key={failure.id}>
               <span>{failure.message}</span>
-              <button type="button" onClick={() => onRetryFailure(failure)} disabled={!!busy}>
-                重试
-              </button>
+              {failure.kind === "secret_order" && (
+                <button type="button" onClick={() => onRetryFailure(failure)} disabled={!!busy}>
+                  重试
+                </button>
+              )}
             </div>
           ))}
           {error && <div className="chat-system-note danger" role="alert">{error}</div>}
