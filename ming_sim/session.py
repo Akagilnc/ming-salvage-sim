@@ -825,6 +825,45 @@ class GameSession:
             return {"kind": "none"}
         return result if isinstance(result, dict) else {"kind": "none"}
 
+    def _confirmation_intent_for_preexisting_pending(
+        self,
+        minister_name: str,
+        player_message: str,
+        reply: str,
+        preclassified_intent: Optional[Dict[str, Any]],
+        confirm_target_ids: set[int],
+    ) -> Optional[Dict[str, Any]]:
+        """Classify confirmation before consuming same-turn write tools.
+
+        Confirmation rounds are intentionally terminal for new inferred writes:
+        the minister's reply may restate or tool-emit the same order, but that
+        output must not stage a fresh pending action before the old visible one
+        is committed/rejected.
+        """
+        from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES, extract_confirmation_intent
+
+        intent = preclassified_intent if isinstance(preclassified_intent, dict) else None
+        message_text = (player_message or "").strip()
+        if message_text.startswith(_DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES):
+            return intent
+        if not confirm_target_ids:
+            return intent
+        if intent is not None and str(intent.get("kind") or "") == "confirmation":
+            return intent
+        pend_for_minister = self.db.list_pending_actions(
+            self.state.turn, minister_name=minister_name)
+        allowed_confirm_ids = {int(pid) for pid in confirm_target_ids}
+        pend_for_minister = [p for p in pend_for_minister if int(p["id"]) in allowed_confirm_ids]
+        confirm_targets = _confirmation_targets_for_message(pend_for_minister, message_text)
+        if not confirm_targets:
+            return intent
+        summaries = [_pending_action_brief(p) for p in confirm_targets]
+        confirm = extract_confirmation_intent(
+            player_message, reply, summaries, llm_config=getattr(self, "llm_config", None))
+        if confirm in ("应允", "拒绝"):
+            return {"kind": "confirmation", "confirmation": confirm}
+        return intent
+
     def chat(self, minister_name: str, message: str) -> ChatTurnResult:
         """与大臣对话一轮，统一处理 court tool 截获。
         大臣 propose_directive 产生的草案先进 pending_actions 闸门，
@@ -844,6 +883,14 @@ class GameSession:
         preexisting_pending_action_ids = {
             int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
         }
+        preclassified_intent = self._finish_cli_action_intent(action_intent_future)
+        preclassified_intent = self._confirmation_intent_for_preexisting_pending(
+            character.name, message, answer, preclassified_intent, preexisting_pending_action_ids)
+        confirmation_turn = (
+            isinstance(preclassified_intent, dict)
+            and str(preclassified_intent.get("kind") or "") == "confirmation"
+            and str(preclassified_intent.get("confirmation") or "") in {"应允", "拒绝"}
+        )
         for tool_exec in getattr(run_output, "tools", None) or []:
             tool_name = getattr(tool_exec, "tool_name", "")
             tool_result = str(getattr(tool_exec, "result", "") or "")
@@ -865,6 +912,8 @@ class GameSession:
                             result.court_action = "summon"
                             result.next_minister = target.name
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
+                if confirmation_turn:
+                    continue
                 draft_text = tool_result.removeprefix("__pending_directive__").strip()
                 if not draft_text:
                     args = getattr(tool_exec, "tool_args", {}) or {}
@@ -877,6 +926,8 @@ class GameSession:
                         payload={"text": draft_text, "actor": character.name},
                     )
             elif tool_name == "propose_appointment" or tool_result.startswith("__pending_appointment__"):
+                if confirmation_turn:
+                    continue
                 payload = tool_result.removeprefix("__pending_appointment__").strip()
                 appointed, displaced = self._apply_appointment(payload, character)
                 if appointed:
@@ -886,6 +937,8 @@ class GameSession:
                     result.displaced_minister = displaced
                     result.refresh_ministers.append(displaced)
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
+                if confirmation_turn:
+                    continue
                 payload = tool_result.removeprefix("__pending_unlisted_person__").strip()
                 registered, summon_after = self._apply_unlisted_person_registration(payload)
                 if registered:
@@ -900,6 +953,8 @@ class GameSession:
                 or tool_result.startswith("__secret_order__")
                 or tool_result.startswith("__secret_action__")
             ):
+                if confirmation_turn:
+                    continue
                 if tool_result.startswith("__secret_action__"):
                     payload_json = tool_result.removeprefix("__secret_action__").strip()
                     try:
@@ -950,7 +1005,7 @@ class GameSession:
         # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
         self._cli_backend_fallback_actions(
             result, character, message,
-            preclassified_intent=self._finish_cli_action_intent(action_intent_future),
+            preclassified_intent=preclassified_intent,
             confirm_target_ids=preexisting_pending_action_ids,
         )
         return result
