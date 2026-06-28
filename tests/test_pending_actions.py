@@ -373,6 +373,42 @@ def test_commit_rejects_blank_new_secret_order_payload(game):
     assert len(failed) == 1 and failed[0]["id"] == pid
 
 
+def test_commit_rolls_back_secret_order_when_status_mark_fails(game, monkeypatch):
+    """落库副作用与 pending 状态必须同事务；中途异常不得留下可重跑的重复密令种子。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽东军饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 3,
+        },
+    )
+
+    def _create_then_crash(state_arg, pa, payload, *, content=None, registry=None):
+        db.create_secret_order(
+            state_arg,
+            str(payload["assignee"]),
+            str(payload["title"]),
+            str(payload["content"]),
+            list(payload["tags"]),
+            deadline_months=int(payload["deadline_months"]),
+        )
+        raise RuntimeError("crash after durable insert")
+
+    monkeypatch.setattr(db, "_apply_pending_action", _create_then_crash)
+
+    applied = db.commit_pending_actions(state)
+
+    assert applied == []
+    assert db.list_secret_orders() == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pid
+
+
 def test_undo_chat_turn_removes_staged_pending_action(game):
     """CMR P1:撤回召对必须删掉该轮暂存的 pending_actions(否则颁诏仍落库,破坏 undo)。
     靠把 pending_actions 纳入 rollback 快照表(_ROLLBACK_TABLE_PK)。"""
