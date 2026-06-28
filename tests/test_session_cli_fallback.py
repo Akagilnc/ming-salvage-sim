@@ -386,6 +386,77 @@ def test_tool_staged_action_is_not_confirmed_in_same_chat_turn(game):
     assert len(db.list_pending_actions(state.turn)) == 1
 
 
+def test_confirmation_commit_only_visible_pending_ids(game):
+    """同句新 stage 的动作即便同大臣同 kind，也不能被本句确认顺手提交。"""
+    db, state, _content = game
+    minister = "毕自严"
+    oid = db.create_secret_order(state, minister, "原标题", "原内容", [], deadline_months=0)
+    old_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="更新", minister_name=minister, target_id=oid,
+        payload={"new_title": "旧候选", "new_content": "旧候选内容", "deadline_months": 0},
+    )
+    new_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={"title": "同句新令", "content": "同句新令内容", "assignee": minister,
+                 "tags": [], "deadline_months": 0},
+    )
+
+    GameSession.apply_cli_conversation_actions(
+        _session(db, state, llm_config=SimpleNamespace(channel="api")),
+        SimpleNamespace(name=minister, office_type="户部"),
+        player_message="准了",
+        answer="臣领旨。",
+        has_directive=False,
+        secret_order_id=None,
+        confirm_target_ids={old_id},
+    )
+
+    row = db.conn.execute(
+        "SELECT title, content FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()
+    assert (row["title"], row["content"]) == ("旧候选", "旧候选内容")
+    assert not db.conn.execute(
+        "SELECT 1 FROM secret_orders WHERE title='同句新令'"
+    ).fetchone()
+    pending_ids = [p["id"] for p in db.list_pending_actions(state.turn)]
+    assert pending_ids == [new_id]
+
+
+def test_confirmation_reject_only_visible_pending_ids(game):
+    """拒绝确认也只能丢本轮开始前可见的 pending，不能删同句新 stage。"""
+    db, state, _content = game
+    minister = "毕自严"
+    oid = db.create_secret_order(state, minister, "原标题", "原内容", [], deadline_months=0)
+    old_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="更新", minister_name=minister, target_id=oid,
+        payload={"new_title": "旧候选", "new_content": "旧候选内容", "deadline_months": 0},
+    )
+    new_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={"title": "同句新令", "content": "同句新令内容", "assignee": minister,
+                 "tags": [], "deadline_months": 0},
+    )
+
+    GameSession.apply_cli_conversation_actions(
+        _session(db, state, llm_config=SimpleNamespace(channel="api")),
+        SimpleNamespace(name=minister, office_type="户部"),
+        player_message="作罢",
+        answer="臣候旨。",
+        has_directive=False,
+        secret_order_id=None,
+        confirm_target_ids={old_id},
+    )
+
+    assert db.conn.execute(
+        "SELECT title, content FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()["title"] == "原标题"
+    assert not db.conn.execute(
+        "SELECT 1 FROM pending_actions WHERE id=? AND status='pending'", (old_id,)
+    ).fetchone()
+    pending_ids = [p["id"] for p in db.list_pending_actions(state.turn)]
+    assert pending_ids == [new_id]
+
+
 def test_legacy_registered_secret_order_marker_parser_restages(game):
     """旧 __secret_order_registered__<id>__ marker 经 chat parser 也要反转回 pending。"""
     db, state, content = game

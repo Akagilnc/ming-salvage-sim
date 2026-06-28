@@ -1010,6 +1010,7 @@ class GameSession:
         directive_confirm_targets = [p for p in pend_for_minister if p["kind"] == "directive"]
         confirm_targets = non_directive_confirm_targets or directive_confirm_targets
         if confirm_targets and not explicit_prefixed:
+            confirm_action_ids = {int(p["id"]) for p in confirm_targets}
             summaries = [_pending_action_brief(p) for p in confirm_targets]
             if intent is not None:
                 confirm = str(intent.get("confirmation") or "无") if intent_kind == "confirmation" else "无"
@@ -1024,26 +1025,27 @@ class GameSession:
                     # 动作留 pending，由推进回合的终端 atomic 统一落（所有权规则，ship-pre r2）。
                     pass
                 else:
-                    attempted_ids = {int(p["id"]) for p in confirm_targets}
                     self.db.commit_pending_actions(
                         self.state, minister_name=minister_name,
                         kind_filter_exclude="directive" if non_directive_confirm_targets else None,
                         kind_filter="directive" if not non_directive_confirm_targets else None,
                         directive_status="pending" if not non_directive_confirm_targets else "draft",
+                        action_ids=confirm_action_ids,
                         content=getattr(self, "content", None),
                         registry=getattr(self, "registry", None))
                     failures = [
                         _pending_action_failure_payload(p)
                         for p in self.db.list_pending_actions(
                             int(self.state.turn), status="failed", minister_name=minister_name)
-                        if int(p["id"]) in attempted_ids
+                        if int(p["id"]) in confirm_action_ids
                     ]
                     if failures:
                         out["pending_action_failures"] = failures
             elif confirm == "拒绝":
                 self.db.drop_pending_actions_for_minister(
                     self.state.turn, minister_name,
-                    kind_filter_exclude="directive" if non_directive_confirm_targets else None)
+                    kind_filter_exclude="directive" if non_directive_confirm_targets else None,
+                    action_ids=confirm_action_ids)
             if confirm in ("应允", "拒绝"):
                 # 本轮是对暂存的确认：大臣回话已【复述】该动作(领命 prompt 所致),若继续走下面的
                 # 抽取,会把刚 commit 的动作从复述里重抽成新暂存→颁诏二次落库,或重建刚拒的动作。

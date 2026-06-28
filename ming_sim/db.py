@@ -6,6 +6,7 @@ GameDB 持有 self.content（GameContent），seed 类方法从中读人物/地�
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import math
 import re
@@ -52,6 +53,16 @@ def _has_stop_condition(stop_condition: object) -> bool:
     except (TypeError, ValueError):
         return False
     return isinstance(parsed, (dict, list)) and bool(parsed)
+
+
+def _coerce_deadline_months(raw: object, *, default: int = 0) -> int:
+    """解析密令期限；显式 0 是合法值，不能被缺省兜底吞掉。"""
+    if raw is None or raw == "":
+        return int(default)
+    try:
+        return max(0, min(int(raw), 36))
+    except (TypeError, ValueError):
+        return int(default)
 
 
 def _new_army_historically_applied(it: dict) -> bool:
@@ -6000,7 +6011,7 @@ class GameDB:
     def commit_pending_actions(
         self, state: GameState, *, content=None, registry=None, minister_name=None,
         kind_filter: Optional[str] = None, kind_filter_exclude: Optional[str] = None,
-        directive_status: str = "draft",
+        directive_status: str = "draft", action_ids: Optional[Iterable[int]] = None,
     ) -> List[Dict[str, object]]:
         """颁诏:把本回合 pending 暂存的结构化写动作批量落到真实表(不拒绝即允许),
         按 id 序(=操作发生序)apply。落得了标 committed、落不了标 failed(都不留 pending,
@@ -6009,6 +6020,7 @@ class GameDB:
         content/registry 仅 office(任免)落库需要(注册新臣 Agent);密令/后宫不需,故可选——
         探针 driver 路径无聊天暂存,传 None 即 no-op。
         minister_name 非空=对话确认当场 commit:只落该召对对象的暂存(应允即落,不波及他人);
+        action_ids 非空=进一步只落指定 pending_actions.id（召对确认只可作用于本轮开始前可见项）;
         默认 None=颁诏批量落全回合。
         kind_filter 非空=只 commit 指定 kind(如 'directive')的暂存,跳过其余 kind。
         kind_filter_exclude 非空=只 commit 该 kind 以外的暂存(召对确认应允放过 directive,BUG 1)。
@@ -6027,6 +6039,9 @@ class GameDB:
             rows = [r for r in rows if r["kind"] == kind_filter]
         if kind_filter_exclude is not None:
             rows = [r for r in rows if r["kind"] != kind_filter_exclude]
+        if action_ids is not None:
+            allowed_ids = {int(action_id) for action_id in action_ids}
+            rows = [r for r in rows if int(r["id"]) in allowed_ids]
         for pa in rows:
             try:
                 payload = json.loads(pa["payload_json"] or "{}")
@@ -6097,10 +6112,13 @@ class GameDB:
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
+        apply_state = state
+        if int(pa["turn"]) < int(state.turn):
+            apply_state = self._state_for_pending_action_turn(state, int(pa["turn"]))
         with atomic(self):
             try:
                 ok = self._apply_pending_action(
-                    state, pa, payload, content=content, registry=registry)
+                    apply_state, pa, payload, content=content, registry=registry)
             except Exception as exc:
                 tlog(f"[pending_actions] 重试落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                 ok = False
@@ -6122,6 +6140,19 @@ class GameDB:
             "target_id": pa["target_id"],
             "committed": bool(ok),
         }
+
+    @staticmethod
+    def _state_for_pending_action_turn(state: GameState, turn: int) -> GameState:
+        """给旧回合 failed 动作重试用的签发态；按月回推 year/period，metrics 共享只读。"""
+        delta = int(state.turn) - int(turn)
+        year = int(state.year)
+        period = int(state.period)
+        for _ in range(max(0, delta)):
+            period -= 1
+            if period < 1:
+                period = 12
+                year -= 1
+        return replace(state, year=year, period=period, turn=int(turn))
 
     def _commit_conversational_draft(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
@@ -6178,10 +6209,7 @@ class GameDB:
                     return False
                 tags_raw = payload.get("tags") or []
                 tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
-                try:
-                    deadline = max(0, min(int(payload.get("deadline_months") or 0), 36))
-                except (TypeError, ValueError):
-                    deadline = 0
+                deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline)
                 if registry is not None:
@@ -6200,10 +6228,7 @@ class GameDB:
                     tags=None, deadline_months=int(payload.get("deadline_months") or 0),
                 )
             if pa["action"] == "催办":
-                try:
-                    deadline = max(0, min(int(payload.get("deadline_months") or 1), 36))
-                except (TypeError, ValueError):
-                    deadline = 1
+                deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)
                 self.rush_secret_order(
                     int(oid), state, deadline_months=deadline, reason=str(payload.get("reason") or ""))
                 return True
@@ -6320,21 +6345,33 @@ class GameDB:
 
     def drop_pending_actions_for_minister(
         self, turn: int, minister_name: str, kind_filter_exclude: Optional[str] = None,
+        action_ids: Optional[Iterable[int]] = None,
     ) -> int:
         """对话确认皇帝拒绝:丢弃该召对对象本回合尚未落库的暂存动作(删 pending 行)。
         返回删除条数。只动该大臣、只动 pending(已 committed 不动)。
+        action_ids 非空=进一步只删指定 pending_actions.id（召对确认只可作用于本轮开始前可见项）。
         kind_filter_exclude 非空=不删该 kind(召对确认拒绝须放过 directive,BUG 1:拟旨搁置
         是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。"""
+        params: List[object] = [int(turn), str(minister_name)]
+        where = "turn=? AND minister_name=? AND status='pending'"
+        if action_ids is not None:
+            allowed_ids = [int(action_id) for action_id in action_ids]
+            if not allowed_ids:
+                return 0
+            placeholders = ",".join("?" for _ in allowed_ids)
+            where += f" AND id IN ({placeholders})"
+            params.extend(allowed_ids)
         if kind_filter_exclude is not None:
+            where += " AND kind<>?"
+            params.append(str(kind_filter_exclude))
             cur = self.conn.execute(
-                "DELETE FROM pending_actions "
-                "WHERE turn=? AND minister_name=? AND status='pending' AND kind<>?",
-                (int(turn), str(minister_name), str(kind_filter_exclude)),
+                f"DELETE FROM pending_actions WHERE {where}",
+                tuple(params),
             )
         else:
             cur = self.conn.execute(
-                "DELETE FROM pending_actions WHERE turn=? AND minister_name=? AND status='pending'",
-                (int(turn), str(minister_name)),
+                f"DELETE FROM pending_actions WHERE {where}",
+                tuple(params),
             )
         self.conn.commit()
         return cur.rowcount
