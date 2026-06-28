@@ -1654,13 +1654,24 @@ class GameSession:
             return 0
         if action == "任命" and not office:
             return 0
+        staged_payload = {"name": name, "office": office, "appointer": appointer.name}
+        metadata_aliases = {
+            "office_type": "官署类别",
+            "faction": "派系",
+            "reason": "理由",
+            "replaces": "腾缺",
+        }
+        for key in ("office_type", "faction", "reason", "replaces"):
+            value = str(data.get(key) or data.get(metadata_aliases[key]) or "").strip()
+            if value:
+                staged_payload[key] = value
         return self.db.stage_pending_action(
             self.state.turn,
             kind="office",
             action=action,
             minister_name=appointer.name,
             target_id=None,
-            payload={"name": name, "office": office, "appointer": appointer.name},
+            payload=staged_payload,
         )
 
     def _apply_unlisted_person_registration(self, payload: str) -> Tuple[str, bool]:

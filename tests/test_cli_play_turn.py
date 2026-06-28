@@ -360,6 +360,21 @@ def test_terminal_minister_chat_can_retry_failed_secret_order(monkeypatch, capsy
     assert "密令 #42 已重试落库" in capsys.readouterr().out
 
 
+def test_terminal_failure_printer_preserves_zero_id(capsys):
+    """失败 id 为 0 时也按显式 id 打印，不用 truthiness 掉成 retry <id>。"""
+    term._print_pending_action_failures([{
+        "id": 0,
+        "kind": "secret_order",
+        "action": "新建",
+        "message": "密令落库失败。",
+        "retryable": True,
+    }])
+
+    out = capsys.readouterr().out
+    assert "【密令落库失败 #0】" in out
+    assert "retry 0" in out
+
+
 @pytest.mark.parametrize("action", ["skip", "issue"])
 def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, capsys, action):
     """#415: 退朝默认提交密令失败时，CLI 也必须给出失败 id 与 retry 命令。"""

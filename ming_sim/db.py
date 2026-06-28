@@ -6094,7 +6094,8 @@ class GameDB:
                     self.conn.execute(f"RELEASE {savepoint}")
                 # 逐条提交状态:_apply 内部 commit 在 atomic 内会被暂停，真实表改动与状态标记
                 # 同事务落定；否则崩在循环中途会让"真实表已改但状态未 committed"→重跑重复落库。
-                self.conn.commit()
+                if owns_transaction:
+                    self.conn.commit()
             if ok:
                 applied.append({"id": pa["id"], "kind": pa["kind"], "action": pa["action"],
                                 "target_id": pa["target_id"]})
@@ -6328,9 +6329,12 @@ class GameDB:
                 return bool(appointed)
             # 朝臣任命/升迁/调任 → 唯一落地核(在册激活授官 / 不在册建档 / dead 拒 / 空 office 拒)。
             from ming_sim.issues import apply_office_appointment
+            faction = str(payload.get("faction") or "中立").strip() or "中立"
+            reason = str(payload.get("reason") or "奉旨任免").strip() or "奉旨任免"
+            office_type = str(payload.get("office_type") or "").strip()
             res = apply_office_appointment(
                 self, state, content, registry, name, office,
-                reason="奉旨任免", llm_config=self.llm_config)
+                reason=reason, new_office_type=office_type, faction=faction, llm_config=self.llm_config)
             return not res.get("rejected")
         if pa["action"] == "罢免":
             # 仅大明【在职】大臣可罢:_find_existing_minister 已 ming-guard + 解 alias;
