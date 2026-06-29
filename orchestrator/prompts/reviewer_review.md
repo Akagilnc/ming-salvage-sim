@@ -10,8 +10,6 @@ Then follow that soul and the worktree's `CLAUDE.md`. The runner only schedules
 you; review method and input handling belong to the baked soul plus runner
 parameters.
 
-Do not use `.orchestrator-snapshot.json` as execution input.
-
 ## Required output
 
 When you are done (or are escalating), emit EXACTLY ONE `<review>` tag on its
