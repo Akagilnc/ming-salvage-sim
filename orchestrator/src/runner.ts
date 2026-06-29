@@ -1,36 +1,20 @@
 /**
- * runOrchestrator — the runner loop (ADR 0018, corrected by ADR 0026 2026-06-24).
+ * runOrchestrator — the runner loop (ADR 0018, corrected by ADR 0030).
  *
  * The runner drives the fixed single-slice sequence itself: it performs each
  * runner-action step or dispatches each worker step, writes a step-ledger
  * entry, then calls route() to pick the next step. The agent never decides
  * the next step — route() does.
  *
- * ⚠️ PRE-0030 (about to be reversed — see ADR 0030, Proposed): ADR 0030 re-splits
- * the per-slice review→fix→re-review loop back to runner-dispatched worker steps;
- * the S2-only collapse below will be reinstated as runner edges when ADR 0030 lands
- * (#369/#422). Until then the ADR-0026 STRUCTURE below is the current sequence —
- * EXCEPT the per-slice REVIEW specifics in it (a fresh Opus pass) are already
- * further superseded by the current Claude-paused policy: per CLAUDE.md
- * "## Skill routing" + souls/coder.md, the per-slice 2nd review is a single
- * NON-Claude (Codex) leg, NOT Opus. Do NOT re-invoke Opus per the comment below
- * under the Claude-paused pipeline (would fail/divert slice review when Claude is tight).
+ * ADR 0030: the single-slice runner owns the visible per-slice review/fix loop:
  *
- * ADR 0026 (2026-06-24 correction, wiki line 42): the single-slice runner is a
- * PURE SCHEDULER. The per-slice review→fix→re-review LOOP no longer lives at the
- * runner level. The sequence collapses to:
+ *   S0(gate) → S1(context) → S2(implement) → S3(review) → S4(classify)
+ *     clean/deferred only → S7(ship) → S8(handoff)
+ *     blocking → S5(fix) → S6(fresh full-diff review) → S4(classify)
  *
- *   S0(gate) → S1(context) → S2(whole-slice build) → S7(ship) → S8(handoff)
- *
- * S2 is ONE memory-bearing build worker that runs the ENTIRE per-slice sequence
- * INTERNALLY (invoke `/tdd`; typecheck + full suite; builtin `/review` + the
- * self-check 二连; baseline commit; a SECOND review — one fresh Opus subagent, the
- * degraded per-slice cmr, NOT the full cross-model `/ak-cross-m-review` (that gate
- * is family-layer only) — looped to concurrence; return the FINAL reviewed commit). The runner dispatches it ONCE and reads its
- * terminal verdict — there is NO runner-level reviewer step (S3/S6), NO fix step
- * (S5), NO route fan-out (S4), and therefore NO runner fix-loop and NO
- * no-progress stuck guard. The grade/fix/drift discipline lives in the versioned
- * skills, never in the runner.
+ * S2/S5 are coder workers. S3/S6 are fresh read-only reviewer workers. S4 is a
+ * runner-action classification boundary so findings and per-round outcomes are
+ * visible in ledger state instead of hidden inside a coder session.
  *
  * Slice #249: persisted step ledger — every step is written via
  *   backend.writeLedger() to the sibling state dir (outside the worktree).
@@ -51,6 +35,7 @@
  */
 
 import { route } from "./route.js";
+import { classifyFindings, findingIdentityKey } from "./findings.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
 // dispatches EVERY worker step (S2 build, S7 ship) through ONE free function
 // instead of reaching for runStep/resumeSession/push directly.
@@ -286,6 +271,16 @@ function lastNonTerminalStep(
   return undefined;
 }
 
+function lastReviewerOutput(
+  ledger: ReadonlyArray<LedgerEntry>,
+): StepOutput | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const output = ledger[i]?.output;
+    if (output?.kind === "reviewer") return output;
+  }
+  return undefined;
+}
+
 /**
  * Derive the resume plan from a persisted ledger.
  *
@@ -351,11 +346,9 @@ function planResume(
     // step): we are re-opening that step, so the prior boundary is superseded.
     // The slice is EXCLUSIVE of the escalated step itself — it is re-run via
     // resumeSession and gets a fresh in-memory entry, so keeping the old one
-    // here would duplicate it. The only agent step now is S2 (the whole-slice
-    // build worker); when it escalated and a human has answered, resume it in
-    // its original memory-bearing session so the build continues from where it
-    // stopped (ADR 0026: S2 is one memory-bearing session). There is no reviewer
-    // step to walk back to — the per-slice loop lives INSIDE the S2 session.
+    // here would duplicate it. ADR 0030 has multiple agent steps (S2/S3/S5/S6);
+    // whichever one escalated is resumed in its recorded session after the human
+    // answer, while normal review/fix rounds stay fresh dispatches.
     const escalatedIdx = ledger.lastIndexOf(agentEntry);
     const priorLedger = ledger.slice(0, escalatedIdx);
     return {
@@ -459,17 +452,14 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
   "typescript",
 ] as const;
 
+const MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS = 2;
+
 /**
- * The fixed StepSpec for the single agent step (ADR 0026 2026-06-24). Versioned
- * promptFiles, never assembled inline (ADR 0018 决定#4).
+ * The fixed StepSpecs for single-slice worker steps. Versioned promptFiles,
+ * never assembled inline (ADR 0018 决定#4).
  *
- * Under the corrected ADR 0026 the only agent step is S2 — the WHOLE-SLICE BUILD
- * worker. It runs the entire per-slice sequence (invoke `/tdd`; typecheck + full
- * suite; `/review` + the self-check 二连; baseline commit; `/ak-cross-m-review
- * --scenario per-slice` to concurrence; return the FINAL reviewed commit) inside
- * its ONE memory-bearing session. There is NO runner-level reviewer step (S3/S6)
- * and NO fix step (S5) — the per-slice review→fix→re-review loop runs INSIDE the
- * skills the worker invokes, never at the runner level.
+ * ADR 0030 makes the per-slice loop runner-visible: S2 implements, S3 reviews,
+ * S5 fixes blocking findings, and S6 performs the fresh full-diff re-review.
  *
  * #253 fields: model (CLI slug), completionSignal (Sandcastle run() API), maxIter
  * (the WITHIN-STEP Ralph retry budget — NOT a fix-loop give-up counter), soul,
@@ -497,7 +487,7 @@ export function coderModel(): string {
   return process.env.ORCHESTRATOR_CODER_MODEL?.trim() || "gpt-5.5";
 }
 
-export const STEP_SPECS: Readonly<Record<"S2", StepSpec>> = {
+export const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
   S2: {
     id: "S2",
     role: "coder",
@@ -512,6 +502,36 @@ export const STEP_SPECS: Readonly<Record<"S2", StepSpec>> = {
     soul: "coder",
     toolchain: IMAGE_TOOLCHAIN,
   },
+  S3: {
+    id: "S3",
+    role: "reviewer",
+    promptFile: "reviewer_review.md",
+    model: process.env.ORCHESTRATOR_REVIEWER_MODEL?.trim() || "gpt-5.5",
+    completionSignal: "REVIEWER_STEP_COMPLETE",
+    maxIter: 1,
+    soul: "READ-ONLY",
+    toolchain: IMAGE_TOOLCHAIN,
+  },
+  S5: {
+    id: "S5",
+    role: "coder",
+    promptFile: "coder_fix.md",
+    model: coderModel(),
+    completionSignal: "CODER_STEP_COMPLETE",
+    maxIter: 5,
+    soul: "coder",
+    toolchain: IMAGE_TOOLCHAIN,
+  },
+  S6: {
+    id: "S6",
+    role: "reviewer",
+    promptFile: "reviewer_review.md",
+    model: process.env.ORCHESTRATOR_REVIEWER_MODEL?.trim() || "gpt-5.5",
+    completionSignal: "REVIEWER_STEP_COMPLETE",
+    maxIter: 1,
+    soul: "READ-ONLY",
+    toolchain: IMAGE_TOOLCHAIN,
+  },
 };
 
 /**
@@ -519,8 +539,8 @@ export const STEP_SPECS: Readonly<Record<"S2", StepSpec>> = {
  * (e.g. 0-commit). Backend-throw errors use the caught message directly.
  */
 function buildErrorReason(step: StepId, output: StepOutput | undefined): string {
-  if (step === "S2" && output?.kind === "coder" && !output.committed) {
-    return "build worker produced no commits (committed:false) — nothing to ship";
+  if ((step === "S2" || step === "S5") && output?.kind === "coder" && !output.committed) {
+    return `${step} coder worker produced no commits (committed:false)`;
   }
   return `step ${step} routed to error handoff`;
 }
@@ -532,6 +552,21 @@ function describeOutput(output: StepOutput | undefined): string {
   if (typeof output !== "object") return String(output);
   const kind = (output as { kind?: unknown }).kind;
   return `object with kind=${JSON.stringify(kind)}`;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function isReviewerStructuredOutputError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return (
+    err.name === "ZodError" ||
+    err.name === "StructuredOutputError" ||
+    /StructuredOutputError|structured output|missing <review>|<review>|ZodError/i.test(
+      err.message,
+    )
+  );
 }
 
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
@@ -553,6 +588,31 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // Collected at S4: reviewer findings with action:'defer' (PRD #244 US#25).
   // Surfaced in RunResult.deferredFindings so the caller can act on them.
   let deferredFindings: Finding[] = [];
+  let pendingBlockingFindings: Finding[] = [];
+  let pendingBlockingFindingIdentityKeys: string[] = [];
+
+  function seedClassificationFromReviewerOutput(
+    reviewerOutput: StepOutput | undefined,
+  ): void {
+    if (reviewerOutput?.kind !== "reviewer") return;
+    const classification = classifyFindings(reviewerOutput.findings);
+    const blockingKeys = new Set(classification.blockingIdentityKeys);
+    deferredFindings = deferredFindings.filter(
+      (finding) => !blockingKeys.has(findingIdentityKey(finding)),
+    );
+    const deferredKeys = new Set(deferredFindings.map(findingIdentityKey));
+    for (const finding of classification.deferred) {
+      const key = findingIdentityKey(finding);
+      if (!deferredKeys.has(key)) {
+        deferredFindings.push(finding);
+        deferredKeys.add(key);
+      }
+    }
+    pendingBlockingFindings = [...classification.blocking];
+    pendingBlockingFindingIdentityKeys = [
+      ...classification.blockingIdentityKeys,
+    ];
+  }
 
   // ── #249: per-run session id + sibling state dir ──────────────────────────
   // sessionId: a stable identifier for this orchestrator invocation.
@@ -846,13 +906,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // The runner drives the sequence; the agent never picks the next step.
   let step: StepId = "S0";
 
-  // ── ADR 0026: NO runner fix-loop, NO no-progress stuck guard ───────────────
-  // The per-slice review→fix→re-review loop runs INSIDE the S2 build worker's own
-  // memory-bearing session (via `/tdd` + `/ak-cross-m-review --scenario
-  // per-slice`); the worker only returns when its per-slice cmr has converged or
-  // it escalates. The runner dispatches S2 ONCE and reads its terminal verdict,
-  // so there is no runner-level round to count and no no-progress detector here
-  // (the skill owns convergence/termination — US#18: never "数到 N 就停").
+  // ── ADR 0030: runner-visible review/fix loop, no blind round cap ───────────
+  // The runner dispatches S2/S3/S5/S6 as separate ledger-visible worker
+  // boundaries. S4 classifies reviewer findings and routes to S5 while blocking
+  // work remains, but there is no fixed "count to N and stop" convergence cap:
+  // only structured worker outputs or explicit escalations decide progress.
 
   // ── #255: idempotent resume from the recorded breakpoint ───────────────────
   // When set, the next dispatch of `resumeFor.step` must use the original agent
@@ -873,10 +931,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
-    // ADR 0026: there is no runner-level reviewer step, so a resume never has a
-    // reviewer output to rebuild a defer list from — the per-slice cmr (with its
-    // defer→issue discipline) ran INSIDE the S2 build worker. The defer list the
-    // single-slice runner surfaces is always empty.
+    // ADR 0030: if the prior run already persisted S4, resume can jump straight
+    // to S5/S7. Rebuild the S4 classification state from the persisted reviewer
+    // output so S5 receives the blocking findings and S7 reports defers.
+    if (
+      plan.resumeStep === "S5" ||
+      plan.resumeStep === "S7" ||
+      plan.resumeStep === "S8"
+    ) {
+      const reviewerOutput = lastReviewerOutput(plan.priorLedger) ?? lastOutput;
+      seedClassificationFromReviewerOutput(reviewerOutput);
+    }
 
     if (plan.terminalStatus !== undefined) {
       // The prior run already reached a terminal handoff that is NOT being
@@ -920,10 +985,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return await errorTermination(plan.resumeStep, err);
     }
 
-    // ADR 0026: no runner fix-loop ⇒ no no-progress guard state to reconstruct.
-    // The per-slice convergence loop lives inside the S2 worker's session, so a
-    // resume just continues from the recorded breakpoint (re-dispatch S2 fresh on
-    // a crash, or escalate-resume S2 in its original session when a human answered).
+    // ADR 0030: resume continues from the recorded runner-visible boundary. If
+    // that boundary follows S4, the classification state was rebuilt above from
+    // the persisted reviewer output.
 
     // Continue from the recorded breakpoint.
     step = plan.resumeStep;
@@ -933,9 +997,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   }
 
   // The step machine has no fixed bound: route() always terminates the run via a
-  // handoff (success/escalate/error). The per-slice review→fix→re-review loop runs
-  // INSIDE the S2 worker (ADR 0026), so there is no runner-level round to count —
-  // a `for (;;)` makes the absence of any "数到 N 就停" cap explicit (US#18).
+  // handoff (success/escalate/error). ADR 0030 makes the per-slice review/fix
+  // loop visible in S3/S4/S5/S6, but still rejects a blind round cap; a `for (;;)`
+  // keeps the absence of any "数到 N 就停" cap explicit (US#18).
   for (;;) {
     let output: StepOutput | undefined;
     // promptFile for the current step (agent steps only; undefined for runner actions).
@@ -1062,117 +1126,155 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         break;
       }
 
-      case "S2": {
-        // S2 whole-slice BUILD — the single agent step (ADR 0026 2026-06-24).
-        // ONE memory-bearing coder worker that runs the ENTIRE per-slice sequence
-        // INTERNALLY: invoke `/tdd` (red→green→refactor) → typecheck + full suite
-        // → `/review` + the self-check 二连 → baseline commit → `/ak-cross-m-review
-        // --scenario per-slice` to concurrence → return the FINAL reviewed commit.
-        // The runner dispatches it ONCE; the per-slice review→fix→re-review loop
-        // lives INSIDE the worker's session (the skills own it). There is no runner
-        // reviewer/fix step and no runner fix-loop.
+      case "S2":
+      case "S3":
+      case "S5":
+      case "S6": {
+        // ADR 0030 productive steps:
+        //   S2 coder implement, S3 fresh read-only review, S5 coder fix,
+        //   S6 fresh read-only full-diff re-review.
+        // Normal fix rounds are fresh runStep dispatches (git-truthing kept),
+        // never resumeSession. resumeSession is only the crash/escalate resume
+        // path when `resumeFor` carries a recorded session id.
         if (worktree === undefined) {
-          // Programming error: the runner sequenced wrong.
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
         promptFile = STEP_SPECS[step].promptFile;
+        const expectedKind = STEP_SPECS[step].role;
         try {
-          // ADR 0026 / #331: dispatch the build worker through the UNIFIED seam.
-          // The runner hands a WorkerSpec (skill / fresh|resume / soul, derived
-          // from the fixed StepSpec) + a DispatchContext (worktree, the resumed
-          // session id) to dispatchWorker, and routes by the discriminated
-          // WorkerResult. No fix_now findings are threaded — the per-slice cmr runs
-          // inside the worker, so the runner never hands findings to a fix step.
-          //
-          // Escalate-resume (#255): when resuming S2 in its original
-          // memory-bearing session (a human answered an escalation), thread the
-          // recorded sessionId into the DispatchContext (session:"resume" worker).
-          // Crash-resume re-dispatches S2 FRESH (brand-new work) → no
-          // resumeSessionId. resumeFor is consumed once, then cleared.
           let resumeSessionId: string | undefined;
           if (resumeFor !== undefined && resumeFor.step === step) {
             resumeSessionId = resumeFor.sessionId;
             resumeFor = undefined;
           }
-          // The dispatch mode is `resume` ONLY when actually threading a recorded
-          // sessionId (the crash/escalate-resume path); a normal S2 build is
-          // `fresh` (ADR 0026 — a normal build keeps git-truthing, never the
-          // resume path). Context retention is a SEPARATE spec field.
-          const result = await dispatchWorker(
-            backend,
-            stepSpecToWorkerSpec(
-              STEP_SPECS[step],
-              resumeSessionId !== undefined ? "resume" : "fresh",
-            ),
-            {
-              worktree,
-              ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
-            },
-          );
-          // Unwrap the discriminated WorkerResult into the StepOutput the existing
-          // #256/route/validate flow consumes (workerResultToStep):
-          //   - completed → the structured output (+ real per-step sessionId);
-          //   - escalated → a coder output carrying the escalate, so route() takes
-          //     the GLOBAL escalate edge → S8(escalate) (NOT swallowed as an error
-          //     — the ADR 0018 escalate semantics are preserved);
-          //   - failed / malformed → undefined output + a reason → S8(error).
-          const { unwrapped, reason } = workerResultToStep(result, "coder");
-          if (unwrapped === undefined) {
-            return await errorTermination(
-              step,
-              new Error(
-                `worker ${step} returned ${result.kind}: ${reason ?? "no reason"}`,
-              ),
-            );
+
+          let attempts = 0;
+          for (;;) {
+            attempts += 1;
+            let result: Awaited<ReturnType<typeof dispatchWorker>>;
+            try {
+              result = await dispatchWorker(
+                backend,
+                stepSpecToWorkerSpec(
+                  STEP_SPECS[step],
+                  resumeSessionId !== undefined ? "resume" : "fresh",
+                ),
+                {
+                  worktree,
+                  stateDir,
+                  ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
+                  ...(step === "S5"
+                    ? {
+                        blockingFindings: pendingBlockingFindings,
+                        blockingFindingIdentityKeys:
+                          pendingBlockingFindingIdentityKeys,
+                      }
+                    : {}),
+                },
+              );
+            } catch (err) {
+              if (
+                expectedKind === "reviewer" &&
+                isReviewerStructuredOutputError(err) &&
+                attempts < MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS
+              ) {
+                resumeSessionId = undefined;
+                continue;
+              }
+              if (
+                expectedKind === "reviewer" &&
+                isReviewerStructuredOutputError(err)
+              ) {
+                output = {
+                  kind: "reviewer",
+                  findings: [],
+                  escalate: {
+                    reason: "reviewer output remained invalid after bounded reruns",
+                    diagnosis:
+                      `step ${step} failed to produce valid reviewer output ` +
+                      `${attempts} times; last error: ${errorMessage(err)}`,
+                  },
+                };
+                stepSessionId = undefined;
+                break;
+              }
+              throw err;
+            }
+            const { unwrapped, reason } = workerResultToStep(result, expectedKind);
+            const retryableReviewerFailure =
+              expectedKind === "reviewer" &&
+              (unwrapped === undefined ||
+                !isValidStepOutput(
+                  "output" in (unwrapped ?? {}) && !("kind" in (unwrapped ?? {}))
+                    ? (unwrapped as { output: StepOutput }).output
+                    : (unwrapped as StepOutput | undefined),
+                  "reviewer",
+                ));
+
+            if (retryableReviewerFailure) {
+              if (attempts < MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS) {
+                resumeSessionId = undefined;
+                continue;
+              }
+              output = {
+                kind: "reviewer",
+                findings: [],
+                escalate: {
+                  reason: "reviewer output remained invalid after bounded reruns",
+                  diagnosis:
+                    `step ${step} produced invalid reviewer output ${attempts} times; ` +
+                    "runner stopped instead of retrying indefinitely",
+                },
+              };
+              stepSessionId =
+                result.kind === "completed" || result.kind === "escalated"
+                  ? result.sessionId
+                  : undefined;
+              break;
+            }
+
+            if (unwrapped === undefined) {
+              return await errorTermination(
+                step,
+                new Error(
+                  `worker ${step} returned ${result.kind}: ${reason ?? "no reason"}`,
+                ),
+              );
+            }
+            const normalized =
+              "output" in unwrapped && !("kind" in unwrapped)
+                ? { output: unwrapped.output, sessionId: unwrapped.sessionId }
+                : { output: unwrapped as StepOutput, sessionId: undefined };
+            output = normalized.output;
+            stepSessionId = normalized.sessionId;
+            break;
           }
-          const normalized =
-            "output" in unwrapped && !("kind" in unwrapped)
-              ? { output: unwrapped.output, sessionId: unwrapped.sessionId }
-              : { output: unwrapped as StepOutput, sessionId: undefined };
-          output = normalized.output;
-          stepSessionId = normalized.sessionId;
         } catch (err) {
           return await errorTermination(step, err);
         }
-        // ── escalate precedence (integ-cmr base r1, F2) ───────────────────
-        // escalate is the GLOBAL stop edge (ADR 0018 / PRD route table:
-        // "checked FIRST"). The build worker can get stuck mid-work and emit a
-        // VALID escalate while its happy-path schema is incomplete (coder missing
-        // committed). The full role-schema check (isValidStepOutput) below would
-        // judge that false → S8(error) and SWALLOW the escalate diagnosis. So if
-        // the output carries a VALID escalate, hand it straight to route() (which
-        // takes the escalate edge) WITHOUT demanding the rest of the happy-path
-        // schema. A NON-NULL but MALFORMED escalate is itself a contract violation
-        // — route()'s escalate edge maps it to S8(error) (F1); we let it through
-        // to route() unchanged (do NOT also fail it on the role schema).
+
         const stepEscalate = escalateOf(output);
         const carriesEscalate = stepEscalate != null;
         if (!carriesEscalate) {
-          // #5 + integ-cmr base r2 (B): only when there is NO escalate does the
-          // output have to satisfy the full coder contract — not just kind. The
-          // build worker must yield a CONSISTENT {committed, commitsAdded}
-          // (B: committed=true⇒≥1, false⇒0, non-negative integer). A wrong-kind /
-          // undefined / garbage output or an inconsistent commitsAdded is a
-          // contract violation — report S8(error) rather than route it. Runner and
-          // route() share one guard (validate.ts).
-          if (!isValidStepOutput(output, "coder")) {
+          if (!isValidStepOutput(output, expectedKind)) {
             return await errorTermination(
               step,
               new Error(
-                `${step}: step output does not match the coder contract ` +
-                  `(expected kind:'coder'). Got: ${describeOutput(output)}. ` +
-                  `Refusing to route a malformed build output.`,
+                `${step}: step output does not match the ${expectedKind} contract. ` +
+                  `Got: ${describeOutput(output)}. Refusing to route malformed output.`,
               ),
             );
           }
         } else if (!isValidEscalation(stepEscalate)) {
-          // Carries a non-null but malformed escalate: do not run the role
-          // schema (so attribution lands on the escalate edge). route() will
-          // map it to S8(error) (F1). Still record it as the in-flight output.
           lastOutput = output;
           break;
         }
         lastOutput = output;
+        break;
+      }
+
+      case "S4": {
+        seedClassificationFromReviewerOutput(lastOutput);
         break;
       }
 
@@ -1319,11 +1421,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
 
     // The runner — not the agent — decides the next step.
-    // ADR 0026: there is NO runner-level no-progress stuck guard here. The
-    // per-slice review→fix→re-review loop runs INSIDE the S2 build worker's
-    // session (the `/ak-cross-m-review --scenario per-slice` skill owns
-    // convergence/termination/drift); the runner dispatches S2 once and reads its
-    // terminal verdict, so there is no runner round to count (US#18).
+    // The runner owns the review/fix loop, but termination is still not a blind
+    // "count rounds then give up" rule. Only malformed reviewer outputs have a
+    // bounded rerun budget; substantive convergence is driven by fresh reviewer
+    // findings and explicit escalation.
     const decision = route({ from: step, output: lastOutput });
 
     if (decision.kind === "handoff") {

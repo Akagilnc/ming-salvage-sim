@@ -1,5 +1,5 @@
 /**
- * #337 — the收口 slice: prove the runner is a PURE SCHEDULER (ADR 0026).
+ * #337/#369 — prove the runner is a PURE SCHEDULER with ADR 0030 role boundaries.
  *
  * After #331–#336 every productive wiki step (coder/ship, plus family cmr/ship) is a
  * WORKER dispatched through the single `dispatchWorker` seam, and the runner
@@ -14,14 +14,12 @@
  *       legacy methods all THROW still runs end-to-end (so the only path that
  *       produced work was `dispatchWorker`).
  *
- *   (B) coder worker — the S2 whole-slice worker owns build + per-slice
- *       review/fix convergence. The runner does not dispatch S3/S5/S6 fix or
- *       reviewer loops.
+ *   (B) coder/reviewer/fix workers — S2, S3, S5, and S6 are separate
+ *       runner-visible worker dispatches.
  *
- *   (C) review-decomposition (#334 deferred P2) — per-slice review lives inside
- *       the coder worker; the compatibility reviewer soul is read-only and never
- *       runs the integrated `ak-cross-m-review` worker. The full cross-model cmr
- *       is a separate family-layer worker.
+ *   (C) review-decomposition — per-slice review is read-only and full-diff; it
+ *       never runs the integrated `ak-cross-m-review` worker. The full
+ *       cross-model cmr is a separate family-layer worker.
  */
 
 import { dirname, join } from "node:path";
@@ -161,12 +159,13 @@ describe("#337 runner is a pure scheduler — no inline productive work (BEHAVIO
     const result = await runOrchestrator({ issueNumber: 337, backend });
     // Reached S8(success) without ever touching a throwing legacy method.
     expect(result.status).toBe("success");
-    // ADR 0026: every productive step is a worker dispatch through the single
-    // seam, and the runner dispatches exactly the whole-slice build coder (S2,
-    // which runs its own per-slice review→fix→cmr loop INSIDE the worker) then the
-    // ship worker (S7) — no runner-driven reviewer/fix steps.
+    // ADR 0030: every productive step is a worker dispatch through the single
+    // seam, and the review/fix loop is visible at runner boundaries.
     expect(backend.dispatched).toEqual([
       "S2:coder:/tdd",
+      "S3:reviewer:/review",
+      "S5:coder:/tdd",
+      "S6:reviewer:/review",
       "S7:ship:gstack-ship",
     ]);
   });
@@ -175,18 +174,13 @@ describe("#337 runner is a pure scheduler — no inline productive work (BEHAVIO
 // ─── (B) the build step is a WORKER (dispatched, not inlined) — and dispatched ──
 //     exactly ONCE: the fix loop is INSIDE the worker, not a runner re-dispatch.
 
-describe("#337 the build step is one worker the runner dispatches, then ship", () => {
-  it("the S2 build worker invokes /tdd and is the only agent dispatch (no runner fix re-dispatch)", async () => {
+describe("#337 runner-visible per-slice review/fix worker dispatch", () => {
+  it("dispatches S2 implementation and S5 fix as separate coder workers", async () => {
     const backend = new SeamOnlyBackend();
     await runOrchestrator({ issueNumber: 337, backend });
     const coderDispatches = backend.specs.filter((s) => s.kind === "coder");
-    // Exactly ONE coder dispatch — the runner never re-dispatches a fix worker
-    // (ADR 0026: the per-slice review→fix→re-review loop lives INSIDE the S2
-    // worker, so the runner sees a single coder dispatch).
-    expect(coderDispatches).toHaveLength(1);
-    const s2 = coderDispatches[0];
-    expect(s2.id).toBe("S2");
-    expect(s2.skill).toBe("/tdd");
+    expect(coderDispatches.map((s) => s.id)).toEqual(["S2", "S5"]);
+    expect(coderDispatches.map((s) => s.skill)).toEqual(["/tdd", "/tdd"]);
   });
 
   it("the build worker spec carries the iterative maxIter (>1) and retains context (it owns the loop)", async () => {
@@ -210,18 +204,18 @@ describe("#337 the build step is one worker the runner dispatches, then ship", (
 
 // ─── (C) review-decomposition wording aligned (#334 deferred P2) ─────────────
 
-describe("#337 review-decomposition wording: coder owns per-slice review, integrated = ak-cross-m-review", () => {
+describe("#337 review-decomposition wording: runner owns per-slice review, integrated = ak-cross-m-review", () => {
   const reviewerSoul = readFileSync(join(soulsDir, "reviewer.md"), "utf8");
   const claudeMd = readFileSync(join(repoRoot, "CLAUDE.md"), "utf8");
-  // The repo-root CLAUDE.md ## Skill routing previously implied a separate
-  // per-slice reviewer path; current flow keeps that loop inside the coder.
+  // ADR 0030: the repo-root CLAUDE.md ## Skill routing now exposes the separate
+  // per-slice reviewer path, while integrated CMR remains family-layer.
   const skillRouting = claudeMd.slice(claudeMd.indexOf("## Skill routing"));
 
-  it("the reviewer soul is compatibility-only, not the normal per-slice loop owner", () => {
-    expect(reviewerSoul).toMatch(/compatibility/i);
-    expect(reviewerSoul).toMatch(/per-slice review lives inside the coder worker/i);
-    expect(reviewerSoul).not.toMatch(/two review passes, both run/i);
-    expect(reviewerSoul).not.toMatch(/two passes, both/i);
+  it("the reviewer soul is the live read-only full-diff reviewer", () => {
+    expect(reviewerSoul).toMatch(/READ-ONLY/);
+    expect(reviewerSoul).toMatch(/current full slice diff/i);
+    expect(reviewerSoul).toMatch(/fresh\s+full-diff re-review/i);
+    expect(reviewerSoul).not.toMatch(/per-slice review lives inside the coder worker/i);
   });
 
   it("the reviewer soul routes the compatibility reviewer to a single-vendor review", () => {
@@ -241,8 +235,8 @@ describe("#337 review-decomposition wording: coder owns per-slice review, integr
 
   it("the CLAUDE.md ## Skill routing keeps per-slice review inside coder and integrated cmr separate", () => {
     expect(skillRouting).toMatch(/\/review/);
-    expect(skillRouting).toMatch(/whole-slice coder worker's OWN/i);
-    expect(skillRouting).toMatch(/no separate reviewer worker/i);
+    expect(skillRouting).toMatch(/runner/i);
+    expect(skillRouting).toMatch(/reviewer/i);
     expect(skillRouting).toMatch(/ak-cross-m-review/);
   });
 });

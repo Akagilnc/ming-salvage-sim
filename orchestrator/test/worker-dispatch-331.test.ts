@@ -125,17 +125,15 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     expect(backend.pushCount).toBe(0);
   });
 
-  it("dispatches the worker SEQUENCE S2→S7 with the right kind/role/session/retention/skill", async () => {
+  it("dispatches the worker SEQUENCE S2→S3→S7 with the right kind/role/session/retention/skill", async () => {
     const backend = new DispatchBackend();
     await runOrchestrator({ issueNumber: 331, backend });
 
-    // ADR 0026: the runner is a pure scheduler — it dispatches exactly the
-    // whole-slice build coder (S2, which runs its own per-slice review→fix→cmr
-    // loop INSIDE the worker) then the ship worker (S7). No runner-driven
-    // reviewer / fix steps (S3/S4/S5/S6 are deleted). session is `fresh` on the
-    // normal path; contextRetention is `retain` for the coder, `clean` for ship.
+    // ADR 0030: implementation and review are separate runner-visible workers.
+    // The reviewer is fresh/clean; a clean review goes directly through S4 to S7.
     expect(backend.dispatched).toEqual([
       "S2:coder:coder:fresh:retain:/tdd",
+      "S3:reviewer:reviewer:fresh:clean:/review",
       "S7:ship:coder:fresh:clean:gstack-ship",
     ]);
   });
@@ -146,6 +144,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
 
     const byId = Object.fromEntries(backend.specs.map((s) => [s.id, s]));
     expect(byId.S2.promptFile).toBe("coder_implement.md");
+    expect(byId.S3.promptFile).toBe("reviewer_review.md");
     expect(byId.S7.promptFile).toBe("ship.md");
   });
 

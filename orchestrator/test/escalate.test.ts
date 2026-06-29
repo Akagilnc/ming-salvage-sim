@@ -40,14 +40,7 @@ const WORKTREE: WorktreeHandle = {
 /**
  * Configurable fake Backend.  `runStepOutputs` is a map from StepId → the
  * StepOutput that call should return.  Any unspecified step falls back to a
- * sane default (coder committed:true).
- *
- * ADR 0026 (2026-06-24): the single-slice runner is a PURE SCHEDULER. The only
- * agent step is S2 — the WHOLE-SLICE BUILD coder. There is NO runner-level
- * reviewer step (S3/S6), NO fix step (S5), NO route fan-out (S4) — the per-slice
- * review→fix→re-review loop lives INSIDE the S2 worker's session. So this fake
- * only ever returns a coder output (S2 is the sole dispatched agent step), and
- * the escalate edge is exercised entirely on the S2 build worker's output.
+ * sane default (coder committed:true, reviewer clean).
  */
 class ConfigurableBackend implements Backend {
   readonly calls: string[] = [];
@@ -101,7 +94,10 @@ class ConfigurableBackend implements Backend {
     const override = this.runStepOutputs.get(spec.id);
     if (override !== undefined) return override;
 
-    // Default output: the S2 build worker committed a reviewed slice.
+    if (spec.role === "reviewer") {
+      return { kind: "reviewer", findings: [] };
+    }
+    // Default output: the coder worker committed.
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
 

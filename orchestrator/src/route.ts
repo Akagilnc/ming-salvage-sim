@@ -1,36 +1,22 @@
 /**
- * route() — the runner's deterministic decision function (ADR 0018 §1, ADR 0026).
+ * route() — the runner's deterministic decision function (ADR 0018 §1, ADR 0030).
  *
  * The next step is decided HERE by the runner, never by the agent. route()
  * consumes the structured step output and returns the next StepId. This is the
  * state-machine edge table from PRD #244's contract layer.
  *
- * ⚠️ PRE-0030 (about to be reversed — see ADR 0030, Proposed): ADR 0030 re-splits
- * the per-slice review→fix→re-review loop back to runner-dispatched coder/reviewer/
- * fix worker steps; the S2-only collapse below (and the "S3/S5/S6 deleted" claim)
- * will be reinstated as runner edges when ADR 0030 lands (#369/#422). Until then the
- * ADR-0026 edge table below is the current sequence — EXCEPT the per-slice REVIEW
- * specifics (a fresh Opus pass) are already further superseded by the current
- * Claude-paused policy: per CLAUDE.md "## Skill routing" + souls/coder.md the
- * per-slice 2nd review is a single NON-Claude (Codex) leg, NOT Opus. Don't re-invoke
- * Opus per the comment below under the Claude-paused pipeline.
+ * ADR 0030 re-splits per-slice review/fix convergence into runner-visible
+ * worker boundaries:
  *
- * ADR 0026 (2026-06-24 correction, wiki line 42): the single-slice runner is a
- * PURE SCHEDULER and the per-slice review→fix→re-review LOOP no longer lives at
- * the runner level. The edge table collapses to:
+ *   S0→S1→S2(implement)→S3(review)→S4(classify)
+ *     clean/deferred only → S7(ship)→S8(success)
+ *     blocking → S5(fix)→S6(fresh full-diff review)→S4
  *
- *   S0(gate) → S1(context) → S2(whole-slice build) → S7(ship) → S8(handoff)
- *
- * S2 is ONE memory-bearing build worker that runs the entire per-slice sequence
- * INTERNALLY (invoke `/tdd`; then `/review` + the self-check 二连; then
- * `/ak-cross-m-review --scenario per-slice` to concurrence; commit with the
- * `sandcastle:` prefix; return the FINAL reviewed commit). So there is NO S3
- * reviewer step, NO S4 route fan-out, NO S5 fix step, NO S6 re-review here —
- * those edges are DELETED. A committed S2 output routes straight to S7 ship.
  * Escalate stays the global stop edge (checked FIRST).
  */
 
 import type { StepId, StepOutput } from "./types.js";
+import { classifyFindings } from "./findings.js";
 // Shared seam guards — the SINGLE source of truth, also used by the runner, so
 // the coder-output / commitsAdded rules can never drift between two copies.
 //
@@ -42,6 +28,7 @@ import {
   escalateOf,
   isValidCoderOutput,
   isValidEscalation,
+  isValidReviewerOutput,
 } from "./validate.js";
 
 /** What route() decides: the next step to run, or a terminal handoff. */
@@ -64,9 +51,9 @@ export interface RouteContext {
 /**
  * Decide the next step.
  *
- * ADR 0026 collapsed edges: S0→S1, S1→S2, S2(committed)→S7, S7→S8(success).
+ * ADR 0030 edges: S2 committed output goes to S3, S3/S6 reviewer output goes to
+ * S4, S4 sends blocking findings to S5 and clean/deferred-only reviews to S7.
  * The global escalate stop (#251) is still checked FIRST, ahead of the switch.
- * S2 0-commit / malformed coder output → S8(error) (#252 / #5).
  */
 export function route(ctx: RouteContext): RouteDecision {
   // ── Global escalate stop edge (#251) ────────────────────────────────────
@@ -99,13 +86,11 @@ export function route(ctx: RouteContext): RouteDecision {
       return { kind: "next", step: "S1" };
 
     case "S1":
-      // S1 load_context done → the build worker runs the whole slice.
+      // S1 load_context done → implementation worker.
       return { kind: "next", step: "S2" };
 
     case "S2": {
-      // S2 coder build done — the worker ran the WHOLE per-slice sequence
-      // internally (tdd → review + self-check → per-slice cmr to concurrence)
-      // and returned the FINAL reviewed commit (ADR 0026).
+      // S2 implementation done → independent fresh reviewer.
       // #5: a malformed coder output (wrong kind / undefined / garbage) is a
       // contract violation → S8(error). NEVER fall through to S7 on a malformed
       // output (the runner also guards this, but route() must be safe at the
@@ -117,8 +102,34 @@ export function route(ctx: RouteContext): RouteDecision {
       if (!ctx.output.committed) {
         return { kind: "handoff", status: "error" };
       }
-      // Happy path: the reviewed slice is committed → ship.
-      return { kind: "next", step: "S7" };
+      return { kind: "next", step: "S3" };
+    }
+
+    case "S3":
+    case "S6":
+      if (!isValidReviewerOutput(ctx.output)) {
+        return { kind: "handoff", status: "error" };
+      }
+      return { kind: "next", step: "S4" };
+
+    case "S4": {
+      if (!isValidReviewerOutput(ctx.output)) {
+        return { kind: "handoff", status: "error" };
+      }
+      const classification = classifyFindings(ctx.output.findings);
+      return classification.blocking.length > 0
+        ? { kind: "next", step: "S5" }
+        : { kind: "next", step: "S7" };
+    }
+
+    case "S5": {
+      if (!isValidCoderOutput(ctx.output)) {
+        return { kind: "handoff", status: "error" };
+      }
+      if (!ctx.output.committed) {
+        return { kind: "handoff", status: "error" };
+      }
+      return { kind: "next", step: "S6" };
     }
 
     case "S7":

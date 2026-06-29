@@ -2,13 +2,9 @@
  * integ-cmr (base) round 2 — cross-slice seam gaps the integrated review found
  * that per-slice cmr missed (all behavioural, test-first):
  *
- *   (A [Crit] finding ELEMENT validation tested the reviewer-findings path
- *    routed through S3/S4. ADR 0026 (2026-06-24) collapsed the single-slice
- *    runner to a PURE SCHEDULER — there is no runner-level reviewer step (S3/S6)
- *    or route fan-out (S4); the review/fix loop runs INSIDE the S2 build worker.
- *    So the finding-element validation path no longer exists at the runner/route
- *    seam and the A suite is DELETED. isValidFinding still lives in validate.ts
- *    for the in-worker review, but the runner never calls it.)
+ *   (A [Crit] finding ELEMENT validation tests the reviewer-findings path routed
+ *    through S3/S4. ADR 0030 restored that runner-visible seam, so malformed
+ *    finding elements must fail closed before classification can route to ship.)
  *
  *   B [High] coder output did not validate `commitsAdded`.  The contract is
  *     {committed:boolean, commitsAdded:number} with the two consistent

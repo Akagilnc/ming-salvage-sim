@@ -1983,10 +1983,10 @@ export class RealBackend implements Backend {
         };
   }
 
-  // ── S2: the whole-slice build worker — one sandbox.run() (ADR 0026; #256 seam
-  //    extension returns StepResult). The per-slice review→fix loop runs INSIDE
-  //    this worker (via the skills the prompt invokes), so the runner no longer
-  //    delivers fix_now findings to a separate fix step. ─
+  // ── S2/S3/S5/S6 agent workers (ADR 0030; #256 seam extension returns
+  //    StepResult). S2/S5 run the coder soul; S3/S6 run the fresh read-only
+  //    reviewer soul. The runner owns the visible review/fix loop and threads
+  //    S4 blocking findings to S5 through DispatchContext/landing artifacts. ─
   async runStep(
     spec: StepSpec,
     worktree: WorktreeHandle,
