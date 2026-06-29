@@ -50,7 +50,15 @@ def _fixed_flow_scalars_are_numeric(region_id: str, fiscal: dict) -> bool:
         if key not in fiscal:
             continue
         value = fiscal[key]
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+        try:
+            finite_number = (
+                not isinstance(value, bool)
+                and isinstance(value, (int, float))
+                and math.isfinite(float(value))
+            )
+        except OverflowError:
+            finite_number = False
+        if not finite_number:
             tlog(f"[province-fiscal] {region_id} fiscal.{key} 非数字，本{TURN_UNIT}固定税收出列")
             return False
     return True

@@ -763,7 +763,7 @@ def test_fixed_flow_loader_accepts_already_decoded_fiscal_dict(monkeypatch):
     assert msgs == []
 
 
-@pytest.mark.parametrize("bad_scalar", [float("nan"), float("inf")])
+@pytest.mark.parametrize("bad_scalar", [float("nan"), float("inf"), 10 ** 309])
 def test_fixed_flow_loader_rejects_non_finite_numeric_values(monkeypatch, bad_scalar):
     import ming_sim.flows as flows_mod
 
