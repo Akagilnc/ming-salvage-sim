@@ -164,6 +164,8 @@ export interface FindingDisposition {
   readonly reason: string;
   readonly severity: Finding["severity"];
   readonly reopenAttempts: number;
+  /** One same-severity fresh-review dispute is allowed before suppression resumes. */
+  readonly disputeAttempts?: number;
 }
 
 /** Fresh-review adjudication for a prior coder-fix worker's claimed-fixed finding. */
