@@ -35,7 +35,7 @@
  */
 
 import { route } from "./route.js";
-import { classifyFindings } from "./findings.js";
+import { classifyFindings, findingIdentityKey } from "./findings.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
 // dispatches EVERY worker step (S2 build, S7 ship) through ONE free function
 // instead of reaching for runStep/resumeSession/push directly.
@@ -267,6 +267,16 @@ function lastNonTerminalStep(
 ): StepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     if (ledger[i]!.step !== "S8") return ledger[i]!.step;
+  }
+  return undefined;
+}
+
+function lastReviewerOutput(
+  ledger: ReadonlyArray<LedgerEntry>,
+): StepOutput | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const output = ledger[i]?.output;
+    if (output?.kind === "reviewer") return output;
   }
   return undefined;
 }
@@ -575,7 +585,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   ): void {
     if (reviewerOutput?.kind !== "reviewer") return;
     const classification = classifyFindings(reviewerOutput.findings);
-    deferredFindings = [...classification.deferred];
+    const blockingKeys = new Set(classification.blockingIdentityKeys);
+    deferredFindings = deferredFindings.filter(
+      (finding) => !blockingKeys.has(findingIdentityKey(finding)),
+    );
+    const deferredKeys = new Set(deferredFindings.map(findingIdentityKey));
+    for (const finding of classification.deferred) {
+      const key = findingIdentityKey(finding);
+      if (!deferredKeys.has(key)) {
+        deferredFindings.push(finding);
+        deferredKeys.add(key);
+      }
+    }
     pendingBlockingFindings = [...classification.blocking];
     pendingBlockingFindingIdentityKeys = [
       ...classification.blockingIdentityKeys,
@@ -902,7 +923,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // ADR 0030: if the prior run already persisted S4, resume can jump straight
     // to S5/S7. Rebuild the S4 classification state from the persisted reviewer
     // output so S5 receives the blocking findings and S7 reports defers.
-    if (plan.resumeStep === "S5" || plan.resumeStep === "S7") {
+    if (plan.resumeStep === "S5") {
+      seedClassificationFromReviewerOutput(
+        lastReviewerOutput(plan.priorLedger) ?? lastOutput,
+      );
+    } else if (plan.resumeStep === "S7") {
       seedClassificationFromReviewerOutput(lastOutput);
     }
 

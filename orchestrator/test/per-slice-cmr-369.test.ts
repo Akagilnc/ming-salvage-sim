@@ -133,6 +133,34 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     ]);
   });
 
+  it("preserves deferred findings across blocking fix rounds", async () => {
+    const blocking: Finding = {
+      severity: "high",
+      category: "Correctness",
+      claim_quote: "must fix before shipping",
+      location: "src/runner.ts:10",
+      suggested_fix: "fix it",
+      action: "fix_now",
+    };
+    const deferred: Finding = {
+      severity: "medium",
+      category: "Follow-up",
+      claim_quote: "track this later",
+      location: "src/runner.ts:11",
+      suggested_fix: "file follow-up",
+      action: "defer",
+    };
+    const backend = new RetryReviewBackend([
+      { kind: "completed", output: { kind: "reviewer", findings: [blocking, deferred] } },
+      { kind: "completed", output: { kind: "reviewer", findings: [] } },
+    ]);
+
+    const result = await runOrchestrator({ issueNumber: 369, backend });
+
+    expect(result.status).toBe("success");
+    expect(result.deferredFindings).toEqual([deferred]);
+  });
+
   it("escalates after the bounded reviewer-output retry budget is exhausted", async () => {
     const backend = new RetryReviewBackend([
       { kind: "malformed", reason: "truncated JSON" },
@@ -187,6 +215,57 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(backend.ctxs[s5Index]?.blockingFindings).toEqual([finding]);
     expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys).toEqual([
       "correctness|src/runner.ts:1116|s5 needs the persisted blocker after resume",
+    ]);
+  });
+
+  it("rebuilds S5 findings from the last reviewer when resuming an escalated S5", async () => {
+    const finding: Finding = {
+      severity: "high",
+      category: "Correctness",
+      claim_quote: "S5 fallback still needs the blocker",
+      location: "src/runner.ts:902",
+      suggested_fix: "reclassify the prior reviewer entry",
+      action: "fix_now",
+    };
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-369",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [finding] } },
+        { step: "S4" },
+        {
+          step: "S5",
+          sessionId: "session-escalated-S5",
+          output: {
+            kind: "coder",
+            committed: false,
+            commitsAdded: 0,
+            escalate: {
+              reason: "needs answer",
+              diagnosis: "human answered; resume or fresh fallback may run",
+            },
+          },
+        },
+        { step: "S8", handoffStatus: "escalate" },
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [{ kind: "completed", output: { kind: "reviewer", findings: [] } }],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 369, backend });
+
+    expect(result.status).toBe("success");
+    const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
+    expect(s5Index).toBeGreaterThanOrEqual(0);
+    expect(backend.specs[s5Index]?.session).toBe("resume");
+    expect(backend.ctxs[s5Index]?.blockingFindings).toEqual([finding]);
+    expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys).toEqual([
+      "correctness|src/runner.ts:902|s5 fallback still needs the blocker",
     ]);
   });
 
