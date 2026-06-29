@@ -1773,6 +1773,31 @@ interface CmrSkippedLeg {
   readonly reason: string;
 }
 
+const DEFAULT_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
+
+function cmrLegAccountingFailure(input: {
+  readonly successfulLegs: readonly string[];
+  readonly skippedLegs?: readonly CmrSkippedLeg[];
+}): string | undefined {
+  const successful = new Set(input.successfulLegs);
+  const skipped = new Set((input.skippedLegs ?? []).map((leg) => leg.slug));
+  const missing = DEFAULT_CMR_LEGS.filter((slug) => !successful.has(slug) && !skipped.has(slug));
+  if (missing.length > 0) {
+    return (
+      "cmr worker omitted declared leg accounting for: " +
+      `${missing.join(", ")} (each default cmr leg must be successful or skipped)`
+    );
+  }
+  const doubleReported = DEFAULT_CMR_LEGS.filter((slug) => successful.has(slug) && skipped.has(slug));
+  if (doubleReported.length > 0) {
+    return (
+      "cmr worker reported declared leg as both successful and skipped: " +
+      doubleReported.join(", ")
+    );
+  }
+  return undefined;
+}
+
 /**
  * The cmr worker's reviewer-leg auth, each leg BEST-EFFORT (codex cmr R1): a leg
  * whose host credential is absent is `undefined` so it degrades (the 降级链 — the
@@ -1876,6 +1901,8 @@ const nonEmpty = z.string().trim().min(1);
  *   1. `{converged:true, successfulLegs, skippedLegs?}`           — converged;
  *   2. `{converged:false, reason, successfulLegs, skippedLegs?}`  — not converged;
  *   3. `{escalate:{reason, diagnosis}}`            — could not run the review.
+ * Verdicts must also account for every default CMR leg: each must be either
+ * successful or explicitly skipped.
  * Escalate is tried FIRST (a stuck worker carries no usable verdict).
  */
 const cmrLegSlugSchema = z.string().trim().min(1);
@@ -1937,6 +1964,10 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
   }
   if (cmrConvergedSchema.safeParse(parsed).success) {
     const converged = cmrConvergedSchema.parse(parsed);
+    const legAccountingFailure = cmrLegAccountingFailure(converged);
+    if (legAccountingFailure !== undefined) {
+      return { kind: "malformed", reason: legAccountingFailure };
+    }
     return {
       kind: "verdict",
       converged: true,
@@ -1946,6 +1977,10 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
   }
   const red = cmrRedSchema.safeParse(parsed);
   if (red.success) {
+    const legAccountingFailure = cmrLegAccountingFailure(red.data);
+    if (legAccountingFailure !== undefined) {
+      return { kind: "malformed", reason: legAccountingFailure };
+    }
     return {
       kind: "verdict",
       converged: false,
