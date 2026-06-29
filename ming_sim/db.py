@@ -2743,6 +2743,7 @@ class GameDB:
         """分配下一个预设头像 ID（顺序递增，不循环）。
         minister_pool: 60 个槽；consort_pool: 20 个槽。
         实际可用槽位 = web/public/portraits/<prefix><N>.png 真存在的编号集合（中途删图会跳过缺号）。
+        发行包只带 web/dist；public 不存在时回退扫 web/dist/portraits。
         全部用完后再回退到递增（前端 onError fallback 占位符）。"""
         rows = self.conn.execute(
             "SELECT portrait_id FROM characters WHERE portrait_id LIKE ?",
@@ -2754,16 +2755,22 @@ class GameDB:
                 used.add(int(r["portrait_id"].replace(prefix, "")))
             except ValueError:
                 pass
-        # 扫真实存在的图编号（frozen 模式走 _MEIPASS，源码走 <repo>/web/public/portraits）
+        # 扫真实存在的图编号：源码优先 public；发行包只带 Vite 产物 dist。
         from pathlib import Path
         from ming_sim.paths import bundled_path
-        portraits_dir = Path(bundled_path("web", "public", "portraits"))
         available: set[int] = set()
-        if portraits_dir.is_dir():
+        for portraits_dir in (
+            Path(bundled_path("web", "public", "portraits")),
+            Path(bundled_path("web", "dist", "portraits")),
+        ):
+            if not portraits_dir.is_dir():
+                continue
             for p in portraits_dir.glob(f"{prefix}*.png"):
                 suffix = p.stem[len(prefix):]
                 if suffix.isdigit():
                     available.add(int(suffix))
+            if available:
+                break
         free = sorted(available - used)
         if free:
             return f"{prefix}{free[0]}"
