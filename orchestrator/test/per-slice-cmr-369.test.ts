@@ -269,6 +269,37 @@ describe("#369 runner resume/retry review fixes", () => {
     ]);
   });
 
+  it("rebuilds deferred findings when re-feeding a terminal resumed run", async () => {
+    const deferred: Finding = {
+      severity: "medium",
+      category: "Follow-up",
+      claim_quote: "terminal resume still reports this defer",
+      location: "src/runner.ts:926",
+      suggested_fix: "surface the deferred finding",
+      action: "defer",
+    };
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-369",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [deferred] } },
+        { step: "S4" },
+        { step: "S7" },
+        { step: "S8", handoffStatus: "success" },
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend([], resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 369, backend });
+
+    expect(result.status).toBe("success");
+    expect(result.deferredFindings).toEqual([deferred]);
+    expect(backend.dispatched).toEqual([]);
+  });
+
   it("bounded-retries legacy reviewer parse exceptions before succeeding", async () => {
     class LegacyThrowingReviewBackend implements Backend {
       readonly calls: string[] = [];
@@ -316,6 +347,51 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(result.status).toBe("success");
     expect(backend.calls).toEqual(["runStep(S2)", "runStep(S3)", "runStep(S3)"]);
     expect(backend.reviewerAttempts).toBe(2);
+  });
+
+  it("preserves generic reviewer backend exceptions as S8 errors without retrying", async () => {
+    class FailingReviewBackend implements Backend {
+      reviewerAttempts = 0;
+
+      async findResumeState(): Promise<undefined> { return undefined; }
+      async cleanResidue(): Promise<void> {}
+      async resumeSession(spec: StepSpec): Promise<StepOutput> {
+        return this.runStep(spec);
+      }
+      async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+        return {
+          number: issueNumber,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+        };
+      }
+      async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
+        return { number: issueNumber, body: "body", comments: [], agentBrief: "" };
+      }
+      async prepareWorktree(): Promise<WorktreeHandle> {
+        return WORKTREE;
+      }
+      async writeSnapshot(): Promise<void> {}
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "reviewer") {
+          this.reviewerAttempts += 1;
+          throw new Error("container failed to start");
+        }
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async push(): Promise<void> {}
+      async writeLedger(): Promise<void> {}
+    }
+    const backend = new FailingReviewBackend();
+
+    const result = await runOrchestrator({ issueNumber: 369, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.errorPackage?.failedStep).toBe("S3");
+    expect(result.errorPackage?.reason).toContain("container failed to start");
+    expect(backend.reviewerAttempts).toBe(1);
   });
 });
 

@@ -558,6 +558,17 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function isReviewerStructuredOutputError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return (
+    err.name === "ZodError" ||
+    err.name === "StructuredOutputError" ||
+    /StructuredOutputError|structured output|missing <review>|<review>|ZodError/i.test(
+      err.message,
+    )
+  );
+}
+
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
   // Family-run context (ADR 0022 decision 2). When present this is a CHILD slice
@@ -923,12 +934,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // ADR 0030: if the prior run already persisted S4, resume can jump straight
     // to S5/S7. Rebuild the S4 classification state from the persisted reviewer
     // output so S5 receives the blocking findings and S7 reports defers.
-    if (plan.resumeStep === "S5") {
-      seedClassificationFromReviewerOutput(
-        lastReviewerOutput(plan.priorLedger) ?? lastOutput,
-      );
-    } else if (plan.resumeStep === "S7") {
-      seedClassificationFromReviewerOutput(lastOutput);
+    if (
+      plan.resumeStep === "S5" ||
+      plan.resumeStep === "S7" ||
+      plan.resumeStep === "S8"
+    ) {
+      const reviewerOutput = lastReviewerOutput(plan.priorLedger) ?? lastOutput;
+      seedClassificationFromReviewerOutput(reviewerOutput);
     }
 
     if (plan.terminalStatus !== undefined) {
@@ -1163,12 +1175,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             } catch (err) {
               if (
                 expectedKind === "reviewer" &&
+                isReviewerStructuredOutputError(err) &&
                 attempts < MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS
               ) {
                 resumeSessionId = undefined;
                 continue;
               }
-              if (expectedKind === "reviewer") {
+              if (
+                expectedKind === "reviewer" &&
+                isReviewerStructuredOutputError(err)
+              ) {
                 output = {
                   kind: "reviewer",
                   findings: [],
