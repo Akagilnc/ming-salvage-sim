@@ -677,11 +677,7 @@ def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
     """
     from ming_sim.fiscal_tick import FiscalConservationError
 
-    owns_transaction = not (
-        bool(getattr(db.conn, "_commit_suspended", False))
-        or int(getattr(db.conn, "_atomic_depth", 0) or 0) > 0
-        or db.conn.in_transaction
-    )
+    owns_transaction = db.owns_transaction()
     advanced = False
     for region_id in _fiscal_substrate_region_ids(db):
         try:
