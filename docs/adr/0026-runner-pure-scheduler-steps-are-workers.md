@@ -1,9 +1,12 @@
 ---
 status: accepted
 supersedes-part-of: ADR 0018 (step 分类); ADR 0016 (spike 发现4 的 cmr/gstack 不进容器排除)
+partially-superseded-by: ADR 0030 (2026-06-29：「cmr/per-slice = 一条带记忆 worker 兼 fixer、无 runner 轮间 loop、findings 不在 worker 间传」这一条被反转，见下「前向更正」)
 ---
 
 # 编排器 runner = 纯调度器；每个具体 wiki 步是 worker
+
+> **前向更正（ADR 0030，2026-06-29）—— 读本 ADR 时注意**：下文「例外 = worker 内部的『收敛』不是分叉」整段（cmr/per-slice = 一条带记忆主 session 兼 fixer、fix-loop 在 worker 内、没有独立 fix worker、没有 runner 轮间 loop、findings 不在 worker 间传）**已被 ADR 0030 反转**。dogfood #362 证伪了「in-session 记忆能自律收敛」的赌注（#375 完整性闸被吞、#373 spec-miss 被 defer），改为「收敛 loop 由 runner 持、coder/reviewer/fix 独立 worker、findings 走 landing file、每轮 fresh reviewer 复审全 diff」。**本 ADR 的核心「runner = 纯调度器、每个具体 wiki 步是 worker」仍然有效**——0030 恰是更彻底地落实它（把埋进单 worker 的分叉点提回 runner 边界，正是本 ADR 自己定的「分叉点必须是 runner 边界」）。遇到下文 consolidate 描述与现状不符时以 ADR 0030 为准，不要据此判「实现违反设计」。**具体被反转的不止「例外 = worker 内部的『收敛』」整段，还包括 Consequences 里「fresh 只在 review 腿、worker 主 session 带记忆」那条及其「不需要也不准把 findings 当 data 在 fresh worker 间传递」——这两处在 0030 下均已翻案（review 成独立 worker、findings 经 landing file 跨 worker 传是独立性载体）。**
 
 **决定**：runner 只做**调度**——step 之间的流程决策（input gate / route / 排序 / step ledger / 续跑）；它**不内联任何具体活**。每个产出工作的 wiki 步——写码 / 评审 / cmr / ship——是一个 **worker**（merge 非均匀 worker，见 Consequences）：跑在自己容器里、里面 agent 是该容器**顶层**（非 runner 的 sub，故能起自己的 sub + CLI），由 runner 派出去执行、收回结果、据此路由。worker **不一定用 skill**；用时 Claude = `Skill` invoke、Codex = 加载 SKILL.md 当 skill item 传入 prompt。
 

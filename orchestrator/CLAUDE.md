@@ -10,4 +10,6 @@
 
 **`sc.run()` 严禁用 `prompt` 参数；传指令只准用 `promptFile`。** `prompt`（inline 字符串）是「临时把 method 手搓进调用点」的唯一入口——堵死它 = 手搓在 API 层就不可能。指令一律走 **`promptFile`**（指向一个**版本化、可评审**的 `.md` 文件）。而且 `promptFile` 的**内容必须 thin**：只准「读 baked soul / 触发对应 skill（`/tdd`、`/ak-cross-m-review`、`gstack-ship` …）+ 指向落盘运行参数文件 + 输出契约」，**绝不写 method**。怎么 review / 怎么 fix / 怎么收敛 / Claude 和 Codex 如何 invoke skill，全住在 versioned soul / skill / 镜像里；runner 不感知、不每轮换 prompt。理由实证：本仓三道 cmr 闸（step 4/5/6）全栽在「promptFile 里手搓 review-only / no-loop」而不是让 `invoke /ak-cross-m-review` 跑它自己的 loop。runner 退回纯调度（派容器 + 落参数文件 + 读终态 verdict），method/纪律全在 skill。**如果 promptFile 开始长成 mini-wiki，就是回归。**
 
+**ADR 只定决策/要求，编码细节归 issue。** ADR 写**不可逆决策 / 不变式 / 契约 / 要求**（薄，1-3 句单决策）；**怎么实现那个要求**（算法、数值、参数、显式属性 vs 前缀派生、重试上限、身份匹配方式…）一律归**对应子 issue 的验收点**，不进 ADR。改每条评审 finding 前自问「这是**决策**还是**编码**？」——编码默认 → issue，ADR 顶多留一句要求 + 指针「细节归 #N」。理由：锁可逆编码 = 过度设计，且细节烂在 ADR 里改不动、而实现 agent 读 issue 验收点不读 ADR 细节。实证：#425 设计 cmr 把「优先显式 `tightFamilies` 属性、前缀 fallback」塞进 ADR 0031 被纠，移到 #422，ADR 只留「每条 `*-tight` 须知道自己 tight 家族」。
+
 **容器内（`sc.run`）产生的 commit 自动冠 `sandcastle:` 前缀**，由烤进镜像的 `image/hooks/commit-msg`（经 `git config --global core.hooksPath`）确定性强制——不靠 soul / promptFile 指示（那样会漏：gstack-ship 自己的 commit 绕过 soul）。用途：`git log --grep '^sandcastle:'` 框出某次 family run 的全部机器产出。可与模型层 `claude:` / `codex:` 前缀叠（`sandcastle: claude: …`，`sandcastle:` 在最前）。
