@@ -3,7 +3,7 @@ REM 一键打 zip 分发包（#186，Windows）。onedir 形态：解压后根�
 REM
 REM 前置（在干净 clone 里跑一次）：
 REM   python -m venv .venv ^&^& .venv\Scripts\activate
-REM   pip install -r requirements.txt pyinstaller pywebview tiktoken   REM 本仓无 pyproject/setup.py，用 requirements.txt（非 -e .）
+REM   pip install -r requirements.txt -r requirements-release-windows.txt   REM 本仓无 pyproject/setup.py，用 requirements.txt（非 -e .）
 REM 然后：
 REM   scripts\build_release.bat
 REM

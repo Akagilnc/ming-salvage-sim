@@ -311,7 +311,8 @@ AI 适合判断官场反应、地方推诿、政策代价、突发事件和叙�
 桌面包用 PyInstaller 把后端 + 前端 + content 冻结成可分发应用（pywebview 套壳渲染 React UI，无需另起 uvicorn）。分发形态（#186）= **mac / win / linux 各一个 zip，解压后根目录一个可执行**（其余依赖在 `_internal/` 子目录 / mac 在 `.app` bundle 内）。
 
 ```bash
-pip install pyinstaller pywebview tiktoken    # 一次性装打包依赖（建议在项目 venv 内）
+pip install -r requirements-release.txt       # 一次性装打包依赖（建议在项目 venv 内）
+# Windows 打包另装：pip install -r requirements-release-windows.txt
 
 # 一键：构建前端 → PyInstaller 打包 → 打 zip
 scripts/build_release.sh        # macOS / Linux

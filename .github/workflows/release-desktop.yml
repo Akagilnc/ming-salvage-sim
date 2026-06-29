@@ -45,7 +45,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller pywebview tiktoken
+          pip install -r requirements-release.txt
 
       - name: Build macOS package
         run: scripts/build_release.sh
@@ -85,7 +85,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           # Windows pywebview EdgeChromium backend needs pythonnet.
-          pip install pyinstaller pywebview pythonnet tiktoken
+          pip install -r requirements-release-windows.txt
 
       - name: Build Windows package
         shell: cmd
