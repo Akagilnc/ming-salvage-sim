@@ -69,6 +69,13 @@ function upgradedSeverity(
   return SEVERITY_RANK[finding.severity] > SEVERITY_RANK[disposition.severity];
 }
 
+function sameSeverity(
+  finding: Finding,
+  disposition: FindingDisposition,
+): boolean {
+  return SEVERITY_RANK[finding.severity] === SEVERITY_RANK[disposition.severity];
+}
+
 function reopenedDisposition(
   finding: Finding,
   disposition: FindingDisposition,
@@ -80,6 +87,13 @@ function reopenedDisposition(
       MAX_REOPEN_ATTEMPTS,
       disposition.reopenAttempts + 1,
     ),
+  };
+}
+
+function disputedDisposition(disposition: FindingDisposition): FindingDisposition {
+  return {
+    ...disposition,
+    disputeAttempts: (disposition.disputeAttempts ?? 0) + 1,
   };
 }
 
@@ -104,11 +118,17 @@ export function classifyFindings(
       continue;
     }
     if (priorDisposition !== undefined) {
-      if (!upgradedSeverity(finding, priorDisposition)) {
+      if (upgradedSeverity(finding, priorDisposition)) {
+        if (priorDisposition.reopenAttempts < MAX_REOPEN_ATTEMPTS) {
+          dispositionByKey.set(key, reopenedDisposition(finding, priorDisposition));
+        }
+      } else if (
+        sameSeverity(finding, priorDisposition) &&
+        (priorDisposition.disputeAttempts ?? 0) < 1
+      ) {
+        dispositionByKey.set(key, disputedDisposition(priorDisposition));
+      } else {
         continue;
-      }
-      if (priorDisposition.reopenAttempts < MAX_REOPEN_ATTEMPTS) {
-        dispositionByKey.set(key, reopenedDisposition(finding, priorDisposition));
       }
     }
     if (isBlockingFinding(finding)) {

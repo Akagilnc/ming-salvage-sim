@@ -319,6 +319,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       action: "wont_fix",
       disposition_reason: "Accepted as out of scope for this slice",
     };
+    const acceptedRiskKey =
+      "correctness|src/runner.ts:736|accepted risk remains same severity";
     const backend = new RetryReviewBackend([
       {
         kind: "completed",
@@ -334,6 +336,16 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           ],
         },
       },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: acceptedRiskKey, status: "verified-closed" },
+          ],
+        },
+      },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 428, backend });
@@ -342,6 +354,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
       "S7:ship",
@@ -630,8 +644,10 @@ describe("#369 runner resume/retry review fixes", () => {
       action: "wont_fix",
       disposition_reason: "Accepted outside this slice",
     };
+    const acceptedRiskKey =
+      "correctness|src/runner.ts:971|accepted risk survives resume";
     const acceptedRiskDisposition = {
-      identityKey: "correctness|src/runner.ts:971|accepted risk survives resume",
+      identityKey: acceptedRiskKey,
       status: "wont_fix" as const,
       reason: "Accepted outside this slice",
       severity: "medium" as const,
@@ -663,6 +679,16 @@ describe("#369 runner resume/retry review fixes", () => {
             ],
           },
         },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: acceptedRiskKey, status: "verified-closed" },
+            ],
+          },
+        },
       ],
       resumeState,
     );
@@ -671,6 +697,8 @@ describe("#369 runner resume/retry review fixes", () => {
 
     expect(result.status).toBe("success");
     expect(backend.dispatched).toEqual([
+      "S5:coder",
+      "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
       "S7:ship",
@@ -922,6 +950,60 @@ describe("#369 finding identity and classification", () => {
     ]);
     expect(capped.deferred).toEqual([]);
     expect(capped.dispositions[0]?.reopenAttempts).toBe(4);
+  });
+
+  it("allows one same-severity dispute of a suppressed finding, then suppresses repeats", () => {
+    const disputed = classifyFindings(
+      [
+        {
+          ...finding,
+          severity: "medium",
+          action: "fix_now",
+        },
+      ],
+      [
+        {
+          identityKey: findingIdentityKey(finding),
+          status: "wont_fix",
+          reason: "previously accepted risk",
+          severity: "medium",
+          reopenAttempts: 0,
+        },
+      ],
+    );
+
+    expect(disputed.blocking).toEqual([
+      {
+        ...finding,
+        severity: "medium",
+        action: "fix_now",
+      },
+    ]);
+    expect(disputed.dispositions).toEqual([
+      {
+        identityKey: findingIdentityKey(finding),
+        status: "wont_fix",
+        reason: "previously accepted risk",
+        severity: "medium",
+        reopenAttempts: 0,
+        disputeAttempts: 1,
+      },
+    ]);
+
+    const repeated = classifyFindings(
+      [
+        {
+          ...finding,
+          severity: "medium",
+          action: "fix_now",
+        },
+      ],
+      disputed.dispositions,
+    );
+
+    expect(repeated.blocking).toEqual([]);
+    expect(repeated.deferred).toEqual([]);
+    expect(repeated.dispositions).toEqual(disputed.dispositions);
   });
 });
 

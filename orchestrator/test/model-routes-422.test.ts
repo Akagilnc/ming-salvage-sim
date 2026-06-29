@@ -190,6 +190,20 @@ describe("#422 model route presets", () => {
     ]);
   });
 
+  it("fails closed for unregistered CMR leg override slugs", () => {
+    expect(() =>
+      resolveRouteModels("normal", {}, { cmrReview: ["glm"] }),
+    ).toThrow(/unknown cmr review leg slug/i);
+
+    expect(
+      resolveRouteModels("normal", {}, { cmrReview: ["gpt-5.5", "agy"] })
+        .legCollections.cmrReview,
+    ).toEqual([
+      { family: "codex", slug: "gpt-5.5" },
+      { family: "agy", slug: "agy" },
+    ]);
+  });
+
   it("feeds the resolved route into every worker spec model slot", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     vi.resetModules();

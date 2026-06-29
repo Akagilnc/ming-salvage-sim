@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline/promises";
 
 import {
+  modelFamilyForCmrReviewLeg,
   modelFamilyForSlug,
   resolveModelSlug,
   type ModelFamily,
@@ -194,7 +195,7 @@ function assertKnownWorkerSlug(slug: string): void {
 
 function legForSlug(slug: string): ModelRouteLeg {
   const trimmed = slug.trim();
-  return { slug: trimmed, family: modelFamilyForSlug(trimmed) };
+  return { slug: trimmed, family: modelFamilyForCmrReviewLeg(trimmed) };
 }
 
 function resolveLegCollection(slugs: ReadonlyArray<string>): ReadonlyArray<ModelRouteLeg> {
@@ -263,6 +264,17 @@ export function resolveRouteModels(
   }
 
   for (const slot of MODEL_ROUTE_SLOTS) assertKnownWorkerSlug(slots[slot]);
+  for (const collection of MODEL_ROUTE_LEG_COLLECTIONS) {
+    legCollections[collection] = legCollections[collection].map((leg) => {
+      const family = modelFamilyForCmrReviewLeg(leg.slug);
+      if (family !== leg.family) {
+        throw new Error(
+          `cmr review leg "${leg.slug}" declares family "${leg.family}" but registry says "${family}"`,
+        );
+      }
+      return leg;
+    });
+  }
 
   return {
     routeName: trimmedRoute,

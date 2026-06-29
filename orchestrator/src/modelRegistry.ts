@@ -79,12 +79,8 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
   },
 };
 
-const LEG_ONLY_MODEL_FAMILIES: Readonly<Record<string, ModelFamily>> = {
+const CMR_REVIEW_LEG_REGISTRY: Readonly<Record<string, ModelFamily>> = {
   agy: "agy",
-  gemini: "other",
-  glm: "other",
-  haiku: "claude",
-  spark: "other",
 };
 
 function rowForSlug(slug: string): ModelSlugRegistryRow {
@@ -121,12 +117,28 @@ export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
 
 export function modelFamilyForSlug(slug: string): ModelFamily {
   const entry = MODEL_SLUG_REGISTRY[slug];
-  if (entry !== undefined) return entry.family;
-  const legOnly = LEG_ONLY_MODEL_FAMILIES[slug];
-  if (legOnly !== undefined) return legOnly;
+  if (entry !== undefined) {
+    return entry.family;
+  }
   throw new Error(
     `realBackend: unknown model slug "${slug}". Add the CLI to the image and ` +
       `register it in MODEL_SLUG_REGISTRY before using it.`,
+  );
+}
+
+export function modelFamilyForCmrReviewLeg(slug: string): ModelFamily {
+  const entry = MODEL_SLUG_REGISTRY[slug];
+  if (entry !== undefined) {
+    return entry.family;
+  }
+  const cmrLeg = CMR_REVIEW_LEG_REGISTRY[slug];
+  if (cmrLeg !== undefined) {
+    return cmrLeg;
+  }
+  throw new Error(
+    `unknown cmr review leg slug "${slug}". Add a runnable worker model to ` +
+      `MODEL_SLUG_REGISTRY, or explicitly register a non-worker CMR leg before ` +
+      `using it in ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS.`,
   );
 }
 
