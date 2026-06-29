@@ -159,6 +159,7 @@ export async function runFamily(
     return {
       status: "escalated",
       familyBase: input.familyBase,
+      escalation: routePolicy.escalation,
       children: input.epic.children.map((child) => ({
         issue: child.issue,
         status: "skipped",

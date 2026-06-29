@@ -606,6 +606,14 @@ export interface LedgerEntry {
   readonly step: StepId;
   /** Structured output for agent steps; undefined for runner-action steps. */
   readonly output?: StepOutput;
+  /**
+   * Runner-owned ADR0030 finding dispositions after an S4 classification.
+   *
+   * S4 is the durable review/fix boundary. Persisting dispositions here lets a
+   * resumed run replay wont-fix/rejected suppressions and bounded severity
+   * reopens instead of reclassifying from only the last reviewer payload.
+   */
+  readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
 }
 
 /**

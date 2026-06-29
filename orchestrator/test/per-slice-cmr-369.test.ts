@@ -31,6 +31,7 @@ class RetryReviewBackend implements Backend {
   readonly dispatched: string[] = [];
   readonly specs: WorkerSpec[] = [];
   readonly ctxs: DispatchContext[] = [];
+  readonly ledgerWrites: PersistentLedgerEntry[] = [];
   reviewerAttempts = 0;
 
   constructor(
@@ -66,7 +67,9 @@ class RetryReviewBackend implements Backend {
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
   async push(): Promise<void> {}
-  async writeLedger(_entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {}
+  async writeLedger(entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {
+    this.ledgerWrites.push(entry);
+  }
 
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}`);
@@ -303,6 +306,56 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     expect(backend.ctxs[s6Index]?.blockingFindings).toEqual([blocking]);
     expect(backend.ctxs[s6Index]?.blockingFindingIdentityKeys).toEqual([
       blockingKey,
+    ]);
+  });
+
+  it("threads S4 finding dispositions through live re-review classification and persists them", async () => {
+    const acceptedRisk: Finding = {
+      severity: "medium",
+      category: "Correctness",
+      claim_quote: "accepted risk remains same severity",
+      location: "src/runner.ts:736",
+      suggested_fix: "do not reopen without a material severity upgrade",
+      action: "wont_fix",
+      disposition_reason: "Accepted as out of scope for this slice",
+    };
+    const backend = new RetryReviewBackend([
+      {
+        kind: "completed",
+        output: { kind: "reviewer", findings: [blocking, acceptedRisk] },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [{ ...acceptedRisk, action: "fix_now" }],
+          priorFindingDispositions: [
+            { identityKey: blockingKey, status: "verified-closed" },
+          ],
+        },
+      },
+    ]);
+
+    const result = await runOrchestrator({ issueNumber: 428, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+    const firstS4Write = backend.ledgerWrites.find((entry) => entry.step === "S4");
+    expect(firstS4Write?.findingDispositions).toEqual([
+      {
+        identityKey:
+          "correctness|src/runner.ts:736|accepted risk remains same severity",
+        status: "wont_fix",
+        reason: "Accepted as out of scope for this slice",
+        severity: "medium",
+        reopenAttempts: 0,
+      },
     ]);
   });
 
@@ -556,6 +609,72 @@ describe("#369 runner resume/retry review fixes", () => {
     ]);
     expect(backend.ctxs[0]?.blockingFindings).toEqual([finding]);
     expect(backend.ctxs[0]?.blockingFindingIdentityKeys).toEqual([key]);
+  });
+
+  it("replays persisted S4 finding dispositions on resume", async () => {
+    const blocking: Finding = {
+      severity: "high",
+      category: "Correctness",
+      claim_quote: "fix this first",
+      location: "src/runner.ts:970",
+      suggested_fix: "fix it",
+      action: "fix_now",
+    };
+    const blockingKey = "correctness|src/runner.ts:970|fix this first";
+    const acceptedRisk: Finding = {
+      severity: "medium",
+      category: "Correctness",
+      claim_quote: "accepted risk survives resume",
+      location: "src/runner.ts:971",
+      suggested_fix: "do not reopen at the same severity",
+      action: "wont_fix",
+      disposition_reason: "Accepted outside this slice",
+    };
+    const acceptedRiskDisposition = {
+      identityKey: "correctness|src/runner.ts:971|accepted risk survives resume",
+      status: "wont_fix" as const,
+      reason: "Accepted outside this slice",
+      severity: "medium" as const,
+      reopenAttempts: 0,
+    };
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-369",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S3",
+          output: { kind: "reviewer", findings: [blocking, acceptedRisk] },
+        },
+        { step: "S4", findingDispositions: [acceptedRiskDisposition] },
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [{ ...acceptedRisk, action: "fix_now" }],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 428, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
   });
 
   it("rebuilds deferred findings when re-feeding a terminal resumed run", async () => {
