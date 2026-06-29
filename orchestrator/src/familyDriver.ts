@@ -382,8 +382,17 @@ export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyE
  * empty PR. Reject it at admission with a concrete message.
  */
 function readChildNumbers(epicIssue: number, repo: string, sh: Sh): number[] {
-  const subRaw = sh("gh", ["api", `repos/${repo}/issues/${epicIssue}/sub_issues`]);
-  const admission = parseSubIssueAdmission(JSON.parse(subRaw));
+  const allSubIssueNodes: unknown[] = [];
+  for (let page = 1; ; page += 1) {
+    const subRaw = sh("gh", [
+      "api",
+      `repos/${repo}/issues/${epicIssue}/sub_issues?per_page=100&page=${page}`,
+    ]);
+    const nodes = subIssueNodes(JSON.parse(subRaw));
+    allSubIssueNodes.push(...nodes);
+    if (nodes.length < 100) break;
+  }
+  const admission = parseSubIssueAdmission(allSubIssueNodes);
   for (const skipped of admission.skipped) {
     console.warn(skipped.message);
   }
