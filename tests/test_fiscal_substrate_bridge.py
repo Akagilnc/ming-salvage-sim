@@ -619,6 +619,25 @@ def test_substrate_malformed_settle_shape_is_logged_not_prefiltered(fresh_game, 
     assert surfaced, msgs
 
 
+def test_substrate_malformed_fiscal_container_is_logged_not_prefiltered(fresh_game, monkeypatch):
+    # cmr step6 r2：动态 spine 不得在 selector 里静默跳过 fiscal='[]' 这类坏容器；
+    # 应交给 settle_province_tick 归 ValueError，再由 shadow 隔离 tlog 留痕。
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    db.conn.execute("UPDATE regions SET fiscal='[]' WHERE id='shaanxi'")
+    db.conn.commit()
+
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    flows_mod._advance_province_fiscal_substrate(db, state)
+
+    assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "[]"
+    surfaced = [m for m in msgs if "[fiscal-substrate] shaanxi" in m and "fiscal 非字典" in m]
+    assert surfaced, msgs
+
+
 def test_apply_fixed_period_flows_advances_and_logs_jiangnan_core(fresh_game, monkeypatch):
     from ming_sim import flows as flows_mod
 

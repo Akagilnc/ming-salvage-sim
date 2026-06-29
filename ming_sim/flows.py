@@ -594,19 +594,25 @@ def _fiscal_substrate_region_ids(db: GameDB) -> List[str]:
     """动态 shadow spine：明控且已有 settle 基座的省才推进。
 
     失地省通过 controlled_by 自然出列；无 settle 的省保持旧路径，不在这里创建基座。
-    st/p 形状不在 spine 预验证，交由 settle_province_tick fail-loud 并由 shadow 隔离留痕。
+    坏 fiscal 容器和 st/p 形状不在 spine 预验证，交由 settle_province_tick fail-loud
+    并由 shadow 隔离留痕。
     """
     region_ids: List[str] = []
     rows = db.conn.execute(
         "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
     ).fetchall()
     for row in rows:
+        region_id = str(row["id"])
         try:
             fiscal = json.loads(str(row["fiscal"] or "{}"))
         except (TypeError, ValueError):
+            region_ids.append(region_id)
             continue
-        if isinstance(fiscal, dict) and "settle" in fiscal:
-            region_ids.append(str(row["id"]))
+        if not isinstance(fiscal, dict):
+            region_ids.append(region_id)
+            continue
+        if "settle" in fiscal:
+            region_ids.append(region_id)
     return region_ids
 
 
