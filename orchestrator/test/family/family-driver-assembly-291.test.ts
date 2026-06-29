@@ -18,7 +18,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
@@ -217,8 +217,8 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
   it("reads sub-issues + each child's blocked_by and builds the epic", () => {
     const sh: Sh = (file, args) => {
       expect(file).toBe("gh");
-      if (args[0] === "issue") {
-        return JSON.stringify({ subIssues: { nodes: [{ number: 11 }, { number: 12 }] } });
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 11 }, { number: 12 }]);
       }
       // gh api repos/.../issues/<n>/dependencies/blocked_by
       const n = Number(/issues\/(\d+)\//.exec(args[1] ?? "")?.[1]);
@@ -233,12 +233,60 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
       ],
     });
   });
+  it("admits only OPEN ready-for-agent leaf children, logs every skipped non-runnable child, and continues", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const sh: Sh = (file, args) => {
+        expect(file).toBe("gh");
+        if (String(args[1]).includes("/sub_issues")) {
+          return JSON.stringify([
+            {
+              number: 11,
+              state: "open",
+              labels: [{ name: "ready-for-agent" }],
+              sub_issues_summary: { total: 0 },
+            },
+            {
+              number: 12,
+              state: "open",
+              labels: [{ name: "enhancement" }],
+              sub_issues_summary: { total: 0 },
+            },
+            {
+              number: 13,
+              state: "closed",
+              labels: [{ name: "ready-for-agent" }],
+              sub_issues_summary: { total: 0 },
+            },
+            {
+              number: 14,
+              state: "open",
+              labels: [{ name: "ready-for-agent" }],
+              sub_issues_summary: { total: 2 },
+            },
+          ]);
+        }
+        // Only the admitted child reaches dependency lookup / wave scheduling.
+        expect(args[1]).toBe("repos/Akagilnc/ming-salvage-sim/issues/11/dependencies/blocked_by");
+        return "[]";
+      };
+      const epic = readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
+      expect(epic.children).toEqual([{ issue: 11, blockedBy: [] }]);
+      expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+        "family admission skipped child #12: missing ready-for-agent label",
+        "family admission skipped child #13: issue is CLOSED",
+        "family admission skipped child #14: issue is a parent issue",
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
   it("fails closed when the epic has NO child issues (a leaf issue / empty-or-odd subIssues) (online R2 Codex P2)", () => {
     // An epic with zero children would let `runFamily` treat the empty set as
     // already-complete (`every` over [] is vacuously true) → final verify/cmr on a
     // base with no slices → an empty PR. Admission must reject it.
     const sh: Sh = (file, args) =>
-      args[0] === "issue" ? JSON.stringify({ subIssues: { nodes: [] } }) : "[]";
+      String(args[1]).includes("/sub_issues") ? JSON.stringify([]) : "[]";
     expect(() => readFamilyEpic(404, "Akagilnc/ming-salvage-sim", sh)).toThrow(/no child issues|child/i);
   });
 });
