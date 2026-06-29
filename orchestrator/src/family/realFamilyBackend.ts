@@ -154,7 +154,7 @@ export const CMR_FOCUS_FILENAME = ".cmr-focus.md";
  */
 export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
 
-/** The cmr worker's completion signal (matches prompts/integrated_cmr.md). */
+/** The cmr worker's completion signal (matches the integrated CMR pass prompts). */
 const CMR_COMPLETION_SIGNAL = "CMR_STEP_COMPLETE";
 /**
  * The WRITE soul the cmr worker runs under (ADR 0026 2026-06-24). The cmr worker is
@@ -265,7 +265,8 @@ const MERGER_CONFLICT_PROMPT = "merger_resolve_conflict.md";
  */
 export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set([
-    cmrWorkerSpec().promptFile,
+    cmrWorkerSpec("fresh", "completeness").promptFile,
+    cmrWorkerSpec("fresh", "correctness").promptFile,
     familyShipWorkerSpec().promptFile,
     MERGER_CONFLICT_PROMPT,
   ]),
@@ -838,6 +839,7 @@ export class RealFamilyBackend implements FamilyBackend {
       kind: "completed",
       output: {
         kind: "cmr",
+        ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
         converged: outcome.converged,
         ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
       },
@@ -892,7 +894,7 @@ export class RealFamilyBackend implements FamilyBackend {
     ctx: DispatchContext,
   ): Promise<CmrWorkerOutcome> {
     // FAIL-CLOSED before any container work (codex cmr R3): the focus file pins the
-    // EXACT cut-SHA review-scope diff (prompt contract integrated_cmr.md:19-24 — do
+    // EXACT cut-SHA review-scope diff (prompt contract in the integrated CMR pass prompts — do
     // NOT guess main...HEAD). With no recorded cut SHA there is no honest scope to
     // hand the review, and a `main...familyBase` fallback would silently disable the
     // load-bearing scope — the same fail-open the reconcile `familyBaseStartHead()`
@@ -906,7 +908,7 @@ export class RealFamilyBackend implements FamilyBackend {
           "no familyBaseStartHead (cut SHA) recorded — cannot pin the cmr review scope",
         diagnosis:
           "the integrated cmr focus file must pin the EXACT git diff <cut SHA>...<familyBase> " +
-          "scope (integrated_cmr.md:19-24); refusing to fall back to a possibly-stale " +
+          "scope (integrated CMR pass prompts); refusing to fall back to a possibly-stale " +
           "main...HEAD scope (a fail-open that would review the wrong diff). Provide " +
           "RealFamilyBackendOptions.familyBaseStartHead.",
       };
@@ -1000,7 +1002,7 @@ export class RealFamilyBackend implements FamilyBackend {
       throw new Error(
         "writeCmrFocusFile: no familyBaseStartHead (cut SHA) recorded — the focus " +
           "file must pin the EXACT git diff <cut SHA>...<familyBase> review scope " +
-          "(integrated_cmr.md:19-24); refusing to emit a stale-base fallback scope " +
+          "(integrated CMR pass prompts); refusing to emit a stale-base fallback scope " +
           "(a fail-open that would review the wrong diff). Provide " +
           "RealFamilyBackendOptions.familyBaseStartHead.",
       );
@@ -1012,6 +1014,12 @@ export class RealFamilyBackend implements FamilyBackend {
             .map((n) => `#${n}`)
             .join(", ")}.`
         : "No machine-resolved child merges this run.";
+    const passLine =
+      ctx.cmrPass === "completeness"
+        ? "CMR pass: step5 completeness gate."
+        : ctx.cmrPass === "correctness"
+          ? "CMR pass: step6 correctness gate."
+          : "CMR pass: legacy integrated gate.";
     // ADR 0026 2026-06-24: the cmr worker is a SINGLE memory-bearing session — its
     // own round-to-round continuity is its session memory, NOT a prior-findings blob
     // threaded in as data. So the focus file pins ONLY the review scope + the
@@ -1019,7 +1027,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const body =
       `# Integrated cmr — review scope + focus (machine-generated; #335)\n\n` +
       `Review THIS exact family-base diff (the commits the family base added since it\n` +
-      `was cut from its target):\n\n    ${scope}\n\n${focusLine}\n`;
+      `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}\n`;
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
     this.excludeCmrFocusFromGit();
@@ -1848,7 +1856,7 @@ const nonEmpty = z.string().trim().min(1);
  * mixed key (a converged success carrying an `escalate` verdict, an off-contract
  * field) is rejected → malformed, closing the same "too-lax shape leaks the pass
  * branch" fail-open the ship parser was already hardened against. The contract is
- * prompts/integrated_cmr.md "must match one of the shapes above exactly":
+ * the integrated CMR pass prompts' "must match one of the shapes above exactly":
  *   1. `{converged:true}`                          — converged (no other key);
  *   2. `{converged:false, reason}`                 — not converged (reason REQUIRED, non-empty);
  *   3. `{escalate:{reason, diagnosis}}`            — could not run the review.

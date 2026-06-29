@@ -197,7 +197,10 @@ class E2EFamilyBackend extends RealFamilyBackend {
     _spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<CmrWorkerOutcome> {
-    this.cmrCalls.push({ familyBase: ctx.familyBase! });
+    this.cmrCalls.push({
+      familyBase: ctx.familyBase!,
+      ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+    });
     return { kind: "verdict", converged: true };
   }
   // #336: 止于 PR is now a CONTAINER ship WORKER (gstack-ship) via dispatchWorker →
@@ -303,12 +306,15 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
     expect(order.indexOf(12)).toBeLessThan(order.indexOf(13));
 
     // ── 4. the run STOPPED at the PR (ship worker dispatched once, family base) ─
-    // verify ran at BOTH barriers (each wave + final), cmr ran once (final), the
+    // verify ran at BOTH barriers (each wave + final), CMR ran as two final passes, the
     // ship WORKER ran once with the family base (#336: gstack-ship, not the inline
     // openFamilyPr) — and nothing merged to main.
     expect(backend.verifyCalls.length).toBeGreaterThanOrEqual(1);
     expect(backend.verifyCalls.some((v) => v.phase === "final")).toBe(true);
-    expect(backend.cmrCalls).toEqual([{ familyBase }]);
+    expect(backend.cmrCalls).toEqual([
+      { familyBase, cmrPass: "completeness" },
+      { familyBase, cmrPass: "correctness" },
+    ]);
     expect(backend.shipCalls).toEqual([familyBase]);
     // The legacy inline push path is DEAD — the ship worker replaced it (#336).
     expect(backend.prCalls).toEqual([]);

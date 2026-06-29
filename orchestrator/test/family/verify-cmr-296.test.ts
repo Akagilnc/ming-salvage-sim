@@ -159,15 +159,30 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyBackend: backend,
     });
     expect(result).toEqual({ ok: true, ran: true });
-    // Order: full verify FIRST, then cmr, then PR.
+    // Order: full verify FIRST, then step5 completeness, step6 correctness, then PR.
     expect(backend.verifyCalls).toEqual([{ phase: "final", familyBase: "family/291-base" }]);
-    expect(backend.cmrCalls).toEqual([{ familyBase: "family/291-base" }]);
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "completeness" },
+      { familyBase: "family/291-base", cmrPass: "correctness" },
+    ]);
     // 止于 PR: the PR is opened (decision 4) — but NOT merged (no merge call here).
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
     expect(backend.escalations).toEqual([]);
     // online review r2 (codex P1): a durable `shipped` terminal marker is persisted
     // carrying the family PR URL, so a resume sees the family is already delivered
     // and the spine's guard does not re-run the barrier / re-ship.
+    expect(backend.ledger).toContainEqual({
+      status: "cmr_passed",
+      event: "cmr_passed",
+      phase: "final",
+      cmrPass: "completeness",
+    });
+    expect(backend.ledger).toContainEqual({
+      status: "cmr_passed",
+      event: "cmr_passed",
+      phase: "final",
+      cmrPass: "correctness",
+    });
     expect(backend.ledger).toContainEqual({
       status: "shipped",
       event: "shipped",
