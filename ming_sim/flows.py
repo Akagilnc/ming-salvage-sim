@@ -43,21 +43,21 @@ def _province_efficiency(fiscal: dict, gentry_resistance: int, unrest: int) -> f
     return max(0.05, min(1.00, rate))
 
 
-def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> dict:
+def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> Optional[dict]:
     """固定财政旧路径的宽容 fiscal 读取。
 
     Shadow substrate 自己有 fail-loud+隔离日志；固定税收不能因为一个省的 fiscal JSON
-    坏态掀翻整月 pre_settle。坏 payload 按空 fiscal 继续走旧税基默认值，并让后续
-    substrate bridge 再记录精确隔离原因。
+    坏态掀翻整月 pre_settle，也不能把坏 payload 当空 fiscal 继续造钱。坏省当月
+    固定税收出列，并让后续 substrate bridge 再记录精确隔离原因。
     """
     try:
         fiscal = json.loads(str(raw_fiscal or "{}"))
     except (TypeError, ValueError) as exc:
-        tlog(f"[province-fiscal] {region_id} fiscal 解析失败，按空财政容器继续：{type(exc).__name__}: {exc}")
-        return {}
+        tlog(f"[province-fiscal] {region_id} fiscal 解析失败，本{TURN_UNIT}固定税收出列：{type(exc).__name__}: {exc}")
+        return None
     if not isinstance(fiscal, dict):
-        tlog(f"[province-fiscal] {region_id} fiscal 非字典，按空财政容器继续")
-        return {}
+        tlog(f"[province-fiscal] {region_id} fiscal 非字典，本{TURN_UNIT}固定税收出列")
+        return None
     return fiscal
 
 
@@ -92,6 +92,13 @@ def calc_province_fiscal(
         gentry       = int(row["gentry_resistance"])
         tax_base     = int(row["tax_per_turn"])   # 省级月税基准（万两）
         fiscal = _load_region_fiscal_for_fixed_flow(region_id, row["fiscal"])
+        if fiscal is None:
+            details.append({
+                "region_id": region_id, "name": name, "田赋": 0, "辽饷": 0,
+                "盐税": 0, "商税": 0, "皇庄": 0, "province_total": 0,
+                "efficiency": 0, "isolated": True,
+            })
+            continue
 
         huang_tian   = fiscal.get("huang_tian", 0)
         liao_xiang   = fiscal.get("liao_xiang", 0)

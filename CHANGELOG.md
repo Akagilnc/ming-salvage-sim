@@ -16,7 +16,7 @@
 - **结算文档同步动态 spine 契约**：`docs/SETTLEMENT_FLOW.md` 与 ADR 0019 说明动态选择、坏基座隔离和全省 seed / hub cutover 的边界。
 
 ### 修复
-- **坏财政基座不掀翻月末固定财政**： malformed `settle.st/p`、非 dict fiscal 容器与畸形 fiscal JSON 都会被送入 bridge 验证路径并 tlog 留痕，失败 tick 不落库。
+- **坏财政基座不掀翻月末固定财政**： malformed `settle.st/p`、非 dict fiscal 容器与畸形 fiscal JSON 都会被隔离并 tlog 留痕；坏 fiscal 省当月固定税收出列，避免按默认容器造钱，失败 tick 不落库。
 - **财政 golden 断言更稳**：`settle_tick` golden 改用 `math.isclose`，避免浮点表示细节造成误判，同时保持严格容差。
 
 ### 测试
