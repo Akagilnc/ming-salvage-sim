@@ -262,3 +262,29 @@ def test_substrate_corrupt_stock_isolated(fresh_game):
     assert isinstance(flows, list) and flows, "非数值 stock 不该掀翻固定财政（TypeError 逃逸隔离）"
     after = _read_settle(db)["st"]
     assert after["省库库银"] == [], "坏 stock 不该推进（港口锁：原值不变）"
+
+
+def test_substrate_malformed_settle_shape_is_logged_not_prefiltered(fresh_game, monkeypatch):
+    # cmr fix：动态 spine 只负责找「明控且已有 settle key」的省；st/p 形状坏态必须交给
+    # settle_province_tick 验证并经 shadow 隔离日志留痕，不能在 spine 预过滤后静默跳过。
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = json.loads(str(row["fiscal"]))
+    fiscal["settle"]["p"] = []  # malformed settle block: 有 settle key，但缺合法 p dict
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    assert isinstance(flow_rows, list) and flow_rows, "坏 settle 形状不该掀翻固定财政"
+    assert _read_settle(db)["p"] == [], "坏 settle 形状不该被 tick 改写"
+    surfaced = [m for m in msgs if "[fiscal-substrate] shaanxi" in m and "ValueError" in m]
+    assert surfaced, msgs
