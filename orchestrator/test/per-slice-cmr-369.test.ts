@@ -913,7 +913,13 @@ describe("#369 finding identity and classification", () => {
       classification.dispositions,
     );
 
-    expect(capped.blocking).toEqual([]);
+    expect(capped.blocking).toEqual([
+      {
+        ...finding,
+        severity: "critical",
+        action: "fix_now",
+      },
+    ]);
     expect(capped.deferred).toEqual([]);
     expect(capped.dispositions[0]?.reopenAttempts).toBe(4);
   });

@@ -66,11 +66,11 @@ interface ModelRoutePreset {
 }
 
 const NORMAL_SLOTS: ModelSlotMap = {
-  coder: "gpt-5.5",
+  coder: "sonnet",
   reviewer: "gpt-5.5",
-  coderFix: "gpt-5.5",
+  coderFix: "sonnet",
   ship: "sonnet",
-  merger: "opus",
+  merger: "sonnet",
   cmrCompleteness: "opus",
   cmrCorrectness: "opus",
 };
@@ -85,14 +85,13 @@ const NORMAL_LEG_COLLECTIONS: ModelRouteLegCollectionMap = {
 
 const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
   normal: { slots: NORMAL_SLOTS, legCollections: NORMAL_LEG_COLLECTIONS },
-  "codex-tight": {
-    tightFamilies: ["codex"],
+  "codex-cheap": {
     slots: {
       coder: "sonnet",
       reviewer: "opus",
       coderFix: "sonnet",
       ship: "sonnet",
-      merger: "opus",
+      merger: "sonnet",
       cmrCompleteness: "opus",
       cmrCorrectness: "opus",
     },
@@ -100,6 +99,43 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
       cmrReview: [
         { family: "claude", slug: "opus" },
         { family: "agy", slug: "agy" },
+        { family: "codex", slug: "gpt-5.5" },
+      ],
+    },
+  },
+  "codex-tight": {
+    tightFamilies: ["codex"],
+    slots: {
+      coder: "sonnet",
+      reviewer: "opus",
+      coderFix: "sonnet",
+      ship: "sonnet",
+      merger: "sonnet",
+      cmrCompleteness: "opus",
+      cmrCorrectness: "opus",
+    },
+    legCollections: {
+      cmrReview: [
+        { family: "claude", slug: "opus" },
+        { family: "agy", slug: "agy" },
+      ],
+    },
+  },
+  "claude-cheap": {
+    slots: {
+      coder: "gpt-5.5",
+      reviewer: "gpt-5.5",
+      coderFix: "gpt-5.5",
+      ship: "gpt-5.5",
+      merger: "gpt-5.5",
+      cmrCompleteness: "gpt-5.5",
+      cmrCorrectness: "gpt-5.5",
+    },
+    legCollections: {
+      cmrReview: [
+        { family: "codex", slug: "gpt-5.5" },
+        { family: "agy", slug: "agy" },
+        { family: "claude", slug: "opus" },
       ],
     },
   },
