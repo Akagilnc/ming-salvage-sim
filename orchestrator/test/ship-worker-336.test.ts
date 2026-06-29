@@ -19,7 +19,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   RealBackend,
@@ -39,6 +39,7 @@ const realPromptsDir = join(here, "..", "prompts");
 
 const cleanups: string[] = [];
 afterEach(() => {
+  vi.unstubAllEnvs();
   while (cleanups.length > 0) {
     const p = cleanups.pop();
     if (p !== undefined) rmSync(p, { recursive: true, force: true });
@@ -337,6 +338,7 @@ describe("#336 single-slice runShipWorker — fail-closed when the top-level Cla
   }
 
   it("no Claude worker token ⇒ escalate, never builds the sandbox / starts the container", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const be = noAuth();
     const outcome = await be.run(shipWorkerSpec(), { worktree });
     expect(outcome.kind).toBe("escalate");

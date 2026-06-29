@@ -50,9 +50,10 @@ import {
   workerResultToStep,
 } from "./dispatchWorker.js";
 import {
-  activeModelRoute,
+  applyRuntimeTightRoutePolicy,
   modelForSlot,
   printableRouteLineup,
+  resolveActiveModelRoute,
   type ModelRouteEnv,
 } from "./modelRoutes.js";
 import { isFilledString } from "./shipOutcome.js";
@@ -68,6 +69,7 @@ import type {
   ErrorPackage,
   Escalation,
   Finding,
+  FindingDisposition,
   HandoffStatus,
   IssueMeta,
   IssueSnapshot,
@@ -181,6 +183,8 @@ function buildPersistentEntry(opts: {
   ts: string;
   /** Terminal status — set only for the S8 handoff entry (#255). */
   handoffStatus?: HandoffStatus;
+  /** ADR0030 S4 classification state, persisted for resume replay. */
+  findingDispositions?: ReadonlyArray<FindingDisposition>;
 }): PersistentLedgerEntry {
   let entry: PersistentLedgerEntry = {
     step: opts.step,
@@ -197,6 +201,9 @@ function buildPersistentEntry(opts: {
   // tell success / escalate / error apart (#255).
   if (opts.handoffStatus !== undefined) {
     entry = { ...entry, handoffStatus: opts.handoffStatus };
+  }
+  if (opts.findingDispositions !== undefined) {
+    entry = { ...entry, findingDispositions: opts.findingDispositions };
   }
   return entry;
 }
@@ -295,6 +302,7 @@ interface S4AdjudicationReplay {
   readonly blocking: ReadonlyArray<Finding>;
   readonly blockingIdentityKeys: ReadonlyArray<string>;
   readonly deferred: ReadonlyArray<Finding>;
+  readonly findingDispositions: ReadonlyArray<FindingDisposition>;
   readonly noProgressCounts: ReadonlyMap<string, number>;
 }
 
@@ -304,6 +312,7 @@ function replayS4AdjudicationState(
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
   let deferredFindings: Finding[] = [];
+  let findingDispositions: FindingDisposition[] = [];
   const noProgressCounts = new Map<string, number>();
   let lastReviewerOutputForS4: StepOutput | undefined;
   let lastReviewerStepForS4: StepId | undefined;
@@ -318,9 +327,15 @@ function replayS4AdjudicationState(
       continue;
     }
 
-    const classification = classifyFindings(lastReviewerOutputForS4.findings);
+    const classification = classifyFindings(
+      lastReviewerOutputForS4.findings,
+      findingDispositions,
+    );
     let blocking = [...classification.blocking];
     let blockingIdentityKeys = [...classification.blockingIdentityKeys];
+    findingDispositions = [
+      ...(entry.findingDispositions ?? classification.dispositions),
+    ];
 
     if (
       lastReviewerStepForS4 === "S6" &&
@@ -371,6 +386,7 @@ function replayS4AdjudicationState(
     blocking: pendingBlockingFindings,
     blockingIdentityKeys: pendingBlockingFindingIdentityKeys,
     deferred: deferredFindings,
+    findingDispositions,
     noProgressCounts,
   };
 }
@@ -686,8 +702,24 @@ function isReviewerStructuredOutputError(err: unknown): boolean {
 
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
+  const modelRoute = resolveActiveModelRoute();
+  const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
+    interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+    warn: (message) => console.warn(`[orchestrator] ${message}`),
+  });
+  if (routePolicy.kind === "stop") {
+    return {
+      status: "escalate",
+      errorPackage: {
+        failedStep: "S0",
+        reason: `${routePolicy.escalation.reason}: ${routePolicy.escalation.diagnosis}`,
+      },
+      stepLedger: [{ step: "S8" }],
+      deferredFindings: [],
+    };
+  }
   console.info(
-    `[orchestrator] model route lineup\n${printableRouteLineup(activeModelRoute())}`,
+    `[orchestrator] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
   );
   // Family-run context (ADR 0022 decision 2). When present this is a CHILD slice
   // of a family run: cut from the family base (decision 7) and S7 push is a local
@@ -708,6 +740,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let deferredFindings: Finding[] = [];
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
+  let findingDispositions: FindingDisposition[] = [];
   let lastReviewerStepId: StepId | undefined;
   const noProgressByFindingIdentityKey = new Map<string, number>();
 
@@ -716,9 +749,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     afterFix: boolean,
   ): string[] {
     if (reviewerOutput?.kind !== "reviewer") return [];
-    const classification = classifyFindings(reviewerOutput.findings);
+    const classification = classifyFindings(
+      reviewerOutput.findings,
+      findingDispositions,
+    );
     let blocking = [...classification.blocking];
     let blockingIdentityKeys = [...classification.blockingIdentityKeys];
+    findingDispositions = [...classification.dispositions];
     const noProgressIdentityKeys: string[] = [];
 
     if (afterFix && pendingBlockingFindingIdentityKeys.length > 0) {
@@ -829,6 +866,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
      * (runner-action steps, or a fake Backend that returns a bare StepOutput).
      */
     stepSessionId?: string,
+    findingDispositions?: ReadonlyArray<FindingDisposition>,
   ): Promise<void> {
     const ph = await hashPrompt(promptFile, s, backend);
     const branchHEAD = await resolveBranchHEAD();
@@ -840,6 +878,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       branchHEAD,
       ts: new Date().toISOString(),
       handoffStatus,
+      findingDispositions,
     });
 
     if (stateDir === undefined) {
@@ -885,9 +924,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
      * the normal error path (run-level UUID fallback applies, as before).
      */
     stepSessionId?: string,
+    findingDispositions?: ReadonlyArray<FindingDisposition>,
   ): Promise<void> {
     try {
-      await emitLedger(s, output, promptFile, handoffStatus, stepSessionId);
+      await emitLedger(
+        s,
+        output,
+        promptFile,
+        handoffStatus,
+        stepSessionId,
+        findingDispositions,
+      );
     } catch {
       // Swallow: error termination must not be derailed by a ledger I/O fault.
     }
@@ -917,7 +964,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   async function errorTermination(
     failedStep: StepId,
     err: unknown,
-    opts?: { recordInMemory?: boolean; output?: StepOutput },
+    opts?: {
+      recordInMemory?: boolean;
+      output?: StepOutput;
+      findingDispositions?: ReadonlyArray<FindingDisposition>;
+    },
   ): Promise<RunResult> {
     // integ-cmr base r2 (D): split the two concerns the old single
     // `recordFailingStep` flag conflated. `recordInMemory` controls only the
@@ -948,13 +999,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // carrying the failing step's output (F3).
     if (failedStep !== "S8") {
       if (recordInMemory) {
-        ledger.push(
-          opts?.output === undefined
-            ? { step: failedStep }
-            : { step: failedStep, output: opts.output },
-        );
+        ledger.push({
+          step: failedStep,
+          ...(opts?.output !== undefined ? { output: opts.output } : {}),
+          ...(opts?.findingDispositions !== undefined
+            ? { findingDispositions: opts.findingDispositions }
+            : {}),
+        });
       }
-      await persistBestEffort(failedStep, opts?.output, undefined);
+      await persistBestEffort(
+        failedStep,
+        opts?.output,
+        undefined,
+        undefined,
+        undefined,
+        opts?.findingDispositions,
+      );
     }
 
     // Terminal S8 entry — in-memory + persisted. The PERSISTED entry is TAGGED
@@ -1094,6 +1154,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     pendingBlockingFindings = [...replayedS4.blocking];
     pendingBlockingFindingIdentityKeys = [...replayedS4.blockingIdentityKeys];
     deferredFindings = [...replayedS4.deferred];
+    findingDispositions = [...replayedS4.findingDispositions];
     noProgressByFindingIdentityKey.clear();
     for (const [key, count] of replayedS4.noProgressCounts) {
       noProgressByFindingIdentityKey.set(key, count);
@@ -1320,7 +1381,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   worktree,
                   stateDir,
                   ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
-                  ...(step === "S5"
+                  ...(step === "S5" || step === "S6"
                     ? {
                         blockingFindings: pendingBlockingFindings,
                         blockingFindingIdentityKeys:
@@ -1569,9 +1630,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
     }
 
+    const stepFindingDispositions =
+      step === "S4" ? findingDispositions : undefined;
+
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).
-    ledger.push(output === undefined ? { step } : { step, output });
+    ledger.push({
+      step,
+      ...(output !== undefined ? { output } : {}),
+      ...(stepFindingDispositions !== undefined
+        ? { findingDispositions: stepFindingDispositions }
+        : {}),
+    });
     // #6: a writeLedger failure here is a backend-call exception → it must
     // converge to S8(error) with an error package, NOT raw-reject out of
     // runOrchestrator (PRD route table: any backend call throwing → S8(error)).
@@ -1579,7 +1649,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     try {
       // #256: pass the real per-step sandbox session id (captured from the seam
       // extension) so the ledger records the true id resumeSession will resume.
-      await emitLedger(step, output, promptFile, undefined, stepSessionId);
+      await emitLedger(
+        step,
+        output,
+        promptFile,
+        undefined,
+        stepSessionId,
+        stepFindingDispositions,
+      );
     } catch (err) {
       // integ-cmr base r2 (D): the step is already in the in-memory ledger
       // (pushed above), so skip the in-memory push — but STILL best-effort
@@ -1591,6 +1668,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return await errorTermination(step, err, {
         recordInMemory: false,
         output,
+        findingDispositions: stepFindingDispositions,
       });
     }
 

@@ -16,6 +16,7 @@
 import type {
   Backend,
   DispatchContext,
+  Escalation,
   PriorFindingDisposition,
   WorkerResult,
   WorkerSpec,
@@ -705,6 +706,8 @@ export interface FamilyRunResult {
   readonly familyBase: string;
   /** The family base HEAD after all merges (undefined if nothing merged). */
   readonly familyHead?: string;
+  /** Structured startup/escalation reason when status is `"escalated"`. */
+  readonly escalation?: Escalation;
   /** Per-child outcomes, in execution order. */
   readonly children: ReadonlyArray<FamilyChildResult>;
 }

@@ -31,6 +31,7 @@ class RetryReviewBackend implements Backend {
   readonly dispatched: string[] = [];
   readonly specs: WorkerSpec[] = [];
   readonly ctxs: DispatchContext[] = [];
+  readonly ledgerWrites: PersistentLedgerEntry[] = [];
   reviewerAttempts = 0;
 
   constructor(
@@ -66,7 +67,9 @@ class RetryReviewBackend implements Backend {
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
   async push(): Promise<void> {}
-  async writeLedger(_entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {}
+  async writeLedger(entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {
+    this.ledgerWrites.push(entry);
+  }
 
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}`);
@@ -277,6 +280,82 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S5:coder",
       "S6:reviewer",
       "S7:ship",
+    ]);
+  });
+
+  it("passes prior claimed-fixed findings and identity keys to the S6 fresh reviewer", async () => {
+    const backend = new RetryReviewBackend([
+      { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: blockingKey, status: "verified-closed" },
+          ],
+        },
+      },
+    ]);
+
+    const result = await runOrchestrator({ issueNumber: 428, backend });
+
+    expect(result.status).toBe("success");
+    const s6Index = backend.specs.findIndex((spec) => spec.id === "S6");
+    expect(s6Index).toBeGreaterThanOrEqual(0);
+    expect(backend.ctxs[s6Index]?.blockingFindings).toEqual([blocking]);
+    expect(backend.ctxs[s6Index]?.blockingFindingIdentityKeys).toEqual([
+      blockingKey,
+    ]);
+  });
+
+  it("threads S4 finding dispositions through live re-review classification and persists them", async () => {
+    const acceptedRisk: Finding = {
+      severity: "medium",
+      category: "Correctness",
+      claim_quote: "accepted risk remains same severity",
+      location: "src/runner.ts:736",
+      suggested_fix: "do not reopen without a material severity upgrade",
+      action: "wont_fix",
+      disposition_reason: "Accepted as out of scope for this slice",
+    };
+    const backend = new RetryReviewBackend([
+      {
+        kind: "completed",
+        output: { kind: "reviewer", findings: [blocking, acceptedRisk] },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [{ ...acceptedRisk, action: "fix_now" }],
+          priorFindingDispositions: [
+            { identityKey: blockingKey, status: "verified-closed" },
+          ],
+        },
+      },
+    ]);
+
+    const result = await runOrchestrator({ issueNumber: 428, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+    const firstS4Write = backend.ledgerWrites.find((entry) => entry.step === "S4");
+    expect(firstS4Write?.findingDispositions).toEqual([
+      {
+        identityKey:
+          "correctness|src/runner.ts:736|accepted risk remains same severity",
+        status: "wont_fix",
+        reason: "Accepted as out of scope for this slice",
+        severity: "medium",
+        reopenAttempts: 0,
+      },
     ]);
   });
 
@@ -532,6 +611,72 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(backend.ctxs[0]?.blockingFindingIdentityKeys).toEqual([key]);
   });
 
+  it("replays persisted S4 finding dispositions on resume", async () => {
+    const blocking: Finding = {
+      severity: "high",
+      category: "Correctness",
+      claim_quote: "fix this first",
+      location: "src/runner.ts:970",
+      suggested_fix: "fix it",
+      action: "fix_now",
+    };
+    const blockingKey = "correctness|src/runner.ts:970|fix this first";
+    const acceptedRisk: Finding = {
+      severity: "medium",
+      category: "Correctness",
+      claim_quote: "accepted risk survives resume",
+      location: "src/runner.ts:971",
+      suggested_fix: "do not reopen at the same severity",
+      action: "wont_fix",
+      disposition_reason: "Accepted outside this slice",
+    };
+    const acceptedRiskDisposition = {
+      identityKey: "correctness|src/runner.ts:971|accepted risk survives resume",
+      status: "wont_fix" as const,
+      reason: "Accepted outside this slice",
+      severity: "medium" as const,
+      reopenAttempts: 0,
+    };
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-369",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S3",
+          output: { kind: "reviewer", findings: [blocking, acceptedRisk] },
+        },
+        { step: "S4", findingDispositions: [acceptedRiskDisposition] },
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [{ ...acceptedRisk, action: "fix_now" }],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 428, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
   it("rebuilds deferred findings when re-feeding a terminal resumed run", async () => {
     const deferred: Finding = {
       severity: "medium",
@@ -690,6 +835,88 @@ describe("#369 finding identity and classification", () => {
       "correctness|src/runner.ts:120|missing full diff review",
     ]);
   });
+
+  it("persists wont-fix and rejected dispositions with identity and rationale", () => {
+    const classification = classifyFindings([
+      {
+        ...finding,
+        action: "wont_fix",
+        disposition_reason: "Accepted as outside this slice",
+      },
+      {
+        ...finding,
+        claim_quote: "  Already covered by existing invariant ",
+        action: "rejected",
+        disposition_reason: "The claim is false on the current full diff",
+      },
+    ]);
+
+    expect(classification.deferred).toEqual([]);
+    expect(classification.dispositions).toEqual([
+      {
+        identityKey: "correctness|src/runner.ts:120|missing full diff review",
+        status: "wont_fix",
+        reason: "Accepted as outside this slice",
+        severity: "medium",
+        reopenAttempts: 0,
+      },
+      {
+        identityKey:
+          "correctness|src/runner.ts:120|already covered by existing invariant",
+        status: "rejected",
+        reason: "The claim is false on the current full diff",
+        severity: "medium",
+        reopenAttempts: 0,
+      },
+    ]);
+  });
+
+  it("reopens a suppressed finding on severity upgrade but caps reopen attempts at four", () => {
+    const classification = classifyFindings(
+      [
+        {
+          ...finding,
+          severity: "high",
+          action: "fix_now",
+        },
+      ],
+      [
+        {
+          identityKey: findingIdentityKey(finding),
+          status: "wont_fix",
+          reason: "previously accepted risk",
+          severity: "medium",
+          reopenAttempts: 3,
+        },
+      ],
+    );
+
+    expect(classification.blocking).toHaveLength(1);
+    expect(classification.dispositions).toEqual([
+      {
+        identityKey: findingIdentityKey(finding),
+        status: "wont_fix",
+        reason: "previously accepted risk",
+        severity: "high",
+        reopenAttempts: 4,
+      },
+    ]);
+
+    const capped = classifyFindings(
+      [
+        {
+          ...finding,
+          severity: "critical",
+          action: "fix_now",
+        },
+      ],
+      classification.dispositions,
+    );
+
+    expect(capped.blocking).toEqual([]);
+    expect(capped.deferred).toEqual([]);
+    expect(capped.dispositions[0]?.reopenAttempts).toBe(4);
+  });
 });
 
 describe("#369 legacy S5 landing file", () => {
@@ -841,6 +1068,93 @@ describe("#369 legacy S5 landing file", () => {
     });
 
     expect(observedLanding).toEqual({
+      path: join(stateDir, "fix-findings.json"),
+      sandboxPath: ".orchestrator-fix-findings.json",
+    });
+  });
+
+  it("materializes prior claimed-fixed findings for S6 reviewers through the same protected mount", async () => {
+    const worktree: WorktreeHandle = {
+      branch: "feat/fix",
+      base: "main",
+      path: mkdtempSync(join(tmpdir(), "prior-findings-mount-")),
+    };
+    const stateDir = mkdtempSync(join(tmpdir(), "prior-findings-mount-ledger-"));
+    const finding: Finding = {
+      severity: "high",
+      category: "correctness",
+      claim_quote: "verify me",
+      location: "src/x.ts:3",
+      suggested_fix: "confirm closure",
+      action: "fix_now",
+    };
+    let observedLanding: unknown;
+    let observedMount:
+      | { readonly path: string; readonly sandboxPath: string }
+      | undefined;
+    const backend: Backend = {
+      async findResumeState() { return undefined; },
+      async cleanResidue() {},
+      async resumeSession() {
+        throw new Error("not expected");
+      },
+      async fetchIssueMeta() {
+        throw new Error("not expected");
+      },
+      async fetchIssueSnapshot() {
+        throw new Error("not expected");
+      },
+      async prepareWorktree() {
+        throw new Error("not expected");
+      },
+      async writeSnapshot() {},
+      async runStep(_spec, _worktree, options) {
+        observedMount = options?.fixFindingsLanding;
+        observedLanding = JSON.parse(
+          readFileSync(join(stateDir, "fix-findings.json"), "utf8"),
+        );
+        return {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|src/x.ts:3|verify me",
+              status: "verified-closed",
+            },
+          ],
+        };
+      },
+      async push() {},
+      async writeLedger() {},
+    };
+    const spec: WorkerSpec = {
+      id: "S6",
+      kind: "reviewer",
+      role: "reviewer",
+      host: "codex",
+      session: "fresh",
+      contextRetention: "clean",
+      skill: "/review",
+      promptFile: "reviewer_review.md",
+      completionSignal: "REVIEWER_STEP_COMPLETE",
+      maxIter: 1,
+      model: "gpt-5.5",
+      soul: "READ-ONLY",
+      toolchain: [],
+    };
+
+    await legacyDispatchWorker(backend, spec, {
+      worktree,
+      stateDir,
+      blockingFindings: [finding],
+      blockingFindingIdentityKeys: ["correctness|src/x.ts:3|verify me"],
+    });
+
+    expect(observedLanding).toEqual({
+      blockingFindings: [finding],
+      blockingFindingIdentityKeys: ["correctness|src/x.ts:3|verify me"],
+    });
+    expect(observedMount).toEqual({
       path: join(stateDir, "fix-findings.json"),
       sandboxPath: ".orchestrator-fix-findings.json",
     });

@@ -15,9 +15,11 @@ is one single-vendor review pass over the current full slice diff:
   read-only review role.
 
 Always review the current full diff, not merely whether a prior finding appears
-closed. If the runner supplies prior claimed-fixed findings, explicitly classify
-each as still-active / verified-closed / unable-to-assess in the structured
-finding/disposition contract when available; absence alone is not proof of closure.
+closed. If `$ORCHESTRATOR_FIX_FINDINGS_PATH` is set, read that JSON file for the
+runner-supplied prior claimed-fixed findings and identity keys. Explicitly
+classify each as still-active / verified-closed / unable-to-assess in the
+structured finding/disposition contract when available; absence alone is not proof
+of closure.
 
 Do not invoke `ak-cross-m-review` here. Full cross-model CMR is a separate
 family-layer worker over the assembled family base. Do not run a fix loop; report
