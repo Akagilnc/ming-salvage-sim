@@ -37,6 +37,8 @@ import {
   lastSessionId,
   matchWorktreeForBranch,
   modelIdForSlug,
+  modelFamilyForSlug,
+  modelIsStrongLeg,
   parseBlockedBy,
   parseSubIssueCount,
   promptsDirError,
@@ -448,20 +450,21 @@ describe("realBackend resolveModelSlug", () => {
       provider: "codex",
       model: "gpt-5.5",
       options: { effort: "high" },
-      family: "codex",
-      strongLeg: true,
     });
     expect(resolveModelSlug("sonnet")).toEqual({
       provider: "claudeCode",
       model: "claude-sonnet-4-6",
-      family: "claude",
     });
     expect(resolveModelSlug("opus")).toEqual({
       provider: "claudeCode",
       model: "claude-opus-4-8",
-      family: "claude",
-      strongLeg: true,
     });
+    expect(modelFamilyForSlug("gpt-5.5")).toBe("codex");
+    expect(modelFamilyForSlug("sonnet")).toBe("claude");
+    expect(modelFamilyForSlug("opus")).toBe("claude");
+    expect(modelIsStrongLeg("gpt-5.5")).toBe(true);
+    expect(modelIsStrongLeg("sonnet")).toBe(false);
+    expect(modelIsStrongLeg("opus")).toBe(true);
   });
 
   it("fails closed for unknown model slugs", () => {
