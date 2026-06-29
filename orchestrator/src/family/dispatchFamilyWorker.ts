@@ -178,6 +178,8 @@ export async function legacyDispatchFamilyWorker(
         ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
         converged: cmr.converged,
         ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
+        ...(cmr.successfulLegs !== undefined ? { successfulLegs: cmr.successfulLegs } : {}),
+        ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
       },
     };
   }

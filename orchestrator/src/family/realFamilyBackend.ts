@@ -796,9 +796,11 @@ export class RealFamilyBackend implements FamilyBackend {
    * `Skill`-invokes ak-cross-m-review (1 Agent + 2 CLI legs in-container, #333) and
    * IS the fixer: the WHOLE review → grade → fix → re-review loop runs INSIDE its
    * one memory-bearing session (only the 3 review legs are fresh each round — ADR
-   * 0026 2026-06-24). It returns a TERMINAL `{converged, reason?}` verdict; the
-   * runner (`verifyCmr.ts`) dispatches it ONCE and ships on `converged` / escalates
-   * otherwise — there is NO separate fix worker, NO runner round-loop. A
+   * 0026 2026-06-24). It returns a TERMINAL
+   * `{converged, reason?, successfulLegs, skippedLegs?}` verdict; the runner
+   * (`verifyCmr.ts`) dispatches it ONCE and ships on `converged` only if the
+   * reported successful legs meet ADR0032's strong-leg floor / escalates otherwise
+   * — there is NO separate fix worker, NO runner round-loop. A
    * non-converged or escalate verdict is the runner's escalate/abort fork. A
    * `completed` verdict is `WorkerResult.completed` (a CmrResult payload), NOT `failed`.
    */
@@ -842,6 +844,8 @@ export class RealFamilyBackend implements FamilyBackend {
         ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
         converged: outcome.converged,
         ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
+        successfulLegs: outcome.successfulLegs,
+        ...(outcome.skippedLegs !== undefined ? { skippedLegs: outcome.skippedLegs } : {}),
       },
     };
   }
@@ -1743,8 +1747,9 @@ export class RealFamilyBackend implements FamilyBackend {
 
 /**
  * The classified outcome of the integrated cmr WORKER's run (#335). One of:
- *   - `verdict`   — the worker produced a bare `{converged, reason?}` cross-model
- *     verdict (the normal case; `verifyCmr.ts` reads `converged`);
+ *   - `verdict`   — the worker produced a `{converged, reason?, successfulLegs}`
+ *     verdict plus the leg slugs that actually reviewed (the normal case;
+ *     `verifyCmr.ts` reads `converged` and enforces ADR0032's strong-leg floor);
  *   - `escalate`  — the worker is model-stuck (skill missing / no leg ran / it
  *     could not produce a verdict) ⇒ the runner's escalate续跑 fork, NOT a pass;
  *   - `malformed` — the run emitted no parseable `<cmr>` tag ⇒ the gate must never
@@ -1753,9 +1758,45 @@ export class RealFamilyBackend implements FamilyBackend {
  * escalate / malformed WorkerResult-level cases the bare verdict cannot carry.
  */
 export type CmrWorkerOutcome =
-  | { readonly kind: "verdict"; readonly converged: boolean; readonly reason?: string }
+  | {
+      readonly kind: "verdict";
+      readonly converged: boolean;
+      readonly reason?: string;
+      readonly successfulLegs: readonly string[];
+      readonly skippedLegs?: readonly CmrSkippedLeg[];
+    }
   | { readonly kind: "escalate"; readonly reason: string; readonly diagnosis: string }
   | { readonly kind: "malformed"; readonly reason: string };
+
+interface CmrSkippedLeg {
+  readonly slug: string;
+  readonly reason: string;
+}
+
+const DEFAULT_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
+
+function cmrLegAccountingFailure(input: {
+  readonly successfulLegs: readonly string[];
+  readonly skippedLegs?: readonly CmrSkippedLeg[];
+}): string | undefined {
+  const successful = new Set(input.successfulLegs);
+  const skipped = new Set((input.skippedLegs ?? []).map((leg) => leg.slug));
+  const missing = DEFAULT_CMR_LEGS.filter((slug) => !successful.has(slug) && !skipped.has(slug));
+  if (missing.length > 0) {
+    return (
+      "cmr worker omitted declared leg accounting for: " +
+      `${missing.join(", ")} (each default cmr leg must be successful or skipped)`
+    );
+  }
+  const doubleReported = DEFAULT_CMR_LEGS.filter((slug) => successful.has(slug) && skipped.has(slug));
+  if (doubleReported.length > 0) {
+    return (
+      "cmr worker reported declared leg as both successful and skipped: " +
+      doubleReported.join(", ")
+    );
+  }
+  return undefined;
+}
 
 /**
  * The cmr worker's reviewer-leg auth, each leg BEST-EFFORT (codex cmr R1): a leg
@@ -1857,14 +1898,26 @@ const nonEmpty = z.string().trim().min(1);
  * field) is rejected → malformed, closing the same "too-lax shape leaks the pass
  * branch" fail-open the ship parser was already hardened against. The contract is
  * the integrated CMR pass prompts' "must match one of the shapes above exactly":
- *   1. `{converged:true}`                          — converged (no other key);
- *   2. `{converged:false, reason}`                 — not converged (reason REQUIRED, non-empty);
+ *   1. `{converged:true, successfulLegs, skippedLegs?}`           — converged;
+ *   2. `{converged:false, reason, successfulLegs, skippedLegs?}`  — not converged;
  *   3. `{escalate:{reason, diagnosis}}`            — could not run the review.
+ * Verdicts must also account for every default CMR leg: each must be either
+ * successful or explicitly skipped.
  * Escalate is tried FIRST (a stuck worker carries no usable verdict).
  */
-const cmrConvergedSchema = z.object({ converged: z.literal(true) }).strict();
+const cmrLegSlugSchema = z.string().trim().min(1);
+const cmrSkippedLegSchema = z
+  .object({ slug: cmrLegSlugSchema, reason: nonEmpty })
+  .strict();
+const cmrVerdictLegsSchema = {
+  successfulLegs: z.array(cmrLegSlugSchema).min(1),
+  skippedLegs: z.array(cmrSkippedLegSchema).optional(),
+} as const;
+const cmrConvergedSchema = z
+  .object({ converged: z.literal(true), ...cmrVerdictLegsSchema })
+  .strict();
 const cmrRedSchema = z
-  .object({ converged: z.literal(false), reason: nonEmpty })
+  .object({ converged: z.literal(false), reason: nonEmpty, ...cmrVerdictLegsSchema })
   .strict();
 const cmrEscalateSchema = z
   .object({ escalate: z.object({ reason: nonEmpty, diagnosis: nonEmpty }).strict() })
@@ -1910,17 +1963,39 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
     };
   }
   if (cmrConvergedSchema.safeParse(parsed).success) {
-    return { kind: "verdict", converged: true };
+    const converged = cmrConvergedSchema.parse(parsed);
+    const legAccountingFailure = cmrLegAccountingFailure(converged);
+    if (legAccountingFailure !== undefined) {
+      return { kind: "malformed", reason: legAccountingFailure };
+    }
+    return {
+      kind: "verdict",
+      converged: true,
+      successfulLegs: converged.successfulLegs,
+      ...(converged.skippedLegs !== undefined ? { skippedLegs: converged.skippedLegs } : {}),
+    };
   }
   const red = cmrRedSchema.safeParse(parsed);
   if (red.success) {
-    return { kind: "verdict", converged: false, reason: red.data.reason };
+    const legAccountingFailure = cmrLegAccountingFailure(red.data);
+    if (legAccountingFailure !== undefined) {
+      return { kind: "malformed", reason: legAccountingFailure };
+    }
+    return {
+      kind: "verdict",
+      converged: false,
+      reason: red.data.reason,
+      successfulLegs: red.data.successfulLegs,
+      ...(red.data.skippedLegs !== undefined ? { skippedLegs: red.data.skippedLegs } : {}),
+    };
   }
   return {
     kind: "malformed",
     reason:
-      'cmr worker <cmr> tag matched no valid shape (expected one of: {converged:true}, ' +
-      "{converged:false,reason}, {escalate:{reason,diagnosis}} — non-empty strings, no extra keys)",
+      "cmr worker <cmr> tag matched no valid shape (expected one of: " +
+      "{converged:true,successfulLegs,skippedLegs?}, " +
+      "{converged:false,reason,successfulLegs,skippedLegs?}, " +
+      "{escalate:{reason,diagnosis}} — non-empty strings, no extra keys)",
   };
 }
 

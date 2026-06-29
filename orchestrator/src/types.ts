@@ -423,10 +423,19 @@ export interface CmrResult {
   readonly converged: boolean;
   /** Why it did not converge — set when red (handed to escalate). */
   readonly reason?: string;
+  /** CMR leg slugs that actually produced a usable review this pass. */
+  readonly successfulLegs?: readonly string[];
+  /** Declared CMR legs skipped at runtime, with the visible degrade flag reason. */
+  readonly skippedLegs?: readonly CmrSkippedLeg[];
   // NOTE: a STUCK cmr worker is the WorkerResult-level `{kind:"escalated"}` case,
   // NOT an `escalate` field on this `completed` payload (codex cmr R3b finding: a
   // payload-level escalate would be silently ignored by the verifyCmr consumer,
   // which reads `converged`). `completed` means the worker ran to completion.
+}
+
+export interface CmrSkippedLeg {
+  readonly slug: string;
+  readonly reason: string;
 }
 
 /**
