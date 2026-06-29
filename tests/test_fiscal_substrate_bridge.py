@@ -639,6 +639,25 @@ def test_substrate_malformed_fiscal_container_is_logged_not_prefiltered(fresh_ga
     assert surfaced, msgs
 
 
+def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game, monkeypatch):
+    # Public entry contract: fixed fiscal must not crash before shadow substrate isolation can log.
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    db.conn.execute("UPDATE regions SET fiscal='[]' WHERE id='shaanxi'")
+    db.conn.commit()
+
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    assert isinstance(flow_rows, list) and flow_rows, "坏 fiscal 容器不该掀翻固定财政"
+    assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "[]"
+    assert any("[province-fiscal] shaanxi fiscal 非字典" in m for m in msgs), msgs
+    assert any("[fiscal-substrate] shaanxi" in m and "fiscal 非字典" in m for m in msgs), msgs
+
+
 def test_substrate_malformed_fiscal_json_is_logged_not_prefiltered(fresh_game, monkeypatch):
     # 动态 spine selector 解析 fiscal JSON 失败时仍应把该省交给 bridge，让 shadow 隔离
     # 统一 tlog 留痕；不能静默跳过坏 JSON。
@@ -657,6 +676,25 @@ def test_substrate_malformed_fiscal_json_is_logged_not_prefiltered(fresh_game, m
     assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "{bad"
     surfaced = [m for m in msgs if "[fiscal-substrate] shaanxi" in m and "JSONDecodeError" in m]
     assert surfaced, msgs
+
+
+def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game, monkeypatch):
+    # Public entry contract: syntax-bad fiscal JSON must not abort before shadow isolation.
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    db.conn.execute("UPDATE regions SET fiscal='{bad' WHERE id='shaanxi'")
+    db.conn.commit()
+
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    assert isinstance(flow_rows, list) and flow_rows, "坏 fiscal JSON 不该掀翻固定财政"
+    assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "{bad"
+    assert any("[province-fiscal] shaanxi fiscal 解析失败" in m and "JSONDecodeError" in m for m in msgs), msgs
+    assert any("[fiscal-substrate] shaanxi" in m and "JSONDecodeError" in m for m in msgs), msgs
 
 
 def test_apply_fixed_period_flows_advances_and_logs_jiangnan_core(fresh_game, monkeypatch):
