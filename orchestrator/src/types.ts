@@ -16,31 +16,30 @@
 // ───────────────────────────── step identifiers ─────────────────────────────
 
 /**
- * The single-slice step sequence (ADR 0026 2026-06-24 correction, wiki line 42).
+ * The single-slice step sequence (ADR 0030): the runner owns the visible
+ * per-slice review/fix loop.
  *
- * Under the corrected ADR 0026 the single-slice runner is a PURE SCHEDULER and
- * the per-slice review→fix→re-review LOOP no longer lives at the runner level. S2
- * is ONE memory-bearing build worker that runs the WHOLE per-slice sequence
- * INTERNALLY (invoke `/tdd` → typecheck + full suite → `/review` + self-check 二连
- * → baseline commit → `/ak-cross-m-review --scenario per-slice` to concurrence →
- * return the FINAL reviewed commit). The runner dispatches it ONCE and reads its
- * terminal verdict — there is NO runner-level reviewer step (S3/S6), NO
- * fix step (S5), NO route fan-out (S4). The discipline lives in the versioned
- * skills, never in the runner.
+ *   S0 gate → S1 context → S2 implement → S3 review → S4 classify
+ *     → S7 ship when clean
+ *     → S5 fix → S6 fresh full-diff review → S4 classify while blocking remains
+ *     → S8 handoff
  *
- *   worker steps      : S2 coder build (the whole per-slice sequence), S7 ship
- *   scheduling actions: S0 input_gate, S1 load_context, S8 handoff
- *
- * S7 is a SHIP worker step (invoke `gstack-ship`); cmr/PR live at the family layer.
+ * S2 and S5 are coder workers. S3 and S6 are fresh read-only reviewer workers.
+ * S4 is the runner-owned classification boundary that makes per-round verdicts
+ * visible in the ledger instead of hiding the loop inside one coder session.
  */
 export type StepId =
   | "S0"
   | "S1"
   | "S2"
+  | "S3"
+  | "S4"
+  | "S5"
+  | "S6"
   | "S7"
   | "S8";
 
-/** Which soul a step runs under. v0.1 = one image, two roles. */
+/** Which role a single-slice worker runs under. */
 export type StepRole = "coder" | "reviewer";
 
 /** Terminal handoff status (ADR 0018 / PRD #244 route table). */
@@ -51,7 +50,7 @@ export type HandoffStatus = "success" | "escalate" | "error";
 /**
  * Soul identifier injected into the sandbox for a step.
  *
- * - `"coder"`: full dev-discipline soul (wiki TDD flow, /review, self-check).
+ * - `"coder"`: implementation/fix soul (TDD for S2, finding fix contract for S5).
  * - `"READ-ONLY"`: reviewer soul with READ-ONLY soft constraint baked in
  *   (prompt-level, not an OS-level mount — same image, separate `run()`).
  * - `"cmr"`: the family integrated-cmr fixer soul (ADR 0026 2026-06-24) — a WRITE
@@ -373,6 +372,19 @@ export interface DispatchContext {
    * not the execution source of truth.
    */
   readonly issueSnapshot?: IssueSnapshot;
+  /**
+   * S5 coder-fix worker only: the blocking reviewer findings selected at S4
+   * from the current full-diff review. This is the structured cross-worker
+   * contract ADR 0030 needs; the runner owns classification and the fix worker
+   * receives data, not hidden session memory.
+   */
+  readonly blockingFindings?: ReadonlyArray<Finding>;
+  /**
+   * Stable identity keys for {@link blockingFindings}. Suppression/reopen logic
+   * must match findings by normalized identity rather than exact object text, so
+   * the runner passes the keys alongside the structured findings.
+   */
+  readonly blockingFindingIdentityKeys?: ReadonlyArray<string>;
   /**
    * FAMILY cmr worker only: the child issue numbers whose merge into the family
    * base was LLM-resolved (#295) — forwarded to the integrated cmr 承重闸 so it
