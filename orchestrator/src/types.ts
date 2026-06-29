@@ -754,6 +754,7 @@ export interface Backend {
     spec: StepSpec,
     worktree: WorktreeHandle,
     sessionId: string,
+    options?: AgentStepRunOptions,
   ): Promise<StepOutput | StepResult>;
   /** S0: lightweight metadata for the input gate (host-side `gh`). */
   fetchIssueMeta(issueNumber: number): Promise<IssueMeta>;
@@ -782,6 +783,7 @@ export interface Backend {
   runStep(
     spec: StepSpec,
     worktree: WorktreeHandle,
+    options?: AgentStepRunOptions,
   ): Promise<StepOutput | StepResult>;
   /**
    * THE unified worker-dispatch seam (ADR 0026 / PRD #330 #331).
@@ -851,6 +853,19 @@ export interface Backend {
    * the S8 handoff entry, BEFORE returning the final result.
    */
   writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void>;
+}
+
+/** Runner-owned S5 findings file made visible inside the worker sandbox. */
+export interface FixFindingsLandingFile {
+  /** Host path to the runner-owned JSON file. */
+  readonly path: string;
+  /** Path where the worker sees the file inside the sandbox repo. */
+  readonly sandboxPath: string;
+}
+
+/** Optional agent-step execution metadata consumed by real sandboxes. */
+export interface AgentStepRunOptions {
+  readonly fixFindingsLanding?: FixFindingsLandingFile;
 }
 
 // ──────────────────────────── run result ────────────────────────────

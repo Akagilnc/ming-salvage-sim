@@ -37,6 +37,7 @@ import { modelForSlot } from "./modelRoutes.js";
 import type {
   Backend,
   DispatchContext,
+  FixFindingsLandingFile,
   StepOutput,
   StepResult,
   StepSpec,
@@ -112,7 +113,7 @@ function ensureGitExcluded(worktreePath: string, pattern: string): void {
 function writeFixFindingsLandingFile(
   spec: WorkerSpec,
   ctx: DispatchContext,
-): { path: string; cleanup: boolean } | undefined {
+): (FixFindingsLandingFile & { cleanup: boolean }) | undefined {
   if (spec.id !== "S5" || spec.kind !== "coder" || ctx.worktree === undefined) {
     return undefined;
   }
@@ -139,7 +140,11 @@ function writeFixFindingsLandingFile(
     )}\n`,
     "utf8",
   );
-  return { path: landingPath, cleanup: ctx.stateDir === undefined };
+  return {
+    path: landingPath,
+    sandboxPath: FIX_FINDINGS_LANDING_FILE,
+    cleanup: ctx.stateDir === undefined,
+  };
 }
 
 /**
@@ -258,11 +263,29 @@ export async function legacyDispatchWorker(
   const stepSpec = workerSpecToStepSpec(spec);
   let ret: StepOutput | StepResult;
   const fixFindingsLanding = writeFixFindingsLandingFile(spec, ctx);
+  const fixFindingsOptions =
+    fixFindingsLanding !== undefined
+      ? {
+          fixFindingsLanding: {
+            path: fixFindingsLanding.path,
+            sandboxPath: fixFindingsLanding.sandboxPath,
+          },
+        }
+      : undefined;
   try {
     if (ctx.resumeSessionId !== undefined) {
-      ret = await backend.resumeSession(stepSpec, ctx.worktree, ctx.resumeSessionId);
+      ret = await backend.resumeSession(
+        stepSpec,
+        ctx.worktree,
+        ctx.resumeSessionId,
+        fixFindingsOptions,
+      );
     } else {
-      ret = await backend.runStep(stepSpec, ctx.worktree);
+      ret = await backend.runStep(
+        stepSpec,
+        ctx.worktree,
+        fixFindingsOptions,
+      );
     }
   } finally {
     if (fixFindingsLanding?.cleanup) {

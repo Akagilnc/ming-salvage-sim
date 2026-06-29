@@ -317,6 +317,38 @@ function previousReviewerOutputBeforeLast(
   return undefined;
 }
 
+function adjudicatedBlockingFindingsForPersistedS4(
+  ledger: ReadonlyArray<LedgerEntry>,
+): Finding[] | undefined {
+  const currentReviewerOutput = lastReviewerOutput(ledger);
+  if (currentReviewerOutput?.kind !== "reviewer") return undefined;
+
+  const classification = classifyFindings(currentReviewerOutput.findings);
+  const blocking = [...classification.blocking];
+  const blockingIdentityKeys = [...classification.blockingIdentityKeys];
+  if (lastReviewerStep(ledger) !== "S6") return blocking;
+
+  const priorReviewerOutput = previousReviewerOutputBeforeLast(ledger);
+  if (priorReviewerOutput?.kind !== "reviewer") return blocking;
+  const priorClassification = classifyFindings(priorReviewerOutput.findings);
+  if (priorClassification.blockingIdentityKeys.length === 0) return blocking;
+
+  const adjudication = adjudicatePriorClaimedFixedFindings({
+    priorFindings: priorClassification.blocking,
+    priorIdentityKeys: priorClassification.blockingIdentityKeys,
+    review: currentReviewerOutput,
+  });
+  const seenBlocking = new Set(blockingIdentityKeys);
+  for (const finding of adjudication.stillOpen) {
+    const key = findingIdentityKey(finding);
+    if (!seenBlocking.has(key)) {
+      blocking.push(finding);
+      seenBlocking.add(key);
+    }
+  }
+  return blocking;
+}
+
 /**
  * Derive the resume plan from a persisted ledger.
  *
@@ -460,7 +492,17 @@ function planResume(
     lastEntry.step === "S8"
       ? lastNonTerminalStep(ledger) ?? lastEntry.step
       : lastEntry.step;
-  const decision = route({ from: routeFrom, output: agentEntry?.output });
+  const pendingBlockingFindings =
+    routeFrom === "S4"
+      ? adjudicatedBlockingFindingsForPersistedS4(ledger)
+      : undefined;
+  const decision = route({
+    from: routeFrom,
+    output: agentEntry?.output,
+    ...(pendingBlockingFindings !== undefined
+      ? { pendingBlockingFindings }
+      : {}),
+  });
   if (decision.kind === "handoff") {
     return {
       terminalStatus: decision.status,
@@ -1029,6 +1071,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     ) {
       const reviewerOutput = lastReviewerOutput(plan.priorLedger) ?? lastOutput;
       lastReviewerStepId = lastReviewerStep(plan.priorLedger);
+      if (lastReviewerStepId === "S6") {
+        seedClassificationFromReviewerOutput(
+          previousReviewerOutputBeforeLast(plan.priorLedger),
+          false,
+        );
+      }
       seedClassificationFromReviewerOutput(
         reviewerOutput,
         lastReviewerStepId === "S6",
@@ -1534,7 +1582,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // "count rounds then give up" rule. Only malformed reviewer outputs have a
     // bounded rerun budget; substantive convergence is driven by fresh reviewer
     // findings and explicit escalation.
-    const decision = route({ from: step, output: lastOutput });
+    const decision = route({
+      from: step,
+      output: lastOutput,
+      ...(step === "S4"
+        ? { pendingBlockingFindings }
+        : {}),
+    });
 
     if (decision.kind === "handoff") {
       ledger.push({ step: "S8" });
