@@ -1,8 +1,8 @@
 """#66/#266：regions.fiscal 省级 settle_tick 基座 + DB↔settle_tick 桥。
 
 两件事：
-1. 种子——陕西 fiscal JSON 内嵌 settle 基座（开账 st + 月参 p），#266 已重标为史实量级
-   shadow seed。种子必须能被 settle_tick 接受（=有效基座）。
+1. 种子——已 seed 的明控省 fiscal JSON 内嵌 settle 基座（开账 st + 月参 p），必须能被
+   settle_tick 接受（=有效基座）；陕西作为 #266 史实量级 shadow seed 的基线样例。
 2. 桥——`GameDB.settle_province_tick(region_id, actions)` 读 settle.st/p → 跑 settle_tick →
    写回 new_st。**港口锁**：坏输入/守恒破 raise 时 FAIL tick 绝不落库（毒态不钉存档）。
 
@@ -341,7 +341,7 @@ def test_zhongyuan_jingshi_settle_province_tick_golden(region_id, expect, fresh_
         assert abs(after[key] - value) < 1e-6, f"{region_id} {key}: 落库 {after[key]} ≠ new_st {value}"
 
 
-def test_settle_province_tick_persists_g1_baseline(fresh_db):
+def test_settle_province_tick_persists_shaanxi_historical_shadow_golden(fresh_db):
     res = fresh_db.settle_province_tick("shaanxi", [])
     fresh_db.conn.commit()
     after = _read_settle(fresh_db)["st"]
@@ -622,6 +622,7 @@ def test_substrate_malformed_settle_shape_is_logged_not_prefiltered(fresh_game, 
 def test_substrate_malformed_fiscal_container_is_logged_not_prefiltered(fresh_game, monkeypatch):
     # cmr step6 r2：动态 spine 不得在 selector 里静默跳过 fiscal='[]' 这类坏容器；
     # 应交给 settle_province_tick 归 ValueError，再由 shadow 隔离 tlog 留痕。
+    # 这里刻意直打 shadow seam：完整 fixed-flow 的旧财政收入路径会先解析 fiscal。
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -635,6 +636,26 @@ def test_substrate_malformed_fiscal_container_is_logged_not_prefiltered(fresh_ga
 
     assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "[]"
     surfaced = [m for m in msgs if "[fiscal-substrate] shaanxi" in m and "fiscal 非字典" in m]
+    assert surfaced, msgs
+
+
+def test_substrate_malformed_fiscal_json_is_logged_not_prefiltered(fresh_game, monkeypatch):
+    # 动态 spine selector 解析 fiscal JSON 失败时仍应把该省交给 bridge，让 shadow 隔离
+    # 统一 tlog 留痕；不能静默跳过坏 JSON。
+    # 这里刻意直打 shadow seam：完整 fixed-flow 的旧财政收入路径会先解析 fiscal。
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    db.conn.execute("UPDATE regions SET fiscal='{bad' WHERE id='shaanxi'")
+    db.conn.commit()
+
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    flows_mod._advance_province_fiscal_substrate(db, state)
+
+    assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "{bad"
+    surfaced = [m for m in msgs if "[fiscal-substrate] shaanxi" in m and "JSONDecodeError" in m]
     assert surfaced, msgs
 
 
