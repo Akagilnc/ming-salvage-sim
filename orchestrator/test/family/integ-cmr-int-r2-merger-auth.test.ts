@@ -187,6 +187,7 @@ describe("integ-cmr int-r2 A-1 — runMergerAgent fails-closed (structured) with
   }
 
   it("no claude token ⇒ resolved:false with a token reason, container never spins", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const be = new NoClaudeMerger(baseOpts());
     const outcome = await be.run({ childIssue: 99, childBranch: "feat/child-99" });
     expect(outcome.resolved).toBe(false);
@@ -195,6 +196,7 @@ describe("integ-cmr int-r2 A-1 — runMergerAgent fails-closed (structured) with
   });
 
   it("resolveMergeConflict surfaces the no-auth non-resolve as a loud throw (no phantom merged)", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const be = new NoClaudeMerger(baseOpts());
     await expect(
       be.resolveMergeConflict({ childIssue: 99, childBranch: "feat/child-99" }),

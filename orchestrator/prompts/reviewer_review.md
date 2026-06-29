@@ -38,7 +38,8 @@ REVIEWER_STEP_COMPLETE
 ```
 
 When the runner supplies prior claimed-fixed findings for a fresh re-review,
-classify every prior finding explicitly in `priorFindingDispositions`. Use the
+it exposes them at `$ORCHESTRATOR_FIX_FINDINGS_PATH` as JSON. Read that file,
+classify every prior finding explicitly in `priorFindingDispositions`, and use the
 runner-provided `identityKey` and one of:
 `still-active`, `verified-closed`, `unable-to-assess`. Do not rely on omitting a
 finding to mean it is closed.
