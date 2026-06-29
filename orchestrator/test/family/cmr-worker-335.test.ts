@@ -148,7 +148,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
   });
 
   // ── Finding A (integ-cmr int-r1): STRICT shape, mirroring shipOutcome ─────────
-  // integrated_cmr.md: "must match one of the shapes above exactly". A mixed /
+  // Integrated CMR pass prompts: "must match one of the shapes above exactly". A mixed /
   // extra-key / garbage payload must NOT coerce into a pass — fail-CLOSED.
   describe("Finding A — strict shape (no extra/mixed keys, non-empty verdict fields)", () => {
     it("a mixed converged+escalate payload ⇒ malformed (not a pass)", () => {
@@ -664,8 +664,8 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
   });
 
   it("no recorded cut SHA ⇒ FAIL-CLOSED throw, never a stale-base fallback scope (codex R3)", () => {
-    // The focus file pins the EXACT cut-SHA review-scope diff (prompt contract
-    // integrated_cmr.md:19-24: do NOT guess main...HEAD). Emitting a
+    // The focus file pins the EXACT cut-SHA review-scope diff (prompt contract:
+    // do NOT guess main...HEAD). Emitting a
     // `main...familyBase` fallback when no cut SHA was recorded would silently
     // disable that load-bearing scope — the same fail-open the reconcile
     // `familyBaseStartHead()` predicate refuses (realFamilyBackend.ts:887-895). So
