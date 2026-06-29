@@ -40,6 +40,34 @@ def _read_settle(db, region_id="shaanxi"):
     return json.loads(str(row["fiscal"] or "{}")).get("settle")
 
 
+ZHONGYUAN_JINGSHI_GOLDEN = {
+    "beizhili": {
+        "省库库银": 0,
+        "C_地方截留": 2.352,
+        "民欠旧赋": 6.3,
+        "军饷欠": 12,
+        "官俸欠": 0.3,
+        "宗禄欠": 10,
+    },
+    "shandong": {
+        "省库库银": 0,
+        "C_地方截留": 2.184,
+        "民欠旧赋": 7.35,
+        "军饷欠": 2.85,
+        "官俸欠": 0,
+        "宗禄欠": 0,
+    },
+    "henan": {
+        "省库库银": 0,
+        "C_地方截留": 2.16,
+        "民欠旧赋": 8,
+        "军饷欠": 0,
+        "官俸欠": 0,
+        "宗禄欠": 31,
+    },
+}
+
+
 def test_shaanxi_seed_has_valid_settle_substrate(fresh_db):
     settle = _read_settle(fresh_db)
     assert isinstance(settle, dict), "陕西 fiscal 缺 settle 基座"
@@ -179,6 +207,61 @@ def test_huguang_seed_stacks_jiangnan_surplus_with_chu_princely_due(fresh_db):
     assert res.breakdown["起运到京"] > 0
     assert res.new_st["省库库银"] > 0
     assert res.new_st["宗禄欠"] == pytest.approx(0)
+
+
+@pytest.mark.parametrize("region_id", ["beizhili", "shandong", "henan"])
+def test_zhongyuan_jingshi_seeds_have_valid_historical_settle(region_id, fresh_db):
+    settle = _read_settle(fresh_db, region_id)
+    assert isinstance(settle, dict), f"{region_id} fiscal 缺 settle 基座"
+    assert isinstance(settle.get("st"), dict) and isinstance(settle.get("p"), dict), \
+        "settle 基座须含 st + p"
+
+    p = settle["p"]
+    assert p["三饷应征"] > 0, "开局只应 seed 辽饷九厘，不应为 0"
+    assert settle["_meta"]["levies"]["seeded"] == ["辽饷"]
+    assert "剿饷" in settle["_meta"]["levies"]["not_seeded"]
+    assert "练饷" in settle["_meta"]["levies"]["not_seeded"]
+    res = settle_tick(settle["st"], p, [])
+    assert res.new_st["省库库银"] is not None
+
+
+def test_beizhili_huangzhuang_is_inner_treasury_not_transport_quota(fresh_db):
+    settle = _read_settle(fresh_db, "beizhili")
+    fiscal = json.loads(str(fresh_db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id='beizhili'"
+    ).fetchone()["fiscal"]))
+
+    huang_meta = settle["_meta"]["huang_tian"]
+    assert fiscal["huang_tian"] == 35
+    assert huang_meta["account"] == "内库"
+    assert huang_meta["excluded_from"] == ["正赋应征", "起运到京"]
+    assert settle["st"]["官民田"] == fiscal["guan_min_tian"] * 10
+    assert settle["p"]["起运定额"] == pytest.approx(5)
+
+
+def test_henan_royal_grants_make_zonglu_due_heavy(fresh_db):
+    henan = _read_settle(fresh_db, "henan")
+    beizhili = _read_settle(fresh_db, "beizhili")
+    shandong = _read_settle(fresh_db, "shandong")
+
+    assert henan["_meta"]["wang_tian"]["houses"] == ["周王", "福王"]
+    assert henan["_meta"]["wang_tian"]["basis"] == "wang_tian"
+    assert henan["p"]["Due"]["宗禄"] > beizhili["p"]["Due"]["宗禄"]
+    assert henan["p"]["Due"]["宗禄"] > shandong["p"]["Due"]["宗禄"]
+    assert henan["p"]["Due"]["宗禄"] == pytest.approx(24)
+
+
+@pytest.mark.parametrize("region_id,expect", ZHONGYUAN_JINGSHI_GOLDEN.items())
+def test_zhongyuan_jingshi_settle_province_tick_golden(region_id, expect, fresh_db):
+    res = fresh_db.settle_province_tick(region_id, [])
+    fresh_db.conn.commit()
+    after = _read_settle(fresh_db, region_id)["st"]
+
+    for key, value in expect.items():
+        assert after[key] == pytest.approx(value, abs=1e-3), \
+            f"{region_id} {key}: 落库 {after[key]} ≠ golden {value}"
+    for key, value in res.new_st.items():
+        assert abs(after[key] - value) < 1e-6, f"{region_id} {key}: 落库 {after[key]} ≠ new_st {value}"
 
 
 def test_settle_province_tick_persists_g1_baseline(fresh_db):
@@ -322,7 +405,7 @@ def test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine(fresh_game):
     apply_fixed_period_flows(db, state)
     assert _read_settle(db)["st"]["军饷欠"] != 20, "陕西仍应由动态 spine 推进"
     assert _read_settle(db, "henan")["st"]["省库库银"] == 40, "非明控制省不应 tick"
-    assert _read_settle(db, "beizhili") is None, "明控但无 settle 的省不应被创建/推进"
+    assert _read_settle(db, "sichuan") is None, "明控但无 settle 的省不应被创建/推进"
 
     db.conn.execute("UPDATE regions SET controlled_by = 'ming' WHERE id = 'henan'")
     db.conn.commit()
@@ -331,16 +414,30 @@ def test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine(fresh_game):
 
 
 def test_apply_fixed_period_flows_logs_border_remainder_substrate(fresh_game, monkeypatch):
-    from ming_sim.flows import apply_fixed_period_flows
-    import ming_sim.flows as flows_mod
+    from ming_sim import flows as flows_mod
+
     db, state = fresh_game
     msgs: list[str] = []
     monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
 
-    apply_fixed_period_flows(db, state)
+    flows_mod.apply_fixed_period_flows(db, state)
 
     for region_id in ("shanxi", "liaodong", "dongjiang_area"):
         assert any(f"[fiscal-substrate] {region_id} 推进" in msg for msg in msgs), msgs
+
+
+def test_apply_fixed_period_flows_logs_zhongyuan_jingshi_shadow_ticks(fresh_game, monkeypatch):
+    from ming_sim import flows as flows_mod
+
+    db, state = fresh_game
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    flows_mod.apply_fixed_period_flows(db, state)
+
+    for region_id in ("beizhili", "shandong", "henan"):
+        surfaced = [m for m in msgs if f"[fiscal-substrate] {region_id} 推进" in m]
+        assert surfaced, f"{region_id} shadow tick 未逐省 tlog：{msgs}"
 
 
 def test_substrate_absent_does_not_break_flows(game):
