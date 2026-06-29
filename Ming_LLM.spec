@@ -2,15 +2,15 @@
 """PyInstaller spec for Ming Salvage Sim 桌面包。
 
 打 onedir（首选）：
-    pyinstaller MingSalvageSim.spec
+    pyinstaller Ming_LLM.spec
 
 打 onefile（单文件，启动慢）：
-    pyinstaller --onefile MingSalvageSim.spec
+    pyinstaller --onefile Ming_LLM.spec
     （或改下方 EXE/COLLECT 段；spec 默认走 onedir）
 
-产物：dist/MingSalvageSim/
-- macOS：.app bundle 由 BUNDLE 段生成（dist/MingSalvageSim.app）。
-- Windows/Linux：dist/MingSalvageSim/ 整目录可分发。
+产物：dist/Ming_LLM/
+- macOS：.app bundle 由 BUNDLE 段生成（dist/Ming_LLM.app）。
+- Windows/Linux：dist/Ming_LLM/ 整目录可分发。
 """
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
@@ -173,12 +173,12 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="MingSalvageSim",
+    name="Ming_LLM",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,  # pywebview 套壳无需终端窗口；debug 需看日志时改 True 或跑 dist/.../MingSalvageSim 二进制
+    console=False,  # pywebview 套壳无需终端窗口；debug 需看日志时改 True 或跑 dist/.../Ming_LLM 二进制
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
@@ -193,7 +193,7 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="MingSalvageSim",
+    name="Ming_LLM",
 )
 
 # macOS .app bundle
@@ -201,7 +201,7 @@ import sys
 if sys.platform == "darwin":
     app = BUNDLE(
         coll,
-        name="MingSalvageSim.app",
+        name="Ming_LLM.app",
         icon=None,
         bundle_identifier="com.local.mingsalvagesim",
         info_plist={

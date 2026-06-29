@@ -112,8 +112,8 @@
 - 一个可用于 AI 对话的 API Key，或已登录的本机 `codex` / `agy` / `claude` CLI runner
 
 ```bash
-git clone https://github.com/Akagilnc/ming-salvage-sim.git
-cd ming-salvage-sim
+git clone https://github.com/Akagilnc/ming-salvage-sim.git Ming_LLM
+cd Ming_LLM
 
 python3 -m venv .venv
 source .venv/bin/activate
@@ -318,18 +318,18 @@ scripts/build_release.sh        # macOS / Linux
 scripts\build_release.bat       # Windows（朋友代打 win 包时用）
 
 # 产物（解压后根目录一个可执行）：
-#   macOS   → dist/MingSalvageSim-macos.zip   → MingSalvageSim.app（双击即用）
-#   Linux   → dist/MingSalvageSim-linux.zip   → MingSalvageSim + _internal/
-#   Windows → dist/MingSalvageSim-windows.zip → MingSalvageSim.exe + _internal\
+#   macOS   → dist/Ming_LLM-macos.zip   → Ming_LLM.app（双击即用）
+#   Linux   → dist/Ming_LLM-linux.zip   → Ming_LLM + _internal/
+#   Windows → dist/Ming_LLM-windows.zip → Ming_LLM.exe + _internal\
 ```
 
 脚本内部三步（手动等价）：`cd web && npm install && npm run build && cd ..` →
-`pyinstaller --noconfirm --clean MingSalvageSim.spec` → 把 onedir 产物 / `.app` 打进 zip。
+`pyinstaller --noconfirm --clean Ming_LLM.spec` → 把 onedir 产物 / `.app` 打进 zip。
 **必须先构建前端**：`web/dist` 被 `.gitignore` 排除，不先 build 打出来的包会缺前端（运行期白屏）。
 
-> 打包前先确认 `git status content/buildings.json` 干净（无未提交改动）——金手指建筑（见下）若没还原，会被打进发行包。`MingSalvageSim.spec` 已内置 build-time 守门：前端未构建 / content/buildings.json 带金手指 / 有未提交改动时**会响亮报错中止**，不会静默打出坏包或作弊包。
+> 打包前先确认 `git status content/buildings.json` 干净（无未提交改动）——金手指建筑（见下）若没还原，会被打进发行包。`Ming_LLM.spec` 已内置 build-time 守门：前端未构建 / content/buildings.json 带金手指 / 有未提交改动时**会响亮报错中止**，不会静默打出坏包或作弊包。
 
-启动：macOS 双击 `MingSalvageSim.app`、Windows/Linux 双击或命令行跑根目录可执行，自动开 webview 原生窗口；`MING_USE_BROWSER=1` 改用系统浏览器，`MING_DEBUG=1` 开 devtools + uvicorn 日志（日志也写 `~/.ming_sim/launcher.log`）。零配置文件：LLM 后端在游戏内「设置」面板自理。
+启动：macOS 双击 `Ming_LLM.app`、Windows/Linux 双击或命令行跑根目录可执行，自动开 webview 原生窗口；`MING_USE_BROWSER=1` 改用系统浏览器，`MING_DEBUG=1` 开 devtools + uvicorn 日志（日志也写 `~/.ming_sim/launcher.log`）。零配置文件：LLM 后端在游戏内「设置」面板自理。
 
 - **金手指不入包**：`content/buildings.json` 末尾三个本地实验建筑（皇家天佑金矿 / 大明中央银行 / 帝国航空）只活在开发工作区的未提交改动里，**发行包从 main 打、自动不含**；需要的群友单独找作者拿。
 - **`/admin` 慎用**：内置 `/admin` 是**无鉴权的 DB 全表编辑器**——自部署下是玩家自己的存档，改坏自负，当「修档工具」用即可，别拿它当玩法。
