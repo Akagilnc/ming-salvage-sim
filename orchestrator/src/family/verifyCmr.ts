@@ -226,8 +226,15 @@ async function runIntegratedCmrPass(input: {
     pass,
   );
   if (cmrResult.kind === "escalated") {
+    const reason = `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter,
+    });
     await familyBackend.escalateFamily?.({
-      reason: `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`,
+      reason,
     });
     return { ok: false, ran: true };
   }
