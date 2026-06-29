@@ -14,4 +14,4 @@ cmr 是承重闸，零撑底线强腿放行 = 没牙。bonus 腿（尤其 agy）
 
 ## 关联
 
-撑底线强腿 = opus / codex(gpt-5.5)；agy(gemini) = bonus 腿（跨家族加一票、但不撑底线）。本底线是 ADR 0030 拆出的 integrated cmr worker 的运行不变式，与 ADR 0031 路线表的 cmr 腿槽配套（路线填意图腿、本 ADR 定运行时底线）。
+撑底线强腿 = opus / codex(gpt-5.5)；agy(gemini) = bonus 腿（跨家族加一票、但不撑底线）。**实现上 `meetsFloor` 查 ADR 0031 registry 的 `strong-leg` 标（从跑成的腿 slug 解析），不字面匹配 "opus"/"codex" 字符串**——codex 的真 slug 是 `gpt-5.5`、未来强模型（如 opus-v2）也靠标不靠串；本文「只认 opus/codex」是"哪些 slug 该带 `strong-leg` 标"的**政策**、非运行时的字符串判等。本底线是 ADR 0030 拆出的 integrated cmr worker 的运行不变式，与 ADR 0031 路线表的 cmr 腿槽配套（路线填意图腿、本 ADR 定运行时底线）。
