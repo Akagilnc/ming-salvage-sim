@@ -10,6 +10,8 @@ Status: Proposed（2026-06-29，grill 结晶；评审闸在 to-prd 之后，本 
 
 cmr 是承重闸，零撑底线强腿放行 = 没牙。bonus 腿（尤其 agy）是**不可预测中途死**（agy 常烧额度，见既往实证），为每种死亡组合预写一条路线不现实。故：路线**声明意图腿**（显式）+ 运行时**哪腿够不着就跳**（容错）+ **硬底线 ≥1 撑底线强腿**（跌破即停）。自动涌现：claude-tight → codex 单腿达标；codex 紧 → opus 单腿达标；codex+claude 双死 → 跌破底线 escalate（agy 即便活也不顶）。
 
+**谓词的域 = 实际跑成的腿，执行后判**：先跑完声明的腿 → 收集真正成功的那批 → 对成功集判 `meetsFloor` → escalate 或放行。"实际跑成"是载重词（不是对声明腿判，是对成功腿判）。
+
 ## 关联
 
 撑底线强腿 = opus / codex(gpt-5.5)；agy(gemini) = bonus 腿（跨家族加一票、但不撑底线）。本底线是 ADR 0030 拆出的 integrated cmr worker 的运行不变式，与 ADR 0031 路线表的 cmr 腿槽配套（路线填意图腿、本 ADR 定运行时底线）。

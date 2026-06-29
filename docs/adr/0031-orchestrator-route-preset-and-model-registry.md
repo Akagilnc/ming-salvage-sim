@@ -6,7 +6,13 @@ Status: Proposed（2026-06-29，grill 结晶；评审闸在 to-prd 之后，本 
 
 引入**路线（route）**为一等命名预设（`normal` / `codex-tight` / `claude-tight` …）。一条路线**显式列出本轮全部模型槽**（coder / per-slice reviewer / coder-fix / ship / merger / cmr 腿集合）各自的模型；切路线 = 拨一个总开关（`ORCHESTRATOR_ROUTE`），任一槽可被单独 env override 盖过（日常用法 = 选一条 base 路线 + override 那 1-2 个要动的槽）。**没有任何槽可钉死在某家族**。切换**手动**（额度紧但未耗尽时提前调，不自动探额度）。
 
-slug→后端 从写死的 switch 改成**数据驱动注册表**：每条 = `slug → {provider, model-id, options}`，覆盖 Sandcastle 原生 6 provider（`claudeCode` / `codex` / `opencode` / `copilot` / `cursor` / `pi`）。加一个「已烤进镜像的 CLI」的兄弟模型（haiku→claudeCode、spark→codex）= **注册表加一行、零代码**；加一个**新 CLI**（opencode 跑 glm5.2 等）= 烤二进制进镜像 + 挂 auth **一次**，之后该 CLI 的多模型全靠加行解锁。
+slug→后端 从写死的 switch 改成**数据驱动注册表**：每条 = `slug → {provider, model-id, options, family, strong-leg}`，覆盖 Sandcastle 原生 6 provider（`claudeCode` / `codex` / `opencode` / `copilot` / `cursor` / `pi`）。加一个「已烤进镜像的 CLI」的兄弟模型（haiku→claudeCode、spark→codex）= **注册表加一行、零代码**；加一个**新 CLI**（opencode 跑 glm5.2 等）= 烤二进制进镜像 + 挂 auth **一次**，之后该 CLI 的多模型全靠加行解锁。**注册表是 slug→后端唯一真源**——路线表 / override / StepSpec 只引用 slug。
+
+**不变式可校验，不靠手填表不出错**：
+- **family-tight 自动校验**：每个 slug 标 `family`，路线解析器**自动断言** family-tight 不变式（claude-tight → 无 Claude-family 槽），把「没有槽钉死家族」从一句承诺变成可校验谓词。手动 override 若会破坏它（如 claude-tight 下 `merger=sonnet`）→ **警告 + 问是否继续，不硬拒**（用户 2026-06-29 拍：claude 紧时我手动我担责）。
+- **强腿身份**：每个 slug 标 `strong-leg`（cmr 底线认它，见 ADR 0032）；便宜模型「显式提升为腿」= 翻这个标。
+- **fail-closed**：无效路线名 / 无效 slug 一律 fail-closed（throw / 拒跑），typo 不静默跑成错的或不存在的模型。
+- **可观测**：解析出的最终阵容跑前可打印 / 审计（每 worker 用哪个模型一目了然）。
 
 ## 为什么
 
@@ -18,4 +24,4 @@ slug→后端 从写死的 switch 改成**数据驱动注册表**：每条 = `sl
 
 ## 关联
 
-依赖 ADR 0030（reviewer 是独立 worker → reviewer 模型才成为可切的槽，否则埋在 coder soul 里切不动）。cmr 腿底线见 ADR 0032。opencode 的 auth = 用户的 opencode go 订阅凭证（挂进容器，同 codex/claude auth 模式；模型覆盖 onboard 时实测）。
+**注册表（#418）本身不依赖 ADR 0030**——它是纯 prefactor（blocked-by None），只有**路线表 / 已分离的槽**依赖 0030/#369/#419（reviewer 是独立 worker → reviewer 模型才成为可切的槽，否则埋在 coder soul 里切不动）。cmr 腿底线见 ADR 0032。opencode 的 auth = 用户的 opencode go 订阅凭证（挂进容器，同 codex/claude auth 模式；模型覆盖 onboard 时实测）。

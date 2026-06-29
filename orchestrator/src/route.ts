@@ -5,6 +5,12 @@
  * consumes the structured step output and returns the next StepId. This is the
  * state-machine edge table from PRD #244's contract layer.
  *
+ * ⚠️ PRE-0030 (about to be reversed — see ADR 0030, Proposed): ADR 0030 re-splits
+ * the per-slice review→fix→re-review loop back to runner-dispatched coder/reviewer/
+ * fix worker steps; the S2-only collapse below (and the "S3/S5/S6 deleted" claim)
+ * will be reinstated as runner edges when ADR 0030 lands (#369/#422). Until then the
+ * ADR-0026 edge table below is the current, correct design — do not treat it as wrong.
+ *
  * ADR 0026 (2026-06-24 correction, wiki line 42): the single-slice runner is a
  * PURE SCHEDULER and the per-slice review→fix→re-review LOOP no longer lives at
  * the runner level. The edge table collapses to:
