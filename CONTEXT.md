@@ -358,8 +358,12 @@ _Avoid_: 批次、轮(混淆评审轮)
 _Avoid_: step ledger(那是单片的)、状态文件(太泛)
 
 **路线 / route**:
-一条命名预设(`normal` / `codex-tight` / `claude-tight` …),显式列出本轮**全部模型槽**(coder / per-slice reviewer / coder-fix / ship / merger / cmr 腿)各自用哪个模型。切路线 = 拨一个总开关、整套翻;任一槽可被单 env override 盖过。本质 = 「按额度死活选哪些家族干活」——额度按家族整片死(claude 100% → sonnet/opus/haiku 全死),故没有槽能钉死在某家族。切换手动(额度紧但未耗尽时提前调)。(ADR 0031)
+一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …),显式列出本轮**全部模型槽**(coder / per-slice reviewer / coder-fix / ship / merger / cmr 腿)各自用哪个模型。切路线 = 拨一个总开关、整套翻;任一槽可被单 env override 盖过。本质 = 「按额度死活选哪些家族干活」——额度按家族整片死(claude 100% → sonnet/opus/haiku 全死),故没有槽能钉死在某家族。切换手动(额度紧但未耗尽时提前调)。(ADR 0031)
 _Avoid_: 环境/profile(那是镜像)、家族(那是模型 vendor 分组)
+
+**cheap vs tight**(某家族吃紧的两档):
+**cheap = 额度不足、省着用** = 把吃紧家族从除 cmr 强腿外的所有槽撤掉、只留它在承重闸当一条腿;**tight = 基本耗尽** = 连那条 cmr 腿也撤、全家族清零。cheap↔tight 差且只差吃紧家族的那一条 cmr 腿(其余槽都已撤离、相同)。家族用量梯度:normal(全量)→ cheap(只剩 cmr 一腿)→ tight(零)。
+_Avoid_: 把 cheap 当「主动用便宜档」(不是,是额度不足被迫省)、把 cheap/tight 当两套无关路线(只差一条 cmr 腿)
 
 **模型槽 / model slot**:
 一条路线里可独立赋模型的一个角色位(coder / reviewer / fix / ship / merger / 各 cmr 腿)。日常切换多半只动其中 1-2 槽(走 override),不是整路线重写。
