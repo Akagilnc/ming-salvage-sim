@@ -3,7 +3,7 @@
 Read the baked role soul first:
 
 ```text
-/home/agent/.orchestrator/souls/cmr.md
+/home/agent/.orchestrator/souls/cmr_completeness.md
 ```
 
 Then follow that soul and the worktree's `CLAUDE.md`. This is the runner-dispatched
