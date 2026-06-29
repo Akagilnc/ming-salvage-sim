@@ -60,6 +60,14 @@ _Avoid_: 创建成功提示、进度条、动作完成通知、正式建立密�
 密令意图已经被受理，但系统未能把它送达成持久密令的异常状态。它需要显眼提示，并允许玩家在原对话里重试；重试不重新召对，玩家也可以无视并继续召对，未处理的失败下达意图在过回合时丢弃，不阻塞游戏。
 _Avoid_: 普通 toast、静默失败、让玩家重新说一遍、取消按钮
 
+**召对退出**:
+玩家离开当前召对观看窗口的动作；已发问话仍然成立，大臣继续回答并在完成后入档。它不表达取消问话、停止大臣回复或撤回政务结果。
+_Avoid_: 取消召对、撤回问话、停止生成、让大臣闭嘴
+
+**撤回本轮**:
+玩家对最近一轮已完成召对及其政务影响的显式反悔动作。它与召对退出分属两种语义：退出只是离开窗口，撤回才改变已完成召对的结果。
+_Avoid_: 退出召对、关闭窗口、断开连接
+
 ### Settlement And Memory
 
 **稀疏 delta**:
@@ -348,6 +356,26 @@ _Avoid_: 批次、轮(混淆评审轮)
 **family ledger**:
 家族集成层的账本(家族 base worktree 的 sibling、worktree 外),记已合子片 hash / 当前波次 / 家族 base HEAD,供 merger 幂等续跑(崩溃重启跳过已合)。区别于单片的 step ledger。
 _Avoid_: step ledger(那是单片的)、状态文件(太泛)
+
+**路线 / route**:
+一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …),显式列出本轮**全部模型槽**(coder / per-slice reviewer / coder-fix / ship / merger / cmr 腿)各自用哪个模型。切路线 = 拨一个总开关、整套翻;任一槽可被单 env override 盖过。本质 = 「按额度死活选哪些家族干活」——额度按家族整片死(claude 100% → sonnet/opus/haiku 全死),故没有槽能钉死在某家族。切换手动(额度紧但未耗尽时提前调)。(ADR 0031)
+_Avoid_: 环境/profile(那是镜像)、家族(那是模型 vendor 分组)
+
+**cheap vs tight**(某家族吃紧的两档):
+**cheap = 额度不足、省着用** = 把吃紧家族从除 cmr 强腿外的所有槽撤掉、只留它在承重闸当一条腿;**tight = 基本耗尽** = 连那条 cmr 腿也撤、全家族清零。cheap↔tight 差且只差吃紧家族的那一条 cmr 腿(其余槽都已撤离、相同)。家族用量梯度:normal(全量)→ cheap(只剩 cmr 一腿)→ tight(零)。
+_Avoid_: 把 cheap 当「主动用便宜档」(不是,是额度不足被迫省)、把 cheap/tight 当两套无关路线(只差一条 cmr 腿)
+
+**模型槽 / model slot**:
+一条路线里可独立赋模型的一个角色位(coder / reviewer / fix / ship / merger / 各 cmr 腿)。日常切换多半只动其中 1-2 槽(走 override),不是整路线重写。
+_Avoid_: 角色(角色是职能单元,槽是它在某路线里的模型赋值位)
+
+**后端注册表 / registry**:
+把 model slug 翻成真后端的数据表:每条 = `slug → {provider, model-id, options, family, strong-leg}`,覆盖 Sandcastle 原生 6 provider(claudeCode/codex/opencode/copilot/cursor/pi)。`family` 让路线解析器自动校验「claude-tight 无 Claude 槽」;`strong-leg` 标谁够格当 cmr 底线腿。加已烤 CLI 的兄弟模型 = 加一行;加新 CLI = 烤二进制+挂 auth 一次。是 slug→后端唯一真源、「第一次做点工作、后续方便切」的落点。(ADR 0031)
+_Avoid_: 写死的 switch(那是被它取代的旧形态)、config(太泛)
+
+**强腿 / strong leg**:
+撑得起 cmr 承重闸底线的强模型 —— **只认 opus / codex(gpt-5.5)**。cmr 硬底线 = **≥1 撑底线强腿实际跑成**,否则 escalate(没牙的闸不放行)。**agy(gemini) = bonus 腿**:跨家族多一票更好,但不可靠、不撑底线(codex+claude 双死、只剩 agy 也 escalate)。便宜实验模型(glm/haiku/spark)默认是 coder 槽的、不当 cmr 腿。(ADR 0032)
+_Avoid_: 把任何模型都算腿、把 agy 当撑底线腿、把 coder 槽的便宜模型当评审腿
 
 ## Example Dialogue
 

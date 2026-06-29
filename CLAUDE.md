@@ -82,6 +82,8 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 ## Skill routing
 
+> ⚠️ **pre-0030（即将反转，见 [ADR 0030](docs/adr/0030-orchestrator-role-separation-fork-at-runner.md)）**：下文「per-slice 评审是 coder worker 自己的事、没有独立 reviewer worker」描述的是当前 ADR 0026 consolidate 设计。ADR 0030（Proposed）把 per-slice 评审/修复拆回 runner 派的独立 coder/reviewer/fix worker；**0030 实现落地（#369）时，本段的 per-slice 评审部分要一并改**。在那之前下文仍是当前有效设计。
+
 > Machine-executable routing for an agent working a slice in a worktree (esp. the orchestrator's in-container worker roles — ADR 0016 「现状缺口」, ADR 0026). The narrative `## 开发流程` above is for humans; THIS section is the in-container agent's routing table. Routing is by the task at hand, not by ceremony.
 
 When you are an agent assigned a single slice issue in this worktree, route by what the task is:
