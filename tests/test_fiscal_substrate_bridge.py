@@ -763,6 +763,22 @@ def test_fixed_flow_loader_accepts_already_decoded_fiscal_dict(monkeypatch):
     assert msgs == []
 
 
+@pytest.mark.parametrize("bad_scalar", [float("nan"), float("inf")])
+def test_fixed_flow_loader_rejects_non_finite_numeric_values(monkeypatch, bad_scalar):
+    import ming_sim.flows as flows_mod
+
+    fiscal = {"settle": {"st": {}, "p": {}}, "liao_xiang": bad_scalar}
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    assert flows_mod._load_region_fiscal_for_fixed_flow("shaanxi", fiscal) is None
+    assert any(
+        "[province-fiscal] shaanxi fiscal.liao_xiang 非数字" in m
+        and "固定税收出列" in m
+        for m in msgs
+    ), msgs
+
+
 def test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone(fresh_game):
     import ming_sim.flows as flows_mod
 

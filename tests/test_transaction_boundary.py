@@ -15,6 +15,23 @@ import pytest
 from ming_sim.applier import atomic
 
 
+def test_game_db_owns_transaction_tracks_atomic_and_open_transactions(game):
+    db, state, content = game
+    assert db.owns_transaction() is True
+
+    with atomic(db):
+        assert db.owns_transaction() is False
+
+    assert db.owns_transaction() is True
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1_owns_tx'")
+    db.conn.commit()
+    db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_owns_tx','open')")
+    try:
+        assert db.owns_transaction() is False
+    finally:
+        db.conn.rollback()
+
+
 def test_atomic_rolls_back_on_error(game):
     """atomic 内多次显式 commit 后人为抛错 → 全部写入回滚。"""
     db, state, content = game
