@@ -35,7 +35,11 @@
  */
 
 import { route } from "./route.js";
-import { classifyFindings, findingIdentityKey } from "./findings.js";
+import {
+  adjudicatePriorClaimedFixedFindings,
+  classifyFindings,
+  findingIdentityKey,
+} from "./findings.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
 // dispatches EVERY worker step (S2 build, S7 ship) through ONE free function
 // instead of reaching for runStep/resumeSession/push directly.
@@ -283,6 +287,32 @@ function lastReviewerOutput(
   for (let i = ledger.length - 1; i >= 0; i--) {
     const output = ledger[i]?.output;
     if (output?.kind === "reviewer") return output;
+  }
+  return undefined;
+}
+
+function lastReviewerStep(
+  ledger: ReadonlyArray<LedgerEntry>,
+): StepId | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.output?.kind === "reviewer") return entry.step;
+  }
+  return undefined;
+}
+
+function previousReviewerOutputBeforeLast(
+  ledger: ReadonlyArray<LedgerEntry>,
+): StepOutput | undefined {
+  let seenLast = false;
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const output = ledger[i]?.output;
+    if (output?.kind !== "reviewer") continue;
+    if (!seenLast) {
+      seenLast = true;
+      continue;
+    }
+    return output;
   }
   return undefined;
 }
@@ -604,13 +634,43 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let deferredFindings: Finding[] = [];
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
+  let lastReviewerStepId: StepId | undefined;
+  const noProgressByFindingIdentityKey = new Map<string, number>();
 
   function seedClassificationFromReviewerOutput(
     reviewerOutput: StepOutput | undefined,
-  ): void {
-    if (reviewerOutput?.kind !== "reviewer") return;
+    afterFix: boolean,
+  ): string[] {
+    if (reviewerOutput?.kind !== "reviewer") return [];
     const classification = classifyFindings(reviewerOutput.findings);
-    const blockingKeys = new Set(classification.blockingIdentityKeys);
+    let blocking = [...classification.blocking];
+    let blockingIdentityKeys = [...classification.blockingIdentityKeys];
+    const noProgressIdentityKeys: string[] = [];
+
+    if (afterFix && pendingBlockingFindingIdentityKeys.length > 0) {
+      const adjudication = adjudicatePriorClaimedFixedFindings({
+        priorFindings: pendingBlockingFindings,
+        priorIdentityKeys: pendingBlockingFindingIdentityKeys,
+        review: reviewerOutput,
+      });
+      for (const key of adjudication.verifiedClosedIdentityKeys) {
+        noProgressByFindingIdentityKey.delete(key);
+      }
+      const seenBlocking = new Set(blockingIdentityKeys);
+      for (const finding of adjudication.stillOpen) {
+        const key = findingIdentityKey(finding);
+        if (!seenBlocking.has(key)) {
+          blocking.push(finding);
+          blockingIdentityKeys.push(key);
+          seenBlocking.add(key);
+        }
+        const count = (noProgressByFindingIdentityKey.get(key) ?? 0) + 1;
+        noProgressByFindingIdentityKey.set(key, count);
+        if (count >= 2) noProgressIdentityKeys.push(key);
+      }
+    }
+
+    const blockingKeys = new Set(blockingIdentityKeys);
     deferredFindings = deferredFindings.filter(
       (finding) => !blockingKeys.has(findingIdentityKey(finding)),
     );
@@ -622,10 +682,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         deferredKeys.add(key);
       }
     }
-    pendingBlockingFindings = [...classification.blocking];
-    pendingBlockingFindingIdentityKeys = [
-      ...classification.blockingIdentityKeys,
-    ];
+    pendingBlockingFindings = blocking;
+    pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
+    if (!afterFix) {
+      for (const key of blockingIdentityKeys) {
+        if (!noProgressByFindingIdentityKey.has(key)) {
+          noProgressByFindingIdentityKey.set(key, 0);
+        }
+      }
+    }
+    return noProgressIdentityKeys;
   }
 
   // ── #249: per-run session id + sibling state dir ──────────────────────────
@@ -948,13 +1014,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // ADR 0030: if the prior run already persisted S4, resume can jump straight
     // to S5/S7. Rebuild the S4 classification state from the persisted reviewer
     // output so S5 receives the blocking findings and S7 reports defers.
-    if (
+    if (plan.resumeStep === "S4") {
+      lastReviewerStepId = lastReviewerStep(plan.priorLedger);
+      if (lastReviewerStepId === "S6") {
+        seedClassificationFromReviewerOutput(
+          previousReviewerOutputBeforeLast(plan.priorLedger),
+          false,
+        );
+      }
+    } else if (
       plan.resumeStep === "S5" ||
       plan.resumeStep === "S7" ||
       plan.resumeStep === "S8"
     ) {
       const reviewerOutput = lastReviewerOutput(plan.priorLedger) ?? lastOutput;
-      seedClassificationFromReviewerOutput(reviewerOutput);
+      lastReviewerStepId = lastReviewerStep(plan.priorLedger);
+      seedClassificationFromReviewerOutput(
+        reviewerOutput,
+        lastReviewerStepId === "S6",
+      );
     }
 
     if (plan.terminalStatus !== undefined) {
@@ -1284,11 +1362,28 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           break;
         }
         lastOutput = output;
+        if (step === "S3" || step === "S6") lastReviewerStepId = step;
         break;
       }
 
       case "S4": {
-        seedClassificationFromReviewerOutput(lastOutput);
+        let noProgressIdentityKeys: string[];
+        try {
+          noProgressIdentityKeys = seedClassificationFromReviewerOutput(
+            lastOutput,
+            lastReviewerStepId === "S6",
+          );
+        } catch (err) {
+          return await errorTermination("S4", err);
+        }
+        if (noProgressIdentityKeys.length > 0) {
+          return await escalateTermination("S4", {
+            reason: "review/fix loop made no progress",
+            diagnosis:
+              "Fresh re-review reported the same claimed-fixed finding still active " +
+              `after repeated fix attempts: ${noProgressIdentityKeys.join(", ")}`,
+          });
+        }
         break;
       }
 

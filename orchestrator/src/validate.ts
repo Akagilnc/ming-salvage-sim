@@ -17,6 +17,7 @@ import type {
   CoderOutput,
   Escalation,
   Finding,
+  PriorFindingDisposition,
   ReviewerOutput,
   StepOutput,
 } from "./types.js";
@@ -32,6 +33,11 @@ const SEVERITIES: ReadonlySet<string> = new Set([
 
 /** Exact action enum. */
 const ACTIONS: ReadonlySet<string> = new Set(["fix_now", "defer"]);
+const PRIOR_FINDING_DISPOSITIONS: ReadonlySet<string> = new Set([
+  "still-active",
+  "verified-closed",
+  "unable-to-assess",
+]);
 
 /** Required string fields on a Finding (PRD #244 contract). */
 const FINDING_STRING_FIELDS = [
@@ -127,6 +133,22 @@ export function isValidFinding(f: unknown): f is Finding {
   return true;
 }
 
+export function isValidPriorFindingDisposition(
+  d: unknown,
+): d is PriorFindingDisposition {
+  if (d == null || typeof d !== "object") return false;
+  const obj = d as Record<string, unknown>;
+  if (!isFilledString(obj.identityKey)) return false;
+  if (
+    typeof obj.status !== "string" ||
+    !PRIOR_FINDING_DISPOSITIONS.has(obj.status)
+  ) {
+    return false;
+  }
+  if (obj.reason !== undefined && !isString(obj.reason)) return false;
+  return true;
+}
+
 /**
  * The SINGLE blocking-finding predicate — the one source of truth for "this
  * finding forces an S5 coder_fix". Both route()'s S4 routing decision (does the
@@ -196,7 +218,12 @@ export function isValidReviewerOutput(
   // F1: same escalate-shape contract as the coder output.
   if (!isValidEscalation(r.escalate)) return false;
   if (!Array.isArray(r.findings)) return false;
-  return r.findings.every(isValidFinding);
+  if (!r.findings.every(isValidFinding)) return false;
+  if (r.priorFindingDispositions === undefined) return true;
+  return (
+    Array.isArray(r.priorFindingDispositions) &&
+    r.priorFindingDispositions.every(isValidPriorFindingDisposition)
+  );
 }
 
 /**

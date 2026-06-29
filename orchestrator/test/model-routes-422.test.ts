@@ -116,9 +116,33 @@ describe("#422 model route presets", () => {
     expect(() =>
       activeModelRoute({
         ORCHESTRATOR_ROUTE: "claude-tight",
-        ORCHESTRATOR_CMR_REVIEW_LEGS: "gpt-5.5,opus",
+        ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: "gpt-5.5,opus",
       }),
     ).toThrow(/tight route violation/i);
+  });
+
+  it("keeps route override slugs separate from worker JSON leg objects", () => {
+    const route = activeModelRoute({
+      ORCHESTRATOR_ROUTE: "claude-tight",
+      ORCHESTRATOR_CMR_REVIEW_LEGS: JSON.stringify([
+        { family: "claude", slug: "opus" },
+      ]),
+    });
+
+    expect(route.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
+      "gpt-5.5",
+      "agy",
+    ]);
+
+    const overridden = activeModelRoute({
+      ORCHESTRATOR_ROUTE: "normal",
+      ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: "gpt-5.5,opus",
+    });
+
+    expect(overridden.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
+      "gpt-5.5",
+      "opus",
+    ]);
   });
 
   it("feeds the resolved route into every worker spec model slot", async () => {

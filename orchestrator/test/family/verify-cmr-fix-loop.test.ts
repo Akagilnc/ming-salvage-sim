@@ -175,6 +175,59 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
+  it("converged cmr with prior claimed-fixed keys but no dispositions fails closed", async () => {
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus"],
+          claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|fake closure"],
+        },
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.escalations[0]?.reason).toMatch(/missing explicit disposition/i);
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
+  });
+
+  it("converged cmr with verified-closed dispositions may pass to ship", async () => {
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus"],
+          claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|real closure"],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|src/x.ts:1|real closure",
+              status: "verified-closed",
+            },
+          ],
+        },
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);
+  });
+
   it("cmr worker MALFORMED / crash ⇒ recordAborted + INCOMPLETE_GATE (ok:false), NO ship", async () => {
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({ kind: "malformed", reason: "no parseable CMR-VERDICT" }),

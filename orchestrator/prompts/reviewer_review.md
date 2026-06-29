@@ -37,6 +37,17 @@ With findings:
 REVIEWER_STEP_COMPLETE
 ```
 
+When the runner supplies prior claimed-fixed findings for a fresh re-review,
+classify every prior finding explicitly in `priorFindingDispositions`. Use the
+runner-provided `identityKey` and one of:
+`still-active`, `verified-closed`, `unable-to-assess`. Do not rely on omitting a
+finding to mean it is closed.
+
+```text
+<review>{"findings":[],"priorFindingDispositions":[{"identityKey":"<prior-key>","status":"verified-closed","reason":"<short>"}]}</review>
+REVIEWER_STEP_COMPLETE
+```
+
 Escalation:
 
 ```text

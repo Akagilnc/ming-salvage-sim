@@ -1307,8 +1307,14 @@ const findingSchema = z.object({
   suggested_fix: z.string(),
   action: z.enum(["fix_now", "defer"]),
 });
+const priorFindingDispositionSchema = z.object({
+  identityKey: z.string().min(1),
+  status: z.enum(["still-active", "verified-closed", "unable-to-assess"]),
+  reason: z.string().optional(),
+});
 const reviewerOutputSchema = z.object({
   findings: z.array(findingSchema),
+  priorFindingDispositions: z.array(priorFindingDispositionSchema).optional(),
   escalate: z
     .object({ reason: z.string(), diagnosis: z.string() })
     .optional(),
@@ -1922,9 +1928,14 @@ export class RealBackend implements Backend {
     if (spec.role === "reviewer") {
       const r = reviewerOutputSchema.parse(raw);
       const findings: Finding[] = r.findings.map((f) => ({ ...f }));
-      return r.escalate
-        ? { kind: "reviewer", findings, escalate: r.escalate }
-        : { kind: "reviewer", findings };
+      return {
+        kind: "reviewer",
+        findings,
+        ...(r.priorFindingDispositions !== undefined
+          ? { priorFindingDispositions: r.priorFindingDispositions }
+          : {}),
+        ...(r.escalate ? { escalate: r.escalate } : {}),
+      };
     }
     // Coder: parse the self-report for shape, then (normal path) TRUTH the commit
     // count from git (result.commits.length). reconcileCoderCommits throws on a

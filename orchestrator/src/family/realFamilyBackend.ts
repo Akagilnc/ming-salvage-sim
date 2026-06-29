@@ -96,6 +96,7 @@ import {
 
 import type {
   DispatchContext,
+  PriorFindingDisposition,
   StepSoul,
   WorkerResult,
   WorkerSpec,
@@ -880,6 +881,15 @@ export class RealFamilyBackend implements FamilyBackend {
         ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
         successfulLegs: outcome.successfulLegs,
         ...(outcome.skippedLegs !== undefined ? { skippedLegs: outcome.skippedLegs } : {}),
+        ...(outcome.claimedFixedFindingIdentityKeys !== undefined
+          ? {
+              claimedFixedFindingIdentityKeys:
+                outcome.claimedFixedFindingIdentityKeys,
+            }
+          : {}),
+        ...(outcome.priorFindingDispositions !== undefined
+          ? { priorFindingDispositions: outcome.priorFindingDispositions }
+          : {}),
       },
     };
   }
@@ -1827,6 +1837,8 @@ export type CmrWorkerOutcome =
       readonly reason?: string;
       readonly successfulLegs: readonly string[];
       readonly skippedLegs?: readonly CmrSkippedLeg[];
+      readonly claimedFixedFindingIdentityKeys?: readonly string[];
+      readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
     }
   | { readonly kind: "escalate"; readonly reason: string; readonly diagnosis: string }
   | { readonly kind: "malformed"; readonly reason: string };
@@ -1836,22 +1848,21 @@ interface CmrSkippedLeg {
   readonly reason: string;
 }
 
-const DEFAULT_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
-
 function cmrLegAccountingFailure(input: {
   readonly successfulLegs: readonly string[];
   readonly skippedLegs?: readonly CmrSkippedLeg[];
 }): string | undefined {
+  const declaredLegs = cmrReviewLegs().map((leg) => leg.slug);
   const successful = new Set(input.successfulLegs);
   const skipped = new Set((input.skippedLegs ?? []).map((leg) => leg.slug));
-  const missing = DEFAULT_CMR_LEGS.filter((slug) => !successful.has(slug) && !skipped.has(slug));
+  const missing = declaredLegs.filter((slug) => !successful.has(slug) && !skipped.has(slug));
   if (missing.length > 0) {
     return (
       "cmr worker omitted declared leg accounting for: " +
-      `${missing.join(", ")} (each default cmr leg must be successful or skipped)`
+      `${missing.join(", ")} (each active-route cmr leg must be successful or skipped)`
     );
   }
-  const doubleReported = DEFAULT_CMR_LEGS.filter((slug) => successful.has(slug) && skipped.has(slug));
+  const doubleReported = declaredLegs.filter((slug) => successful.has(slug) && skipped.has(slug));
   if (doubleReported.length > 0) {
     return (
       "cmr worker reported declared leg as both successful and skipped: " +
@@ -1975,11 +1986,27 @@ const cmrVerdictLegsSchema = {
   successfulLegs: z.array(cmrLegSlugSchema).min(1),
   skippedLegs: z.array(cmrSkippedLegSchema).optional(),
 } as const;
+const cmrFindingDispositionSchema = z
+  .object({
+    identityKey: nonEmpty,
+    status: z.enum(["still-active", "verified-closed", "unable-to-assess"]),
+    reason: z.string().optional(),
+  })
+  .strict();
+const cmrClosureSchema = {
+  claimedFixedFindingIdentityKeys: z.array(nonEmpty).optional(),
+  priorFindingDispositions: z.array(cmrFindingDispositionSchema).optional(),
+} as const;
 const cmrConvergedSchema = z
-  .object({ converged: z.literal(true), ...cmrVerdictLegsSchema })
+  .object({ converged: z.literal(true), ...cmrVerdictLegsSchema, ...cmrClosureSchema })
   .strict();
 const cmrRedSchema = z
-  .object({ converged: z.literal(false), reason: nonEmpty, ...cmrVerdictLegsSchema })
+  .object({
+    converged: z.literal(false),
+    reason: nonEmpty,
+    ...cmrVerdictLegsSchema,
+    ...cmrClosureSchema,
+  })
   .strict();
 const cmrEscalateSchema = z
   .object({ escalate: z.object({ reason: nonEmpty, diagnosis: nonEmpty }).strict() })
@@ -2035,6 +2062,15 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
       converged: true,
       successfulLegs: converged.successfulLegs,
       ...(converged.skippedLegs !== undefined ? { skippedLegs: converged.skippedLegs } : {}),
+      ...(converged.claimedFixedFindingIdentityKeys !== undefined
+        ? {
+            claimedFixedFindingIdentityKeys:
+              converged.claimedFixedFindingIdentityKeys,
+          }
+        : {}),
+      ...(converged.priorFindingDispositions !== undefined
+        ? { priorFindingDispositions: converged.priorFindingDispositions }
+        : {}),
     };
   }
   const red = cmrRedSchema.safeParse(parsed);
@@ -2049,6 +2085,15 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
       reason: red.data.reason,
       successfulLegs: red.data.successfulLegs,
       ...(red.data.skippedLegs !== undefined ? { skippedLegs: red.data.skippedLegs } : {}),
+      ...(red.data.claimedFixedFindingIdentityKeys !== undefined
+        ? {
+            claimedFixedFindingIdentityKeys:
+              red.data.claimedFixedFindingIdentityKeys,
+          }
+        : {}),
+      ...(red.data.priorFindingDispositions !== undefined
+        ? { priorFindingDispositions: red.data.priorFindingDispositions }
+        : {}),
     };
   }
   return {

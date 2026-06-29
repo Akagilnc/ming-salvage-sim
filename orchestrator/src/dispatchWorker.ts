@@ -48,6 +48,7 @@ import type {
 } from "./types.js";
 
 const FIX_FINDINGS_LANDING_FILE = ".orchestrator-fix-findings.json";
+const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
 
 /**
  * The wiki skill each worker kind invokes (ADR 0026):
@@ -111,14 +112,21 @@ function ensureGitExcluded(worktreePath: string, pattern: string): void {
 function writeFixFindingsLandingFile(
   spec: WorkerSpec,
   ctx: DispatchContext,
-): string | undefined {
+): { path: string; cleanup: boolean } | undefined {
   if (spec.id !== "S5" || spec.kind !== "coder" || ctx.worktree === undefined) {
     return undefined;
   }
   if (!existsSync(ctx.worktree.path)) return undefined;
 
-  ensureGitExcluded(ctx.worktree.path, FIX_FINDINGS_LANDING_FILE);
-  const landingPath = join(ctx.worktree.path, FIX_FINDINGS_LANDING_FILE);
+  const landingPath =
+    ctx.stateDir !== undefined
+      ? join(ctx.stateDir, FIX_FINDINGS_LEDGER_FILE)
+      : join(ctx.worktree.path, FIX_FINDINGS_LANDING_FILE);
+  if (ctx.stateDir !== undefined) {
+    mkdirSync(ctx.stateDir, { recursive: true });
+  } else {
+    ensureGitExcluded(ctx.worktree.path, FIX_FINDINGS_LANDING_FILE);
+  }
   writeFileSync(
     landingPath,
     `${JSON.stringify(
@@ -131,7 +139,7 @@ function writeFixFindingsLandingFile(
     )}\n`,
     "utf8",
   );
-  return landingPath;
+  return { path: landingPath, cleanup: ctx.stateDir === undefined };
 }
 
 /**
@@ -249,7 +257,7 @@ export async function legacyDispatchWorker(
   }
   const stepSpec = workerSpecToStepSpec(spec);
   let ret: StepOutput | StepResult;
-  const fixFindingsLandingPath = writeFixFindingsLandingFile(spec, ctx);
+  const fixFindingsLanding = writeFixFindingsLandingFile(spec, ctx);
   try {
     if (ctx.resumeSessionId !== undefined) {
       ret = await backend.resumeSession(stepSpec, ctx.worktree, ctx.resumeSessionId);
@@ -257,8 +265,8 @@ export async function legacyDispatchWorker(
       ret = await backend.runStep(stepSpec, ctx.worktree);
     }
   } finally {
-    if (fixFindingsLandingPath !== undefined) {
-      rmSync(fixFindingsLandingPath, { force: true });
+    if (fixFindingsLanding?.cleanup) {
+      rmSync(fixFindingsLanding.path, { force: true });
     }
   }
   const { output, sessionId } = normalizeStepReturn(ret);

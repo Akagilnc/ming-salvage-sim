@@ -121,7 +121,7 @@ const ENV_BY_SLOT: Readonly<Record<ModelRouteSlot, string>> = {
   cmrCorrectness: "ORCHESTRATOR_CMR_CORRECTNESS_MODEL",
 };
 const ENV_BY_LEG_COLLECTION: Readonly<Record<ModelRouteLegCollection, string>> = {
-  cmrReview: "ORCHESTRATOR_CMR_REVIEW_LEGS",
+  cmrReview: "ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS",
 };
 
 function assertKnownSlot(slot: string): asserts slot is ModelRouteSlot {

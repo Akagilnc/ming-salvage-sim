@@ -152,6 +152,16 @@ export interface Finding {
   readonly action: "fix_now" | "defer";
 }
 
+/** Fresh-review adjudication for a prior coder-fix worker's claimed-fixed finding. */
+export interface PriorFindingDisposition {
+  /** Stable key produced by `findingIdentityKey` for the prior claimed-fixed finding. */
+  readonly identityKey: string;
+  /** ADR0030's explicit closure buckets; absence is never closure. */
+  readonly status: "still-active" | "verified-closed" | "unable-to-assess";
+  /** Optional reviewer rationale for audit/debugging. */
+  readonly reason?: string;
+}
+
 /** Output of a coder step (S2/S5). 0 commits ⇒ committed:false (not a miss). */
 export interface CoderOutput {
   readonly kind: "coder";
@@ -161,10 +171,11 @@ export interface CoderOutput {
   readonly escalate?: Escalation;
 }
 
-/** Output of a reviewer step (S3/S6). Empty findings ⇒ approve. */
+/** Output of a reviewer step (S3/S6). Empty findings ⇒ approve only when no prior finding needs adjudication. */
 export interface ReviewerOutput {
   readonly kind: "reviewer";
   readonly findings: ReadonlyArray<Finding>;
+  readonly priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
 }
@@ -427,6 +438,10 @@ export interface CmrResult {
   readonly successfulLegs?: readonly string[];
   /** Declared CMR legs skipped at runtime, with the visible degrade flag reason. */
   readonly skippedLegs?: readonly CmrSkippedLeg[];
+  /** Prior claimed-fixed findings the integrated CMR worker asks the runner to adjudicate. */
+  readonly claimedFixedFindingIdentityKeys?: readonly string[];
+  /** Explicit closure disposition for claimed-fixed integrated CMR findings. */
+  readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   // NOTE: a STUCK cmr worker is the WorkerResult-level `{kind:"escalated"}` case,
   // NOT an `escalate` field on this `completed` payload (codex cmr R3b finding: a
   // payload-level escalate would be silently ignored by the verifyCmr consumer,

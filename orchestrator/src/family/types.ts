@@ -16,6 +16,7 @@
 import type {
   Backend,
   DispatchContext,
+  PriorFindingDisposition,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -450,6 +451,10 @@ export interface IntegratedCmrResult {
   readonly successfulLegs?: readonly string[];
   /** Declared CMR legs skipped at runtime, with the visible degrade flag reason. */
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+  /** Prior claimed-fixed findings the integrated CMR result asks the runner to adjudicate. */
+  readonly claimedFixedFindingIdentityKeys?: readonly string[];
+  /** Explicit disposition for claimed-fixed integrated CMR findings. */
+  readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
 }
 
 /** What opening the family PR needs (decision 4, 止于 PR). */
