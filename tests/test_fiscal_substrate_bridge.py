@@ -644,6 +644,10 @@ def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
+    _, _, before_details = flows_mod.calc_province_fiscal(state, db)
+    expected_tax = sum(
+        int(d["province_total"]) for d in before_details if d["region_id"] != "shaanxi"
+    )
     db.conn.execute("UPDATE regions SET fiscal='[]' WHERE id='shaanxi'")
     db.conn.commit()
 
@@ -654,7 +658,9 @@ def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game
 
     assert isinstance(flow_rows, list) and flow_rows, "坏 fiscal 容器不该掀翻固定财政"
     assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "[]"
-    assert any("[province-fiscal] shaanxi fiscal 非字典" in m for m in msgs), msgs
+    tax_flow = next(f for f in flow_rows if f.get("category") == "田赋辽饷盐商")
+    assert tax_flow["amount"] == expected_tax, "坏 fiscal 省当月固定税收应出列，不能按默认 fiscal 造钱"
+    assert any("[province-fiscal] shaanxi fiscal 非字典" in m and "固定税收出列" in m for m in msgs), msgs
     assert any("[fiscal-substrate] shaanxi" in m and "fiscal 非字典" in m for m in msgs), msgs
 
 
@@ -683,6 +689,10 @@ def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game, mon
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
+    _, _, before_details = flows_mod.calc_province_fiscal(state, db)
+    expected_tax = sum(
+        int(d["province_total"]) for d in before_details if d["region_id"] != "shaanxi"
+    )
     db.conn.execute("UPDATE regions SET fiscal='{bad' WHERE id='shaanxi'")
     db.conn.commit()
 
@@ -693,7 +703,14 @@ def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game, mon
 
     assert isinstance(flow_rows, list) and flow_rows, "坏 fiscal JSON 不该掀翻固定财政"
     assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "{bad"
-    assert any("[province-fiscal] shaanxi fiscal 解析失败" in m and "JSONDecodeError" in m for m in msgs), msgs
+    tax_flow = next(f for f in flow_rows if f.get("category") == "田赋辽饷盐商")
+    assert tax_flow["amount"] == expected_tax, "坏 fiscal 省当月固定税收应出列，不能按默认 fiscal 造钱"
+    assert any(
+        "[province-fiscal] shaanxi fiscal 解析失败" in m
+        and "固定税收出列" in m
+        and "JSONDecodeError" in m
+        for m in msgs
+    ), msgs
     assert any("[fiscal-substrate] shaanxi" in m and "JSONDecodeError" in m for m in msgs), msgs
 
 
