@@ -68,9 +68,9 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
 import { runExclusive } from "../gitMutex.js";
 import {
+  agentForSlug,
   branchForIssue,
   extractCoderTag,
-  modelIdForSlug,
   realCommitCount,
   reconcileCoderCommits,
   SANDBOX_CODEX_DIR,
@@ -353,18 +353,16 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Build the container agent for a {@link WorkerSpec}: the top-level claude on the
-   * model the spec declares, resolved through the SAME validated `modelIdForSlug`
-   * mapping the single-slice ship path uses (realBackend.ts:2122). The lone seam
-   * that turns `spec.model` into an `sc.claudeCode(...)` agent for BOTH family
-   * WorkerSpec-driven runs (ship + cmr) — so neither can hardcode a model id that
-   * bypasses validation or drifts from the slug the runner declares (cmr S336 r7
-   * P1). `protected` + pure (no container/I/O) so a unit test asserts the resolved
-   * model without spinning a real `sc.run` — mirroring how `modelIdForSlug` /
-   * `soulForStep` are the testable seams on the single-slice path.
+   * Build the container agent for a {@link WorkerSpec}: resolve the model slug
+   * through the SAME backend registry the single-slice path uses. This is the lone
+   * seam that turns `spec.model` into a Sandcastle provider for BOTH family
+   * WorkerSpec-driven runs (ship + cmr), so neither can hardcode a model id or
+   * assume a provider family that drifts from the slug the runner declares.
+   * `protected` + pure (no container/I/O) so a unit test asserts the resolved model
+   * without spinning a real `sc.run`.
    */
-  protected agentForSpec(spec: WorkerSpec): ReturnType<typeof sc.claudeCode> {
-    return sc.claudeCode(modelIdForSlug(spec.model));
+  protected agentForSpec(spec: WorkerSpec): sc.AgentProvider {
+    return agentForSlug(spec.model);
   }
 
   // ─────────────────────────── family ledger ───────────────────────────

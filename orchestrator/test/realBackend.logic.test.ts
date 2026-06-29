@@ -42,12 +42,14 @@ import {
   promptsDirError,
   realCommitCount,
   reconcileCoderCommits,
+  resolveModelSlug,
   soulForStep,
   REFERENCED_PROMPT_FILES,
   RealBackend,
   SANDBOX_CODEX_DIR,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
+  SUPPORTED_MODEL_PROVIDER_FACTORIES,
   WORKER_IDLE_TIMEOUT_SECONDS,
   type GhBlockedBy,
   type GhIssueJson,
@@ -416,15 +418,49 @@ describe("realBackend WORKER_IDLE_TIMEOUT_SECONDS (idle-timeout disable)", () =>
 });
 
 describe("realBackend modelIdForSlug", () => {
-  it("maps the CLAUDE slugs to their claude model ids (reviewer=opus, ship=sonnet)", () => {
-    // modelIdForSlug stays the CLAUDE-model-id resolver: the codex coder slug is
-    // NOT a claude model id, so it is resolved by agentForSlug, not here.
+  it("maps supported slugs to baked CLI model ids through the registry", () => {
+    expect(modelIdForSlug("gpt-5.5")).toBe("gpt-5.5");
     expect(modelIdForSlug("sonnet")).toBe("claude-sonnet-4-6");
     expect(modelIdForSlug("opus")).toBe("claude-opus-4-8");
   });
-  it("throws on a non-claude slug (the codex slug is not a claude model id)", () => {
+
+  it("throws on an unknown slug", () => {
     expect(() => modelIdForSlug("gpt")).toThrow(/unknown model slug/);
-    expect(() => modelIdForSlug("gpt-5.5")).toThrow(/unknown model slug/);
+  });
+});
+
+// ─── resolveModelSlug (data-driven slug → backend registry) ──────────────────
+
+describe("realBackend resolveModelSlug", () => {
+  it("declares the six Sandcastle-native provider factories the registry can target", () => {
+    expect(SUPPORTED_MODEL_PROVIDER_FACTORIES).toEqual([
+      "claudeCode",
+      "codex",
+      "opencode",
+      "copilot",
+      "cursor",
+      "pi",
+    ]);
+  });
+
+  it("resolves existing slugs to the same provider/model/options as the pre-registry mapping", () => {
+    expect(resolveModelSlug("gpt-5.5")).toEqual({
+      provider: "codex",
+      model: "gpt-5.5",
+      options: { effort: "high" },
+    });
+    expect(resolveModelSlug("sonnet")).toEqual({
+      provider: "claudeCode",
+      model: "claude-sonnet-4-6",
+    });
+    expect(resolveModelSlug("opus")).toEqual({
+      provider: "claudeCode",
+      model: "claude-opus-4-8",
+    });
+  });
+
+  it("fails closed for unknown model slugs", () => {
+    expect(() => resolveModelSlug("gpt")).toThrow(/unknown model slug/);
   });
 });
 
