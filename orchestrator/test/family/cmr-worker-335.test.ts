@@ -322,6 +322,36 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       });
     });
 
+    it("rejects successful legs that were not declared by the active route", () => {
+      vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: ["agy", "opus"],
+            ...EMPTY_CMR_CLOSURE,
+            skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
+          })}</cmr>`,
+        ).kind,
+      ).toBe("malformed");
+    });
+
+    it("rejects skipped legs that were not declared by the active route", () => {
+      vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: ["gpt-5.5", "agy"],
+            ...EMPTY_CMR_CLOSURE,
+            skippedLegs: [{ slug: "opus", reason: "auth unavailable" }],
+          })}</cmr>`,
+        ).kind,
+      ).toBe("malformed");
+    });
+
     it("accepts a single surviving default leg only when the other declared legs are skipped", () => {
       const o = parseCmrOutcome(
         `<cmr>${JSON.stringify({

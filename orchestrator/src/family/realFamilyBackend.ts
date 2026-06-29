@@ -1853,6 +1853,23 @@ function cmrLegAccountingFailure(input: {
   readonly skippedLegs?: readonly CmrSkippedLeg[];
 }): string | undefined {
   const declaredLegs = cmrReviewLegs().map((leg) => leg.slug);
+  const declared = new Set(declaredLegs);
+  const undeclaredSuccessful = input.successfulLegs.filter((slug) => !declared.has(slug));
+  if (undeclaredSuccessful.length > 0) {
+    return (
+      "cmr worker reported successful legs that were not declared by the active route: " +
+      undeclaredSuccessful.join(", ")
+    );
+  }
+  const undeclaredSkipped = (input.skippedLegs ?? [])
+    .map((leg) => leg.slug)
+    .filter((slug) => !declared.has(slug));
+  if (undeclaredSkipped.length > 0) {
+    return (
+      "cmr worker reported skipped legs that were not declared by the active route: " +
+      undeclaredSkipped.join(", ")
+    );
+  }
   const successful = new Set(input.successfulLegs);
   const skipped = new Set((input.skippedLegs ?? []).map((leg) => leg.slug));
   const missing = declaredLegs.filter((slug) => !successful.has(slug) && !skipped.has(slug));
