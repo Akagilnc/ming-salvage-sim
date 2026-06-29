@@ -654,53 +654,119 @@ export function checkOwnGitDir(
 export const CODER_CODEX_SLUG = "gpt-5.5";
 const CODER_CODEX_EFFORT: NonNullable<sc.CodexOptions["effort"]> = "high";
 
-/**
- * Map a CLAUDE {@link StepSpec.model} slug to its claude model id (PRD #244:
- * "换模型 = runtime 选已烤进镜像的 CLI"). This resolver covers ONLY the claude
- * slugs — `"opus"` (per-slice review subagent / reviewer) and `"sonnet"` (the ship
- * worker). The CODER slug ({@link CODER_CODEX_SLUG}) is NOT a claude model id and is
- * resolved by {@link agentForSlug} to the codex provider, never here. Pure: returns
- * the model id string, so the mapping is unit-testable without constructing a provider.
- *
- * `"sonnet"` → claude-sonnet-4-6 (ship); `"opus"` → claude-opus-4-8 (reviewer).
- * Any other slug is a misconfigured StepSpec → throw (caught by the runner's
- * error edge, surfaced as S8(error)).
- */
-export function modelIdForSlug(slug: string): string {
-  switch (slug) {
-    case "sonnet":
-      return "claude-sonnet-4-6";
-    case "opus":
-      return "claude-opus-4-8";
-    default:
-      throw new Error(
-        `realBackend: unknown model slug "${slug}" — expected "sonnet" or "opus". ` +
-          `Add the CLI to the image and extend modelIdForSlug before using it.`,
-      );
+export type ModelProviderFactory =
+  | "claudeCode"
+  | "codex"
+  | "opencode"
+  | "copilot"
+  | "cursor"
+  | "pi";
+
+export const SUPPORTED_MODEL_PROVIDER_FACTORIES = [
+  "claudeCode",
+  "codex",
+  "opencode",
+  "copilot",
+  "cursor",
+  "pi",
+] as const satisfies ReadonlyArray<ModelProviderFactory>;
+
+type ModelProviderOptions =
+  | sc.ClaudeCodeOptions
+  | sc.CodexOptions
+  | sc.OpenCodeOptions
+  | sc.CopilotOptions
+  | sc.CursorOptions
+  | sc.PiOptions;
+
+export type ModelSlugRegistryEntry =
+  | { readonly provider: "claudeCode"; readonly model: string; readonly options?: sc.ClaudeCodeOptions }
+  | { readonly provider: "codex"; readonly model: string; readonly options?: sc.CodexOptions }
+  | { readonly provider: "opencode"; readonly model: string; readonly options?: sc.OpenCodeOptions }
+  | { readonly provider: "copilot"; readonly model: string; readonly options?: sc.CopilotOptions }
+  | { readonly provider: "cursor"; readonly model: string; readonly options?: sc.CursorOptions }
+  | { readonly provider: "pi"; readonly model: string; readonly options?: sc.PiOptions };
+
+type ProviderFactory = (model: string, options?: ModelProviderOptions) => sc.AgentProvider;
+
+const MODEL_PROVIDER_FACTORIES: Readonly<Record<ModelProviderFactory, ProviderFactory>> = {
+  claudeCode: (model, options) => sc.claudeCode(model, options as sc.ClaudeCodeOptions | undefined),
+  codex: (model, options) => sc.codex(model, options as sc.CodexOptions | undefined),
+  opencode: (model, options) => sc.opencode(model, options as sc.OpenCodeOptions | undefined),
+  copilot: (model, options) => sc.copilot(model, options as sc.CopilotOptions | undefined),
+  cursor: (model, options) => sc.cursor(model, options as sc.CursorOptions | undefined),
+  pi: (model, options) => sc.pi(model, options as sc.PiOptions | undefined),
+};
+
+const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryEntry>> = {
+  [CODER_CODEX_SLUG]: {
+    provider: "codex",
+    model: CODER_CODEX_SLUG,
+    options: { effort: CODER_CODEX_EFFORT },
+  },
+  sonnet: {
+    provider: "claudeCode",
+    model: "claude-sonnet-4-6",
+  },
+  opus: {
+    provider: "claudeCode",
+    model: "claude-opus-4-8",
+  },
+};
+
+export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
+  const entry = MODEL_SLUG_REGISTRY[slug];
+  if (!entry) {
+    throw new Error(
+      `realBackend: unknown model slug "${slug}". Add the CLI to the image and ` +
+        `register it in MODEL_SLUG_REGISTRY before using it.`,
+    );
+  }
+  if (entry.options === undefined) {
+    return { provider: entry.provider, model: entry.model } as ModelSlugRegistryEntry;
+  }
+  switch (entry.provider) {
+    case "claudeCode":
+      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
+    case "codex":
+      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
+    case "opencode":
+      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
+    case "copilot":
+      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
+    case "cursor":
+      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
+    case "pi":
+      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
   }
 }
 
 /**
+ * Map a {@link StepSpec.model} slug to its baked CLI model id (PRD #244:
+ * "换模型 = runtime 选已烤进镜像的 CLI"). Compatibility helper over the data-driven
+ * registry; provider selection lives in {@link agentForSlug}.
+ *
+ * `"gpt-5.5"` → gpt-5.5 (codex coder), `"sonnet"` → claude-sonnet-4-6 (ship),
+ * `"opus"` → claude-opus-4-8 (reviewer). Any other slug is a misconfigured
+ * StepSpec → throw (caught by the runner's error edge, surfaced as S8(error)).
+ */
+export function modelIdForSlug(slug: string): string {
+  return resolveModelSlug(slug).model;
+}
+
+/**
  * Map a {@link StepSpec.model} slug to the baked-in CLI AGENT PROVIDER (the
- * provider factory, not just the model id — extends {@link modelIdForSlug} now that
- * the family spans TWO CLIs). PRD #244: "换模型 = runtime 选已烤进镜像的 CLI".
+ * provider factory, not just the model id). PRD #244: "换模型 = runtime 选已烤进镜像
+ * 的 CLI". Adding a sibling model for an already-baked CLI is a registry row:
+ * `slug → {provider, model, options}`.
  *
- * - {@link CODER_CODEX_SLUG} (`"gpt-5.5"`, the S2 build worker / coder) → the
- *   sandcastle CODEX provider at {@link CODER_CODEX_EFFORT}. The 2b image already
- *   bakes the codex CLI (the cmr legs use it) and `box()` already mounts the
- *   per-issue codex auth dir, so the codex coder authenticates in-sandbox.
- * - `"sonnet"` / `"opus"` (claude slugs — the ship worker, the per-slice review
- *   subagent) → `claudeCode(modelIdForSlug(slug))`, unchanged.
- *
- * Any other slug throws via {@link modelIdForSlug} (misconfigured StepSpec →
+ * Any unknown slug throws via {@link resolveModelSlug} (misconfigured StepSpec →
  * S8(error)). Returns an {@link sc.AgentProvider}; its `.name` (`"codex"` vs
  * `"claude-code"`) is the unit-test discriminator (no container needed).
  */
 export function agentForSlug(slug: string): sc.AgentProvider {
-  if (slug === CODER_CODEX_SLUG) {
-    return sc.codex(CODER_CODEX_SLUG, { effort: CODER_CODEX_EFFORT });
-  }
-  return sc.claudeCode(modelIdForSlug(slug));
+  const entry = resolveModelSlug(slug);
+  return MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, entry.options);
 }
 
 // ── role → baked soul selection (ship-pre 256 r1) ───────────────────────────
@@ -2269,7 +2335,7 @@ export class RealBackend implements Backend {
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
         sandbox: this.shipSandbox(auth),
-        agent: sc.claudeCode(modelIdForSlug(spec.model)),
+        agent: agentForSlug(spec.model),
         // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
         // container (用户 note); maxIter is the within-worker budget. A genuine block
         // is the worker's `<ship>` escalate verdict, not the iteration limit.
