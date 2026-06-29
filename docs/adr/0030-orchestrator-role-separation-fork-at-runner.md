@@ -10,7 +10,7 @@ per-slice 与 integrated cmr 的「评审 → 修复 → 复审」收敛 loop，
 
 **终止/收敛判定**：loop 的收敛/escalate **复用 cmr skill 的现成模型**（drift 三检收敛、**非轮数计数**；缺腿按 cmr skill 降级容忍——**不强制三腿齐全**），不另立判据；integrated cmr 的最低线 = ADR 0032 的 ≥1 撑底线强腿。这天然抗 LLM 抖动（drift 看 finding count 趋势/类，不是精确 hash，换措辞不重置）。**landing file = 结构化 findings 记录，存受保护的 ledger sibling 目录**（ADR 0026 既有「worktree 外」模式）、对非 reviewer worker 只读，防 coder worker 篡改绕闸。
 
-**裁定状态补「无记忆」缺**（拆 worker 后丢了 0026 的 in-session 记忆）：landing file 不只记 findings，还记**跨轮裁定**，由 **runner 持**（runner 持可见 loop，裁定是它的账、不是某条 reviewer 腿私改）。**关键区分「自报」与「已验证」**——fix worker 说修好了只是 `claimed-fixed`（**未验证的自报，绝不当既成"已修"**）；只有**下一轮 fresh reviewer 在当前全 diff 里复验确认关闭**后，runner 才标 `verified-closed`。**这正是 cmr「每轮全量复审 + 上轮 finding 仅尾挂确认」**：假修（claimed 但没真修）会被下一轮 fresh 冷读重新 flag，不被噤声。
+**裁定状态补「无记忆」缺**（拆 worker 后丢了 0026 的 in-session 记忆）：landing file 不只记 findings，还记**跨轮裁定**，由 **runner 持**（runner 持可见 loop，裁定是它的账、不是某条 reviewer 腿私改）。**关键区分「自报」与「已验证」**——fix worker 说修好了只是 `claimed-fixed`（**未验证的自报，绝不当既成"已修"**）；只有**下一轮 fresh reviewer 在当前全 diff 里复验确认关闭**后，runner 才标 `verified-closed`。**这正是 cmr「每轮全量复审 + 上轮 finding 仅尾挂确认」**：假修（claimed 但没真修）会被下一轮 fresh 冷读重新 flag，不被噤声。**关闭判据 = 缺席**：一条 `claimed-fixed` 关闭 ⇔ 它**不在** fresh reviewer 当前全 diff 的 active-findings 列表里（全量复审本就报全集，缺席即关闭）；尾挂的「上轮 finding 确认」只作 prompt 保险，**关闭真源是 active-findings 列表的缺席、不是尾挂的显式确认**（既不让漏看的 reviewer 假关闭，也不让"略过未提"卡死 loop）。
 
 **suppression 只用于「故意不修」、不用于「自报已修」**：fresh reviewer 不重提的，**仅限已接受的 `wont-fix` / `已驳`**（runner/人对某 finding 的明确判断「这条不修」）——否则 fresh 每轮重提一条**已决定不修**的 finding，drift 永不收敛、误触 escalate。`claimed-fixed` **不在 suppression 之列**（必须复验，见上）。
 
