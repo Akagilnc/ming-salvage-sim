@@ -651,3 +651,76 @@ def test_apply_fixed_period_flows_logs_south_southwest_shadow_ticks(fresh_game, 
     for region_id in SOUTH_SOUTHWEST_SEEDS:
         assert any(f"[fiscal-substrate] {region_id} 推进" in m for m in msgs), \
             f"{region_id} shadow tick 未逐省 tlog: {msgs}"
+
+
+def test_all_ming_settle_substrates_advance_with_observable_shadow_tlog(fresh_game, monkeypatch):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    fixed_flows = flows_mod.apply_fixed_period_flows(db, state)
+
+    rows = db.conn.execute(
+        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
+    ).fetchall()
+    settle_region_ids = [
+        str(row["id"])
+        for row in rows
+        if "settle" in json.loads(str(row["fiscal"] or "{}"))
+    ]
+    shadow_msgs = [m for m in msgs if m.startswith("[fiscal-substrate] ") and " 推进：" in m]
+
+    assert len(settle_region_ids) == 17
+    assert len(shadow_msgs) == 17
+    assert not any(
+        flow.get("account") == "国库"
+        and flow.get("dir") == "income"
+        and ("起运" in str(flow) or "fiscal-substrate" in str(flow))
+        for flow in fixed_flows
+    ), "shadow 基座只算/打印起运，不得作为额外国库收入落账"
+    for region_id in settle_region_ids:
+        surfaced = [m for m in shadow_msgs if f"[fiscal-substrate] {region_id} 推进：" in m]
+        assert surfaced, f"{region_id} 缺 shadow tlog: {msgs}"
+        msg = surfaced[0]
+        for field in ("实征", "起运", "火耗", "末态欠账"):
+            assert field in msg, f"{region_id} tlog 缺 {field}: {msg}"
+
+    for region_id in ("nanzhili", "zhejiang", "jiangxi", "huguang"):
+        settle = _read_settle(db, region_id)
+        assert settle["st"]["省库库银"] > 0, f"{region_id} 江南核心应有省库盈余"
+        assert f"[fiscal-substrate] {region_id} 推进" in "\n".join(shadow_msgs)
+    for region_id in ("shaanxi", "shanxi", "liaodong", "dongjiang_area"):
+        settle = _read_settle(db, region_id)
+        assert settle["st"]["军饷欠"] > 0, f"{region_id} 边镇应进入/延续欠饷螺旋"
+    assert _read_settle(db, "henan")["st"]["宗禄欠"] > 0, "周/福藩重省应有宗禄欠压"
+    assert _read_settle(db, "huguang")["p"]["Due"]["宗禄"] > _read_settle(db, "nanzhili")["p"]["Due"]["宗禄"], \
+        "楚藩重省宗禄 Due 应重于江南基准"
+
+
+def test_all_settle_substrate_provisional_meta_covers_virtual_fields(fresh_db):
+    rows = fresh_db.conn.execute(
+        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
+    ).fetchall()
+
+    checked = 0
+    for row in rows:
+        fiscal = json.loads(str(row["fiscal"] or "{}"))
+        settle = fiscal.get("settle")
+        if not settle:
+            continue
+        checked += 1
+        region_id = str(row["id"])
+        st = settle["st"]
+        p = settle["p"]
+        provisional = set(settle["_meta"].get("provisional", []))
+        if p["正赋应征"] == 0 and p["起运定额"] == 0:
+            required = {"军饷", "拨付gross", "军饷欠", "起运定额"}
+        else:
+            required = {"宗禄", "起运定额", "官民田", "隐田"}
+        assert required <= provisional, f"{region_id} provisional 缺 {sorted(required - provisional)}"
+        if "官民田" in required:
+            assert "官民田" in st and "隐田" in st, f"{region_id} 田亩虚字段缺 seed"
+
+    assert checked == 17
