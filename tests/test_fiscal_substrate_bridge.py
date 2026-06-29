@@ -779,6 +779,21 @@ def test_fixed_flow_loader_rejects_non_finite_numeric_values(monkeypatch, bad_sc
     ), msgs
 
 
+@pytest.mark.parametrize("payload", [[], 0, False])
+def test_fixed_flow_loader_rejects_decoded_non_dict_payloads(monkeypatch, payload):
+    import ming_sim.flows as flows_mod
+
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    assert flows_mod._load_region_fiscal_for_fixed_flow("shaanxi", payload) is None
+    assert any(
+        "[province-fiscal] shaanxi fiscal 非字典" in m
+        and "固定税收出列" in m
+        for m in msgs
+    ), msgs
+
+
 def test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone(fresh_game):
     import ming_sim.flows as flows_mod
 

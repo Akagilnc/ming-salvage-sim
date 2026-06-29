@@ -65,8 +65,13 @@ def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> Op
     """
     if isinstance(raw_fiscal, dict):
         return raw_fiscal if _fixed_flow_scalars_are_numeric(region_id, raw_fiscal) else None
+    if raw_fiscal is None or raw_fiscal == "":
+        raw_fiscal = "{}"
+    elif not isinstance(raw_fiscal, (str, bytes, bytearray)):
+        tlog(f"[province-fiscal] {region_id} fiscal 非字典，本{TURN_UNIT}固定税收出列")
+        return None
     try:
-        fiscal = json.loads(str(raw_fiscal or "{}"))
+        fiscal = json.loads(raw_fiscal)
     except (TypeError, ValueError) as exc:
         tlog(f"[province-fiscal] {region_id} fiscal 解析失败，本{TURN_UNIT}固定税收出列：{type(exc).__name__}: {exc}")
         return None
