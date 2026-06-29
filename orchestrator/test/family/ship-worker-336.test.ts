@@ -21,7 +21,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { RealFamilyBackend, SHIP_FOCUS_FILENAME } from "../../src/family/realFamilyBackend.js";
 import {
@@ -56,6 +56,7 @@ const realPromptsDir = join(here, "..", "..", "prompts");
 
 const cleanups: string[] = [];
 afterEach(() => {
+  vi.unstubAllEnvs();
   while (cleanups.length > 0) {
     const p = cleanups.pop();
     if (p !== undefined) rmSync(p, { recursive: true, force: true });
@@ -338,6 +339,7 @@ describe("#336 family runShipWorker — fail-closed when the top-level Claude wo
   }
 
   it("no Claude worker token ⇒ escalate, never checks out / spins the container", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const be = noAuth();
     const outcome = await be.run(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
     expect(outcome.kind).toBe("escalate");
@@ -558,6 +560,7 @@ describe("#336 family workers — model id is spec-derived via modelIdForSlug (c
   }
 
   it("the family SHIP worker resolves to claude-sonnet-4-6 (the 'sonnet' slug), NOT a hardcoded claude-sonnet-4-5", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const spec = familyShipWorkerSpec();
     expect(spec.model).toBe("sonnet");
     const model = modelOfAgent(seam().agent(spec));
@@ -571,6 +574,7 @@ describe("#336 family workers — model id is spec-derived via modelIdForSlug (c
   // class) must likewise derive its model from the spec via the same seam — not a
   // standalone constant that could drift from `cmrWorkerSpec().model`.
   it("the family CMR worker resolves to claude-opus-4-8 (the 'opus' slug) via the same seam", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const spec = cmrWorkerSpec();
     expect(spec.model).toBe("opus");
     const model = modelOfAgent(seam().agent(spec));

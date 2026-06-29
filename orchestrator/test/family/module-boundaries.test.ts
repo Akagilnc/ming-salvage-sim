@@ -114,10 +114,12 @@ describe("acceptance 4 — four independent module seams", () => {
 
 describe("acceptance 4 — the spine routes through each module's injected seam", () => {
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
   it("prints the resolved model route lineup before the first family child worker dispatch", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     class OneChildFamilyBackend implements FamilyBackend {
       readonly ledger: FamilyLedgerEntry[] = [];
       async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {

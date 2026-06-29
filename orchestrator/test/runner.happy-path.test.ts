@@ -112,10 +112,12 @@ class HappyPathBackend implements Backend {
 
 describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
   it("prints the resolved model route lineup before the first worker dispatch", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const backend = new HappyPathBackend();
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
 
