@@ -42,6 +42,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  CMR_ROUTE_FILENAME,
   CMR_FOCUS_FILENAME,
   cmrOutcomeFromResult,
   parseCmrOutcome,
@@ -456,6 +457,17 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(cfg.env.OPENCLAW_SESSION).toBe("1");
     expect(cfg.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });
+
+  it("exports the route-selected CMR leg collection to the worker", () => {
+    const cfg = cfgBackend().config(auth);
+    const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
+
+    expect(legs).toEqual([
+      { family: "codex", slug: "gpt-5.5" },
+      { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy" },
+    ]);
+  });
 });
 
 // ═══════════════════ 4b. mountCmrAuth — best-effort per leg (codex cmr R1) ═══════════════════
@@ -631,6 +643,9 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     }): void {
       this.writeCmrFocusFile(ctx as never);
     }
+    public routeFile(spec: ReturnType<typeof cmrWorkerSpec>): void {
+      this.writeCmrRouteFile(spec);
+    }
   }
 
   function realRepo(): string {
@@ -711,6 +726,34 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     // ...but NO prior-findings block (the worker remembers within its own session).
     expect(body).not.toMatch(/Prior round's findings/i);
     expect(body).not.toMatch(/confirm-resolved/i);
+  });
+
+  it("writes the route-selected CMR review legs beside the focus file", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    be.routeFile(cmrWorkerSpec("fresh", "correctness"));
+
+    const route = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as unknown;
+    expect(route).toEqual({
+      pass: "correctness",
+      reviewLegs: [
+        { family: "codex", slug: "gpt-5.5" },
+        { family: "claude", slug: "opus" },
+        { family: "agy", slug: "agy" },
+      ],
+    });
+    const exclude = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
+    expect(exclude.split("\n")).toContain(CMR_ROUTE_FILENAME);
   });
 });
 

@@ -8,8 +8,8 @@ Read the baked role soul first:
 
 Then follow that soul and the worktree's `CLAUDE.md`. This is the runner-dispatched
 step6 correctness gate. The runner only schedules you after step5 completeness has
-passed and writes `.cmr-focus.md`; the CMR method lives in the baked soul and skill,
-not in this prompt.
+passed and writes `.cmr-focus.md` plus `.cmr-route.json`; the CMR method lives in
+the baked soul and skill, not in this prompt.
 
 ## Pass scope
 

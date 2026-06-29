@@ -79,6 +79,10 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
   },
 };
 
+const LEG_ONLY_MODEL_FAMILIES: Readonly<Record<string, ModelFamily>> = {
+  agy: "agy",
+};
+
 function rowForSlug(slug: string): ModelSlugRegistryRow {
   const entry = MODEL_SLUG_REGISTRY[slug];
   if (!entry) {
@@ -112,7 +116,14 @@ export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
 }
 
 export function modelFamilyForSlug(slug: string): ModelFamily {
-  return rowForSlug(slug).family;
+  const entry = MODEL_SLUG_REGISTRY[slug];
+  if (entry !== undefined) return entry.family;
+  const legOnly = LEG_ONLY_MODEL_FAMILIES[slug];
+  if (legOnly !== undefined) return legOnly;
+  throw new Error(
+    `realBackend: unknown model slug "${slug}". Add the CLI to the image and ` +
+      `register it in MODEL_SLUG_REGISTRY before using it.`,
+  );
 }
 
 export function modelIsStrongLeg(slug: string): boolean {

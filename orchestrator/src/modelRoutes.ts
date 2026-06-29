@@ -14,13 +14,26 @@ export const MODEL_ROUTE_SLOTS = [
   "cmrCorrectness",
 ] as const;
 
+export const MODEL_ROUTE_LEG_COLLECTIONS = ["cmrReview"] as const;
+
 export type ModelRouteSlot = (typeof MODEL_ROUTE_SLOTS)[number];
+export type ModelRouteLegCollection = (typeof MODEL_ROUTE_LEG_COLLECTIONS)[number];
 export type ModelSlotMap = Readonly<Record<ModelRouteSlot, string>>;
+export interface ModelRouteLeg {
+  readonly family: ModelFamily;
+  readonly slug: string;
+}
+export type ModelRouteLegCollectionMap = Readonly<
+  Record<ModelRouteLegCollection, ReadonlyArray<ModelRouteLeg>>
+>;
 export type ModelRouteOverrides = Readonly<Partial<Record<ModelRouteSlot, string>>>;
+export type ModelRouteLegCollectionOverrides = Readonly<
+  Partial<Record<ModelRouteLegCollection, ReadonlyArray<string>>>
+>;
 export type ModelRouteEnv = Readonly<Record<string, string | undefined>>;
 
 export interface TightFamilyViolation {
-  readonly slot: ModelRouteSlot;
+  readonly slot: ModelRouteSlot | ModelRouteLegCollection;
   readonly slug: string;
   readonly family: ModelFamily;
 }
@@ -28,11 +41,13 @@ export interface TightFamilyViolation {
 export interface ResolvedModelRoute {
   readonly routeName: string;
   readonly slots: ModelSlotMap;
+  readonly legCollections: ModelRouteLegCollectionMap;
   readonly tightFamilyViolations: ReadonlyArray<TightFamilyViolation>;
 }
 
 interface ModelRoutePreset {
   readonly slots: ModelSlotMap;
+  readonly legCollections: ModelRouteLegCollectionMap;
   readonly tightFamilies?: ReadonlyArray<ModelFamily>;
 }
 
@@ -46,8 +61,16 @@ const NORMAL_SLOTS: ModelSlotMap = {
   cmrCorrectness: "opus",
 };
 
+const NORMAL_LEG_COLLECTIONS: ModelRouteLegCollectionMap = {
+  cmrReview: [
+    { family: "codex", slug: "gpt-5.5" },
+    { family: "claude", slug: "opus" },
+    { family: "agy", slug: "agy" },
+  ],
+};
+
 const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
-  normal: { slots: NORMAL_SLOTS },
+  normal: { slots: NORMAL_SLOTS, legCollections: NORMAL_LEG_COLLECTIONS },
   "codex-tight": {
     tightFamilies: ["codex"],
     slots: {
@@ -58,6 +81,12 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
       merger: "opus",
       cmrCompleteness: "opus",
       cmrCorrectness: "opus",
+    },
+    legCollections: {
+      cmrReview: [
+        { family: "claude", slug: "opus" },
+        { family: "agy", slug: "agy" },
+      ],
     },
   },
   "claude-tight": {
@@ -71,10 +100,17 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
       cmrCompleteness: "gpt-5.5",
       cmrCorrectness: "gpt-5.5",
     },
+    legCollections: {
+      cmrReview: [
+        { family: "codex", slug: "gpt-5.5" },
+        { family: "agy", slug: "agy" },
+      ],
+    },
   },
 };
 
 const SLOT_SET = new Set<string>(MODEL_ROUTE_SLOTS);
+const LEG_COLLECTION_SET = new Set<string>(MODEL_ROUTE_LEG_COLLECTIONS);
 const ENV_BY_SLOT: Readonly<Record<ModelRouteSlot, string>> = {
   coder: "ORCHESTRATOR_CODER_MODEL",
   reviewer: "ORCHESTRATOR_REVIEWER_MODEL",
@@ -84,6 +120,9 @@ const ENV_BY_SLOT: Readonly<Record<ModelRouteSlot, string>> = {
   cmrCompleteness: "ORCHESTRATOR_CMR_COMPLETENESS_MODEL",
   cmrCorrectness: "ORCHESTRATOR_CMR_CORRECTNESS_MODEL",
 };
+const ENV_BY_LEG_COLLECTION: Readonly<Record<ModelRouteLegCollection, string>> = {
+  cmrReview: "ORCHESTRATOR_CMR_REVIEW_LEGS",
+};
 
 function assertKnownSlot(slot: string): asserts slot is ModelRouteSlot {
   if (!SLOT_SET.has(slot)) {
@@ -91,12 +130,33 @@ function assertKnownSlot(slot: string): asserts slot is ModelRouteSlot {
   }
 }
 
-function assertKnownSlug(slug: string): void {
+function assertKnownLegCollection(
+  collection: string,
+): asserts collection is ModelRouteLegCollection {
+  if (!LEG_COLLECTION_SET.has(collection)) {
+    throw new Error(`unknown model leg collection "${collection}"`);
+  }
+}
+
+function assertKnownWorkerSlug(slug: string): void {
   resolveModelSlug(slug);
+}
+
+function legForSlug(slug: string): ModelRouteLeg {
+  const trimmed = slug.trim();
+  return { slug: trimmed, family: modelFamilyForSlug(trimmed) };
+}
+
+function resolveLegCollection(slugs: ReadonlyArray<string>): ReadonlyArray<ModelRouteLeg> {
+  return slugs
+    .map((slug) => slug.trim())
+    .filter((slug) => slug !== "")
+    .map(legForSlug);
 }
 
 function tightFamilyViolations(
   slots: ModelSlotMap,
+  legCollections: ModelRouteLegCollectionMap,
   tightFamilies: ReadonlyArray<ModelFamily>,
 ): TightFamilyViolation[] {
   const tight = new Set(tightFamilies);
@@ -106,12 +166,24 @@ function tightFamilyViolations(
     const family = modelFamilyForSlug(slug);
     if (tight.has(family)) violations.push({ slot, slug, family });
   }
+  for (const collection of MODEL_ROUTE_LEG_COLLECTIONS) {
+    for (const leg of legCollections[collection]) {
+      if (tight.has(leg.family)) {
+        violations.push({
+          slot: collection,
+          slug: leg.slug,
+          family: leg.family,
+        });
+      }
+    }
+  }
   return violations;
 }
 
 export function resolveRouteModels(
   routeName: string,
   overrides: Readonly<Record<string, string | undefined>>,
+  legCollectionOverrides: Readonly<Record<string, ReadonlyArray<string> | undefined>> = {},
 ): ResolvedModelRoute {
   const trimmedRoute = routeName.trim() || "normal";
   const preset = ROUTE_PRESETS[trimmedRoute];
@@ -123,17 +195,32 @@ export function resolveRouteModels(
   for (const [rawSlot, rawSlug] of Object.entries(overrides)) {
     if (rawSlug === undefined || rawSlug.trim() === "") continue;
     assertKnownSlot(rawSlot);
-    assertKnownSlug(rawSlug.trim());
+    assertKnownWorkerSlug(rawSlug.trim());
     slots[rawSlot] = rawSlug.trim();
   }
 
-  for (const slot of MODEL_ROUTE_SLOTS) assertKnownSlug(slots[slot]);
+  const legCollections: Record<ModelRouteLegCollection, ReadonlyArray<ModelRouteLeg>> = {
+    ...preset.legCollections,
+  };
+  for (const [rawCollection, rawSlugs] of Object.entries(legCollectionOverrides)) {
+    if (rawSlugs === undefined) continue;
+    assertKnownLegCollection(rawCollection);
+    const resolved = resolveLegCollection(rawSlugs);
+    if (resolved.length === 0) {
+      throw new Error(`empty model leg collection "${rawCollection}"`);
+    }
+    legCollections[rawCollection] = resolved;
+  }
+
+  for (const slot of MODEL_ROUTE_SLOTS) assertKnownWorkerSlug(slots[slot]);
 
   return {
     routeName: trimmedRoute,
     slots,
+    legCollections,
     tightFamilyViolations: tightFamilyViolations(
       slots,
+      legCollections,
       preset.tightFamilies ?? [],
     ),
   };
@@ -143,6 +230,12 @@ export function printableRouteLineup(route: ResolvedModelRoute): string {
   return [
     `route=${route.routeName}`,
     ...MODEL_ROUTE_SLOTS.map((slot) => `${slot}=${route.slots[slot]}`),
+    ...MODEL_ROUTE_LEG_COLLECTIONS.map(
+      (collection) =>
+        `${collection}=[${route.legCollections[collection]
+          .map((leg) => `${leg.family}:${leg.slug}`)
+          .join(",")}]`,
+    ),
   ].join("\n");
 }
 
@@ -155,12 +248,30 @@ export function routeOverridesFromEnv(env: ModelRouteEnv): ModelRouteOverrides {
   return overrides;
 }
 
+export function routeLegCollectionOverridesFromEnv(
+  env: ModelRouteEnv,
+): ModelRouteLegCollectionOverrides {
+  const overrides: Partial<Record<ModelRouteLegCollection, ReadonlyArray<string>>> =
+    {};
+  for (const collection of MODEL_ROUTE_LEG_COLLECTIONS) {
+    const value = env[ENV_BY_LEG_COLLECTION[collection]]?.trim();
+    if (value !== undefined && value !== "") {
+      overrides[collection] = value
+        .split(",")
+        .map((slug) => slug.trim())
+        .filter((slug) => slug !== "");
+    }
+  }
+  return overrides;
+}
+
 export function activeModelRoute(
   env: ModelRouteEnv = process.env,
 ): ResolvedModelRoute {
   const route = resolveRouteModels(
     env.ORCHESTRATOR_ROUTE?.trim() || "normal",
     routeOverridesFromEnv(env),
+    routeLegCollectionOverridesFromEnv(env),
   );
   if (route.tightFamilyViolations.length > 0) {
     const details = route.tightFamilyViolations
@@ -178,4 +289,10 @@ export function modelForSlot(
   env: ModelRouteEnv = process.env,
 ): string {
   return activeModelRoute(env).slots[slot];
+}
+
+export function cmrReviewLegs(
+  env: ModelRouteEnv = process.env,
+): ReadonlyArray<ModelRouteLeg> {
+  return activeModelRoute(env).legCollections.cmrReview;
 }
