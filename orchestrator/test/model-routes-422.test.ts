@@ -38,6 +38,7 @@ describe("#422 model route presets", () => {
         "merger=opus",
         "cmrCompleteness=opus",
         "cmrCorrectness=opus",
+        "cmrReview=[codex:gpt-5.5,claude:opus,agy:agy]",
       ].join("\n"),
     );
   });
@@ -68,13 +69,26 @@ describe("#422 model route presets", () => {
 
     expect(resolved.tightFamilyViolations).toEqual([]);
     expect(new Set(Object.values(resolved.slots))).toEqual(new Set(["gpt-5.5"]));
+    expect(resolved.legCollections.cmrReview.map((leg) => leg.family)).not.toContain(
+      "claude",
+    );
   });
 
-  it("flags an override that breaks a tight route invariant", () => {
-    const resolved = resolveRouteModels("claude-tight", { merger: "opus" });
+  it("flags an override or review leg that breaks a tight route invariant", () => {
+    const overridden = resolveRouteModels("claude-tight", { merger: "opus" });
 
-    expect(resolved.tightFamilyViolations).toEqual([
+    expect(overridden.tightFamilyViolations).toEqual([
       { slot: "merger", slug: "opus", family: "claude" },
+    ]);
+
+    const badLeg = resolveRouteModels(
+      "claude-tight",
+      {},
+      { cmrReview: ["gpt-5.5", "opus"] },
+    );
+
+    expect(badLeg.tightFamilyViolations).toEqual([
+      { slot: "cmrReview", slug: "opus", family: "claude" },
     ]);
   });
 
@@ -98,6 +112,13 @@ describe("#422 model route presets", () => {
         ORCHESTRATOR_SHIP_MODEL: "gpt-5.5",
       }),
     ).toBe("gpt-5.5");
+
+    expect(() =>
+      activeModelRoute({
+        ORCHESTRATOR_ROUTE: "claude-tight",
+        ORCHESTRATOR_CMR_REVIEW_LEGS: "gpt-5.5,opus",
+      }),
+    ).toThrow(/tight route violation/i);
   });
 
   it("feeds the resolved route into every worker spec model slot", async () => {

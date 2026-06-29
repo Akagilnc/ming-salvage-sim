@@ -82,7 +82,7 @@ import {
   WORKER_IDLE_TIMEOUT_SECONDS,
   modelFamilyForSlug,
 } from "../realBackend.js";
-import { modelForSlot } from "../modelRoutes.js";
+import { cmrReviewLegs, modelForSlot } from "../modelRoutes.js";
 import {
   cmrWorkerSpec,
   familyShipWorkerSpec,
@@ -144,6 +144,8 @@ export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
  * family diff correctly and prioritises machine-touched merges (#291 缺口 1).
  */
 export const CMR_FOCUS_FILENAME = ".cmr-focus.md";
+/** Route-selected CMR review-leg config written next to {@link CMR_FOCUS_FILENAME}. */
+export const CMR_ROUTE_FILENAME = ".cmr-route.json";
 
 /**
  * The git-ignored SHIP FOCUS file written into the family-base worktree before the
@@ -986,6 +988,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // exact `git diff <familyBaseStartHead>...<familyBase>` scope command + the
       // baseline SHA + the machine-resolved children.
       this.writeCmrFocusFile(ctx);
+      this.writeCmrRouteFile(spec);
       const result = await sc.run({
         name: "family-cmr",
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1063,12 +1066,31 @@ export class RealFamilyBackend implements FamilyBackend {
       `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}\n`;
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
-    this.excludeCmrFocusFromGit();
+    this.excludeFromGit(CMR_FOCUS_FILENAME);
     writeFileSync(target, body, "utf8");
   }
 
-  /** Add the cmr focus file to the worktree's local git excludes (never committed). */
-  protected excludeCmrFocusFromGit(): void {
+  /** Write the route-selected CMR review legs for the in-container worker. */
+  protected writeCmrRouteFile(spec: WorkerSpec): void {
+    const pass = spec.promptFile.includes("completeness")
+      ? "completeness"
+      : spec.promptFile.includes("correctness")
+        ? "correctness"
+        : "legacy";
+    const body = JSON.stringify(
+      {
+        pass,
+        reviewLegs: cmrReviewLegs(),
+      },
+      null,
+      2,
+    );
+    this.excludeFromGit(CMR_ROUTE_FILENAME);
+    writeFileSync(join(this.opts.workingRepo, CMR_ROUTE_FILENAME), body + "\n", "utf8");
+  }
+
+  /** Add a transient cmr runtime file to the worktree's local git excludes. */
+  protected excludeFromGit(filename: string): void {
     try {
       const excludePath = join(
         this.sh("git", ["rev-parse", "--git-dir"], this.opts.workingRepo),
@@ -1084,9 +1106,15 @@ export class RealFamilyBackend implements FamilyBackend {
       } catch {
         // no exclude file yet
       }
-      if (!existing.split("\n").includes(CMR_FOCUS_FILENAME)) {
+      if (!existing.split("\n").includes(filename)) {
         mkdirSync(join(abs, ".."), { recursive: true });
-        appendFileSync(abs, (existing.endsWith("\n") || existing === "" ? "" : "\n") + CMR_FOCUS_FILENAME + "\n", "utf8");
+        appendFileSync(
+          abs,
+          (existing.endsWith("\n") || existing === "" ? "" : "\n") +
+            filename +
+            "\n",
+          "utf8",
+        );
       }
     } catch {
       // Best-effort: if excludes can't be written the file is still produced; the
@@ -1243,6 +1271,7 @@ export class RealFamilyBackend implements FamilyBackend {
       ...SPAWNED_WORKER_ENV,
       [SANDBOX_SOUL_ENV]: CMR_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
+      ORCHESTRATOR_CMR_REVIEW_LEGS: JSON.stringify(cmrReviewLegs()),
     };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // The in-container completeness gate's `gh issue view` (the live issue body =
