@@ -95,7 +95,7 @@ class SchedulerFamilyBackend implements FamilyBackend {
       return (
         this.script.cmr?.() ?? {
           kind: "completed",
-          output: { kind: "cmr", converged: true },
+          output: { kind: "cmr", converged: true, successfulLegs: ["opus"] },
         }
       );
     }
@@ -115,7 +115,7 @@ class SchedulerFamilyBackend implements FamilyBackend {
 describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr passes, no runner fix loop)", () => {
   it("cmr workers CONVERGED ⇒ ok:true, completeness + correctness dispatches, NO coder-fix, then ship", async () => {
     const backend = new SchedulerFamilyBackend({
-      cmr: () => ({ kind: "completed", output: { kind: "cmr", converged: true } }),
+      cmr: () => ({ kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus"] } }),
     });
     const result = await runVerifyCmr({
       phase: "final",
@@ -193,7 +193,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
 
   it("the cmr worker dispatch is FRESH (a new memory-bearing session, not a resume) — NO resume plumbing", async () => {
     const backend = new SchedulerFamilyBackend({
-      cmr: () => ({ kind: "completed", output: { kind: "cmr", converged: true } }),
+      cmr: () => ({ kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus"] } }),
     });
     await runVerifyCmr({
       phase: "final",

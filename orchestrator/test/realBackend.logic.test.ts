@@ -448,14 +448,19 @@ describe("realBackend resolveModelSlug", () => {
       provider: "codex",
       model: "gpt-5.5",
       options: { effort: "high" },
+      family: "codex",
+      strongLeg: true,
     });
     expect(resolveModelSlug("sonnet")).toEqual({
       provider: "claudeCode",
       model: "claude-sonnet-4-6",
+      family: "claude",
     });
     expect(resolveModelSlug("opus")).toEqual({
       provider: "claudeCode",
       model: "claude-opus-4-8",
+      family: "claude",
+      strongLeg: true,
     });
   });
 
