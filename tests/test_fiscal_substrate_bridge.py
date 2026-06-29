@@ -714,6 +714,17 @@ def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game, mon
     assert any("[fiscal-substrate] shaanxi" in m and "JSONDecodeError" in m for m in msgs), msgs
 
 
+def test_fixed_flow_loader_accepts_already_decoded_fiscal_dict(monkeypatch):
+    import ming_sim.flows as flows_mod
+
+    fiscal = {"settle": {"st": {}, "p": {}}, "tax": 1}
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    assert flows_mod._load_region_fiscal_for_fixed_flow("shaanxi", fiscal) == fiscal
+    assert msgs == []
+
+
 def test_apply_fixed_period_flows_advances_and_logs_jiangnan_core(fresh_game, monkeypatch):
     from ming_sim import flows as flows_mod
 
