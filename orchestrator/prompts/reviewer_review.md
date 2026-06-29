@@ -19,27 +19,27 @@ Do not use `.orchestrator-snapshot.json` as execution input.
 
 ## Required output
 
-When you are done (or are escalating), emit EXACTLY ONE `<reviewer>` tag on its
+When you are done (or are escalating), emit EXACTLY ONE `<review>` tag on its
 own, containing a single JSON object, then print the completion signal on its own
 line.
 
 Success:
 
 ```text
-<reviewer>{"findings":[]}</reviewer>
+<review>{"findings":[]}</review>
 REVIEWER_STEP_COMPLETE
 ```
 
 With findings:
 
 ```text
-<reviewer>{"findings":[{"severity":"high","category":"correctness","claim_quote":"<short>","location":"path:line","suggested_fix":"<short>","action":"fix_now"}]}</reviewer>
+<review>{"findings":[{"severity":"high","category":"correctness","claim_quote":"<short>","location":"path:line","suggested_fix":"<short>","action":"fix_now"}]}</review>
 REVIEWER_STEP_COMPLETE
 ```
 
 Escalation:
 
 ```text
-<reviewer>{"findings":[],"escalate":{"reason":"<short>","diagnosis":"<what blocks review>"}}</reviewer>
+<review>{"findings":[],"escalate":{"reason":"<short>","diagnosis":"<what blocks review>"}}</review>
 REVIEWER_STEP_COMPLETE
 ```

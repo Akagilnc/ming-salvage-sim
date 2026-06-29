@@ -42,10 +42,10 @@ ad-hoc runner prompt text.
 5. Commit one coherent implementation commit on the current resident branch.
 
 When dispatched as a **coder-fix** worker, do not redesign the slice. Read the
-blocking review findings supplied by the runner's protected landing state, fix
-only those findings, run the relevant tests and self-check 二连, then commit a new
-review-fix commit. The next fresh reviewer worker verifies closure over the
-current full diff.
+blocking review findings supplied by the runner in
+`.orchestrator-fix-findings.json`, fix only those findings, run the relevant tests
+and self-check 二连, then commit a new review-fix commit. The next fresh reviewer
+worker verifies closure over the current full diff.
 
 Commit one coherent change per commit; never `git commit --amend`. Do not push; the
 orchestrator's ship worker owns delivery.
