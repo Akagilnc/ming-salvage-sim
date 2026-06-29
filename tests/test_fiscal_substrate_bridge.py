@@ -120,6 +120,67 @@ def test_liaodong_and_dongjiang_are_pure_military_pay_funnels(fresh_db):
         assert res.new_st["军饷欠"] == pytest.approx(e["opening_arrears"] + e["due"] - e["grant"])
 
 
+JIANGNAN_CORE_EXPECTED = {
+    "nanzhili": {
+        "正赋应征": 30, "三饷应征": 8, "起运定额": 24,
+        "Due": {"军饷": 0, "官俸": 4, "宗禄": 2, "赈济": 0},
+        "first_tick": {"起运到京": 24, "省库库银": 1.16, "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
+    },
+    "zhejiang": {
+        "正赋应征": 23, "三饷应征": 5.5, "起运定额": 18,
+        "Due": {"军饷": 0, "官俸": 3, "宗禄": 1, "赈济": 0},
+        "first_tick": {"起运到京": 18, "省库库银": 0.8, "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
+    },
+    "jiangxi": {
+        "正赋应征": 22, "三饷应征": 4.5, "起运定额": 15,
+        "Due": {"军饷": 0, "官俸": 3, "宗禄": 1, "赈济": 0},
+        "first_tick": {"起运到京": 15, "省库库银": 0.875, "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
+    },
+    "huguang": {
+        "正赋应征": 34, "三饷应征": 6, "起运定额": 18,
+        "Due": {"军饷": 0, "官俸": 3, "宗禄": 5, "赈济": 0},
+        "first_tick": {"起运到京": 18, "省库库银": 5.2, "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
+    },
+}
+
+
+@pytest.mark.parametrize("region_id,expected", JIANGNAN_CORE_EXPECTED.items())
+def test_jiangnan_core_seeds_have_positive_remittance_golden(fresh_db, region_id, expected):
+    settle = _read_settle(fresh_db, region_id)
+    assert isinstance(settle, dict), f"{region_id} fiscal 缺 settle 基座"
+    meta = settle["_meta"]
+    assert "江南财赋核心" in meta["postures"]
+    assert meta["levies"]["seeded"] == ["辽饷"]
+    assert "剿饷" in meta["levies"]["not_seeded"]
+    assert "练饷" in meta["levies"]["not_seeded"]
+
+    p = settle["p"]
+    for key in ("正赋应征", "三饷应征", "起运定额"):
+        assert p[key] == pytest.approx(expected[key])
+    assert p["Due"] == expected["Due"]
+    assert p["Due"]["军饷"] == 0, "江南腹地非边镇，军饷 Due 应为 0"
+    assert p["起运定额"] > p["三饷应征"], "江南起运定额须覆盖三饷并含正赋大份额"
+
+    res = settle_tick(settle["st"], p, [])
+    for key, value in expected["first_tick"].items():
+        got = res.breakdown.get(key) if key == "起运到京" else res.new_st[key]
+        assert got == pytest.approx(value, abs=1e-3), f"{region_id} {key}"
+    assert res.breakdown["起运到京"] > 0, f"{region_id} 应跑出正起运"
+
+
+def test_huguang_seed_stacks_jiangnan_surplus_with_chu_princely_due(fresh_db):
+    huguang = _read_settle(fresh_db, "huguang")
+    nanzhili = _read_settle(fresh_db, "nanzhili")
+
+    assert "楚藩重宗禄" in huguang["_meta"]["postures"]
+    assert huguang["p"]["Due"]["宗禄"] > nanzhili["p"]["Due"]["宗禄"]
+
+    res = settle_tick(huguang["st"], huguang["p"], [])
+    assert res.breakdown["起运到京"] > 0
+    assert res.new_st["省库库银"] > 0
+    assert res.new_st["宗禄欠"] == pytest.approx(0)
+
+
 def test_settle_province_tick_persists_g1_baseline(fresh_db):
     res = fresh_db.settle_province_tick("shaanxi", [])
     fresh_db.conn.commit()
@@ -261,7 +322,7 @@ def test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine(fresh_game):
     apply_fixed_period_flows(db, state)
     assert _read_settle(db)["st"]["军饷欠"] != 20, "陕西仍应由动态 spine 推进"
     assert _read_settle(db, "henan")["st"]["省库库银"] == 40, "非明控制省不应 tick"
-    assert _read_settle(db, "nanzhili") is None, "明控但无 settle 的省不应被创建/推进"
+    assert _read_settle(db, "beizhili") is None, "明控但无 settle 的省不应被创建/推进"
 
     db.conn.execute("UPDATE regions SET controlled_by = 'ming' WHERE id = 'henan'")
     db.conn.commit()
@@ -381,3 +442,23 @@ def test_substrate_malformed_settle_shape_is_logged_not_prefiltered(fresh_game, 
     assert _read_settle(db)["p"] == [], "坏 settle 形状不该被 tick 改写"
     surfaced = [m for m in msgs if "[fiscal-substrate] shaanxi" in m and "ValueError" in m]
     assert surfaced, msgs
+
+
+def test_apply_fixed_period_flows_advances_and_logs_jiangnan_core(fresh_game, monkeypatch):
+    from ming_sim import flows as flows_mod
+
+    db, state = fresh_game
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    flows_mod.apply_fixed_period_flows(db, state)
+
+    for region_id, expected in JIANGNAN_CORE_EXPECTED.items():
+        settle = _read_settle(db, region_id)
+        assert settle["st"]["省库库银"] == pytest.approx(
+            expected["first_tick"]["省库库银"], abs=1e-3
+        )
+        assert any(
+            f"[fiscal-substrate] {region_id} 推进" in msg and "起运" in msg
+            for msg in msgs
+        ), f"{region_id} 缺 shadow tlog：{msgs}"
