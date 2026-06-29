@@ -370,8 +370,8 @@ _Avoid_: 角色(角色是职能单元,槽是它在某路线里的模型赋值位
 _Avoid_: 写死的 switch(那是被它取代的旧形态)、config(太泛)
 
 **强腿 / strong leg**:
-够格当 cmr 承重闸一腿的强模型(opus / codex(gpt-5.5) / gemini(agy))。cmr 硬底线 = **≥1 强腿实际跑成**,否则 escalate(零强腿 = 橡皮图章)。便宜实验模型(glm/haiku/spark)默认是 coder 槽的、不当 cmr 腿。(ADR 0032)
-_Avoid_: 把任何模型都算腿、把 coder 槽的便宜模型当评审腿
+撑得起 cmr 承重闸底线的强模型 —— **只认 opus / codex(gpt-5.5)**。cmr 硬底线 = **≥1 撑底线强腿实际跑成**,否则 escalate(没牙的闸不放行)。**agy(gemini) = bonus 腿**:跨家族多一票更好,但不可靠、不撑底线(codex+claude 双死、只剩 agy 也 escalate)。便宜实验模型(glm/haiku/spark)默认是 coder 槽的、不当 cmr 腿。(ADR 0032)
+_Avoid_: 把任何模型都算腿、把 agy 当撑底线腿、把 coder 槽的便宜模型当评审腿
 
 ## Example Dialogue
 
