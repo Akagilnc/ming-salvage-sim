@@ -24,6 +24,7 @@
  */
 
 import { runOrchestrator } from "../runner.js";
+import { activeModelRoute, printableRouteLineup } from "../modelRoutes.js";
 import type { Backend } from "../types.js";
 import { assertAcyclic, selectWave } from "./commander.js";
 import { familyAlreadyShipped, mergedSet, recordMerged } from "./ledger.js";
@@ -145,6 +146,9 @@ async function llmResolvedChildren(
 export async function runFamily(
   input: FamilyRunInput,
 ): Promise<FamilyRunResult> {
+  console.info(
+    `[orchestrator:family] model route lineup\n${printableRouteLineup(activeModelRoute())}`,
+  );
   const { familyBackend, singleSliceBackend, familyBase } = input;
   // ── #298 escalate-resume dependency-graph rebuild (ADR 0022 decision 4) ─────
   // APPEND-ONLY resume entry: when a `refetchEpic` hook is injected (a re-entry
