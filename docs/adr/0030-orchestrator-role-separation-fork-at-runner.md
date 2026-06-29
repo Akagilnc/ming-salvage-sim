@@ -8,7 +8,7 @@ partially-supersedes: ADR 0026（「cmr = 一条带记忆 worker 兼 fixer / 无
 
 per-slice 与 integrated cmr 的「评审 → 修复 → 复审」收敛 loop，从「单 worker session 内部跑完」**拆回 runner 调度层**：coder / reviewer / coder-fix 是各自 runner 派的独立 worker/容器，runner 持那条可见的 loop（派 reviewer → 分类 findings → 派 fix → 派 fresh reviewer 复审 → 收敛/escalate）。findings 经 landing file 跨 worker 边界传，每轮复审针对**当前全 diff**。**通用原则：任一 must-pass-first 闸不得埋进单 worker loop，必须落成 runner 调度边界。**
 
-**终止/收敛判定**：loop 的收敛/escalate **复用 cmr skill 的现成模型**（drift 三检收敛、**非轮数计数**；缺腿按 cmr skill 降级容忍——**不强制三腿齐全**），不另立判据；integrated cmr 的最低线 = ADR 0032 的 ≥1 撑底线强腿。这天然抗 LLM 抖动（drift 看 finding count 趋势/类，不是精确 hash，换措辞不重置）。**landing file = 结构化 findings 记录，存受保护的 ledger sibling 目录**（ADR 0026 既有「worktree 外」模式）、对非 reviewer worker 只读，防 coder worker 篡改绕闸。
+**终止/收敛判定**：loop 的收敛/escalate **复用 cmr skill 的现成模型**（drift 三检收敛、**非轮数计数**；缺腿按 cmr skill 降级容忍——**不强制三腿齐全**），不另立判据；integrated cmr 的最低线 = ADR 0032 的 ≥1 撑底线强腿。**fix-loop 的每步走 fresh `runStep`（保 git-truthing 真提交核验 + 单步 maxIter），不走 `resumeSession`**——`resumeSession`（跳 git-truthing、maxIter 固定 1）**严格只用于 crash/escalate 恢复**（沿 ADR 0026 既有不变式）；让正常 fix 步绕过 git-truthing 会使「假修」逃过真提交核验。这天然抗 LLM 抖动（drift 看 finding count 趋势/类，不是精确 hash，换措辞不重置）。**landing file = 结构化 findings 记录，存受保护的 ledger sibling 目录**（ADR 0026 既有「worktree 外」模式）、对非 reviewer worker 只读，防 coder worker 篡改绕闸。
 
 **裁定状态补「无记忆」缺**（拆 worker 后丢了 0026 的 in-session 记忆）：landing file 不只记 findings，还记**跨轮裁定**，由 **runner 持**（runner 持可见 loop，裁定是它的账、不是某条 reviewer 腿私改）。**关键区分「自报」与「已验证」**——fix worker 说修好了只是 `claimed-fixed`（**未验证的自报，绝不当既成"已修"**）；只有**下一轮 fresh reviewer 在当前全 diff 里复验确认关闭**后，runner 才标 `verified-closed`。**这正是 cmr「每轮全量复审 + 上轮 finding 仅尾挂确认」**：假修（claimed 但没真修）会被下一轮 fresh 冷读重新 flag，不被噤声。**关闭判据 = 显式 disposition + 覆盖断言（不是"缺席"）**：fresh reviewer 必须把**每一条上轮 `claimed-fixed`** 明确归入三桶之一——`still-active`（仍在）/ `verified-closed`（已验证关闭）/ `unable-to-assess`（本轮判不了）；runner **断言每条 claimed-fixed 都被 disposition 覆盖**，漏判、或 reviewer 崩/截断/吐坏输出 = **无效输出 → 重跑 / escalate**，**绝不当 verified-closed**（同 cmr skill「降级 ≠ approve」——缺席不是关闭证据，因为 reviewer 失败也会造成缺席）。`unable-to-assess` **保持 open**。「不在 active 列表」只作佐证、**不是关闭唯一真源**（否则 reviewer 一崩、列表一空，所有未修 bug 被假关闭放行）。
 
@@ -34,7 +34,7 @@ ADR 0026 押注「一条带记忆的 worker 主 session 兼 fixer，凭 in-sessi
 
 被本反转推翻的旧（0026 consolidate）设计 + **写死的 model 钉死点**散在 orchestrator souls + src 各处——它们是**当前有效的 0026 实现**，由实现切片重写。**逐轮 cmr 总能再揪出一个漏列文件（coverage drift），故本节不追求穷尽清单，而是把"扫全"定为切片的首步职责**：
 
-> **实现职责（#422 路线/registry + #419 cmr 拆分 的首步）**：先 `rg -n 'model:\s*"(sonnet|opus|gpt-5\.5)"'` 扫出**所有写死 model 钉死点**让它们消费 route+registry 输出（不再硬编码）；再 `rg -n 'You ARE the fixer|memory-bearing|inside YOUR session|S3/S5/S6|priorFindings'` 扫出所有 0026-consolidate 注释/契约一并翻。本节清单是已知起点、**不是完整集**。
+> **实现职责（#422 路线/registry + #419 cmr 拆分 的首步）**：扫出**所有写死 model 钉死点**让它们消费 route+registry 输出（不再硬编码）。**`rg 'model:\s*"..."'` 只匹配对象字段、会漏裸常量** —— 必须语义扫全，含 codex R1 点名的形态：`runner.ts` coder 默认 `|| "gpt-5.5"`、`realBackend.ts` 的 slug switch case、`family/realFamilyBackend.ts` 的 `MERGER_MODEL = "claude-opus-4-8"`（**否则 merger 在 claude-tight 下仍跑 Claude**）。建议扫 `rg -n 'model:\s*"|MODEL\s*=\s*"|"(sonnet|opus|haiku|gpt-5\.5|claude-[a-z0-9-]+)"'` 再人工过 switch/默认值。再 `rg -n 'You ARE the fixer|memory-bearing|inside YOUR session|S3/S5/S6|priorFindings'` 扫 0026-consolidate 注释/契约一并翻。本节清单是已知起点、**不是完整集**。
 
 已知承重点（起点，非全集）：
 - **souls**：`coder.md`（per-slice review/fix loop 在 coder 内）、`reviewer.md`、`cmr.md`（"You ARE the fixer…loop inside YOUR session"）、`ship.md`（引 cmr defer 语义）。
