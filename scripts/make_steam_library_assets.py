@@ -3,7 +3,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 
-ROOT = Path("/Users/wangwei/project/ming-salvage-sim")
+ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "output/imagegen/steam-library"
 OUT = ROOT / "web/public/steam-stock/generated"
 OUT.mkdir(parents=True, exist_ok=True)

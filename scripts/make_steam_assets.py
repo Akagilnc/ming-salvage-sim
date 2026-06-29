@@ -9,7 +9,8 @@ Steam store assets generator.
 from PIL import Image, ImageDraw, ImageFont
 import os
 
-ASSETS = "/Users/wangwei/project/ming-salvage-sim/web/public/steam_assets"
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+ASSETS = os.path.join(ROOT, "web/public/steam_assets")
 OUT    = os.path.join(ASSETS, "output")
 os.makedirs(OUT, exist_ok=True)
 
