@@ -39,7 +39,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   CMR_ROUTE_FILENAME,
@@ -69,6 +69,7 @@ const STRONG_LEGS = ["opus", "gpt-5.5"] as const;
 
 const cleanups: string[] = [];
 afterEach(() => {
+  vi.unstubAllEnvs();
   while (cleanups.length > 0) {
     const p = cleanups.pop();
     if (p !== undefined) rmSync(p, { recursive: true, force: true });
@@ -191,6 +192,35 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       );
     });
 
+    it("converged:true may carry explicit prior-finding closure dispositions", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|closed"],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|src/x.ts:1|closed",
+              status: "verified-closed",
+            },
+          ],
+        })}</cmr>`,
+      );
+
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.claimedFixedFindingIdentityKeys).toEqual([
+          "correctness|src/x.ts:1|closed",
+        ]);
+        expect(o.priorFindingDispositions).toEqual([
+          {
+            identityKey: "correctness|src/x.ts:1|closed",
+            status: "verified-closed",
+          },
+        ]);
+      }
+    });
+
     it("converged:false WITHOUT a reason ⇒ malformed (the contract requires the one-line reason)", () => {
       expect(parseCmrOutcome('<cmr>{"converged": false}</cmr>').kind).toBe("malformed");
     });
@@ -229,6 +259,20 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       expect(parseCmrOutcome('<cmr>{"converged": true, "successfulLegs": ["opus"]}</cmr>').kind).toBe(
         "malformed",
       );
+    });
+
+    it("accounts against the active route's declared cmr legs, not the default route", () => {
+      vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({ converged: true, successfulLegs: ["gpt-5.5", "agy"] })}</cmr>`,
+      );
+
+      expect(o).toEqual({
+        kind: "verdict",
+        converged: true,
+        successfulLegs: ["gpt-5.5", "agy"],
+      });
     });
 
     it("accepts a single surviving default leg only when the other declared legs are skipped", () => {
