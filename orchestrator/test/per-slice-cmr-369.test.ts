@@ -3,7 +3,11 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { legacyDispatchWorker } from "../src/dispatchWorker.js";
-import { classifyFindings, findingIdentityKey } from "../src/findings.js";
+import {
+  adjudicatePriorClaimedFixedFindings,
+  classifyFindings,
+  findingIdentityKey,
+} from "../src/findings.js";
 import { route } from "../src/route.js";
 import { runOrchestrator } from "../src/runner.js";
 import type {
@@ -254,6 +258,24 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S5:coder",
       "S6:reviewer",
     ]);
+  });
+
+  it("fails closed when a still-active prior key has no finding payload", () => {
+    const orphanKey = "correctness|src/runner.ts:404|missing finding payload";
+
+    expect(() =>
+      adjudicatePriorClaimedFixedFindings({
+        priorFindings: [],
+        priorIdentityKeys: [orphanKey],
+        review: {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: orphanKey, status: "still-active" },
+          ],
+        },
+      }),
+    ).toThrow(/no active or prior finding payload/);
   });
 
   it("ships only after the fresh re-review explicitly verifies a claimed-fixed finding closed", async () => {

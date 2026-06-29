@@ -31,7 +31,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { modelForSlot } from "./modelRoutes.js";
 import type {
@@ -97,12 +97,13 @@ function ensureGitExcluded(worktreePath: string, pattern: string): void {
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
     ).trim();
     if (excludePath.length === 0) return;
-    mkdirSync(join(excludePath, ".."), { recursive: true });
-    const existing = existsSync(excludePath)
-      ? readFileSync(excludePath, "utf8")
+    const resolvedPath = resolve(worktreePath, excludePath);
+    mkdirSync(join(resolvedPath, ".."), { recursive: true });
+    const existing = existsSync(resolvedPath)
+      ? readFileSync(resolvedPath, "utf8")
       : "";
     if (!existing.split(/\r?\n/).includes(pattern)) {
-      appendFileSync(excludePath, `${existing.endsWith("\n") || existing.length === 0 ? "" : "\n"}${pattern}\n`);
+      appendFileSync(resolvedPath, `${existing.endsWith("\n") || existing.length === 0 ? "" : "\n"}${pattern}\n`);
     }
   } catch {
     // Best effort only: the file is still useful to the worker even if this is

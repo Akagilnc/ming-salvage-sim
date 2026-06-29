@@ -230,16 +230,16 @@ export function isValidReviewerOutput(
   o: StepOutput | undefined,
 ): o is ReviewerOutput {
   if (o == null || typeof o !== "object") return false;
-  if (o.kind !== "reviewer") return false;
-  const r = o as ReviewerOutput;
+  const obj = o as unknown as Record<string, unknown>;
+  if (obj.kind !== "reviewer") return false;
   // F1: same escalate-shape contract as the coder output.
-  if (!isValidEscalation(r.escalate)) return false;
-  if (!Array.isArray(r.findings)) return false;
-  if (!r.findings.every(isValidFinding)) return false;
-  if (r.priorFindingDispositions === undefined) return true;
+  if (!isValidEscalation(obj.escalate)) return false;
+  if (!Array.isArray(obj.findings)) return false;
+  if (!obj.findings.every(isValidFinding)) return false;
+  if (obj.priorFindingDispositions === undefined) return true;
   return (
-    Array.isArray(r.priorFindingDispositions) &&
-    r.priorFindingDispositions.every(isValidPriorFindingDisposition)
+    Array.isArray(obj.priorFindingDispositions) &&
+    obj.priorFindingDispositions.every(isValidPriorFindingDisposition)
   );
 }
 
