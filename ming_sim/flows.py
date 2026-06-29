@@ -43,6 +43,24 @@ def _province_efficiency(fiscal: dict, gentry_resistance: int, unrest: int) -> f
     return max(0.05, min(1.00, rate))
 
 
+def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> dict:
+    """固定财政旧路径的宽容 fiscal 读取。
+
+    Shadow substrate 自己有 fail-loud+隔离日志；固定税收不能因为一个省的 fiscal JSON
+    坏态掀翻整月 pre_settle。坏 payload 按空 fiscal 继续走旧税基默认值，并让后续
+    substrate bridge 再记录精确隔离原因。
+    """
+    try:
+        fiscal = json.loads(str(raw_fiscal or "{}"))
+    except (TypeError, ValueError) as exc:
+        tlog(f"[province-fiscal] {region_id} fiscal 解析失败，按空财政容器继续：{type(exc).__name__}: {exc}")
+        return {}
+    if not isinstance(fiscal, dict):
+        tlog(f"[province-fiscal] {region_id} fiscal 非字典，按空财政容器继续")
+        return {}
+    return fiscal
+
+
 def calc_province_fiscal(
     state: GameState,
     db: GameDB,
@@ -73,7 +91,7 @@ def calc_province_fiscal(
         unrest       = int(row["unrest"])
         gentry       = int(row["gentry_resistance"])
         tax_base     = int(row["tax_per_turn"])   # 省级月税基准（万两）
-        fiscal: dict = json.loads(row["fiscal"] or "{}")
+        fiscal = _load_region_fiscal_for_fixed_flow(region_id, row["fiscal"])
 
         huang_tian   = fiscal.get("huang_tian", 0)
         liao_xiang   = fiscal.get("liao_xiang", 0)
