@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
 import type {
   Backend,
@@ -27,6 +27,8 @@ class HappyPathBackend implements Backend {
   readonly calls: string[] = [];
   /** Ordered log of every agent step actually dispatched to a sandbox. */
   readonly runStepIds: string[] = [];
+  /** Vitest mock call-order marker for sandbox dispatch. */
+  readonly markRunStep = vi.fn();
   /** Number of times push() was invoked. */
   pushCount = 0;
   /** The single resident worktree handed out (asserts persistence/reuse). */
@@ -84,6 +86,7 @@ class HappyPathBackend implements Backend {
   }
 
   async runStep(spec: StepSpec): Promise<StepOutput> {
+    this.markRunStep();
     this.calls.push(`runStep(${spec.id}:${spec.role}:${spec.promptFile})`);
     this.runStepIds.push(spec.id);
     if (spec.role === "reviewer") {
@@ -108,6 +111,35 @@ class HappyPathBackend implements Backend {
 }
 
 describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("prints the resolved model route lineup before the first worker dispatch", async () => {
+    const backend = new HappyPathBackend();
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    await runOrchestrator({ issueNumber: 247, backend });
+
+    expect(info).toHaveBeenCalledWith(
+      [
+        "[orchestrator] model route lineup",
+        "route=normal",
+        "coder=gpt-5.5",
+        "reviewer=gpt-5.5",
+        "coderFix=gpt-5.5",
+        "ship=sonnet",
+        "merger=opus",
+        "cmrCompleteness=opus",
+        "cmrCorrectness=opus",
+        "cmrReview=[codex:gpt-5.5,claude:opus,agy:agy]",
+      ].join("\n"),
+    );
+    expect(info.mock.invocationCallOrder[0]).toBeLessThan(
+      backend.markRunStep.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it("runs S0→S1→S2→S7→S8 in order and hands off status=success", async () => {
     const backend = new HappyPathBackend();
 

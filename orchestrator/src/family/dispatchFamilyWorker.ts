@@ -26,6 +26,7 @@ import type {
   WorkerSessionMode,
   WorkerSpec,
 } from "../types.js";
+import { modelForSlot } from "../modelRoutes.js";
 import type {
   FamilyBackend,
   IntegratedCmrPass,
@@ -78,7 +79,7 @@ export function cmrWorkerSpec(
         : "integrated_cmr_correctness.md",
     completionSignal: "CMR_STEP_COMPLETE",
     maxIter: 5,
-    model: "opus",
+    model: modelForSlot(pass === "completeness" ? "cmrCompleteness" : "cmrCorrectness"),
     soul: "cmr",
     toolchain: [],
   };
@@ -100,7 +101,7 @@ export function familyShipWorkerSpec(): WorkerSpec {
     // (family_ship.md: "rerun it yourself") → an iterative budget like coder/fix
     // (runner STEP_SPECS use 5), NOT the cmr reviewer's single-pass 1 (#336 cmr r6).
     maxIter: 5,
-    model: "sonnet",
+    model: modelForSlot("ship"),
     // The family ship worker runs under the dedicated "ship" soul (delivery
     // discipline: gstack-ship, stop-at-PR, defer→tracker not PR body), matching
     // the runtime SHIP_SOUL injected by realFamilyBackend.shipSandboxConfig — the

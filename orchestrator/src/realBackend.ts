@@ -68,6 +68,30 @@ import { z } from "zod";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
+import {
+  agentForSlug,
+  CODER_CODEX_SLUG,
+  modelFamilyForSlug,
+  modelIdForSlug,
+  modelIsStrongLeg,
+  resolveModelSlug,
+  SUPPORTED_MODEL_PROVIDER_FACTORIES,
+  type ModelFamily,
+  type ModelProviderFactory,
+  type ModelSlugRegistryEntry,
+} from "./modelRegistry.js";
+export {
+  agentForSlug,
+  CODER_CODEX_SLUG,
+  modelFamilyForSlug,
+  modelIdForSlug,
+  modelIsStrongLeg,
+  resolveModelSlug,
+  SUPPORTED_MODEL_PROVIDER_FACTORIES,
+  type ModelFamily,
+  type ModelProviderFactory,
+  type ModelSlugRegistryEntry,
+};
 import { legacyDispatchWorker, shipWorkerSpec } from "./dispatchWorker.js";
 import { STEP_SPECS } from "./runner.js";
 import {
@@ -495,9 +519,9 @@ export interface AuthPaths {
 /**
  * The single-slice ship worker's BEST-EFFORT auth (mirrors the family
  * {@link import("./family/realFamilyBackend.js").ShipAuth}). The ship worker pushes
- * + `gh pr create` (needs codex/gh creds) AND is the container's top-level claude
- * (needs its OWN claude token) — but each source is OPTIONAL: a missing source
- * degrades that leg, it never crashes the ship (#336 cmr S336 r1: the inline
+ * + `gh pr create` (needs codex/gh creds) and may run on a Claude-family model
+ * (needs its own claude token then) — but each source is OPTIONAL here: a missing
+ * source degrades that leg, it never crashes the ship (#336 cmr S336 r1: the inline
  * `mountAuth` threw on any missing credential, blocking ship in degraded auth envs).
  */
 export interface ShipAuth {
@@ -644,164 +668,6 @@ export function checkOwnGitDir(
 }
 
 // ── model slug → agent provider selection (role decides soul/CLI) ───────────
-
-/**
- * The codex coder slug + its effort (the S2 build worker runs on Codex gpt-5.5).
- * `"high"` matches the project's per-slice codex effort convention (`## Skill
- * routing`: the per-slice cmr legs run codex5.5 at high). The model id is the bare
- * CLI model string the sandcastle codex provider expects.
- */
-export const CODER_CODEX_SLUG = "gpt-5.5";
-const CODER_CODEX_EFFORT: NonNullable<sc.CodexOptions["effort"]> = "high";
-
-export type ModelProviderFactory =
-  | "claudeCode"
-  | "codex"
-  | "opencode"
-  | "copilot"
-  | "cursor"
-  | "pi";
-
-export const SUPPORTED_MODEL_PROVIDER_FACTORIES = [
-  "claudeCode",
-  "codex",
-  "opencode",
-  "copilot",
-  "cursor",
-  "pi",
-] as const satisfies ReadonlyArray<ModelProviderFactory>;
-
-type ModelProviderOptions =
-  | sc.ClaudeCodeOptions
-  | sc.CodexOptions
-  | sc.OpenCodeOptions
-  | sc.CopilotOptions
-  | sc.CursorOptions
-  | sc.PiOptions;
-
-type ModelFamily = "claude" | "codex" | "opencode" | "copilot" | "cursor" | "pi";
-interface ModelSlugRegistryBase {
-  readonly model: string;
-  readonly family: ModelFamily;
-  readonly strongLeg?: boolean;
-}
-
-export type ModelSlugRegistryEntry =
-  | (ModelSlugRegistryBase & {
-      readonly provider: "claudeCode";
-      readonly options?: sc.ClaudeCodeOptions;
-    })
-  | (ModelSlugRegistryBase & {
-      readonly provider: "codex";
-      readonly options?: sc.CodexOptions;
-    })
-  | (ModelSlugRegistryBase & {
-      readonly provider: "opencode";
-      readonly options?: sc.OpenCodeOptions;
-    })
-  | (ModelSlugRegistryBase & {
-      readonly provider: "copilot";
-      readonly options?: sc.CopilotOptions;
-    })
-  | (ModelSlugRegistryBase & {
-      readonly provider: "cursor";
-      readonly options?: sc.CursorOptions;
-    })
-  | (ModelSlugRegistryBase & {
-      readonly provider: "pi";
-      readonly options?: sc.PiOptions;
-    });
-
-type ProviderFactory = (model: string, options?: ModelProviderOptions) => sc.AgentProvider;
-
-const MODEL_PROVIDER_FACTORIES: Readonly<Record<ModelProviderFactory, ProviderFactory>> = {
-  claudeCode: (model, options) => sc.claudeCode(model, options as sc.ClaudeCodeOptions | undefined),
-  codex: (model, options) => sc.codex(model, options as sc.CodexOptions | undefined),
-  opencode: (model, options) => sc.opencode(model, options as sc.OpenCodeOptions | undefined),
-  copilot: (model, options) => sc.copilot(model, options as sc.CopilotOptions | undefined),
-  cursor: (model, options) => sc.cursor(model, options as sc.CursorOptions | undefined),
-  pi: (model, options) => sc.pi(model, options as sc.PiOptions | undefined),
-};
-
-const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryEntry>> = {
-  [CODER_CODEX_SLUG]: {
-    provider: "codex",
-    model: CODER_CODEX_SLUG,
-    options: { effort: CODER_CODEX_EFFORT },
-    family: "codex",
-    strongLeg: true,
-  },
-  sonnet: {
-    provider: "claudeCode",
-    model: "claude-sonnet-4-6",
-    family: "claude",
-  },
-  opus: {
-    provider: "claudeCode",
-    model: "claude-opus-4-8",
-    family: "claude",
-    strongLeg: true,
-  },
-};
-
-function cloneModelSlugEntry(entry: ModelSlugRegistryEntry): ModelSlugRegistryEntry {
-  const base = {
-    provider: entry.provider,
-    model: entry.model,
-    family: entry.family,
-    ...(entry.strongLeg === true ? { strongLeg: true } : {}),
-  };
-  if (entry.options === undefined) return base as ModelSlugRegistryEntry;
-  return {
-    ...base,
-    options: { ...entry.options },
-  } as ModelSlugRegistryEntry;
-}
-
-export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
-  const entry = MODEL_SLUG_REGISTRY[slug];
-  if (!entry) {
-    throw new Error(
-      `realBackend: unknown model slug "${slug}". Add the CLI to the image and ` +
-        `register it in MODEL_SLUG_REGISTRY before using it.`,
-    );
-  }
-  return cloneModelSlugEntry(entry);
-}
-
-/** True only for model slugs marked as ADR0032 CMR floor-carrying strong legs. */
-export function isStrongCmrLeg(slug: string): boolean {
-  const entry = MODEL_SLUG_REGISTRY[slug];
-  return entry?.strongLeg === true;
-}
-
-/**
- * Map a {@link StepSpec.model} slug to its baked CLI model id (PRD #244:
- * "换模型 = runtime 选已烤进镜像的 CLI"). Compatibility helper over the data-driven
- * registry; provider selection lives in {@link agentForSlug}.
- *
- * `"gpt-5.5"` → gpt-5.5 (codex coder), `"sonnet"` → claude-sonnet-4-6 (ship),
- * `"opus"` → claude-opus-4-8 (reviewer). Any other slug is a misconfigured
- * StepSpec → throw (caught by the runner's error edge, surfaced as S8(error)).
- */
-export function modelIdForSlug(slug: string): string {
-  return resolveModelSlug(slug).model;
-}
-
-/**
- * Map a {@link StepSpec.model} slug to the baked-in CLI AGENT PROVIDER (the
- * provider factory, not just the model id). PRD #244: "换模型 = runtime 选已烤进镜像
- * 的 CLI". Adding a sibling model for an already-baked CLI is a registry row:
- * `slug → {provider, model, options}`.
- *
- * Any unknown slug throws via {@link resolveModelSlug} (misconfigured StepSpec →
- * S8(error)). Returns an {@link sc.AgentProvider}; its `.name` (`"codex"` vs
- * `"claude-code"`) is the unit-test discriminator (no container needed).
- */
-export function agentForSlug(slug: string): sc.AgentProvider {
-  const entry = resolveModelSlug(slug);
-  return MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, entry.options);
-}
 
 // ── role → baked soul selection (ship-pre 256 r1) ───────────────────────────
 
@@ -2298,7 +2164,7 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Run the ship WORKER: ONE `sc.run` of the 2b container's top-level claude
+   * Run the ship WORKER: ONE `sc.run` of the 2b container's route-selected agent
    * invoking `gstack-ship` over the resident slice worktree (#336). `protected` so
    * a unit test fixtures the outcome without a real container (the real container
    * only runs on the driver / manual-smoke / e2e path).
@@ -2336,7 +2202,7 @@ export class RealBackend implements Backend {
     // leaked temp dirs accumulating under the codex-auth root).
     const auth = this.mountShipAuth(this.issueOf(worktree));
     try {
-      if (auth.claudeToken === undefined) {
+      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
           reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
@@ -2452,7 +2318,8 @@ export class RealBackend implements Backend {
       // the gate (cmr int-r3 A; matches readGhToken's empty-string normalization).
       claudeToken = tok === "" ? undefined : tok;
     } catch {
-      // claude token absent ⇒ the top-level claude worker degrades (no env var).
+      // claude token absent ⇒ Claude-family workers fail their preflight; non-Claude
+      // route slots simply run without this env var.
     }
     return { codexAuthDir, claudeToken, ghToken: this.readGhToken() };
   }

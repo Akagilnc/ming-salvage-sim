@@ -80,7 +80,9 @@ import {
   SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
   WORKER_IDLE_TIMEOUT_SECONDS,
+  modelFamilyForSlug,
 } from "../realBackend.js";
+import { cmrReviewLegs, modelForSlot } from "../modelRoutes.js";
 import {
   cmrWorkerSpec,
   familyShipWorkerSpec,
@@ -142,6 +144,8 @@ export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
  * family diff correctly and prioritises machine-touched merges (#291 缺口 1).
  */
 export const CMR_FOCUS_FILENAME = ".cmr-focus.md";
+/** Route-selected CMR review-leg config written next to {@link CMR_FOCUS_FILENAME}. */
+export const CMR_ROUTE_FILENAME = ".cmr-route.json";
 
 /**
  * The git-ignored SHIP FOCUS file written into the family-base worktree before the
@@ -273,8 +277,10 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
 ];
 /** The merger agent's completion signal (matches prompts/merger_resolve_conflict.md). */
 const MERGER_COMPLETION_SIGNAL = "MERGER_STEP_COMPLETE";
-/** The merger resolver runs on the higher-skill model (the conflict-resolution role). */
-const MERGER_MODEL = "claude-opus-4-8";
+/** The merger resolver model slot, selected by the active route. */
+export function mergerModel(): string {
+  return modelForSlot("merger");
+}
 
 /**
  * The baked soul the merger agent runs under (F28 / ADR 0022: the conflict
@@ -517,57 +523,79 @@ export class RealFamilyBackend implements FamilyBackend {
     req: ConflictResolveRequest,
   ): Promise<{ resolved: boolean; reason?: string }> {
     // FAIL-CLOSED on the WORKER's OWN auth (integ-cmr int-r2 A-1, mirroring the
-    // cmr/ship worker preflight): the merger is the container's TOP-LEVEL claude
-    // (`agent: sc.claudeCode(MERGER_MODEL)`), so the Claude OAuth token is THIS
-    // worker's auth, not a degradable leg. Absent, the worker cannot start and never
-    // fires its completion signal; that failure would throw out of `sc.run` (NOT a
-    // structured non-resolve), and the thrown startup error would surface as an opaque
-    // wave abort instead of the merger's honest "did not resolve" → escalate path
+    // cmr/ship worker preflight): when the merger slot resolves to a Claude-family
+    // model, the Claude OAuth token is THIS worker's auth, not a degradable leg.
+    // Absent, the worker cannot start and never fires its completion signal; that
+    // failure would throw out of `sc.run` (NOT a structured non-resolve), and the
+    // thrown startup error would surface as an opaque wave abort instead of the
+    // merger's honest "did not resolve" → escalate path
     // (`resolveMergeConflict` turns a non-resolve into a loud, locatable throw; the
     // ledger never records a phantom `merged`). So return a STRUCTURED unresolved
     // BEFORE spinning the container when the token is absent. Mount once and reuse for
     // the sandbox (no double-mount).
     const auth = this.mountMergerAuth();
-    if (auth.claudeToken === undefined) {
-      return {
-        resolved: false,
-        reason:
-          "merger worker cannot start without CLAUDE_CODE_OAUTH_TOKEN — the merger is " +
-          "the container's top-level claude (sc.claudeCode); its OAuth token " +
-          "(~/.sc-claude-token → CLAUDE_CODE_OAUTH_TOKEN) is the worker's OWN auth. " +
-          "Without it the worker fails to start and never resolves; returning a " +
-          "structured non-resolve here keeps resolveMergeConflict's loud-throw " +
-          "semantics (a thrown sc.run startup error would surface as an opaque wave abort).",
-      };
+    try {
+      if (modelFamilyForSlug(mergerModel()) === "claude" && auth.claudeToken === undefined) {
+        return {
+          resolved: false,
+          reason:
+            "merger worker cannot start without CLAUDE_CODE_OAUTH_TOKEN — the merger is " +
+            "the container's top-level claude (sc.claudeCode); its OAuth token " +
+            "(~/.sc-claude-token → CLAUDE_CODE_OAUTH_TOKEN) is the worker's OWN auth. " +
+            "Without it the worker fails to start and never resolves; returning a " +
+            "structured non-resolve here keeps resolveMergeConflict's loud-throw " +
+            "semantics (a thrown sc.run startup error would surface as an opaque wave abort).",
+        };
+      }
+      const result = await sc.run({
+        name: `merger-resolve-${req.childIssue}`,
+        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+        cwd: this.opts.workingRepo,
+        sandbox: this.mergerSandbox(auth),
+        agent: agentForSlug(mergerModel()),
+        maxIterations: 1,
+        completionSignal: MERGER_COMPLETION_SIGNAL,
+        branchStrategy: { type: "head" }, // commit the resolved merge in place
+        promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
+      });
+      return mergerOutcomeFromResult(result);
+    } finally {
+      this.cleanupTempAuthDirs([auth.codexAuthDir]);
     }
-    const result = await sc.run({
-      name: `merger-resolve-${req.childIssue}`,
-      idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-      cwd: this.opts.workingRepo,
-      sandbox: this.mergerSandbox(auth),
-      agent: sc.claudeCode(MERGER_MODEL),
-      maxIterations: 1,
-      completionSignal: MERGER_COMPLETION_SIGNAL,
-      branchStrategy: { type: "head" }, // commit the resolved merge in place
-      promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
-    });
-    return mergerOutcomeFromResult(result);
   }
 
-  /** The merger agent's sandbox (souls + skills baked into the image + the claude token). */
+  /** The merger agent's sandbox (souls + skills baked into the image + optional auth). */
   protected mergerSandbox(auth: MergerAuth = this.mountMergerAuth()): sc.SandboxProvider {
     return docker(this.mergerSandboxConfig(auth));
   }
 
   /**
-   * Gather the merger worker's host credential (integ-cmr int-r2 A-1): the claude
-   * OAuth token (env), mirroring the claude-token leg of `mountCmrAuth` / `mountShipAuth`.
-   * The merger needs NO codex/gh (it resolves + commits in place, never pushes/PRs).
-   * Fail-soft: a missing token ⇒ undefined (the REQUIRE gate is `runMergerAgent`'s
-   * preflight). `protected` so a unit test points $HOME at an empty dir.
+   * Gather the merger worker's host credentials: codex auth (mounted) plus the
+   * claude OAuth token (env), mirroring the route-selected top-level worker auth
+   * used by coder-fix / ship. The merger needs NO gh (it resolves + commits in
+   * place, never pushes/PRs). Fail-soft: missing auth source ⇒ undefined (Claude's
+   * REQUIRE gate is `runMergerAgent`'s preflight; codex degrades to no mount).
+   * `protected` so a unit test points $HOME at a temp dir.
    */
   protected mountMergerAuth(): MergerAuth {
     const home = this.opts.home ?? homedir();
+    const root = join(home, ".sc-orchestrator");
+    let codexAuthDir: string | undefined;
+    let tempCodexDir: string | undefined;
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      tempCodexDir = mkdtempSync(join(root, "merger-codex-auth-"));
+      copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
+      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
+      codexAuthDir = tempCodexDir;
+    } catch {
+      // codex auth absent ⇒ no codex mount. Reclaim the mkdtemp dir if it was
+      // created before copy/chmod/config writing threw.
+      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
+        rmSync(tempCodexDir, { recursive: true, force: true });
+      }
+    }
     let claudeToken: string | undefined;
     try {
       const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
@@ -579,7 +607,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // claude token absent ⇒ the top-level merger worker degrades; the
       // runMergerAgent preflight returns a structured non-resolve.
     }
-    return { claudeToken };
+    return { codexAuthDir, claudeToken };
   }
 
   /**
@@ -604,21 +632,26 @@ export class RealFamilyBackend implements FamilyBackend {
    * `cmrSandboxConfig` / `shipSandboxConfig`) — #335/#336 wired the cmr/ship workers'
    * auth but the merger's was missing (the worker spun unauthenticated). The token is
    * set only when present (this pure seam stays tolerant; the REQUIRE gate is
-   * `runMergerAgent`'s preflight). The merger needs NO codex/gh mount — it resolves +
-   * commits in place, never pushes / opens a PR.
+   * `runMergerAgent`'s preflight). Codex auth is mounted when present for routes
+   * whose merger slot resolves to a Codex-family worker. The merger needs NO gh
+   * mount — it resolves + commits in place, never pushes / opens a PR.
    */
-  protected mergerSandboxConfig(auth: MergerAuth = this.mountMergerAuth()): {
+  protected mergerSandboxConfig(auth: MergerAuth): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
     const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    const mounts: { hostPath: string; sandboxPath: string }[] = [];
+    if (auth.codexAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
     return {
       imageName: this.opts.imageName,
       env,
       // #334: no skills mount — the baked image provides the merger skill.
-      mounts: [],
+      mounts,
     };
   }
 
@@ -786,7 +819,8 @@ export class RealFamilyBackend implements FamilyBackend {
   /**
    * THE family worker-dispatch seam (ADR 0026 / #331 / #335 / #336). It dispatches
    * real CONTAINER workers for the two delivered legs:
-   *   - cmr  (#335): a top-level claude invoking `ak-cross-m-review` (`runCmrWorker`).
+ *   - cmr  (#335): a route-selected top-level agent invoking `ak-cross-m-review`
+ *     (`runCmrWorker`).
    *   - ship (#336): a container ship worker invoking `gstack-ship` 止于 PR
    *     (`dispatchShipWorker`) — this REPLACED the legacy inline `openFamilyPr`.
    * Every OTHER family worker kind (merge — B 段) still forwards to the legacy
@@ -880,8 +914,9 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Run the integrated cmr WORKER: ONE `sc.run` of the 2b container's top-level
-   * claude invoking `ak-cross-m-review` over the merged family base diff (#335).
+   * Run the integrated cmr WORKER: ONE `sc.run` of the 2b container's
+   * route-selected agent invoking `ak-cross-m-review` over the merged family base
+   * diff (#335).
    * `protected` so a unit test fixtures the outcome without a real container (the
    * real container only runs on the driver / manual-smoke / e2e path).
    *
@@ -917,10 +952,10 @@ export class RealFamilyBackend implements FamilyBackend {
           "RealFamilyBackendOptions.familyBaseStartHead.",
       };
     }
-    // FAIL-CLOSED on the WORKER's OWN auth (codex cmr R4): the cmr worker is the
-    // container's TOP-LEVEL claude (`agent: sc.claudeCode` below), so the Claude
-    // OAuth token is NOT a mere reviewer leg — it is THIS worker's auth. Absent, the
-    // worker cannot start and never emits a `<cmr>` verdict; that failure would
+    // FAIL-CLOSED on the WORKER's OWN auth (codex cmr R4): when the cmr slot
+    // resolves to a Claude-family model, the Claude OAuth token is NOT a mere
+    // reviewer leg — it is THIS worker's auth. Absent, the worker cannot start and
+    // never emits a `<cmr>` verdict; that failure would
     // throw out of `sc.run` (NOT a structured escalate), bypassing verifyCmr's
     // escalate routing (a fail-open — the gate is crashed, not honestly escalated).
     // codex/agy auth stay best-effort reviewer LEGS (they degrade in-container); the
@@ -932,7 +967,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // AND that early return (online review r1 — 3 bots: leaked temp dirs).
     const auth = this.mountCmrAuth();
     try {
-      if (auth.claudeToken === undefined) {
+      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
           reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the cmr worker cannot start",
@@ -947,7 +982,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // Check out the family base so the in-container ak-cross-m-review reviews the
       // RIGHT base diff (ctx.familyBase is the contract input — dispatchWorker
       // already asserted it is present). The cmr worker runs as the container's
-      // top-level claude over THIS checked-out base.
+      // route-selected top-level agent over THIS checked-out base.
       this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
       // codex cmr R1 (F3+F2): thread the EXACT review scope + the LLM-resolved-child
       // FOCUS into the worker via a git-ignored focus file the prompt reads — the
@@ -957,15 +992,16 @@ export class RealFamilyBackend implements FamilyBackend {
       // exact `git diff <familyBaseStartHead>...<familyBase>` scope command + the
       // baseline SHA + the machine-resolved children.
       this.writeCmrFocusFile(ctx);
+      this.writeCmrRouteFile(spec);
       const result = await sc.run({
         name: "family-cmr",
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: this.opts.workingRepo,
         sandbox: this.cmrSandbox(auth),
         // Derive the model from the spec via the shared validated seam (cmr S336 r7
-        // symmetry): `cmrWorkerSpec().model === "opus"` resolves to claude-opus-4-8.
-        // Same途径 the single-slice + family ship paths use — no constant that could
-        // silently drift from the spec the runner declares.
+        // symmetry): resolve the worker's slug through the same registry as the
+        // single-slice + family ship paths — no constant that could silently drift
+        // from the spec the runner declares.
         agent: this.agentForSpec(spec),
         // The cmr worker runs the WHOLE review → grade → fix → re-review loop inside
         // this ONE session (ADR 0026 2026-06-24: the worker IS the fixer; only the
@@ -1034,12 +1070,31 @@ export class RealFamilyBackend implements FamilyBackend {
       `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}\n`;
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
-    this.excludeCmrFocusFromGit();
+    this.excludeFromGit(CMR_FOCUS_FILENAME);
     writeFileSync(target, body, "utf8");
   }
 
-  /** Add the cmr focus file to the worktree's local git excludes (never committed). */
-  protected excludeCmrFocusFromGit(): void {
+  /** Write the route-selected CMR review legs for the in-container worker. */
+  protected writeCmrRouteFile(spec: WorkerSpec): void {
+    const pass = spec.promptFile.includes("completeness")
+      ? "completeness"
+      : spec.promptFile.includes("correctness")
+        ? "correctness"
+        : "legacy";
+    const body = JSON.stringify(
+      {
+        pass,
+        reviewLegs: cmrReviewLegs(),
+      },
+      null,
+      2,
+    );
+    this.excludeFromGit(CMR_ROUTE_FILENAME);
+    writeFileSync(join(this.opts.workingRepo, CMR_ROUTE_FILENAME), body + "\n", "utf8");
+  }
+
+  /** Add a transient cmr runtime file to the worktree's local git excludes. */
+  protected excludeFromGit(filename: string): void {
     try {
       const excludePath = join(
         this.sh("git", ["rev-parse", "--git-dir"], this.opts.workingRepo),
@@ -1055,9 +1110,15 @@ export class RealFamilyBackend implements FamilyBackend {
       } catch {
         // no exclude file yet
       }
-      if (!existing.split("\n").includes(CMR_FOCUS_FILENAME)) {
+      if (!existing.split("\n").includes(filename)) {
         mkdirSync(join(abs, ".."), { recursive: true });
-        appendFileSync(abs, (existing.endsWith("\n") || existing === "" ? "" : "\n") + CMR_FOCUS_FILENAME + "\n", "utf8");
+        appendFileSync(
+          abs,
+          (existing.endsWith("\n") || existing === "" ? "" : "\n") +
+            filename +
+            "\n",
+          "utf8",
+        );
       }
     } catch {
       // Best-effort: if excludes can't be written the file is still produced; the
@@ -1214,6 +1275,7 @@ export class RealFamilyBackend implements FamilyBackend {
       ...SPAWNED_WORKER_ENV,
       [SANDBOX_SOUL_ENV]: CMR_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
+      ORCHESTRATOR_CMR_REVIEW_LEGS: JSON.stringify(cmrReviewLegs()),
     };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // The in-container completeness gate's `gh issue view` (the live issue body =
@@ -1311,7 +1373,7 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Run the family ship WORKER: ONE `sc.run` of the 2b container's top-level claude
+   * Run the family ship WORKER: ONE `sc.run` of the 2b container's route-selected agent
    * invoking `gstack-ship` over the checked-out family base (#336). `protected` so a
    * unit test fixtures the outcome without a real container (the real container only
    * runs on the driver / manual-smoke / e2e path).
@@ -1327,10 +1389,10 @@ export class RealFamilyBackend implements FamilyBackend {
     ctx: DispatchContext,
   ): Promise<ShipWorkerOutcome> {
     // FAIL-CLOSED on the WORKER's OWN auth (cmr S336 r8, mirroring the cmr worker's
-    // preflight ~645-666): the ship worker is the container's TOP-LEVEL claude
-    // (`agent: sc.claudeCode` in shipContainerRun), so the Claude OAuth token is NOT
-    // a degradable codex/gh LEG — it is THIS worker's auth. Absent, the worker cannot
-    // start and never emits a `<ship>` verdict; that failure would throw out of
+    // preflight ~645-666): when the ship slot resolves to a Claude-family model,
+    // the Claude OAuth token is NOT a degradable codex/gh LEG — it is THIS worker's
+    // auth. Absent, the worker cannot start and never emits a `<ship>` verdict; that
+    // failure would throw out of
     // `sc.run` (NOT a structured escalate), bypassing the WorkerResult routing
     // (dispatchShipWorker → verifyCmr only handle the RETURNED result, never a thrown
     // startup error — a fail-open that crashes the gate rather than honestly
@@ -1344,7 +1406,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // returns (online review r1 — 3 bots: leaked temp dirs).
     const auth = this.mountShipAuth();
     try {
-      if (auth.claudeToken === undefined) {
+      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
           reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
@@ -1523,7 +1585,8 @@ export class RealFamilyBackend implements FamilyBackend {
       // (cmr int-r3 A; matches readGhToken's `tok === "" ? undefined` normalization).
       claudeToken = tok === "" ? undefined : tok;
     } catch {
-      // claude token absent ⇒ the top-level claude worker degrades (no env var).
+      // claude token absent ⇒ Claude-family workers fail their preflight; non-Claude
+      // route slots simply run without this env var.
     }
     return { codexAuthDir, claudeToken, ghToken: this.readGhToken() };
   }
@@ -1842,16 +1905,15 @@ export interface ShipAuth {
 }
 
 /**
- * The merger worker's auth (integ-cmr int-r2 A-1). The merger is a TOP-LEVEL claude
- * worker (`sc.claudeCode(MERGER_MODEL)` under `resolving-merge-conflicts`), so the
- * claude OAuth token is its OWN auth (LOAD-BEARING) — `runMergerAgent` preflights it
- * and returns a structured non-resolve when absent (never spins an unauthenticated
- * container). Unlike the cmr/ship workers the merger needs NO codex/gh: it resolves +
- * commits the merge IN PLACE (`branchStrategy:{type:"head"}`); it never pushes or
- * opens a PR (the runner owns the merge queue / ledger), so the claude token is the
- * sole credential.
+ * The merger worker's auth (integ-cmr int-r2 A-1). When the active route selects a
+ * Claude-family merger slug, the claude OAuth token is its OWN auth
+ * (LOAD-BEARING) — `runMergerAgent` preflights it and returns a structured
+ * non-resolve when absent. The merger resolves + commits the merge in place
+ * (`branchStrategy:{type:"head"}`); it never pushes or opens a PR.
  */
 export interface MergerAuth {
+  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
+  readonly codexAuthDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
 }

@@ -59,7 +59,7 @@ import {
   dispatchFamilyWorker,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { isStrongCmrLeg } from "../realBackend.js";
+import { modelIsStrongLeg } from "../realBackend.js";
 import {
   recordAborted as recordDurableAbort,
   recordCmrPassed,
@@ -154,7 +154,7 @@ const INCOMPLETE_GATE: VerifyCmrResult = { ok: false, ran: true };
 
 /** ADR0032 floor: at least one successful CMR leg must be registry-marked strong. */
 export function meetsCmrFloor(successfulLegs: readonly string[]): boolean {
-  return successfulLegs.some(isStrongCmrLeg);
+  return successfulLegs.some(modelIsStrongLeg);
 }
 
 function cmrFloorFailureReason(input: {

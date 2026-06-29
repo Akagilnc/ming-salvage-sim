@@ -88,7 +88,7 @@ export interface StepSpec {
    * Short model slug the runtime maps to a baked-in CLI.
    * Changing the slug is all it takes to swap models — no image rebuild, no
    * StepSpec shape change (PRD #244 Implementation Decisions).
-   * `"sonnet"` → coder CLI; `"opus"` → reviewer CLI.
+   * Route-selected slug resolved through the model registry.
    */
   readonly model: string;
   /**

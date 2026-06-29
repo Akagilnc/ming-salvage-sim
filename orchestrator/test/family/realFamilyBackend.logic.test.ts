@@ -666,7 +666,7 @@ class FakeSeamsBackend extends RealFamilyBackend {
   // Expose the protected sandbox-config seam so the merger soul injection +
   // skills-mount path are unit-testable without a real container.
   public sandboxConfig() {
-    return this.mergerSandboxConfig();
+    return this.mergerSandboxConfig({});
   }
 }
 
