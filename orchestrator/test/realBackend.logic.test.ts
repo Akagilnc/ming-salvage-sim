@@ -761,14 +761,15 @@ describe("realBackend promptsDirError (F4)", () => {
   });
 
   it("REFERENCED_PROMPT_FILES covers every dispatched worker prompt incl. ship.md (integ-cmr int-r1 C-3)", () => {
-    // The list is DERIVED from the actual worker specs (ADR 0026: STEP_SPECS is
-    // ONLY the S2 whole-slice build coder + shipWorkerSpec S7), so it can never
-    // drift out-of-sync with the workers the runner dispatches. The runner-driven
-    // reviewer/fix steps (and their reviewer_full_review.md / coder_fix.md /
-    // reviewer_rereview.md prompts) were deleted; the per-slice review/fix loop now
-    // runs INSIDE the S2 worker. The S7 ship worker's ship.md must be validated.
     const files = [...REFERENCED_PROMPT_FILES];
-    expect(new Set(files)).toEqual(new Set(["coder_implement.md", "ship.md"]));
+    expect(new Set(files)).toEqual(
+      new Set([
+        "coder_implement.md",
+        "coder_fix.md",
+        "reviewer_review.md",
+        "ship.md",
+      ]),
+    );
     // No duplicates.
     expect(new Set(files).size).toBe(files.length);
   });

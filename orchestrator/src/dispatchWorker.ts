@@ -22,6 +22,17 @@
  *     control flow consumes, so the prefactor does not touch route()/validate().
  */
 
+import { execFileSync } from "node:child_process";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+
 import type {
   Backend,
   DispatchContext,
@@ -34,6 +45,8 @@ import type {
   WorkerSessionMode,
   WorkerSpec,
 } from "./types.js";
+
+const FIX_FINDINGS_LANDING_FILE = ".orchestrator-fix-findings.json";
 
 /**
  * The wiki skill each worker kind invokes (ADR 0026):
@@ -71,6 +84,53 @@ function workerKindForRole(role: StepSpec["role"]): WorkerKind {
  */
 function retentionForKind(kind: WorkerKind): WorkerContextRetention {
   return kind === "coder" ? "retain" : "clean";
+}
+
+function ensureGitExcluded(worktreePath: string, pattern: string): void {
+  try {
+    const excludePath = execFileSync(
+      "git",
+      ["-C", worktreePath, "rev-parse", "--git-path", "info/exclude"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
+    if (excludePath.length === 0) return;
+    mkdirSync(join(excludePath, ".."), { recursive: true });
+    const existing = existsSync(excludePath)
+      ? readFileSync(excludePath, "utf8")
+      : "";
+    if (!existing.split(/\r?\n/).includes(pattern)) {
+      appendFileSync(excludePath, `${existing.endsWith("\n") || existing.length === 0 ? "" : "\n"}${pattern}\n`);
+    }
+  } catch {
+    // Best effort only: the file is still useful to the worker even if this is
+    // a non-git fixture path. Real git worktrees get the exclude entry.
+  }
+}
+
+function writeFixFindingsLandingFile(
+  spec: WorkerSpec,
+  ctx: DispatchContext,
+): string | undefined {
+  if (spec.id !== "S5" || spec.kind !== "coder" || ctx.worktree === undefined) {
+    return undefined;
+  }
+  if (!existsSync(ctx.worktree.path)) return undefined;
+
+  ensureGitExcluded(ctx.worktree.path, FIX_FINDINGS_LANDING_FILE);
+  const landingPath = join(ctx.worktree.path, FIX_FINDINGS_LANDING_FILE);
+  writeFileSync(
+    landingPath,
+    `${JSON.stringify(
+      {
+        blockingFindings: ctx.blockingFindings ?? [],
+        blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  return landingPath;
 }
 
 /**
@@ -188,10 +248,17 @@ export async function legacyDispatchWorker(
   }
   const stepSpec = workerSpecToStepSpec(spec);
   let ret: StepOutput | StepResult;
-  if (ctx.resumeSessionId !== undefined) {
-    ret = await backend.resumeSession(stepSpec, ctx.worktree, ctx.resumeSessionId);
-  } else {
-    ret = await backend.runStep(stepSpec, ctx.worktree);
+  const fixFindingsLandingPath = writeFixFindingsLandingFile(spec, ctx);
+  try {
+    if (ctx.resumeSessionId !== undefined) {
+      ret = await backend.resumeSession(stepSpec, ctx.worktree, ctx.resumeSessionId);
+    } else {
+      ret = await backend.runStep(stepSpec, ctx.worktree);
+    }
+  } finally {
+    if (fixFindingsLandingPath !== undefined) {
+      rmSync(fixFindingsLandingPath, { force: true });
+    }
   }
   const { output, sessionId } = normalizeStepReturn(ret);
   return { kind: "completed", output, sessionId };

@@ -16,8 +16,8 @@
  *      NOT hand-copy the TDD/review/fix METHOD into the prompt. The workflow lives
  *      in the baked soul + skills.
  *
- * Plus the load-bearing [C] (PRD #330 R2): the runner dispatches exactly the S2
- * coder worker and then S7 ship; there is no runner-driven reviewer/fix loop.
+ * Plus the load-bearing [C] (ADR 0030): the runner dispatches implementation,
+ * reviewer, fix, reviewer, and ship workers through visible boundaries.
  */
 
 import { dirname, join } from "node:path";
@@ -156,16 +156,11 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(p).not.toMatch(/\bRED\b|\bGREEN\b|\brefactor\b|Baseline commit|\bOpus\b|\bsubagent\b|ak-cross-m-review/i);
   });
 
-  it("the coder soul carries the per-slice process, including Claude-paused review routing", () => {
+  it("the coder soul carries implementation/fix process but not the per-slice review loop", () => {
     const soul = readFileSync(join(here, "..", "image", "souls", "coder.md"), "utf8");
     expect(soul).toMatch(/Invoke `\/tdd`/i);
-    expect(soul).toMatch(/Claude-paused local pipeline/i);
-    expect(soul).toMatch(/non-Claude reviewer leg/i);
-    expect(soul).toMatch(/use a Codex\s+reviewer by default/i);
-    expect(soul).toMatch(/agy may\s+substitute/i);
-    expect(soul).toMatch(/Do not call Claude\/Anthropic locally/i);
-    expect(soul).toMatch(/one reviewer leg|single reviewer leg/i);
-    expect(soul).toMatch(/do not invoke `ak-cross-m-review`/i);
+    expect(soul).toMatch(/coder-fix|fix worker|blocking review findings/i);
+    expect(soul).not.toMatch(/Second review|non-Claude reviewer leg/i);
     expect(soul).toMatch(/gh issue view/i);
     expect(soul).toMatch(/Snapshot files.*not execution input/is);
   });
@@ -173,10 +168,12 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
   it("every existing prompt still defines its structured output contract (tag + signal)", () => {
     // Thinning the METHOD must not drop the output contract route()/the seam
     // decode against — each worker must still emit its tag + completion signal.
-    // Only the surviving prompts exist (ADR 0026 deleted the reviewer/fix files):
-    // the build coder (coder_implement.md) and the ship worker (ship.md).
     expect(read("coder_implement.md")).toMatch(/<coder>/);
     expect(read("coder_implement.md")).toMatch(/CODER_STEP_COMPLETE/);
+    expect(read("coder_fix.md")).toMatch(/<coder>/);
+    expect(read("coder_fix.md")).toMatch(/CODER_STEP_COMPLETE/);
+    expect(read("reviewer_review.md")).toMatch(/<review>/);
+    expect(read("reviewer_review.md")).toMatch(/REVIEWER_STEP_COMPLETE/);
     expect(read("ship.md")).toMatch(/<ship>/);
     expect(read("ship.md")).toMatch(/SHIP_STEP_COMPLETE/);
   });
@@ -261,7 +258,7 @@ class ReviewWorkerBackend implements Backend {
   }
 }
 
-describe("#334 the build coder worker routes /tdd and a committed build ships (ADR 0026)", () => {
+describe("#334 ADR 0030 worker routing", () => {
   it("the S2 build coder worker is dispatched with skill /tdd", async () => {
     const backend = new ReviewWorkerBackend();
     await runOrchestrator({ issueNumber: 334, backend });
@@ -270,15 +267,15 @@ describe("#334 the build coder worker routes /tdd and a committed build ships (A
     expect(s2?.skill).toBe("/tdd");
   });
 
-  it("a committed whole-slice build → S7 ship (no runner-driven reviewer/fix steps)", async () => {
-    // ADR 0026: the per-slice review→fix→cmr loop runs INSIDE the S2 worker, so
-    // the runner sees exactly ONE coder dispatch then the ship worker — never an
-    // S3/S5/S6 reviewer/fix step.
+  it("blocking review dispatches S5 fix, then S6 fresh review before S7 ship", async () => {
     const backend = new ReviewWorkerBackend();
     const result = await runOrchestrator({ issueNumber: 334, backend });
     expect(result.status).toBe("success");
     expect(backend.dispatched).toEqual([
       "S2:coder:/tdd",
+      "S3:reviewer:/review",
+      "S5:coder:/tdd",
+      "S6:reviewer:/review",
       "S7:ship:gstack-ship",
     ]);
   });
