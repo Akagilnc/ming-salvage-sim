@@ -24,7 +24,9 @@
         ↳ 我那座金矿(+800)/银行(+300)/帝国航空(+10皇威) 在这一步生效
         ↳ #66/#266 省级财政基座：动态 shadow spine 推进 `controlled_by='ming'`
           且有 `fiscal.settle` key 的省；失地自然出列，明控但无 settle 的省不创建基座。
-          `settle.st/p` 形状校验交给 `settle_province_tick`，坏基座会 tlog 留痕并被 shadow 隔离。
+          有效 fiscal 容器按 `settle` key 选择；解析失败或非 dict 容器也会进入 bridge
+          验证路径用于隔离日志。`settle.st/p` 形状校验交给 `settle_province_tick`，
+          坏基座会 tlog 留痕并被 shadow 隔离。
           陕西 seed 已按 #266 重标到史实量级（正赋/辽饷九厘/军饷/官俸/宗禄/逋赋/火耗/起运定额），
           末态逐月演化+落库并 tlog 打印实征/起运/火耗/末态欠账，但**不驱动国库**；
           fail-loud 但隔离（基座 bug 不掀翻本步固定财政，cmr S4 F4）。
