@@ -1994,8 +1994,8 @@ const cmrFindingDispositionSchema = z
   })
   .strict();
 const cmrClosureSchema = {
-  claimedFixedFindingIdentityKeys: z.array(nonEmpty).optional(),
-  priorFindingDispositions: z.array(cmrFindingDispositionSchema).optional(),
+  claimedFixedFindingIdentityKeys: z.array(nonEmpty),
+  priorFindingDispositions: z.array(cmrFindingDispositionSchema),
 } as const;
 const cmrConvergedSchema = z
   .object({ converged: z.literal(true), ...cmrVerdictLegsSchema, ...cmrClosureSchema })
@@ -2062,15 +2062,9 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
       converged: true,
       successfulLegs: converged.successfulLegs,
       ...(converged.skippedLegs !== undefined ? { skippedLegs: converged.skippedLegs } : {}),
-      ...(converged.claimedFixedFindingIdentityKeys !== undefined
-        ? {
-            claimedFixedFindingIdentityKeys:
-              converged.claimedFixedFindingIdentityKeys,
-          }
-        : {}),
-      ...(converged.priorFindingDispositions !== undefined
-        ? { priorFindingDispositions: converged.priorFindingDispositions }
-        : {}),
+      claimedFixedFindingIdentityKeys:
+        converged.claimedFixedFindingIdentityKeys,
+      priorFindingDispositions: converged.priorFindingDispositions,
     };
   }
   const red = cmrRedSchema.safeParse(parsed);
@@ -2085,23 +2079,16 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
       reason: red.data.reason,
       successfulLegs: red.data.successfulLegs,
       ...(red.data.skippedLegs !== undefined ? { skippedLegs: red.data.skippedLegs } : {}),
-      ...(red.data.claimedFixedFindingIdentityKeys !== undefined
-        ? {
-            claimedFixedFindingIdentityKeys:
-              red.data.claimedFixedFindingIdentityKeys,
-          }
-        : {}),
-      ...(red.data.priorFindingDispositions !== undefined
-        ? { priorFindingDispositions: red.data.priorFindingDispositions }
-        : {}),
+      claimedFixedFindingIdentityKeys: red.data.claimedFixedFindingIdentityKeys,
+      priorFindingDispositions: red.data.priorFindingDispositions,
     };
   }
   return {
     kind: "malformed",
     reason:
       "cmr worker <cmr> tag matched no valid shape (expected one of: " +
-      "{converged:true,successfulLegs,skippedLegs?}, " +
-      "{converged:false,reason,successfulLegs,skippedLegs?}, " +
+      "{converged:true,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions}, " +
+      "{converged:false,reason,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions}, " +
       "{escalate:{reason,diagnosis}} — non-empty strings, no extra keys)",
   };
 }
