@@ -4,6 +4,24 @@
 
 ## [未发布]
 
+## [0.18.0.0] - 2026-06-29
+
+### 新增
+- **全省财政 shadow 基座**：明控且已 seed 的 17 个省现在都会在月末推进省级 `settle_tick` 基座，逐月累积省库、欠饷、官俸欠、宗禄欠、民欠与火耗截留。
+- **史实量级财政种子**：陕西、边镇、京师/中原、江南核心、南方与西南省份补齐 `fiscal.settle` 开账与月参，并保留辽饷已 seed、剿饷/练饷待事件注入的元数据。
+
+### 变更
+- **财政 shadow spine 改为动态选择**：旧的陕西单省脊柱改为按 `controlled_by='ming'` 与 `fiscal.settle` 动态选择，失地省自然冻结，明控但无基座的旧档不会被自动创建基座。
+- **shadow 日志更可审计**：月末 tlog 现在逐省打印实征、起运、火耗与末态欠账，并继续保持 shadow-only，不把起运额写入国库流水。
+- **结算文档同步动态 spine 契约**：`docs/SETTLEMENT_FLOW.md` 与 ADR 0019 说明动态选择、坏基座隔离和全省 seed / hub cutover 的边界。
+
+### 修复
+- **坏财政基座不掀翻月末固定财政**： malformed `settle.st/p`、非 dict fiscal 容器与畸形 fiscal JSON 都会被送入 bridge 验证路径并 tlog 留痕，失败 tick 不落库。
+- **财政 golden 断言更稳**：`settle_tick` golden 改用 `math.isclose`，避免浮点表示细节造成误判，同时保持严格容差。
+
+### 测试
+- 新增全省 seed shape、逐省首 tick golden、多 tick 轨迹、动态 spine、失地冻结、旧档无基座、坏基座隔离、public fixed-flow malformed fiscal、shadow 不入国库与 malformed JSON 回归覆盖；ship 验证为 `1932 passed, 13 skipped`（root pytest），覆盖审计约 94%。
+
 ## [0.17.0.0] - 2026-06-29
 
 ### 新增
