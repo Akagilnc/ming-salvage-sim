@@ -590,17 +590,33 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     return flows
 
 
-# 单省脊柱：省级 settle_tick 基座目前只锚陕西（跨省 hub deferred，ADR 0007 锁定单省脊柱）。
-_FISCAL_SUBSTRATE_SPINE = ("shaanxi",)
+def _fiscal_substrate_region_ids(db: GameDB) -> List[str]:
+    """动态 shadow spine：明控且已有 settle 基座的省才推进。
+
+    失地省通过 controlled_by 自然出列；无 settle 的省保持旧路径，不在这里创建基座。
+    """
+    region_ids: List[str] = []
+    rows = db.conn.execute(
+        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
+    ).fetchall()
+    for row in rows:
+        try:
+            fiscal = json.loads(str(row["fiscal"] or "{}"))
+        except (TypeError, ValueError):
+            continue
+        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        if isinstance(settle, dict) and isinstance(settle.get("st"), dict) \
+                and isinstance(settle.get("p"), dict):
+            region_ids.append(str(row["id"]))
+    return region_ids
 
 
 def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
-    """#66 slice3：月末固定财政相位推进省级 settle_tick 基座（单省脊柱·陕西）。
+    """#66/#266：月末固定财政相位推进省级 settle_tick 基座（动态 shadow spine）。
 
     **shadow 模式**：推进基座末态（军饷欠/民欠/火耗的死亡螺旋逐月累积）并落库，但**不驱动
-    国库**——占位数（正赋 60/月）比陕西史实（~9/月）高 3–10×，未史实重标前 cutover 会破坏
-    游戏平衡（FISCAL_PROVINCE_SUBSTRATE.md §史实校准）。国库 cutover + 史实重标 + 饷率
-    effect 通道 + 跨省 hub 均为 follow-up。
+    国库**——#266 已把陕西 seed 重标到史实量级；国库 cutover + 饷率 effect 通道 + 跨省
+    hub 均为 follow-up。
 
     **fail-loud 但隔离**：基座缺失（旧档无种子）或 settle_tick 抛 ValueError/守恒破时，tlog
     响亮告警并跳过该省该月推进（港口锁：FAIL tick 不落库），但**绝不让 shadow 基座 bug 掀翻
@@ -612,7 +628,7 @@ def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
     """
     from ming_sim.fiscal_tick import FiscalConservationError
 
-    for region_id in _FISCAL_SUBSTRATE_SPINE:
+    for region_id in _fiscal_substrate_region_ids(db):
         try:
             res = db.settle_province_tick(region_id, actions=[])
         except (ValueError, FiscalConservationError) as exc:
