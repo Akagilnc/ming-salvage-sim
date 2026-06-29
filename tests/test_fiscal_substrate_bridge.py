@@ -68,6 +68,83 @@ ZHONGYUAN_JINGSHI_GOLDEN = {
 }
 
 
+SOUTH_SOUTHWEST_SEEDS = {
+    "sichuan": {
+        "zh": "四川", "正赋应征": 8.0, "三饷应征": 1.4, "起运定额": 1.8, "军饷": 5.0, "宗禄": 1.4,
+        "first_tick": {"省库库银": 0, "C_地方截留": 0.93248, "民欠旧赋": 3.572, "军饷欠": 4.472,
+                       "官俸欠": 1.2, "宗禄欠": 1.4},
+    },
+    "fujian": {
+        "zh": "福建", "正赋应征": 11.0, "三饷应征": 1.7, "起运定额": 2.4, "军饷": 4.0, "宗禄": 0.8,
+        "first_tick": {"省库库银": 0, "C_地方截留": 1.46304, "民欠旧赋": 3.556, "军饷欠": 1.256,
+                       "官俸欠": 0, "宗禄欠": 0},
+    },
+    "guangdong": {
+        "zh": "广东", "正赋应征": 10.0, "三饷应征": 1.5, "起运定额": 2.2, "军饷": 3.6, "宗禄": 0.9,
+        "first_tick": {"省库库银": 0, "C_地方截留": 1.288, "民欠旧赋": 3.45, "军饷欠": 1.75,
+                       "官俸欠": 0, "宗禄欠": 0},
+    },
+    "guangxi": {
+        "zh": "广西", "正赋应征": 3.2, "三饷应征": 0.6, "起运定额": 0.8, "军饷": 2.2, "宗禄": 0.3,
+        "first_tick": {"省库库银": 0, "C_地方截留": 0.342, "民欠旧赋": 1.9, "军饷欠": 1.8,
+                       "官俸欠": 0.5, "宗禄欠": 0.3},
+    },
+    "yunnan": {
+        "zh": "云南", "正赋应征": 3.8, "三饷应征": 0.5, "起运定额": 0.7, "军饷": 1.8, "宗禄": 0.2,
+        "first_tick": {"省库库银": 0, "C_地方截留": 0.40248, "民欠旧赋": 2.064, "军饷欠": 1.0,
+                       "官俸欠": 0.364, "宗禄欠": 0.2},
+    },
+    "guizhou": {
+        "zh": "贵州", "正赋应征": 2.4, "三饷应征": 0.25, "起运定额": 0.4, "军饷": 1.6, "宗禄": 0.15,
+        "first_tick": {"省库库银": 0, "C_地方截留": 0.21465, "民欠旧赋": 1.4575, "军饷欠": 1.6075,
+                       "官俸欠": 0.4, "宗禄欠": 0.15},
+    },
+}
+
+
+@pytest.mark.parametrize("region_id,expected", SOUTH_SOUTHWEST_SEEDS.items(), ids=list(SOUTH_SOUTHWEST_SEEDS))
+def test_south_southwest_seeds_have_valid_historical_settle_substrate(fresh_db, region_id, expected):
+    settle = _read_settle(fresh_db, region_id)
+    assert isinstance(settle, dict), f"{expected['zh']} fiscal 缺 settle 基座"
+    assert isinstance(settle.get("st"), dict) and isinstance(settle.get("p"), dict), \
+        f"{expected['zh']} settle 基座须含 st + p"
+
+    p = settle["p"]
+    assert p["正赋应征"] == pytest.approx(expected["正赋应征"])
+    assert p["三饷应征"] == pytest.approx(expected["三饷应征"])
+    assert p["起运定额"] == pytest.approx(expected["起运定额"])
+    assert p["Due"]["军饷"] == pytest.approx(expected["军饷"])
+    assert p["Due"]["宗禄"] == pytest.approx(expected["宗禄"])
+    assert p["Due"]["赈济"] == 0
+    assert p["三饷应征"] < p["正赋应征"], f"{expected['zh']} 开局只 seed 辽饷，不能塞剿/练饷"
+    assert p["起运定额"] >= p["三饷应征"], f"{expected['zh']} 辽饷应可全额起运"
+    assert "salt_tax" not in p and "commerce_tax" not in p, "盐税/商税不进 settle substrate"
+
+    meta = settle["_meta"]
+    assert "辽饷" in meta["levies"]["seeded"]
+    assert "剿饷" in meta["levies"]["not_seeded"]
+    assert "练饷" in meta["levies"]["not_seeded"]
+    assert "salt_tax" in meta["excluded_from_settle"]
+    assert "commerce_tax" in meta["excluded_from_settle"]
+    res = settle_tick(settle["st"], p, [])
+    assert res.new_st["省库库银"] is not None
+
+
+@pytest.mark.parametrize("region_id,expected", SOUTH_SOUTHWEST_SEEDS.items(), ids=list(SOUTH_SOUTHWEST_SEEDS))
+def test_south_southwest_settle_tick_golden_and_bridge_persist(fresh_db, region_id, expected):
+    settle = _read_settle(fresh_db, region_id)
+    pure = settle_tick(settle["st"], settle["p"], [])
+    bridged = fresh_db.settle_province_tick(region_id, [])
+    fresh_db.conn.commit()
+    after = _read_settle(fresh_db, region_id)["st"]
+
+    for k, v in expected["first_tick"].items():
+        assert pure.new_st[k] == pytest.approx(v, abs=1e-4), f"{region_id} pure {k}"
+        assert after[k] == pytest.approx(v, abs=1e-4), f"{region_id} DB {k}"
+    for k, v in bridged.new_st.items():
+        assert after[k] == pytest.approx(v, abs=1e-6), f"{region_id} 桥落库 {k} ≠ new_st"
+
+
 def test_shaanxi_seed_has_valid_settle_substrate(fresh_db):
     settle = _read_settle(fresh_db)
     assert isinstance(settle, dict), "陕西 fiscal 缺 settle 基座"
@@ -400,12 +477,13 @@ def test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine(fresh_game):
         "UPDATE regions SET controlled_by = 'rebel', fiscal = ? WHERE id = 'henan'",
         (json.dumps(henan_fiscal, ensure_ascii=False),),
     )
+    db.conn.execute("UPDATE regions SET controlled_by = 'ming' WHERE id = 'taiwan'")
     db.conn.commit()
 
     apply_fixed_period_flows(db, state)
     assert _read_settle(db)["st"]["军饷欠"] != 20, "陕西仍应由动态 spine 推进"
     assert _read_settle(db, "henan")["st"]["省库库银"] == 40, "非明控制省不应 tick"
-    assert _read_settle(db, "sichuan") is None, "明控但无 settle 的省不应被创建/推进"
+    assert _read_settle(db, "taiwan") is None, "明控但无 settle 的省不应被创建/推进"
 
     db.conn.execute("UPDATE regions SET controlled_by = 'ming' WHERE id = 'henan'")
     db.conn.commit()
@@ -559,3 +637,17 @@ def test_apply_fixed_period_flows_advances_and_logs_jiangnan_core(fresh_game, mo
             f"[fiscal-substrate] {region_id} 推进" in msg and "起运" in msg
             for msg in msgs
         ), f"{region_id} 缺 shadow tlog：{msgs}"
+
+
+def test_apply_fixed_period_flows_logs_south_southwest_shadow_ticks(fresh_game, monkeypatch):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    flows_mod.apply_fixed_period_flows(db, state)
+
+    for region_id in SOUTH_SOUTHWEST_SEEDS:
+        assert any(f"[fiscal-substrate] {region_id} 推进" in m for m in msgs), \
+            f"{region_id} shadow tick 未逐省 tlog: {msgs}"
