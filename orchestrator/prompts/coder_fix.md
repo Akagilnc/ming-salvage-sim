@@ -12,10 +12,10 @@ and `ORCHESTRATOR_REPO` to fetch the current issue body and comments with `gh`.
 Retry transient network failures. If GitHub auth is missing or the issue cannot be
 read after retry, escalate instead of guessing from stale local context.
 
-Fix the blocking review findings supplied by the runner in the protected landing
-state for this round. Keep the fix scoped, run the relevant tests, run the
-mandatory self-check 二连, and create a new commit for this review round. Never
-amend a prior commit.
+Fix the blocking review findings supplied by the runner for this round in
+`.orchestrator-fix-findings.json` at the worktree root. Keep the fix scoped, run
+the relevant tests, run the mandatory self-check 二连, and create a new commit for
+this review round. Never amend a prior commit.
 
 Do not use `.orchestrator-snapshot.json` as execution input.
 

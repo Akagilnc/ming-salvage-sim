@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { legacyDispatchWorker } from "../src/dispatchWorker.js";
 import { classifyFindings, findingIdentityKey } from "../src/findings.js";
 import { runOrchestrator } from "../src/runner.js";
 import type {
@@ -84,7 +88,7 @@ class RetryReviewBackend implements Backend {
 describe("#369 per-slice runner-visible review/fix loop", () => {
   it("reruns an invalid reviewer output once, then succeeds on a clean full-diff review", async () => {
     const backend = new RetryReviewBackend([
-      { kind: "malformed", reason: "missing <reviewer> tag" },
+      { kind: "malformed", reason: "missing <review> tag" },
       { kind: "completed", output: { kind: "reviewer", findings: [] } },
     ]);
 
@@ -176,5 +180,82 @@ describe("#369 finding identity and classification", () => {
     expect(classification.blockingIdentityKeys).toEqual([
       "correctness|src/runner.ts:120|missing full diff review",
     ]);
+  });
+});
+
+describe("#369 legacy S5 landing file", () => {
+  it("materializes blocking findings for a real legacy fix worker and cleans them afterward", async () => {
+    const worktree: WorktreeHandle = {
+      branch: "feat/fix",
+      base: "main",
+      path: mkdtempSync(join(tmpdir(), "fix-findings-")),
+    };
+    const finding: Finding = {
+      severity: "high",
+      category: "correctness",
+      claim_quote: "fix me",
+      location: "src/x.ts:1",
+      suggested_fix: "patch it",
+      action: "fix_now",
+    };
+    let observedLanding: unknown;
+    const backend: Backend = {
+      async findResumeState() { return undefined; },
+      async cleanResidue() {},
+      async resumeSession() {
+        throw new Error("not expected");
+      },
+      async fetchIssueMeta() {
+        throw new Error("not expected");
+      },
+      async fetchIssueSnapshot() {
+        throw new Error("not expected");
+      },
+      async prepareWorktree() {
+        throw new Error("not expected");
+      },
+      async writeSnapshot() {},
+      async runStep() {
+        observedLanding = JSON.parse(
+          readFileSync(
+            join(worktree.path, ".orchestrator-fix-findings.json"),
+            "utf8",
+          ),
+        );
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      },
+      async push() {},
+      async writeLedger() {},
+    };
+    const spec: WorkerSpec = {
+      id: "S5",
+      kind: "coder",
+      role: "coder",
+      host: "codex",
+      session: "fresh",
+      contextRetention: "retain",
+      skill: "/tdd",
+      promptFile: "coder_fix.md",
+      completionSignal: "CODER_STEP_COMPLETE",
+      maxIter: 5,
+      model: "gpt-5.5",
+      soul: "coder",
+      toolchain: [],
+    };
+
+    const result = await legacyDispatchWorker(backend, spec, {
+      worktree,
+      blockingFindings: [finding],
+      blockingFindingIdentityKeys: ["correctness|src/x.ts:1|fix me"],
+    });
+
+    expect(result.kind).toBe("completed");
+    expect(observedLanding).toEqual({
+      blockingFindings: [finding],
+      blockingFindingIdentityKeys: ["correctness|src/x.ts:1|fix me"],
+    });
+    expect(() =>
+      readFileSync(join(worktree.path, ".orchestrator-fix-findings.json")),
+    ).toThrow();
   });
 });

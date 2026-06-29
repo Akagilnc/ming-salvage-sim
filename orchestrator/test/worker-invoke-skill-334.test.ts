@@ -172,7 +172,7 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(read("coder_implement.md")).toMatch(/CODER_STEP_COMPLETE/);
     expect(read("coder_fix.md")).toMatch(/<coder>/);
     expect(read("coder_fix.md")).toMatch(/CODER_STEP_COMPLETE/);
-    expect(read("reviewer_review.md")).toMatch(/<reviewer>/);
+    expect(read("reviewer_review.md")).toMatch(/<review>/);
     expect(read("reviewer_review.md")).toMatch(/REVIEWER_STEP_COMPLETE/);
     expect(read("ship.md")).toMatch(/<ship>/);
     expect(read("ship.md")).toMatch(/SHIP_STEP_COMPLETE/);
