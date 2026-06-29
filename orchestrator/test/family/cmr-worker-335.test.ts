@@ -63,6 +63,7 @@ import type { DispatchContext, WorkerSpec } from "../../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
+const DEFAULT_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
 const STRONG_LEGS = ["opus", "gpt-5.5"] as const;
 
 const cleanups: string[] = [];
@@ -99,18 +100,26 @@ function makeBackend(over?: {
 describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
   it("converged:true ⇒ a converged outcome", () => {
     const o = parseCmrOutcome(
-      'noise\n<cmr>{"converged": true, "successfulLegs": ["opus"]}</cmr>\n',
+      `noise\n<cmr>${JSON.stringify({ converged: true, successfulLegs: DEFAULT_CMR_LEGS })}</cmr>\n`,
     );
     expect(o.kind).toBe("verdict");
     if (o.kind === "verdict") {
       expect(o.converged).toBe(true);
-      expect(o.successfulLegs).toEqual(["opus"]);
+      expect(o.successfulLegs).toEqual(DEFAULT_CMR_LEGS);
     }
   });
 
   it("converged:false + reason ⇒ a red outcome carrying the reason", () => {
     const o = parseCmrOutcome(
-      '<cmr>{"converged": false, "reason": "cross-slice field-name mismatch", "successfulLegs": ["gpt-5.5"]}</cmr>',
+      `<cmr>${JSON.stringify({
+        converged: false,
+        reason: "cross-slice field-name mismatch",
+        successfulLegs: ["gpt-5.5"],
+        skippedLegs: [
+          { slug: "opus", reason: "auth unavailable" },
+          { slug: "agy", reason: "quota exhausted" },
+        ],
+      })}</cmr>`,
     );
     expect(o.kind).toBe("verdict");
     if (o.kind === "verdict") {
@@ -133,7 +142,10 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
 
   it("only the LAST <cmr> tag is read (the worker may iterate)", () => {
     const o = parseCmrOutcome(
-      '<cmr>{"converged": false}</cmr>\nlater…\n<cmr>{"converged": true, "successfulLegs": ["opus"]}</cmr>',
+      `<cmr>{"converged": false}</cmr>\nlater…\n<cmr>${JSON.stringify({
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+      })}</cmr>`,
     );
     expect(o.kind).toBe("verdict");
     if (o.kind === "verdict") expect(o.converged).toBe(true);
@@ -207,13 +219,67 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       expect(parseCmrOutcome('<cmr>{"converged": true}</cmr>').kind).toBe("malformed");
     });
 
+    it("omitted skippedLegs is valid only when every default cmr leg succeeded", () => {
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({ converged: true, successfulLegs: DEFAULT_CMR_LEGS })}</cmr>`,
+        ).kind,
+      ).toBe("verdict");
+      expect(parseCmrOutcome('<cmr>{"converged": true, "successfulLegs": ["opus"]}</cmr>').kind).toBe(
+        "malformed",
+      );
+    });
+
+    it("accepts a single surviving default leg only when the other declared legs are skipped", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: ["opus"],
+          skippedLegs: [
+            { slug: "gpt-5.5", reason: "auth unavailable" },
+            { slug: "agy", reason: "quota exhausted" },
+          ],
+        })}</cmr>`,
+      );
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.successfulLegs).toEqual(["opus"]);
+        expect(o.skippedLegs).toEqual([
+          { slug: "gpt-5.5", reason: "auth unavailable" },
+          { slug: "agy", reason: "quota exhausted" },
+        ]);
+      }
+    });
+
+    it("a declared leg cannot be both successful and skipped", () => {
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            skippedLegs: [{ slug: "agy", reason: "quota exhausted" }],
+          })}</cmr>`,
+        ).kind,
+      ).toBe("malformed");
+    });
+
     it("still accepts the two LEGAL verdict shapes (regression)", () => {
       expect(
-        parseCmrOutcome('<cmr>{"converged": true, "successfulLegs": ["opus"]}</cmr>').kind,
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({ converged: true, successfulLegs: DEFAULT_CMR_LEGS })}</cmr>`,
+        ).kind,
       ).toBe("verdict");
       expect(
         parseCmrOutcome(
-          '<cmr>{"converged": false, "reason": "seam mismatch", "successfulLegs": ["gpt-5.5"]}</cmr>',
+          `<cmr>${JSON.stringify({
+            converged: false,
+            reason: "seam mismatch",
+            successfulLegs: ["gpt-5.5"],
+            skippedLegs: [
+              { slug: "opus", reason: "auth unavailable" },
+              { slug: "agy", reason: "quota exhausted" },
+            ],
+          })}</cmr>`,
         ).kind,
       ).toBe("verdict");
     });
@@ -228,7 +294,7 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
   it("a signaled converged run ⇒ a verdict outcome", () => {
     const o = cmrOutcomeFromResult({
       completionSignal: SIGNAL,
-      stdout: '<cmr>{"converged": true, "successfulLegs": ["opus"]}</cmr>',
+      stdout: `<cmr>${JSON.stringify({ converged: true, successfulLegs: DEFAULT_CMR_LEGS })}</cmr>`,
     });
     expect(o.kind).toBe("verdict");
     if (o.kind === "verdict") expect(o.converged).toBe(true);
@@ -237,7 +303,7 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
   it("an UNSIGNALED run ⇒ escalate (a complete-but-unsignaled run is NOT a pass)", () => {
     const o = cmrOutcomeFromResult({
       completionSignal: undefined,
-      stdout: '<cmr>{"converged": true, "successfulLegs": ["opus"]}</cmr>',
+      stdout: `<cmr>${JSON.stringify({ converged: true, successfulLegs: DEFAULT_CMR_LEGS })}</cmr>`,
     });
     expect(o.kind).toBe("escalate");
   });
@@ -245,7 +311,7 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
   it("a wrong-signal run ⇒ escalate", () => {
     const o = cmrOutcomeFromResult({
       completionSignal: "SOME_OTHER_SIGNAL",
-      stdout: '<cmr>{"converged": true, "successfulLegs": ["opus"]}</cmr>',
+      stdout: `<cmr>${JSON.stringify({ converged: true, successfulLegs: DEFAULT_CMR_LEGS })}</cmr>`,
     });
     expect(o.kind).toBe("escalate");
   });
