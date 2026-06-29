@@ -70,9 +70,12 @@ Rules:
 - On any converged verdict, `claimedFixedFindingIdentityKeys` and
   `priorFindingDispositions` are REQUIRED. Use empty arrays only when no
   claimed-fixed findings occurred in the CMR loop. If a prior claimed-fixed
-  finding exists, include its stable identity key and an explicit disposition:
-  `still-active`, `verified-closed`, or `unable-to-assess`. Runner-supplied
-  claimed-fixed findings are protected blockers: do not use
+  finding exists, include its stable identity key and an explicit disposition
+  using the exact JSON field name `status`, for example
+  `{"identityKey":"<key>","status":"verified-closed","reason":"<short>"}`.
+  Valid `status` values are `still-active`, `verified-closed`, and
+  `unable-to-assess`. Do not use a field named `disposition`.
+  Runner-supplied claimed-fixed findings are protected blockers: do not use
   `accepted_suppressed` to close them. If an owner/ADR/issue-backed scope
   exception is now implemented in code/docs/tests, mark the prior finding
   `verified-closed` and cite that source in `reason`; otherwise mark it
