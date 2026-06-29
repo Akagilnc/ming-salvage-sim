@@ -699,6 +699,36 @@ def test_all_ming_settle_substrates_advance_with_observable_shadow_tlog(fresh_ga
         "楚藩重省宗禄 Due 应重于江南基准"
 
 
+def test_seeded_substrates_keep_multi_tick_historical_trajectories(fresh_db):
+    """#70 capstone：用真实 content seed 跑多 tick 轨迹，而非只测首 tick golden。"""
+    jiangnan = ("nanzhili", "zhejiang", "jiangxi", "huguang")
+    border = ("shaanxi", "shanxi", "liaodong", "dongjiang_area")
+
+    for region_id in jiangnan:
+        settle = _read_settle(fresh_db, region_id)
+        st = settle["st"]
+        remittances = []
+        for _ in range(3):
+            res = settle_tick(st, settle["p"], [])
+            remittances.append(res.breakdown["起运到京"])
+            st = res.new_st
+        assert all(value > 0 for value in remittances), \
+            f"{region_id} 江南财赋核心应多 tick 保持正起运: {remittances}"
+
+    for region_id in border:
+        settle = _read_settle(fresh_db, region_id)
+        st = settle["st"]
+        arrears = []
+        for _ in range(3):
+            res = settle_tick(st, settle["p"], [])
+            arrears.append(res.new_st["军饷欠"])
+            st = res.new_st
+        assert arrears == sorted(arrears), \
+            f"{region_id} 边镇军饷欠应多 tick 单调累积: {arrears}"
+        assert arrears[-1] > arrears[0], \
+            f"{region_id} 边镇军饷漏斗应形成死亡螺旋: {arrears}"
+
+
 def test_all_settle_substrate_provisional_meta_covers_virtual_fields(fresh_db):
     rows = fresh_db.conn.execute(
         "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
