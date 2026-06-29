@@ -532,30 +532,34 @@ export class RealFamilyBackend implements FamilyBackend {
     // BEFORE spinning the container when the token is absent. Mount once and reuse for
     // the sandbox (no double-mount).
     const auth = this.mountMergerAuth();
-    if (modelFamilyForSlug(mergerModel()) === "claude" && auth.claudeToken === undefined) {
-      return {
-        resolved: false,
-        reason:
-          "merger worker cannot start without CLAUDE_CODE_OAUTH_TOKEN — the merger is " +
-          "the container's top-level claude (sc.claudeCode); its OAuth token " +
-          "(~/.sc-claude-token → CLAUDE_CODE_OAUTH_TOKEN) is the worker's OWN auth. " +
-          "Without it the worker fails to start and never resolves; returning a " +
-          "structured non-resolve here keeps resolveMergeConflict's loud-throw " +
-          "semantics (a thrown sc.run startup error would surface as an opaque wave abort).",
-      };
+    try {
+      if (modelFamilyForSlug(mergerModel()) === "claude" && auth.claudeToken === undefined) {
+        return {
+          resolved: false,
+          reason:
+            "merger worker cannot start without CLAUDE_CODE_OAUTH_TOKEN — the merger is " +
+            "the container's top-level claude (sc.claudeCode); its OAuth token " +
+            "(~/.sc-claude-token → CLAUDE_CODE_OAUTH_TOKEN) is the worker's OWN auth. " +
+            "Without it the worker fails to start and never resolves; returning a " +
+            "structured non-resolve here keeps resolveMergeConflict's loud-throw " +
+            "semantics (a thrown sc.run startup error would surface as an opaque wave abort).",
+        };
+      }
+      const result = await sc.run({
+        name: `merger-resolve-${req.childIssue}`,
+        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+        cwd: this.opts.workingRepo,
+        sandbox: this.mergerSandbox(auth),
+        agent: agentForSlug(mergerModel()),
+        maxIterations: 1,
+        completionSignal: MERGER_COMPLETION_SIGNAL,
+        branchStrategy: { type: "head" }, // commit the resolved merge in place
+        promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
+      });
+      return mergerOutcomeFromResult(result);
+    } finally {
+      this.cleanupTempAuthDirs([auth.codexAuthDir]);
     }
-    const result = await sc.run({
-      name: `merger-resolve-${req.childIssue}`,
-      idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-      cwd: this.opts.workingRepo,
-      sandbox: this.mergerSandbox(auth),
-      agent: agentForSlug(mergerModel()),
-      maxIterations: 1,
-      completionSignal: MERGER_COMPLETION_SIGNAL,
-      branchStrategy: { type: "head" }, // commit the resolved merge in place
-      promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
-    });
-    return mergerOutcomeFromResult(result);
   }
 
   /** The merger agent's sandbox (souls + skills baked into the image + optional auth). */
@@ -564,14 +568,32 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Gather the merger worker's host credential (integ-cmr int-r2 A-1): the claude
-   * OAuth token (env), mirroring the claude-token leg of `mountCmrAuth` / `mountShipAuth`.
-   * The merger needs NO codex/gh (it resolves + commits in place, never pushes/PRs).
-   * Fail-soft: a missing token ⇒ undefined (the REQUIRE gate is `runMergerAgent`'s
-   * preflight). `protected` so a unit test points $HOME at an empty dir.
+   * Gather the merger worker's host credentials: codex auth (mounted) plus the
+   * claude OAuth token (env), mirroring the route-selected top-level worker auth
+   * used by coder-fix / ship. The merger needs NO gh (it resolves + commits in
+   * place, never pushes/PRs). Fail-soft: missing auth source ⇒ undefined (Claude's
+   * REQUIRE gate is `runMergerAgent`'s preflight; codex degrades to no mount).
+   * `protected` so a unit test points $HOME at a temp dir.
    */
   protected mountMergerAuth(): MergerAuth {
     const home = this.opts.home ?? homedir();
+    const root = join(home, ".sc-orchestrator");
+    let codexAuthDir: string | undefined;
+    let tempCodexDir: string | undefined;
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      tempCodexDir = mkdtempSync(join(root, "merger-codex-auth-"));
+      copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
+      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
+      codexAuthDir = tempCodexDir;
+    } catch {
+      // codex auth absent ⇒ no codex mount. Reclaim the mkdtemp dir if it was
+      // created before copy/chmod/config writing threw.
+      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
+        rmSync(tempCodexDir, { recursive: true, force: true });
+      }
+    }
     let claudeToken: string | undefined;
     try {
       const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
@@ -583,7 +605,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // claude token absent ⇒ the top-level merger worker degrades; the
       // runMergerAgent preflight returns a structured non-resolve.
     }
-    return { claudeToken };
+    return { codexAuthDir, claudeToken };
   }
 
   /**
@@ -608,21 +630,26 @@ export class RealFamilyBackend implements FamilyBackend {
    * `cmrSandboxConfig` / `shipSandboxConfig`) — #335/#336 wired the cmr/ship workers'
    * auth but the merger's was missing (the worker spun unauthenticated). The token is
    * set only when present (this pure seam stays tolerant; the REQUIRE gate is
-   * `runMergerAgent`'s preflight). The merger needs NO codex/gh mount — it resolves +
-   * commits in place, never pushes / opens a PR.
+   * `runMergerAgent`'s preflight). Codex auth is mounted when present for routes
+   * whose merger slot resolves to a Codex-family worker. The merger needs NO gh
+   * mount — it resolves + commits in place, never pushes / opens a PR.
    */
-  protected mergerSandboxConfig(auth: MergerAuth = this.mountMergerAuth()): {
+  protected mergerSandboxConfig(auth: MergerAuth): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
     const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    const mounts: { hostPath: string; sandboxPath: string }[] = [];
+    if (auth.codexAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
     return {
       imageName: this.opts.imageName,
       env,
       // #334: no skills mount — the baked image provides the merger skill.
-      mounts: [],
+      mounts,
     };
   }
 
@@ -1815,6 +1842,8 @@ export interface ShipAuth {
  * (`branchStrategy:{type:"head"}`); it never pushes or opens a PR.
  */
 export interface MergerAuth {
+  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
+  readonly codexAuthDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
 }
