@@ -16,6 +16,8 @@
 import type {
   Backend,
   DispatchContext,
+  Escalation,
+  PriorFindingDisposition,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -24,6 +26,9 @@ import type {
   VerifyCmrPhase,
   VerifyCmrResult,
 } from "./verifyCmr.js";
+
+/** The two runner-visible integrated CMR gates (#419). */
+export type IntegratedCmrPass = "completeness" | "correctness";
 
 // ─────────────────────────── child slice ───────────────────────────
 
@@ -102,8 +107,10 @@ export interface FamilyLedgerEntry {
    *     codex P1). A PHASE-LEVEL terminal marker carrying the family `pr` URL; the
    *     spine's resume guard reads it so an already-delivered family run is NOT
    *     re-verified / re-cmr'd / re-shipped. NOT counted as merged (no `childIssue`).
+   *   - `"cmr_passed"` — a PHASE-LEVEL audit event recording one green integrated
+   *     CMR pass (#419). NOT counted as merged.
    */
-  readonly status: "merged" | "aborted" | "shipped";
+  readonly status: "merged" | "aborted" | "shipped" | "cmr_passed";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -115,14 +122,19 @@ export interface FamilyLedgerEntry {
    *   - `"shipped"` — the terminal family ship succeeded (online review r2, codex
    *     P1), paired with `status:"shipped"`; written by the verify-cmr hook at the
    *     止于-PR success so a resume sees the family is already delivered.
+   *   - `"cmr_passed"` — paired with `status:"cmr_passed"`; records the pass
+   *     verdict so step5 and step6 are visible in the family ledger (#419).
    * Not the unblock truth (that is `status`); the tag is for observability.
    */
-  readonly event?: "reconciled" | "aborted" | "shipped";
+  readonly event?: "reconciled" | "aborted" | "shipped" | "cmr_passed";
   /**
-   * Which verify barrier was red — ONLY on a PHASE-LEVEL `aborted` entry (#291 缺口
-   * 2). A `merged` / `reconciled` entry omits it (it is per-child, not per-phase).
+   * Which phase this PHASE-LEVEL event belongs to. Set on `aborted` entries and
+   * on `cmr_passed` audit entries; `merged` / `reconciled` entries omit it because
+   * they are per-child, not per-phase.
    */
   readonly phase?: "wave" | "final";
+  /** Which integrated CMR pass this phase-level audit/failure event belongs to. */
+  readonly cmrPass?: IntegratedCmrPass;
   /**
    * Human-readable abort reason — ONLY on a PHASE-LEVEL `aborted` entry (#291 缺口
    * 2), forwarded from the verify error package / cmr non-convergence reason so the
@@ -417,6 +429,8 @@ export interface FamilyVerifyErrorPackage {
 export interface IntegratedCmrRequest {
   /** The merged family base branch the integrated cmr reviews. */
   readonly familyBase: string;
+  /** Which runner-visible CMR pass this request is for (#419). */
+  readonly cmrPass?: IntegratedCmrPass;
   /**
    * The child issue numbers whose merge into the family base was LLM-resolved
    * (`conflictResolvedByLlm:true` in the family ledger, #295). The spine derives
@@ -435,6 +449,14 @@ export interface IntegratedCmrResult {
   readonly converged: boolean;
   /** Why it did not converge (handed to the escalate seam) — set when red. */
   readonly reason?: string;
+  /** CMR leg slugs that actually produced a usable review this pass. */
+  readonly successfulLegs?: readonly string[];
+  /** Declared CMR legs skipped at runtime, with the visible degrade flag reason. */
+  readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+  /** Prior claimed-fixed findings the integrated CMR result asks the runner to adjudicate. */
+  readonly claimedFixedFindingIdentityKeys?: readonly string[];
+  /** Explicit disposition for claimed-fixed integrated CMR findings. */
+  readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
 }
 
 /** What opening the family PR needs (decision 4, 止于 PR). */
@@ -457,6 +479,8 @@ export interface OpenFamilyPrResult {
 export interface FamilyAbortedEvent {
   /** Which verify barrier was red. */
   readonly phase: "wave" | "final";
+  /** Present when a final integrated CMR pass, not verify/ship, is what failed. */
+  readonly cmrPass?: IntegratedCmrPass;
   /** The family base at the time of the abort (so the failure is locatable). */
   readonly familyBase: string;
   /** The verify error package (decision 3④/5). */
@@ -683,6 +707,8 @@ export interface FamilyRunResult {
   readonly familyBase: string;
   /** The family base HEAD after all merges (undefined if nothing merged). */
   readonly familyHead?: string;
+  /** Structured startup/escalation reason when status is `"escalated"`. */
+  readonly escalation?: Escalation;
   /** Per-child outcomes, in execution order. */
   readonly children: ReadonlyArray<FamilyChildResult>;
 }

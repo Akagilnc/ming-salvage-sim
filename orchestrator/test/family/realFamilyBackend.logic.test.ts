@@ -543,8 +543,8 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
 // RealBackend (single slice) validates promptsDir at construction (C-3): every
 // REFERENCED_PROMPT_FILES entry, derived from the worker specs, must exist or the
 // constructor throws — a missing prompt surfaces THERE, not deep in the first
-// sandbox.run(). RealFamilyBackend lazily resolves its 3 family prompts
-// (integrated_cmr.md / family_ship.md / merger_resolve_conflict.md) at dispatch
+// sandbox.run(). RealFamilyBackend lazily resolves its family prompts
+// (integrated CMR pass prompts / family_ship.md / merger_resolve_conflict.md) at dispatch
 // time, so a missing one would only blow up at run time. These tests pin the
 // SAME construction-time net at the family layer.
 describe("RealFamilyBackend construction-time prompt validation (gap g, same-type C-3)", () => {
@@ -560,8 +560,12 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
 
   it("throws when the family promptsDir is missing a family prompt file", () => {
     const repo = trackRepo();
-    // Has integrated_cmr.md + merger_resolve_conflict.md but NOT family_ship.md.
-    const dir = promptsDirWith(["integrated_cmr.md", "merger_resolve_conflict.md"]);
+    // Has integrated CMR pass prompts + merger_resolve_conflict.md but NOT family_ship.md.
+    const dir = promptsDirWith([
+      "integrated_cmr_completeness.md",
+      "integrated_cmr_correctness.md",
+      "merger_resolve_conflict.md",
+    ]);
     expect(() => new RealFamilyBackend(opts(repo, { promptsDir: dir }))).toThrow(
       /family_ship\.md/,
     );
@@ -595,7 +599,7 @@ class FakeSeamsBackend extends RealFamilyBackend {
   mergerCalls: ConflictResolveRequest[] = [];
   verifyOutcome: "green" | "red" = "green";
   verifyCalls: FamilyVerifyRequest[] = [];
-  cmrResult: IntegratedCmrResult = { converged: true };
+  cmrResult: IntegratedCmrResult = { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
   cmrCalls: IntegratedCmrRequest[] = [];
   shCalls: Array<{ file: string; args: string[] }> = [];
   mergeInProgressFake = false;
@@ -662,7 +666,7 @@ class FakeSeamsBackend extends RealFamilyBackend {
   // Expose the protected sandbox-config seam so the merger soul injection +
   // skills-mount path are unit-testable without a real container.
   public sandboxConfig() {
-    return this.mergerSandboxConfig();
+    return this.mergerSandboxConfig({});
   }
 }
 

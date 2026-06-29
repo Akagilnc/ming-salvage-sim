@@ -1,20 +1,27 @@
-# Integrated CMR worker entrypoint
+# Integrated CMR correctness worker entrypoint
 
 Read the baked role soul first:
 
 ```text
-/home/agent/.orchestrator/souls/cmr.md
+/home/agent/.orchestrator/souls/cmr_correctness.md
 ```
 
-Then follow that soul and the worktree's `CLAUDE.md`. The runner only schedules
-you and writes `.cmr-focus.md`; the CMR method lives in the baked soul and skill,
-not in this prompt.
+Then follow that soul and the worktree's `CLAUDE.md`. This is the runner-dispatched
+step6 correctness gate. The runner only schedules you after step5 completeness has
+passed and writes `.cmr-focus.md` plus `.cmr-route.json`; the CMR method lives in
+the baked soul and skill, not in this prompt.
+
+## Pass scope
+
+Run only the correctness gate over the complete family base: review behavioral
+correctness, cross-slice contracts, and regressions. Do not re-run the completeness
+gate in this worker.
 
 ## Required output
 
-When the review has converged (or you must escalate), emit a single `<cmr>` tag on
-its own line containing a single JSON object, then print the completion signal on
-its own line as the final line.
+When the correctness gate has converged (or you must escalate), emit a single
+`<cmr>` tag on its own line containing a single JSON object, then print the
+completion signal on its own line as the final line.
 
 Converged:
 

@@ -36,6 +36,7 @@ import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
 import type {
   Backend,
+  Finding,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
@@ -55,6 +56,18 @@ const WORKTREE: WorktreeHandle = {
 };
 
 const STATE_DIR = "/resident/worktrees/.ledger-255";
+
+const CLAIMED_FIXED_FINDING: Finding = {
+  severity: "high",
+  category: "correctness",
+  claim_quote: "Do not rely on omitting a finding to mean it is closed.",
+  location: "orchestrator/src/runner.ts:1061",
+  suggested_fix: "Replay prior S4 adjudication state on resume.",
+  action: "fix_now",
+};
+
+const CLAIMED_FIXED_KEY =
+  "correctness|orchestrator/src/runner.ts:1061|do not rely on omitting a finding to mean it is closed.";
 
 /** Build a persisted ledger entry (the resume truth on disk). */
 function entry(
@@ -124,7 +137,9 @@ class ResumeBackend implements Backend {
     this.calls.push(`resumeSession(${spec.id}, ${sessionId})`);
     this.resumeSessionCalls.push([spec.id, sessionId]);
     this.runStepIds.push(spec.id);
-    // ADR 0026: S2 is the only agent step; resume always continues the build worker.
+    if (spec.role === "reviewer") {
+      return { kind: "reviewer", findings: [] };
+    }
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
 
@@ -168,7 +183,9 @@ class ResumeBackend implements Backend {
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.calls.push(`runStep(${spec.id})`);
     this.runStepIds.push(spec.id);
-    // ADR 0026: S2 is the only agent step the runner dispatches.
+    if (spec.role === "reviewer") {
+      return { kind: "reviewer", findings: [] };
+    }
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
 
@@ -194,9 +211,9 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
     expect(result.status).toBe("success");
-    // Full happy path executed (ADR 0026: gate + load + build worker + ship).
+    // Full happy path executed (ADR 0030: gate + load + implement + review + classify + ship).
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
     ]);
     // Fresh cut: prepareWorktree called once; cleanResidue never called.
     expect(backend.prepareWorktreeCount).toBe(1);
@@ -217,7 +234,7 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
 
 // ─── AC1 + AC2: crash-resume — branch/worktree exists, ledger stops at S2 ─────
 
-describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 0026)", () => {
+describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 0030)", () => {
   /**
    * Crash scenario (ADR 0026): the prior run completed S0, S1, S2 (the build
    * worker committed a reviewed slice) and then died before S7. The ledger on
@@ -259,14 +276,13 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     expect(cleanIdx).toBeLessThan(firstWork);
   });
 
-  it("AC2: continues from S7 (route successor of a committed S2) — does NOT re-run S0/S1/S2", async () => {
+  it("AC2: continues from S3 (route successor of a committed S2) — does NOT re-run S0/S1/S2", async () => {
     const backend = new ResumeBackend(crashedAtS2());
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    // The committed S2 routes straight to S7 ship: NO agent step is re-dispatched
-    // (S2 already done; S7 is a runner-action ship that pushes).
-    expect(backend.runStepIds).toEqual([]);
+    // The committed S2 routes to a fresh reviewer; S2 itself is not re-dispatched.
+    expect(backend.runStepIds).toEqual(["S3"]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
     expect(backend.pushCount).toBe(1);
     // S0/S1 are not re-executed either (no re-gate, no re-cut, no re-snapshot).
@@ -286,11 +302,56 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     // The prior committed steps survive into the final ledger (not lost), and
     // the resumed steps are appended after them.
     const steps = result.stepLedger.map((e) => e.step);
-    // Prior S0/S1/S2 + resumed S7/S8 (ADR 0026: no S3/S4).
-    expect(steps).toEqual(["S0", "S1", "S2", "S7", "S8"]);
+    // Prior S0/S1/S2 + resumed S3/S4/S7/S8.
+    expect(steps).toEqual(["S0", "S1", "S2", "S3", "S4", "S7", "S8"]);
     // The preserved S2 entry still carries its committed output.
     const s2 = result.stepLedger.find((e) => e.step === "S2");
     expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
+  });
+});
+
+describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication", () => {
+  function crashedAfterSecondEmptyStillActiveS6(): ResumeState {
+    return {
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
+        entry("S4"),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S6", {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
+          ],
+        }),
+        entry("S4"),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S6", {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
+          ],
+        }),
+      ],
+    };
+  }
+
+  it("multi-round empty S6 still-active dispositions resume as no-progress, not silent closure", async () => {
+    const backend = new ResumeBackend(crashedAfterSecondEmptyStillActiveS6());
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(result.errorPackage?.reason).toContain("review/fix loop made no progress");
+    expect(backend.pushCount).toBe(0);
+    expect(backend.runStepIds).toEqual([]);
+    expect(result.stepLedger.map((e) => e.step).slice(-2)).toEqual(["S4", "S8"]);
   });
 });
 
@@ -399,6 +460,8 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
         entry("S7"), // failing step recorded without an output (escalateTermination)
         s8("escalate"),
       ],
@@ -437,9 +500,9 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     // The single surviving S7 is the FRESH re-dispatch (it carries the ship
     // payload, #336), not the output-less superseded escalate entry.
     expect(s7Entries[0]!.output).toBeDefined();
-    // The full re-opened ledger has the clean happy-path shape (ADR 0026), no S7 twice.
+    // The full re-opened ledger has the clean happy-path shape (ADR 0030), no S7 twice.
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
     ]);
   });
 
@@ -475,11 +538,10 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
 
 // ─── AC4: recovery decides next step from ledger, not memory ──────────────────
 
-describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0026)", () => {
-  it("ledger stopping at a committed S2 resumes at the route successor S7, not S0", async () => {
-    // Prior run got through S2 (the build worker committed a reviewed slice) but
-    // died before S7. Resume must route S2→S7→S8 from the recorded output — there
-    // is no reviewer/route step in between (ADR 0026).
+describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", () => {
+  it("ledger stopping at a committed S2 resumes at the route successor S3, not S0", async () => {
+    // Prior run got through S2 but died before review. Resume must route
+    // S2→S3→S4→S7→S8 from the recorded output.
     const resumeState: ResumeState = {
       worktree: WORKTREE,
       stateDir: STATE_DIR,
@@ -493,14 +555,14 @@ describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0026)", (
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    // No agent steps re-dispatched (S2 already done; S7 is a runner-action ship).
-    expect(backend.runStepIds).toEqual([]);
+    // S2 is not re-dispatched; the next fresh agent step is S3 reviewer.
+    expect(backend.runStepIds).toEqual(["S3"]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
     // Pushed and succeeded — resumed purely from ledger truth.
     expect(backend.pushCount).toBe(1);
     expect(result.status).toBe("success");
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
     ]);
   });
 

@@ -79,10 +79,9 @@ class GateTestBackend implements Backend {
 
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.calls.push(`runStep(${spec.id})`);
-    // ADR 0026 (2026-06-24): S2 (coder) is the ONLY agent step the runner
-    // dispatches — there is no reviewer step. runStep therefore only ever sees
-    // the S2 build worker; return a committed coder output so the happy path
-    // reaches S7→S8(success).
+    if (spec.role === "reviewer") {
+      return { kind: "reviewer", findings: [] };
+    }
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
 
@@ -255,6 +254,9 @@ describe("S0 input gate — pass case (#248)", () => {
 
       override async runStep(spec: StepSpec): Promise<StepOutput> {
         this.calls.push(`runStep(${spec.id})`);
+        if (spec.role === "reviewer") {
+          return { kind: "reviewer", findings: [] };
+        }
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
     }
@@ -285,6 +287,9 @@ describe("S0 input gate — pass case (#248)", () => {
 
       override async runStep(spec: StepSpec): Promise<StepOutput> {
         this.calls.push(`runStep(${spec.id})`);
+        if (spec.role === "reviewer") {
+          return { kind: "reviewer", findings: [] };
+        }
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
     }
@@ -324,6 +329,9 @@ describe("S0 gate — #294 family-mode ledger-merged blocked_by (decision 6③)"
       }
       override async runStep(spec: StepSpec): Promise<StepOutput> {
         this.calls.push(`runStep(${spec.id})`);
+        if (spec.role === "reviewer") {
+          return { kind: "reviewer", findings: [] };
+        }
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
     }
@@ -395,6 +403,9 @@ describe("S0 gate — #247 happy-path regression", () => {
 
       override async runStep(spec: StepSpec): Promise<StepOutput> {
         this.calls.push(`runStep(${spec.id})`);
+        if (spec.role === "reviewer") {
+          return { kind: "reviewer", findings: [] };
+        }
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
     }
@@ -403,11 +414,10 @@ describe("S0 gate — #247 happy-path regression", () => {
     const result = await runOrchestrator({ issueNumber: 248, backend });
 
     expect(result.status).toBe("success");
-    // ADR 0026 (2026-06-24): the runner is a pure scheduler — the per-slice
-    // review→fix→re-review loop (old S3/S4/S5/S6) collapsed INTO the S2 build
-    // worker. The runner-level ledger is now S0→S1→S2→S7→S8.
+    // ADR 0030: the runner-level ledger exposes the fresh reviewer and
+    // classification boundary before ship.
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
     ]);
   });
 });

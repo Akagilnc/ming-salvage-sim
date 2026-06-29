@@ -111,7 +111,7 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
-    return this.script.cmr?.(req) ?? { converged: true };
+    return this.script.cmr?.(req) ?? { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);
@@ -197,9 +197,11 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       singleSliceBackend: new ChildBackend(),
       familyBase: "family/291-base",
     });
-    // Both children merged; wave verify green; final verify green; cmr ran + red.
+    // Both children merged; wave verify green; final verify green; step5 completeness ran + red.
     expect(backend.merges.map((m) => m.childIssue)).toEqual([294, 295]);
-    expect(backend.cmrCalls).toEqual([{ familyBase: "family/291-base" }]);
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "completeness" },
+    ]);
     // Escalate续跑 (#298) carrying the cross-slice-seam reason; NO PR.
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]?.reason).toContain("阈值口径");
@@ -254,7 +256,7 @@ describe("#296 spine integration — acceptance 3: all green → open PR, stop, 
   it("green verify + converged cmr ⇒ the family PR is opened and the run is success (止于 PR)", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
     });
     const result = await runFamily({
       epic: epicWith(294, 295, 298),
@@ -263,9 +265,12 @@ describe("#296 spine integration — acceptance 3: all green → open PR, stop, 
       familyBase: "family/291-base",
     });
     // One wave (all independent): wave verify (green) then final verify (green) →
-    // cmr (converged) → PR opened ONCE from the family base.
+    // step5 completeness → step6 correctness → PR opened ONCE from the family base.
     expect(backend.verifyCalls.map((v) => v.phase)).toEqual(["wave", "final"]);
-    expect(backend.cmrCalls).toEqual([{ familyBase: "family/291-base" }]);
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "completeness" },
+      { familyBase: "family/291-base", cmrPass: "correctness" },
+    ]);
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
     // 止于 PR: a PR was opened, but the run STOPS here — every child merged into the
     // family base, status success, no escalate. (No merge-to-main seam exists on
@@ -294,7 +299,7 @@ describe("#291 spine — the final barrier (verify + cmr + 止于 PR) is GATED o
   it("a child that fails its single-slice run ⇒ NO final verify / cmr / PR, status incomplete", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
     });
     const result = await runFamily({
       epic: epicWith(294, 295),
@@ -318,7 +323,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
   it("a `shipped` ledger marker ⇒ skip the final barrier (NO final verify / cmr / PR), status success", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
     });
     // Resume truth: both children already merged AND the terminal 止于-PR ship already
     // ran (a `shipped` marker on the durable ledger). The family PR is open and the

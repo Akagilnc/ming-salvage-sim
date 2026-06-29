@@ -68,6 +68,30 @@ import { z } from "zod";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
+import {
+  agentForSlug,
+  CODER_CODEX_SLUG,
+  modelFamilyForSlug,
+  modelIdForSlug,
+  modelIsStrongLeg,
+  resolveModelSlug,
+  SUPPORTED_MODEL_PROVIDER_FACTORIES,
+  type ModelFamily,
+  type ModelProviderFactory,
+  type ModelSlugRegistryEntry,
+} from "./modelRegistry.js";
+export {
+  agentForSlug,
+  CODER_CODEX_SLUG,
+  modelFamilyForSlug,
+  modelIdForSlug,
+  modelIsStrongLeg,
+  resolveModelSlug,
+  SUPPORTED_MODEL_PROVIDER_FACTORIES,
+  type ModelFamily,
+  type ModelProviderFactory,
+  type ModelSlugRegistryEntry,
+};
 import { legacyDispatchWorker, shipWorkerSpec } from "./dispatchWorker.js";
 import { STEP_SPECS } from "./runner.js";
 import {
@@ -76,6 +100,7 @@ import {
   type ShipWorkerOutcome,
 } from "./shipOutcome.js";
 import type {
+  AgentStepRunOptions,
   Backend,
   DispatchContext,
   Finding,
@@ -433,6 +458,8 @@ export const SANDBOX_ISSUE_NUMBER_ENV = "ORCHESTRATOR_ISSUE_NUMBER";
 export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
 /** GitHub repo slug (`owner/repo`) the worker should use for gh issue reads. */
 export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
+/** S5 coder-fix worker path to runner-owned blocking findings JSON. */
+export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
 
 /**
  * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
@@ -495,9 +522,9 @@ export interface AuthPaths {
 /**
  * The single-slice ship worker's BEST-EFFORT auth (mirrors the family
  * {@link import("./family/realFamilyBackend.js").ShipAuth}). The ship worker pushes
- * + `gh pr create` (needs codex/gh creds) AND is the container's top-level claude
- * (needs its OWN claude token) — but each source is OPTIONAL: a missing source
- * degrades that leg, it never crashes the ship (#336 cmr S336 r1: the inline
+ * + `gh pr create` (needs codex/gh creds) and may run on a Claude-family model
+ * (needs its own claude token then) — but each source is OPTIONAL here: a missing
+ * source degrades that leg, it never crashes the ship (#336 cmr S336 r1: the inline
  * `mountAuth` threw on any missing credential, blocking ship in degraded auth envs).
  */
 export interface ShipAuth {
@@ -644,64 +671,6 @@ export function checkOwnGitDir(
 }
 
 // ── model slug → agent provider selection (role decides soul/CLI) ───────────
-
-/**
- * The codex coder slug + its effort (the S2 build worker runs on Codex gpt-5.5).
- * `"high"` matches the project's per-slice codex effort convention (`## Skill
- * routing`: the per-slice cmr legs run codex5.5 at high). The model id is the bare
- * CLI model string the sandcastle codex provider expects.
- */
-export const CODER_CODEX_SLUG = "gpt-5.5";
-const CODER_CODEX_EFFORT: NonNullable<sc.CodexOptions["effort"]> = "high";
-
-/**
- * Map a CLAUDE {@link StepSpec.model} slug to its claude model id (PRD #244:
- * "换模型 = runtime 选已烤进镜像的 CLI"). This resolver covers ONLY the claude
- * slugs — `"opus"` (per-slice review subagent / reviewer) and `"sonnet"` (the ship
- * worker). The CODER slug ({@link CODER_CODEX_SLUG}) is NOT a claude model id and is
- * resolved by {@link agentForSlug} to the codex provider, never here. Pure: returns
- * the model id string, so the mapping is unit-testable without constructing a provider.
- *
- * `"sonnet"` → claude-sonnet-4-6 (ship); `"opus"` → claude-opus-4-8 (reviewer).
- * Any other slug is a misconfigured StepSpec → throw (caught by the runner's
- * error edge, surfaced as S8(error)).
- */
-export function modelIdForSlug(slug: string): string {
-  switch (slug) {
-    case "sonnet":
-      return "claude-sonnet-4-6";
-    case "opus":
-      return "claude-opus-4-8";
-    default:
-      throw new Error(
-        `realBackend: unknown model slug "${slug}" — expected "sonnet" or "opus". ` +
-          `Add the CLI to the image and extend modelIdForSlug before using it.`,
-      );
-  }
-}
-
-/**
- * Map a {@link StepSpec.model} slug to the baked-in CLI AGENT PROVIDER (the
- * provider factory, not just the model id — extends {@link modelIdForSlug} now that
- * the family spans TWO CLIs). PRD #244: "换模型 = runtime 选已烤进镜像的 CLI".
- *
- * - {@link CODER_CODEX_SLUG} (`"gpt-5.5"`, the S2 build worker / coder) → the
- *   sandcastle CODEX provider at {@link CODER_CODEX_EFFORT}. The 2b image already
- *   bakes the codex CLI (the cmr legs use it) and `box()` already mounts the
- *   per-issue codex auth dir, so the codex coder authenticates in-sandbox.
- * - `"sonnet"` / `"opus"` (claude slugs — the ship worker, the per-slice review
- *   subagent) → `claudeCode(modelIdForSlug(slug))`, unchanged.
- *
- * Any other slug throws via {@link modelIdForSlug} (misconfigured StepSpec →
- * S8(error)). Returns an {@link sc.AgentProvider}; its `.name` (`"codex"` vs
- * `"claude-code"`) is the unit-test discriminator (no container needed).
- */
-export function agentForSlug(slug: string): sc.AgentProvider {
-  if (slug === CODER_CODEX_SLUG) {
-    return sc.codex(CODER_CODEX_SLUG, { effort: CODER_CODEX_EFFORT });
-  }
-  return sc.claudeCode(modelIdForSlug(slug));
-}
 
 // ── role → baked soul selection (ship-pre 256 r1) ───────────────────────────
 
@@ -1043,6 +1012,10 @@ const STEP_IDS: ReadonlySet<string> = new Set([
   "S0",
   "S1",
   "S2",
+  "S3",
+  "S4",
+  "S5",
+  "S6",
   "S7",
   "S8",
 ]);
@@ -1339,10 +1312,17 @@ const findingSchema = z.object({
   claim_quote: z.string(),
   location: z.string(),
   suggested_fix: z.string(),
-  action: z.enum(["fix_now", "defer"]),
+  action: z.enum(["fix_now", "defer", "wont_fix", "rejected"]),
+  disposition_reason: z.string().optional(),
+});
+const priorFindingDispositionSchema = z.object({
+  identityKey: z.string().min(1),
+  status: z.enum(["still-active", "verified-closed", "unable-to-assess"]),
+  reason: z.string().optional(),
 });
 const reviewerOutputSchema = z.object({
   findings: z.array(findingSchema),
+  priorFindingDispositions: z.array(priorFindingDispositionSchema).optional(),
   escalate: z
     .object({ reason: z.string(), diagnosis: z.string() })
     .optional(),
@@ -1834,10 +1814,19 @@ export class RealBackend implements Backend {
     return { authDir: paths.hostCodexAuthDir, claudeToken };
   }
 
-  private box(issueNumber: number, spec: StepSpec): sc.SandboxProvider {
+  private box(
+    issueNumber: number,
+    spec: StepSpec,
+    options?: AgentStepRunOptions,
+  ): sc.SandboxProvider {
     const auth = this.mountAuth(issueNumber);
     return docker(
-      this.boxConfig({ ...auth, ghToken: this.readGhToken() }, spec, issueNumber),
+      this.boxConfig(
+        { ...auth, ghToken: this.readGhToken() },
+        spec,
+        issueNumber,
+        options,
+      ),
     );
   }
 
@@ -1866,10 +1855,11 @@ export class RealBackend implements Backend {
     auth: { authDir: string; claudeToken?: string; ghToken?: string },
     spec: StepSpec,
     issueNumber?: number,
+    options?: AgentStepRunOptions,
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     const soul = soulForStep(spec);
     const env: Record<string, string> = {
@@ -1891,11 +1881,26 @@ export class RealBackend implements Backend {
     if (auth.ghToken !== undefined) {
       env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
     }
+    if (options?.fixFindingsLanding !== undefined) {
+      env[SANDBOX_FIX_FINDINGS_PATH_ENV] =
+        options.fixFindingsLanding.sandboxPath;
+    }
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
+      { hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR },
+    ];
+    if (options?.fixFindingsLanding !== undefined) {
+      mounts.push({
+        hostPath: options.fixFindingsLanding.path,
+        sandboxPath: options.fixFindingsLanding.sandboxPath,
+        readonly: true,
+      });
+    }
     return {
       imageName: this.opts.imageName,
       env,
-      // #334: codex auth ONLY — the skills mount is dropped (baked skills win).
-      mounts: [{ hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR }],
+      // #334: codex auth stays the only always-on runtime mount; S5 adds the
+      // runner-owned fix findings file as a narrow read-only overlay.
+      mounts,
     };
   }
 
@@ -1956,9 +1961,14 @@ export class RealBackend implements Backend {
     if (spec.role === "reviewer") {
       const r = reviewerOutputSchema.parse(raw);
       const findings: Finding[] = r.findings.map((f) => ({ ...f }));
-      return r.escalate
-        ? { kind: "reviewer", findings, escalate: r.escalate }
-        : { kind: "reviewer", findings };
+      return {
+        kind: "reviewer",
+        findings,
+        ...(r.priorFindingDispositions !== undefined
+          ? { priorFindingDispositions: r.priorFindingDispositions }
+          : {}),
+        ...(r.escalate ? { escalate: r.escalate } : {}),
+      };
     }
     // Coder: parse the self-report for shape, then (normal path) TRUTH the commit
     // count from git (result.commits.length). reconcileCoderCommits throws on a
@@ -1983,20 +1993,21 @@ export class RealBackend implements Backend {
         };
   }
 
-  // ── S2: the whole-slice build worker — one sandbox.run() (ADR 0026; #256 seam
-  //    extension returns StepResult). The per-slice review→fix loop runs INSIDE
-  //    this worker (via the skills the prompt invokes), so the runner no longer
-  //    delivers fix_now findings to a separate fix step. ─
+  // ── S2/S3/S5/S6 agent workers (ADR 0030; #256 seam extension returns
+  //    StepResult). S2/S5 run the coder soul; S3/S6 run the fresh read-only
+  //    reviewer soul. The runner owns the visible review/fix loop and threads
+  //    S4 blocking findings to S5 through DispatchContext/landing artifacts. ─
   async runStep(
     spec: StepSpec,
     worktree: WorktreeHandle,
+    options?: AgentStepRunOptions,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     const result = await sc.run({
       name: `${spec.id}-${spec.role}`,
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: worktree.path,
-      sandbox: this.box(issueNumber, spec),
+      sandbox: this.box(issueNumber, spec, options),
       // The build worker's CLI is the spec's model slug → provider (the S2 coder
       // runs on Codex gpt-5.5; a claude slug stays claudeCode). agentForSlug keeps
       // the "model slug → baked CLI" #244 mapping unit-testable.
@@ -2032,6 +2043,7 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     worktree: WorktreeHandle,
     sessionId: string,
+    options?: AgentStepRunOptions,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     try {
@@ -2039,7 +2051,7 @@ export class RealBackend implements Backend {
         name: `${spec.id}-${spec.role}-resume`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
-        sandbox: this.box(issueNumber, spec),
+        sandbox: this.box(issueNumber, spec, options),
         // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
         // codex for the gpt-5.5 coder, claudeCode for a claude slug).
         agent: agentForSlug(spec.model),
@@ -2086,7 +2098,7 @@ export class RealBackend implements Backend {
           name: `${spec.id}-${spec.role}-resume-retry`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: worktree.path,
-          sandbox: this.box(issueNumber, spec),
+          sandbox: this.box(issueNumber, spec, options),
           // Same CLI as the fresh/native-resume build worker (agentForSlug).
           agent: agentForSlug(spec.model),
           maxIterations: 1,
@@ -2116,7 +2128,7 @@ export class RealBackend implements Backend {
       }
       // fresh-run fallback: re-dispatch the build worker (a dead resume session
       // ⇒ start a fresh sandbox.run for the same step).
-      return await this.runStep(spec, worktree);
+      return await this.runStep(spec, worktree, options);
     }
   }
 
@@ -2198,7 +2210,7 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Run the ship WORKER: ONE `sc.run` of the 2b container's top-level claude
+   * Run the ship WORKER: ONE `sc.run` of the 2b container's route-selected agent
    * invoking `gstack-ship` over the resident slice worktree (#336). `protected` so
    * a unit test fixtures the outcome without a real container (the real container
    * only runs on the driver / manual-smoke / e2e path).
@@ -2236,7 +2248,7 @@ export class RealBackend implements Backend {
     // leaked temp dirs accumulating under the codex-auth root).
     const auth = this.mountShipAuth(this.issueOf(worktree));
     try {
-      if (auth.claudeToken === undefined) {
+      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
           reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
@@ -2269,7 +2281,7 @@ export class RealBackend implements Backend {
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
         sandbox: this.shipSandbox(auth),
-        agent: sc.claudeCode(modelIdForSlug(spec.model)),
+        agent: agentForSlug(spec.model),
         // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
         // container (用户 note); maxIter is the within-worker budget. A genuine block
         // is the worker's `<ship>` escalate verdict, not the iteration limit.
@@ -2352,7 +2364,8 @@ export class RealBackend implements Backend {
       // the gate (cmr int-r3 A; matches readGhToken's empty-string normalization).
       claudeToken = tok === "" ? undefined : tok;
     } catch {
-      // claude token absent ⇒ the top-level claude worker degrades (no env var).
+      // claude token absent ⇒ Claude-family workers fail their preflight; non-Claude
+      // route slots simply run without this env var.
     }
     return { codexAuthDir, claudeToken, ghToken: this.readGhToken() };
   }

@@ -17,6 +17,7 @@ import type {
   CoderOutput,
   Escalation,
   Finding,
+  PriorFindingDisposition,
   ReviewerOutput,
   StepOutput,
 } from "./types.js";
@@ -31,7 +32,17 @@ const SEVERITIES: ReadonlySet<string> = new Set([
 ]);
 
 /** Exact action enum. */
-const ACTIONS: ReadonlySet<string> = new Set(["fix_now", "defer"]);
+const ACTIONS: ReadonlySet<string> = new Set([
+  "fix_now",
+  "defer",
+  "wont_fix",
+  "rejected",
+]);
+const PRIOR_FINDING_DISPOSITIONS: ReadonlySet<string> = new Set([
+  "still-active",
+  "verified-closed",
+  "unable-to-assess",
+]);
 
 /** Required string fields on a Finding (PRD #244 contract). */
 const FINDING_STRING_FIELDS = [
@@ -121,9 +132,43 @@ export function isValidFinding(f: unknown): f is Finding {
   if (typeof obj.action !== "string" || !ACTIONS.has(obj.action)) {
     return false;
   }
+  if (
+    (obj.action === "wont_fix" || obj.action === "rejected") &&
+    !isFilledString(obj.disposition_reason)
+  ) {
+    return false;
+  }
+  if (
+    obj.disposition_reason !== undefined &&
+    !isString(obj.disposition_reason)
+  ) {
+    return false;
+  }
+  if (
+    (obj.severity === "critical" || obj.severity === "high") &&
+    obj.action !== "fix_now"
+  ) {
+    return false;
+  }
   for (const field of FINDING_STRING_FIELDS) {
     if (!isString(obj[field])) return false;
   }
+  return true;
+}
+
+export function isValidPriorFindingDisposition(
+  d: unknown,
+): d is PriorFindingDisposition {
+  if (d == null || typeof d !== "object") return false;
+  const obj = d as Record<string, unknown>;
+  if (!isFilledString(obj.identityKey)) return false;
+  if (
+    typeof obj.status !== "string" ||
+    !PRIOR_FINDING_DISPOSITIONS.has(obj.status)
+  ) {
+    return false;
+  }
+  if (obj.reason !== undefined && !isString(obj.reason)) return false;
   return true;
 }
 
@@ -191,12 +236,17 @@ export function isValidReviewerOutput(
   o: StepOutput | undefined,
 ): o is ReviewerOutput {
   if (o == null || typeof o !== "object") return false;
-  if (o.kind !== "reviewer") return false;
-  const r = o as ReviewerOutput;
+  const obj = o as unknown as Record<string, unknown>;
+  if (obj.kind !== "reviewer") return false;
   // F1: same escalate-shape contract as the coder output.
-  if (!isValidEscalation(r.escalate)) return false;
-  if (!Array.isArray(r.findings)) return false;
-  return r.findings.every(isValidFinding);
+  if (!isValidEscalation(obj.escalate)) return false;
+  if (!Array.isArray(obj.findings)) return false;
+  if (!obj.findings.every(isValidFinding)) return false;
+  if (obj.priorFindingDispositions === undefined) return true;
+  return (
+    Array.isArray(obj.priorFindingDispositions) &&
+    obj.priorFindingDispositions.every(isValidPriorFindingDisposition)
+  );
 }
 
 /**

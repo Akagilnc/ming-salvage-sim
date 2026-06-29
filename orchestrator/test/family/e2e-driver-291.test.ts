@@ -95,9 +95,7 @@ afterEach(() => {
  * (independent) and 13 (blocked_by 12) — so wave 1 = {11,12}, wave 2 = {13}.
  */
 function makeSh(): Sh {
-  const SUB_ISSUES = JSON.stringify({
-    subIssues: { nodes: [{ number: 11 }, { number: 12 }, { number: 13 }], totalCount: 3 },
-  });
+  const SUB_ISSUES = JSON.stringify([{ number: 11 }, { number: 12 }, { number: 13 }]);
   const blockedBy: Record<number, string> = {
     11: "[]",
     12: "[]",
@@ -105,8 +103,8 @@ function makeSh(): Sh {
   };
   return (file, args) => {
     if (file === "gh") {
-      if (args[0] === "issue" && args.includes("subIssues")) return SUB_ISSUES;
       if (args[0] === "api") {
+        if (String(args[1]).includes("/sub_issues")) return SUB_ISSUES;
         // .../issues/<n>/dependencies/blocked_by
         const m = /issues\/(\d+)\/dependencies/.exec(args[1] ?? "");
         const n = m ? Number(m[1]) : -1;
@@ -199,8 +197,11 @@ class E2EFamilyBackend extends RealFamilyBackend {
     _spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<CmrWorkerOutcome> {
-    this.cmrCalls.push({ familyBase: ctx.familyBase! });
-    return { kind: "verdict", converged: true };
+    this.cmrCalls.push({
+      familyBase: ctx.familyBase!,
+      ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+    });
+    return { kind: "verdict", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
   }
   // #336: 止于 PR is now a CONTAINER ship WORKER (gstack-ship) via dispatchWorker →
   // runShipWorker, NOT the inline openFamilyPr. Override the worker seam (no real
@@ -305,12 +306,15 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
     expect(order.indexOf(12)).toBeLessThan(order.indexOf(13));
 
     // ── 4. the run STOPPED at the PR (ship worker dispatched once, family base) ─
-    // verify ran at BOTH barriers (each wave + final), cmr ran once (final), the
+    // verify ran at BOTH barriers (each wave + final), CMR ran as two final passes, the
     // ship WORKER ran once with the family base (#336: gstack-ship, not the inline
     // openFamilyPr) — and nothing merged to main.
     expect(backend.verifyCalls.length).toBeGreaterThanOrEqual(1);
     expect(backend.verifyCalls.some((v) => v.phase === "final")).toBe(true);
-    expect(backend.cmrCalls).toEqual([{ familyBase }]);
+    expect(backend.cmrCalls).toEqual([
+      { familyBase, cmrPass: "completeness" },
+      { familyBase, cmrPass: "correctness" },
+    ]);
     expect(backend.shipCalls).toEqual([familyBase]);
     // The legacy inline push path is DEAD — the ship worker replaced it (#336).
     expect(backend.prCalls).toEqual([]);

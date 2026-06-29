@@ -16,31 +16,30 @@
 // ───────────────────────────── step identifiers ─────────────────────────────
 
 /**
- * The single-slice step sequence (ADR 0026 2026-06-24 correction, wiki line 42).
+ * The single-slice step sequence (ADR 0030): the runner owns the visible
+ * per-slice review/fix loop.
  *
- * Under the corrected ADR 0026 the single-slice runner is a PURE SCHEDULER and
- * the per-slice review→fix→re-review LOOP no longer lives at the runner level. S2
- * is ONE memory-bearing build worker that runs the WHOLE per-slice sequence
- * INTERNALLY (invoke `/tdd` → typecheck + full suite → `/review` + self-check 二连
- * → baseline commit → `/ak-cross-m-review --scenario per-slice` to concurrence →
- * return the FINAL reviewed commit). The runner dispatches it ONCE and reads its
- * terminal verdict — there is NO runner-level reviewer step (S3/S6), NO
- * fix step (S5), NO route fan-out (S4). The discipline lives in the versioned
- * skills, never in the runner.
+ *   S0 gate → S1 context → S2 implement → S3 review → S4 classify
+ *     → S7 ship when clean
+ *     → S5 fix → S6 fresh full-diff review → S4 classify while blocking remains
+ *     → S8 handoff
  *
- *   worker steps      : S2 coder build (the whole per-slice sequence), S7 ship
- *   scheduling actions: S0 input_gate, S1 load_context, S8 handoff
- *
- * S7 is a SHIP worker step (invoke `gstack-ship`); cmr/PR live at the family layer.
+ * S2 and S5 are coder workers. S3 and S6 are fresh read-only reviewer workers.
+ * S4 is the runner-owned classification boundary that makes per-round verdicts
+ * visible in the ledger instead of hiding the loop inside one coder session.
  */
 export type StepId =
   | "S0"
   | "S1"
   | "S2"
+  | "S3"
+  | "S4"
+  | "S5"
+  | "S6"
   | "S7"
   | "S8";
 
-/** Which soul a step runs under. v0.1 = one image, two roles. */
+/** Which role a single-slice worker runs under. */
 export type StepRole = "coder" | "reviewer";
 
 /** Terminal handoff status (ADR 0018 / PRD #244 route table). */
@@ -51,7 +50,7 @@ export type HandoffStatus = "success" | "escalate" | "error";
 /**
  * Soul identifier injected into the sandbox for a step.
  *
- * - `"coder"`: full dev-discipline soul (wiki TDD flow, /review, self-check).
+ * - `"coder"`: implementation/fix soul (TDD for S2, finding fix contract for S5).
  * - `"READ-ONLY"`: reviewer soul with READ-ONLY soft constraint baked in
  *   (prompt-level, not an OS-level mount — same image, separate `run()`).
  * - `"cmr"`: the family integrated-cmr fixer soul (ADR 0026 2026-06-24) — a WRITE
@@ -89,7 +88,7 @@ export interface StepSpec {
    * Short model slug the runtime maps to a baked-in CLI.
    * Changing the slug is all it takes to swap models — no image rebuild, no
    * StepSpec shape change (PRD #244 Implementation Decisions).
-   * `"sonnet"` → coder CLI; `"opus"` → reviewer CLI.
+   * Route-selected slug resolved through the model registry.
    */
   readonly model: string;
   /**
@@ -149,8 +148,34 @@ export interface Finding {
   readonly claim_quote: string;
   readonly location: string;
   readonly suggested_fix: string;
-  /** P0/P1 ⇒ always `fix_now`; P2/P3 reviewer judges fix_now vs defer. */
-  readonly action: "fix_now" | "defer";
+  /**
+   * P0/P1 ⇒ always `fix_now`; P2/P3 reviewer judges fix_now vs defer.
+   * `wont_fix` / `rejected` are explicit ADR0030 suppression dispositions:
+   * they must carry a rationale and never suppress a material severity upgrade.
+   */
+  readonly action: "fix_now" | "defer" | "wont_fix" | "rejected";
+  /** Required when action is `wont_fix` or `rejected`; optional otherwise. */
+  readonly disposition_reason?: string;
+}
+
+export interface FindingDisposition {
+  readonly identityKey: string;
+  readonly status: "unrepaired" | "wont_fix" | "rejected";
+  readonly reason: string;
+  readonly severity: Finding["severity"];
+  readonly reopenAttempts: number;
+  /** One same-severity fresh-review dispute is allowed before suppression resumes. */
+  readonly disputeAttempts?: number;
+}
+
+/** Fresh-review adjudication for a prior coder-fix worker's claimed-fixed finding. */
+export interface PriorFindingDisposition {
+  /** Stable key produced by `findingIdentityKey` for the prior claimed-fixed finding. */
+  readonly identityKey: string;
+  /** ADR0030's explicit closure buckets; absence is never closure. */
+  readonly status: "still-active" | "verified-closed" | "unable-to-assess";
+  /** Optional reviewer rationale for audit/debugging. */
+  readonly reason?: string;
 }
 
 /** Output of a coder step (S2/S5). 0 commits ⇒ committed:false (not a miss). */
@@ -162,10 +187,11 @@ export interface CoderOutput {
   readonly escalate?: Escalation;
 }
 
-/** Output of a reviewer step (S3/S6). Empty findings ⇒ approve. */
+/** Output of a reviewer step (S3/S6). Empty findings ⇒ approve only when no prior finding needs adjudication. */
 export interface ReviewerOutput {
   readonly kind: "reviewer";
   readonly findings: ReadonlyArray<Finding>;
+  readonly priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
 }
@@ -360,11 +386,9 @@ export interface DispatchContext {
   /**
    * The prior agent session id to resume — present ONLY for a `session:"resume"`
    * dispatch, i.e. the CRASH/ESCALATE-resume path where the runner re-opens a
-   * recorded S2 build session (ADR 0026 invariant). A NORMAL S2 build is
-   * `session:"fresh"` and does NOT carry this; the per-slice review→fix loop runs
-   * INSIDE the build worker's own session, not via a resumed session (codex cmr
-   * R3/R4 finding: a normal build must not take the resume path, which skips
-   * git-truthing).
+   * recorded agent session. Normal S2/S3/S5/S6 runner-visible work is
+   * `session:"fresh"` and does NOT carry this (codex cmr R3/R4 finding: normal
+   * work must not take the resume path, which skips git-truthing).
    */
   readonly resumeSessionId?: string;
   /**
@@ -374,12 +398,31 @@ export interface DispatchContext {
    */
   readonly issueSnapshot?: IssueSnapshot;
   /**
+   * S5 coder-fix worker only: the blocking reviewer findings selected at S4
+   * from the current full-diff review. This is the structured cross-worker
+   * contract ADR 0030 needs; the runner owns classification and the fix worker
+   * receives data, not hidden session memory.
+   */
+  readonly blockingFindings?: ReadonlyArray<Finding>;
+  /**
+   * Stable identity keys for {@link blockingFindings}. Suppression/reopen logic
+   * must match findings by normalized identity rather than exact object text, so
+   * the runner passes the keys alongside the structured findings.
+   */
+  readonly blockingFindingIdentityKeys?: ReadonlyArray<string>;
+  /**
    * FAMILY cmr worker only: the child issue numbers whose merge into the family
    * base was LLM-resolved (#295) — forwarded to the integrated cmr 承重闸 so it
    * focuses on the merges a machine touched (PRD #330 / #291 缺口 1). Undefined for
    * single-slice workers and for a conflict-free family run.
    */
   readonly llmResolvedChildren?: ReadonlyArray<number>;
+  /**
+   * FAMILY cmr worker only: which integrated CMR pass this worker is running.
+   * `completeness` is the step5 gate; `correctness` is the step6 gate and must be
+   * dispatched only after completeness passes.
+   */
+  readonly cmrPass?: "completeness" | "correctness";
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */
@@ -401,14 +444,29 @@ export type ReviewerResult = ReviewerOutput;
  */
 export interface CmrResult {
   readonly kind: "cmr";
+  /** Which integrated CMR pass produced this verdict, when known. */
+  readonly cmrPass?: "completeness" | "correctness";
   /** Converged (all reviewers agreed) ⇒ true; else the gate is red. */
   readonly converged: boolean;
   /** Why it did not converge — set when red (handed to escalate). */
   readonly reason?: string;
+  /** CMR leg slugs that actually produced a usable review this pass. */
+  readonly successfulLegs?: readonly string[];
+  /** Declared CMR legs skipped at runtime, with the visible degrade flag reason. */
+  readonly skippedLegs?: readonly CmrSkippedLeg[];
+  /** Prior claimed-fixed findings the integrated CMR worker asks the runner to adjudicate. */
+  readonly claimedFixedFindingIdentityKeys?: readonly string[];
+  /** Explicit closure disposition for claimed-fixed integrated CMR findings. */
+  readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   // NOTE: a STUCK cmr worker is the WorkerResult-level `{kind:"escalated"}` case,
   // NOT an `escalate` field on this `completed` payload (codex cmr R3b finding: a
   // payload-level escalate would be silently ignored by the verifyCmr consumer,
   // which reads `converged`). `completed` means the worker ran to completion.
+}
+
+export interface CmrSkippedLeg {
+  readonly slug: string;
+  readonly reason: string;
 }
 
 /**
@@ -550,6 +608,14 @@ export interface LedgerEntry {
   readonly step: StepId;
   /** Structured output for agent steps; undefined for runner-action steps. */
   readonly output?: StepOutput;
+  /**
+   * Runner-owned ADR0030 finding dispositions after an S4 classification.
+   *
+   * S4 is the durable review/fix boundary. Persisting dispositions here lets a
+   * resumed run replay wont-fix/rejected suppressions and bounded severity
+   * reopens instead of reclassifying from only the last reviewer payload.
+   */
+  readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
 }
 
 /**
@@ -704,14 +770,15 @@ export interface Backend {
    * id is recorded in the ledger). A bare {@link StepOutput} return is still
    * accepted (no real id → run-level UUID fallback); the runner normalises both.
    *
-   * ADR 0026: the only agent step is the S2 build worker; resume re-opens that
-   * one session. The per-slice review→fix loop runs INSIDE the build worker, so
-   * there is no separate fix step to deliver findings to on resume.
+   * ADR 0030: resume re-opens the recorded agent step when a human answered an
+   * escalation. Normal per-slice review/fix rounds are runner-visible fresh
+   * dispatches; S4 findings are delivered to S5 through DispatchContext.
    */
   resumeSession(
     spec: StepSpec,
     worktree: WorktreeHandle,
     sessionId: string,
+    options?: AgentStepRunOptions,
   ): Promise<StepOutput | StepResult>;
   /** S0: lightweight metadata for the input gate (host-side `gh`). */
   fetchIssueMeta(issueNumber: number): Promise<IssueMeta>;
@@ -725,8 +792,7 @@ export interface Backend {
     snapshot: IssueSnapshot,
   ): Promise<void>;
   /**
-   * S2: one `sandbox.run()` for the whole-slice build worker (ADR 0026 — the only
-   * agent step).
+   * S2/S3/S5/S6: one `sandbox.run()` per runner-visible agent worker.
    *
    * #256 seam extension (DONE): the return is widened from `StepOutput` to
    * `StepOutput | StepResult`. The real Backend returns a {@link StepResult}
@@ -741,6 +807,7 @@ export interface Backend {
   runStep(
     spec: StepSpec,
     worktree: WorktreeHandle,
+    options?: AgentStepRunOptions,
   ): Promise<StepOutput | StepResult>;
   /**
    * THE unified worker-dispatch seam (ADR 0026 / PRD #330 #331).
@@ -810,6 +877,19 @@ export interface Backend {
    * the S8 handoff entry, BEFORE returning the final result.
    */
   writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void>;
+}
+
+/** Runner-owned S5 findings file made visible inside the worker sandbox. */
+export interface FixFindingsLandingFile {
+  /** Host path to the runner-owned JSON file. */
+  readonly path: string;
+  /** Path where the worker sees the file inside the sandbox repo. */
+  readonly sandboxPath: string;
+}
+
+/** Optional agent-step execution metadata consumed by real sandboxes. */
+export interface AgentStepRunOptions {
+  readonly fixFindingsLanding?: FixFindingsLandingFile;
 }
 
 // ──────────────────────────── run result ────────────────────────────

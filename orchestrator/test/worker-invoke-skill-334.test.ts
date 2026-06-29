@@ -16,8 +16,8 @@
  *      NOT hand-copy the TDD/review/fix METHOD into the prompt. The workflow lives
  *      in the baked soul + skills.
  *
- * Plus the load-bearing [C] (PRD #330 R2): the runner dispatches exactly the S2
- * coder worker and then S7 ship; there is no runner-driven reviewer/fix loop.
+ * Plus the load-bearing [C] (ADR 0030): the runner dispatches implementation,
+ * reviewer, fix, reviewer, and ship workers through visible boundaries.
  */
 
 import { dirname, join } from "node:path";
@@ -28,6 +28,7 @@ import { runOrchestrator } from "../src/runner.js";
 import {
   RealBackend,
   SANDBOX_CODEX_DIR,
+  SANDBOX_FIX_FINDINGS_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
   SANDBOX_ISSUE_NUMBER_ENV,
@@ -69,15 +70,19 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     }
     // Expose the pure config seam + a way to feed canned auth without reading
     // host credential files (the auth-file I/O is not under test here).
-    public config(spec: StepSpec): {
+    public config(
+      spec: StepSpec,
+      options?: Parameters<RealBackend["runStep"]>[2],
+    ): {
       imageName: string;
       env: Record<string, string>;
-      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
       return this.boxConfig(
         { authDir: "/tmp/auth-256", claudeToken: "tok", ghToken: "gho_test" },
         spec,
         334,
+        options,
       );
     }
   }
@@ -128,6 +133,24 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBe("gho_test");
   });
 
+  it("mounts S5 fix findings at the documented worktree-root path read-only", () => {
+    const cfg = makeBackend().config(coderSpec, {
+      fixFindingsLanding: {
+        path: "/host/.ledger-334/fix-findings.json",
+        sandboxPath: ".orchestrator-fix-findings.json",
+      },
+    });
+
+    expect(cfg.env[SANDBOX_FIX_FINDINGS_PATH_ENV]).toBe(
+      ".orchestrator-fix-findings.json",
+    );
+    expect(cfg.mounts).toContainEqual({
+      hostPath: "/host/.ledger-334/fix-findings.json",
+      sandboxPath: ".orchestrator-fix-findings.json",
+      readonly: true,
+    });
+  });
+
   it("marks the coder/agent container as an orchestrator-spawned, non-interactive session", () => {
     const cfg = makeBackend().config(coderSpec);
     expect(cfg.env.OPENCLAW_SESSION).toBe("1");
@@ -145,6 +168,8 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
 
 describe("#334 thin prompts read baked souls and do not hand-copy methodology", () => {
   const read = (f: string): string => readFileSync(join(promptsDir, f), "utf8");
+  const readSoul = (f: string): string =>
+    readFileSync(join(here, "..", "image", "souls", f), "utf8");
 
   it("coder_implement.md is an entrypoint, not a TDD/review mini-wiki", () => {
     const p = read("coder_implement.md");
@@ -156,29 +181,70 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(p).not.toMatch(/\bRED\b|\bGREEN\b|\brefactor\b|Baseline commit|\bOpus\b|\bsubagent\b|ak-cross-m-review/i);
   });
 
-  it("the coder soul carries the per-slice process, including Claude-paused review routing", () => {
-    const soul = readFileSync(join(here, "..", "image", "souls", "coder.md"), "utf8");
+  it("fix/review prompt files stay thin and leave path/review method to the soul", () => {
+    const fix = read("coder_fix.md");
+    expect(fix).toMatch(/\/home\/agent\/\.orchestrator\/souls\/coder\.md/);
+    expect(fix).toMatch(/fix-findings path/i);
+    expect(fix).not.toMatch(/sibling ledger|legacy compatibility fallback|Prefer the sibling ledger/is);
+
+    const review = read("reviewer_review.md");
+    expect(review).toMatch(/\/home\/agent\/\.orchestrator\/souls\/reviewer\.md/);
+    expect(review).toMatch(/baked soul plus runner\s+parameters/i);
+    expect(review).not.toMatch(/\.orchestrator-snapshot\.json/i);
+    expect(review).not.toMatch(/fetch the current issue body|Retry transient network failures|Review the current full slice diff/is);
+  });
+
+  it("the coder soul carries implementation/fix process but not the per-slice review loop", () => {
+    const soul = readSoul("coder.md");
     expect(soul).toMatch(/Invoke `\/tdd`/i);
-    expect(soul).toMatch(/Claude-paused local pipeline/i);
-    expect(soul).toMatch(/non-Claude reviewer leg/i);
-    expect(soul).toMatch(/use a Codex\s+reviewer by default/i);
-    expect(soul).toMatch(/agy may\s+substitute/i);
-    expect(soul).toMatch(/Do not call Claude\/Anthropic locally/i);
-    expect(soul).toMatch(/one reviewer leg|single reviewer leg/i);
-    expect(soul).toMatch(/do not invoke `ak-cross-m-review`/i);
+    expect(soul).toMatch(/coder-fix|fix worker|blocking review findings/i);
+    expect(soul).not.toMatch(/Second review|non-Claude reviewer leg/i);
     expect(soul).toMatch(/gh issue view/i);
     expect(soul).toMatch(/Snapshot files.*not execution input/is);
+  });
+
+  it("the reviewer soul carries snapshot-input policy outside the thin prompt", () => {
+    const soul = readSoul("reviewer.md");
+    expect(soul).toMatch(/Snapshot files.*not execution input/is);
+    expect(soul).toMatch(/git state for the review scope/i);
+  });
+
+  it("#419 integrated cmr pass entrypoints read pass-specific souls that invoke only their lens gate", () => {
+    const completenessPrompt = read("integrated_cmr_completeness.md");
+    const correctnessPrompt = read("integrated_cmr_correctness.md");
+    expect(completenessPrompt).toMatch(
+      /\/home\/agent\/\.orchestrator\/souls\/cmr_completeness\.md/,
+    );
+    expect(correctnessPrompt).toMatch(
+      /\/home\/agent\/\.orchestrator\/souls\/cmr_correctness\.md/,
+    );
+
+    const completenessSoul = readSoul("cmr_completeness.md");
+    expect(completenessSoul).toMatch(/\bak-cmr-completeness\b/);
+    expect(completenessSoul).not.toMatch(/\bak-cmr-correctness\b/);
+    expect(completenessSoul).not.toMatch(/Gate 2|correctness gate|Run only the correctness/is);
+
+    const correctnessSoul = readSoul("cmr_correctness.md");
+    expect(correctnessSoul).toMatch(/\bak-cmr-correctness\b/);
+    expect(correctnessSoul).not.toMatch(/\bak-cmr-completeness\b/);
+    expect(correctnessSoul).not.toMatch(/Gate 1|completeness gate|Run only the completeness/is);
   });
 
   it("every existing prompt still defines its structured output contract (tag + signal)", () => {
     // Thinning the METHOD must not drop the output contract route()/the seam
     // decode against — each worker must still emit its tag + completion signal.
-    // Only the surviving prompts exist (ADR 0026 deleted the reviewer/fix files):
-    // the build coder (coder_implement.md) and the ship worker (ship.md).
     expect(read("coder_implement.md")).toMatch(/<coder>/);
     expect(read("coder_implement.md")).toMatch(/CODER_STEP_COMPLETE/);
+    expect(read("coder_fix.md")).toMatch(/<coder>/);
+    expect(read("coder_fix.md")).toMatch(/CODER_STEP_COMPLETE/);
+    expect(read("reviewer_review.md")).toMatch(/<review>/);
+    expect(read("reviewer_review.md")).toMatch(/REVIEWER_STEP_COMPLETE/);
     expect(read("ship.md")).toMatch(/<ship>/);
     expect(read("ship.md")).toMatch(/SHIP_STEP_COMPLETE/);
+    expect(read("integrated_cmr_completeness.md")).toMatch(/<cmr>/);
+    expect(read("integrated_cmr_completeness.md")).toMatch(/CMR_STEP_COMPLETE/);
+    expect(read("integrated_cmr_correctness.md")).toMatch(/<cmr>/);
+    expect(read("integrated_cmr_correctness.md")).toMatch(/CMR_STEP_COMPLETE/);
   });
 });
 
@@ -252,7 +318,23 @@ class ReviewWorkerBackend implements Backend {
           : [];
       // Legacy compatibility shape: a reviewer worker returns findings, not a
       // bare verdict. The active runner path no longer dispatches it normally.
-      return { kind: "completed", output: { kind: "reviewer", findings } };
+      return {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings,
+          ...(this.reviewCount > 1
+            ? {
+                priorFindingDispositions: [
+                  {
+                    identityKey: "correctness|f.ts:1|x",
+                    status: "verified-closed",
+                  },
+                ],
+              }
+            : {}),
+        },
+      };
     }
     return {
       kind: "completed",
@@ -261,7 +343,7 @@ class ReviewWorkerBackend implements Backend {
   }
 }
 
-describe("#334 the build coder worker routes /tdd and a committed build ships (ADR 0026)", () => {
+describe("#334 ADR 0030 worker routing", () => {
   it("the S2 build coder worker is dispatched with skill /tdd", async () => {
     const backend = new ReviewWorkerBackend();
     await runOrchestrator({ issueNumber: 334, backend });
@@ -270,15 +352,15 @@ describe("#334 the build coder worker routes /tdd and a committed build ships (A
     expect(s2?.skill).toBe("/tdd");
   });
 
-  it("a committed whole-slice build → S7 ship (no runner-driven reviewer/fix steps)", async () => {
-    // ADR 0026: the per-slice review→fix→cmr loop runs INSIDE the S2 worker, so
-    // the runner sees exactly ONE coder dispatch then the ship worker — never an
-    // S3/S5/S6 reviewer/fix step.
+  it("blocking review dispatches S5 fix, then S6 fresh review before S7 ship", async () => {
     const backend = new ReviewWorkerBackend();
     const result = await runOrchestrator({ issueNumber: 334, backend });
     expect(result.status).toBe("success");
     expect(backend.dispatched).toEqual([
       "S2:coder:/tdd",
+      "S3:reviewer:/review",
+      "S5:coder:/tdd",
+      "S6:reviewer:/review",
       "S7:ship:gstack-ship",
     ]);
   });
