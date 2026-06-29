@@ -1000,7 +1000,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // exact `git diff <familyBaseStartHead>...<familyBase>` scope command + the
       // baseline SHA + the machine-resolved children.
       this.writeCmrFocusFile(ctx);
-      this.writeCmrRouteFile(spec);
+      this.writeCmrRouteFile(ctx.cmrPass);
       const result = await sc.run({
         name: "family-cmr",
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1083,15 +1083,10 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /** Write the route-selected CMR review legs for the in-container worker. */
-  protected writeCmrRouteFile(spec: WorkerSpec): void {
-    const pass = spec.promptFile.includes("completeness")
-      ? "completeness"
-      : spec.promptFile.includes("correctness")
-        ? "correctness"
-        : "legacy";
+  protected writeCmrRouteFile(pass: DispatchContext["cmrPass"]): void {
     const body = JSON.stringify(
       {
-        pass,
+        pass: pass ?? "legacy",
         reviewLegs: cmrReviewLegs(),
       },
       null,

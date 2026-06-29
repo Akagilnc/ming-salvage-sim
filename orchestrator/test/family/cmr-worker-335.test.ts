@@ -900,8 +900,8 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     }): void {
       this.writeCmrFocusFile(ctx as never);
     }
-    public routeFile(spec: ReturnType<typeof cmrWorkerSpec>): void {
-      this.writeCmrRouteFile(spec);
+    public routeFile(pass: "completeness" | "correctness" | undefined): void {
+      this.writeCmrRouteFile(pass);
     }
   }
 
@@ -933,6 +933,25 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     // It is git-ignored (info/exclude), so the review never accidentally commits it.
     const exclude = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
     expect(exclude.split("\n")).toContain(CMR_FOCUS_FILENAME);
+  });
+
+  it("writes the route file pass from dispatch context, not the prompt filename", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    be.routeFile("correctness");
+    const body = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as {
+      pass: string;
+    };
+    expect(body.pass).toBe("correctness");
   });
 
   it("no recorded cut SHA ⇒ FAIL-CLOSED throw, never a stale-base fallback scope (codex R3)", () => {
@@ -999,7 +1018,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       familyBaseStartHead: "abc123",
     });
 
-    be.routeFile(cmrWorkerSpec("fresh", "correctness"));
+    be.routeFile("correctness");
 
     const route = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as unknown;
     expect(route).toEqual({

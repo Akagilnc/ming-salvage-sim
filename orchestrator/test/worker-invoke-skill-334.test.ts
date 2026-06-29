@@ -190,6 +190,7 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     const review = read("reviewer_review.md");
     expect(review).toMatch(/\/home\/agent\/\.orchestrator\/souls\/reviewer\.md/);
     expect(review).toMatch(/baked soul plus runner\s+parameters/i);
+    expect(review).not.toMatch(/\.orchestrator-snapshot\.json/i);
     expect(review).not.toMatch(/fetch the current issue body|Retry transient network failures|Review the current full slice diff/is);
   });
 
