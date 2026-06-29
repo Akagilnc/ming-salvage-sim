@@ -203,7 +203,7 @@ if sys.platform == "darwin":
         coll,
         name="Ming_LLM.app",
         icon=None,
-        bundle_identifier="com.local.mingsalvagesim",
+        bundle_identifier="com.local.mingllm",
         info_plist={
             "NSHighResolutionCapable": True,
             "LSBackgroundOnly": False,
