@@ -45,7 +45,12 @@ import {
   stepSpecToWorkerSpec,
   workerResultToStep,
 } from "./dispatchWorker.js";
-import { modelForSlot, type ModelRouteEnv } from "./modelRoutes.js";
+import {
+  activeModelRoute,
+  modelForSlot,
+  printableRouteLineup,
+  type ModelRouteEnv,
+} from "./modelRoutes.js";
 import { isFilledString } from "./shipOutcome.js";
 // Shared seam guards — single source of truth, also used by route(), so the
 // coder-output / commitsAdded rules can never drift.
@@ -577,6 +582,9 @@ function isReviewerStructuredOutputError(err: unknown): boolean {
 
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
+  console.info(
+    `[orchestrator] model route lineup\n${printableRouteLineup(activeModelRoute())}`,
+  );
   // Family-run context (ADR 0022 decision 2). When present this is a CHILD slice
   // of a family run: cut from the family base (decision 7) and S7 push is a local
   // no-op (decision 2). Absent ⇒ the v0.1 standalone behaviour (base=main, push).
