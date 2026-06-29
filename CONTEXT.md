@@ -357,6 +357,22 @@ _Avoid_: 批次、轮(混淆评审轮)
 家族集成层的账本(家族 base worktree 的 sibling、worktree 外),记已合子片 hash / 当前波次 / 家族 base HEAD,供 merger 幂等续跑(崩溃重启跳过已合)。区别于单片的 step ledger。
 _Avoid_: step ledger(那是单片的)、状态文件(太泛)
 
+**路线 / route**:
+一条命名预设(`normal` / `codex-tight` / `claude-tight` …),显式列出本轮**全部模型槽**(coder / per-slice reviewer / coder-fix / ship / merger / cmr 腿)各自用哪个模型。切路线 = 拨一个总开关、整套翻;任一槽可被单 env override 盖过。本质 = 「按额度死活选哪些家族干活」——额度按家族整片死(claude 100% → sonnet/opus/haiku 全死),故没有槽能钉死在某家族。切换手动(额度紧但未耗尽时提前调)。(ADR 0031)
+_Avoid_: 环境/profile(那是镜像)、家族(那是模型 vendor 分组)
+
+**模型槽 / model slot**:
+一条路线里可独立赋模型的一个角色位(coder / reviewer / fix / ship / merger / 各 cmr 腿)。日常切换多半只动其中 1-2 槽(走 override),不是整路线重写。
+_Avoid_: 角色(角色是职能单元,槽是它在某路线里的模型赋值位)
+
+**后端注册表 / registry**:
+把 model slug 翻成真后端的数据表:每条 = `slug → {provider, model-id, options}`,覆盖 Sandcastle 原生 6 provider(claudeCode/codex/opencode/copilot/cursor/pi)。加已烤 CLI 的兄弟模型 = 加一行;加新 CLI = 烤二进制+挂 auth 一次。是「第一次做点工作、后续方便切」的落点。(ADR 0031)
+_Avoid_: 写死的 switch(那是被它取代的旧形态)、config(太泛)
+
+**强腿 / strong leg**:
+够格当 cmr 承重闸一腿的强模型(opus / codex(gpt-5.5) / gemini(agy))。cmr 硬底线 = **≥1 强腿实际跑成**,否则 escalate(零强腿 = 橡皮图章)。便宜实验模型(glm/haiku/spark)默认是 coder 槽的、不当 cmr 腿。(ADR 0032)
+_Avoid_: 把任何模型都算腿、把 coder 槽的便宜模型当评审腿
+
 ## Example Dialogue
 
 开发者：“玩家说‘拟旨如下’时，CLI 通道能不能直接把诏书写进库？”
