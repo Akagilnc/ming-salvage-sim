@@ -21,6 +21,10 @@ classify each as still-active / verified-closed / unable-to-assess in the
 structured finding/disposition contract when available; absence alone is not proof
 of closure.
 
+Snapshot files such as `.orchestrator-snapshot.json` are audit/resume artifacts,
+not execution input. Use runner-supplied environment variables, mounted files,
+and git state for the review scope.
+
 Do not invoke `ak-cross-m-review` here. Full cross-model CMR is a separate
 family-layer worker over the assembled family base. Do not run a fix loop; report
 findings per your worker output contract and stop.

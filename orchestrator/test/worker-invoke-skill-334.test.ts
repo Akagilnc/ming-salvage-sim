@@ -203,6 +203,12 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(soul).toMatch(/Snapshot files.*not execution input/is);
   });
 
+  it("the reviewer soul carries snapshot-input policy outside the thin prompt", () => {
+    const soul = readSoul("reviewer.md");
+    expect(soul).toMatch(/Snapshot files.*not execution input/is);
+    expect(soul).toMatch(/git state for the review scope/i);
+  });
+
   it("#419 integrated cmr pass entrypoints read pass-specific souls that invoke only their lens gate", () => {
     const completenessPrompt = read("integrated_cmr_completeness.md");
     const correctnessPrompt = read("integrated_cmr_correctness.md");
