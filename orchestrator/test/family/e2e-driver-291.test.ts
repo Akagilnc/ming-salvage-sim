@@ -95,9 +95,7 @@ afterEach(() => {
  * (independent) and 13 (blocked_by 12) — so wave 1 = {11,12}, wave 2 = {13}.
  */
 function makeSh(): Sh {
-  const SUB_ISSUES = JSON.stringify({
-    subIssues: { nodes: [{ number: 11 }, { number: 12 }, { number: 13 }], totalCount: 3 },
-  });
+  const SUB_ISSUES = JSON.stringify([{ number: 11 }, { number: 12 }, { number: 13 }]);
   const blockedBy: Record<number, string> = {
     11: "[]",
     12: "[]",
@@ -105,8 +103,8 @@ function makeSh(): Sh {
   };
   return (file, args) => {
     if (file === "gh") {
-      if (args[0] === "issue" && args.includes("subIssues")) return SUB_ISSUES;
       if (args[0] === "api") {
+        if (String(args[1]).includes("/sub_issues")) return SUB_ISSUES;
         // .../issues/<n>/dependencies/blocked_by
         const m = /issues\/(\d+)\/dependencies/.exec(args[1] ?? "");
         const n = m ? Number(m[1]) : -1;

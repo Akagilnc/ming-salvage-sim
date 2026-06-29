@@ -54,49 +54,117 @@ import type {
 // PURE epic-assembly logic (unit-tested without live GitHub)
 // ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Extract the child issue NUMBERS from `gh issue view <epic> --json subIssues`.
- *
- * The real shape is `{"subIssues":{"nodes":[{"number":N},…],"totalCount":N}}` (an
- * OBJECT — the same shape {@link parseSubIssueCount} reads the count off). The
- * driver needs the NUMBERS (each a child slice), so it reads `nodes[].number`.
- * **Skips CLOSED children** (each node carries `state`): a re-run epic carries
- * already-done slices, and a closed child must NOT be re-admitted (it aborts the
- * family run at the single-slice S0 gate). OPEN / state-less are kept.
- * Tolerates a non-object / non-array / missing-number value by skipping it (a
- * future/odd shape must not crash the assembly); de-dupes, preserving first-seen
- * order. Pure (parses a value only) so it is unit-tested without `gh`.
- */
-export function parseSubIssueNumbers(parsed: { subIssues?: unknown } | null | undefined): number[] {
-  // online R2 (Gemini): `JSON.parse` can yield null/undefined/a non-object — guard
-  // before the property read so a malformed `gh` payload returns [] not a TypeError.
+/** One child excluded from this family run before wave scheduling. */
+export interface SkippedFamilyChild {
+  readonly issue: number;
+  readonly reason: "closed" | "not_ready_for_agent" | "parent_issue";
+  readonly message: string;
+}
+
+interface SubIssueAdmission {
+  readonly admitted: ReadonlyArray<number>;
+  readonly skipped: ReadonlyArray<SkippedFamilyChild>;
+}
+
+function subIssueNodes(parsed: unknown): unknown[] {
+  // REST native sub-issues endpoint: `gh api repos/O/R/issues/<epic>/sub_issues`.
+  if (Array.isArray(parsed)) return parsed;
+  // Older/newer gh GraphQL shape retained for pure parser compatibility.
   if (parsed === null || typeof parsed !== "object") return [];
-  const sub = parsed.subIssues;
+  const sub = (parsed as { subIssues?: unknown }).subIssues;
   if (sub === null || typeof sub !== "object") return [];
   const nodes = (sub as { nodes?: unknown }).nodes;
-  if (!Array.isArray(nodes)) return [];
+  return Array.isArray(nodes) ? nodes : [];
+}
+
+function labelNames(node: unknown): string[] | undefined {
+  const raw = (node as { labels?: unknown })?.labels;
+  if (raw === undefined) return undefined;
+  const labels = Array.isArray(raw)
+    ? raw
+    : raw !== null && typeof raw === "object" && Array.isArray((raw as { nodes?: unknown }).nodes)
+      ? (raw as { nodes: unknown[] }).nodes
+      : undefined;
+  return labels
+    ?.map((l) => (l as { name?: unknown })?.name)
+    .filter((name): name is string => typeof name === "string");
+}
+
+function subIssueCount(node: unknown): number | undefined {
+  const restSummary = (node as { sub_issues_summary?: unknown })?.sub_issues_summary;
+  if (restSummary !== null && typeof restSummary === "object") {
+    const total = (restSummary as { total?: unknown }).total;
+    if (typeof total === "number" && Number.isFinite(total)) return total;
+  }
+  const graphSubIssues = (node as { subIssues?: unknown })?.subIssues;
+  if (graphSubIssues !== null && typeof graphSubIssues === "object") {
+    const total = (graphSubIssues as { totalCount?: unknown }).totalCount;
+    if (typeof total === "number" && Number.isFinite(total)) return total;
+  }
+  return undefined;
+}
+
+function skipReason(node: unknown): SkippedFamilyChild["reason"] | undefined {
+  const state = (node as { state?: unknown })?.state;
+  if (typeof state === "string" && state.toUpperCase() === "CLOSED") return "closed";
+
+  const labels = labelNames(node);
+  if (labels !== undefined && !labels.includes("ready-for-agent")) return "not_ready_for_agent";
+
+  const children = subIssueCount(node);
+  if (children !== undefined && children > 0) return "parent_issue";
+
+  return undefined;
+}
+
+function skipMessage(issue: number, reason: SkippedFamilyChild["reason"]): string {
+  switch (reason) {
+    case "closed":
+      return `family admission skipped child #${issue}: issue is CLOSED`;
+    case "not_ready_for_agent":
+      return `family admission skipped child #${issue}: missing ready-for-agent label`;
+    case "parent_issue":
+      return `family admission skipped child #${issue}: issue is a parent issue`;
+  }
+}
+
+/**
+ * Split native sub-issues into runnable children vs visible skips.
+ *
+ * The production reader uses GitHub's REST native sub-issues endpoint because it
+ * carries the metadata needed for the family admission rule: state, labels, and
+ * whether the child is itself a parent. A child is runnable when it is open,
+ * labelled `ready-for-agent`, and leaf-like. Missing metadata is tolerated and
+ * left to the single-slice S0 backstop, preserving the older pure parser behavior
+ * for odd/GraphQL payloads.
+ */
+function parseSubIssueAdmission(parsed: unknown): SubIssueAdmission {
+  const nodes = subIssueNodes(parsed);
   const seen = new Set<number>();
-  const out: number[] = [];
+  const admitted: number[] = [];
+  const skipped: SkippedFamilyChild[] = [];
   for (const n of nodes) {
-    // Skip CLOSED children: an epic re-run across rounds naturally carries
-    // already-merged/closed slices alongside the new open ones. A closed child is
-    // done — admitting it sends a CLOSED issue into runChild, where the single-slice
-    // S0 input gate THROWS ("issue is CLOSED") and aborts the whole family run
-    // (#362 dogfood r3). Only OPEN (or state-less — the S0 gate is the backstop)
-    // children are runnable. `gh issue view --json subIssues` returns each node's
-    // `state` ("OPEN"/"CLOSED"); a state-less node (odd payload) is kept, not dropped.
-    // Compare case-INSENSITIVELY: the GraphQL-backed path yields "CLOSED" but other
-    // gh/REST surfaces yield lowercase "closed" — a case-sensitive check would let a
-    // closed child slip through and abort the family run at S0 (gemini #384 R-final).
-    const state = (n as { state?: unknown })?.state;
-    if (typeof state === "string" && state.toUpperCase() === "CLOSED") continue;
     const num = (n as { number?: unknown })?.number;
-    if (typeof num === "number" && Number.isFinite(num) && !seen.has(num)) {
-      seen.add(num);
-      out.push(num);
+    if (typeof num !== "number" || !Number.isFinite(num) || seen.has(num)) continue;
+    seen.add(num);
+    const reason = skipReason(n);
+    if (reason === undefined) {
+      admitted.push(num);
+    } else {
+      skipped.push({ issue: num, reason, message: skipMessage(num, reason) });
     }
   }
-  return out;
+  return { admitted, skipped };
+}
+
+/**
+ * Extract the runnable child issue NUMBERS from a native sub-issues payload.
+ *
+ * Pure compatibility wrapper used by older tests/callers. For the full admission
+ * result (including skip reasons), the driver uses `parseSubIssueAdmission`.
+ */
+export function parseSubIssueNumbers(parsed: unknown): number[] {
+  return [...parseSubIssueAdmission(parsed).admitted];
 }
 
 /**
@@ -285,8 +353,9 @@ const defaultSh: Sh = (file, args) =>
 
 /**
  * Read the epic's children (native sub-issues + each child's blocked_by) from
- * live GitHub and build the {@link FamilyEpic}. Reuses the `gh` argv RealBackend's
- * S0 path uses (`gh issue view --json subIssues`, `gh api …/dependencies/blocked_by`).
+ * live GitHub and build the {@link FamilyEpic}. Reads native sub-issues through
+ * REST (`gh api …/sub_issues`) so family admission can skip non-runnable children
+ * before the single-slice S0 gate would abort the whole family run.
  */
 export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyEpic {
   const childNumbers = readChildNumbers(epicIssue, repo, sh);
@@ -313,12 +382,16 @@ export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyE
  * empty PR. Reject it at admission with a concrete message.
  */
 function readChildNumbers(epicIssue: number, repo: string, sh: Sh): number[] {
-  const subRaw = sh("gh", ["issue", "view", String(epicIssue), "--repo", repo, "--json", "subIssues"]);
-  const childNumbers = parseSubIssueNumbers(JSON.parse(subRaw) as { subIssues?: unknown });
+  const subRaw = sh("gh", ["api", `repos/${repo}/issues/${epicIssue}/sub_issues`]);
+  const admission = parseSubIssueAdmission(JSON.parse(subRaw));
+  for (const skipped of admission.skipped) {
+    console.warn(skipped.message);
+  }
+  const childNumbers = [...admission.admitted];
   if (childNumbers.length === 0) {
     throw new Error(
-      `family admission rejected: epic #${epicIssue} has no child issues ` +
-        `(not an epic, or its native sub-issues are empty) — nothing to orchestrate`,
+      `family admission rejected: epic #${epicIssue} has no runnable child issues ` +
+        `(not an epic, native sub-issues are empty, or all children were skipped) — nothing to orchestrate`,
     );
   }
   return childNumbers;
@@ -584,4 +657,3 @@ function branchExists(workingRepo: string, branch: string, sh: Sh): boolean {
     return false;
   }
 }
-
