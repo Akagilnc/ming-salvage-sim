@@ -300,6 +300,8 @@ describe("#422 model route presets", () => {
 
     expect(result.status).toBe("escalated");
     expect(result.familyBase).toBe("family/376-base");
+    expect(result.escalation?.reason).toMatch(/tight route violation/i);
+    expect(result.escalation?.diagnosis).toContain("reviewer=opus(claude)");
     expect(result.children).toEqual([{ issue: 428, status: "skipped" }]);
   });
 });
