@@ -679,13 +679,38 @@ type ModelProviderOptions =
   | sc.CursorOptions
   | sc.PiOptions;
 
+type ModelFamily = "claude" | "codex" | "opencode" | "copilot" | "cursor" | "pi";
+interface ModelSlugRegistryBase {
+  readonly model: string;
+  readonly family: ModelFamily;
+  readonly strongLeg?: boolean;
+}
+
 export type ModelSlugRegistryEntry =
-  | { readonly provider: "claudeCode"; readonly model: string; readonly options?: sc.ClaudeCodeOptions }
-  | { readonly provider: "codex"; readonly model: string; readonly options?: sc.CodexOptions }
-  | { readonly provider: "opencode"; readonly model: string; readonly options?: sc.OpenCodeOptions }
-  | { readonly provider: "copilot"; readonly model: string; readonly options?: sc.CopilotOptions }
-  | { readonly provider: "cursor"; readonly model: string; readonly options?: sc.CursorOptions }
-  | { readonly provider: "pi"; readonly model: string; readonly options?: sc.PiOptions };
+  | (ModelSlugRegistryBase & {
+      readonly provider: "claudeCode";
+      readonly options?: sc.ClaudeCodeOptions;
+    })
+  | (ModelSlugRegistryBase & {
+      readonly provider: "codex";
+      readonly options?: sc.CodexOptions;
+    })
+  | (ModelSlugRegistryBase & {
+      readonly provider: "opencode";
+      readonly options?: sc.OpenCodeOptions;
+    })
+  | (ModelSlugRegistryBase & {
+      readonly provider: "copilot";
+      readonly options?: sc.CopilotOptions;
+    })
+  | (ModelSlugRegistryBase & {
+      readonly provider: "cursor";
+      readonly options?: sc.CursorOptions;
+    })
+  | (ModelSlugRegistryBase & {
+      readonly provider: "pi";
+      readonly options?: sc.PiOptions;
+    });
 
 type ProviderFactory = (model: string, options?: ModelProviderOptions) => sc.AgentProvider;
 
@@ -703,16 +728,35 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryEntry>> = {
     provider: "codex",
     model: CODER_CODEX_SLUG,
     options: { effort: CODER_CODEX_EFFORT },
+    family: "codex",
+    strongLeg: true,
   },
   sonnet: {
     provider: "claudeCode",
     model: "claude-sonnet-4-6",
+    family: "claude",
   },
   opus: {
     provider: "claudeCode",
     model: "claude-opus-4-8",
+    family: "claude",
+    strongLeg: true,
   },
 };
+
+function cloneModelSlugEntry(entry: ModelSlugRegistryEntry): ModelSlugRegistryEntry {
+  const base = {
+    provider: entry.provider,
+    model: entry.model,
+    family: entry.family,
+    ...(entry.strongLeg === true ? { strongLeg: true } : {}),
+  };
+  if (entry.options === undefined) return base as ModelSlugRegistryEntry;
+  return {
+    ...base,
+    options: { ...entry.options },
+  } as ModelSlugRegistryEntry;
+}
 
 export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
   const entry = MODEL_SLUG_REGISTRY[slug];
@@ -722,23 +766,13 @@ export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
         `register it in MODEL_SLUG_REGISTRY before using it.`,
     );
   }
-  if (entry.options === undefined) {
-    return { provider: entry.provider, model: entry.model } as ModelSlugRegistryEntry;
-  }
-  switch (entry.provider) {
-    case "claudeCode":
-      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
-    case "codex":
-      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
-    case "opencode":
-      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
-    case "copilot":
-      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
-    case "cursor":
-      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
-    case "pi":
-      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
-  }
+  return cloneModelSlugEntry(entry);
+}
+
+/** True only for model slugs marked as ADR0032 CMR floor-carrying strong legs. */
+export function isStrongCmrLeg(slug: string): boolean {
+  const entry = MODEL_SLUG_REGISTRY[slug];
+  return entry?.strongLeg === true;
 }
 
 /**

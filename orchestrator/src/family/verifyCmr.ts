@@ -59,6 +59,7 @@ import {
   dispatchFamilyWorker,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
+import { isStrongCmrLeg } from "../realBackend.js";
 import {
   recordAborted as recordDurableAbort,
   recordCmrPassed,
@@ -150,6 +151,33 @@ const NOOP: VerifyCmrResult = { ok: true, ran: false };
  * that real verify work DID happen (this is not the nothing-ran no-op).
  */
 const INCOMPLETE_GATE: VerifyCmrResult = { ok: false, ran: true };
+
+/** ADR0032 floor: at least one successful CMR leg must be registry-marked strong. */
+export function meetsCmrFloor(successfulLegs: readonly string[]): boolean {
+  return successfulLegs.some(isStrongCmrLeg);
+}
+
+function cmrFloorFailureReason(input: {
+  readonly pass: IntegratedCmrPass;
+  readonly successfulLegs: readonly string[] | undefined;
+  readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+}): string | undefined {
+  const successfulLegs = input.successfulLegs;
+  if (successfulLegs === undefined || successfulLegs.length === 0) {
+    return `integrated cmr ${input.pass} floor failed: no successful leg set was reported`;
+  }
+  if (meetsCmrFloor(successfulLegs)) return undefined;
+  const skipped =
+    input.skippedLegs !== undefined && input.skippedLegs.length > 0
+      ? `; skipped legs: ${input.skippedLegs
+          .map((leg) => `${leg.slug} (${leg.reason})`)
+          .join(", ")}`
+      : "";
+  return (
+    `integrated cmr ${input.pass} floor failed: successful legs [` +
+    `${successfulLegs.join(", ")}] include no strong leg${skipped}`
+  );
+}
 
 /**
  * Dispatch a family worker, converting ANY thrown STARTUP error into a documented
@@ -259,6 +287,21 @@ async function runIntegratedCmrPass(input: {
       familyHeadAfter,
     });
     await familyBackend.escalateFamily?.({ reason });
+    return { ok: false, ran: true };
+  }
+  const floorFailure = cmrFloorFailureReason({
+    pass,
+    successfulLegs: cmrResult.output.successfulLegs,
+    skippedLegs: cmrResult.output.skippedLegs,
+  });
+  if (floorFailure !== undefined) {
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason: floorFailure,
+      familyHeadAfter,
+    });
+    await familyBackend.escalateFamily?.({ reason: floorFailure });
     return { ok: false, ran: true };
   }
   await recordCmrPassed(familyBackend, { cmrPass: pass });
