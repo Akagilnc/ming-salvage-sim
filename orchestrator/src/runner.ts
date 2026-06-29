@@ -336,11 +336,9 @@ function planResume(
     // step): we are re-opening that step, so the prior boundary is superseded.
     // The slice is EXCLUSIVE of the escalated step itself — it is re-run via
     // resumeSession and gets a fresh in-memory entry, so keeping the old one
-    // here would duplicate it. The only agent step now is S2 (the whole-slice
-    // build worker); when it escalated and a human has answered, resume it in
-    // its original memory-bearing session so the build continues from where it
-    // stopped (ADR 0026: S2 is one memory-bearing session). There is no reviewer
-    // step to walk back to — the per-slice loop lives INSIDE the S2 session.
+    // here would duplicate it. ADR 0030 has multiple agent steps (S2/S3/S5/S6);
+    // whichever one escalated is resumed in its recorded session after the human
+    // answer, while normal review/fix rounds stay fresh dispatches.
     const escalatedIdx = ledger.lastIndexOf(agentEntry);
     const priorLedger = ledger.slice(0, escalatedIdx);
     return {
@@ -546,6 +544,10 @@ function describeOutput(output: StepOutput | undefined): string {
   return `object with kind=${JSON.stringify(kind)}`;
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
   // Family-run context (ADR 0022 decision 2). When present this is a CHILD slice
@@ -567,6 +569,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let deferredFindings: Finding[] = [];
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
+
+  function seedClassificationFromReviewerOutput(
+    reviewerOutput: StepOutput | undefined,
+  ): void {
+    if (reviewerOutput?.kind !== "reviewer") return;
+    const classification = classifyFindings(reviewerOutput.findings);
+    deferredFindings = [...classification.deferred];
+    pendingBlockingFindings = [...classification.blocking];
+    pendingBlockingFindingIdentityKeys = [
+      ...classification.blockingIdentityKeys,
+    ];
+  }
 
   // ── #249: per-run session id + sibling state dir ──────────────────────────
   // sessionId: a stable identifier for this orchestrator invocation.
@@ -860,13 +874,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // The runner drives the sequence; the agent never picks the next step.
   let step: StepId = "S0";
 
-  // ── ADR 0026: NO runner fix-loop, NO no-progress stuck guard ───────────────
-  // The per-slice review→fix→re-review loop runs INSIDE the S2 build worker's own
-  // memory-bearing session (via `/tdd` + `/ak-cross-m-review --scenario
-  // per-slice`); the worker only returns when its per-slice cmr has converged or
-  // it escalates. The runner dispatches S2 ONCE and reads its terminal verdict,
-  // so there is no runner-level round to count and no no-progress detector here
-  // (the skill owns convergence/termination — US#18: never "数到 N 就停").
+  // ── ADR 0030: runner-visible review/fix loop, no blind round cap ───────────
+  // The runner dispatches S2/S3/S5/S6 as separate ledger-visible worker
+  // boundaries. S4 classifies reviewer findings and routes to S5 while blocking
+  // work remains, but there is no fixed "count to N and stop" convergence cap:
+  // only structured worker outputs or explicit escalations decide progress.
 
   // ── #255: idempotent resume from the recorded breakpoint ───────────────────
   // When set, the next dispatch of `resumeFor.step` must use the original agent
@@ -887,10 +899,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
-    // ADR 0026: there is no runner-level reviewer step, so a resume never has a
-    // reviewer output to rebuild a defer list from — the per-slice cmr (with its
-    // defer→issue discipline) ran INSIDE the S2 build worker. The defer list the
-    // single-slice runner surfaces is always empty.
+    // ADR 0030: if the prior run already persisted S4, resume can jump straight
+    // to S5/S7. Rebuild the S4 classification state from the persisted reviewer
+    // output so S5 receives the blocking findings and S7 reports defers.
+    if (plan.resumeStep === "S5" || plan.resumeStep === "S7") {
+      seedClassificationFromReviewerOutput(lastOutput);
+    }
 
     if (plan.terminalStatus !== undefined) {
       // The prior run already reached a terminal handoff that is NOT being
@@ -934,10 +948,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return await errorTermination(plan.resumeStep, err);
     }
 
-    // ADR 0026: no runner fix-loop ⇒ no no-progress guard state to reconstruct.
-    // The per-slice convergence loop lives inside the S2 worker's session, so a
-    // resume just continues from the recorded breakpoint (re-dispatch S2 fresh on
-    // a crash, or escalate-resume S2 in its original session when a human answered).
+    // ADR 0030: resume continues from the recorded runner-visible boundary. If
+    // that boundary follows S4, the classification state was rebuilt above from
+    // the persisted reviewer output.
 
     // Continue from the recorded breakpoint.
     step = plan.resumeStep;
@@ -947,9 +960,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   }
 
   // The step machine has no fixed bound: route() always terminates the run via a
-  // handoff (success/escalate/error). The per-slice review→fix→re-review loop runs
-  // INSIDE the S2 worker (ADR 0026), so there is no runner-level round to count —
-  // a `for (;;)` makes the absence of any "数到 N 就停" cap explicit (US#18).
+  // handoff (success/escalate/error). ADR 0030 makes the per-slice review/fix
+  // loop visible in S3/S4/S5/S6, but still rejects a blind round cap; a `for (;;)`
+  // keeps the absence of any "数到 N 就停" cap explicit (US#18).
   for (;;) {
     let output: StepOutput | undefined;
     // promptFile for the current step (agent steps only; undefined for runner actions).
@@ -1101,25 +1114,51 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           let attempts = 0;
           for (;;) {
             attempts += 1;
-            const result = await dispatchWorker(
-              backend,
-              stepSpecToWorkerSpec(
-                STEP_SPECS[step],
-                resumeSessionId !== undefined ? "resume" : "fresh",
-              ),
-              {
-                worktree,
-                stateDir,
-                ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
-                ...(step === "S5"
-                  ? {
-                      blockingFindings: pendingBlockingFindings,
-                      blockingFindingIdentityKeys:
-                        pendingBlockingFindingIdentityKeys,
-                    }
-                  : {}),
-              },
-            );
+            let result: Awaited<ReturnType<typeof dispatchWorker>>;
+            try {
+              result = await dispatchWorker(
+                backend,
+                stepSpecToWorkerSpec(
+                  STEP_SPECS[step],
+                  resumeSessionId !== undefined ? "resume" : "fresh",
+                ),
+                {
+                  worktree,
+                  stateDir,
+                  ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
+                  ...(step === "S5"
+                    ? {
+                        blockingFindings: pendingBlockingFindings,
+                        blockingFindingIdentityKeys:
+                          pendingBlockingFindingIdentityKeys,
+                      }
+                    : {}),
+                },
+              );
+            } catch (err) {
+              if (
+                expectedKind === "reviewer" &&
+                attempts < MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS
+              ) {
+                resumeSessionId = undefined;
+                continue;
+              }
+              if (expectedKind === "reviewer") {
+                output = {
+                  kind: "reviewer",
+                  findings: [],
+                  escalate: {
+                    reason: "reviewer output remained invalid after bounded reruns",
+                    diagnosis:
+                      `step ${step} failed to produce valid reviewer output ` +
+                      `${attempts} times; last error: ${errorMessage(err)}`,
+                  },
+                };
+                stepSessionId = undefined;
+                break;
+              }
+              throw err;
+            }
             const { unwrapped, reason } = workerResultToStep(result, expectedKind);
             const retryableReviewerFailure =
               expectedKind === "reviewer" &&
@@ -1194,14 +1233,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       case "S4": {
-        if (lastOutput?.kind === "reviewer") {
-          const classification = classifyFindings(lastOutput.findings);
-          deferredFindings = [...classification.deferred];
-          pendingBlockingFindings = [...classification.blocking];
-          pendingBlockingFindingIdentityKeys = [
-            ...classification.blockingIdentityKeys,
-          ];
-        }
+        seedClassificationFromReviewerOutput(lastOutput);
         break;
       }
 
