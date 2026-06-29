@@ -1308,7 +1308,8 @@ const findingSchema = z.object({
   claim_quote: z.string(),
   location: z.string(),
   suggested_fix: z.string(),
-  action: z.enum(["fix_now", "defer"]),
+  action: z.enum(["fix_now", "defer", "wont_fix", "rejected"]),
+  disposition_reason: z.string().optional(),
 });
 const priorFindingDispositionSchema = z.object({
   identityKey: z.string().min(1),

@@ -1,11 +1,27 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   activeModelRoute,
+  applyRuntimeTightRoutePolicy,
+  applyTightRoutePolicy,
   MODEL_ROUTE_SLOTS,
   modelForSlot,
   printableRouteLineup,
   resolveRouteModels,
 } from "../src/modelRoutes.js";
+import type {
+  Backend,
+  IssueMeta,
+  IssueSnapshot,
+  StepOutput,
+  StepSpec,
+  WorktreeHandle,
+} from "../src/types.js";
+import type {
+  FamilyBackend,
+  FamilyLedgerEntry,
+  MergeRequest,
+  MergeResult,
+} from "../src/family/types.js";
 
 describe("#422 model route presets", () => {
   afterEach(() => {
@@ -165,5 +181,125 @@ describe("#422 model route presets", () => {
     expect(cmrWorkerSpec("fresh", "correctness").model).toBe("gpt-5.5");
     expect(familyShipWorkerSpec().model).toBe("gpt-5.5");
     expect(mergerModel()).toBe("gpt-5.5");
+  });
+
+  it("turns tight-route violations into a structured non-interactive stop decision", () => {
+    const route = resolveRouteModels("claude-tight", { reviewer: "opus" });
+
+    const decision = applyTightRoutePolicy(route, { interactive: false });
+
+    expect(decision.kind).toBe("stop");
+    if (decision.kind === "stop") {
+      expect(decision.escalation.reason).toMatch(/tight route violation/i);
+      expect(decision.escalation.diagnosis).toContain("reviewer=opus(claude)");
+    }
+  });
+
+  it("lets the interactive policy seam warn and continue only on explicit confirmation", () => {
+    const route = resolveRouteModels("claude-tight", { reviewer: "opus" });
+    const warnings: string[] = [];
+
+    const declined = applyTightRoutePolicy(route, {
+      interactive: true,
+      warn: (message) => warnings.push(message),
+      confirm: () => false,
+    });
+    const accepted = applyTightRoutePolicy(route, {
+      interactive: true,
+      warn: (message) => warnings.push(message),
+      confirm: () => true,
+    });
+
+    expect(declined.kind).toBe("stop");
+    expect(accepted.kind).toBe("continue");
+    expect(warnings.some((message) => message.includes("reviewer=opus(claude)"))).toBe(true);
+  });
+
+  it("runtime tight-route policy accepts an async interactive confirmation seam", async () => {
+    const route = resolveRouteModels("claude-tight", { reviewer: "opus" });
+    const decision = await applyRuntimeTightRoutePolicy(route, {
+      interactive: true,
+      confirm: async () => true,
+    });
+
+    expect(decision.kind).toBe("continue");
+  });
+
+  it("runner startup returns a structured non-interactive escalate before backend work", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    vi.stubEnv("ORCHESTRATOR_REVIEWER_MODEL", "opus");
+    vi.resetModules();
+
+    class BackendShouldNotRun implements Backend {
+      async findResumeState(): Promise<undefined> {
+        throw new Error("backend should not run");
+      }
+      async cleanResidue(): Promise<void> {}
+      async resumeSession(_spec: StepSpec): Promise<StepOutput> {
+        throw new Error("backend should not run");
+      }
+      async fetchIssueMeta(_issueNumber: number): Promise<IssueMeta> {
+        throw new Error("backend should not run");
+      }
+      async fetchIssueSnapshot(_issueNumber: number): Promise<IssueSnapshot> {
+        throw new Error("backend should not run");
+      }
+      async prepareWorktree(): Promise<WorktreeHandle> {
+        throw new Error("backend should not run");
+      }
+      async writeSnapshot(): Promise<void> {}
+      async runStep(): Promise<StepOutput> {
+        throw new Error("backend should not run");
+      }
+      async push(): Promise<void> {
+        throw new Error("backend should not run");
+      }
+      async writeLedger(): Promise<void> {}
+    }
+
+    const { runOrchestrator } = await import("../src/runner.js");
+    const result = await runOrchestrator({
+      issueNumber: 422,
+      backend: new BackendShouldNotRun(),
+    });
+
+    expect(result.status).toBe("escalate");
+    expect(result.errorPackage?.failedStep).toBe("S0");
+    expect(result.errorPackage?.reason).toContain("reviewer=opus(claude)");
+  });
+
+  it("family runner startup returns a structured non-interactive escalation before backend work", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    vi.stubEnv("ORCHESTRATOR_REVIEWER_MODEL", "opus");
+    vi.resetModules();
+
+    const familyBackend: FamilyBackend = {
+      async mergeChildIntoFamilyBase(_child: MergeRequest): Promise<MergeResult> {
+        throw new Error("family backend should not run");
+      },
+      async appendFamilyLedger(_entry: FamilyLedgerEntry): Promise<void> {
+        throw new Error("family backend should not run");
+      },
+      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        throw new Error("family backend should not run");
+      },
+    };
+    const singleSliceBackend = {
+      async findResumeState(): Promise<undefined> {
+        throw new Error("single slice backend should not run");
+      },
+    } as unknown as Backend;
+
+    const { runFamily } = await import("../src/family/runner.js");
+    const result = await runFamily({
+      epic: { issue: 376, children: [{ issue: 428, blockedBy: [] }] },
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/376-base",
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(result.familyBase).toBe("family/376-base");
+    expect(result.children).toEqual([{ issue: 428, status: "skipped" }]);
   });
 });

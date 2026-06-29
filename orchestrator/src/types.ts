@@ -148,8 +148,22 @@ export interface Finding {
   readonly claim_quote: string;
   readonly location: string;
   readonly suggested_fix: string;
-  /** P0/P1 ⇒ always `fix_now`; P2/P3 reviewer judges fix_now vs defer. */
-  readonly action: "fix_now" | "defer";
+  /**
+   * P0/P1 ⇒ always `fix_now`; P2/P3 reviewer judges fix_now vs defer.
+   * `wont_fix` / `rejected` are explicit ADR0030 suppression dispositions:
+   * they must carry a rationale and never suppress a material severity upgrade.
+   */
+  readonly action: "fix_now" | "defer" | "wont_fix" | "rejected";
+  /** Required when action is `wont_fix` or `rejected`; optional otherwise. */
+  readonly disposition_reason?: string;
+}
+
+export interface FindingDisposition {
+  readonly identityKey: string;
+  readonly status: "unrepaired" | "wont_fix" | "rejected";
+  readonly reason: string;
+  readonly severity: Finding["severity"];
+  readonly reopenAttempts: number;
 }
 
 /** Fresh-review adjudication for a prior coder-fix worker's claimed-fixed finding. */

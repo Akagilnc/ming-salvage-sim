@@ -32,7 +32,12 @@ const SEVERITIES: ReadonlySet<string> = new Set([
 ]);
 
 /** Exact action enum. */
-const ACTIONS: ReadonlySet<string> = new Set(["fix_now", "defer"]);
+const ACTIONS: ReadonlySet<string> = new Set([
+  "fix_now",
+  "defer",
+  "wont_fix",
+  "rejected",
+]);
 const PRIOR_FINDING_DISPOSITIONS: ReadonlySet<string> = new Set([
   "still-active",
   "verified-closed",
@@ -125,6 +130,18 @@ export function isValidFinding(f: unknown): f is Finding {
     return false;
   }
   if (typeof obj.action !== "string" || !ACTIONS.has(obj.action)) {
+    return false;
+  }
+  if (
+    (obj.action === "wont_fix" || obj.action === "rejected") &&
+    !isFilledString(obj.disposition_reason)
+  ) {
+    return false;
+  }
+  if (
+    obj.disposition_reason !== undefined &&
+    !isString(obj.disposition_reason)
+  ) {
     return false;
   }
   for (const field of FINDING_STRING_FIELDS) {
