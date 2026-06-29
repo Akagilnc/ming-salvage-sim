@@ -33,6 +33,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
+import { modelForSlot } from "./modelRoutes.js";
 import type {
   Backend,
   DispatchContext,
@@ -189,7 +190,7 @@ export function shipWorkerSpec(): WorkerSpec {
     // STEP_SPECS use 5), NOT a single-pass reviewer's 1 (#336 cmr r6). The completion
     // signal stops the loop early on a clean ship; the <ship> parser reads the LAST tag.
     maxIter: 5,
-    model: "sonnet",
+    model: modelForSlot("ship"),
     soul: "coder",
     toolchain: [],
   };

@@ -45,6 +45,7 @@ import {
   stepSpecToWorkerSpec,
   workerResultToStep,
 } from "./dispatchWorker.js";
+import { modelForSlot, type ModelRouteEnv } from "./modelRoutes.js";
 import { isFilledString } from "./shipOutcome.js";
 // Shared seam guards — single source of truth, also used by route(), so the
 // coder-output / commitsAdded rules can never drift.
@@ -470,21 +471,26 @@ const MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS = 2;
  * is NEVER the orchestrator giving up (that only happens on a MODEL escalate
  * signal — US#18/US#19, never by counting). See StepSpec.maxIter.
  *
- * Swapping models = set ORCHESTRATOR_CODER_MODEL (see {@link coderModel}); no image
- * rebuild, no structural StepSpec change (PRD #244 Implementation Decisions).
+ * Swapping models = set ORCHESTRATOR_ROUTE for the base preset, optionally layered
+ * with single-slot overrides (see {@link coderModel}); no image rebuild, no
+ * structural StepSpec change (PRD #244 Implementation Decisions + ADR 0031).
  */
 
 /**
- * The S2 coder worker's model slug, switchable via `ORCHESTRATOR_CODER_MODEL`
- * (default `"gpt-5.5"`). Swapping the coder backend (codex gpt-5.5 ↔ a Claude
- * coder ↔ …) is THIS env alone — the slug is resolved to the baked CLI by
- * agentForSlug, an invalid slug fails closed at modelIdForSlug, and the auth mount
- * is best-effort for both the codex and claude legs (realBackend mountAuth), so no
- * auth-wiring change is needed to switch. The user's standing decision: make the
- * coder model conveniently switchable rather than hard-coded.
+ * The S2 coder worker's model slug, selected by the active route and optionally
+ * overridden via `ORCHESTRATOR_CODER_MODEL`. The slug is resolved to the baked CLI
+ * by agentForSlug; invalid route names / slugs fail closed before dispatch.
  */
-export function coderModel(): string {
-  return process.env.ORCHESTRATOR_CODER_MODEL?.trim() || "gpt-5.5";
+export function coderModel(env: ModelRouteEnv = process.env): string {
+  return modelForSlot("coder", env);
+}
+
+export function reviewerModel(env: ModelRouteEnv = process.env): string {
+  return modelForSlot("reviewer", env);
+}
+
+export function coderFixModel(env: ModelRouteEnv = process.env): string {
+  return modelForSlot("coderFix", env);
 }
 
 export const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
@@ -506,7 +512,7 @@ export const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> =
     id: "S3",
     role: "reviewer",
     promptFile: "reviewer_review.md",
-    model: process.env.ORCHESTRATOR_REVIEWER_MODEL?.trim() || "gpt-5.5",
+    model: reviewerModel(),
     completionSignal: "REVIEWER_STEP_COMPLETE",
     maxIter: 1,
     soul: "READ-ONLY",
@@ -516,7 +522,7 @@ export const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> =
     id: "S5",
     role: "coder",
     promptFile: "coder_fix.md",
-    model: coderModel(),
+    model: coderFixModel(),
     completionSignal: "CODER_STEP_COMPLETE",
     maxIter: 5,
     soul: "coder",
@@ -526,7 +532,7 @@ export const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> =
     id: "S6",
     role: "reviewer",
     promptFile: "reviewer_review.md",
-    model: process.env.ORCHESTRATOR_REVIEWER_MODEL?.trim() || "gpt-5.5",
+    model: reviewerModel(),
     completionSignal: "REVIEWER_STEP_COMPLETE",
     maxIter: 1,
     soul: "READ-ONLY",
