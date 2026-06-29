@@ -189,22 +189,33 @@ function cmrClosureFailureReason(input: {
   }[];
 }): string | undefined {
   const claimed = input.claimedFixedFindingIdentityKeys ?? [];
+  const priorDispositions = input.priorFindingDispositions ?? [];
+  const stillOpen = priorDispositions
+    .filter((disposition) => disposition.status !== "verified-closed")
+    .map((disposition) => disposition.identityKey);
+  if (stillOpen.length > 0) {
+    return (
+      `integrated cmr ${input.pass} closure failed: prior claimed-fixed ` +
+      `findings are not verified closed: ${stillOpen.join(", ")}`
+    );
+  }
+  const dispositions = new Map(priorDispositions.map((d) => [d.identityKey, d.status]));
+  const claimedSet = new Set(claimed);
+  const extraDispositions = priorDispositions
+    .map((disposition) => disposition.identityKey)
+    .filter((key) => !claimedSet.has(key));
+  if (extraDispositions.length > 0) {
+    return (
+      `integrated cmr ${input.pass} closure failed: prior finding ` +
+      `dispositions without claimed-fixed keys: ${extraDispositions.join(", ")}`
+    );
+  }
   if (claimed.length === 0) return undefined;
-  const dispositions = new Map(
-    (input.priorFindingDispositions ?? []).map((d) => [d.identityKey, d.status]),
-  );
   const missing = claimed.filter((key) => !dispositions.has(key));
   if (missing.length > 0) {
     return (
       `integrated cmr ${input.pass} closure failed: prior claimed-fixed ` +
       `findings missing explicit disposition: ${missing.join(", ")}`
-    );
-  }
-  const stillOpen = claimed.filter((key) => dispositions.get(key) !== "verified-closed");
-  if (stillOpen.length > 0) {
-    return (
-      `integrated cmr ${input.pass} closure failed: prior claimed-fixed ` +
-      `findings are not verified closed: ${stillOpen.join(", ")}`
     );
   }
   return undefined;

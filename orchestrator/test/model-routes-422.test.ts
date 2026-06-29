@@ -10,10 +10,13 @@ import {
 } from "../src/modelRoutes.js";
 import type {
   Backend,
+  DispatchContext,
   IssueMeta,
   IssueSnapshot,
   StepOutput,
   StepSpec,
+  WorkerResult,
+  WorkerSpec,
   WorktreeHandle,
 } from "../src/types.js";
 import type {
@@ -224,6 +227,73 @@ describe("#422 model route presets", () => {
     expect(cmrWorkerSpec("fresh", "correctness").model).toBe("gpt-5.5");
     expect(familyShipWorkerSpec().model).toBe("gpt-5.5");
     expect(mergerModel()).toBe("gpt-5.5");
+  });
+
+  it("dispatches worker specs from the per-run route, not the route at module import time", async () => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    const { runOrchestrator } = await import("../src/runner.js");
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+
+    class RecordingBackend implements Backend {
+      readonly specs: WorkerSpec[] = [];
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      }
+      async cleanResidue(): Promise<void> {}
+      async resumeSession(): Promise<StepOutput> {
+        throw new Error("not used");
+      }
+      async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+        return {
+          number: issueNumber,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+        };
+      }
+      async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
+        return { number: issueNumber, body: "body", comments: [], agentBrief: "" };
+      }
+      async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
+        return { branch: `feat/${issueNumber}`, base, path: `/tmp/model-route-${issueNumber}` };
+      }
+      async writeSnapshot(): Promise<void> {}
+      async runStep(): Promise<StepOutput> {
+        throw new Error("not used");
+      }
+      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        this.specs.push(spec);
+        if (spec.kind === "coder") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "reviewer") {
+          return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: ctx.worktree?.branch ?? "missing",
+            status: "pushed",
+          },
+        };
+      }
+      async push(): Promise<void> {}
+      async writeLedger(): Promise<void> {}
+    }
+
+    const backend = new RecordingBackend();
+    const result = await runOrchestrator({ issueNumber: 422, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.specs.filter((spec) => spec.id === "S2").map((spec) => spec.model)).toEqual([
+      "gpt-5.5",
+    ]);
   });
 
   it("turns tight-route violations into a structured non-interactive stop decision", () => {

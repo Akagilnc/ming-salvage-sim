@@ -199,6 +199,36 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
+  it("converged cmr with a still-active prior disposition fails even when the claimed key list is empty", async () => {
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|src/x.ts:1|still open",
+              status: "still-active",
+            },
+          ],
+        },
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.escalations[0]?.reason).toMatch(/not verified closed/i);
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
+  });
+
   it("converged cmr with verified-closed dispositions may pass to ship", async () => {
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({

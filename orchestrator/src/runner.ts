@@ -55,6 +55,7 @@ import {
   printableRouteLineup,
   resolveActiveModelRoute,
   type ModelRouteEnv,
+  type ResolvedModelRoute,
 } from "./modelRoutes.js";
 import { isFilledString } from "./shipOutcome.js";
 // Shared seam guards — single source of truth, also used by route(), so the
@@ -618,52 +619,67 @@ export function coderFixModel(env: ModelRouteEnv = process.env): string {
   return modelForSlot("coderFix", env);
 }
 
-export const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
-  S2: {
-    id: "S2",
-    role: "coder",
-    promptFile: "coder_implement.md",
-    // The whole-slice build worker's model is env-switchable (default Codex
-    // gpt-5.5; was Sonnet 4.6). The slug is resolved to the baked CLI by
-    // agentForSlug (realBackend); switching the model is `ORCHESTRATOR_CODER_MODEL`
-    // alone — no image rebuild, no StepSpec shape change.
-    model: coderModel(),
-    completionSignal: "CODER_STEP_COMPLETE",
-    maxIter: 5,
-    soul: "coder",
-    toolchain: IMAGE_TOOLCHAIN,
-  },
-  S3: {
-    id: "S3",
-    role: "reviewer",
-    promptFile: "reviewer_review.md",
-    model: reviewerModel(),
-    completionSignal: "REVIEWER_STEP_COMPLETE",
-    maxIter: 1,
-    soul: "READ-ONLY",
-    toolchain: IMAGE_TOOLCHAIN,
-  },
-  S5: {
-    id: "S5",
-    role: "coder",
-    promptFile: "coder_fix.md",
-    model: coderFixModel(),
-    completionSignal: "CODER_STEP_COMPLETE",
-    maxIter: 5,
-    soul: "coder",
-    toolchain: IMAGE_TOOLCHAIN,
-  },
-  S6: {
-    id: "S6",
-    role: "reviewer",
-    promptFile: "reviewer_review.md",
-    model: reviewerModel(),
-    completionSignal: "REVIEWER_STEP_COMPLETE",
-    maxIter: 1,
-    soul: "READ-ONLY",
-    toolchain: IMAGE_TOOLCHAIN,
-  },
-};
+type WorkerStepId = "S2" | "S3" | "S5" | "S6";
+
+export function stepSpecsForRoute(
+  route: Pick<ResolvedModelRoute, "slots">,
+): Readonly<Record<WorkerStepId, StepSpec>> {
+  return {
+    S2: {
+      id: "S2",
+      role: "coder",
+      promptFile: "coder_implement.md",
+      // The whole-slice build worker's model is env-switchable (default Codex
+      // gpt-5.5; was Sonnet 4.6). The slug is resolved to the baked CLI by
+      // agentForSlug (realBackend); switching the model is `ORCHESTRATOR_CODER_MODEL`
+      // alone — no image rebuild, no StepSpec shape change.
+      model: route.slots.coder,
+      completionSignal: "CODER_STEP_COMPLETE",
+      maxIter: 5,
+      soul: "coder",
+      toolchain: IMAGE_TOOLCHAIN,
+    },
+    S3: {
+      id: "S3",
+      role: "reviewer",
+      promptFile: "reviewer_review.md",
+      model: route.slots.reviewer,
+      completionSignal: "REVIEWER_STEP_COMPLETE",
+      maxIter: 1,
+      soul: "READ-ONLY",
+      toolchain: IMAGE_TOOLCHAIN,
+    },
+    S5: {
+      id: "S5",
+      role: "coder",
+      promptFile: "coder_fix.md",
+      model: route.slots.coderFix,
+      completionSignal: "CODER_STEP_COMPLETE",
+      maxIter: 5,
+      soul: "coder",
+      toolchain: IMAGE_TOOLCHAIN,
+    },
+    S6: {
+      id: "S6",
+      role: "reviewer",
+      promptFile: "reviewer_review.md",
+      model: route.slots.reviewer,
+      completionSignal: "REVIEWER_STEP_COMPLETE",
+      maxIter: 1,
+      soul: "READ-ONLY",
+      toolchain: IMAGE_TOOLCHAIN,
+    },
+  };
+}
+
+export function stepSpecsForEnv(
+  env: ModelRouteEnv = process.env,
+): Readonly<Record<WorkerStepId, StepSpec>> {
+  return stepSpecsForRoute(resolveActiveModelRoute(env));
+}
+
+export const STEP_SPECS: Readonly<Record<WorkerStepId, StepSpec>> =
+  stepSpecsForEnv();
 
 /**
  * Synthesise a human-readable reason string for route()-detected error edges
@@ -721,6 +737,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   console.info(
     `[orchestrator] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
   );
+  const stepSpecs = stepSpecsForRoute(routePolicy.route);
   // Family-run context (ADR 0022 decision 2). When present this is a CHILD slice
   // of a family run: cut from the family base (decision 7) and S7 push is a local
   // no-op (decision 2). Absent ⇒ the v0.1 standalone behaviour (base=main, push).
@@ -1357,8 +1374,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
-        promptFile = STEP_SPECS[step].promptFile;
-        const expectedKind = STEP_SPECS[step].role;
+        promptFile = stepSpecs[step].promptFile;
+        const expectedKind = stepSpecs[step].role;
         try {
           let resumeSessionId: string | undefined;
           if (resumeFor !== undefined && resumeFor.step === step) {
@@ -1374,7 +1391,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               result = await dispatchWorker(
                 backend,
                 stepSpecToWorkerSpec(
-                  STEP_SPECS[step],
+                  stepSpecs[step],
                   resumeSessionId !== undefined ? "resume" : "fresh",
                 ),
                 {
