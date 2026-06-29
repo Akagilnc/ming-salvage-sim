@@ -107,10 +107,9 @@ export function classifyFindings(
       if (!upgradedSeverity(finding, priorDisposition)) {
         continue;
       }
-      if (priorDisposition.reopenAttempts >= MAX_REOPEN_ATTEMPTS) {
-        continue;
+      if (priorDisposition.reopenAttempts < MAX_REOPEN_ATTEMPTS) {
+        dispositionByKey.set(key, reopenedDisposition(finding, priorDisposition));
       }
-      dispositionByKey.set(key, reopenedDisposition(finding, priorDisposition));
     }
     if (isBlockingFinding(finding)) {
       blocking.push(finding);

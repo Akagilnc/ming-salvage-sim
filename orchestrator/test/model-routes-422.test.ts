@@ -36,22 +36,22 @@ describe("#422 model route presets", () => {
       [...MODEL_ROUTE_SLOTS].sort(),
     );
     expect(resolved.slots).toEqual({
-      coder: "gpt-5.5",
+      coder: "sonnet",
       reviewer: "gpt-5.5",
-      coderFix: "gpt-5.5",
+      coderFix: "sonnet",
       ship: "sonnet",
-      merger: "opus",
+      merger: "sonnet",
       cmrCompleteness: "opus",
       cmrCorrectness: "opus",
     });
     expect(printableRouteLineup(resolved)).toEqual(
       [
         "route=normal",
-        "coder=gpt-5.5",
+        "coder=sonnet",
         "reviewer=gpt-5.5",
-        "coderFix=gpt-5.5",
+        "coderFix=sonnet",
         "ship=sonnet",
-        "merger=opus",
+        "merger=sonnet",
         "cmrCompleteness=opus",
         "cmrCorrectness=opus",
         "cmrReview=[codex:gpt-5.5,claude:opus,agy:agy]",
@@ -67,7 +67,36 @@ describe("#422 model route presets", () => {
 
     expect(resolved.slots.reviewer).toBe("opus");
     expect(resolved.slots.ship).toBe("gpt-5.5");
-    expect(resolved.slots.coder).toBe("gpt-5.5");
+    expect(resolved.slots.coder).toBe("sonnet");
+  });
+
+  it("cheap routes keep only the pressured family's CMR strong leg", () => {
+    const claudeCheap = resolveRouteModels("claude-cheap", {});
+    const claudeTight = resolveRouteModels("claude-tight", {});
+    const codexCheap = resolveRouteModels("codex-cheap", {});
+    const codexTight = resolveRouteModels("codex-tight", {});
+
+    expect(claudeCheap.slots).toEqual(claudeTight.slots);
+    expect(claudeCheap.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
+      "gpt-5.5",
+      "agy",
+      "opus",
+    ]);
+    expect(claudeTight.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
+      "gpt-5.5",
+      "agy",
+    ]);
+
+    expect(codexCheap.slots).toEqual(codexTight.slots);
+    expect(codexCheap.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
+      "opus",
+      "agy",
+      "gpt-5.5",
+    ]);
+    expect(codexTight.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
+      "opus",
+      "agy",
+    ]);
   });
 
   it("fails closed for unknown routes, slots, and slugs", () => {
