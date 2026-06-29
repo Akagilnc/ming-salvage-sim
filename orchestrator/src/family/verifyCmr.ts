@@ -179,6 +179,36 @@ function cmrFloorFailureReason(input: {
   );
 }
 
+function cmrClosureFailureReason(input: {
+  readonly pass: IntegratedCmrPass;
+  readonly claimedFixedFindingIdentityKeys?: readonly string[];
+  readonly priorFindingDispositions?: readonly {
+    readonly identityKey: string;
+    readonly status: string;
+  }[];
+}): string | undefined {
+  const claimed = input.claimedFixedFindingIdentityKeys ?? [];
+  if (claimed.length === 0) return undefined;
+  const dispositions = new Map(
+    (input.priorFindingDispositions ?? []).map((d) => [d.identityKey, d.status]),
+  );
+  const missing = claimed.filter((key) => !dispositions.has(key));
+  if (missing.length > 0) {
+    return (
+      `integrated cmr ${input.pass} closure failed: prior claimed-fixed ` +
+      `findings missing explicit disposition: ${missing.join(", ")}`
+    );
+  }
+  const stillOpen = claimed.filter((key) => dispositions.get(key) !== "verified-closed");
+  if (stillOpen.length > 0) {
+    return (
+      `integrated cmr ${input.pass} closure failed: prior claimed-fixed ` +
+      `findings are not verified closed: ${stillOpen.join(", ")}`
+    );
+  }
+  return undefined;
+}
+
 /**
  * Dispatch a family worker, converting ANY thrown STARTUP error into a documented
  * gate result instead of letting it escape verifyCmr (cmr S336 r8 — startup/error
@@ -302,6 +332,22 @@ async function runIntegratedCmrPass(input: {
       familyHeadAfter,
     });
     await familyBackend.escalateFamily?.({ reason: floorFailure });
+    return { ok: false, ran: true };
+  }
+  const closureFailure = cmrClosureFailureReason({
+    pass,
+    claimedFixedFindingIdentityKeys:
+      cmrResult.output.claimedFixedFindingIdentityKeys,
+    priorFindingDispositions: cmrResult.output.priorFindingDispositions,
+  });
+  if (closureFailure !== undefined) {
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason: closureFailure,
+      familyHeadAfter,
+    });
+    await familyBackend.escalateFamily?.({ reason: closureFailure });
     return { ok: false, ran: true };
   }
   await recordCmrPassed(familyBackend, { cmrPass: pass });

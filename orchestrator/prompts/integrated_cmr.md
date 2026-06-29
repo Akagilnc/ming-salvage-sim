@@ -19,7 +19,7 @@ its own line as the final line.
 Converged:
 
 ```text
-<cmr>{"converged": true, "successfulLegs": ["opus", "gpt-5.5"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}]}</cmr>
+<cmr>{"converged": true, "successfulLegs": ["opus", "gpt-5.5"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>
 CMR_STEP_COMPLETE
 ```
 
@@ -40,6 +40,11 @@ Rules:
 - If a declared leg was unavailable at runtime, omit it from `successfulLegs` and
   include it in `skippedLegs` with a short visible flag reason. Omit
   `skippedLegs` only when no declared leg was skipped.
+- On any converged verdict, `claimedFixedFindingIdentityKeys` and
+  `priorFindingDispositions` are REQUIRED. Use empty arrays only when no
+  claimed-fixed findings occurred in the CMR loop. If a prior claimed-fixed
+  finding exists, include its stable identity key and an explicit disposition:
+  `still-active`, `verified-closed`, or `unable-to-assess`.
 - Do not emit `{"converged": false}` as a normal outcome.
 - Emit the `<cmr>` tag LAST; if you iterate, the LAST tag is the one that counts.
 - Always print `CMR_STEP_COMPLETE` on its own line at the very end.

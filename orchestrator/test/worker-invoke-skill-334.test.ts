@@ -28,6 +28,7 @@ import { runOrchestrator } from "../src/runner.js";
 import {
   RealBackend,
   SANDBOX_CODEX_DIR,
+  SANDBOX_FIX_FINDINGS_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
   SANDBOX_ISSUE_NUMBER_ENV,
@@ -69,15 +70,19 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     }
     // Expose the pure config seam + a way to feed canned auth without reading
     // host credential files (the auth-file I/O is not under test here).
-    public config(spec: StepSpec): {
+    public config(
+      spec: StepSpec,
+      options?: Parameters<RealBackend["runStep"]>[2],
+    ): {
       imageName: string;
       env: Record<string, string>;
-      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
       return this.boxConfig(
         { authDir: "/tmp/auth-256", claudeToken: "tok", ghToken: "gho_test" },
         spec,
         334,
+        options,
       );
     }
   }
@@ -126,6 +131,24 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     expect(cfg.env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV]).toBe("334");
     expect(cfg.env[SANDBOX_REPO_ENV]).toBe("owner/name");
     expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBe("gho_test");
+  });
+
+  it("mounts S5 fix findings at the documented worktree-root path read-only", () => {
+    const cfg = makeBackend().config(coderSpec, {
+      fixFindingsLanding: {
+        path: "/host/.ledger-334/fix-findings.json",
+        sandboxPath: ".orchestrator-fix-findings.json",
+      },
+    });
+
+    expect(cfg.env[SANDBOX_FIX_FINDINGS_PATH_ENV]).toBe(
+      ".orchestrator-fix-findings.json",
+    );
+    expect(cfg.mounts).toContainEqual({
+      hostPath: "/host/.ledger-334/fix-findings.json",
+      sandboxPath: ".orchestrator-fix-findings.json",
+      readonly: true,
+    });
   });
 
   it("marks the coder/agent container as an orchestrator-spawned, non-interactive session", () => {
@@ -276,7 +299,23 @@ class ReviewWorkerBackend implements Backend {
           : [];
       // Legacy compatibility shape: a reviewer worker returns findings, not a
       // bare verdict. The active runner path no longer dispatches it normally.
-      return { kind: "completed", output: { kind: "reviewer", findings } };
+      return {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings,
+          ...(this.reviewCount > 1
+            ? {
+                priorFindingDispositions: [
+                  {
+                    identityKey: "correctness|f.ts:1|x",
+                    status: "verified-closed",
+                  },
+                ],
+              }
+            : {}),
+        },
+      };
     }
     return {
       kind: "completed",

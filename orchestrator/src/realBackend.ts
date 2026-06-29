@@ -100,6 +100,7 @@ import {
   type ShipWorkerOutcome,
 } from "./shipOutcome.js";
 import type {
+  AgentStepRunOptions,
   Backend,
   DispatchContext,
   Finding,
@@ -457,6 +458,8 @@ export const SANDBOX_ISSUE_NUMBER_ENV = "ORCHESTRATOR_ISSUE_NUMBER";
 export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
 /** GitHub repo slug (`owner/repo`) the worker should use for gh issue reads. */
 export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
+/** S5 coder-fix worker path to runner-owned blocking findings JSON. */
+export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
 
 /**
  * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
@@ -1307,8 +1310,14 @@ const findingSchema = z.object({
   suggested_fix: z.string(),
   action: z.enum(["fix_now", "defer"]),
 });
+const priorFindingDispositionSchema = z.object({
+  identityKey: z.string().min(1),
+  status: z.enum(["still-active", "verified-closed", "unable-to-assess"]),
+  reason: z.string().optional(),
+});
 const reviewerOutputSchema = z.object({
   findings: z.array(findingSchema),
+  priorFindingDispositions: z.array(priorFindingDispositionSchema).optional(),
   escalate: z
     .object({ reason: z.string(), diagnosis: z.string() })
     .optional(),
@@ -1800,10 +1809,19 @@ export class RealBackend implements Backend {
     return { authDir: paths.hostCodexAuthDir, claudeToken };
   }
 
-  private box(issueNumber: number, spec: StepSpec): sc.SandboxProvider {
+  private box(
+    issueNumber: number,
+    spec: StepSpec,
+    options?: AgentStepRunOptions,
+  ): sc.SandboxProvider {
     const auth = this.mountAuth(issueNumber);
     return docker(
-      this.boxConfig({ ...auth, ghToken: this.readGhToken() }, spec, issueNumber),
+      this.boxConfig(
+        { ...auth, ghToken: this.readGhToken() },
+        spec,
+        issueNumber,
+        options,
+      ),
     );
   }
 
@@ -1832,10 +1850,11 @@ export class RealBackend implements Backend {
     auth: { authDir: string; claudeToken?: string; ghToken?: string },
     spec: StepSpec,
     issueNumber?: number,
+    options?: AgentStepRunOptions,
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     const soul = soulForStep(spec);
     const env: Record<string, string> = {
@@ -1857,11 +1876,26 @@ export class RealBackend implements Backend {
     if (auth.ghToken !== undefined) {
       env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
     }
+    if (options?.fixFindingsLanding !== undefined) {
+      env[SANDBOX_FIX_FINDINGS_PATH_ENV] =
+        options.fixFindingsLanding.sandboxPath;
+    }
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
+      { hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR },
+    ];
+    if (options?.fixFindingsLanding !== undefined) {
+      mounts.push({
+        hostPath: options.fixFindingsLanding.path,
+        sandboxPath: options.fixFindingsLanding.sandboxPath,
+        readonly: true,
+      });
+    }
     return {
       imageName: this.opts.imageName,
       env,
-      // #334: codex auth ONLY — the skills mount is dropped (baked skills win).
-      mounts: [{ hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR }],
+      // #334: codex auth stays the only always-on runtime mount; S5 adds the
+      // runner-owned fix findings file as a narrow read-only overlay.
+      mounts,
     };
   }
 
@@ -1922,9 +1956,14 @@ export class RealBackend implements Backend {
     if (spec.role === "reviewer") {
       const r = reviewerOutputSchema.parse(raw);
       const findings: Finding[] = r.findings.map((f) => ({ ...f }));
-      return r.escalate
-        ? { kind: "reviewer", findings, escalate: r.escalate }
-        : { kind: "reviewer", findings };
+      return {
+        kind: "reviewer",
+        findings,
+        ...(r.priorFindingDispositions !== undefined
+          ? { priorFindingDispositions: r.priorFindingDispositions }
+          : {}),
+        ...(r.escalate ? { escalate: r.escalate } : {}),
+      };
     }
     // Coder: parse the self-report for shape, then (normal path) TRUTH the commit
     // count from git (result.commits.length). reconcileCoderCommits throws on a
@@ -1956,13 +1995,14 @@ export class RealBackend implements Backend {
   async runStep(
     spec: StepSpec,
     worktree: WorktreeHandle,
+    options?: AgentStepRunOptions,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     const result = await sc.run({
       name: `${spec.id}-${spec.role}`,
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: worktree.path,
-      sandbox: this.box(issueNumber, spec),
+      sandbox: this.box(issueNumber, spec, options),
       // The build worker's CLI is the spec's model slug → provider (the S2 coder
       // runs on Codex gpt-5.5; a claude slug stays claudeCode). agentForSlug keeps
       // the "model slug → baked CLI" #244 mapping unit-testable.
@@ -1998,6 +2038,7 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     worktree: WorktreeHandle,
     sessionId: string,
+    options?: AgentStepRunOptions,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     try {
@@ -2005,7 +2046,7 @@ export class RealBackend implements Backend {
         name: `${spec.id}-${spec.role}-resume`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
-        sandbox: this.box(issueNumber, spec),
+        sandbox: this.box(issueNumber, spec, options),
         // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
         // codex for the gpt-5.5 coder, claudeCode for a claude slug).
         agent: agentForSlug(spec.model),
@@ -2052,7 +2093,7 @@ export class RealBackend implements Backend {
           name: `${spec.id}-${spec.role}-resume-retry`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: worktree.path,
-          sandbox: this.box(issueNumber, spec),
+          sandbox: this.box(issueNumber, spec, options),
           // Same CLI as the fresh/native-resume build worker (agentForSlug).
           agent: agentForSlug(spec.model),
           maxIterations: 1,
@@ -2082,7 +2123,7 @@ export class RealBackend implements Backend {
       }
       // fresh-run fallback: re-dispatch the build worker (a dead resume session
       // ⇒ start a fresh sandbox.run for the same step).
-      return await this.runStep(spec, worktree);
+      return await this.runStep(spec, worktree, options);
     }
   }
 
