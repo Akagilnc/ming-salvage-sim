@@ -1,6 +1,6 @@
 # 编排器角色分离：分叉点 = runner 派的独立 worker（反转 ADR 0026 单 worker 兼 fixer）
 
-Status: Proposed（2026-06-29，grill #376/#369 结晶；评审闸在 to-prd 之后，本 ADR 尚未评审）
+Status: Accepted（2026-06-29；本地 cmr 8 轮[完整性 4 + 正确性 4] + 线上 bot 3 轮双闸收敛，PR #425）
 
 partially-supersedes: ADR 0026（「cmr = 一条带记忆 worker 兼 fixer / 无 runner 轮间 loop / findings 不在 worker 间传」这一条被反转；ADR 0026 的 runner=纯调度其余部分仍有效）
 

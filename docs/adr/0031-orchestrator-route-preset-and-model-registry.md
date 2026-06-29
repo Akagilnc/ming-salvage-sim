@@ -1,6 +1,6 @@
 # 编排器路线 = 一等命名预设 + slug→后端数据注册表
 
-Status: Proposed（2026-06-29，grill 结晶；评审闸在 to-prd 之后，本 ADR 尚未评审）
+Status: Accepted（2026-06-29；本地 cmr 8 轮[完整性 4 + 正确性 4] + 线上 bot 3 轮双闸收敛，PR #425）
 
 ## 决定
 
