@@ -228,7 +228,7 @@ describe("#331 the S7 ship worker must return a SHIP payload (codex R2 guard)", 
       // ship: a mis-wired backend returns a non-ship completed payload.
       return {
         kind: "completed",
-        output: { kind: "cmr", converged: true, successfulLegs: ["opus"] },
+        output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] },
       };
     }
   }

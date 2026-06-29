@@ -21,7 +21,7 @@
  * fake — no real codex / container / push.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { meetsCmrFloor, runVerifyCmr } from "../../src/family/verifyCmr.js";
 import type {
   FamilyBackend,
@@ -37,6 +37,10 @@ import type {
   MergeRequest,
 } from "../../src/family/types.js";
 import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.js";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 /**
  * A full family backend fake with the #296 verify/cmr/PR/abort/escalate
@@ -77,7 +81,7 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
-    return this.script.cmr?.(req) ?? { converged: true, successfulLegs: ["opus", "gpt-5.5"] };
+    return this.script.cmr?.(req) ?? { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);
@@ -218,10 +222,40 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     });
   });
 
+  it("rejects route-undeclared strong legs before applying the CMR floor", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({
+        converged: true,
+        successfulLegs: ["agy", "opus"],
+        skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.prCalls).toEqual([]);
+    expect(backend.escalations[0]?.reason).toContain("not declared");
+    expect(backend.escalations[0]?.reason).toContain("opus");
+    expect(backend.ledger).toContainEqual({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("not declared"),
+    });
+  });
+
   it("GREEN full verify + CONVERGED cmr → open the family PR, ok:true ran:true (止于 PR)", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
     });
     const result = await runVerifyCmr({
       phase: "final",
@@ -409,7 +443,7 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
         return { ok: true };
       }
       async runIntegratedCmr(): Promise<IntegratedCmrResult> {
-        return { converged: true, successfulLegs: ["opus"] };
+        return { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
       }
     }
     const backend = new VerifyAndCmrBackend();
@@ -452,7 +486,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       // The cmr worker converges so the run reaches the ship stage (for the ship case).
       return {
         kind: "completed",
-        output: { kind: "cmr", converged: true, successfulLegs: ["opus"] },
+        output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] },
       };
     }
   }

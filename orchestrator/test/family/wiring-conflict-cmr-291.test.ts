@@ -121,7 +121,7 @@ class ConflictCmrFamilyBackend implements FamilyBackend {
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
-    return { converged: true, successfulLegs: ["opus"] };
+    return { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);

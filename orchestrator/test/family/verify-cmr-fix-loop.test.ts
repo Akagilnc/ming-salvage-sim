@@ -95,7 +95,7 @@ class SchedulerFamilyBackend implements FamilyBackend {
       return (
         this.script.cmr?.() ?? {
           kind: "completed",
-          output: { kind: "cmr", converged: true, successfulLegs: ["opus"] },
+          output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] },
         }
       );
     }
@@ -115,7 +115,7 @@ class SchedulerFamilyBackend implements FamilyBackend {
 describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr passes, no runner fix loop)", () => {
   it("cmr workers CONVERGED ⇒ ok:true, completeness + correctness dispatches, NO coder-fix, then ship", async () => {
     const backend = new SchedulerFamilyBackend({
-      cmr: () => ({ kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus"] } }),
+      cmr: () => ({ kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] } }),
     });
     const result = await runVerifyCmr({
       phase: "final",
@@ -182,7 +182,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus"],
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
           claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|fake closure"],
         },
       }),
@@ -206,7 +206,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus"],
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
           claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|real closure"],
           priorFindingDispositions: [
             {
@@ -246,7 +246,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
 
   it("the cmr worker dispatch is FRESH (a new memory-bearing session, not a resume) — NO resume plumbing", async () => {
     const backend = new SchedulerFamilyBackend({
-      cmr: () => ({ kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus"] } }),
+      cmr: () => ({ kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] } }),
     });
     await runVerifyCmr({
       phase: "final",

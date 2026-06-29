@@ -52,7 +52,7 @@ class CapableFamilyBackend implements FamilyBackend {
   ): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
     return this.cmrConverged
-      ? { converged: true, successfulLegs: ["opus"] }
+      ? { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }
       : { converged: false, reason: "cross-slice seam mismatch" };
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
@@ -157,7 +157,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
             kind: "cmr",
             converged:
               ctx.cmrPass === "completeness" ? this.completenessConverged : true,
-            successfulLegs: ["opus"],
+            successfulLegs: ["opus", "gpt-5.5", "agy"],
             ...(ctx.cmrPass === "completeness" && !this.completenessConverged
               ? { reason: "family base is incomplete" }
               : {}),
@@ -230,10 +230,10 @@ describe("#331 the family ship worker must return a SHIP payload (codex R2 guard
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
       if (spec.kind === "cmr") {
-        return { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus"] } };
+        return { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] } };
       }
       // ship: a mis-wired backend returns a non-ship completed payload.
-      return { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus"] } };
+      return { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] } };
     }
   }
 
@@ -274,7 +274,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
       if (spec.kind === "cmr") {
-        return { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus"] } };
+        return { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] } };
       }
       return this.shipOutput;
     }
@@ -376,8 +376,8 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
 
   it("a malformed ship worker (completed but NOT a ship payload) ⇒ INCOMPLETE_GATE + durable aborted(final)", async () => {
     const backend = new RecordingFamilyBackend(
-      { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus"] } },
-      { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus"] } },
+      { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] } },
+      { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] } },
     );
     const res = await runVerifyCmr({ phase: "final", familyBase: "feat/330", familyBackend: backend });
     expect(res).toEqual({ ok: false, ran: true });
@@ -416,7 +416,7 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
         };
       }
       if (spec.kind === "cmr") {
-        return { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus"] } };
+        return { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] } };
       }
       return {
         kind: "completed",
@@ -486,7 +486,7 @@ describe("#331 legacyDispatchFamilyWorker — wraps legacy returns as WorkerResu
     };
     be.dispatchWorker = async (): Promise<WorkerResult> => {
       used = true;
-      return { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus"] } };
+      return { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] } };
     };
     await dispatchFamilyWorker(be, cmrWorkerSpec(), { familyBase: "fb" });
     expect(used).toBe(true);

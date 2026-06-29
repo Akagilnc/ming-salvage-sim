@@ -599,7 +599,7 @@ class FakeSeamsBackend extends RealFamilyBackend {
   mergerCalls: ConflictResolveRequest[] = [];
   verifyOutcome: "green" | "red" = "green";
   verifyCalls: FamilyVerifyRequest[] = [];
-  cmrResult: IntegratedCmrResult = { converged: true, successfulLegs: ["opus"] };
+  cmrResult: IntegratedCmrResult = { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
   cmrCalls: IntegratedCmrRequest[] = [];
   shCalls: Array<{ file: string; args: string[] }> = [];
   mergeInProgressFake = false;

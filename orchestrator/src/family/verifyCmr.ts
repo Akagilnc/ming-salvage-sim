@@ -59,6 +59,7 @@ import {
   dispatchFamilyWorker,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
+import { cmrLegAccountingFailure } from "../modelRoutes.js";
 import { modelIsStrongLeg } from "../realBackend.js";
 import {
   recordAborted as recordDurableAbort,
@@ -310,6 +311,21 @@ async function runIntegratedCmrPass(input: {
   if (!cmrResult.output.converged) {
     const reason =
       cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter,
+    });
+    await familyBackend.escalateFamily?.({ reason });
+    return { ok: false, ran: true };
+  }
+  const legAccountingFailure = cmrLegAccountingFailure({
+    successfulLegs: cmrResult.output.successfulLegs ?? [],
+    skippedLegs: cmrResult.output.skippedLegs,
+  });
+  if (legAccountingFailure !== undefined) {
+    const reason = `integrated cmr ${pass} leg accounting failed: ${legAccountingFailure}`;
     await recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,

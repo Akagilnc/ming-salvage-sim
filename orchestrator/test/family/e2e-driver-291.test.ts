@@ -201,7 +201,7 @@ class E2EFamilyBackend extends RealFamilyBackend {
       familyBase: ctx.familyBase!,
       ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
     });
-    return { kind: "verdict", converged: true, successfulLegs: ["opus"] };
+    return { kind: "verdict", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
   }
   // #336: 止于 PR is now a CONTAINER ship WORKER (gstack-ship) via dispatchWorker →
   // runShipWorker, NOT the inline openFamilyPr. Override the worker seam (no real

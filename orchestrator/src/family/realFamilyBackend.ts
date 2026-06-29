@@ -82,7 +82,7 @@ import {
   WORKER_IDLE_TIMEOUT_SECONDS,
   modelFamilyForSlug,
 } from "../realBackend.js";
-import { cmrReviewLegs, modelForSlot } from "../modelRoutes.js";
+import { cmrLegAccountingFailure, cmrReviewLegs, modelForSlot } from "../modelRoutes.js";
 import {
   cmrWorkerSpec,
   familyShipWorkerSpec,
@@ -1846,47 +1846,6 @@ export type CmrWorkerOutcome =
 interface CmrSkippedLeg {
   readonly slug: string;
   readonly reason: string;
-}
-
-function cmrLegAccountingFailure(input: {
-  readonly successfulLegs: readonly string[];
-  readonly skippedLegs?: readonly CmrSkippedLeg[];
-}): string | undefined {
-  const declaredLegs = cmrReviewLegs().map((leg) => leg.slug);
-  const declared = new Set(declaredLegs);
-  const undeclaredSuccessful = input.successfulLegs.filter((slug) => !declared.has(slug));
-  if (undeclaredSuccessful.length > 0) {
-    return (
-      "cmr worker reported successful legs that were not declared by the active route: " +
-      undeclaredSuccessful.join(", ")
-    );
-  }
-  const undeclaredSkipped = (input.skippedLegs ?? [])
-    .map((leg) => leg.slug)
-    .filter((slug) => !declared.has(slug));
-  if (undeclaredSkipped.length > 0) {
-    return (
-      "cmr worker reported skipped legs that were not declared by the active route: " +
-      undeclaredSkipped.join(", ")
-    );
-  }
-  const successful = new Set(input.successfulLegs);
-  const skipped = new Set((input.skippedLegs ?? []).map((leg) => leg.slug));
-  const missing = declaredLegs.filter((slug) => !successful.has(slug) && !skipped.has(slug));
-  if (missing.length > 0) {
-    return (
-      "cmr worker omitted declared leg accounting for: " +
-      `${missing.join(", ")} (each active-route cmr leg must be successful or skipped)`
-    );
-  }
-  const doubleReported = declaredLegs.filter((slug) => successful.has(slug) && skipped.has(slug));
-  if (doubleReported.length > 0) {
-    return (
-      "cmr worker reported declared leg as both successful and skipped: " +
-      doubleReported.join(", ")
-    );
-  }
-  return undefined;
 }
 
 /**
