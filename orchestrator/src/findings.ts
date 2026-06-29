@@ -13,6 +13,12 @@ function normalizeFindingPart(value: string): string {
     .replace(/\s+/g, " ");
 }
 
+function encodeFindingPart(value: string): string {
+  return normalizeFindingPart(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|");
+}
+
 /**
  * Stable identity key for cross-round finding matching.
  *
@@ -23,9 +29,9 @@ function normalizeFindingPart(value: string): string {
  */
 export function findingIdentityKey(finding: Finding): string {
   return [
-    normalizeFindingPart(finding.category),
-    normalizeFindingPart(finding.location),
-    normalizeFindingPart(finding.claim_quote),
+    encodeFindingPart(finding.category),
+    encodeFindingPart(finding.location),
+    encodeFindingPart(finding.claim_quote),
   ].join("|");
 }
 
@@ -155,6 +161,12 @@ export function adjudicatePriorClaimedFixedFindings(input: {
   readonly priorIdentityKeys: ReadonlyArray<string>;
   readonly review: ReviewerOutput;
 }): PriorFindingAdjudication {
+  if (input.priorFindings.length !== input.priorIdentityKeys.length) {
+    throw new Error(
+      `prior claimed-fixed finding/key count mismatch: ` +
+        `${input.priorFindings.length} findings for ${input.priorIdentityKeys.length} keys`,
+    );
+  }
   const dispositionByKey = new Map<string, PriorFindingDisposition>();
   for (const disposition of input.review.priorFindingDispositions ?? []) {
     if (dispositionByKey.has(disposition.identityKey)) {

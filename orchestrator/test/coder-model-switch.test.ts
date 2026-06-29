@@ -13,7 +13,6 @@ describe("coderModel() — switchable coder backend (ORCHESTRATOR_CODER_MODEL)",
   });
 
   it("defaults to the normal-route sonnet coder when the env is unset", () => {
-    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
     expect(coderModel()).toBe("sonnet");
   });
 

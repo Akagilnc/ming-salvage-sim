@@ -274,6 +274,23 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
+  it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", async () => {
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({ kind: "failed", reason: "sandbox exited 1" }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.aborted[0]?.errorPackage.reason).toMatch(/sandbox exited 1/);
+    expect(backend.ledger.some((e) => e.status === "aborted")).toBe(true);
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
+  });
+
   it("the cmr worker dispatch is FRESH (a new memory-bearing session, not a resume) — NO resume plumbing", async () => {
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({ kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] } }),
