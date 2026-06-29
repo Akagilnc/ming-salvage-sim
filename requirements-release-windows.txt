@@ -1,0 +1,2 @@
+-r requirements-release.txt
+pythonnet==3.1.0
