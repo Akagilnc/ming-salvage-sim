@@ -281,6 +281,31 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
       warn.mockRestore();
     }
   });
+  it("paginates native sub-issues so children after the first REST page are admitted", () => {
+    const subIssueCalls: string[] = [];
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (String(args[1]).includes("/sub_issues")) {
+        subIssueCalls.push(String(args[1]));
+        const page = Number(/[?&]page=(\d+)/.exec(String(args[1]))?.[1] ?? "1");
+        if (page === 1) {
+          return JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ number: 1000 + i })));
+        }
+        if (page === 2) return JSON.stringify([{ number: 2000 }]);
+        return "[]";
+      }
+      return "[]";
+    };
+    const epic = readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
+    expect(epic.children.map((c) => c.issue)).toEqual([
+      ...Array.from({ length: 100 }, (_, i) => 1000 + i),
+      2000,
+    ]);
+    expect(subIssueCalls).toEqual([
+      "repos/Akagilnc/ming-salvage-sim/issues/291/sub_issues?per_page=100&page=1",
+      "repos/Akagilnc/ming-salvage-sim/issues/291/sub_issues?per_page=100&page=2",
+    ]);
+  });
   it("fails closed when the epic has NO child issues (a leaf issue / empty-or-odd subIssues) (online R2 Codex P2)", () => {
     // An epic with zero children would let `runFamily` treat the empty set as
     // already-complete (`every` over [] is vacuously true) → final verify/cmr on a
