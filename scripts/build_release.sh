@@ -3,7 +3,7 @@
 #
 # 前置（在干净 clone 里跑一次）：
 #   python -m venv .venv && . .venv/bin/activate
-#   pip install -r requirements.txt pyinstaller pywebview tiktoken   # 本仓无 pyproject/setup.py，用 requirements.txt（非 -e .）
+#   pip install -r requirements.txt -r requirements-release.txt   # 本仓无 pyproject/setup.py，用 requirements.txt（非 -e .）
 # 然后：
 #   scripts/build_release.sh
 #
