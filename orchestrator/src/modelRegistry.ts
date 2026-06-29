@@ -81,6 +81,10 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
 
 const LEG_ONLY_MODEL_FAMILIES: Readonly<Record<string, ModelFamily>> = {
   agy: "agy",
+  gemini: "other",
+  glm: "other",
+  haiku: "claude",
+  spark: "other",
 };
 
 function rowForSlug(slug: string): ModelSlugRegistryRow {
@@ -127,7 +131,7 @@ export function modelFamilyForSlug(slug: string): ModelFamily {
 }
 
 export function modelIsStrongLeg(slug: string): boolean {
-  return rowForSlug(slug).strongLeg === true;
+  return MODEL_SLUG_REGISTRY[slug]?.strongLeg === true;
 }
 
 export function modelIdForSlug(slug: string): string {
