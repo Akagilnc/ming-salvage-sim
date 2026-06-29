@@ -1,14 +1,14 @@
-"""#66 slice2：regions.fiscal 省级 settle_tick 基座 + DB↔settle_tick 桥。
+"""#66/#266：regions.fiscal 省级 settle_tick 基座 + DB↔settle_tick 桥。
 
 两件事：
-1. 种子——陕西（单省脊柱）fiscal JSON 内嵌 settle 基座（开账 st + 月参 p），占位数 = v23
-   spike G1 base（史实重标在 slice5）。种子必须能被 settle_tick 接受（=有效基座）。
+1. 种子——陕西 fiscal JSON 内嵌 settle 基座（开账 st + 月参 p），#266 已重标为史实量级
+   shadow seed。种子必须能被 settle_tick 接受（=有效基座）。
 2. 桥——`GameDB.settle_province_tick(region_id, actions)` 读 settle.st/p → 跑 settle_tick →
    写回 new_st。**港口锁**：坏输入/守恒破 raise 时 FAIL tick 绝不落库（毒态不钉存档）。
 
-陕西种子 = G1 基线（省库50/军饷欠20/正赋60/三饷10/火耗.2/逋赋.3/起运40/Due军饷45…），
-故空 action 跑一 tick 应得 G1 末态 {省库0, C_地方截留9.8, 民欠21, 军饷欠18}——把桥的
-落库输出直接钉到已验证 golden。
+陕西种子 = 低省库 + 正赋15/月 + 辽饷2.5/月 + 逋赋0.45 + 边镇 Due；
+空 action 跑一 tick 应进入欠账螺旋。月末 shadow spine 按 controlled_by==ming 且有 settle
+动态推进，失地/无基座省自然出列。
 """
 import json
 
@@ -50,19 +50,57 @@ def test_shaanxi_seed_has_valid_settle_substrate(fresh_db):
     assert res.new_st["省库库银"] is not None
 
 
+def test_shaanxi_seed_is_relabelled_to_historical_shadow_scale(fresh_db):
+    settle = _read_settle(fresh_db)
+    p = settle["p"]
+    assert p["正赋应征"] == pytest.approx(15)
+    assert p["三饷应征"] == pytest.approx(2.5)
+    assert p["火耗率"] == pytest.approx(0.18)
+    assert p["逋赋率"] == pytest.approx(0.45)
+    assert p["起运定额"] == pytest.approx(3.5)
+    assert p["拨付gross"] == pytest.approx(4)
+    assert p["Due"] == {"军饷": 18, "官俸": 3, "宗禄": 6, "赈济": 0}
+    assert settle["st"]["省库库银"] == 0
+
+    meta = settle["_meta"]
+    assert "宗禄" in meta["provisional"]
+    assert "起运定额" in meta["provisional"]
+    assert "官民田" in meta["provisional"]
+    assert "隐田" in meta["provisional"]
+    assert meta["levies"]["seeded"] == ["辽饷"]
+    assert "剿饷" in meta["levies"]["not_seeded"]
+    assert "练饷" in meta["levies"]["not_seeded"]
+    assert "#259 后由饷率通道动态接管" in meta["notes"]["起运定额"]
+
+
 def test_settle_province_tick_persists_g1_baseline(fresh_db):
     res = fresh_db.settle_province_tick("shaanxi", [])
     fresh_db.conn.commit()
     after = _read_settle(fresh_db)["st"]
-    # 钉 G1 末态（种子=G1 基线）：桥的落库输出 == 已验证 golden
-    for k, v in {"省库库银": 0, "C_地方截留": 9.8, "民欠旧赋": 21, "军饷欠": 18}.items():
-        assert abs(after[k] - v) < 1e-3, f"{k}：落库 {after[k]} ≠ G1 {v}"
+    # 钉 #266 陕西史实量级 shadow 末态：低省库 + 高逋赋 + 边镇 Due 形成欠账螺旋。
+    for k, v in {
+        "省库库银": 0,
+        "C_地方截留": 1.7325,
+        "民欠旧赋": 7.875,
+        "军饷欠": 27.875,
+        "官俸欠": 3,
+        "宗禄欠": 6,
+    }.items():
+        assert after[k] == pytest.approx(v, abs=1e-3), f"{k}：落库 {after[k]} ≠ #266 {v}"
     # 落库逐键 == settle_tick 的 new_st（桥不篡改）
     for k, v in res.new_st.items():
         assert abs(after[k] - v) < 1e-6, f"{k}：落库 {after[k]} ≠ new_st {v}"
 
 
 def test_settle_province_tick_qingzhang_action(fresh_db):
+    row = fresh_db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = json.loads(str(row["fiscal"]))
+    fiscal["settle"]["st"]["省库库银"] = 50
+    fresh_db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    fresh_db.conn.commit()
     # 带 action 的桥：清丈挖隐田 300 → 官民田 3050→3350、隐田 1600→1300（土地守恒）
     fresh_db.settle_province_tick("shaanxi", [{"type": "清丈", "cost": 2, "挖隐田": 300}])
     fresh_db.conn.commit()
@@ -111,15 +149,44 @@ def fresh_game(fresh_db):
 
 
 def test_apply_fixed_period_flows_advances_shaanxi_substrate(fresh_game):
-    # 月末固定财政相位推进省级基座：陕西种子=G1 基线，空 action 一 tick → 军饷欠 20→18、省库 50→0
+    # 月末固定财政相位推进省级基座：陕西史实量级 seed 空 action 一 tick → 欠账螺旋累积
     from ming_sim.flows import apply_fixed_period_flows
     db, state = fresh_game
     assert _read_settle(db)["st"]["军饷欠"] == 20  # 种子
     apply_fixed_period_flows(db, state)
     after = _read_settle(db)["st"]
-    assert abs(after["军饷欠"] - 18) < 1e-3, f"军饷欠 {after['军饷欠']} ≠ 18（基座未在固定财政相位推进？）"
-    assert abs(after["省库库银"] - 0) < 1e-3
-    assert abs(after["C_地方截留"] - 9.8) < 1e-3
+    assert after["军饷欠"] == pytest.approx(27.875, abs=1e-3), \
+        f"军饷欠 {after['军饷欠']} ≠ 27.875（基座未在固定财政相位推进？）"
+    assert after["省库库银"] == pytest.approx(0, abs=1e-3)
+    assert after["C_地方截留"] == pytest.approx(1.7325, abs=1e-3)
+    assert after["民欠旧赋"] == pytest.approx(7.875, abs=1e-3)
+
+
+def test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine(fresh_game):
+    # #266: shadow spine is controlled_by==ming AND has fiscal.settle.
+    # That lets lost provinces freeze naturally and lets newly-seeded Ming provinces tick.
+    from ming_sim.flows import apply_fixed_period_flows
+    db, state = fresh_game
+    shaanxi_settle = _read_settle(db)
+
+    henan_settle = json.loads(json.dumps(shaanxi_settle, ensure_ascii=False))
+    henan_settle["st"]["省库库银"] = 40
+    henan_fiscal = {"settle": henan_settle}
+    db.conn.execute(
+        "UPDATE regions SET controlled_by = 'rebel', fiscal = ? WHERE id = 'henan'",
+        (json.dumps(henan_fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+
+    apply_fixed_period_flows(db, state)
+    assert _read_settle(db)["st"]["军饷欠"] != 20, "陕西仍应由动态 spine 推进"
+    assert _read_settle(db, "henan")["st"]["省库库银"] == 40, "非明控制省不应 tick"
+    assert _read_settle(db, "nanzhili") is None, "明控但无 settle 的省不应被创建/推进"
+
+    db.conn.execute("UPDATE regions SET controlled_by = 'ming' WHERE id = 'henan'")
+    db.conn.commit()
+    apply_fixed_period_flows(db, state)
+    assert _read_settle(db, "henan")["st"]["省库库银"] != 40, "明控且有 settle 的省应 tick"
 
 
 def test_substrate_absent_does_not_break_flows(game):
@@ -195,3 +262,29 @@ def test_substrate_corrupt_stock_isolated(fresh_game):
     assert isinstance(flows, list) and flows, "非数值 stock 不该掀翻固定财政（TypeError 逃逸隔离）"
     after = _read_settle(db)["st"]
     assert after["省库库银"] == [], "坏 stock 不该推进（港口锁：原值不变）"
+
+
+def test_substrate_malformed_settle_shape_is_logged_not_prefiltered(fresh_game, monkeypatch):
+    # cmr fix：动态 spine 只负责找「明控且已有 settle key」的省；st/p 形状坏态必须交给
+    # settle_province_tick 验证并经 shadow 隔离日志留痕，不能在 spine 预过滤后静默跳过。
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = json.loads(str(row["fiscal"]))
+    fiscal["settle"]["p"] = []  # malformed settle block: 有 settle key，但缺合法 p dict
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    assert isinstance(flow_rows, list) and flow_rows, "坏 settle 形状不该掀翻固定财政"
+    assert _read_settle(db)["p"] == [], "坏 settle 形状不该被 tick 改写"
+    surfaced = [m for m in msgs if "[fiscal-substrate] shaanxi" in m and "ValueError" in m]
+    assert surfaced, msgs
