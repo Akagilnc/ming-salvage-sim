@@ -72,7 +72,10 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
 
     expect(res).toEqual({ ok: true, ran: true });
     // The legacy methods were still reached (the wrapper forwards to them).
-    expect(be.cmrCalls).toEqual([{ familyBase: "feat/330" }]);
+    expect(be.cmrCalls).toEqual([
+      { familyBase: "feat/330", cmrPass: "completeness" },
+      { familyBase: "feat/330", cmrPass: "correctness" },
+    ]);
     expect(be.prCalls).toEqual([{ familyBase: "feat/330" }]);
   });
 
@@ -100,7 +103,16 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
       llmResolvedChildren: [42, 43],
     });
     expect(be.cmrCalls).toEqual([
-      { familyBase: "feat/330", llmResolvedChildren: [42, 43] },
+      {
+        familyBase: "feat/330",
+        cmrPass: "completeness",
+        llmResolvedChildren: [42, 43],
+      },
+      {
+        familyBase: "feat/330",
+        cmrPass: "correctness",
+        llmResolvedChildren: [42, 43],
+      },
     ]);
   });
 });
@@ -113,7 +125,12 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
    * fail-safed a new-seam-only backend to INCOMPLETE_GATE).
    */
   class NewSeamFamilyBackend implements FamilyBackend {
-    dispatched: string[] = [];
+    dispatched: Array<{
+      kind: WorkerSpec["kind"];
+      promptFile: string;
+      cmrPass?: DispatchContext["cmrPass"];
+    }> = [];
+    completenessConverged = true;
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
@@ -126,11 +143,25 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
     }
     async dispatchWorker(
       spec: WorkerSpec,
-      _ctx: DispatchContext,
+      ctx: DispatchContext,
     ): Promise<WorkerResult> {
-      this.dispatched.push(spec.kind);
+      this.dispatched.push({
+        kind: spec.kind,
+        promptFile: spec.promptFile,
+        cmrPass: ctx.cmrPass,
+      });
       if (spec.kind === "cmr") {
-        return { kind: "completed", output: { kind: "cmr", converged: true } };
+        return {
+          kind: "completed",
+          output: {
+            kind: "cmr",
+            converged:
+              ctx.cmrPass === "completeness" ? this.completenessConverged : true,
+            ...(ctx.cmrPass === "completeness" && !this.completenessConverged
+              ? { reason: "family base is incomplete" }
+              : {}),
+          },
+        };
       }
       // Ship the family base branch (the gate re-asserts branch === familyBase,
       // cmr S336 r4) with a real pr_opened + pr URL.
@@ -149,7 +180,37 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       familyBackend: be,
     });
     expect(res).toEqual({ ok: true, ran: true });
-    expect(be.dispatched).toEqual(["cmr", "ship"]);
+    expect(be.dispatched).toEqual([
+      {
+        kind: "cmr",
+        promptFile: "integrated_cmr_completeness.md",
+        cmrPass: "completeness",
+      },
+      {
+        kind: "cmr",
+        promptFile: "integrated_cmr_correctness.md",
+        cmrPass: "correctness",
+      },
+      { kind: "ship", promptFile: "family_ship.md", cmrPass: undefined },
+    ]);
+  });
+
+  it("a red completeness pass gates correctness and ship (step6 cannot run before step5 passes)", async () => {
+    const be = new NewSeamFamilyBackend();
+    be.completenessConverged = false;
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: be,
+    });
+    expect(res).toEqual({ ok: false, ran: true });
+    expect(be.dispatched).toEqual([
+      {
+        kind: "cmr",
+        promptFile: "integrated_cmr_completeness.md",
+        cmrPass: "completeness",
+      },
+    ]);
   });
 });
 

@@ -46,6 +46,7 @@ import type {
 interface DispatchRecord {
   readonly kind: WorkerSpec["kind"];
   readonly session: WorkerSpec["session"];
+  readonly cmrPass?: DispatchContext["cmrPass"];
 }
 
 /**
@@ -89,7 +90,7 @@ class SchedulerFamilyBackend implements FamilyBackend {
   }
 
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-    this.dispatches.push({ kind: spec.kind, session: spec.session });
+    this.dispatches.push({ kind: spec.kind, session: spec.session, cmrPass: ctx.cmrPass });
     if (spec.kind === "cmr") {
       return (
         this.script.cmr?.() ?? {
@@ -111,8 +112,8 @@ class SchedulerFamilyBackend implements FamilyBackend {
   }
 }
 
-describe("family integrated-cmr gate = PURE SCHEDULER (dispatch ONE memory-bearing cmr worker, no runner loop)", () => {
-  it("cmr worker CONVERGED ⇒ ok:true, ONE cmr dispatch, NO coder-fix, then ship (the worker fixed internally)", async () => {
+describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr passes, no runner fix loop)", () => {
+  it("cmr workers CONVERGED ⇒ ok:true, completeness + correctness dispatches, NO coder-fix, then ship", async () => {
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({ kind: "completed", output: { kind: "cmr", converged: true } }),
     });
@@ -122,9 +123,12 @@ describe("family integrated-cmr gate = PURE SCHEDULER (dispatch ONE memory-beari
       familyBackend: backend,
     });
     expect(result).toEqual({ ok: true, ran: true });
-    // Exactly one cmr dispatch, NEVER a coder-fix worker (the fix loop is INSIDE
-    // the cmr worker's own session — the runner never schedules a fix), then ship.
-    expect(backend.dispatches.filter((d) => d.kind === "cmr")).toHaveLength(1);
+    // Exactly two CMR passes, NEVER a coder-fix worker (the pass workers own their
+    // convergence; the runner only gates step5 → step6), then ship.
+    expect(backend.dispatches.filter((d) => d.kind === "cmr").map((d) => d.cmrPass)).toEqual([
+      "completeness",
+      "correctness",
+    ]);
     expect(backend.dispatches.filter((d) => d.kind === "coder")).toHaveLength(0);
     expect(backend.escalations).toEqual([]);
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);

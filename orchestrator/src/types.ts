@@ -390,6 +390,12 @@ export interface DispatchContext {
    * single-slice workers and for a conflict-free family run.
    */
   readonly llmResolvedChildren?: ReadonlyArray<number>;
+  /**
+   * FAMILY cmr worker only: which integrated CMR pass this worker is running.
+   * `completeness` is the step5 gate; `correctness` is the step6 gate and must be
+   * dispatched only after completeness passes.
+   */
+  readonly cmrPass?: "completeness" | "correctness";
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */
@@ -411,6 +417,8 @@ export type ReviewerResult = ReviewerOutput;
  */
 export interface CmrResult {
   readonly kind: "cmr";
+  /** Which integrated CMR pass produced this verdict, when known. */
+  readonly cmrPass?: "completeness" | "correctness";
   /** Converged (all reviewers agreed) ⇒ true; else the gate is red. */
   readonly converged: boolean;
   /** Why it did not converge — set when red (handed to escalate). */
