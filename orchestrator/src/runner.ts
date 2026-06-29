@@ -9,7 +9,12 @@
  * ⚠️ PRE-0030 (about to be reversed — see ADR 0030, Proposed): ADR 0030 re-splits
  * the per-slice review→fix→re-review loop back to runner-dispatched worker steps;
  * the S2-only collapse below will be reinstated as runner edges when ADR 0030 lands
- * (#369/#422). Until then the ADR-0026 sequence below is the current correct design.
+ * (#369/#422). Until then the ADR-0026 STRUCTURE below is the current sequence —
+ * EXCEPT the per-slice REVIEW specifics in it (a fresh Opus pass) are already
+ * further superseded by the current Claude-paused policy: per CLAUDE.md
+ * "## Skill routing" + souls/coder.md, the per-slice 2nd review is a single
+ * NON-Claude (Codex) leg, NOT Opus. Do NOT re-invoke Opus per the comment below
+ * under the Claude-paused pipeline (would fail/divert slice review when Claude is tight).
  *
  * ADR 0026 (2026-06-24 correction, wiki line 42): the single-slice runner is a
  * PURE SCHEDULER. The per-slice review→fix→re-review LOOP no longer lives at the
