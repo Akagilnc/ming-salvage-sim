@@ -685,6 +685,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
   });
 
   it("exports the route-selected CMR leg collection to the worker", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const cfg = cfgBackend().config(auth);
     const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
 
@@ -955,6 +956,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
   });
 
   it("writes the route-selected CMR review legs beside the focus file", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const repo = realRepo();
     const be = new FocusBackend({
       workingRepo: repo,
@@ -1068,6 +1070,7 @@ describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has
   }
 
   it("no Claude worker token ⇒ escalate, never spins the container", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const repo = realRepo335();
     const be = new NoClaudeAuthBackend({
       workingRepo: repo,
@@ -1088,6 +1091,7 @@ describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has
   });
 
   it("dispatchWorker routes the no-auth escalate to a not-passed WorkerResult", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const repo = realRepo335();
     const be = new NoClaudeAuthBackend({
       workingRepo: repo,
@@ -1134,6 +1138,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
   }
 
   it("the early no-claude-auth escalate still removes the codex + agy temp dirs", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const codexDir = mkDir("reclaim-codex-");
     const agyDir = mkDir("reclaim-agy-");
     expect(existsSync(codexDir)).toBe(true);
