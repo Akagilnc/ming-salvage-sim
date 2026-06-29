@@ -343,6 +343,14 @@ class GameDB:
         self._legacy_mod_cache: Optional[Dict[str, object]] = None
         self.init_schema()
 
+    def owns_transaction(self) -> bool:
+        """Return True when this GameDB call site should commit its own writes."""
+        return not (
+            bool(getattr(self.conn, "_commit_suspended", False))
+            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
+            or self.conn.in_transaction
+        )
+
     def init_schema(self) -> None:
         self.conn.executescript(
             """

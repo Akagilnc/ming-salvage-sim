@@ -30,5 +30,5 @@ ADR 0007 + [FISCAL_PROVINCE_SUBSTRATE.md](../FISCAL_PROVINCE_SUBSTRATE.md) 把�
 - **取代 ADR 0007 / FISCAL doc 的「仅锁单省 spine」措辞**：单省 = shadow 验证态、非终点；全省 = cutover 必需。并**对齐 ADR 0007「余额起运」措辞 = 引擎 cap 模型**（实测 `起运池=min(实征,起运定额)` 是收入侧 cap、非付完出血的余额，评审 R2 抓出；起运量由起运定额定，故 #70 按 posture 构造起运定额，详见 FISCAL §#70）。
 - **#70 scope 从陕西扩到 17 省 seed**（查史料填、量级定稿，详见 FISCAL doc §#70）。
 - **跨省 hub 从「deferred 不需要」升为 cutover 必需件、紧随 #70**（独立项 #261，待 to-prd/to-issues）。
-- 引擎 `_FISCAL_SUBSTRATE_SPINE` 从静态 `("shaanxi",)` 改**动态查询**（遍历 `controlled_by==ming` ∧ fiscal 有 `settle` 基座的省）；#70 显式 seed 这 17 省（代码级，留 #70 实现期）。
+- 引擎 `_FISCAL_SUBSTRATE_SPINE` 从静态 `("shaanxi",)` 改**动态查询**（遍历 `controlled_by==ming` ∧ fiscal 有 `settle` 基座的省）已由 #266 落地；#70 剩余工作是显式 seed 这 17 省。
 - 单省脊柱的「跨省 hub deferred」不再是终态约束，但 hub 本身的拆法（动态京运补 / 退役旧路径的并轨口径）仍是独立设计，本 ADR 不展开。

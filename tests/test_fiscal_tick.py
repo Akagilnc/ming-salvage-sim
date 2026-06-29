@@ -26,7 +26,8 @@ def _assert_end(st, p, actions, expect):
     res = settle_tick(st, p, actions)
     for kk, vv in expect.items():
         got = res.new_st.get(kk)
-        assert got is not None and abs(got - vv) < 1e-3, f"末态 {kk}={got} ≠ 期望 {vv}"
+        assert got is not None and math.isclose(got, vv, rel_tol=1e-6, abs_tol=1e-3), \
+            f"末态 {kk}={got} ≠ 期望 {vv}"
     return res
 
 

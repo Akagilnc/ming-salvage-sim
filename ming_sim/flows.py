@@ -18,6 +18,8 @@ from ming_sim.token_stats import tlog
 # 基准皇庄收入走 fiscal_config.皇庄_base；此常数只用于增量计算
 _HUANG_TIAN_RENT_PER_WAN_MU = 0.57  # ≈ 20万两/月 ÷ 35万亩
 
+_FIXED_FLOW_NUMERIC_FIELDS = ("huang_tian", "liao_xiang", "salt_tax", "commerce_tax", "corruption")
+
 
 def _province_transport_ratio(fiscal: dict, unrest: int) -> float:
     """解运比（保留函数签名，返回1.0；实际损耗已并入 _province_efficiency）。"""
@@ -41,6 +43,52 @@ def _province_efficiency(fiscal: dict, gentry_resistance: int, unrest: int) -> f
             - corruption        / 100 * 0.45
             - max(0, unrest - 20) / 100 * 0.30)
     return max(0.05, min(1.00, rate))
+
+
+def _fixed_flow_scalars_are_numeric(region_id: str, fiscal: dict) -> bool:
+    for key in _FIXED_FLOW_NUMERIC_FIELDS:
+        if key not in fiscal:
+            continue
+        value = fiscal[key]
+        try:
+            finite_number = (
+                not isinstance(value, bool)
+                and isinstance(value, (int, float))
+                and math.isfinite(float(value))
+            )
+        except OverflowError:
+            finite_number = False
+        if not finite_number:
+            tlog(f"[province-fiscal] {region_id} fiscal.{key} 非数字，本{TURN_UNIT}固定税收出列")
+            return False
+    return True
+
+
+def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> Optional[dict]:
+    """固定财政旧路径的宽容 fiscal 读取。
+
+    Shadow substrate 自己有 fail-loud+隔离日志；固定税收不能因为一个省的 fiscal JSON
+    坏态掀翻整月 pre_settle，也不能把坏 payload 当空 fiscal 继续造钱。坏省当月
+    固定税收出列，并让后续 substrate bridge 再记录精确隔离原因。
+    """
+    if isinstance(raw_fiscal, dict):
+        return raw_fiscal if _fixed_flow_scalars_are_numeric(region_id, raw_fiscal) else None
+    if raw_fiscal is None or raw_fiscal == "":
+        raw_fiscal = "{}"
+    elif not isinstance(raw_fiscal, (str, bytes, bytearray)):
+        tlog(f"[province-fiscal] {region_id} fiscal 非字典，本{TURN_UNIT}固定税收出列")
+        return None
+    try:
+        fiscal = json.loads(raw_fiscal)
+    except (TypeError, ValueError) as exc:
+        tlog(f"[province-fiscal] {region_id} fiscal 解析失败，本{TURN_UNIT}固定税收出列：{type(exc).__name__}: {exc}")
+        return None
+    if not isinstance(fiscal, dict):
+        tlog(f"[province-fiscal] {region_id} fiscal 非字典，本{TURN_UNIT}固定税收出列")
+        return None
+    if not _fixed_flow_scalars_are_numeric(region_id, fiscal):
+        return None
+    return fiscal
 
 
 def calc_province_fiscal(
@@ -73,7 +121,14 @@ def calc_province_fiscal(
         unrest       = int(row["unrest"])
         gentry       = int(row["gentry_resistance"])
         tax_base     = int(row["tax_per_turn"])   # 省级月税基准（万两）
-        fiscal: dict = json.loads(row["fiscal"] or "{}")
+        fiscal = _load_region_fiscal_for_fixed_flow(region_id, row["fiscal"])
+        if fiscal is None:
+            details.append({
+                "region_id": region_id, "name": name, "田赋": 0, "辽饷": 0,
+                "盐税": 0, "商税": 0, "皇庄": 0, "province_total": 0,
+                "efficiency": 0, "isolated": True,
+            })
+            continue
 
         huang_tian   = fiscal.get("huang_tian", 0)
         liao_xiang   = fiscal.get("liao_xiang", 0)
@@ -590,17 +645,40 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     return flows
 
 
-# 单省脊柱：省级 settle_tick 基座目前只锚陕西（跨省 hub deferred，ADR 0007 锁定单省脊柱）。
-_FISCAL_SUBSTRATE_SPINE = ("shaanxi",)
+def _fiscal_substrate_region_ids(db: GameDB) -> List[str]:
+    """动态 shadow spine：明控且已有 settle 基座的省才推进。
+
+    失地省通过 controlled_by 自然出列；无 settle 的省保持旧路径，不在这里创建基座。
+    坏 fiscal 容器和 st/p 形状不在 spine 预验证，交由 settle_province_tick fail-loud
+    并由 shadow 隔离留痕。
+    """
+    region_ids: List[str] = []
+    rows = db.conn.execute(
+        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
+    ).fetchall()
+    for row in rows:
+        region_id = str(row["id"])
+        try:
+            fiscal = json.loads(str(row["fiscal"] or "{}"))
+        except (TypeError, ValueError):
+            # 坏 fiscal 也进入 spine，让 shadow bridge 记录隔离原因；这里不静默跳过。
+            region_ids.append(region_id)
+            continue
+        if not isinstance(fiscal, dict):
+            # 同上：非 dict 容器由 settle_province_tick fail-loud 并写入 tlog。
+            region_ids.append(region_id)
+            continue
+        if "settle" in fiscal:
+            region_ids.append(region_id)
+    return region_ids
 
 
 def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
-    """#66 slice3：月末固定财政相位推进省级 settle_tick 基座（单省脊柱·陕西）。
+    """#66/#266：月末固定财政相位推进省级 settle_tick 基座（动态 shadow spine）。
 
     **shadow 模式**：推进基座末态（军饷欠/民欠/火耗的死亡螺旋逐月累积）并落库，但**不驱动
-    国库**——占位数（正赋 60/月）比陕西史实（~9/月）高 3–10×，未史实重标前 cutover 会破坏
-    游戏平衡（FISCAL_PROVINCE_SUBSTRATE.md §史实校准）。国库 cutover + 史实重标 + 饷率
-    effect 通道 + 跨省 hub 均为 follow-up。
+    国库**——#266 已把陕西 seed 重标到史实量级；国库 cutover + 饷率 effect 通道 + 跨省
+    hub 均为 follow-up。
 
     **fail-loud 但隔离**：基座缺失（旧档无种子）或 settle_tick 抛 ValueError/守恒破时，tlog
     响亮告警并跳过该省该月推进（港口锁：FAIL tick 不落库），但**绝不让 shadow 基座 bug 掀翻
@@ -612,9 +690,12 @@ def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
     """
     from ming_sim.fiscal_tick import FiscalConservationError
 
-    for region_id in _FISCAL_SUBSTRATE_SPINE:
+    owns_transaction = db.owns_transaction()
+    advanced = False
+    for region_id in _fiscal_substrate_region_ids(db):
         try:
             res = db.settle_province_tick(region_id, actions=[])
+            advanced = True
         except (ValueError, FiscalConservationError) as exc:
             # settle_tick 的契约失败（坏态/守恒破）+ 基座缺失 → shadow 隔离，不炸 pre_settle
             tlog(f"[fiscal-substrate] {region_id} 本{TURN_UNIT}未推进（隔离）：{type(exc).__name__}: {exc}")
@@ -622,9 +703,13 @@ def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
         b = res.breakdown
         tlog(
             f"[fiscal-substrate] {region_id} 推进：实征{b.get('实征', 0):.1f}/起运{b.get('起运到京', 0):.1f}/"
-            f"火耗入截留{b.get('火耗实收', 0):.1f}；末态 军饷欠{res.new_st.get('军饷欠', 0):.0f}/"
-            f"民欠{res.new_st.get('民欠旧赋', 0):.0f}（shadow，未入国库）"
+            f"火耗入截留{b.get('火耗实收', 0):.1f}；末态欠账 "
+            f"军饷欠{res.new_st.get('军饷欠', 0):.0f}/官俸欠{res.new_st.get('官俸欠', 0):.0f}/"
+            f"宗禄欠{res.new_st.get('宗禄欠', 0):.0f}/民欠{res.new_st.get('民欠旧赋', 0):.0f}"
+            f"（shadow，未入国库）"
         )
+    if advanced and owns_transaction:
+        db.conn.commit()
 
 
 class DeltaApplyResult(NamedTuple):

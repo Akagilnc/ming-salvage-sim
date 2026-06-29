@@ -22,9 +22,14 @@
           0 兵=0 饷；salary_rate=每军名义月饷率两/兵·月，存 rate 不存 derived maintenance），
           国库不足挂 arrears tick / 逐建筑 condition × output_amount → 国库/内库
         ↳ 我那座金矿(+800)/银行(+300)/帝国航空(+10皇威) 在这一步生效
-        ↳ #66 省级财政基座：db.settle_province_tick(陕西) 推进 settle_tick 基座（shadow）
-          —— 末态逐月演化+落库，但**不驱动国库**（占位数偏史实 3–10×，⑫国库入账 cutover
-          待 #70 史实重标）；fail-loud 但隔离（基座 bug 不掀翻本步固定财政，cmr S4 F4）。
+        ↳ #66/#266 省级财政基座：动态 shadow spine 推进 `controlled_by='ming'`
+          且有 `fiscal.settle` key 的省；失地自然出列，明控但无 settle 的省不创建基座。
+          有效 fiscal 容器按 `settle` key 选择；解析失败或非 dict 容器也会进入 bridge
+          验证路径用于隔离日志。`settle.st/p` 形状校验交给 `settle_province_tick`，
+          坏基座会 tlog 留痕并被 shadow 隔离。
+          陕西 seed 已按 #266 重标到史实量级（正赋/辽饷九厘/军饷/官俸/宗禄/逋赋/火耗/起运定额），
+          末态逐月演化+落库并 tlog 打印实征/起运/火耗/末态欠账，但**不驱动国库**；
+          fail-loud 但隔离（基座 bug 不掀翻本步固定财政，cmr S4 F4）。
         ⚠️ 我的 economy_moves 不要重复这些固定项！
      c. apply_event_terminal_states(state, db)    # 事件终态写路径（候选读取本身只读）
         ↳ 声明了 trigger_end_* 且未 `open_window` 的事件，超过最晚时点会先记 `event_triggers.terminal_state=expired`
