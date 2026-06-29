@@ -10,7 +10,9 @@ per-slice 与 integrated cmr 的「评审 → 修复 → 复审」收敛 loop，
 
 **终止/收敛判定**：loop 的收敛/escalate **复用 cmr skill 的现成模型**（drift 三检收敛、**非轮数计数**；缺腿按 cmr skill 降级容忍——**不强制三腿齐全**），不另立判据；integrated cmr 的最低线 = ADR 0032 的 ≥1 撑底线强腿。这天然抗 LLM 抖动（drift 看 finding count 趋势/类，不是精确 hash，换措辞不重置）。**landing file = 结构化 findings 记录，存受保护的 ledger sibling 目录**（ADR 0026 既有「worktree 外」模式）、对非 reviewer worker 只读，防 coder worker 篡改绕闸。
 
-**裁定状态补「无记忆」缺**（拆 worker 后丢了 0026 的 in-session 记忆）：landing file 不只记 findings，还记**跨轮裁定**（已修 / wont-fix / 已驳）。fresh reviewer 每轮读它，对已裁定的 finding 不重提——否则 fresh 冷读会反复重提一条已合理处理的 finding，使 drift 永不收敛、误触 escalate（spurious 假升级）。**landing file 就是 fresh-worker 拓扑下"记忆"的落点**，正是 0030「runner 可见、不靠 session 记忆」的应有之义。
+**裁定状态补「无记忆」缺**（拆 worker 后丢了 0026 的 in-session 记忆）：landing file 不只记 findings，还记**跨轮裁定**（已修 / wont-fix / 已驳），由 **runner 据 fix-step 结果写**（runner 持可见 loop，裁定是它的账，不是某条 reviewer 腿私改）。fresh reviewer 每轮读它，对已裁定的 finding 不重提——否则 fresh 冷读会反复重提一条已合理处理的 finding，使 drift 永不收敛、误触 escalate（spurious 假升级）。
+
+**但裁定不得噤声独立性**（否则把 0026 的病搬进 landing file）：`wont-fix` **只压「同一 finding 同 severity 的原样重提」**；fresh reviewer（尤其换了模型）若独立判定该点**更严重**或**前轮裁错**，**仍可升级 / 翻案 / 争议**（裁定是供参考的账、不是封口令）。即：landing file 记忆用来挡"同一条假报反复刷",**不用来挡"另一双眼睛发现它其实是真 P1"**。**landing file 就是 fresh-worker 拓扑下"记忆"的落点**，正是 0030「runner 可见、不靠 session 记忆」的应有之义。
 
 **integrated cmr 拆分**：step5 完整性 与 step6 正确性 是两道**有序** runner-dispatched pass —— step5 先过才派 step6、step5 fail 即停、每 pass 判决落 ledger/landing file（细节见子片 #419；本 ADR 把它从纯指针升为决定）。
 
@@ -26,11 +28,15 @@ ADR 0026 押注「一条带记忆的 worker 主 session 兼 fixer，凭 in-sessi
 
 #376（epic v2.1 角色分离）/ #369（per-slice 拆 coder/reviewer/fix）/ #376 scope#2（integrated cmr step5 完整性 与 step6 正确性 拆成独立 runner-dispatched pass）。实现保「薄 promptFile / issue live fetch / baked soul-skill / runner 只调度读终态」的反漂移约束不变。
 
-## 传导范围（本节是权威 scope 真源；实现 #369/#419/#422 必改）
+## 传导范围（实现 #369/#419/#422 必改；本节列已知承重点，但**清单非穷尽**）
 
-被本反转推翻的旧（0026 consolidate）设计编码在下列**活文件**里——它们是**当前有效的 0026 实现**，由实现切片（#369/#419/#422）重写。**本节即「反转爆炸半径」的完整真源**；不逐处插标（逐文件标会随每轮 cmr 新发现而无限蔓延 = coverage drift，故 centralize 到这一处）：
+被本反转推翻的旧（0026 consolidate）设计 + **写死的 model 钉死点**散在 orchestrator souls + src 各处——它们是**当前有效的 0026 实现**，由实现切片重写。**逐轮 cmr 总能再揪出一个漏列文件（coverage drift），故本节不追求穷尽清单，而是把"扫全"定为切片的首步职责**：
 
-- **souls**：`orchestrator/image/souls/coder.md`（per-slice review/fix loop 在 coder 内）、`reviewer.md`（review lives inside coder）、`cmr.md`（"You ARE the fixer，loop runs inside YOUR session"）。
-- **code 注释/契约**：`orchestrator/src/route.ts`、`runner.ts`（S2-only 塌缩、S3/S5/S6 deleted）、`types.ts`（StepId 序列契约，#422 要改的最权威处）、`realBackend.ts`、`family/verifyCmr.ts`、`family/realFamilyBackend.ts`（单 session、无 runner 轮间 loop、无 priorFindings、cmr worker 自兼 fixer）、`image/build.sh`（per-slice review = 单 vendor 一遍）。
+> **实现职责（#422 路线/registry + #419 cmr 拆分 的首步）**：先 `rg -n 'model:\s*"(sonnet|opus|gpt-5\.5)"'` 扫出**所有写死 model 钉死点**让它们消费 route+registry 输出（不再硬编码）；再 `rg -n 'You ARE the fixer|memory-bearing|inside YOUR session|S3/S5/S6|priorFindings'` 扫出所有 0026-consolidate 注释/契约一并翻。本节清单是已知起点、**不是完整集**。
 
-**便利标记（非全集）**：高频被读的几处（`CLAUDE.md ## Skill routing`、`coder.md`、`reviewer.md`、`route.ts`、`runner.ts`）已就地加 `pre-0030` 指针；其余 code 注释**不逐处标**，以本节为准。**0030 实现落地前，这些全是当前 0026 有效设计**——不是「现在就错了」，是「实现时一并翻」。
+已知承重点（起点，非全集）：
+- **souls**：`coder.md`（per-slice review/fix loop 在 coder 内）、`reviewer.md`、`cmr.md`（"You ARE the fixer…loop inside YOUR session"）、`ship.md`（引 cmr defer 语义）。
+- **worker spec / 钉死点（codex R3 揪出的真代码点，#422 必改）**：`orchestrator/src/dispatchWorker.ts`（`shipWorkerSpec()` 写死 `model:"sonnet"`）、`orchestrator/src/family/dispatchFamilyWorker.ts`（写 integrated cmr 是单 memory-bearing fixer session + 写死 `model:"opus"`(cmr) / `"sonnet"`(family ship)）。
+- **code 注释/契约**：`route.ts`、`runner.ts`（S2-only 塌缩）、`types.ts`（StepId 序列 + `StepRole` 枚举 + Reviewer/CoderOutput schema 注释，单 session/无独立 fix worker）、`realBackend.ts`、`family/verifyCmr.ts`、`family/realFamilyBackend.ts`、`image/build.sh`。
+
+**便利标记（非全集）**：`CLAUDE.md ## Skill routing`、`coder.md`、`reviewer.md`、`route.ts`、`runner.ts` 已就地加 `pre-0030` 指针;其余以本节 + 上面的 grep-sweep 为准。**0030 落地前这些全是当前 0026 有效设计**——不是「现在就错了」，是「实现时一并翻」。

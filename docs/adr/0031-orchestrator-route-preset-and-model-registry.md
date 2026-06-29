@@ -9,7 +9,7 @@ Status: Proposed（2026-06-29，grill 结晶；评审闸在 to-prd 之后，本 
 slug→后端 从写死的 switch 改成**数据驱动注册表**：每条 = `slug → {provider, model-id, options, family, strong-leg}`，覆盖 Sandcastle 原生 6 provider（`claudeCode` / `codex` / `opencode` / `copilot` / `cursor` / `pi`）。加一个「已烤进镜像的 CLI」的兄弟模型（haiku→claudeCode、spark→codex）= **注册表加一行、零代码**；加一个**新 CLI**（opencode 跑 glm5.2 等）= 烤二进制进镜像 + 挂 auth **一次**，之后该 CLI 的多模型全靠加行解锁。**注册表是 slug→后端唯一真源**——路线表 / override / StepSpec 只引用 slug。
 
 **不变式可校验，不靠手填表不出错**：
-- **family-tight 自动校验**：每个 slug 标 `family`，路线解析器**自动断言** family-tight 不变式（claude-tight → 无 Claude-family 槽），把「没有槽钉死家族」从一句承诺变成可校验谓词。**纯解析器（`(routeName,overrides)→{slot:slug}`）只检测并返回「违规 flag」，不自己问**（纯函数不交互）；**runner（调用方）见 flag → 弹提示 + 阻塞等人答**。手动 override 若会破坏 family-tight（如 claude-tight 下 `merger=sonnet`）→ 警告 + 问是否继续，**不硬拒**（用户拍：claude 紧时我手动我担责）；**AFK 无人在场 → 就卡在那等**（不静默放行带 Claude 跑、也不崩——只在你**故意**手动塞了违规槽时才触发，卡着是你自找）。
+- **family-tight 自动校验**：每个 slug 标 `family`，路线解析器**自动断言** family-tight 不变式（claude-tight → 无 Claude-family 槽），把「没有槽钉死家族」从一句承诺变成可校验谓词。**校验遍历所有槽、含 cmr 腿集合的每一条腿**（cmr 腿是 set 不是单值，是最易漏的槽——claude-tight 必须断言 codex+agy 里没有 opus 这类 Claude 腿）。注意：family-tight 断言只对 `*-tight` 路线生效；`*-cheap` 路线**故意**保留吃紧家族的那一条 cmr 强腿（cheap 的定义），不触发该断言。**纯解析器（`(routeName,overrides)→{slot:slug}`）只检测并返回「违规 flag」，不自己问**（纯函数不交互）；**runner（调用方）见 flag → 弹提示 + 阻塞等人答**。手动 override 若会破坏 family-tight（如 claude-tight 下 `merger=sonnet`）→ 警告 + 问是否继续，**不硬拒**（用户拍：claude 紧时我手动我担责）；**AFK 无人在场 → 就卡在那等**（不静默放行带 Claude 跑、也不崩——只在你**故意**手动塞了违规槽时才触发，卡着是你自找）。
 - **强腿身份**：每个 slug 标 `strong-leg`（cmr 底线认它，见 ADR 0032）；便宜模型「显式提升为腿」= 翻这个标。
 - **fail-closed**：无效路线名 / 无效 slug 一律 fail-closed（throw / 拒跑），typo 不静默跑成错的或不存在的模型。
 - **可观测**：解析出的最终阵容跑前可打印 / 审计（每 worker 用哪个模型一目了然）。
