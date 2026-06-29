@@ -50,6 +50,8 @@ def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> Op
     坏态掀翻整月 pre_settle，也不能把坏 payload 当空 fiscal 继续造钱。坏省当月
     固定税收出列，并让后续 substrate bridge 再记录精确隔离原因。
     """
+    if isinstance(raw_fiscal, dict):
+        return raw_fiscal
     try:
         fiscal = json.loads(str(raw_fiscal or "{}"))
     except (TypeError, ValueError) as exc:
@@ -631,9 +633,11 @@ def _fiscal_substrate_region_ids(db: GameDB) -> List[str]:
         try:
             fiscal = json.loads(str(row["fiscal"] or "{}"))
         except (TypeError, ValueError):
+            # 坏 fiscal 也进入 spine，让 shadow bridge 记录隔离原因；这里不静默跳过。
             region_ids.append(region_id)
             continue
         if not isinstance(fiscal, dict):
+            # 同上：非 dict 容器由 settle_province_tick fail-loud 并写入 tlog。
             region_ids.append(region_id)
             continue
         if "settle" in fiscal:
