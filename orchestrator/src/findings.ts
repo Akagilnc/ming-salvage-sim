@@ -189,7 +189,13 @@ export function adjudicatePriorClaimedFixedFindings(input: {
       verifiedClosedIdentityKeys.push(key);
       continue;
     }
-    stillOpen.push(activeFindingsByKey.get(key) ?? priorByKey.get(key)!);
+    const finding = activeFindingsByKey.get(key) ?? priorByKey.get(key);
+    if (finding === undefined) {
+      throw new Error(
+        `reviewer marked prior claimed-fixed finding ${key} still-active, but no active or prior finding payload exists`,
+      );
+    }
+    stillOpen.push(finding);
   }
   return { stillOpen, verifiedClosedIdentityKeys };
 }

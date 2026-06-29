@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
 import {
@@ -419,6 +423,38 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     expect(res.kind).toBe("completed");
     if (res.kind === "completed") {
       expect(res.output.kind).toBe("coder");
+    }
+  });
+
+  it("writes the fix-findings landing file exclude into the target worktree git exclude", async () => {
+    const worktreePath = mkdtempSync(join(tmpdir(), "dispatch-exclude-worktree-"));
+    const wrongCwd = mkdtempSync(join(tmpdir(), "dispatch-exclude-cwd-"));
+    const originalCwd = process.cwd();
+    try {
+      execFileSync("git", ["init"], { cwd: worktreePath, stdio: "ignore" });
+      process.chdir(wrongCwd);
+
+      const be = new LegacyBackend();
+      const worktree = { ...be.worktree, path: worktreePath };
+      await legacyDispatchWorker(
+        be as unknown as Backend,
+        { ...coderWorker, id: "S5", session: "fresh" },
+        {
+          worktree,
+          blockingFindings: [],
+          blockingFindingIdentityKeys: [],
+        },
+      );
+
+      const exclude = readFileSync(
+        join(worktreePath, ".git", "info", "exclude"),
+        "utf8",
+      );
+      expect(exclude.split(/\r?\n/)).toContain(".orchestrator-fix-findings.json");
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(worktreePath, { recursive: true, force: true });
+      rmSync(wrongCwd, { recursive: true, force: true });
     }
   });
 
