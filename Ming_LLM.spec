@@ -127,7 +127,6 @@ datas = (
     + _tiktoken_data
     + _webview_data
     + tree_datas("web/dist", "web/dist", exclude_parts={"_backup_rgb", "_original_before_cutout"})
-    + tree_datas("web/public", "web/public", exclude_parts={"_backup_rgb", "_original_before_cutout"})
     + [
         ("content", "content"),
     ]
