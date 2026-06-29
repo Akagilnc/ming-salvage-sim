@@ -12,14 +12,10 @@ and `ORCHESTRATOR_REPO` to fetch the current issue body and comments with `gh`.
 Retry transient network failures. If GitHub auth is missing or the issue cannot be
 read after retry, escalate instead of guessing from stale local context.
 
-Fix the blocking review findings supplied by the runner for this round. In normal
-runner executions the file is in the sibling ledger directory:
-`../.ledger-${ORCHESTRATOR_ISSUE_NUMBER}/fix-findings.json` (or
-`../.ledger-${ISSUE_NUMBER}/fix-findings.json`). A legacy compatibility fallback
-may provide `.orchestrator-fix-findings.json` at the worktree root. Prefer the
-sibling ledger file when it exists. Keep the fix scoped, run the relevant tests,
-run the mandatory self-check 二连, and create a new commit for this review round.
-Never amend a prior commit.
+Fix the blocking review findings supplied by the runner for this round. Read the
+fix-findings path from the runner-provided parameters or environment, keep the fix
+scoped, run the relevant tests, run the mandatory self-check 二连, and create a
+new commit for this review round. Never amend a prior commit.
 
 Do not use `.orchestrator-snapshot.json` as execution input.
 

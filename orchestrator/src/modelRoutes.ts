@@ -457,8 +457,27 @@ export function cmrLegAccountingFailure(
       undeclaredSkipped.join(", ")
     );
   }
+  const duplicateSuccessful = input.successfulLegs.filter(
+    (slug, index, legs) => legs.indexOf(slug) !== index,
+  );
+  if (duplicateSuccessful.length > 0) {
+    return (
+      "cmr worker reported duplicate successful legs: " +
+      [...new Set(duplicateSuccessful)].join(", ")
+    );
+  }
+  const skippedSlugs = (input.skippedLegs ?? []).map((leg) => leg.slug);
+  const duplicateSkipped = skippedSlugs.filter(
+    (slug, index, legs) => legs.indexOf(slug) !== index,
+  );
+  if (duplicateSkipped.length > 0) {
+    return (
+      "cmr worker reported duplicate skipped legs: " +
+      [...new Set(duplicateSkipped)].join(", ")
+    );
+  }
   const successful = new Set(input.successfulLegs);
-  const skipped = new Set((input.skippedLegs ?? []).map((leg) => leg.slug));
+  const skipped = new Set(skippedSlugs);
   const missing = declaredLegs.filter((slug) => !successful.has(slug) && !skipped.has(slug));
   if (missing.length > 0) {
     return (

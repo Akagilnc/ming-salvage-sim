@@ -144,6 +144,12 @@ export function isValidFinding(f: unknown): f is Finding {
   ) {
     return false;
   }
+  if (
+    (obj.severity === "critical" || obj.severity === "high") &&
+    obj.action !== "fix_now"
+  ) {
+    return false;
+  }
   for (const field of FINDING_STRING_FIELDS) {
     if (!isString(obj[field])) return false;
   }

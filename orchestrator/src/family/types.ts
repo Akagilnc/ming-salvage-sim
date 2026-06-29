@@ -128,8 +128,9 @@ export interface FamilyLedgerEntry {
    */
   readonly event?: "reconciled" | "aborted" | "shipped" | "cmr_passed";
   /**
-   * Which verify barrier was red — ONLY on a PHASE-LEVEL `aborted` entry (#291 缺口
-   * 2). A `merged` / `reconciled` entry omits it (it is per-child, not per-phase).
+   * Which phase this PHASE-LEVEL event belongs to. Set on `aborted` entries and
+   * on `cmr_passed` audit entries; `merged` / `reconciled` entries omit it because
+   * they are per-child, not per-phase.
    */
   readonly phase?: "wave" | "final";
   /** Which integrated CMR pass this phase-level audit/failure event belongs to. */

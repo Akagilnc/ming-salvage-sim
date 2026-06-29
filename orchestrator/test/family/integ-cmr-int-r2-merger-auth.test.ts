@@ -143,12 +143,20 @@ describe("integ-cmr int-r2 A-1 — mergerSandboxConfig wires CLAUDE_CODE_OAUTH_T
     expect(cfg.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });
   it("mounts codex auth for route-selected Codex merger workers", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     const be = new CfgBackend(baseOpts());
     const cfg = be.cfg({ claudeToken: "merger-tok-xyz", codexAuthDir: "/tmp/merger-codex-auth" });
     expect(cfg.mounts).toContainEqual({
       hostPath: "/tmp/merger-codex-auth",
       sandboxPath: SANDBOX_CODEX_DIR,
     });
+  });
+
+  it("does not mount codex auth for the normal Claude merger route", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const be = new CfgBackend(baseOpts());
+    const cfg = be.cfg({ claudeToken: "merger-tok-xyz", codexAuthDir: "/tmp/merger-codex-auth" });
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
   });
 });
 

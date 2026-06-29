@@ -309,11 +309,25 @@ async function runIntegratedCmrPass(input: {
     return { ok: false, ran: true };
   }
   if (cmrResult.kind !== "completed" || cmrResult.output.kind !== "cmr") {
-    if (cmrResult.kind !== "failed") {
+    const startupAbortAlreadyRecorded =
+      cmrResult.kind === "failed" &&
+      cmrResult.reason.startsWith("family cmr worker threw on startup:");
+    if (!startupAbortAlreadyRecorded) {
+      const reason =
+        cmrResult.kind === "failed"
+          ? `family integrated cmr ${pass} worker failed: ${cmrResult.reason}`
+          : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
+      await familyBackend.recordAborted?.({
+        phase: "final",
+        cmrPass: pass,
+        familyBase,
+        errorPackage: { reason },
+        familyHeadAfter,
+      });
       await recordDurableAbort(familyBackend, {
         phase: "final",
         cmrPass: pass,
-        reason: `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`,
+        reason,
         familyHeadAfter,
       });
     }

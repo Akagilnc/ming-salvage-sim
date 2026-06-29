@@ -260,19 +260,14 @@ export interface RealFamilyBackendOptions {
 const MERGER_CONFLICT_PROMPT = "merger_resolve_conflict.md";
 
 /**
- * Every promptFile the family layer can dispatch — DERIVED from the worker specs
- * (the cmr / family-ship workers) + the local merger-conflict prompt, exactly the
- * way the single-slice {@link REFERENCED_PROMPT_FILES} (realBackend.ts) derives
- * its list from STEP_SPECS + shipWorkerSpec() (integ-cmr int-r1 C-3 / gap g). By
- * reading the prompt off the dispatched specs, a new/changed family worker step
- * can never silently drift out of the construction-time validation list. De-duped
- * (a Set) in case two specs share a promptFile across versions.
+ * Every promptFile the family layer can dispatch. This list is intentionally
+ * static: prompt validation must not resolve model routes during module import.
  */
 export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set([
-    cmrWorkerSpec("fresh", "completeness").promptFile,
-    cmrWorkerSpec("fresh", "correctness").promptFile,
-    familyShipWorkerSpec().promptFile,
+    "integrated_cmr_completeness.md",
+    "integrated_cmr_correctness.md",
+    "family_ship.md",
     MERGER_CONFLICT_PROMPT,
   ]),
 ];
@@ -645,7 +640,10 @@ export class RealFamilyBackend implements FamilyBackend {
     const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     const mounts: { hostPath: string; sandboxPath: string }[] = [];
-    if (auth.codexAuthDir !== undefined) {
+    if (
+      auth.codexAuthDir !== undefined &&
+      modelFamilyForSlug(mergerModel()) === "codex"
+    ) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
     return {
@@ -1130,10 +1128,11 @@ export class RealFamilyBackend implements FamilyBackend {
           "utf8",
         );
       }
-    } catch {
-      // Best-effort: if excludes can't be written the file is still produced; the
-      // review never commits (branchStrategy head + READ-ONLY soul), so a stray
-      // untracked file is harmless.
+    } catch (err) {
+      throw new Error(
+        `excludeFromGit: failed to exclude transient CMR runtime file "${filename}": ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

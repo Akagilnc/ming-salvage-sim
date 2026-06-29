@@ -181,6 +181,18 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(p).not.toMatch(/\bRED\b|\bGREEN\b|\brefactor\b|Baseline commit|\bOpus\b|\bsubagent\b|ak-cross-m-review/i);
   });
 
+  it("fix/review prompt files stay thin and leave path/review method to the soul", () => {
+    const fix = read("coder_fix.md");
+    expect(fix).toMatch(/\/home\/agent\/\.orchestrator\/souls\/coder\.md/);
+    expect(fix).toMatch(/fix-findings path/i);
+    expect(fix).not.toMatch(/sibling ledger|legacy compatibility fallback|Prefer the sibling ledger/is);
+
+    const review = read("reviewer_review.md");
+    expect(review).toMatch(/\/home\/agent\/\.orchestrator\/souls\/reviewer\.md/);
+    expect(review).toMatch(/baked soul plus runner\s+parameters/i);
+    expect(review).not.toMatch(/fetch the current issue body|Retry transient network failures|Review the current full slice diff/is);
+  });
+
   it("the coder soul carries implementation/fix process but not the per-slice review loop", () => {
     const soul = readSoul("coder.md");
     expect(soul).toMatch(/Invoke `\/tdd`/i);

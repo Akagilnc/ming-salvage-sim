@@ -18,7 +18,7 @@
  *   AC-6  tool-chain declaration contains Python + frontend stack
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
 import type {
   Backend,
@@ -107,6 +107,10 @@ class RecordingBackend implements Backend {
 }
 
 describe("StepSpec role contract + soul injection (#253)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   async function runAndCapture() {
     const backend = new RecordingBackend();
     await runOrchestrator({ issueNumber: 253, backend });
@@ -116,6 +120,7 @@ describe("StepSpec role contract + soul injection (#253)", () => {
   // ── AC-1: coder step (S2) carries role=coder + route-selected model + soul=coder ──
 
   it("S2 coder step: role=coder, normal-route model=sonnet, soul=coder", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const specs = await runAndCapture();
     const s2 = specs.find((s) => s.id === "S2");
     expect(s2).toBeDefined();

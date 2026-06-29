@@ -4,6 +4,7 @@ import {
   applyRuntimeTightRoutePolicy,
   applyTightRoutePolicy,
   MODEL_ROUTE_SLOTS,
+  cmrLegAccountingFailure,
   modelForSlot,
   printableRouteLineup,
   resolveRouteModels,
@@ -205,6 +206,25 @@ describe("#422 model route presets", () => {
       { family: "codex", slug: "gpt-5.5" },
       { family: "agy", slug: "agy" },
     ]);
+  });
+
+  it("rejects duplicate CMR leg accounting entries before set-based reconciliation", () => {
+    expect(
+      cmrLegAccountingFailure({
+        successfulLegs: ["gpt-5.5", "gpt-5.5", "opus"],
+        skippedLegs: [{ slug: "agy", reason: "quota" }],
+      }),
+    ).toMatch(/duplicate successful legs.*gpt-5\.5/i);
+
+    expect(
+      cmrLegAccountingFailure({
+        successfulLegs: ["gpt-5.5", "opus"],
+        skippedLegs: [
+          { slug: "agy", reason: "quota" },
+          { slug: "agy", reason: "quota again" },
+        ],
+      }),
+    ).toMatch(/duplicate skipped legs.*agy/i);
   });
 
   it("feeds the resolved route into every worker spec model slot", async () => {

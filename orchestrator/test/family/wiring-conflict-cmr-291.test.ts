@@ -173,7 +173,10 @@ describe("Wiring 1 â€” conflictResolvedByLlm flows to the integrated cmr (#291 ç
       "correctness",
     ]);
     expect(backend.cmrCalls.every((c) => c.familyBase === "family/291-base")).toBe(true);
-    expect(backend.cmrCalls.every((c) => c.llmResolvedChildren?.[0] === 295)).toBe(true);
+    expect(backend.cmrCalls.map((c) => c.llmResolvedChildren)).toEqual([
+      [295],
+      [295],
+    ]);
   });
 
   it("with NO conflicts, the cmr request omits llmResolvedChildren (no false signal)", async () => {

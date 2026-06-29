@@ -10,6 +10,7 @@ import {
 } from "../src/findings.js";
 import { route } from "../src/route.js";
 import { runOrchestrator } from "../src/runner.js";
+import { isValidFinding } from "../src/validate.js";
 import type {
   Backend,
   DispatchContext,
@@ -260,7 +261,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     ]);
   });
 
-  it("fails closed when a still-active prior key has no finding payload", () => {
+  it("fails closed when prior claimed-fixed finding keys and payloads drift", () => {
     const orphanKey = "correctness|src/runner.ts:404|missing finding payload";
 
     expect(() =>
@@ -275,7 +276,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           ],
         },
       }),
-    ).toThrow(/no active or prior finding payload/);
+    ).toThrow(/finding\/key count mismatch/);
   });
 
   it("ships only after the fresh re-review explicitly verifies a claimed-fixed finding closed", async () => {
@@ -876,6 +877,25 @@ describe("#369 finding identity and classification", () => {
     );
   });
 
+  it("escapes identity-key separators so distinct findings cannot collide", () => {
+    const categoryCarriesSeparator: Finding = {
+      ...finding,
+      category: "Correct|ness",
+      location: "src/runner.ts",
+      claim_quote: "same claim",
+    };
+    const locationCarriesSeparator: Finding = {
+      ...finding,
+      category: "Correct",
+      location: "ness|src/runner.ts",
+      claim_quote: "same claim",
+    };
+
+    expect(findingIdentityKey(categoryCarriesSeparator)).not.toBe(
+      findingIdentityKey(locationCarriesSeparator),
+    );
+  });
+
   it("classifies blocking findings and exposes their identity keys together", () => {
     const classification = classifyFindings([finding]);
 
@@ -919,6 +939,31 @@ describe("#369 finding identity and classification", () => {
         reopenAttempts: 0,
       },
     ]);
+  });
+
+  it("rejects critical/high findings unless they are fix-now", () => {
+    expect(
+      isValidFinding({
+        ...finding,
+        severity: "high",
+        action: "defer",
+      }),
+    ).toBe(false);
+    expect(
+      isValidFinding({
+        ...finding,
+        severity: "critical",
+        action: "wont_fix",
+        disposition_reason: "not allowed for P0",
+      }),
+    ).toBe(false);
+    expect(
+      isValidFinding({
+        ...finding,
+        severity: "high",
+        action: "fix_now",
+      }),
+    ).toBe(true);
   });
 
   it("reopens a suppressed finding on severity upgrade but caps reopen attempts at four", () => {
