@@ -1,7 +1,7 @@
 name: CI
 
 # 基础质量门:PR 和并入 main 时跑 Python 引擎测试 + web 构建/类型检查。
-# 之前仓库无任何 test/typecheck CI(只有 release-win 打包),codex 的 PR 零自动门。
+# 之前仓库无任何 test/typecheck CI(只有 release-desktop 打包),codex 的 PR 零自动门。
 on:
   pull_request:
   push:
