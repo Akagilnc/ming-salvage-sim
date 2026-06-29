@@ -18,6 +18,8 @@ from ming_sim.token_stats import tlog
 # 基准皇庄收入走 fiscal_config.皇庄_base；此常数只用于增量计算
 _HUANG_TIAN_RENT_PER_WAN_MU = 0.57  # ≈ 20万两/月 ÷ 35万亩
 
+_FIXED_FLOW_NUMERIC_FIELDS = ("huang_tian", "liao_xiang", "salt_tax", "commerce_tax", "corruption")
+
 
 def _province_transport_ratio(fiscal: dict, unrest: int) -> float:
     """解运比（保留函数签名，返回1.0；实际损耗已并入 _province_efficiency）。"""
@@ -43,6 +45,17 @@ def _province_efficiency(fiscal: dict, gentry_resistance: int, unrest: int) -> f
     return max(0.05, min(1.00, rate))
 
 
+def _fixed_flow_scalars_are_numeric(region_id: str, fiscal: dict) -> bool:
+    for key in _FIXED_FLOW_NUMERIC_FIELDS:
+        if key not in fiscal:
+            continue
+        value = fiscal[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            tlog(f"[province-fiscal] {region_id} fiscal.{key} 非数字，本{TURN_UNIT}固定税收出列")
+            return False
+    return True
+
+
 def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> Optional[dict]:
     """固定财政旧路径的宽容 fiscal 读取。
 
@@ -51,7 +64,7 @@ def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> Op
     固定税收出列，并让后续 substrate bridge 再记录精确隔离原因。
     """
     if isinstance(raw_fiscal, dict):
-        return raw_fiscal
+        return raw_fiscal if _fixed_flow_scalars_are_numeric(region_id, raw_fiscal) else None
     try:
         fiscal = json.loads(str(raw_fiscal or "{}"))
     except (TypeError, ValueError) as exc:
@@ -59,6 +72,8 @@ def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> Op
         return None
     if not isinstance(fiscal, dict):
         tlog(f"[province-fiscal] {region_id} fiscal 非字典，本{TURN_UNIT}固定税收出列")
+        return None
+    if not _fixed_flow_scalars_are_numeric(region_id, fiscal):
         return None
     return fiscal
 
@@ -662,9 +677,16 @@ def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
     """
     from ming_sim.fiscal_tick import FiscalConservationError
 
+    owns_transaction = not (
+        bool(getattr(db.conn, "_commit_suspended", False))
+        or int(getattr(db.conn, "_atomic_depth", 0) or 0) > 0
+        or db.conn.in_transaction
+    )
+    advanced = False
     for region_id in _fiscal_substrate_region_ids(db):
         try:
             res = db.settle_province_tick(region_id, actions=[])
+            advanced = True
         except (ValueError, FiscalConservationError) as exc:
             # settle_tick 的契约失败（坏态/守恒破）+ 基座缺失 → shadow 隔离，不炸 pre_settle
             tlog(f"[fiscal-substrate] {region_id} 本{TURN_UNIT}未推进（隔离）：{type(exc).__name__}: {exc}")
@@ -677,6 +699,8 @@ def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
             f"宗禄欠{res.new_st.get('宗禄欠', 0):.0f}/民欠{res.new_st.get('民欠旧赋', 0):.0f}"
             f"（shadow，未入国库）"
         )
+    if advanced and owns_transaction:
+        db.conn.commit()
 
 
 class DeltaApplyResult(NamedTuple):

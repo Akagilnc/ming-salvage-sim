@@ -11,6 +11,7 @@
 动态推进，失地/无基座省自然出列。
 """
 import json
+import sqlite3
 
 import pytest
 
@@ -714,6 +715,43 @@ def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game, mon
     assert any("[fiscal-substrate] shaanxi" in m and "JSONDecodeError" in m for m in msgs), msgs
 
 
+@pytest.mark.parametrize("field,bad_value", [
+    ("corruption", []),
+    ("liao_xiang", []),
+])
+def test_apply_fixed_period_flows_malformed_fiscal_scalar_isolated(fresh_game, monkeypatch, field, bad_value):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    _, _, before_details = flows_mod.calc_province_fiscal(state, db)
+    expected_tax = sum(
+        int(d["province_total"]) for d in before_details if d["region_id"] != "shaanxi"
+    )
+    fiscal = json.loads(str(db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id='shaanxi'"
+    ).fetchone()["fiscal"] or "{}"))
+    fiscal[field] = bad_value
+    db.conn.execute(
+        "UPDATE regions SET fiscal=? WHERE id='shaanxi'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    assert isinstance(flow_rows, list) and flow_rows, "坏 fiscal 标量不该掀翻固定财政"
+    tax_flow = next(f for f in flow_rows if f.get("category") == "田赋辽饷盐商")
+    assert tax_flow["amount"] == expected_tax, "坏 fiscal 标量省当月固定税收应出列"
+    assert any(
+        f"[province-fiscal] shaanxi fiscal.{field} 非数字" in m
+        and "固定税收出列" in m
+        for m in msgs
+    ), msgs
+
+
 def test_fixed_flow_loader_accepts_already_decoded_fiscal_dict(monkeypatch):
     import ming_sim.flows as flows_mod
 
@@ -723,6 +761,24 @@ def test_fixed_flow_loader_accepts_already_decoded_fiscal_dict(monkeypatch):
 
     assert flows_mod._load_region_fiscal_for_fixed_flow("shaanxi", fiscal) == fiscal
     assert msgs == []
+
+
+def test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    flows_mod.apply_fixed_period_flows(db, state)
+    in_memory = _read_settle(db, "shaanxi")["st"]
+
+    other = sqlite3.connect(db.path)
+    try:
+        row = other.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    finally:
+        other.close()
+    on_disk = json.loads(str(row[0] or "{}"))["settle"]["st"]
+
+    assert on_disk["军饷欠"] == pytest.approx(in_memory["军饷欠"], abs=1e-3)
+    assert on_disk["军饷欠"] == pytest.approx(27.875, abs=1e-3)
 
 
 def test_apply_fixed_period_flows_advances_and_logs_jiangnan_core(fresh_game, monkeypatch):
