@@ -6,6 +6,11 @@
  * entry, then calls route() to pick the next step. The agent never decides
  * the next step — route() does.
  *
+ * ⚠️ PRE-0030 (about to be reversed — see ADR 0030, Proposed): ADR 0030 re-splits
+ * the per-slice review→fix→re-review loop back to runner-dispatched worker steps;
+ * the S2-only collapse below will be reinstated as runner edges when ADR 0030 lands
+ * (#369/#422). Until then the ADR-0026 sequence below is the current correct design.
+ *
  * ADR 0026 (2026-06-24 correction, wiki line 42): the single-slice runner is a
  * PURE SCHEDULER. The per-slice review→fix→re-review LOOP no longer lives at the
  * runner level. The sequence collapses to:

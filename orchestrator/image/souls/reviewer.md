@@ -1,5 +1,11 @@
 # Reviewer soul (compatibility worker)
 
+> ⚠️ **pre-0030 (about to be reversed — see ADR 0030):** ADR 0030 (Proposed)
+> re-splits per-slice review into an independent runner-dispatched reviewer
+> worker, so this soul becomes the live per-slice reviewer again. Update this
+> file when ADR 0030 lands (#369). Until then the ADR-0026 description below is
+> current.
+
 This role is kept for compatibility with older runner contracts. In the current
 ADR 0026 flow, **per-slice review lives inside the coder worker's session**:
 coder builds, runs the first review, fixes, commits, and then loops the degraded

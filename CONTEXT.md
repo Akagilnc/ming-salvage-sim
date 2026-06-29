@@ -366,7 +366,7 @@ _Avoid_: 环境/profile(那是镜像)、家族(那是模型 vendor 分组)
 _Avoid_: 角色(角色是职能单元,槽是它在某路线里的模型赋值位)
 
 **后端注册表 / registry**:
-把 model slug 翻成真后端的数据表:每条 = `slug → {provider, model-id, options}`,覆盖 Sandcastle 原生 6 provider(claudeCode/codex/opencode/copilot/cursor/pi)。加已烤 CLI 的兄弟模型 = 加一行;加新 CLI = 烤二进制+挂 auth 一次。是「第一次做点工作、后续方便切」的落点。(ADR 0031)
+把 model slug 翻成真后端的数据表:每条 = `slug → {provider, model-id, options, family, strong-leg}`,覆盖 Sandcastle 原生 6 provider(claudeCode/codex/opencode/copilot/cursor/pi)。`family` 让路线解析器自动校验「claude-tight 无 Claude 槽」;`strong-leg` 标谁够格当 cmr 底线腿。加已烤 CLI 的兄弟模型 = 加一行;加新 CLI = 烤二进制+挂 auth 一次。是 slug→后端唯一真源、「第一次做点工作、后续方便切」的落点。(ADR 0031)
 _Avoid_: 写死的 switch(那是被它取代的旧形态)、config(太泛)
 
 **强腿 / strong leg**:
