@@ -114,7 +114,10 @@ function writeFixFindingsLandingFile(
   spec: WorkerSpec,
   ctx: DispatchContext,
 ): (FixFindingsLandingFile & { cleanup: boolean }) | undefined {
-  if (spec.id !== "S5" || spec.kind !== "coder" || ctx.worktree === undefined) {
+  const needsFindingsLanding =
+    (spec.id === "S5" && spec.kind === "coder") ||
+    (spec.id === "S6" && spec.kind === "reviewer");
+  if (!needsFindingsLanding || ctx.worktree === undefined) {
     return undefined;
   }
   if (!existsSync(ctx.worktree.path)) return undefined;

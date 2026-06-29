@@ -24,7 +24,11 @@
  */
 
 import { runOrchestrator } from "../runner.js";
-import { activeModelRoute, printableRouteLineup } from "../modelRoutes.js";
+import {
+  applyRuntimeTightRoutePolicy,
+  printableRouteLineup,
+  resolveActiveModelRoute,
+} from "../modelRoutes.js";
 import type { Backend } from "../types.js";
 import { assertAcyclic, selectWave } from "./commander.js";
 import { familyAlreadyShipped, mergedSet, recordMerged } from "./ledger.js";
@@ -146,8 +150,23 @@ async function llmResolvedChildren(
 export async function runFamily(
   input: FamilyRunInput,
 ): Promise<FamilyRunResult> {
+  const modelRoute = resolveActiveModelRoute();
+  const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
+    interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+    warn: (message) => console.warn(`[orchestrator:family] ${message}`),
+  });
+  if (routePolicy.kind === "stop") {
+    return {
+      status: "escalated",
+      familyBase: input.familyBase,
+      children: input.epic.children.map((child) => ({
+        issue: child.issue,
+        status: "skipped",
+      })),
+    };
+  }
   console.info(
-    `[orchestrator:family] model route lineup\n${printableRouteLineup(activeModelRoute())}`,
+    `[orchestrator:family] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
   );
   const { familyBackend, singleSliceBackend, familyBase } = input;
   // ── #298 escalate-resume dependency-graph rebuild (ADR 0022 decision 4) ─────

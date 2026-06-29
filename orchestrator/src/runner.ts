@@ -50,9 +50,10 @@ import {
   workerResultToStep,
 } from "./dispatchWorker.js";
 import {
-  activeModelRoute,
+  applyRuntimeTightRoutePolicy,
   modelForSlot,
   printableRouteLineup,
+  resolveActiveModelRoute,
   type ModelRouteEnv,
 } from "./modelRoutes.js";
 import { isFilledString } from "./shipOutcome.js";
@@ -686,8 +687,24 @@ function isReviewerStructuredOutputError(err: unknown): boolean {
 
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
+  const modelRoute = resolveActiveModelRoute();
+  const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
+    interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+    warn: (message) => console.warn(`[orchestrator] ${message}`),
+  });
+  if (routePolicy.kind === "stop") {
+    return {
+      status: "escalate",
+      errorPackage: {
+        failedStep: "S0",
+        reason: `${routePolicy.escalation.reason}: ${routePolicy.escalation.diagnosis}`,
+      },
+      stepLedger: [{ step: "S8" }],
+      deferredFindings: [],
+    };
+  }
   console.info(
-    `[orchestrator] model route lineup\n${printableRouteLineup(activeModelRoute())}`,
+    `[orchestrator] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
   );
   // Family-run context (ADR 0022 decision 2). When present this is a CHILD slice
   // of a family run: cut from the family base (decision 7) and S7 push is a local
@@ -1320,7 +1337,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   worktree,
                   stateDir,
                   ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
-                  ...(step === "S5"
+                  ...(step === "S5" || step === "S6"
                     ? {
                         blockingFindings: pendingBlockingFindings,
                         blockingFindingIdentityKeys:

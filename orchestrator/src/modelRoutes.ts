@@ -1,3 +1,5 @@
+import { createInterface } from "node:readline/promises";
+
 import {
   modelFamilyForSlug,
   resolveModelSlug,
@@ -44,6 +46,18 @@ export interface ResolvedModelRoute {
   readonly legCollections: ModelRouteLegCollectionMap;
   readonly tightFamilyViolations: ReadonlyArray<TightFamilyViolation>;
 }
+
+export interface TightRoutePolicyStop {
+  readonly kind: "stop";
+  readonly escalation: {
+    readonly reason: string;
+    readonly diagnosis: string;
+  };
+}
+
+export type TightRoutePolicyDecision =
+  | { readonly kind: "continue"; readonly route: ResolvedModelRoute }
+  | TightRoutePolicyStop;
 
 interface ModelRoutePreset {
   readonly slots: ModelSlotMap;
@@ -239,6 +253,12 @@ export function printableRouteLineup(route: ResolvedModelRoute): string {
   ].join("\n");
 }
 
+export function tightRouteViolationDetails(route: ResolvedModelRoute): string {
+  return route.tightFamilyViolations
+    .map((v) => `${v.slot}=${v.slug}(${v.family})`)
+    .join(", ");
+}
+
 export function routeOverridesFromEnv(env: ModelRouteEnv): ModelRouteOverrides {
   const overrides: Partial<Record<ModelRouteSlot, string>> = {};
   for (const slot of MODEL_ROUTE_SLOTS) {
@@ -268,31 +288,98 @@ export function routeLegCollectionOverridesFromEnv(
 export function activeModelRoute(
   env: ModelRouteEnv = process.env,
 ): ResolvedModelRoute {
-  const route = resolveRouteModels(
+  const route = resolveActiveModelRoute(env);
+  if (route.tightFamilyViolations.length > 0) {
+    throw new Error(
+      `tight route violation for ${route.routeName}: ${tightRouteViolationDetails(route)}`,
+    );
+  }
+  return route;
+}
+
+export function resolveActiveModelRoute(
+  env: ModelRouteEnv = process.env,
+): ResolvedModelRoute {
+  return resolveRouteModels(
     env.ORCHESTRATOR_ROUTE?.trim() || "normal",
     routeOverridesFromEnv(env),
     routeLegCollectionOverridesFromEnv(env),
   );
+}
+
+export function applyTightRoutePolicy(
+  route: ResolvedModelRoute,
+  opts: {
+    readonly interactive?: boolean;
+    readonly warn?: (message: string) => void;
+    readonly confirm?: (message: string) => boolean;
+  } = {},
+): TightRoutePolicyDecision {
   if (route.tightFamilyViolations.length > 0) {
-    const details = route.tightFamilyViolations
-      .map((v) => `${v.slot}=${v.slug}(${v.family})`)
-      .join(", ");
-    throw new Error(
-      `tight route violation for ${route.routeName}: ${details}`,
-    );
+    const details = tightRouteViolationDetails(route);
+    const message = `tight route violation for ${route.routeName}: ${details}`;
+    if (opts.interactive === true) {
+      opts.warn?.(message);
+      if (opts.confirm?.(message) === true) {
+        return { kind: "continue", route };
+      }
+    }
+    return {
+      kind: "stop",
+      escalation: {
+        reason: "tight route violation",
+        diagnosis:
+          `${message}. Non-interactive orchestrator startup stops instead of ` +
+          "crashing or silently continuing; rerun with a route/model override " +
+          "that preserves the tight-family invariant, or explicitly confirm in an interactive run.",
+      },
+    };
   }
-  return route;
+  return { kind: "continue", route };
+}
+
+export async function applyRuntimeTightRoutePolicy(
+  route: ResolvedModelRoute,
+  opts: {
+    readonly interactive?: boolean;
+    readonly warn?: (message: string) => void;
+    readonly confirm?: (message: string) => boolean | Promise<boolean>;
+  } = {},
+): Promise<TightRoutePolicyDecision> {
+  if (route.tightFamilyViolations.length === 0) {
+    return { kind: "continue", route };
+  }
+  const message = `tight route violation for ${route.routeName}: ${tightRouteViolationDetails(route)}`;
+  if (opts.interactive === true) {
+    opts.warn?.(message);
+    const confirmed = await (opts.confirm ?? askContinue)(message);
+    if (confirmed) return { kind: "continue", route };
+  }
+  return applyTightRoutePolicy(route, { interactive: false });
+}
+
+async function askContinue(message: string): Promise<boolean> {
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    const answer = await rl.question(`${message}\nContinue anyway? [y/N] `);
+    return /^(y|yes)$/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
 }
 
 export function modelForSlot(
   slot: ModelRouteSlot,
   env: ModelRouteEnv = process.env,
 ): string {
-  return activeModelRoute(env).slots[slot];
+  return resolveActiveModelRoute(env).slots[slot];
 }
 
 export function cmrReviewLegs(
   env: ModelRouteEnv = process.env,
 ): ReadonlyArray<ModelRouteLeg> {
-  return activeModelRoute(env).legCollections.cmrReview;
+  return resolveActiveModelRoute(env).legCollections.cmrReview;
 }
