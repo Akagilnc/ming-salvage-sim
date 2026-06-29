@@ -359,11 +359,9 @@ export interface DispatchContext {
   /**
    * The prior agent session id to resume — present ONLY for a `session:"resume"`
    * dispatch, i.e. the CRASH/ESCALATE-resume path where the runner re-opens a
-   * recorded S2 build session (ADR 0026 invariant). A NORMAL S2 build is
-   * `session:"fresh"` and does NOT carry this; the per-slice review→fix loop runs
-   * INSIDE the build worker's own session, not via a resumed session (codex cmr
-   * R3/R4 finding: a normal build must not take the resume path, which skips
-   * git-truthing).
+   * recorded agent session. Normal S2/S3/S5/S6 runner-visible work is
+   * `session:"fresh"` and does NOT carry this (codex cmr R3/R4 finding: normal
+   * work must not take the resume path, which skips git-truthing).
    */
   readonly resumeSessionId?: string;
   /**
@@ -716,9 +714,9 @@ export interface Backend {
    * id is recorded in the ledger). A bare {@link StepOutput} return is still
    * accepted (no real id → run-level UUID fallback); the runner normalises both.
    *
-   * ADR 0026: the only agent step is the S2 build worker; resume re-opens that
-   * one session. The per-slice review→fix loop runs INSIDE the build worker, so
-   * there is no separate fix step to deliver findings to on resume.
+   * ADR 0030: resume re-opens the recorded agent step when a human answered an
+   * escalation. Normal per-slice review/fix rounds are runner-visible fresh
+   * dispatches; S4 findings are delivered to S5 through DispatchContext.
    */
   resumeSession(
     spec: StepSpec,
@@ -737,8 +735,7 @@ export interface Backend {
     snapshot: IssueSnapshot,
   ): Promise<void>;
   /**
-   * S2: one `sandbox.run()` for the whole-slice build worker (ADR 0026 — the only
-   * agent step).
+   * S2/S3/S5/S6: one `sandbox.run()` per runner-visible agent worker.
    *
    * #256 seam extension (DONE): the return is widened from `StepOutput` to
    * `StepOutput | StepResult`. The real Backend returns a {@link StepResult}
