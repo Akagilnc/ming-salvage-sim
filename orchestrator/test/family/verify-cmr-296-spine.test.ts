@@ -111,7 +111,7 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
-    return this.script.cmr?.(req) ?? { converged: true };
+    return this.script.cmr?.(req) ?? { converged: true, successfulLegs: ["opus"] };
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);
@@ -256,7 +256,7 @@ describe("#296 spine integration — acceptance 3: all green → open PR, stop, 
   it("green verify + converged cmr ⇒ the family PR is opened and the run is success (止于 PR)", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus"] }),
     });
     const result = await runFamily({
       epic: epicWith(294, 295, 298),
@@ -299,7 +299,7 @@ describe("#291 spine — the final barrier (verify + cmr + 止于 PR) is GATED o
   it("a child that fails its single-slice run ⇒ NO final verify / cmr / PR, status incomplete", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus"] }),
     });
     const result = await runFamily({
       epic: epicWith(294, 295),
@@ -323,7 +323,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
   it("a `shipped` ledger marker ⇒ skip the final barrier (NO final verify / cmr / PR), status success", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus"] }),
     });
     // Resume truth: both children already merged AND the terminal 止于-PR ship already
     // ran (a `shipped` marker on the durable ledger). The family PR is open and the

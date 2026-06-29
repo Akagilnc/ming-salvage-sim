@@ -22,7 +22,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { runVerifyCmr } from "../../src/family/verifyCmr.js";
+import { meetsCmrFloor, runVerifyCmr } from "../../src/family/verifyCmr.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -77,7 +77,7 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
-    return this.script.cmr?.(req) ?? { converged: true };
+    return this.script.cmr?.(req) ?? { converged: true, successfulLegs: ["opus", "gpt-5.5"] };
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);
@@ -148,10 +148,80 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
 });
 
 describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)", () => {
+  it("ADR0032 pure floor predicate covers strong and non-strong survival combinations", () => {
+    expect(meetsCmrFloor(["gpt-5.5"])).toBe(true);
+    expect(meetsCmrFloor(["opus"])).toBe(true);
+    expect(meetsCmrFloor(["agy"])).toBe(false);
+    expect(meetsCmrFloor(["agy", "gemini"])).toBe(false);
+    expect(meetsCmrFloor(["glm", "haiku", "spark"])).toBe(false);
+  });
+
+  it("ADR0032 floor: agy-only survived CMR ⇒ escalate, even when the worker reports converged", async () => {
+    class AgyOnlyCmrBackend extends BareFamilyBackend {
+      readonly escalations: FamilyEscalation[] = [];
+      readonly prCalls: OpenFamilyPrRequest[] = [];
+
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+
+      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              cmrPass: ctx.cmrPass,
+              converged: true,
+              successfulLegs: ["agy"],
+              skippedLegs: [
+                { slug: "opus", reason: "auth unavailable" },
+                { slug: "gpt-5.5", reason: "auth unavailable" },
+              ],
+            },
+          };
+        }
+        this.prCalls.push({ familyBase: ctx.familyBase! });
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: ctx.familyBase!,
+            status: "pr_opened",
+            pr: `pr://${ctx.familyBase!}`,
+          },
+        };
+      }
+
+      async escalateFamily(esc: FamilyEscalation): Promise<void> {
+        this.escalations.push(esc);
+      }
+    }
+
+    const backend = new AgyOnlyCmrBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.escalations[0]?.reason).toContain("floor");
+    expect(backend.escalations[0]?.reason).toContain("agy");
+    expect(backend.prCalls).toEqual([]);
+    expect(backend.ledger).toContainEqual({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("floor"),
+    });
+  });
+
   it("GREEN full verify + CONVERGED cmr → open the family PR, ok:true ran:true (止于 PR)", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5"] }),
     });
     const result = await runVerifyCmr({
       phase: "final",
@@ -339,7 +409,7 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
         return { ok: true };
       }
       async runIntegratedCmr(): Promise<IntegratedCmrResult> {
-        return { converged: true };
+        return { converged: true, successfulLegs: ["opus"] };
       }
     }
     const backend = new VerifyAndCmrBackend();
@@ -380,7 +450,10 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         throw new Error(`${spec.kind} worker: git checkout ${ctx.familyBase} failed (no such ref)`);
       }
       // The cmr worker converges so the run reaches the ship stage (for the ship case).
-      return { kind: "completed", output: { kind: "cmr", converged: true } };
+      return {
+        kind: "completed",
+        output: { kind: "cmr", converged: true, successfulLegs: ["opus"] },
+      };
     }
   }
 

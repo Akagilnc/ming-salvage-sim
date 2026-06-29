@@ -446,6 +446,10 @@ export interface IntegratedCmrResult {
   readonly converged: boolean;
   /** Why it did not converge (handed to the escalate seam) — set when red. */
   readonly reason?: string;
+  /** CMR leg slugs that actually produced a usable review this pass. */
+  readonly successfulLegs?: readonly string[];
+  /** Declared CMR legs skipped at runtime, with the visible degrade flag reason. */
+  readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
 }
 
 /** What opening the family PR needs (decision 4, 止于 PR). */
