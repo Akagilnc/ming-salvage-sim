@@ -6,10 +6,10 @@
  * The cmr worker = the 2b container's TOP-LEVEL claude; it `Skill`-invokes
  * `ak-cross-m-review` (which itself fans out 1 Agent + 2 CLI legs inside the
  * container — proven in #333), FRESH each round (cross-model independence). The
- * worker returns a BARE `{converged, reason?}` verdict (PRD #330 R2: the family
- * cmr consumer `verifyCmr.ts` is escalate-on-red, NO fix-loop, so no findings
- * array is required). A `red` verdict is `WorkerResult.completed` (a CmrResult
- * payload), NOT `failed`.
+ * worker returns a `{converged, reason?, successfulLegs, skippedLegs?}` verdict
+ * (PRD #330 R2: the family cmr consumer `verifyCmr.ts` is escalate-on-red, NO
+ * fix-loop, so no findings array is required). A `red` verdict is
+ * `WorkerResult.completed` (a CmrResult payload), NOT `failed`.
  *
  * Tested WITHOUT a real container:
  *   - parseCmrOutcome: the `<cmr>` tag → converged / red / escalate / malformed;
@@ -39,9 +39,10 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  CMR_ROUTE_FILENAME,
   CMR_FOCUS_FILENAME,
   cmrOutcomeFromResult,
   parseCmrOutcome,
@@ -63,9 +64,16 @@ import type { DispatchContext, WorkerSpec } from "../../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
+const DEFAULT_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
+const STRONG_LEGS = ["opus", "gpt-5.5"] as const;
+const EMPTY_CMR_CLOSURE = {
+  claimedFixedFindingIdentityKeys: [],
+  priorFindingDispositions: [],
+} as const;
 
 const cleanups: string[] = [];
 afterEach(() => {
+  vi.unstubAllEnvs();
   while (cleanups.length > 0) {
     const p = cleanups.pop();
     if (p !== undefined) rmSync(p, { recursive: true, force: true });
@@ -97,19 +105,38 @@ function makeBackend(over?: {
 
 describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
   it("converged:true ⇒ a converged outcome", () => {
-    const o = parseCmrOutcome('noise\n<cmr>{"converged": true}</cmr>\n');
+    const o = parseCmrOutcome(
+      `noise\n<cmr>${JSON.stringify({
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...EMPTY_CMR_CLOSURE,
+      })}</cmr>\n`,
+    );
     expect(o.kind).toBe("verdict");
-    if (o.kind === "verdict") expect(o.converged).toBe(true);
+    if (o.kind === "verdict") {
+      expect(o.converged).toBe(true);
+      expect(o.successfulLegs).toEqual(DEFAULT_CMR_LEGS);
+    }
   });
 
   it("converged:false + reason ⇒ a red outcome carrying the reason", () => {
     const o = parseCmrOutcome(
-      '<cmr>{"converged": false, "reason": "cross-slice field-name mismatch"}</cmr>',
+      `<cmr>${JSON.stringify({
+        converged: false,
+        reason: "cross-slice field-name mismatch",
+        successfulLegs: ["gpt-5.5"],
+        ...EMPTY_CMR_CLOSURE,
+        skippedLegs: [
+          { slug: "opus", reason: "auth unavailable" },
+          { slug: "agy", reason: "quota exhausted" },
+        ],
+      })}</cmr>`,
     );
     expect(o.kind).toBe("verdict");
     if (o.kind === "verdict") {
       expect(o.converged).toBe(false);
       expect(o.reason).toBe("cross-slice field-name mismatch");
+      expect(o.successfulLegs).toEqual(["gpt-5.5"]);
     }
   });
 
@@ -126,7 +153,11 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
 
   it("only the LAST <cmr> tag is read (the worker may iterate)", () => {
     const o = parseCmrOutcome(
-      '<cmr>{"converged": false}</cmr>\nlater…\n<cmr>{"converged": true}</cmr>',
+      `<cmr>{"converged": false}</cmr>\nlater…\n<cmr>${JSON.stringify({
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...EMPTY_CMR_CLOSURE,
+      })}</cmr>`,
     );
     expect(o.kind).toBe("verdict");
     if (o.kind === "verdict") expect(o.converged).toBe(true);
@@ -148,7 +179,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
   });
 
   // ── Finding A (integ-cmr int-r1): STRICT shape, mirroring shipOutcome ─────────
-  // integrated_cmr.md: "must match one of the shapes above exactly". A mixed /
+  // Integrated CMR pass prompts: "must match one of the shapes above exactly". A mixed /
   // extra-key / garbage payload must NOT coerce into a pass — fail-CLOSED.
   describe("Finding A — strict shape (no extra/mixed keys, non-empty verdict fields)", () => {
     it("a mixed converged+escalate payload ⇒ malformed (not a pass)", () => {
@@ -162,9 +193,70 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
     });
 
     it("converged:true carrying an EXTRA key ⇒ malformed (strict)", () => {
-      expect(parseCmrOutcome('<cmr>{"converged": true, "junk": 1}</cmr>').kind).toBe(
+      expect(
+        parseCmrOutcome(
+          '<cmr>{"converged": true, "successfulLegs": ["opus"], "junk": 1}</cmr>',
+        ).kind,
+      ).toBe(
         "malformed",
       );
+    });
+
+    it("converged:true may carry explicit prior-finding closure dispositions", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|closed"],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|src/x.ts:1|closed",
+              status: "verified-closed",
+            },
+          ],
+        })}</cmr>`,
+      );
+
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.claimedFixedFindingIdentityKeys).toEqual([
+          "correctness|src/x.ts:1|closed",
+        ]);
+        expect(o.priorFindingDispositions).toEqual([
+          {
+            identityKey: "correctness|src/x.ts:1|closed",
+            status: "verified-closed",
+          },
+        ]);
+      }
+    });
+
+    it("converged:true requires explicit empty closure arrays when no claimed-fixed findings occurred", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+        })}</cmr>`,
+      );
+
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.claimedFixedFindingIdentityKeys).toEqual([]);
+        expect(o.priorFindingDispositions).toEqual([]);
+      }
+    });
+
+    it("converged:true without closure arrays ⇒ malformed (absence is not closure)", () => {
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+          })}</cmr>`,
+        ).kind,
+      ).toBe("malformed");
     });
 
     it("converged:false WITHOUT a reason ⇒ malformed (the contract requires the one-line reason)", () => {
@@ -172,7 +264,11 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
     });
 
     it("converged:false with a BLANK reason ⇒ malformed (non-empty required)", () => {
-      expect(parseCmrOutcome('<cmr>{"converged": false, "reason": "  "}</cmr>').kind).toBe(
+      expect(
+        parseCmrOutcome(
+          '<cmr>{"converged": false, "reason": "  ", "successfulLegs": ["opus"]}</cmr>',
+        ).kind,
+      ).toBe(
         "malformed",
       );
     });
@@ -188,13 +284,151 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       expect(parseCmrOutcome('<cmr>{"converged": "true"}</cmr>').kind).toBe("malformed");
     });
 
-    it("still accepts the two LEGAL shapes (regression)", () => {
-      expect(parseCmrOutcome('<cmr>{"converged": true}</cmr>').kind).toBe("verdict");
+    it("bare converged:true without successfulLegs ⇒ malformed (ADR0032 floor needs leg truth)", () => {
+      expect(parseCmrOutcome('<cmr>{"converged": true}</cmr>').kind).toBe("malformed");
+    });
+
+    it("omitted skippedLegs is valid only when every default cmr leg succeeded", () => {
       expect(
-        parseCmrOutcome('<cmr>{"converged": false, "reason": "seam mismatch"}</cmr>').kind,
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...EMPTY_CMR_CLOSURE,
+          })}</cmr>`,
+        ).kind,
+      ).toBe("verdict");
+      expect(parseCmrOutcome('<cmr>{"converged": true, "successfulLegs": ["opus"]}</cmr>').kind).toBe(
+        "malformed",
+      );
+    });
+
+    it("accounts against the active route's declared cmr legs, not the default route", () => {
+      vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: ["gpt-5.5", "agy"],
+          ...EMPTY_CMR_CLOSURE,
+        })}</cmr>`,
+      );
+
+      expect(o).toEqual({
+        kind: "verdict",
+        converged: true,
+        successfulLegs: ["gpt-5.5", "agy"],
+        ...EMPTY_CMR_CLOSURE,
+      });
+    });
+
+    it("rejects successful legs that were not declared by the active route", () => {
+      vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: ["agy", "opus"],
+            ...EMPTY_CMR_CLOSURE,
+            skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
+          })}</cmr>`,
+        ).kind,
+      ).toBe("malformed");
+    });
+
+    it("rejects skipped legs that were not declared by the active route", () => {
+      vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: ["gpt-5.5", "agy"],
+            ...EMPTY_CMR_CLOSURE,
+            skippedLegs: [{ slug: "opus", reason: "auth unavailable" }],
+          })}</cmr>`,
+        ).kind,
+      ).toBe("malformed");
+    });
+
+    it("accepts a single surviving default leg only when the other declared legs are skipped", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: ["opus"],
+          ...EMPTY_CMR_CLOSURE,
+          skippedLegs: [
+            { slug: "gpt-5.5", reason: "auth unavailable" },
+            { slug: "agy", reason: "quota exhausted" },
+          ],
+        })}</cmr>`,
+      );
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.successfulLegs).toEqual(["opus"]);
+        expect(o.skippedLegs).toEqual([
+          { slug: "gpt-5.5", reason: "auth unavailable" },
+          { slug: "agy", reason: "quota exhausted" },
+        ]);
+      }
+    });
+
+    it("a declared leg cannot be both successful and skipped", () => {
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...EMPTY_CMR_CLOSURE,
+            skippedLegs: [{ slug: "agy", reason: "quota exhausted" }],
+          })}</cmr>`,
+        ).kind,
+      ).toBe("malformed");
+    });
+
+    it("still accepts the two LEGAL verdict shapes (regression)", () => {
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...EMPTY_CMR_CLOSURE,
+          })}</cmr>`,
+        ).kind,
+      ).toBe("verdict");
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: false,
+            reason: "seam mismatch",
+            successfulLegs: ["gpt-5.5"],
+            ...EMPTY_CMR_CLOSURE,
+            skippedLegs: [
+              { slug: "opus", reason: "auth unavailable" },
+              { slug: "agy", reason: "quota exhausted" },
+            ],
+          })}</cmr>`,
+        ).kind,
       ).toBe("verdict");
     });
   });
+});
+
+describe("integrated CMR pass prompt closure contract", () => {
+  for (const promptName of [
+    "integrated_cmr.md",
+    "integrated_cmr_completeness.md",
+    "integrated_cmr_correctness.md",
+  ]) {
+    it(`${promptName} requires closure arrays on converged output`, () => {
+      const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
+
+      expect(prompt).toContain("claimedFixedFindingIdentityKeys");
+      expect(prompt).toContain("priorFindingDispositions");
+      expect(prompt).toMatch(/empty arrays/i);
+    });
+  }
 });
 
 // ═══════════════════════ 2. cmrOutcomeFromResult (signal gate) ═══════════════════════
@@ -205,7 +439,11 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
   it("a signaled converged run ⇒ a verdict outcome", () => {
     const o = cmrOutcomeFromResult({
       completionSignal: SIGNAL,
-      stdout: '<cmr>{"converged": true}</cmr>',
+      stdout: `<cmr>${JSON.stringify({
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...EMPTY_CMR_CLOSURE,
+      })}</cmr>`,
     });
     expect(o.kind).toBe("verdict");
     if (o.kind === "verdict") expect(o.converged).toBe(true);
@@ -214,7 +452,11 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
   it("an UNSIGNALED run ⇒ escalate (a complete-but-unsignaled run is NOT a pass)", () => {
     const o = cmrOutcomeFromResult({
       completionSignal: undefined,
-      stdout: '<cmr>{"converged": true}</cmr>',
+      stdout: `<cmr>${JSON.stringify({
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...EMPTY_CMR_CLOSURE,
+      })}</cmr>`,
     });
     expect(o.kind).toBe("escalate");
   });
@@ -222,7 +464,11 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
   it("a wrong-signal run ⇒ escalate", () => {
     const o = cmrOutcomeFromResult({
       completionSignal: "SOME_OTHER_SIGNAL",
-      stdout: '<cmr>{"converged": true}</cmr>',
+      stdout: `<cmr>${JSON.stringify({
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...EMPTY_CMR_CLOSURE,
+      })}</cmr>`,
     });
     expect(o.kind).toBe("escalate");
   });
@@ -235,7 +481,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
   class FixturedCmrBackend extends RealFamilyBackend {
     runCmrCalls: { spec: ReturnType<typeof cmrWorkerSpec>; ctx: DispatchContext }[] = [];
     runShipCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
-    outcome: CmrWorkerOutcome = { kind: "verdict", converged: true };
+    outcome: CmrWorkerOutcome = {
+      kind: "verdict",
+      converged: true,
+      successfulLegs: STRONG_LEGS,
+    };
     protected override async runCmrWorker(
       spec: ReturnType<typeof cmrWorkerSpec>,
       ctx: DispatchContext,
@@ -286,11 +536,12 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
   it("a converged verdict ⇒ WorkerResult.completed with a bare cmr payload", async () => {
     const be = fixtured();
-    be.outcome = { kind: "verdict", converged: true };
+    be.outcome = { kind: "verdict", converged: true, successfulLegs: STRONG_LEGS };
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("completed");
     if (res.kind === "completed" && res.output.kind === "cmr") {
       expect(res.output.converged).toBe(true);
+      expect(res.output.successfulLegs).toEqual(STRONG_LEGS);
     } else {
       throw new Error("expected completed cmr payload");
     }
@@ -298,12 +549,18 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
   it("a red verdict ⇒ WorkerResult.completed (NOT failed), carrying the reason", async () => {
     const be = fixtured();
-    be.outcome = { kind: "verdict", converged: false, reason: "seam mismatch" };
+    be.outcome = {
+      kind: "verdict",
+      converged: false,
+      reason: "seam mismatch",
+      successfulLegs: STRONG_LEGS,
+    };
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("completed");
     if (res.kind === "completed" && res.output.kind === "cmr") {
       expect(res.output.converged).toBe(false);
       expect(res.output.reason).toBe("seam mismatch");
+      expect(res.output.successfulLegs).toEqual(STRONG_LEGS);
     } else {
       throw new Error("expected completed cmr payload");
     }
@@ -346,7 +603,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     // ship contract — gstack-ship routing, pr_opened narrowing, branch identity — is
     // covered by ship-worker-336.test.ts; here we only assert the cmr seam is untouched.)
     const be = fixtured();
-    be.outcome = { kind: "verdict", converged: true };
+    be.outcome = { kind: "verdict", converged: true, successfulLegs: STRONG_LEGS };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("completed"); // the fixtured ship outcome, not the cmr path
     expect(be.runShipCalls.length).toBe(1); // reached the ship worker seam
@@ -455,6 +712,18 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     const cfg = cfgBackend().config(auth);
     expect(cfg.env.OPENCLAW_SESSION).toBe("1");
     expect(cfg.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
+  });
+
+  it("exports the route-selected CMR leg collection to the worker", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const cfg = cfgBackend().config(auth);
+    const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
+
+    expect(legs).toEqual([
+      { family: "codex", slug: "gpt-5.5" },
+      { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy" },
+    ]);
   });
 });
 
@@ -631,6 +900,9 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     }): void {
       this.writeCmrFocusFile(ctx as never);
     }
+    public routeFile(pass: "completeness" | "correctness" | undefined): void {
+      this.writeCmrRouteFile(pass);
+    }
   }
 
   function realRepo(): string {
@@ -663,9 +935,28 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     expect(exclude.split("\n")).toContain(CMR_FOCUS_FILENAME);
   });
 
+  it("writes the route file pass from dispatch context, not the prompt filename", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    be.routeFile("correctness");
+    const body = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as {
+      pass: string;
+    };
+    expect(body.pass).toBe("correctness");
+  });
+
   it("no recorded cut SHA ⇒ FAIL-CLOSED throw, never a stale-base fallback scope (codex R3)", () => {
-    // The focus file pins the EXACT cut-SHA review-scope diff (prompt contract
-    // integrated_cmr.md:19-24: do NOT guess main...HEAD). Emitting a
+    // The focus file pins the EXACT cut-SHA review-scope diff (prompt contract:
+    // do NOT guess main...HEAD). Emitting a
     // `main...familyBase` fallback when no cut SHA was recorded would silently
     // disable that load-bearing scope — the same fail-open the reconcile
     // `familyBaseStartHead()` predicate refuses (realFamilyBackend.ts:887-895). So
@@ -711,6 +1002,35 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     // ...but NO prior-findings block (the worker remembers within its own session).
     expect(body).not.toMatch(/Prior round's findings/i);
     expect(body).not.toMatch(/confirm-resolved/i);
+  });
+
+  it("writes the route-selected CMR review legs beside the focus file", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    be.routeFile("correctness");
+
+    const route = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as unknown;
+    expect(route).toEqual({
+      pass: "correctness",
+      reviewLegs: [
+        { family: "codex", slug: "gpt-5.5" },
+        { family: "claude", slug: "opus" },
+        { family: "agy", slug: "agy" },
+      ],
+    });
+    const exclude = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
+    expect(exclude.split("\n")).toContain(CMR_ROUTE_FILENAME);
   });
 });
 
@@ -799,6 +1119,7 @@ describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has
   }
 
   it("no Claude worker token ⇒ escalate, never spins the container", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const repo = realRepo335();
     const be = new NoClaudeAuthBackend({
       workingRepo: repo,
@@ -819,6 +1140,7 @@ describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has
   });
 
   it("dispatchWorker routes the no-auth escalate to a not-passed WorkerResult", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const repo = realRepo335();
     const be = new NoClaudeAuthBackend({
       workingRepo: repo,
@@ -865,6 +1187,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
   }
 
   it("the early no-claude-auth escalate still removes the codex + agy temp dirs", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const codexDir = mkDir("reclaim-codex-");
     const agyDir = mkDir("reclaim-agy-");
     expect(existsSync(codexDir)).toBe(true);

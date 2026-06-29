@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
 import {
@@ -125,17 +129,15 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     expect(backend.pushCount).toBe(0);
   });
 
-  it("dispatches the worker SEQUENCE S2→S7 with the right kind/role/session/retention/skill", async () => {
+  it("dispatches the worker SEQUENCE S2→S3→S7 with the right kind/role/session/retention/skill", async () => {
     const backend = new DispatchBackend();
     await runOrchestrator({ issueNumber: 331, backend });
 
-    // ADR 0026: the runner is a pure scheduler — it dispatches exactly the
-    // whole-slice build coder (S2, which runs its own per-slice review→fix→cmr
-    // loop INSIDE the worker) then the ship worker (S7). No runner-driven
-    // reviewer / fix steps (S3/S4/S5/S6 are deleted). session is `fresh` on the
-    // normal path; contextRetention is `retain` for the coder, `clean` for ship.
+    // ADR 0030: implementation and review are separate runner-visible workers.
+    // The reviewer is fresh/clean; a clean review goes directly through S4 to S7.
     expect(backend.dispatched).toEqual([
       "S2:coder:coder:fresh:retain:/tdd",
+      "S3:reviewer:reviewer:fresh:clean:/review",
       "S7:ship:coder:fresh:clean:gstack-ship",
     ]);
   });
@@ -146,6 +148,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
 
     const byId = Object.fromEntries(backend.specs.map((s) => [s.id, s]));
     expect(byId.S2.promptFile).toBe("coder_implement.md");
+    expect(byId.S3.promptFile).toBe("reviewer_review.md");
     expect(byId.S7.promptFile).toBe("ship.md");
   });
 
@@ -227,7 +230,10 @@ describe("#331 the S7 ship worker must return a SHIP payload (codex R2 guard)", 
         return { kind: "completed", output: { kind: "reviewer", findings: [] } };
       }
       // ship: a mis-wired backend returns a non-ship completed payload.
-      return { kind: "completed", output: { kind: "cmr", converged: true } };
+      return {
+        kind: "completed",
+        output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] },
+      };
     }
   }
 
@@ -417,6 +423,38 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     expect(res.kind).toBe("completed");
     if (res.kind === "completed") {
       expect(res.output.kind).toBe("coder");
+    }
+  });
+
+  it("writes the fix-findings landing file exclude into the target worktree git exclude", async () => {
+    const worktreePath = mkdtempSync(join(tmpdir(), "dispatch-exclude-worktree-"));
+    const wrongCwd = mkdtempSync(join(tmpdir(), "dispatch-exclude-cwd-"));
+    const originalCwd = process.cwd();
+    try {
+      execFileSync("git", ["init"], { cwd: worktreePath, stdio: "ignore" });
+      process.chdir(wrongCwd);
+
+      const be = new LegacyBackend();
+      const worktree = { ...be.worktree, path: worktreePath };
+      await legacyDispatchWorker(
+        be as unknown as Backend,
+        { ...coderWorker, id: "S5", session: "fresh" },
+        {
+          worktree,
+          blockingFindings: [],
+          blockingFindingIdentityKeys: [],
+        },
+      );
+
+      const exclude = readFileSync(
+        join(worktreePath, ".git", "info", "exclude"),
+        "utf8",
+      );
+      expect(exclude.split(/\r?\n/)).toContain(".orchestrator-fix-findings.json");
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(worktreePath, { recursive: true, force: true });
+      rmSync(wrongCwd, { recursive: true, force: true });
     }
   });
 

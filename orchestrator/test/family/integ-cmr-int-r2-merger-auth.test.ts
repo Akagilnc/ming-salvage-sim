@@ -10,27 +10,29 @@
  *
  * This mirrors the cmr/ship workers' OWN-auth preflight (cmr-worker-335.test.ts /
  * ship-worker-336.test.ts): the merger is a claude worker, so its claude token is
- * load-bearing (NOT a degradable reviewer leg). Codex/gh are NOT needed (the merger
- * resolves + commits in place; it never pushes / opens a PR — the runner owns the
- * merge queue / ledger).
+ * load-bearing (NOT a degradable reviewer leg). Codex auth is still needed when
+ * ORCHESTRATOR_ROUTE selects a Codex-family merger worker; gh is NOT needed (the
+ * merger resolves + commits in place; it never pushes / opens a PR — the runner owns
+ * the merge queue / ledger).
  *
  *   1. mountMergerAuth on an EMPTY $HOME ⇒ claudeToken undefined, no throw.
- *   2. mergerSandboxConfig injects CLAUDE_CODE_OAUTH_TOKEN when the token is present.
+ *   2. mergerSandboxConfig injects CLAUDE_CODE_OAUTH_TOKEN and mounts codex auth
+ *      when those credentials are present.
  *   3. runMergerAgent with NO claude token ⇒ structured unresolved (resolved:false,
  *      reason names the missing token), and NEVER spins the container.
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type MergerAuth,
   RealFamilyBackend,
   type RealFamilyBackendOptions,
 } from "../../src/family/realFamilyBackend.js";
-import { SANDBOX_SOUL_ENV, SPAWNED_WORKER_ENV } from "../../src/realBackend.js";
+import { SANDBOX_CODEX_DIR, SANDBOX_SOUL_ENV, SPAWNED_WORKER_ENV } from "../../src/realBackend.js";
 import type { ConflictResolveRequest } from "../../src/family/types.js";
 
 const here = join(import.meta.dirname ?? ".", "..", "..", "prompts");
@@ -47,6 +49,7 @@ function realRepo(): string {
   return repo;
 }
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
   tmpDirs = [];
 });
@@ -71,6 +74,9 @@ describe("integ-cmr int-r2 A-1 — mountMergerAuth on an empty $HOME degrades, n
     public auth(): MergerAuth {
       return this.mountMergerAuth();
     }
+    public cfg(auth: MergerAuth) {
+      return this.mergerSandboxConfig(auth);
+    }
   }
   it("empty $HOME (no claude token) ⇒ claudeToken undefined, no throw", () => {
     const emptyHome = mkDir("merger-empty-home-");
@@ -89,6 +95,24 @@ describe("integ-cmr int-r2 A-1 — mountMergerAuth on an empty $HOME degrades, n
     writeFileSync(join(blankHome, ".sc-claude-token"), "   \n");
     const be = new AuthBackend(baseOpts({ home: blankHome }));
     expect(be.auth().claudeToken).toBeUndefined();
+  });
+  it("ORCHESTRATOR_ROUTE=claude-tight copies codex auth into a container-safe merger mount", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const home = mkDir("merger-codex-home-");
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "auth.json"), "{\"token\":\"codex\"}\n");
+    const be = new AuthBackend(baseOpts({ home }));
+    const auth = be.auth();
+
+    expect(auth.codexAuthDir).toBeTruthy();
+    expect(readFileSync(join(auth.codexAuthDir as string, "auth.json"), "utf8")).toContain("codex");
+    expect(readFileSync(join(auth.codexAuthDir as string, "config.toml"), "utf8")).toContain(
+      'sandbox_mode = "danger-full-access"',
+    );
+    expect(be.cfg(auth).mounts).toContainEqual({
+      hostPath: auth.codexAuthDir,
+      sandboxPath: SANDBOX_CODEX_DIR,
+    });
   });
 });
 
@@ -117,6 +141,22 @@ describe("integ-cmr int-r2 A-1 — mergerSandboxConfig wires CLAUDE_CODE_OAUTH_T
     const cfg = be.cfg({ claudeToken: "merger-tok-xyz" });
     expect(cfg.env.OPENCLAW_SESSION).toBe("1");
     expect(cfg.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
+  });
+  it("mounts codex auth for route-selected Codex merger workers", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const be = new CfgBackend(baseOpts());
+    const cfg = be.cfg({ claudeToken: "merger-tok-xyz", codexAuthDir: "/tmp/merger-codex-auth" });
+    expect(cfg.mounts).toContainEqual({
+      hostPath: "/tmp/merger-codex-auth",
+      sandboxPath: SANDBOX_CODEX_DIR,
+    });
+  });
+
+  it("does not mount codex auth for the normal Claude merger route", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const be = new CfgBackend(baseOpts());
+    const cfg = be.cfg({ claudeToken: "merger-tok-xyz", codexAuthDir: "/tmp/merger-codex-auth" });
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
   });
 });
 
@@ -155,6 +195,7 @@ describe("integ-cmr int-r2 A-1 — runMergerAgent fails-closed (structured) with
   }
 
   it("no claude token ⇒ resolved:false with a token reason, container never spins", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const be = new NoClaudeMerger(baseOpts());
     const outcome = await be.run({ childIssue: 99, childBranch: "feat/child-99" });
     expect(outcome.resolved).toBe(false);
@@ -163,6 +204,7 @@ describe("integ-cmr int-r2 A-1 — runMergerAgent fails-closed (structured) with
   });
 
   it("resolveMergeConflict surfaces the no-auth non-resolve as a loud throw (no phantom merged)", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const be = new NoClaudeMerger(baseOpts());
     await expect(
       be.resolveMergeConflict({ childIssue: 99, childBranch: "feat/child-99" }),

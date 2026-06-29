@@ -21,7 +21,7 @@
  *      THIS injected seam.)
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // 1) Each module resolves as its own import with its own export(s).
 import { selectWave } from "../../src/family/commander.js";
@@ -49,6 +49,8 @@ import type {
 // ─── fakes ────────────────────────────────────────────────────────────────────
 
 class ChildBackend implements Backend {
+  readonly markRunStep = vi.fn();
+
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
@@ -73,6 +75,7 @@ class ChildBackend implements Backend {
   }
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
+    this.markRunStep();
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "reviewer", findings: [] };
   }
@@ -110,6 +113,57 @@ describe("acceptance 4 — four independent module seams", () => {
 // ════════════════════════════════════════════════════════════════════════════
 
 describe("acceptance 4 — the spine routes through each module's injected seam", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("prints the resolved model route lineup before the first family child worker dispatch", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    class OneChildFamilyBackend implements FamilyBackend {
+      readonly ledger: FamilyLedgerEntry[] = [];
+      async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
+        return { familyHead: `h${child.childIssue}` };
+      }
+      async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+        this.ledger.push(entry);
+      }
+      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        return this.ledger;
+      }
+    }
+    const childBackend = new ChildBackend();
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    await runFamily({
+      epic: epicWith(10),
+      familyBackend: new OneChildFamilyBackend(),
+      singleSliceBackend: childBackend,
+      familyBase: "family/293-base",
+    });
+
+    const familyLineupCallIndex = info.mock.calls.findIndex(
+      ([message]) =>
+        message ===
+        [
+          "[orchestrator:family] model route lineup",
+          "route=normal",
+          "coder=sonnet",
+          "reviewer=gpt-5.5",
+          "coderFix=sonnet",
+          "ship=sonnet",
+          "merger=sonnet",
+          "cmrCompleteness=opus",
+          "cmrCorrectness=opus",
+          "cmrReview=[codex:gpt-5.5,claude:opus,agy:agy]",
+        ].join("\n"),
+    );
+    expect(familyLineupCallIndex).toBeGreaterThanOrEqual(0);
+    expect(info.mock.invocationCallOrder[familyLineupCallIndex]!).toBeLessThan(
+      childBackend.markRunStep.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it("merger seam: a FamilyBackend whose merge head differs flows straight through the spine", async () => {
     // If the spine hardcoded the merge head, it couldn't be steered by the injected
     // merger seam. Here the seam stamps a custom head per child; the spine's result

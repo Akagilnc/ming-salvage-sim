@@ -68,7 +68,7 @@ SKILL_CLOSURE=(
 # so it needs its closure subtree baked at that exact path — not a flat cp.
 GSTACK_SRC="${GSTACK_SRC:-$HOME/gstack}"
 # The roles whose souls we bake (all worker roles — ADR 0026 / #333 "全部角色 soul").
-SOUL_ROLES=(coder reviewer merger cmr ship)
+SOUL_ROLES=(coder reviewer merger cmr cmr_completeness cmr_correctness ship)
 
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/ming-coder-img.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
@@ -240,7 +240,8 @@ fi
 #   role "coder"    → env "coder"     (soulForStep)        → coder.md
 #   role "reviewer" → env "READ-ONLY" (soulForStep)        → reviewer.md + READ-ONLY.md
 #   role "merger"   → env "merger"    (MERGER_SOUL)        → merger.md
-#   (cmr worker)    → env "cmr"       (CMR_SOUL)           → cmr.md (integrated-cmr fixer)
+#   (cmr worker)    → env "cmr"       (CMR_SOUL)           → cmr.md (split-pass index)
+#   (cmr pass docs) → prompt-read direct paths             → cmr_completeness.md / cmr_correctness.md
 # Prompt entrypoints read the baked soul files directly, and ORCHESTRATOR_SOUL is
 # also kept as the runtime role signal. Keep the env-value alias so either lookup
 # path resolves to the same reviewed role text.

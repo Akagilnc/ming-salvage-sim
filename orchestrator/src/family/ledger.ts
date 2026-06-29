@@ -18,7 +18,11 @@
  * append-only invariant but does NOT dedup — reconcile is #298.)
  */
 
-import type { FamilyBackend, FamilyLedgerEntry } from "./types.js";
+import type {
+  FamilyBackend,
+  FamilyLedgerEntry,
+  IntegratedCmrPass,
+} from "./types.js";
 
 /**
  * The full-schema fields a #298 `merged` event can carry (ADR 0022 decision 5).
@@ -56,6 +60,8 @@ export interface MergedRecord {
 export interface AbortedRecord {
   /** Which verify barrier was red. */
   readonly phase: "wave" | "final";
+  /** Which integrated CMR pass failed, when the abort came from a CMR pass. */
+  readonly cmrPass?: IntegratedCmrPass;
   /** Human-readable abort reason (the verify error / cmr non-convergence). */
   readonly reason?: string;
   /** The family base HEAD at the time the barrier failed (for triage + baseline). */
@@ -74,6 +80,11 @@ export interface AbortedRecord {
 export interface ShippedRecord {
   /** The family PR URL the terminal ship opened. */
   readonly pr: string;
+}
+
+/** The fields for a green integrated CMR pass audit event (#419). */
+export interface CmrPassedRecord {
+  readonly cmrPass: IntegratedCmrPass;
 }
 
 /**
@@ -145,8 +156,24 @@ export async function recordAborted(
       status: "aborted",
       event: "aborted",
       phase: record.phase,
+      cmrPass: record.cmrPass,
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/** Append one PHASE-LEVEL green integrated CMR pass audit event (#419). */
+export async function recordCmrPassed(
+  backend: FamilyBackend,
+  record: CmrPassedRecord,
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      status: "cmr_passed",
+      event: "cmr_passed",
+      phase: "final",
+      cmrPass: record.cmrPass,
     }) as FamilyLedgerEntry,
   );
 }

@@ -39,6 +39,32 @@ describe("parseLedgerJsonl — corrupt-line fail-closed (256 r5)", () => {
     expect(entries.map((e) => e.step)).toEqual(["S0", "S1", "S7"]);
   });
 
+  it("accepts every current ADR0030 StepId, including review/fix loop steps", () => {
+    const raw = [
+      goodLine("S0"),
+      goodLine("S1"),
+      goodLine("S2"),
+      goodLine("S3"),
+      goodLine("S4"),
+      goodLine("S5"),
+      goodLine("S6"),
+      goodLine("S7"),
+      goodLine("S8"),
+    ].join("\n");
+    const entries = parseLedgerJsonl(raw);
+    expect(entries.map((e) => e.step)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S5",
+      "S6",
+      "S7",
+      "S8",
+    ]);
+  });
+
   it("tolerates blank / whitespace-only lines (truncation-recovery boundary)", () => {
     // Trailing newline, an interior blank line, and a whitespace-only line are
     // NOT corruption — they carry no record and are skipped without error.

@@ -37,17 +37,21 @@ import {
   lastSessionId,
   matchWorktreeForBranch,
   modelIdForSlug,
+  modelFamilyForSlug,
+  modelIsStrongLeg,
   parseBlockedBy,
   parseSubIssueCount,
   promptsDirError,
   realCommitCount,
   reconcileCoderCommits,
+  resolveModelSlug,
   soulForStep,
   REFERENCED_PROMPT_FILES,
   RealBackend,
   SANDBOX_CODEX_DIR,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
+  SUPPORTED_MODEL_PROVIDER_FACTORIES,
   WORKER_IDLE_TIMEOUT_SECONDS,
   type GhBlockedBy,
   type GhIssueJson,
@@ -416,15 +420,55 @@ describe("realBackend WORKER_IDLE_TIMEOUT_SECONDS (idle-timeout disable)", () =>
 });
 
 describe("realBackend modelIdForSlug", () => {
-  it("maps the CLAUDE slugs to their claude model ids (reviewer=opus, ship=sonnet)", () => {
-    // modelIdForSlug stays the CLAUDE-model-id resolver: the codex coder slug is
-    // NOT a claude model id, so it is resolved by agentForSlug, not here.
+  it("maps supported slugs to baked CLI model ids through the registry", () => {
+    expect(modelIdForSlug("gpt-5.5")).toBe("gpt-5.5");
     expect(modelIdForSlug("sonnet")).toBe("claude-sonnet-4-6");
     expect(modelIdForSlug("opus")).toBe("claude-opus-4-8");
   });
-  it("throws on a non-claude slug (the codex slug is not a claude model id)", () => {
+
+  it("throws on an unknown slug", () => {
     expect(() => modelIdForSlug("gpt")).toThrow(/unknown model slug/);
-    expect(() => modelIdForSlug("gpt-5.5")).toThrow(/unknown model slug/);
+  });
+});
+
+// ─── resolveModelSlug (data-driven slug → backend registry) ──────────────────
+
+describe("realBackend resolveModelSlug", () => {
+  it("declares the six Sandcastle-native provider factories the registry can target", () => {
+    expect(SUPPORTED_MODEL_PROVIDER_FACTORIES).toEqual([
+      "claudeCode",
+      "codex",
+      "opencode",
+      "copilot",
+      "cursor",
+      "pi",
+    ]);
+  });
+
+  it("resolves existing slugs to the same provider/model/options as the pre-registry mapping", () => {
+    expect(resolveModelSlug("gpt-5.5")).toEqual({
+      provider: "codex",
+      model: "gpt-5.5",
+      options: { effort: "high" },
+    });
+    expect(resolveModelSlug("sonnet")).toEqual({
+      provider: "claudeCode",
+      model: "claude-sonnet-4-6",
+    });
+    expect(resolveModelSlug("opus")).toEqual({
+      provider: "claudeCode",
+      model: "claude-opus-4-8",
+    });
+    expect(modelFamilyForSlug("gpt-5.5")).toBe("codex");
+    expect(modelFamilyForSlug("sonnet")).toBe("claude");
+    expect(modelFamilyForSlug("opus")).toBe("claude");
+    expect(modelIsStrongLeg("gpt-5.5")).toBe(true);
+    expect(modelIsStrongLeg("sonnet")).toBe(false);
+    expect(modelIsStrongLeg("opus")).toBe(true);
+  });
+
+  it("fails closed for unknown model slugs", () => {
+    expect(() => resolveModelSlug("gpt")).toThrow(/unknown model slug/);
   });
 });
 
@@ -761,14 +805,15 @@ describe("realBackend promptsDirError (F4)", () => {
   });
 
   it("REFERENCED_PROMPT_FILES covers every dispatched worker prompt incl. ship.md (integ-cmr int-r1 C-3)", () => {
-    // The list is DERIVED from the actual worker specs (ADR 0026: STEP_SPECS is
-    // ONLY the S2 whole-slice build coder + shipWorkerSpec S7), so it can never
-    // drift out-of-sync with the workers the runner dispatches. The runner-driven
-    // reviewer/fix steps (and their reviewer_full_review.md / coder_fix.md /
-    // reviewer_rereview.md prompts) were deleted; the per-slice review/fix loop now
-    // runs INSIDE the S2 worker. The S7 ship worker's ship.md must be validated.
     const files = [...REFERENCED_PROMPT_FILES];
-    expect(new Set(files)).toEqual(new Set(["coder_implement.md", "ship.md"]));
+    expect(new Set(files)).toEqual(
+      new Set([
+        "coder_implement.md",
+        "coder_fix.md",
+        "reviewer_review.md",
+        "ship.md",
+      ]),
+    );
     // No duplicates.
     expect(new Set(files).size).toBe(files.length);
   });

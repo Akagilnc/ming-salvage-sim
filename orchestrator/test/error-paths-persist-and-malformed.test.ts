@@ -10,12 +10,9 @@
  *       failing step + S8 via writeLedger, exactly like the happy path.
  *
  *   #5  route() / runner must NEVER silently treat a malformed step output as a
- *       success and bypass the ship gate.  Under ADR 0026 the single-slice runner
- *       is a PURE SCHEDULER: S2 is the ONLY agent step (the WHOLE-SLICE build
- *       worker; the review/fix loop runs INSIDE it). An S2 build worker that
- *       returns a reviewer/undefined/garbage output is a contract violation →
- *       S8(error); it must NEVER be coerced into a committed success and pushed
- *       (that would ship unreviewed code).
+ *       success and bypass the ship gate. Under ADR 0030 a malformed S2 coder
+ *       output or malformed S3/S6 reviewer output is a contract violation; it
+ *       must NEVER be coerced into a committed/reviewed success and pushed.
  *
  * All paths use fake Backend injection — zero real Sandcastle / LLM calls.
  */
@@ -298,8 +295,7 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
 
   it("a well-formed committed S2 build output routes to S7 ship (regression)", async () => {
     // Sanity: the malformed-output guard must not break the real ship path. A
-    // committed S2 coder output (the WHOLE-SLICE build, review/fix loop already
-    // run inside the worker) routes straight to S7 ship → success.
+    // committed S2 coder output plus a clean S3 reviewer output routes to S7.
     const backend = new SpyBackend();
     let pushed = false;
     backend.push = async () => {
@@ -307,6 +303,9 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     };
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
+      if (spec.role === "reviewer") {
+        return { kind: "reviewer", findings: [] };
+      }
       return { kind: "coder", committed: true, commitsAdded: 1 };
     };
 

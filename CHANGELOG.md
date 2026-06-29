@@ -4,6 +4,25 @@
 
 ## [未发布]
 
+## [0.17.0.0] - 2026-06-29
+
+### 新增
+- **编排器模型路线预设**：runner、coder/reviewer/coder-fix、family ship、merger 与 integrated CMR 现在可按路线选择 claude/codex/agy 组合，并在 tight 路线破坏家族隔离时 fail closed。
+- **双阶段 integrated CMR 闸**：family run 现在将完整性与正确性 CMR 拆成两道承重闸，分别使用独立 soul/prompt，并要求每个声明的 review leg 明确成功或跳过。
+- **CMR finding 持久处置**：跨轮 review finding 支持稳定 identity、wont-fix/rejected 处置、claimed-fixed closure replay 与 prior disposition 校验，避免旧阻塞项在 resume/修复轮里丢失。
+
+### 变更
+- **worker 调度模型统一走注册表**：单切片、family、CMR、ship、merger 的 worker spec 都通过同一 model slug registry 解析实际 provider，未知 slug 与未声明 CMR leg 会直接拒收。
+- **family ship/CMR worker 契约收紧**：ship worker 必须返回 `pr_opened`、family base branch 与非空 PR URL；CMR worker 必须满足 strong-leg floor、leg accounting 与 closure 检查后才允许进入下一步。
+
+### 修复
+- **CMR 闭环不再误绿**：补齐 CMR leg 计数、路由漂移、suppression replay、prior finding adjudication 与 corrupt ledger fail-closed 路径，防止未收敛或格式漂移的集成评审被当成通过。
+- **merger/ship auth 与临时目录清理**：merger 支持路线选择的 codex/claude auth 装载，并在 worker 结束后清理临时 codex auth 目录；ship/CMR/merger 的缺失 auth 与启动异常会转为可定位的结构化失败。
+- **family runner resume 边界加固**：修复已合并 child、aborted ledger、thin ledger、分页 sub-issue admission、非 runnable child 与 final ship marker 等恢复路径，避免重复合并、重复 ship 或静默跳过。
+
+### 测试
+- 新增 model route、per-slice CMR、family CMR/ship worker、verify-cmr、runner resume、ledger persistence、malformed output 与 route accounting 覆盖；ship 验证为 `1889 passed, 13 skipped`（root pytest），orchestrator Vitest `809 passed, 1 skipped`，orchestrator typecheck 通过。
+
 ## [0.16.0.0] - 2026-06-28
 
 ### 新增
