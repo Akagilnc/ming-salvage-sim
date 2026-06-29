@@ -15,7 +15,7 @@
  * Escalate stays the global stop edge (checked FIRST).
  */
 
-import type { StepId, StepOutput } from "./types.js";
+import type { Finding, StepId, StepOutput } from "./types.js";
 import { classifyFindings } from "./findings.js";
 // Shared seam guards — the SINGLE source of truth, also used by the runner, so
 // the coder-output / commitsAdded rules can never drift between two copies.
@@ -46,6 +46,16 @@ export interface RouteContext {
    * own output. Undefined when no agent has run yet.
    */
   readonly output?: StepOutput;
+  /**
+   * Runner-adjudicated blocking findings selected at S4.
+   *
+   * For S6 re-reviews, ADR 0030 closure can re-open a prior claimed-fixed
+   * finding even when the reviewer omits it from `findings[]` and marks it
+   * still-active/unable-to-assess. S4 routing must follow the runner's
+   * adjudicated state, not reclassify the raw reviewer payload as if absence
+   * were closure.
+   */
+  readonly pendingBlockingFindings?: ReadonlyArray<Finding>;
 }
 
 /**
@@ -116,8 +126,11 @@ export function route(ctx: RouteContext): RouteDecision {
       if (!isValidReviewerOutput(ctx.output)) {
         return { kind: "handoff", status: "error" };
       }
-      const classification = classifyFindings(ctx.output.findings);
-      return classification.blocking.length > 0
+      const blockingCount =
+        ctx.pendingBlockingFindings !== undefined
+          ? ctx.pendingBlockingFindings.length
+          : classifyFindings(ctx.output.findings).blocking.length;
+      return blockingCount > 0
         ? { kind: "next", step: "S5" }
         : { kind: "next", step: "S7" };
     }

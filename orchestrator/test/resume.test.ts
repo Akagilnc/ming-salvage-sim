@@ -36,6 +36,7 @@ import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
 import type {
   Backend,
+  Finding,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
@@ -55,6 +56,18 @@ const WORKTREE: WorktreeHandle = {
 };
 
 const STATE_DIR = "/resident/worktrees/.ledger-255";
+
+const CLAIMED_FIXED_FINDING: Finding = {
+  severity: "high",
+  category: "correctness",
+  claim_quote: "Do not rely on omitting a finding to mean it is closed.",
+  location: "orchestrator/src/runner.ts:1061",
+  suggested_fix: "Replay prior S4 adjudication state on resume.",
+  action: "fix_now",
+};
+
+const CLAIMED_FIXED_KEY =
+  "correctness|orchestrator/src/runner.ts:1061|do not rely on omitting a finding to mean it is closed.";
 
 /** Build a persisted ledger entry (the resume truth on disk). */
 function entry(
@@ -294,6 +307,51 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     // The preserved S2 entry still carries its committed output.
     const s2 = result.stepLedger.find((e) => e.step === "S2");
     expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
+  });
+});
+
+describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication", () => {
+  function crashedAfterSecondEmptyStillActiveS6(): ResumeState {
+    return {
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
+        entry("S4"),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S6", {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
+          ],
+        }),
+        entry("S4"),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S6", {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
+          ],
+        }),
+      ],
+    };
+  }
+
+  it("multi-round empty S6 still-active dispositions resume as no-progress, not silent closure", async () => {
+    const backend = new ResumeBackend(crashedAfterSecondEmptyStillActiveS6());
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(result.errorPackage?.reason).toContain("review/fix loop made no progress");
+    expect(backend.pushCount).toBe(0);
+    expect(backend.runStepIds).toEqual([]);
+    expect(result.stepLedger.map((e) => e.step).slice(-2)).toEqual(["S4", "S8"]);
   });
 });
 

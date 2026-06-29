@@ -181,6 +181,15 @@ export async function legacyDispatchFamilyWorker(
         ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
         ...(cmr.successfulLegs !== undefined ? { successfulLegs: cmr.successfulLegs } : {}),
         ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
+        ...(cmr.claimedFixedFindingIdentityKeys !== undefined
+          ? {
+              claimedFixedFindingIdentityKeys:
+                cmr.claimedFixedFindingIdentityKeys,
+            }
+          : {}),
+        ...(cmr.priorFindingDispositions !== undefined
+          ? { priorFindingDispositions: cmr.priorFindingDispositions }
+          : {}),
       },
     };
   }

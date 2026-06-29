@@ -144,7 +144,23 @@ class SeamOnlyBackend implements Backend {
               },
             ]
           : [];
-      return { kind: "completed", output: { kind: "reviewer", findings } };
+      return {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings,
+          ...(this.reviewCount > 1
+            ? {
+                priorFindingDispositions: [
+                  {
+                    identityKey: "correctness|f.ts:1|x",
+                    status: "verified-closed",
+                  },
+                ],
+              }
+            : {}),
+        },
+      };
     }
     return {
       kind: "completed",

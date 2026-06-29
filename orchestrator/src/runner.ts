@@ -35,7 +35,11 @@
  */
 
 import { route } from "./route.js";
-import { classifyFindings, findingIdentityKey } from "./findings.js";
+import {
+  adjudicatePriorClaimedFixedFindings,
+  classifyFindings,
+  findingIdentityKey,
+} from "./findings.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
 // dispatches EVERY worker step (S2 build, S7 ship) through ONE free function
 // instead of reaching for runStep/resumeSession/push directly.
@@ -277,14 +281,104 @@ function lastNonTerminalStep(
   return undefined;
 }
 
-function lastReviewerOutput(
+function lastReviewerStep(
   ledger: ReadonlyArray<LedgerEntry>,
-): StepOutput | undefined {
+): StepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
-    const output = ledger[i]?.output;
-    if (output?.kind === "reviewer") return output;
+    const entry = ledger[i]!;
+    if (entry.output?.kind === "reviewer") return entry.step;
   }
   return undefined;
+}
+
+interface S4AdjudicationReplay {
+  readonly blocking: ReadonlyArray<Finding>;
+  readonly blockingIdentityKeys: ReadonlyArray<string>;
+  readonly deferred: ReadonlyArray<Finding>;
+  readonly noProgressCounts: ReadonlyMap<string, number>;
+}
+
+function replayS4AdjudicationState(
+  ledger: ReadonlyArray<LedgerEntry>,
+): S4AdjudicationReplay {
+  let pendingBlockingFindings: Finding[] = [];
+  let pendingBlockingFindingIdentityKeys: string[] = [];
+  let deferredFindings: Finding[] = [];
+  const noProgressCounts = new Map<string, number>();
+  let lastReviewerOutputForS4: StepOutput | undefined;
+  let lastReviewerStepForS4: StepId | undefined;
+
+  for (const entry of ledger) {
+    if (entry.output?.kind === "reviewer") {
+      lastReviewerOutputForS4 = entry.output;
+      lastReviewerStepForS4 = entry.step;
+      continue;
+    }
+    if (entry.step !== "S4" || lastReviewerOutputForS4?.kind !== "reviewer") {
+      continue;
+    }
+
+    const classification = classifyFindings(lastReviewerOutputForS4.findings);
+    let blocking = [...classification.blocking];
+    let blockingIdentityKeys = [...classification.blockingIdentityKeys];
+
+    if (
+      lastReviewerStepForS4 === "S6" &&
+      pendingBlockingFindingIdentityKeys.length > 0
+    ) {
+      const adjudication = adjudicatePriorClaimedFixedFindings({
+        priorFindings: pendingBlockingFindings,
+        priorIdentityKeys: pendingBlockingFindingIdentityKeys,
+        review: lastReviewerOutputForS4,
+      });
+      for (const key of adjudication.verifiedClosedIdentityKeys) {
+        noProgressCounts.delete(key);
+      }
+      const seenBlocking = new Set(blockingIdentityKeys);
+      for (const finding of adjudication.stillOpen) {
+        const key = findingIdentityKey(finding);
+        if (!seenBlocking.has(key)) {
+          blocking.push(finding);
+          blockingIdentityKeys.push(key);
+          seenBlocking.add(key);
+        }
+        noProgressCounts.set(key, (noProgressCounts.get(key) ?? 0) + 1);
+      }
+    }
+
+    const blockingKeys = new Set(blockingIdentityKeys);
+    deferredFindings = deferredFindings.filter(
+      (finding) => !blockingKeys.has(findingIdentityKey(finding)),
+    );
+    const deferredKeys = new Set(deferredFindings.map(findingIdentityKey));
+    for (const finding of classification.deferred) {
+      const key = findingIdentityKey(finding);
+      if (!deferredKeys.has(key)) {
+        deferredFindings.push(finding);
+        deferredKeys.add(key);
+      }
+    }
+    pendingBlockingFindings = blocking;
+    pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
+    if (lastReviewerStepForS4 !== "S6") {
+      for (const key of blockingIdentityKeys) {
+        if (!noProgressCounts.has(key)) noProgressCounts.set(key, 0);
+      }
+    }
+  }
+
+  return {
+    blocking: pendingBlockingFindings,
+    blockingIdentityKeys: pendingBlockingFindingIdentityKeys,
+    deferred: deferredFindings,
+    noProgressCounts,
+  };
+}
+
+function adjudicatedBlockingFindingsForPersistedS4(
+  ledger: ReadonlyArray<LedgerEntry>,
+): ReadonlyArray<Finding> | undefined {
+  return replayS4AdjudicationState(ledger).blocking;
 }
 
 /**
@@ -430,7 +524,17 @@ function planResume(
     lastEntry.step === "S8"
       ? lastNonTerminalStep(ledger) ?? lastEntry.step
       : lastEntry.step;
-  const decision = route({ from: routeFrom, output: agentEntry?.output });
+  const pendingBlockingFindings =
+    routeFrom === "S4"
+      ? adjudicatedBlockingFindingsForPersistedS4(ledger)
+      : undefined;
+  const decision = route({
+    from: routeFrom,
+    output: agentEntry?.output,
+    ...(pendingBlockingFindings !== undefined
+      ? { pendingBlockingFindings }
+      : {}),
+  });
   if (decision.kind === "handoff") {
     return {
       terminalStatus: decision.status,
@@ -604,13 +708,43 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let deferredFindings: Finding[] = [];
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
+  let lastReviewerStepId: StepId | undefined;
+  const noProgressByFindingIdentityKey = new Map<string, number>();
 
   function seedClassificationFromReviewerOutput(
     reviewerOutput: StepOutput | undefined,
-  ): void {
-    if (reviewerOutput?.kind !== "reviewer") return;
+    afterFix: boolean,
+  ): string[] {
+    if (reviewerOutput?.kind !== "reviewer") return [];
     const classification = classifyFindings(reviewerOutput.findings);
-    const blockingKeys = new Set(classification.blockingIdentityKeys);
+    let blocking = [...classification.blocking];
+    let blockingIdentityKeys = [...classification.blockingIdentityKeys];
+    const noProgressIdentityKeys: string[] = [];
+
+    if (afterFix && pendingBlockingFindingIdentityKeys.length > 0) {
+      const adjudication = adjudicatePriorClaimedFixedFindings({
+        priorFindings: pendingBlockingFindings,
+        priorIdentityKeys: pendingBlockingFindingIdentityKeys,
+        review: reviewerOutput,
+      });
+      for (const key of adjudication.verifiedClosedIdentityKeys) {
+        noProgressByFindingIdentityKey.delete(key);
+      }
+      const seenBlocking = new Set(blockingIdentityKeys);
+      for (const finding of adjudication.stillOpen) {
+        const key = findingIdentityKey(finding);
+        if (!seenBlocking.has(key)) {
+          blocking.push(finding);
+          blockingIdentityKeys.push(key);
+          seenBlocking.add(key);
+        }
+        const count = (noProgressByFindingIdentityKey.get(key) ?? 0) + 1;
+        noProgressByFindingIdentityKey.set(key, count);
+        if (count >= 2) noProgressIdentityKeys.push(key);
+      }
+    }
+
+    const blockingKeys = new Set(blockingIdentityKeys);
     deferredFindings = deferredFindings.filter(
       (finding) => !blockingKeys.has(findingIdentityKey(finding)),
     );
@@ -622,10 +756,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         deferredKeys.add(key);
       }
     }
-    pendingBlockingFindings = [...classification.blocking];
-    pendingBlockingFindingIdentityKeys = [
-      ...classification.blockingIdentityKeys,
-    ];
+    pendingBlockingFindings = blocking;
+    pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
+    if (!afterFix) {
+      for (const key of blockingIdentityKeys) {
+        if (!noProgressByFindingIdentityKey.has(key)) {
+          noProgressByFindingIdentityKey.set(key, 0);
+        }
+      }
+    }
+    return noProgressIdentityKeys;
   }
 
   // ── #249: per-run session id + sibling state dir ──────────────────────────
@@ -945,17 +1085,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
-    // ADR 0030: if the prior run already persisted S4, resume can jump straight
-    // to S5/S7. Rebuild the S4 classification state from the persisted reviewer
-    // output so S5 receives the blocking findings and S7 reports defers.
-    if (
-      plan.resumeStep === "S5" ||
-      plan.resumeStep === "S7" ||
-      plan.resumeStep === "S8"
-    ) {
-      const reviewerOutput = lastReviewerOutput(plan.priorLedger) ?? lastOutput;
-      seedClassificationFromReviewerOutput(reviewerOutput);
+    // ADR 0030: persisted S4 boundaries are the runner's closure truth. Resume
+    // must replay the prior S4 adjudications, because an S6 reviewer may carry an
+    // empty `findings[]` plus `still-active` dispositions for blockers inherited
+    // from older rounds. Reclassifying only the previous reviewer payload would
+    // treat absence as closure.
+    const replayedS4 = replayS4AdjudicationState(plan.priorLedger);
+    pendingBlockingFindings = [...replayedS4.blocking];
+    pendingBlockingFindingIdentityKeys = [...replayedS4.blockingIdentityKeys];
+    deferredFindings = [...replayedS4.deferred];
+    noProgressByFindingIdentityKey.clear();
+    for (const [key, count] of replayedS4.noProgressCounts) {
+      noProgressByFindingIdentityKey.set(key, count);
     }
+    lastReviewerStepId = lastReviewerStep(plan.priorLedger);
 
     if (plan.terminalStatus !== undefined) {
       // The prior run already reached a terminal handoff that is NOT being
@@ -1284,11 +1427,28 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           break;
         }
         lastOutput = output;
+        if (step === "S3" || step === "S6") lastReviewerStepId = step;
         break;
       }
 
       case "S4": {
-        seedClassificationFromReviewerOutput(lastOutput);
+        let noProgressIdentityKeys: string[];
+        try {
+          noProgressIdentityKeys = seedClassificationFromReviewerOutput(
+            lastOutput,
+            lastReviewerStepId === "S6",
+          );
+        } catch (err) {
+          return await errorTermination("S4", err);
+        }
+        if (noProgressIdentityKeys.length > 0) {
+          return await escalateTermination("S4", {
+            reason: "review/fix loop made no progress",
+            diagnosis:
+              "Fresh re-review reported the same claimed-fixed finding still active " +
+              `after repeated fix attempts: ${noProgressIdentityKeys.join(", ")}`,
+          });
+        }
         break;
       }
 
@@ -1439,7 +1599,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // "count rounds then give up" rule. Only malformed reviewer outputs have a
     // bounded rerun budget; substantive convergence is driven by fresh reviewer
     // findings and explicit escalation.
-    const decision = route({ from: step, output: lastOutput });
+    const decision = route({
+      from: step,
+      output: lastOutput,
+      ...(step === "S4"
+        ? { pendingBlockingFindings }
+        : {}),
+    });
 
     if (decision.kind === "handoff") {
       ledger.push({ step: "S8" });
