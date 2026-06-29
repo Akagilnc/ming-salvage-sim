@@ -167,9 +167,13 @@ describe("Wiring 1 â€” conflictResolvedByLlm flows to the integrated cmr (#291 ç
       familyBase: "family/291-base",
     });
 
-    expect(backend.cmrCalls).toHaveLength(1);
-    expect(backend.cmrCalls[0]?.familyBase).toBe("family/291-base");
-    expect(backend.cmrCalls[0]?.llmResolvedChildren).toEqual([295]);
+    expect(backend.cmrCalls).toHaveLength(2);
+    expect(backend.cmrCalls.map((c) => c.cmrPass)).toEqual([
+      "completeness",
+      "correctness",
+    ]);
+    expect(backend.cmrCalls.every((c) => c.familyBase === "family/291-base")).toBe(true);
+    expect(backend.cmrCalls.every((c) => c.llmResolvedChildren?.[0] === 295)).toBe(true);
   });
 
   it("with NO conflicts, the cmr request omits llmResolvedChildren (no false signal)", async () => {
@@ -181,9 +185,12 @@ describe("Wiring 1 â€” conflictResolvedByLlm flows to the integrated cmr (#291 ç
       familyBase: "family/291-base",
     });
 
-    expect(backend.cmrCalls).toHaveLength(1);
+    expect(backend.cmrCalls).toHaveLength(2);
     // No LLM-resolved children â†’ the field is omitted (an empty list would be a
     // distinct shape; we keep the back-compatible `{familyBase}`-only request).
-    expect(backend.cmrCalls[0]).toEqual({ familyBase: "family/291-base" });
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "completeness" },
+      { familyBase: "family/291-base", cmrPass: "correctness" },
+    ]);
   });
 });

@@ -28,6 +28,7 @@ import type {
 } from "../types.js";
 import type {
   FamilyBackend,
+  IntegratedCmrPass,
   IntegratedCmrResult,
   OpenFamilyPrResult,
 } from "./types.js";
@@ -53,7 +54,10 @@ import type {
  *     never round-counted by the runner — maxIter must not degrade into a
  *     "count-to-N-then-give-up" fix-loop cap (types.ts maxIter SEMANTICS, US#18).
  */
-export function cmrWorkerSpec(session: WorkerSessionMode = "fresh"): WorkerSpec {
+export function cmrWorkerSpec(
+  session: WorkerSessionMode = "fresh",
+  pass: IntegratedCmrPass = "correctness",
+): WorkerSpec {
   return {
     id: "S2", // the family integrated cmr is a WRITE/work step (ADR 0026: the
     //           single-slice S3/S5/S6 ids were removed; the cmr worker is a build/
@@ -68,7 +72,10 @@ export function cmrWorkerSpec(session: WorkerSessionMode = "fresh"): WorkerSpec 
     // only the review legs are fresh — ADR 0026 2026-06-24.
     contextRetention: "retain",
     skill: "ak-cross-m-review",
-    promptFile: "integrated_cmr.md",
+    promptFile:
+      pass === "completeness"
+        ? "integrated_cmr_completeness.md"
+        : "integrated_cmr_correctness.md",
     completionSignal: "CMR_STEP_COMPLETE",
     maxIter: 5,
     model: "opus",
@@ -156,6 +163,7 @@ export async function legacyDispatchFamilyWorker(
     }
     const cmr: IntegratedCmrResult = await familyBackend.runIntegratedCmr({
       familyBase,
+      ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
       ...(ctx.llmResolvedChildren !== undefined &&
       ctx.llmResolvedChildren.length > 0
         ? { llmResolvedChildren: ctx.llmResolvedChildren }
@@ -167,6 +175,7 @@ export async function legacyDispatchFamilyWorker(
       kind: "completed",
       output: {
         kind: "cmr",
+        ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
         converged: cmr.converged,
         ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
       },

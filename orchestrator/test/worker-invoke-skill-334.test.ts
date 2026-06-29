@@ -145,6 +145,8 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
 
 describe("#334 thin prompts read baked souls and do not hand-copy methodology", () => {
   const read = (f: string): string => readFileSync(join(promptsDir, f), "utf8");
+  const readSoul = (f: string): string =>
+    readFileSync(join(here, "..", "image", "souls", f), "utf8");
 
   it("coder_implement.md is an entrypoint, not a TDD/review mini-wiki", () => {
     const p = read("coder_implement.md");
@@ -157,12 +159,33 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
   });
 
   it("the coder soul carries implementation/fix process but not the per-slice review loop", () => {
-    const soul = readFileSync(join(here, "..", "image", "souls", "coder.md"), "utf8");
+    const soul = readSoul("coder.md");
     expect(soul).toMatch(/Invoke `\/tdd`/i);
     expect(soul).toMatch(/coder-fix|fix worker|blocking review findings/i);
     expect(soul).not.toMatch(/Second review|non-Claude reviewer leg/i);
     expect(soul).toMatch(/gh issue view/i);
     expect(soul).toMatch(/Snapshot files.*not execution input/is);
+  });
+
+  it("#419 integrated cmr pass entrypoints read pass-specific souls that invoke only their lens gate", () => {
+    const completenessPrompt = read("integrated_cmr_completeness.md");
+    const correctnessPrompt = read("integrated_cmr_correctness.md");
+    expect(completenessPrompt).toMatch(
+      /\/home\/agent\/\.orchestrator\/souls\/cmr_completeness\.md/,
+    );
+    expect(correctnessPrompt).toMatch(
+      /\/home\/agent\/\.orchestrator\/souls\/cmr_correctness\.md/,
+    );
+
+    const completenessSoul = readSoul("cmr_completeness.md");
+    expect(completenessSoul).toMatch(/\bak-cmr-completeness\b/);
+    expect(completenessSoul).not.toMatch(/\bak-cmr-correctness\b/);
+    expect(completenessSoul).not.toMatch(/Gate 2|correctness gate|Run only the correctness/is);
+
+    const correctnessSoul = readSoul("cmr_correctness.md");
+    expect(correctnessSoul).toMatch(/\bak-cmr-correctness\b/);
+    expect(correctnessSoul).not.toMatch(/\bak-cmr-completeness\b/);
+    expect(correctnessSoul).not.toMatch(/Gate 1|completeness gate|Run only the completeness/is);
   });
 
   it("every existing prompt still defines its structured output contract (tag + signal)", () => {
@@ -176,6 +199,10 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(read("reviewer_review.md")).toMatch(/REVIEWER_STEP_COMPLETE/);
     expect(read("ship.md")).toMatch(/<ship>/);
     expect(read("ship.md")).toMatch(/SHIP_STEP_COMPLETE/);
+    expect(read("integrated_cmr_completeness.md")).toMatch(/<cmr>/);
+    expect(read("integrated_cmr_completeness.md")).toMatch(/CMR_STEP_COMPLETE/);
+    expect(read("integrated_cmr_correctness.md")).toMatch(/<cmr>/);
+    expect(read("integrated_cmr_correctness.md")).toMatch(/CMR_STEP_COMPLETE/);
   });
 });
 

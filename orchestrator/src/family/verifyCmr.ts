@@ -59,11 +59,16 @@ import {
   dispatchFamilyWorker,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { recordAborted as recordDurableAbort, recordShipped } from "./ledger.js";
+import {
+  recordAborted as recordDurableAbort,
+  recordCmrPassed,
+  recordShipped,
+} from "./ledger.js";
 import { isFilledString } from "../shipOutcome.js";
 import type {
   FamilyBackend,
   FamilyVerifyResult,
+  IntegratedCmrPass,
 } from "./types.js";
 
 /** Which of the two ADR 0022 decision-3 verify points is running. */
@@ -167,6 +172,7 @@ async function dispatchOrAbort(
   ctx: Parameters<typeof dispatchFamilyWorker>[2],
   phase: VerifyCmrPhase,
   familyHeadAfter: string | undefined,
+  cmrPass?: IntegratedCmrPass,
 ): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
   try {
     return await dispatchFamilyWorker(familyBackend, spec, ctx);
@@ -176,13 +182,87 @@ async function dispatchOrAbort(
     }`;
     await familyBackend.recordAborted?.({
       phase,
+      ...(cmrPass !== undefined ? { cmrPass } : {}),
       familyBase: ctx.familyBase!,
       errorPackage: { reason },
       familyHeadAfter,
     });
-    await recordDurableAbort(familyBackend, { phase, reason, familyHeadAfter });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      ...(cmrPass !== undefined ? { cmrPass } : {}),
+      reason,
+      familyHeadAfter,
+    });
     return { kind: "failed", reason };
   }
+}
+
+async function runIntegratedCmrPass(input: {
+  readonly pass: IntegratedCmrPass;
+  readonly familyBackend: FamilyBackend;
+  readonly familyBase: string;
+  readonly llmResolvedChildren?: readonly number[];
+  readonly familyHeadAfter?: string;
+}): Promise<VerifyCmrResult> {
+  const {
+    pass,
+    familyBackend,
+    familyBase,
+    llmResolvedChildren,
+    familyHeadAfter,
+  } = input;
+  const cmrResult = await dispatchOrAbort(
+    familyBackend,
+    cmrWorkerSpec("fresh", pass),
+    {
+      familyBase,
+      cmrPass: pass,
+      ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
+        ? { llmResolvedChildren }
+        : {}),
+    },
+    "final",
+    familyHeadAfter,
+    pass,
+  );
+  if (cmrResult.kind === "escalated") {
+    const reason = `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter,
+    });
+    await familyBackend.escalateFamily?.({
+      reason,
+    });
+    return { ok: false, ran: true };
+  }
+  if (cmrResult.kind !== "completed" || cmrResult.output.kind !== "cmr") {
+    if (cmrResult.kind !== "failed") {
+      await recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason: `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`,
+        familyHeadAfter,
+      });
+    }
+    return INCOMPLETE_GATE;
+  }
+  if (!cmrResult.output.converged) {
+    const reason =
+      cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter,
+    });
+    await familyBackend.escalateFamily?.({ reason });
+    return { ok: false, ran: true };
+  }
+  await recordCmrPassed(familyBackend, { cmrPass: pass });
+  return { ok: true, ran: true };
 }
 
 /**
@@ -248,85 +328,27 @@ export async function runVerifyCmr(
     return INCOMPLETE_GATE;
   }
 
-  // ── integrated cmr gate = PURE SCHEDULER (wiki tdd-autonomous-dev Step 6 =
-  //    ship-pre 正确性 cmr; the corrected design, ADR 0026 2026-06-24). The cmr
-  //    worker is a SINGLE memory-bearing `sc.run` session that IS the fixer: it
-  //    invokes `ak-cross-m-review` (--scenario ship-pre), which dispatches fresh
-  //    review legs, grades, FIXES on the family base, and re-reviews until the
-  //    worker converges — the WHOLE review→grade→fix→re-review loop runs INSIDE the
-  //    worker's own session (only the 3 review LEGS are fresh each round; the
-  //    worker's main session has memory and is the fixer). The discipline lives in
-  //    the versioned skill (Step 5 termination + Step 6 drift 三联 + Step 7 fix
-  //    loop), never hand-coded here (orchestrator CLAUDE.md rule 3).
-  //
-  //    So the runner DISPATCHES THE CMR WORKER ONCE and reads its TERMINAL verdict.
-  //    There is NO round-loop, NO separate coder-fix worker, NO prior-round findings
-  //    threaded as data between fresh workers, NO drift constant / round counter /
-  //    grade logic here. #291 缺口 1: the LLM-resolved children ride on the
-  //    DispatchContext (OMITTED when none, the back-compat request shape). The cmr
-  //    worker dispatches FRESH (a NEW memory-bearing session, not a crash/escalate
-  //    resume — `session:"resume"` skips git-truthing and is reserved for that).
-  const cmrResult = await dispatchOrAbort(
+  // #419: Step5 completeness and Step6 correctness are two runner-dispatched
+  // CMR worker passes. Correctness is structurally unreachable unless the
+  // completeness worker returns a green terminal verdict.
+  const completeness = await runIntegratedCmrPass({
+    pass: "completeness",
     familyBackend,
-    cmrWorkerSpec("fresh"),
-    {
-      familyBase,
-      ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
-        ? { llmResolvedChildren }
-        : {}),
-    },
-    phase,
+    familyBase,
+    llmResolvedChildren,
     familyHeadAfter,
-  );
-  // An ESCALATED cmr worker is the family escalate续跑 path (decision 3⑥/4): the
-  // worker — having run its whole internal review→fix→re-review loop — judged it
-  // cannot converge (drift / architectural rework needed). Relay its reason to the
-  // escalate seam (the runner did NOT count rounds). A crash/malformed result
-  // cannot be reported as a pass — fail-safe to INCOMPLETE_GATE (decision 3⑤
-  // "不静默吞").
-  if (cmrResult.kind === "escalated") {
-    await familyBackend.escalateFamily?.({
-      reason: `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`,
-    });
-    return { ok: false, ran: true };
-  }
-  if (cmrResult.kind !== "completed" || cmrResult.output.kind !== "cmr") {
-    // The cmr worker ran but returned no valid result (crash / malformed / hard
-    // command failure). Persist a durable `aborted` event (online review r3, codex
-    // P2): otherwise the failed FINAL barrier lives only in this return value, and a
-    // resume sees stale merged state (no shipped marker, no failure marker) → it
-    // re-runs the same failing gate, losing the phase / reason / family head needed
-    // for triage (decision 3⑤ 不静默吞).
-    //
-    // EXCEPT a `kind: "failed"` result — that is `dispatchOrAbort` reporting a
-    // worker STARTUP THROW, for which it ALREADY persisted a durable `aborted`
-    // (with the real throw reason). Re-recording here would double-write the same
-    // failure (CodeRabbit #384: the #362 ledger showed two `aborted` entries for
-    // one idle-timeout death). Only a non-"failed" invalid result — the worker
-    // RETURNED but crashed/malformed — needs its own durable abort here.
-    if (cmrResult.kind !== "failed") {
-      await recordDurableAbort(familyBackend, {
-        phase,
-        reason: "family integrated cmr worker returned no valid result (crash/malformed)",
-        familyHeadAfter,
-      });
-    }
-    return INCOMPLETE_GATE;
-  }
-  if (!cmrResult.output.converged) {
-    // A `completed` cmr verdict that is NOT converged means the worker ended its
-    // internal fix loop without converging AND without escalating (a contract slip —
-    // the worker is supposed to converge or escalate). Fail-safe: escalate续跑 with
-    // the worker's reason rather than ship an un-converged base (decision 3⑤
-    // 不静默吞), never a fabricated pass.
-    await familyBackend.escalateFamily?.({
-      reason: cmrResult.output.reason ?? "integrated cmr did not converge",
-    });
-    return { ok: false, ran: true };
-  }
-  // Converged: the cmr worker fixed every cross-slice finding inside its own
-  // memory-bearing session; the family base now holds the fixes. Fall through to
-  // 止于 PR (the ship worker) below.
+  });
+  if (!completeness.ok) return completeness;
+
+  const correctness = await runIntegratedCmrPass({
+    pass: "correctness",
+    familyBackend,
+    familyBase,
+    llmResolvedChildren,
+    familyHeadAfter,
+  });
+  if (!correctness.ok) return correctness;
+  // Both CMR passes converged. Fall through to 止于 PR (the ship worker) below.
 
   // ── 止于 PR (decision 4): green verify + converged cmr ⇒ open the family PR and
   //    STOP. Online bot cmr + merge to main are the separate pr-review-loop stage,

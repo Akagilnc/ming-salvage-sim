@@ -197,9 +197,11 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       singleSliceBackend: new ChildBackend(),
       familyBase: "family/291-base",
     });
-    // Both children merged; wave verify green; final verify green; cmr ran + red.
+    // Both children merged; wave verify green; final verify green; step5 completeness ran + red.
     expect(backend.merges.map((m) => m.childIssue)).toEqual([294, 295]);
-    expect(backend.cmrCalls).toEqual([{ familyBase: "family/291-base" }]);
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "completeness" },
+    ]);
     // Escalate续跑 (#298) carrying the cross-slice-seam reason; NO PR.
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]?.reason).toContain("阈值口径");
@@ -263,9 +265,12 @@ describe("#296 spine integration — acceptance 3: all green → open PR, stop, 
       familyBase: "family/291-base",
     });
     // One wave (all independent): wave verify (green) then final verify (green) →
-    // cmr (converged) → PR opened ONCE from the family base.
+    // step5 completeness → step6 correctness → PR opened ONCE from the family base.
     expect(backend.verifyCalls.map((v) => v.phase)).toEqual(["wave", "final"]);
-    expect(backend.cmrCalls).toEqual([{ familyBase: "family/291-base" }]);
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "completeness" },
+      { familyBase: "family/291-base", cmrPass: "correctness" },
+    ]);
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
     // 止于 PR: a PR was opened, but the run STOPS here — every child merged into the
     // family base, status success, no escalate. (No merge-to-main seam exists on
