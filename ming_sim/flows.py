@@ -637,8 +637,10 @@ def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
         b = res.breakdown
         tlog(
             f"[fiscal-substrate] {region_id} 推进：实征{b.get('实征', 0):.1f}/起运{b.get('起运到京', 0):.1f}/"
-            f"火耗入截留{b.get('火耗实收', 0):.1f}；末态 军饷欠{res.new_st.get('军饷欠', 0):.0f}/"
-            f"民欠{res.new_st.get('民欠旧赋', 0):.0f}（shadow，未入国库）"
+            f"火耗入截留{b.get('火耗实收', 0):.1f}；末态欠账 "
+            f"军饷欠{res.new_st.get('军饷欠', 0):.0f}/官俸欠{res.new_st.get('官俸欠', 0):.0f}/"
+            f"宗禄欠{res.new_st.get('宗禄欠', 0):.0f}/民欠{res.new_st.get('民欠旧赋', 0):.0f}"
+            f"（shadow，未入国库）"
         )
 
 
