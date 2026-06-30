@@ -294,7 +294,8 @@ export function familyEscalationState(
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
     if (isValidFamilyShipped(entry)) return undefined;
-    if (entry.status !== "escalated" || entry.event !== "escalated") continue;
+    if (entry.status !== "escalated") continue;
+    if (entry.event !== "escalated") return { escalation: entry };
     const answer =
       entry.escalationKind === "decision"
         ? latestValidFamilyAnswerAfter(entries, i)
