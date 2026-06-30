@@ -69,6 +69,8 @@ import type {
   Backend,
   ErrorPackage,
   Escalation,
+  EscalationAnswerEvent,
+  EscalationKind,
   Finding,
   FindingDisposition,
   HandoffStatus,
@@ -184,6 +186,8 @@ function buildPersistentEntry(opts: {
   ts: string;
   /** Terminal status — set only for the S8 handoff entry (#255). */
   handoffStatus?: HandoffStatus;
+  /** Escalation bucket — set only for S8(status=escalate), #439. */
+  escalationKind?: EscalationKind;
   /** ADR0030 S4 classification state, persisted for resume replay. */
   findingDispositions?: ReadonlyArray<FindingDisposition>;
 }): PersistentLedgerEntry {
@@ -202,6 +206,9 @@ function buildPersistentEntry(opts: {
   // tell success / escalate / error apart (#255).
   if (opts.handoffStatus !== undefined) {
     entry = { ...entry, handoffStatus: opts.handoffStatus };
+  }
+  if (opts.escalationKind !== undefined) {
+    entry = { ...entry, escalationKind: opts.escalationKind };
   }
   if (opts.findingDispositions !== undefined) {
     entry = { ...entry, findingDispositions: opts.findingDispositions };
@@ -243,8 +250,66 @@ interface ResumePlan {
   readonly terminalStatus?: HandoffStatus;
   readonly resumeStep: StepId;
   readonly resumeSessionId?: string;
+  readonly escalationAnswer?: EscalationAnswerEvent;
   readonly lastOutput?: StepOutput;
   readonly priorLedger: ReadonlyArray<LedgerEntry>;
+}
+
+function isValidStepId(value: unknown): value is StepId {
+  return (
+    value === "S0" ||
+    value === "S1" ||
+    value === "S2" ||
+    value === "S3" ||
+    value === "S4" ||
+    value === "S5" ||
+    value === "S6" ||
+    value === "S7" ||
+    value === "S8"
+  );
+}
+
+function isEscalationAnswerEntry(
+  entry: LedgerEntry,
+): entry is LedgerEntry & EscalationAnswerEvent {
+  return (
+    entry.event === "escalation_answered" &&
+    isValidStepId(entry.forStep) &&
+    typeof entry.answer === "string" &&
+    entry.answer.trim().length > 0 &&
+    (entry.note === undefined || typeof entry.note === "string")
+  );
+}
+
+function answerPayload(
+  entry: LedgerEntry & EscalationAnswerEvent,
+): EscalationAnswerEvent {
+  return {
+    event: "escalation_answered",
+    forStep: entry.forStep,
+    answer: entry.answer,
+    ...(entry.note !== undefined ? { note: entry.note } : {}),
+  };
+}
+
+function executableLedgerEntries(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): ReadonlyArray<PersistentLedgerEntry> {
+  return ledger.filter((entry) => !isEscalationAnswerEntry(entry));
+}
+
+function latestAnswerAfter(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+  index: number,
+  forStep: StepId,
+): EscalationAnswerEvent | undefined {
+  for (let i = ledger.length - 1; i > index; i--) {
+    const entry = ledger[i]!;
+    if (isEscalationAnswerEntry(entry) && entry.forStep === forStep) {
+      return answerPayload(entry);
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -319,6 +384,9 @@ function replayS4AdjudicationState(
   let lastReviewerStepForS4: StepId | undefined;
 
   for (const entry of ledger) {
+    if (isEscalationAnswerEntry(entry)) {
+      continue;
+    }
     if (entry.output?.kind === "reviewer") {
       lastReviewerOutputForS4 = entry.output;
       lastReviewerStepForS4 = entry.step;
@@ -424,8 +492,82 @@ function planResume(
     return { resumeStep: "S0", priorLedger: [] };
   }
 
-  const lastEntry = ledger[ledger.length - 1]!;
-  const agentEntry = lastAgentEntry(ledger);
+  const executableLedger = executableLedgerEntries(ledger);
+  if (executableLedger.length === 0) {
+    return { resumeStep: "S0", priorLedger: ledger as ReadonlyArray<LedgerEntry> };
+  }
+
+  const lastEntry = executableLedger[executableLedger.length - 1]!;
+  const lastEntryIndex = ledger.lastIndexOf(lastEntry);
+  const agentEntry = lastAgentEntry(executableLedger);
+
+  if (
+    lastEntry.step === "S8" &&
+    lastEntry.handoffStatus === "escalate" &&
+    lastEntry.escalationKind !== undefined
+  ) {
+    if (lastEntry.escalationKind === "failure") {
+      return {
+        terminalStatus: "escalate",
+        resumeStep: "S8",
+        lastOutput: agentEntry?.output,
+        priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+      };
+    }
+
+    const decisionStep = lastNonTerminalStep(executableLedger);
+    const answer =
+      decisionStep !== undefined
+        ? latestAnswerAfter(ledger, lastEntryIndex, decisionStep)
+        : undefined;
+    if (answer === undefined || decisionStep === undefined) {
+      return {
+        terminalStatus: "escalate",
+        resumeStep: "S8",
+        lastOutput: agentEntry?.output,
+        priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+      };
+    }
+
+    if (decisionStep === "S4") {
+      return {
+        resumeStep: "S5",
+        escalationAnswer: answer,
+        lastOutput: agentEntry?.output,
+        priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+      };
+    }
+
+    if (decisionStep === "S7") {
+      return {
+        resumeStep: "S7",
+        escalationAnswer: answer,
+        lastOutput: agentEntry?.output,
+        priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+      };
+    }
+
+    if (
+      agentEntry !== undefined &&
+      agentEntry.step === decisionStep &&
+      isValidEscalation(escalateOf(agentEntry.output))
+    ) {
+      return {
+        resumeStep: agentEntry.step,
+        resumeSessionId: agentEntry.sessionId,
+        escalationAnswer: answer,
+        lastOutput: agentEntry.output,
+        priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+      };
+    }
+
+    return {
+      terminalStatus: "escalate",
+      resumeStep: "S8",
+      lastOutput: agentEntry?.output,
+      priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+    };
+  }
 
   // Case 2: escalate residue — the last agent output carries a WELL-FORMED
   // escalation. The human has answered; resume THAT step in its original agent
@@ -466,7 +608,7 @@ function planResume(
     // here would duplicate it. ADR 0030 has multiple agent steps (S2/S3/S5/S6);
     // whichever one escalated is resumed in its recorded session after the human
     // answer, while normal review/fix rounds stay fresh dispatches.
-    const escalatedIdx = ledger.lastIndexOf(agentEntry);
+    const escalatedIdx = executableLedger.lastIndexOf(agentEntry);
     const priorLedger = ledger.slice(0, escalatedIdx);
     return {
       resumeStep: agentEntry.step,
@@ -495,7 +637,7 @@ function planResume(
   if (
     lastEntry.step === "S8" &&
     lastEntry.handoffStatus === "escalate" &&
-    lastNonTerminalStep(ledger) === "S7"
+    lastNonTerminalStep(executableLedger) === "S7"
   ) {
     // Re-opening S7 means the OLD S7 entry is superseded — drop BOTH the trailing
     // S8(escalate) boundary AND the failing S7 entry it terminated. Slicing only at
@@ -504,13 +646,13 @@ function planResume(
     // review r1, 3 bots). The escalate-resume contract re-opens the step, it does
     // not keep the superseded one. The S7 entry being re-opened is the last
     // non-terminal (non-S8) entry; truncate at its index.
-    let reopenIdx = ledger.length - 1;
-    while (reopenIdx >= 0 && ledger[reopenIdx]!.step === "S8") reopenIdx--;
+    let reopenIdx = executableLedger.length - 1;
+    while (reopenIdx >= 0 && executableLedger[reopenIdx]!.step === "S8") reopenIdx--;
     // reopenIdx now points at the failing S7 entry (lastNonTerminalStep === "S7").
     return {
       resumeStep: "S7",
       lastOutput: agentEntry?.output,
-      priorLedger: ledger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
+      priorLedger: executableLedger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
     };
   }
 
@@ -539,11 +681,11 @@ function planResume(
   // still infer the terminal status.
   const routeFrom =
     lastEntry.step === "S8"
-      ? lastNonTerminalStep(ledger) ?? lastEntry.step
+      ? lastNonTerminalStep(executableLedger) ?? lastEntry.step
       : lastEntry.step;
   const pendingBlockingFindings =
     routeFrom === "S4"
-      ? adjudicatedBlockingFindingsForPersistedS4(ledger)
+      ? adjudicatedBlockingFindingsForPersistedS4(executableLedger)
       : undefined;
   const decision = route({
     from: routeFrom,
@@ -884,6 +1026,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
      */
     stepSessionId?: string,
     findingDispositions?: ReadonlyArray<FindingDisposition>,
+    escalationKind?: EscalationKind,
   ): Promise<void> {
     const ph = await hashPrompt(promptFile, s, backend);
     const branchHEAD = await resolveBranchHEAD();
@@ -895,6 +1038,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       branchHEAD,
       ts: new Date().toISOString(),
       handoffStatus,
+      escalationKind,
       findingDispositions,
     });
 
@@ -942,6 +1086,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
      */
     stepSessionId?: string,
     findingDispositions?: ReadonlyArray<FindingDisposition>,
+    escalationKind?: EscalationKind,
   ): Promise<void> {
     try {
       await emitLedger(
@@ -951,6 +1096,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         handoffStatus,
         stepSessionId,
         findingDispositions,
+        escalationKind,
       );
     } catch {
       // Swallow: error termination must not be derailed by a ledger I/O fault.
@@ -1081,6 +1227,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     failedStep: StepId,
     escalation: Escalation,
     sessionId?: string,
+    escalationKind: EscalationKind = "decision",
   ): Promise<RunResult> {
     if (failedStep !== "S8") {
       ledger.push({ step: failedStep });
@@ -1100,7 +1247,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       await persistBestEffort(failedStep, undefined, failedPromptFile, undefined, sessionId);
     }
     ledger.push({ step: "S8" });
-    await persistBestEffort("S8", undefined, undefined, "escalate");
+    await persistBestEffort(
+      "S8",
+      undefined,
+      undefined,
+      "escalate",
+      undefined,
+      undefined,
+      escalationKind,
+    );
     return {
       status: "escalate",
       // Surface the escalation as the error package so the caller can read the
@@ -1151,6 +1306,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // the escalate-resume case (the human answered; the build worker finishes in
   // its original memory-bearing session). Cleared after the step is dispatched once.
   let resumeFor: { step: StepId; sessionId: string } | undefined;
+  let resumedEscalationAnswer: EscalationAnswerEvent | undefined;
 
   if (resumeState !== undefined && resumeState.ledger.length > 0) {
     const plan = planResume(resumeState.ledger);
@@ -1231,6 +1387,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (plan.resumeSessionId !== undefined) {
       resumeFor = { step: plan.resumeStep, sessionId: plan.resumeSessionId };
     }
+    resumedEscalationAnswer = plan.escalationAnswer;
   }
 
   // The step machine has no fixed bound: route() always terminates the run via a
@@ -1384,6 +1541,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             resumeSessionId = resumeFor.sessionId;
             resumeFor = undefined;
           }
+          const escalationAnswerForStep =
+            step === "S5" ? resumedEscalationAnswer : undefined;
+          if (escalationAnswerForStep !== undefined) {
+            resumedEscalationAnswer = undefined;
+          }
 
           let attempts = 0;
           for (;;) {
@@ -1405,6 +1567,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         blockingFindings: pendingBlockingFindings,
                         blockingFindingIdentityKeys:
                           pendingBlockingFindingIdentityKeys,
+                        ...(step === "S5" &&
+                        escalationAnswerForStep !== undefined
+                          ? { escalationAnswer: escalationAnswerForStep }
+                          : {}),
                       }
                     : {}),
                 },
@@ -1714,7 +1880,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // resuming run can tell a prior success / escalate / error apart (the S8
       // entry is otherwise identical for all three).
       try {
-        await emitLedger("S8", undefined, undefined, decision.status);
+        await emitLedger(
+          "S8",
+          undefined,
+          undefined,
+          decision.status,
+          undefined,
+          undefined,
+          decision.status === "escalate" ? "decision" : undefined,
+        );
       } catch (err) {
         // integ-cmr base r2 (E): the failing operation here is the S8 handoff
         // ledger write — which happens for ANY handoff (S2 no-commit error,
