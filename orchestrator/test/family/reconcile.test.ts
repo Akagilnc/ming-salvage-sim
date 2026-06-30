@@ -215,22 +215,32 @@ describe("reconcileFamilyLedger — branch ③ inconsistent → fail-closed esca
 });
 
 describe("reconcileFamilyLedger — thin (#293-style) entries degrade SAFELY", () => {
-  it("a NON-empty thin ledger (no familyHeadAfter) → conservative no-escalate, even when live HEAD moved past the base start", async () => {
-    // A legitimate #293 thin ledger: child 10 merged (status:"merged") but the
-    // entry carries NO familyHeadAfter. After that merge LANDED, the live family
-    // base has moved PAST the base start (live="base1", start="base0" — the
-    // realistic state, cmr R4: codex-s2 + agy). This must DEGRADE SAFELY — NOT
-    // false-escalate: child 10 IS recorded merged, so it is not a lost/unrecorded
-    // merge (that is the empty-ledger first-merge-crash case, which is distinct).
-    // The first-merge-crash start-head check applies ONLY to a truly EMPTY ledger;
-    // a NON-empty headless/thin ledger keeps the conservative back-compat
-    // behavior: trust the recorded merged set, no补账, no escalate.
+  it("a bare thin ledger row without childHead does not explain a live HEAD advance → fail-closed escalate", async () => {
+    // A bare #293 thin row records child 10 as merged but carries neither
+    // familyHeadAfter nor childHead. If the live family base moved past the start
+    // head and no unrecorded child is reconciled, the row is not verifiable
+    // evidence for what advanced the base. Fail closed instead of treating any
+    // accounting row as enough to suppress the start-head safety net.
     const ledger: FamilyLedgerEntry[] = [{ childIssue: 10, status: "merged" }];
+    const git = new FakeReconcileGit("base1", { 10: "c10" }, new Set(["base0", "c10"]), "base0");
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect([...plan.merged].sort()).toEqual([10]);
+  });
+
+  it("a headless accounting row with childHead can explain the live HEAD advance when verified", async () => {
+    // A headless merged entry that carries childHead can be verified directly:
+    // child 10's head is still an ancestor of the live family base, so the live
+    // advance is attributable to an already-accounted child. No补账 and no
+    // double-merge are needed.
+    const ledger: FamilyLedgerEntry[] = [
+      { childIssue: 10, status: "merged", childHead: "c10" },
+    ];
     const git = new FakeReconcileGit("base1", { 10: "c10" }, new Set(["base0", "c10"]), "base0");
     const plan = await reconcileFamilyLedger(ledger, children, git);
     expect(plan.escalate).toBe(false);
     expect(plan.reconciled).toEqual([]);
-    // 10 is still counted merged (from the thin ledger entry) → not double-merged.
     expect([...plan.merged].sort()).toEqual([10]);
   });
 
