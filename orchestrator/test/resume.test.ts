@@ -470,6 +470,18 @@ describe("#439 decision-escalate answer channel", () => {
     expect(backend.cleanResidueCount).toBe(0);
   });
 
+  it("decision-escalate with a malformed blank answer row remains paused", async () => {
+    const backend = new DispatchRecordingResumeBackend(
+      decisionEscalatedAtS4({ answer: escalationAnswer("S4", "   ") }),
+    );
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatchSpecs).toEqual([]);
+    expect(backend.cleanResidueCount).toBe(0);
+  });
+
   it("appended answer reopens the S4 decision escalation at S5 and injects the answer", async () => {
     const answer = escalationAnswer(
       "S4",

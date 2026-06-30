@@ -295,7 +295,7 @@ function answerPayload(
 function executableLedgerEntries(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
 ): ReadonlyArray<PersistentLedgerEntry> {
-  return ledger.filter((entry) => !isEscalationAnswerEntry(entry));
+  return ledger.filter((entry) => entry.event !== "escalation_answered");
 }
 
 function latestAnswerAfter(
