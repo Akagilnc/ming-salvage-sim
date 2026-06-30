@@ -401,6 +401,37 @@ def test_army_delta_owner_power_to_ming_requires_same_delta_pay_source(fresh_db)
     )
 
 
+def test_army_delta_rejects_pay_source_without_ming_settle_substrate(fresh_db):
+    state = fresh_db.load_state()
+    event = SimpleNamespace(id="test", title="移饷源")
+    fresh_db.conn.execute(
+        "UPDATE regions SET controlled_by = 'ming', fiscal = '{}' WHERE id = 'taiwan'"
+    )
+    fresh_db.conn.commit()
+
+    rejected = fresh_db.apply_army_deltas(
+        state,
+        event,
+        None,
+        "测试",
+        {
+            "shaanxi_army": {
+                "pay_source_region": "taiwan",
+                "province_pay_share": 1.0,
+                "central_pay_share": 0.0,
+            }
+        },
+        commit=False,
+    )
+
+    row = fresh_db.conn.execute(
+        "SELECT pay_source_region FROM armies WHERE id = 'shaanxi_army'"
+    ).fetchone()
+    assert rejected and rejected[0]["rejected"] is True
+    assert "pay_source_region" in rejected[0]["reason"]
+    assert row["pay_source_region"] == "shaanxi"
+
+
 def test_army_delta_owner_power_from_ming_clears_pay_source_arrears(fresh_db):
     state = fresh_db.load_state()
     event = SimpleNamespace(id="test", title="陷没")
@@ -470,6 +501,28 @@ def test_new_ming_army_requires_valid_pay_source_under_cutover(fresh_db):
     assert "pay_source_region" in rejected[0]["reason"]
     assert fresh_db.conn.execute(
         "SELECT 1 FROM armies WHERE id = 'no_pay_source'"
+    ).fetchone() is None
+
+
+def test_new_ming_army_rejects_non_ming_pay_source_region(fresh_db):
+    state = fresh_db.load_state()
+    fresh_db.conn.execute("UPDATE regions SET controlled_by = 'rebel' WHERE id = 'shaanxi'")
+    fresh_db.conn.commit()
+
+    rejected = fresh_db.create_armies_from_extraction(state, [{
+        "id": "rebel_source_army",
+        "name": "逆境索饷军",
+        "manpower": 1000,
+        "owner_power": "ming",
+        "pay_source_region": "shaanxi",
+        "province_pay_share": 1.0,
+        "central_pay_share": 0.0,
+    }], commit=False)
+
+    assert rejected and rejected[0]["rejected"] is True
+    assert "pay_source_region" in rejected[0]["reason"]
+    assert fresh_db.conn.execute(
+        "SELECT 1 FROM armies WHERE id = 'rebel_source_army'"
     ).fetchone() is None
 
 
