@@ -14,7 +14,8 @@
  *   ① equal           → trust the merged set, skip already-merged, continue.
  *   ② live HEAD LEADS  → the common crash window (a merge landed, its `merged`
  *      (live is a            write crashed). For each NOT-yet-accounted child:
- *       descendant)          - childHead exists AND is an ancestor of live HEAD
+ *       descendant)          - childHead exists, differs from the effective base
+ *                              head, AND is an ancestor of live HEAD
  *                              → its merge LANDED →补 a `status:"merged"` +
  *                              `event:"reconciled"` entry (counted merged, codex
  *                              R3) and do NOT re-merge it;
@@ -137,6 +138,7 @@ async function headlessTailIsConsistent(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
   baselineIndex: number,
   liveHead: string,
+  baselineHead: string,
   git: ReconcileGit,
 ): Promise<boolean> {
   for (let i = baselineIndex + 1; i < ledger.length; i++) {
@@ -148,6 +150,7 @@ async function headlessTailIsConsistent(
     if (!isMergedAccountingEntry(entry)) return false;
     // A headless merged entry with no childHead cannot be verified → fail-closed.
     if (entry.childHead === undefined) return false;
+    if (entry.childHead === baselineHead) return false;
     if (!(await git.isAncestor(entry.childHead, liveHead))) return false;
   }
   return true;
@@ -156,6 +159,7 @@ async function headlessTailIsConsistent(
 async function verifyHeadlessAccountingRows(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
   liveHead: string,
+  baseHead: string,
   git: ReconcileGit,
 ): Promise<{ consistent: boolean; hasVerified: boolean }> {
   let hasVerified = false;
@@ -163,6 +167,9 @@ async function verifyHeadlessAccountingRows(
     if (!isMergedAccountingEntry(entry)) continue;
     if (entry.familyHeadAfter !== undefined) continue;
     if (entry.childHead === undefined) {
+      return { consistent: false, hasVerified };
+    }
+    if (entry.childHead === baseHead) {
       return { consistent: false, hasVerified };
     }
     if (!(await git.isAncestor(entry.childHead, liveHead))) {
@@ -212,7 +219,7 @@ export async function reconcileFamilyLedger(
   // tail entry's `childHead` is still an ancestor of live; any missing or non-ancestor
   // → fail-closed escalate (do not silently skip a child whose merge is gone).
   if (baseline !== undefined && baseline === liveHead) {
-    if (await headlessTailIsConsistent(ledger, baselineIndex, liveHead, git)) {
+    if (await headlessTailIsConsistent(ledger, baselineIndex, liveHead, baseline, git)) {
       return { escalate: false, reconciled: [], merged: ledgerMerged, liveHead };
     }
     return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
@@ -234,9 +241,11 @@ export async function reconcileFamilyLedger(
   // neither "always escalate" nor "blindly trust" was right — RECONCILE PER CHILD
   // is).
   if (baseline === undefined) {
+    const startHead = await git.familyBaseStartHead();
     const headlessAccounting = await verifyHeadlessAccountingRows(
       ledger,
       liveHead,
+      startHead,
       git,
     );
     if (!headlessAccounting.consistent) {
@@ -247,6 +256,7 @@ export async function reconcileFamilyLedger(
       children,
       ledgerMerged,
       liveHead,
+      startHead,
       git,
     );
     // Safety net for a headless ledger: after every existing headless merged row
@@ -257,7 +267,6 @@ export async function reconcileFamilyLedger(
       reconciled.length === 0 &&
       !headlessAccounting.hasVerified
     ) {
-      const startHead = await git.familyBaseStartHead();
       if (liveHead !== startHead) {
         return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
       }
@@ -280,6 +289,7 @@ export async function reconcileFamilyLedger(
     children,
     ledgerMerged,
     liveHead,
+    baseline,
     git,
   );
   return { escalate: false, reconciled, merged, liveHead };
@@ -288,13 +298,16 @@ export async function reconcileFamilyLedger(
 /**
  * The per-child crash-window reconcile, shared by branch ② AND the headless-ledger
  * path. For each child NOT already accounted in `ledgerMerged`, ask git whether its
- * branch HEAD landed on the live family base (`isAncestor(childHead, liveHead)`):
+ * branch HEAD landed on the live family base (`childHead !== baseHead` AND
+ * `isAncestor(childHead, liveHead)`):
  *
- *   - landed (ancestor-confirmed) → 补 a reconciled entry + count it merged (no
- *     double-merge). The caller writes the補账条 `status:"merged"` + `event:"reconciled"`
- *     so the unblock predicate counts it (codex R3);
+ *   - landed (non-base ancestor-confirmed) → 补 a reconciled entry + count it
+ *     merged (no double-merge). The caller writes the補账条 `status:"merged"` +
+ *     `event:"reconciled"` so the unblock predicate counts it (codex R3);
  *   - childHead/branch absent (crashed before any commit) → never merged → leave
  *     OUT of `merged`, the wave loop reruns it (no error, agy R4);
+ *   - childHead exists but equals the effective base head → branch exists but no
+ *     child commit landed yet → rerun;
  *   - childHead exists but is NOT an ancestor → genuinely unmerged → rerun.
  *
  * The check is self-sufficient (no baseline needed), which is why the headless
@@ -304,6 +317,7 @@ async function reconcileLandedChildren(
   children: ReadonlyArray<ChildSlice>,
   ledgerMerged: ReadonlySet<number>,
   liveHead: string,
+  baseHead: string,
   git: ReconcileGit,
 ): Promise<{
   reconciled: Array<{ childIssue: number; childHead: string }>;
@@ -315,6 +329,7 @@ async function reconcileLandedChildren(
     if (merged.has(child.issue)) continue; // already accounted (ledger-merged)
     const { exists, childHead } = await git.childHeadExists(child.issue);
     if (!exists || childHead === undefined) continue; // crashed pre-commit → rerun
+    if (childHead === baseHead) continue; // branch exists but has no child commit yet
     if (await git.isAncestor(childHead, liveHead)) {
       reconciled.push({ childIssue: child.issue, childHead });
       merged.add(child.issue);
