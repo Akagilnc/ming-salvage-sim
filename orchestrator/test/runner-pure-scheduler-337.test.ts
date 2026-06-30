@@ -228,10 +228,19 @@ describe("#337 review-decomposition wording: runner owns per-slice review, integ
   const skillRouting = claudeMd.slice(claudeMd.indexOf("## Skill routing"));
 
   it("the reviewer soul is the live read-only full-diff reviewer", () => {
+    const staleCoderOwnedReviewClaim = new RegExp(
+      [
+        "per-slice review lives\\s+",
+        "inside\\s+the ",
+        "coder worker",
+      ].join(""),
+      "i",
+    );
+
     expect(reviewerSoul).toMatch(/READ-ONLY/);
     expect(reviewerSoul).toMatch(/current full slice diff/i);
     expect(reviewerSoul).toMatch(/fresh\s+full-diff re-review/i);
-    expect(reviewerSoul).not.toMatch(/per-slice review lives inside the coder worker/i);
+    expect(reviewerSoul).not.toMatch(staleCoderOwnedReviewClaim);
   });
 
   it("the reviewer soul routes the compatibility reviewer to a single-vendor review", () => {
@@ -249,7 +258,7 @@ describe("#337 review-decomposition wording: runner owns per-slice review, integ
     expect(skillRouting).not.toMatch(/two passes, both/i);
   });
 
-  it("the CLAUDE.md ## Skill routing keeps per-slice review inside coder and integrated cmr separate", () => {
+  it("the CLAUDE.md ## Skill routing keeps runner-visible per-slice review/fix and integrated cmr separate", () => {
     expect(skillRouting).toMatch(/\/review/);
     expect(skillRouting).toMatch(/runner/i);
     expect(skillRouting).toMatch(/reviewer/i);
