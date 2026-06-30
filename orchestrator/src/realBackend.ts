@@ -229,7 +229,11 @@ function isTrustedBriefAuthor(
   } | null | undefined,
   ownerLogin: string,
 ): boolean {
-  return ownerLogin !== "" && actorLogin(carrier) === ownerLogin;
+  const normalizedOwner = ownerLogin.trim().toLowerCase();
+  return (
+    normalizedOwner !== "" &&
+    actorLogin(carrier).trim().toLowerCase() === normalizedOwner
+  );
 }
 
 export function extractAgentBrief(json: GhIssueJson, ownerLogin: string): string {

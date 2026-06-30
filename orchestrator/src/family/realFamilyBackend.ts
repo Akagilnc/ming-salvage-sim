@@ -1769,10 +1769,14 @@ export class RealFamilyBackend implements FamilyBackend {
           typeof entry.reason === "string" && entry.reason.trim().length > 0
             ? entry.reason
             : "family escalation",
-        escalationKind: entry.escalationKind,
-        familyHeadAfter: entry.familyHeadAfter,
+        ...(entry.escalationKind !== undefined
+          ? { escalationKind: entry.escalationKind }
+          : {}),
+        ...(entry.familyHeadAfter !== undefined
+          ? { familyHeadAfter: entry.familyHeadAfter }
+          : {}),
       }));
-    return [...ledgerEscalations, ...this.readLegacyEscalationRecords()];
+    return [...this.readLegacyEscalationRecords(), ...ledgerEscalations];
   }
 
   // ─────────────────────────── reconcile git seam ───────────────────────────

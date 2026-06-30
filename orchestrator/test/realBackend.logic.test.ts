@@ -156,6 +156,24 @@ describe("realBackend gh parsing", () => {
     expect(extractAgentBrief(json, "Akagilnc")).toContain("SECOND brief");
   });
 
+  it("extractAgentBrief treats GitHub owner logins case-insensitively", () => {
+    expect(
+      extractAgentBrief(
+        {
+          author: { login: "Akagilnc" },
+          body: "## Agent Brief\nbody brief from canonical owner",
+          comments: [
+            {
+              author: { login: "AKAGILNC" },
+              body: "## Agent Brief\ncomment brief from canonical owner",
+            },
+          ],
+        },
+        "akagilnc",
+      ),
+    ).toContain("comment brief from canonical owner");
+  });
+
   it("extractAgentBrief falls back to the body when no comment carries it", () => {
     expect(
       extractAgentBrief(

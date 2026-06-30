@@ -196,6 +196,44 @@ describe("#439 family escalation answer events", () => {
     });
   });
 
+  it("rejects malformed family answer rows that do not match the writer shape", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "decision",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        answer: "continue-without-final-phase",
+      },
+    ];
+
+    expect(familyEscalationState(entries)).toEqual({
+      escalation: entries[0],
+    });
+  });
+
+  it("does not reopen an older escalation after a terminal shipped marker", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "decision",
+        reason: "old migration pause",
+      },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "https://github.com/o/r/pull/1",
+      },
+    ];
+
+    expect(familyEscalationState(entries)).toBeUndefined();
+  });
+
   it("failure escalations remain failure even when a later answer row exists", async () => {
     const backend = new FakeFamilyBackend();
     await recordFamilyEscalated(backend, {
