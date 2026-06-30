@@ -345,6 +345,31 @@ for i in range(1,4):
     allok = allok and ok
 R.append(("G9 三tick链", allok))
 
+# G23 #287 per-source 省源分摊 oracle: 当月实付按本月应付占比摊；偿旧按偿还时点余额摊。
+def _province_source_alloc(opening, due, paid, repay):
+    due_total = sum(due.values())
+    out = dict(opening)
+    if due_total > 0:
+        new_debt = max(0, due_total - paid)
+        for aid, d in due.items():
+            out[aid] += new_debt * d / due_total
+    bal_total = sum(out.values())
+    if bal_total > 0 and repay > 0:
+        actual = min(repay, bal_total)
+        for aid, bal in list(out.items()):
+            out[aid] = max(0, bal - actual * bal / bal_total)
+    return out
+
+print(f"\n{'#'*64}\n# G23 per-source 省源按军分摊\n{'#'*64}")
+g23 = _province_source_alloc({'pure':0.0,'mixed':6.5}, {'pure':5.0,'mixed':6.5}, 8.0, 0.0)
+g23_ok = abs(g23['pure'] - 1.5217391304) < 1e-6 and abs(g23['mixed'] - 8.4782608696) < 1e-6
+print(("PASS" if g23_ok else "FAIL") + f" G23 缺口按应付占比分摊: {g23}")
+R.append(("G23 per-source缺口", g23_ok))
+g24 = _province_source_alloc({'pure':4.0,'mixed':6.0}, {'pure':0.0,'mixed':0.0}, 0.0, 5.0)
+g24_ok = abs(g24['pure'] - 2.0) < 1e-6 and abs(g24['mixed'] - 3.0) < 1e-6
+print(("PASS" if g24_ok else "FAIL") + f" G24 余额按偿还时点余额分摊: {g24}")
+R.append(("G24 per-source偿还", g24_ok))
+
 print(f"\n{'='*64}\n汇总:")
 for n,ok in R: print(f"  {'PASS' if ok else 'FAIL':5s} {n}")
 print(f"  全部 {'PASS' if all(o for _,o in R) else 'FAIL'}")
