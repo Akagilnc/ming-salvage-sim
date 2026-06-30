@@ -41,9 +41,10 @@ export interface RouteContext {
   /** The step we are routing OUT of. */
   readonly from: StepId;
   /**
-   * The agent output the edge should act on — i.e. the most recent agent-step
-   * output in flight. For S2 (the only agent step) this is the build worker's
-   * own output. Undefined when no agent has run yet.
+   * The agent output the edge should act on — i.e. the most recent agent-worker
+   * output in flight. ADR 0030 has multiple agent steps (S2/S3/S5/S6); this is
+   * the output from whichever one just completed. Undefined when no agent has
+   * run yet.
    */
   readonly output?: StepOutput;
   /**
