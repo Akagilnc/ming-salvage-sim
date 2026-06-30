@@ -921,17 +921,22 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
    */
   class ThrowingDispatchBackend extends BareFamilyBackend {
     readonly aborted: FamilyAbortedEvent[] = [];
+    currentFamilyHead = "head-before-worker";
     constructor(private readonly throwOnKind: "cmr" | "ship") {
       super();
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
     }
+    async readFamilyHead(_familyBase: string): Promise<string> {
+      return this.currentFamilyHead;
+    }
     async recordAborted(event: FamilyAbortedEvent): Promise<void> {
       this.aborted.push(event);
     }
     async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
       if (spec.kind === this.throwOnKind) {
+        this.currentFamilyHead = `head-after-${spec.kind}-worker`;
         throw new Error(`${spec.kind} worker: git checkout ${ctx.familyBase} failed (no such ref)`);
       }
       // The cmr worker converges so the run reaches the ship stage (for the ship case).
@@ -953,6 +958,16 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/cmr worker threw on startup/i);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/no such ref/i);
+    expect(backend.aborted[0]?.familyHeadAfter).toBe("head-after-cmr-worker");
+    expect(backend.ledger).toContainEqual({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason:
+        "family integrated cmr completeness worker failed: family cmr worker threw on startup: cmr worker: git checkout family/291-base failed (no such ref)",
+      familyHeadAfter: "head-after-cmr-worker",
+    });
   });
 
   it("a ship worker that throws on startup (after a converged cmr) ⇒ INCOMPLETE_GATE, abort recorded — never an escaped throw", async () => {
