@@ -312,6 +312,17 @@ function latestAnswerAfter(
   return undefined;
 }
 
+function escalationKindForHandoff(
+  status: HandoffStatus,
+  output: StepOutput | undefined,
+): EscalationKind | undefined {
+  if (status !== "escalate") return undefined;
+  const escalation = escalateOf(output);
+  return escalation != null && isValidEscalation(escalation)
+    ? "decision"
+    : "failure";
+}
+
 /**
  * Find the most recent ledger entry that carries an agent output. The S8
  * handoff entry never has an output, so this skips it to recover the real
@@ -1693,7 +1704,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             diagnosis:
               "Fresh re-review reported the same claimed-fixed finding still active " +
               `after repeated fix attempts: ${noProgressIdentityKeys.join(", ")}`,
-          });
+          }, undefined, "failure");
         }
         break;
       }
@@ -1887,7 +1898,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           decision.status,
           undefined,
           undefined,
-          decision.status === "escalate" ? "decision" : undefined,
+          escalationKindForHandoff(decision.status, lastOutput),
         );
       } catch (err) {
         // integ-cmr base r2 (E): the failing operation here is the S8 handoff

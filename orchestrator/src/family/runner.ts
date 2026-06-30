@@ -31,7 +31,13 @@ import {
 } from "../modelRoutes.js";
 import type { Backend } from "../types.js";
 import { assertAcyclic, selectWave } from "./commander.js";
-import { familyAlreadyShipped, mergedSet, recordMerged } from "./ledger.js";
+import {
+  familyAlreadyShipped,
+  familyEscalationState,
+  mergedSet,
+  recordFamilyEscalated,
+  recordMerged,
+} from "./ledger.js";
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import { runVerifyCmr } from "./verifyCmr.js";
@@ -170,6 +176,32 @@ export async function runFamily(
     `[orchestrator:family] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
   );
   const { familyBackend, singleSliceBackend, familyBase } = input;
+  const priorEscalation = familyEscalationState(
+    await familyBackend.readFamilyLedger(),
+  );
+  if (priorEscalation !== undefined) {
+    const { escalation, answered } = priorEscalation;
+    if (escalation.escalationKind === "failure" || !answered) {
+      return {
+        status: "escalated",
+        familyBase,
+        escalation: {
+          reason:
+            typeof escalation.reason === "string" && escalation.reason.trim().length > 0
+              ? escalation.reason
+              : "family escalation is not answered",
+          diagnosis:
+            escalation.escalationKind === "failure"
+              ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
+              : "Prior family decision escalation has no later valid escalation_answered ledger event.",
+        },
+        children: input.epic.children.map((child) => ({
+          issue: child.issue,
+          status: "skipped",
+        })),
+      };
+    }
+  }
   // ── #298 escalate-resume dependency-graph rebuild (ADR 0022 decision 4) ─────
   // APPEND-ONLY resume entry: when a `refetchEpic` hook is injected (a re-entry
   // after escalation — cmr non-convergence / a cycle a human edited in GitHub),
@@ -280,6 +312,12 @@ export async function runFamily(
           ? { issue: c.issue, status: "merged" as const }
           : { issue: c.issue, status: "skipped" as const },
       );
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind: "failure",
+        phase: "final",
+        reason: "family reconcile found the live family-base HEAD inconsistent with the ledger",
+        familyHeadAfter: plan.liveHead,
+      });
       return { status: "escalated", familyBase, familyHead, children };
     }
     // Append each reconcile補账条 (status:"merged" + event:"reconciled") through

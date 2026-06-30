@@ -126,6 +126,7 @@ function escalationAnswer(
 class ResumeBackend implements Backend {
   readonly calls: string[] = [];
   readonly runStepIds: string[] = [];
+  readonly ledgerWrites: PersistentLedgerEntry[] = [];
   /** Each resumeSession call: [stepId, sessionId]. */
   readonly resumeSessionCalls: Array<[string, string]> = [];
   prepareWorktreeCount = 0;
@@ -212,10 +213,10 @@ class ResumeBackend implements Backend {
   }
 
   async writeLedger(
-    _entry: PersistentLedgerEntry,
+    entry: PersistentLedgerEntry,
     _stateDir: string,
   ): Promise<void> {
-    // no-op
+    this.ledgerWrites.push(entry);
   }
 }
 
@@ -411,6 +412,10 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
     expect(backend.pushCount).toBe(0);
     expect(backend.runStepIds).toEqual([]);
     expect(result.stepLedger.map((e) => e.step).slice(-2)).toEqual(["S4", "S8"]);
+    expect(backend.ledgerWrites.find((e) => e.step === "S8")).toMatchObject({
+      handoffStatus: "escalate",
+      escalationKind: "failure",
+    });
   });
 });
 

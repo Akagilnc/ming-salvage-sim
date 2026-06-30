@@ -85,6 +85,118 @@ class FakeFamilyBackend implements FamilyBackend {
 }
 
 describe("spine re-entry — refetch the dependency graph from live GitHub (decision 4)", () => {
+  it("an unanswered family decision escalation stays paused even when refetchEpic is available", async () => {
+    const staleEpic: FamilyEpic = {
+      issue: 291,
+      children: [{ issue: 10, blockedBy: [11] }],
+    };
+    const liveEpic: FamilyEpic = {
+      issue: 291,
+      children: [{ issue: 10, blockedBy: [] }],
+    };
+    const childBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push({
+      status: "escalated",
+      event: "escalated",
+      phase: "final",
+      reason: "cmr needs human disposition",
+      escalationKind: "decision",
+    });
+    let refetched = 0;
+
+    const result = await runFamily({
+      epic: staleEpic,
+      familyBackend,
+      singleSliceBackend: childBackend,
+      familyBase: "family/291-base",
+      refetchEpic: async () => {
+        refetched += 1;
+        return liveEpic;
+      },
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(refetched).toBe(0);
+    expect(childBackend.ran).toEqual([]);
+    expect(familyBackend.merges).toEqual([]);
+  });
+
+  it("an appended answer reopens a family decision escalation through the live refetch path", async () => {
+    const staleEpic: FamilyEpic = {
+      issue: 291,
+      children: [{ issue: 10, blockedBy: [11] }],
+    };
+    const liveEpic: FamilyEpic = {
+      issue: 291,
+      children: [{ issue: 10, blockedBy: [] }],
+    };
+    const childBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        reason: "cmr needs human disposition",
+        escalationKind: "decision",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue-same-class",
+      },
+    );
+
+    const result = await runFamily({
+      epic: staleEpic,
+      familyBackend,
+      singleSliceBackend: childBackend,
+      familyBase: "family/291-base",
+      refetchEpic: async () => liveEpic,
+    });
+
+    expect(result.status).toBe("success");
+    expect(childBackend.ran).toEqual([10]);
+    expect(familyBackend.merges.map((m) => m.childIssue)).toEqual([10]);
+  });
+
+  it("an answered family failure escalation remains terminal", async () => {
+    const childBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        reason: "family base diverged from ledger",
+        escalationKind: "failure",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "try-anyway",
+      },
+    );
+
+    const result = await runFamily({
+      epic: { issue: 291, children: [{ issue: 10, blockedBy: [] }] },
+      familyBackend,
+      singleSliceBackend: childBackend,
+      familyBase: "family/291-base",
+      refetchEpic: async () => ({
+        issue: 291,
+        children: [{ issue: 10, blockedBy: [] }],
+      }),
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(childBackend.ran).toEqual([]);
+    expect(familyBackend.merges).toEqual([]);
+  });
+
   it("schedules off the LIVE edges the refetch returns, NOT the stale cached epic", async () => {
     // STALE cached epic: 11 blocked_by 10 AND 10 blocked_by 11 — a CYCLE (would
     // deadlock / escalate). A human broke it in GitHub: 11 blocked_by 10 only.
