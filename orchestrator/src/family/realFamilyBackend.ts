@@ -404,7 +404,8 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   async readFamilyHead(familyBase: string): Promise<string> {
-    return this.sh("git", ["rev-parse", familyBase], this.opts.workingRepo);
+    const out = await this.sh("git", ["rev-parse", familyBase], this.opts.workingRepo);
+    return out.trim();
   }
 
   // ─────────────────────────── merge ───────────────────────────

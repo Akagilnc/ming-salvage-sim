@@ -23,6 +23,6 @@ beforeEach(() => {
   vi.unstubAllEnvs();
   vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
   for (const key of ROUTE_ENV_KEYS) {
-    vi.stubEnv(key, "");
+    delete process.env[key];
   }
 });
