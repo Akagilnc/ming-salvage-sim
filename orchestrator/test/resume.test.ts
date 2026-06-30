@@ -515,6 +515,62 @@ describe("#439 decision-escalate answer channel", () => {
     expect(backend.dispatchSpecs).toEqual([]);
     expect(backend.cleanResidueCount).toBe(0);
   });
+
+  it("legacy untagged agent decision escalation without an appended answer remains paused", async () => {
+    const backend = new ResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry(
+          "S2",
+          {
+            kind: "coder",
+            committed: false,
+            commitsAdded: 0,
+            escalate: { reason: "design ambiguity", diagnosis: "needs a human answer" },
+          },
+          "session-escalated-S2",
+        ),
+        s8("escalate"),
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.resumeSessionCalls).toHaveLength(0);
+    expect(backend.cleanResidueCount).toBe(0);
+  });
+
+  it("legacy untagged agent decision escalation reopens only after an appended answer", async () => {
+    const backend = new ResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry(
+          "S2",
+          {
+            kind: "coder",
+            committed: false,
+            commitsAdded: 0,
+            escalate: { reason: "design ambiguity", diagnosis: "needs a human answer" },
+          },
+          "session-escalated-S2",
+        ),
+        s8("escalate"),
+        escalationAnswer("S2", "continue-with-x-required"),
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.resumeSessionCalls[0]).toEqual(["S2", "session-escalated-S2"]);
+  });
 });
 
 // ─── AC3 + AC4: escalate-resume — SAME machine, via resumeSession + sessionId ─
@@ -554,6 +610,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
           "session-escalated-S2",
         ),
         entry("S8"),
+        escalationAnswer("S2", "continue-after-human-answer"),
       ],
     };
   }
@@ -637,30 +694,42 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     };
   }
 
-  it("re-opens S7: re-runs the ship worker (push) instead of reporting the prior escalate", async () => {
+  it("S7 decision escalation without an appended answer remains paused", async () => {
     const backend = new ResumeBackend(escalatedAtS7());
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    // The ship worker is re-dispatched (legacy seam → push) — the slice ships.
-    expect(backend.pushCount).toBe(1);
-    // The re-opened run completes (the human answer unblocked the ship).
-    expect(result.status).toBe("success");
-    expect(result.branch).toBe(WORKTREE.branch);
-    // SAME machine: reuse the worktree + clean residue, no re-cut from S0.
-    expect(backend.prepareWorktreeCount).toBe(0);
-    expect(backend.cleanResidueCount).toBe(1);
-    // No agent steps re-run (S2/S3 already done; the re-open is just S7).
+    expect(result.status).toBe("escalate");
+    expect(backend.pushCount).toBe(0);
+    expect(backend.cleanResidueCount).toBe(0);
     expect(backend.runStepIds).toEqual([]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
   });
 
-  it("re-opening S7 drops the SUPERSEDED S7 entry — no double-S7 in the ledger (online review r1)", async () => {
+  it("answered S7 decision escalation re-opens: re-runs the ship worker instead of reporting the prior escalate", async () => {
+    const backend = new ResumeBackend(
+      escalatedAtS7(escalationAnswer("S7", "retry-ship-after-human-fix")),
+    );
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(backend.pushCount).toBe(1);
+    expect(result.status).toBe("success");
+    expect(result.branch).toBe(WORKTREE.branch);
+    expect(backend.prepareWorktreeCount).toBe(0);
+    expect(backend.cleanResidueCount).toBe(1);
+    expect(backend.runStepIds).toEqual([]);
+    expect(backend.resumeSessionCalls).toHaveLength(0);
+  });
+
+  it("answered S7 re-opening drops the SUPERSEDED S7 entry — no double-S7 in the ledger (online review r1)", async () => {
     // The prior escalate left `[…, S7(failing), S8(escalate)]`. Re-opening S7
     // must truncate BOTH the trailing S8 boundary AND the superseded S7 entry;
     // otherwise the re-dispatch appends a SECOND S7 → two consecutive S7 entries
     // (3 bots). The final stepLedger must hold exactly ONE S7.
-    const backend = new ResumeBackend(escalatedAtS7());
+    const backend = new ResumeBackend(
+      escalatedAtS7(escalationAnswer("S7", "retry-ship-after-human-fix")),
+    );
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
@@ -697,7 +766,7 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     });
   });
 
-  it("only S7-escalate re-opens: a prior S2-escalate S8 still reports/resumes the agent step, not S7", async () => {
+  it("only answered S7-escalate re-opens: a prior answered S2-escalate S8 still resumes the agent step, not S7", async () => {
     // Guard: the new S7-reopen pattern must NOT swallow the existing agent
     // escalate-resume. A prior AGENT escalate (S2) still drives resumeSession on
     // S2 — it is not mistaken for an S7 re-open.
@@ -718,6 +787,7 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
           "session-escalated-S2",
         ),
         s8("escalate"),
+        escalationAnswer("S2", "continue-agent-work"),
       ],
     });
 

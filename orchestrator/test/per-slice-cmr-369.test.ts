@@ -528,6 +528,12 @@ describe("#369 runner resume/retry review fixes", () => {
           },
         },
         { step: "S8", handoffStatus: "escalate" },
+        {
+          step: "S5",
+          event: "escalation_answered",
+          forStep: "S5",
+          answer: "continue after human answer",
+        },
       ] as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend(
