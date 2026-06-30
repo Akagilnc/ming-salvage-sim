@@ -12,7 +12,7 @@ import json
 import math
 import re
 import sqlite3
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from ming_sim.applier import atomic, safe_json_dumps, sanitize_sqlite_text
 from ming_sim.assets import format_money, format_money_delta
@@ -40,6 +40,12 @@ _REGION_DIRECT_SET = frozenset(_REGION_DIRECT_TUPLE)
 _REGION_NUMERIC_SET = frozenset(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS)
 _ARMY_VALID_SET = frozenset(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
 _COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
+
+
+class ProvinceFiscalTickOutcome(NamedTuple):
+    region_id: str
+    result: Any
+    error: Optional[BaseException]
 
 
 def _is_commitment_stop_condition(resolve_condition: object) -> bool:
@@ -1470,21 +1476,58 @@ class GameDB:
         官民田/隐田（清丈重分类）只写进 settle.st，不同步顶层 registered_land/hidden_land——
         基座 dormant 期与旧 calc_province_fiscal 解耦，接入并轨在 slice3。
         """
-        from .fiscal_tick import settle_tick
-
         row = self.conn.execute(
             "SELECT fiscal FROM regions WHERE id = ?", (region_id,)
         ).fetchone()
         if row is None:
             raise ValueError(f"region {region_id!r} 不存在，无法 settle_tick")
         fiscal = json.loads(str(row["fiscal"] or "{}"))
+        return self._settle_province_tick_from_fiscal(region_id, fiscal, actions or [])
+
+    def settle_ming_province_substrate_ticks(
+        self, actions_by_region: Optional[Dict[str, List[Dict[str, Any]]]] = None
+    ) -> List[ProvinceFiscalTickOutcome]:
+        """一次扫描 Ming 省 fiscal payload 并推进已有 settle 基座。
+
+        动态 shadow spine 用这个批量桥，避免 selector 先解析、单省 bridge 再 SELECT/解析。
+        合法但无 settle 的 Ming 省按旧语义出列；坏 JSON/容器/settle st/p 与 settle_tick
+        ValueError/守恒错误作为 outcome.error 返回，供 shadow 调用方隔离 tlog。其它异常继续上抛，
+        保持桥接 bug fail-loud。
+        """
+        from .fiscal_tick import FiscalConservationError
+
+        actions_by_region = actions_by_region or {}
+        outcomes: List[ProvinceFiscalTickOutcome] = []
+        rows = self.conn.execute(
+            "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
+        ).fetchall()
+        for row in rows:
+            region_id = str(row["id"])
+            try:
+                fiscal = json.loads(str(row["fiscal"] or "{}"))
+                if isinstance(fiscal, dict) and "settle" not in fiscal:
+                    continue
+                result = self._settle_province_tick_from_fiscal(
+                    region_id, fiscal, actions_by_region.get(region_id, [])
+                )
+            except (ValueError, FiscalConservationError) as exc:
+                outcomes.append(ProvinceFiscalTickOutcome(region_id, None, exc))
+                continue
+            outcomes.append(ProvinceFiscalTickOutcome(region_id, result, None))
+        return outcomes
+
+    def _settle_province_tick_from_fiscal(
+        self, region_id: str, fiscal: object, actions: List[Dict[str, Any]]
+    ):
+        from .fiscal_tick import settle_tick
+
         if not isinstance(fiscal, dict):  # fiscal JSON 非 dict（null/list）→ ValueError，否则 .get 抛 AttributeError 逃逸隔离（cmr R3 gemini）
             raise ValueError(f"region {region_id!r} fiscal 非字典")
         settle = fiscal.get("settle")
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
             raise ValueError(f"region {region_id!r} 无 settle 财政基座（缺 st/p）")
-        result = settle_tick(settle["st"], settle["p"], actions or [])  # raise→下方不执行（港口锁）
+        result = settle_tick(settle["st"], settle["p"], actions)  # raise→下方不执行（港口锁）
         settle["st"] = result.new_st
         self.conn.execute(
             "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
