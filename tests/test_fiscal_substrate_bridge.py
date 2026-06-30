@@ -364,6 +364,75 @@ def test_fixed_flows_cutover_accrues_unpaid_central_pay_share(fresh_game):
     )
 
 
+def test_fixed_flows_cutover_carries_fractional_central_pay_due(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 1
+    db.save_state(state)
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.execute(
+        """
+        UPDATE fiscal_config
+        SET value = 0
+        WHERE kind != 'meta'
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET tax_per_turn = 0,
+            fiscal = json_set(
+                fiscal, '$.huang_tian', 0, '$.liao_xiang', 0,
+                '$.salt_tax', 0, '$.commerce_tax', 0
+            )
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'shaanxi', province_pay_share = 0.65,
+            central_pay_share = 0.35, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0,
+            manpower = 10000, salary_rate = 1
+        WHERE id = 'shaanxi_army'
+        """
+    )
+    db.conn.commit()
+
+    flows_mod.apply_fixed_period_flows(db, state)
+
+    row = db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears
+        FROM armies WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    ledger_row = db.conn.execute(
+        """
+        SELECT delta
+        FROM economy_ledger
+        WHERE category = '各军军饷' AND reason LIKE '陕西军%'
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    assert ledger_row is None
+    assert row["central_pay_arrears"] == pytest.approx(0.35)
+    assert row["arrears"] == pytest.approx(
+        row["province_pay_arrears"] + row["central_pay_arrears"]
+    )
+
+
 def test_fixed_flows_cutover_allocates_central_pool_by_due_not_priority(fresh_game):
     import ming_sim.flows as flows_mod
 
