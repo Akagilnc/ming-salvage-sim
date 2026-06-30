@@ -438,7 +438,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       expect.objectContaining({
         step: "S8",
         handoffStatus: "escalate",
-        escalationKind: "failure",
+        escalationKind: "decision",
       }),
     );
   });

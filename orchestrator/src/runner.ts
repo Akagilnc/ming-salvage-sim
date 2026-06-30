@@ -1704,7 +1704,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             diagnosis:
               "Fresh re-review reported the same claimed-fixed finding still active " +
               `after repeated fix attempts: ${noProgressIdentityKeys.join(", ")}`,
-          }, undefined, "failure");
+          });
         }
         break;
       }
