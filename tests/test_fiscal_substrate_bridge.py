@@ -12,6 +12,7 @@
 """
 import json
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
@@ -979,36 +980,37 @@ def test_all_ming_settle_substrates_advance_with_observable_shadow_tlog(fresh_ga
         "楚藩重省宗禄 Due 应重于江南基准"
 
 
-def test_shadow_spine_uses_single_fiscal_payload_scan(fresh_game, monkeypatch):
+def test_shadow_spine_uses_batch_bridge_without_per_region_reload(fresh_game, monkeypatch):
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
-    monkeypatch.setattr(flows_mod, "tlog", lambda msg: None)
+    msgs: list[str] = []
+    calls = {"batch": 0}
+    monkeypatch.setattr(flows_mod, "tlog", msgs.append)
 
-    statements: list[str] = []
-    db.conn.set_trace_callback(statements.append)
-    try:
-        flows_mod._advance_province_fiscal_substrate(db, state)
-    finally:
-        db.conn.set_trace_callback(None)
+    def fake_batch_bridge():
+        calls["batch"] += 1
+        return [
+            SimpleNamespace(
+                region_id="shaanxi",
+                error=None,
+                result=SimpleNamespace(
+                    breakdown={"实征": 1.2, "起运到京": 0.3, "火耗实收": 0.4},
+                    new_st={"军饷欠": 2, "官俸欠": 0, "宗禄欠": 0, "民欠旧赋": 1},
+                ),
+            )
+        ]
 
-    fiscal_selects = [
-        stmt for stmt in statements
-        if stmt.strip().upper().startswith("SELECT")
-        and "FISCAL" in stmt.upper()
-        and "FROM REGIONS" in stmt.upper()
-    ]
-    per_region_reloads = [
-        stmt for stmt in fiscal_selects
-        if "WHERE ID =" in stmt.upper()
-    ]
+    def fail_single_region_reload(*args, **kwargs):
+        raise AssertionError("shadow spine must use the batch fiscal payload bridge")
 
-    assert len(fiscal_selects) == 1, fiscal_selects
-    assert per_region_reloads == []
-    assert len([
-        stmt for stmt in statements
-        if stmt.strip().upper().startswith("UPDATE REGIONS SET FISCAL")
-    ]) == 17
+    monkeypatch.setattr(db, "settle_ming_province_substrate_ticks", fake_batch_bridge)
+    monkeypatch.setattr(db, "settle_province_tick", fail_single_region_reload)
+
+    flows_mod._advance_province_fiscal_substrate(db, state)
+
+    assert calls["batch"] == 1
+    assert any("[fiscal-substrate] shaanxi 推进：" in msg for msg in msgs)
 
 
 def test_seeded_substrates_keep_multi_tick_historical_trajectories(fresh_db):
