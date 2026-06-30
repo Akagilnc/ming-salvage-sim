@@ -8,9 +8,9 @@
  * reads locally. The fake backends return a bare snapshot, so only this real
  * write proves the native metadata reaches disk.
  *
- * (The old writeFixFindings face is gone: ADR 0026 2026-06-24 collapsed the
- * per-slice review→fix loop INTO the S2 build worker, so there is no separate
- * fix step the runner delivers findings to — the file helper was removed.)
+ * ADR 0030 keeps per-slice review/fix runner-visible: S3/S6 review, S4
+ * classifies, and S5 receives blocking findings through the runner-owned
+ * fix-findings landing file. This snapshot test stays scoped to S1 metadata.
  */
 
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
