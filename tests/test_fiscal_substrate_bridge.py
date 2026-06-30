@@ -42,8 +42,8 @@ def _read_settle(db, region_id="shaanxi"):
     return json.loads(str(row["fiscal"] or "{}")).get("settle")
 
 
-def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
-    region = {
+def _region_with_settle(settle):
+    return {
         "id": "test_province",
         "name": "测试省",
         "kind": "布政司",
@@ -60,18 +60,20 @@ def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
         "military_pressure": 0,
         "status": "测试",
         "controlled_by": "ming",
-        "fiscal": {
-            "settle": {
-                "_meta_defaults": "ming_province",
-                "_meta": {
-                    "postures": ["江南财赋核心"],
-                    "notes": {"漕粮": "保留省份专属说明"},
-                },
-                "st": {},
-                "p": {},
-            }
-        },
+        "fiscal": {"settle": settle},
     }
+
+
+def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
+    region = _region_with_settle({
+        "_meta_defaults": "ming_province",
+        "_meta": {
+            "postures": ["江南财赋核心"],
+            "notes": {"漕粮": "保留省份专属说明"},
+        },
+        "st": {},
+        "p": {},
+    })
     fake_regions = {
         "settle_meta_defaults": {
             "ming_province": {
@@ -93,6 +95,37 @@ def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
     assert loaded["_meta"]["postures"] == ["江南财赋核心"]
     assert loaded["_meta"]["notes"]["起运定额"].startswith("#259")
     assert loaded["_meta"]["notes"]["漕粮"] == "保留省份专属说明"
+
+
+@pytest.mark.parametrize(
+    "settle,defaults,error",
+    [
+        (
+            {"_meta_defaults": "", "_meta": {}, "st": {}, "p": {}},
+            {"ming_province": {}},
+            "_meta_defaults 必须是非空字符串",
+        ),
+        (
+            {"_meta_defaults": "missing_group", "_meta": {}, "st": {}, "p": {}},
+            {"ming_province": {}},
+            "_meta_defaults 指向未知默认组：missing_group",
+        ),
+        (
+            {"_meta_defaults": "ming_province", "_meta": [], "st": {}, "p": {}},
+            {"ming_province": {}},
+            "_meta 必须是 JSON 对象",
+        ),
+    ],
+)
+def test_region_loader_rejects_bad_settle_meta_defaults(monkeypatch, settle, defaults, error):
+    fake_regions = {
+        "settle_meta_defaults": defaults,
+        "regions": [_region_with_settle(settle)],
+    }
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda name: fake_regions)
+
+    with pytest.raises(SystemExit, match=error):
+        content_mod.load_region_content()
 
 
 ZHONGYUAN_JINGSHI_GOLDEN = {
