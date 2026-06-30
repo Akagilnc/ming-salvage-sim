@@ -41,15 +41,12 @@
  * `--no-ff` conflict fallback). So in production reconcile branch ② is reachable.
  *
  * BACK-COMPAT WITH #293 THIN ENTRIES. A pre-#298 thin entry `{childIssue,
- * status:"merged"}` (no `familyHeadAfter`) stays a VALID ledger entry, and a
- * NON-EMPTY thin ledger DEGRADES SAFELY on resume: it has no `familyHeadAfter`
- * baseline → reconcile trusts the recorded merged set (those entries DO account
- * for their merged children), no补账, NO escalate — even though the live base has
- * moved past the start head (that move is the recorded merges, not a lost one). A
- * never-recorded child is left to the wave loop. The family-base-start-head
- * first-merge-crash check (below) applies ONLY to a TRULY EMPTY ledger, so a
- * non-empty thin ledger is never false-escalated (cmr R4). No corruption / no
- * double-merge either way.
+ * status:"merged"}` (no `familyHeadAfter`) stays a VALID merged-set row so we do
+ * not double-merge already-recorded children. But when the live family base has
+ * advanced past the recorded start head, a headless row explains that advance only
+ * if it carries a `childHead` that is still an ancestor of live. A bare thin row
+ * remains counted for scheduling, but it is not sufficient evidence to suppress
+ * the start-head safety net for an otherwise unattributed live-base advance.
  */
 
 import { isMergedAccountingEntry, mergedSet } from "./ledger.js";
@@ -156,8 +153,18 @@ async function headlessTailIsConsistent(
   return true;
 }
 
-function hasHeadlessAccountingRow(ledger: ReadonlyArray<FamilyLedgerEntry>): boolean {
-  return ledger.some((entry) => isMergedAccountingEntry(entry));
+async function hasVerifiedHeadlessAccountingRow(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  liveHead: string,
+  git: ReconcileGit,
+): Promise<boolean> {
+  for (const entry of ledger) {
+    if (!isMergedAccountingEntry(entry)) continue;
+    if (entry.familyHeadAfter !== undefined) continue;
+    if (entry.childHead === undefined) continue;
+    if (await git.isAncestor(entry.childHead, liveHead)) return true;
+  }
+  return false;
 }
 
 /**
@@ -227,13 +234,16 @@ export async function reconcileFamilyLedger(
       liveHead,
       git,
     );
-    // Safety net for a headless ledger with NO accounting row: if the family base
-    // moved past its start head yet NO child explains the move (nothing补账ed), a
-    // merge landed that we cannot attribute to any known child → fail-closed
-    // escalate (decision 5 真有未落/不一致 → 升级) rather than silently proceed. A
-    // thin `status:"merged"` row is accounting evidence and keeps the conservative
-    // back-compat path; phase-only escalation/answer rows are not.
-    if (!hasHeadlessAccountingRow(ledger) && reconciled.length === 0) {
+    // Safety net for a headless ledger: if the family base moved past its start
+    // head yet NO child explains the move (nothing补账ed, and no headless
+    // accounting row carries a childHead that verifies as landed), the advance is
+    // unattributed → fail-closed escalate rather than silently proceed. A bare
+    // thin `status:"merged"` row is still counted in `merged`, but without a
+    // verifiable childHead it cannot explain the live-base advance.
+    if (
+      reconciled.length === 0 &&
+      !(await hasVerifiedHeadlessAccountingRow(ledger, liveHead, git))
+    ) {
       const startHead = await git.familyBaseStartHead();
       if (liveHead !== startHead) {
         return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
