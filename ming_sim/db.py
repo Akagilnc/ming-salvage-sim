@@ -4717,6 +4717,8 @@ class GameDB:
                     f"UPDATE armies SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (stored_new, army_id),
                 )
+                if field == "manpower" and self.is_army_pay_source_cutover_enabled():
+                    self._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
                 self.conn.execute(
                     """
                     INSERT INTO army_logs

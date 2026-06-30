@@ -751,6 +751,21 @@ def test_army_delta_arrears_reconciles_pay_source_container_immediately(fresh_db
     )
 
 
+def test_army_delta_manpower_reconciles_pay_source_due_immediately(fresh_db):
+    state = fresh_db.load_state()
+    event = SimpleNamespace(id="test", title="募兵")
+    before_due = _read_settle(fresh_db, "shaanxi")["p"]["Due"]["军饷"]
+
+    fresh_db.apply_army_deltas(
+        state, event, None, "测试", {"shaanxi_army": {"manpower": 10000, "reason": "募兵"}},
+        commit=False,
+    )
+
+    settle = _read_settle(fresh_db, "shaanxi")
+    assert settle["p"]["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, "shaanxi"))
+    assert settle["p"]["Due"]["军饷"] > before_due
+
+
 def test_army_delta_owner_power_to_ming_requires_same_delta_pay_source(fresh_db):
     state = fresh_db.load_state()
     event = SimpleNamespace(id="test", title="招抚")
