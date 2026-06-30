@@ -263,6 +263,40 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     });
   });
 
+  it("fingerprints the resolved route without re-throwing an already accepted tight-route violation", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    vi.stubEnv("ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS", "opus");
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus"] }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "completeness" },
+      { familyBase: "family/291-base", cmrPass: "correctness" },
+    ]);
+    expect(
+      backend.ledger.filter((entry) => entry.status === "cmr_passed"),
+    ).toEqual([
+      expect.objectContaining({
+        cmrPass: "completeness",
+        routeFingerprint: expect.stringContaining('"routeName":"claude-tight"'),
+      }),
+      expect.objectContaining({
+        cmrPass: "correctness",
+        routeFingerprint: expect.stringContaining('"routeName":"claude-tight"'),
+      }),
+    ]);
+  });
+
   it("GREEN full verify + CONVERGED cmr → open the family PR, ok:true ran:true (止于 PR)", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
