@@ -213,11 +213,15 @@ export type EscalationKind = "decision" | "failure";
  *
  * It intentionally remains a ledger row, not an edit to the prior S8 boundary.
  */
-export interface EscalationAnswerEvent {
+export interface EscalationAnswerPayload {
   readonly event: "escalation_answered";
-  readonly forStep: StepId;
+  readonly forStep?: StepId;
   readonly answer: string;
   readonly note?: string;
+}
+
+export interface EscalationAnswerEvent extends EscalationAnswerPayload {
+  readonly forStep: StepId;
 }
 
 /**
@@ -429,12 +433,12 @@ export interface DispatchContext {
    */
   readonly blockingFindingIdentityKeys?: ReadonlyArray<string>;
   /**
-   * S5 coder-fix or S7 ship worker: the human answer that reopened a prior
-   * decision-escalate pause (#439). The runner passes it to the re-dispatched
-   * worker so the resume instruction is visible without deleting or rewriting the
-   * terminal ledger row that paused the run.
+   * S5 coder-fix, S7 ship, or family-level CMR/ship worker: the human answer that
+   * reopened a prior decision-escalate pause (#439). The runner passes it to the
+   * re-dispatched worker so the resume instruction is visible without deleting or
+   * rewriting the terminal ledger row that paused the run.
    */
-  readonly escalationAnswer?: EscalationAnswerEvent;
+  readonly escalationAnswer?: EscalationAnswerPayload;
   /**
    * FAMILY cmr worker only: the child issue numbers whose merge into the family
    * base was LLM-resolved (#295) — forwarded to the integrated cmr 承重闸 so it

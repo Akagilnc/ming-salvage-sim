@@ -58,6 +58,7 @@ import {
   resolveActiveModelRoute,
 } from "../modelRoutes.js";
 import { modelIsStrongLeg } from "../realBackend.js";
+import type { EscalationAnswerPayload } from "../types.js";
 import {
   cmrPassAlreadyPassed,
   recordAborted as recordDurableAbort,
@@ -107,6 +108,8 @@ export interface VerifyCmrInput {
    * resolution this run; the cmr request omits the field (the back-compat shape).
    */
   readonly llmResolvedChildren?: readonly number[];
+  /** Human answer that reopened a prior family decision escalation (#439). */
+  readonly escalationAnswer?: EscalationAnswerPayload;
   /**
    * The family base HEAD at the time the hook runs (#291 缺口 2), supplied by the
    * spine. On a RED barrier the hook forwards it onto BOTH the in-memory seam
@@ -289,6 +292,7 @@ async function runIntegratedCmrPass(input: {
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
   readonly llmResolvedChildren?: readonly number[];
+  readonly escalationAnswer?: EscalationAnswerPayload;
   readonly familyHeadAfter?: string;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
@@ -296,6 +300,7 @@ async function runIntegratedCmrPass(input: {
     familyBackend,
     familyBase,
     llmResolvedChildren,
+    escalationAnswer,
     familyHeadAfter,
   } = input;
   const routeFingerprint = modelRouteFingerprint(resolveActiveModelRoute());
@@ -325,6 +330,7 @@ async function runIntegratedCmrPass(input: {
       ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
         ? { llmResolvedChildren }
         : {}),
+      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     },
     "final",
     resolvedFamilyHeadAfter,
@@ -466,8 +472,14 @@ async function runIntegratedCmrPass(input: {
 export async function runVerifyCmr(
   input: VerifyCmrInput,
 ): Promise<VerifyCmrResult> {
-  const { phase, familyBase, familyBackend, llmResolvedChildren, familyHeadAfter } =
-    input;
+  const {
+    phase,
+    familyBase,
+    familyBackend,
+    llmResolvedChildren,
+    escalationAnswer,
+    familyHeadAfter,
+  } = input;
 
   // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
   if (familyBackend.runFamilyVerify === undefined) return NOOP;
@@ -523,6 +535,7 @@ export async function runVerifyCmr(
     familyBackend,
     familyBase,
     llmResolvedChildren,
+    escalationAnswer,
     familyHeadAfter,
   });
   if (!completeness.result.ok) return completeness.result;
@@ -532,6 +545,7 @@ export async function runVerifyCmr(
     familyBackend,
     familyBase,
     llmResolvedChildren,
+    escalationAnswer,
     familyHeadAfter: completeness.familyHeadAfter,
   });
   if (!correctness.result.ok) return correctness.result;
@@ -558,7 +572,10 @@ export async function runVerifyCmr(
   const shipResult = await dispatchOrAbort(
     familyBackend,
     familyShipWorkerSpec(),
-    { familyBase },
+    {
+      familyBase,
+      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
+    },
     phase,
     cmrPassedFamilyHeadAfter,
   );

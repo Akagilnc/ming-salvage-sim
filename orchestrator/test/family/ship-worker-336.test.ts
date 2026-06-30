@@ -435,7 +435,10 @@ describe("#336 family runShipWorker — fail-closed when gh auth is missing", ()
 describe("#336 writeShipFocusFile — threads the configured PR target base into the ship worker", () => {
   /** Expose the focus-file seam over a REAL temp git repo (so the exclude path resolves). */
   class FocusShipBackend extends RealFamilyBackend {
-    public focus(ctx: { familyBase: string }): void {
+    public focus(ctx: {
+      familyBase: string;
+      escalationAnswer?: DispatchContext["escalationAnswer"];
+    }): void {
       this.writeShipFocusFile(ctx as never);
     }
   }
@@ -483,6 +486,23 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
     backend.focus({ familyBase: FAMILY_BASE });
     const exclude = readFileSync(join(backend["opts"].workingRepo, ".git", "info", "exclude"), "utf8");
     expect(exclude.split("\n")).toContain(SHIP_FOCUS_FILENAME);
+  });
+
+  it("threads a human escalation answer into the ship focus file", () => {
+    const backend = be({ base: "integ/291-wave3" });
+    backend.focus({
+      familyBase: FAMILY_BASE,
+      escalationAnswer: {
+        event: "escalation_answered",
+        answer: "continue-same-class",
+        note: "Human approved retrying the family ship gate.",
+      },
+    });
+
+    const body = readFileSync(join(backend["opts"].workingRepo, SHIP_FOCUS_FILENAME), "utf8");
+    expect(body).toContain("Human escalation answer");
+    expect(body).toContain("continue-same-class");
+    expect(body).toContain("Human approved retrying the family ship gate.");
   });
 
   it("runShipWorker writes the focus file BEFORE the container runs (so the worker can read it)", async () => {

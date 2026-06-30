@@ -1061,13 +1061,21 @@ export class RealFamilyBackend implements FamilyBackend {
         : ctx.cmrPass === "correctness"
           ? "CMR pass: step6 correctness gate."
           : "CMR pass: legacy integrated gate.";
+    const answerBlock =
+      ctx.escalationAnswer !== undefined
+        ? `\n\nHuman escalation answer (#439):\n\n\`\`\`json\n${JSON.stringify(
+            ctx.escalationAnswer,
+            null,
+            2,
+          )}\n\`\`\`\n\nRetry the previously paused family gate with this answer in force. Do not repeat the same HITL escalation unless this answer leaves a concrete blocker unresolved.`
+        : "";
     // The focus file is pass-scoped: it pins only the exact review scope and the
     // machine-resolved-child focus. Cross-pass accounting lives in the durable
     // ledger / worker verdict fields, not in this transient prompt file.
     const body =
       `# Integrated cmr — review scope + focus (machine-generated; #335)\n\n` +
       `Review THIS exact family-base diff (the commits the family base added since it\n` +
-      `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}\n`;
+      `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}${answerBlock}\n`;
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
     this.excludeFromGit(CMR_FOCUS_FILENAME);
@@ -1495,7 +1503,14 @@ export class RealFamilyBackend implements FamilyBackend {
       `    PR head branch: ${familyBase}\n` +
       `    GitHub repo:    ${this.opts.repo}\n\n` +
       `When gstack-ship detects the base branch, OVERRIDE its inference with the\n` +
-      `\`PR target base\` above (\`gh pr create --base ${this.opts.base} --head ${familyBase}\`).\n`;
+      `\`PR target base\` above (\`gh pr create --base ${this.opts.base} --head ${familyBase}\`).\n` +
+      (ctx.escalationAnswer !== undefined
+        ? `\nHuman escalation answer (#439):\n\n\`\`\`json\n${JSON.stringify(
+            ctx.escalationAnswer,
+            null,
+            2,
+          )}\n\`\`\`\n\nRetry the previously paused family ship gate with this answer in force. Do not repeat the same HITL escalation unless this answer leaves a concrete blocker unresolved.\n`
+        : "");
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, SHIP_FOCUS_FILENAME);
     this.excludeShipFocusFromGit();
