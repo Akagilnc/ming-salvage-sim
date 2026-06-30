@@ -259,6 +259,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       event: "aborted",
       phase: "final",
       cmrPass: "completeness",
+      familyHeadAfter: "head-1",
       reason: expect.stringContaining("not declared"),
     });
   });
@@ -408,6 +409,43 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
   });
 
+  it("resume resolves a ref-like familyHeadAfter before checking existing CMR pass markers", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
+    });
+    backend.currentFamilyHead = "head-1";
+    backend.ledger.push(
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-1",
+        routeFingerprint: currentRouteFingerprint(),
+      },
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadAfter: "head-1",
+        routeFingerprint: currentRouteFingerprint(),
+      },
+    );
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "refs/heads/family/291-base",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.cmrCalls).toEqual([]);
+    expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+  });
+
   it("resume reruns a CMR pass when the family HEAD advanced after the pass marker", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
@@ -434,6 +472,47 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       { familyBase: "family/291-base", cmrPass: "completeness" },
       { familyBase: "family/291-base", cmrPass: "correctness" },
     ]);
+  });
+
+  it("resume reruns both passes when routeFingerprint changes even if the family HEAD matches", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["gpt-5.5", "agy"] }),
+    });
+    const normalFingerprint = currentRouteFingerprint();
+    backend.ledger.push(
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-1",
+        routeFingerprint: normalFingerprint,
+      },
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadAfter: "head-1",
+        routeFingerprint: normalFingerprint,
+      },
+    );
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "completeness" },
+      { familyBase: "family/291-base", cmrPass: "correctness" },
+    ]);
+    expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
   });
 
   it("resume reruns both passes when old completeness and correctness markers are for a stale HEAD", async () => {
@@ -554,7 +633,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         (e) => e.status === "cmr_passed" && e.cmrPass === "correctness",
       ),
     ).toHaveLength(1);
-    expect(backend.readFamilyHeadCalls).toEqual(["family/291-base"]);
+    expect(backend.readFamilyHeadCalls).toEqual([
+      "family/291-base",
+      "family/291-base",
+      "family/291-base",
+    ]);
   });
 
   it("RED full verify → ok:false, ran:true, aborted event, and NO cmr / NO PR (verify gates cmr)", async () => {

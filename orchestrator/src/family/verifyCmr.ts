@@ -295,14 +295,22 @@ async function runIntegratedCmrPass(input: {
     familyHeadAfter,
   } = input;
   const routeFingerprint = modelRouteFingerprint(resolveActiveModelRoute());
+  const resolvedFamilyHeadAfter = await readPostCmrFamilyHead(
+    familyBackend,
+    familyBase,
+    familyHeadAfter,
+  );
   if (
     cmrPassAlreadyPassed(await familyBackend.readFamilyLedger(), {
       cmrPass: pass,
-      familyHeadAfter,
+      familyHeadAfter: resolvedFamilyHeadAfter,
       routeFingerprint,
     })
   ) {
-    return { result: { ok: true, ran: true }, familyHeadAfter };
+    return {
+      result: { ok: true, ran: true },
+      familyHeadAfter: resolvedFamilyHeadAfter,
+    };
   }
   const cmrResult = await dispatchOrAbort(
     familyBackend,
@@ -315,7 +323,7 @@ async function runIntegratedCmrPass(input: {
         : {}),
     },
     "final",
-    familyHeadAfter,
+    resolvedFamilyHeadAfter,
     pass,
   );
   if (cmrResult.kind === "escalated") {
@@ -324,12 +332,12 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason,
-      familyHeadAfter,
+      familyHeadAfter: resolvedFamilyHeadAfter,
     });
     await familyBackend.escalateFamily?.({
       reason,
     });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
+    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   if (cmrResult.kind !== "completed" || cmrResult.output.kind !== "cmr") {
     const startupAbortAlreadyRecorded =
@@ -345,16 +353,16 @@ async function runIntegratedCmrPass(input: {
         cmrPass: pass,
         familyBase,
         errorPackage: { reason },
-        familyHeadAfter,
+        familyHeadAfter: resolvedFamilyHeadAfter,
       });
       await recordDurableAbort(familyBackend, {
         phase: "final",
         cmrPass: pass,
         reason,
-        familyHeadAfter,
+        familyHeadAfter: resolvedFamilyHeadAfter,
       });
     }
-    return { result: INCOMPLETE_GATE, familyHeadAfter };
+    return { result: INCOMPLETE_GATE, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   if (!cmrResult.output.converged) {
     const reason =
@@ -363,10 +371,10 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason,
-      familyHeadAfter,
+      familyHeadAfter: resolvedFamilyHeadAfter,
     });
     await familyBackend.escalateFamily?.({ reason });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
+    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   const legAccountingFailure = cmrLegAccountingFailure({
     successfulLegs: cmrResult.output.successfulLegs ?? [],
@@ -378,10 +386,10 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason,
-      familyHeadAfter,
+      familyHeadAfter: resolvedFamilyHeadAfter,
     });
     await familyBackend.escalateFamily?.({ reason });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
+    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   const floorFailure = cmrFloorFailureReason({
     pass,
@@ -393,10 +401,10 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason: floorFailure,
-      familyHeadAfter,
+      familyHeadAfter: resolvedFamilyHeadAfter,
     });
     await familyBackend.escalateFamily?.({ reason: floorFailure });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
+    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   const closureFailure = cmrClosureFailureReason({
     pass,
@@ -409,15 +417,15 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason: closureFailure,
-      familyHeadAfter,
+      familyHeadAfter: resolvedFamilyHeadAfter,
     });
     await familyBackend.escalateFamily?.({ reason: closureFailure });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
+    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   const postCmrFamilyHead = await readPostCmrFamilyHead(
     familyBackend,
     familyBase,
-    familyHeadAfter,
+    resolvedFamilyHeadAfter,
   );
   await recordCmrPassed(familyBackend, {
     cmrPass: pass,
