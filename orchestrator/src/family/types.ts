@@ -160,9 +160,8 @@ export interface FamilyLedgerEntry {
   /** Which integrated CMR pass this phase-level audit/failure event belongs to. */
   readonly cmrPass?: IntegratedCmrPass;
   /**
-   * Human-readable abort reason — ONLY on a PHASE-LEVEL `aborted` entry (#291 缺口
-   * 2), forwarded from the verify error package / cmr non-convergence reason so the
-   * failure is locatable from the ledger alone (decision 3④/5 "不静默吞").
+   * Human-readable phase-level reason. `aborted` rows use it for verify/cmr
+   * failures; `escalated` rows use it for answerable family decision pauses.
    */
   readonly reason?: string;
   /** The child branch that was merged (full schema, #298). */
