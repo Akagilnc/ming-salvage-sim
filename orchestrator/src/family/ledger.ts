@@ -18,7 +18,7 @@
  * append-only invariant but does NOT dedup — reconcile is #298.)
  */
 
-import type { EscalationKind } from "../types.js";
+import type { EscalationAnswerPayload, EscalationKind } from "../types.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -242,20 +242,39 @@ function isValidFamilyAnswer(entry: FamilyLedgerEntry): boolean {
   );
 }
 
-/** Latest family escalation and whether a later valid answer row reopens it (#439). */
+function familyAnswerPayload(entry: FamilyLedgerEntry): EscalationAnswerPayload {
+  return {
+    event: "escalation_answered",
+    answer: entry.answer!,
+    ...(entry.note !== undefined ? { note: entry.note } : {}),
+  };
+}
+
+function latestValidFamilyAnswerAfter(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  index: number,
+): EscalationAnswerPayload | undefined {
+  for (let i = entries.length - 1; i > index; i--) {
+    const entry = entries[i]!;
+    if (isValidFamilyAnswer(entry)) return familyAnswerPayload(entry);
+  }
+  return undefined;
+}
+
+/** Latest family escalation and the later valid answer row that reopens it (#439). */
 export function familyEscalationState(
   entries: ReadonlyArray<FamilyLedgerEntry>,
 ):
   | {
       readonly escalation: FamilyLedgerEntry;
-      readonly answered: boolean;
+      readonly answer?: EscalationAnswerPayload;
     }
   | undefined {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
     if (entry.status !== "escalated" || entry.event !== "escalated") continue;
-    const answered = entries.slice(i + 1).some(isValidFamilyAnswer);
-    return { escalation: entry, answered };
+    const answer = latestValidFamilyAnswerAfter(entries, i);
+    return answer !== undefined ? { escalation: entry, answer } : { escalation: entry };
   }
   return undefined;
 }

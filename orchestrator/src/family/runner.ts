@@ -180,8 +180,8 @@ export async function runFamily(
     await familyBackend.readFamilyLedger(),
   );
   if (priorEscalation !== undefined) {
-    const { escalation, answered } = priorEscalation;
-    if (escalation.escalationKind === "failure" || !answered) {
+    const { escalation, answer } = priorEscalation;
+    if (escalation.escalationKind === "failure" || answer === undefined) {
       return {
         status: "escalated",
         familyBase,
@@ -202,6 +202,7 @@ export async function runFamily(
       };
     }
   }
+  const escalationAnswer = priorEscalation?.answer;
   // ── #298 escalate-resume dependency-graph rebuild (ADR 0022 decision 4) ─────
   // APPEND-ONLY resume entry: when a `refetchEpic` hook is injected (a re-entry
   // after escalation — cmr non-convergence / a cycle a human edited in GitHub),
@@ -511,6 +512,7 @@ export async function runFamily(
     // touched. The wave barrier is verify-only (no cmr), so only the final call
     // needs it; an empty list ⇒ the cmr request omits the field.
     llmResolvedChildren: await llmResolvedChildren(familyBackend),
+    ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     // #291 缺口 2: the abort-time head for a RED final verify's durable aborted entry.
     familyHeadAfter: familyHead,
   });

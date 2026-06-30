@@ -149,8 +149,50 @@ describe("#439 family escalation answer events", () => {
       },
     ]);
     expect(familyEscalationState(backend.appended)).toMatchObject({
-      answered: true,
+      answer: {
+        event: "escalation_answered",
+        answer: "continue-same-class",
+        note: "human approved another pass",
+      },
       escalation: { escalationKind: "decision" },
+    });
+  });
+
+  it("returns the latest valid answer payload after the latest escalation", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "decision",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue-old",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "   ",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue-latest",
+        note: "latest human answer wins",
+      },
+    ];
+
+    expect(familyEscalationState(entries)).toEqual({
+      escalation: entries[0],
+      answer: {
+        event: "escalation_answered",
+        answer: "continue-latest",
+        note: "latest human answer wins",
+      },
     });
   });
 
@@ -163,7 +205,10 @@ describe("#439 family escalation answer events", () => {
     await recordFamilyEscalationAnswered(backend, { answer: "try-anyway" });
 
     expect(familyEscalationState(backend.appended)).toMatchObject({
-      answered: true,
+      answer: {
+        event: "escalation_answered",
+        answer: "try-anyway",
+      },
       escalation: { escalationKind: "failure" },
     });
     expect(mergedSet(backend.appended).size).toBe(0);

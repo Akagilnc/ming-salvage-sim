@@ -165,6 +165,9 @@ export async function legacyDispatchFamilyWorker(
       ctx.llmResolvedChildren.length > 0
         ? { llmResolvedChildren: ctx.llmResolvedChildren }
         : {}),
+      ...(ctx.escalationAnswer !== undefined
+        ? { escalationAnswer: ctx.escalationAnswer }
+        : {}),
     });
     // A `red` (non-converged) verdict is `completed` with payload — NOT `failed`
     // (PRD #330 R2). The verify-cmr hook reads `converged` off the payload.

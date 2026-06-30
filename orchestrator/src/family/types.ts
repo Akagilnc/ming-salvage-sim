@@ -17,6 +17,7 @@ import type {
   Backend,
   DispatchContext,
   Escalation,
+  EscalationAnswerPayload,
   PriorFindingDisposition,
   WorkerResult,
   WorkerSpec,
@@ -485,6 +486,8 @@ export interface IntegratedCmrRequest {
    * the back-compatible `{familyBase}`-only shape.
    */
   readonly llmResolvedChildren?: readonly number[];
+  /** Human answer that reopened a prior family decision escalation (#439). */
+  readonly escalationAnswer?: EscalationAnswerPayload;
 }
 
 /** The integrated-cmr outcome (the load-bearing cross-slice-seam gate). */
