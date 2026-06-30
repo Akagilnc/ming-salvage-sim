@@ -679,6 +679,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       "family/291-base",
       "family/291-base",
       "family/291-base",
+      "family/291-base",
     ]);
   });
 
@@ -731,13 +732,19 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("ESCALATED cmr worker → durable final aborted entry includes the cmr pass before escalate", async () => {
     class EscalatingCmrWorkerBackend extends BareFamilyBackend {
       readonly escalations: FamilyEscalation[] = [];
+      currentFamilyHead = "head-after-final-verify";
 
       async runFamilyVerify(): Promise<FamilyVerifyResult> {
         return { ok: true };
       }
 
+      async readFamilyHead(_familyBase: string): Promise<string> {
+        return this.currentFamilyHead;
+      }
+
       async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
         if (spec.kind === "cmr") {
+          this.currentFamilyHead = "head-after-cmr-worker-fix";
           return {
             kind: "escalated",
             escalation: {
@@ -773,6 +780,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]?.reason).toContain("completeness cmr");
+    expect(backend.escalations[0]?.familyHeadAfter).toBe("head-after-cmr-worker-fix");
     expect(backend.ledger).toContainEqual({
       status: "aborted",
       event: "aborted",
@@ -780,9 +788,65 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       cmrPass: "completeness",
       reason:
         "completeness cmr needs human review — review workers disagreed on whether the pass can converge",
-      familyHeadAfter: "head-after-final-verify",
+      familyHeadAfter: "head-after-cmr-worker-fix",
     });
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+  });
+
+  it("ESCALATED ship worker records the post-worker family head in the family pause", async () => {
+    class EscalatingShipWorkerBackend extends BareFamilyBackend {
+      readonly escalations: FamilyEscalation[] = [];
+      currentFamilyHead = "head-after-final-verify";
+
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+
+      async readFamilyHead(_familyBase: string): Promise<string> {
+        return this.currentFamilyHead;
+      }
+
+      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          this.currentFamilyHead = `head-after-${ctx.cmrPass}-cmr`;
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: true,
+              successfulLegs: ["opus", "gpt-5.5", "agy"],
+            },
+          };
+        }
+        this.currentFamilyHead = "head-after-ship-worker-bump";
+        return {
+          kind: "escalated",
+          escalation: {
+            reason: "ship needs human review",
+            diagnosis: "release note conflict",
+          },
+        };
+      }
+
+      async escalateFamily(esc: FamilyEscalation): Promise<void> {
+        this.escalations.push(esc);
+      }
+    }
+
+    const backend = new EscalatingShipWorkerBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-final-verify",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.escalations).toHaveLength(1);
+    expect(backend.escalations[0]).toMatchObject({
+      reason: "ship needs human review — release note conflict",
+      familyHeadAfter: "head-after-ship-worker-bump",
+    });
   });
 });
 

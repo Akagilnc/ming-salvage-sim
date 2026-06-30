@@ -14,7 +14,8 @@
  */
 
 import { dirname, join } from "node:path";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -1461,6 +1462,59 @@ describe("realBackend resume coder commit truth", () => {
         /*cumulativeGitCommitCount*/ 0,
       ),
     ).toThrow(/resume/i);
+  });
+
+  it("fails closed when a prior commit-count fallback has no before-resume HEAD", () => {
+    class ResumeCommitBackend extends RealBackend {
+      protected override cloneDirExists(): boolean {
+        return true;
+      }
+      protected override sh(file: string, args: string[]): string {
+        if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+          return ".git";
+        }
+        throw new Error(`unexpected shell call: ${file} ${args.join(" ")}`);
+      }
+    }
+    const here = dirname(fileURLToPath(import.meta.url));
+    const root = mkdtempSync(join(tmpdir(), "resume-commit-truth-"));
+    const worktreePath = join(root, "wt");
+    const stateDir = join(root, ".ledger-256");
+    mkdirSync(worktreePath, { recursive: true });
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(
+      join(stateDir, "steps.jsonl"),
+      `${JSON.stringify({
+        step: "S2",
+        sessionId: "sess-coder",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      })}\n`,
+      "utf8",
+    );
+    const backend = new ResumeCommitBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 285,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "prompts"),
+    });
+
+    expect(() =>
+      (
+        backend as unknown as {
+          resumeCoderCommitCount(
+            worktree: { branch: string; base: string; path: string },
+            sessionId: string,
+            beforeResumeHead: string | undefined,
+          ): number;
+        }
+      ).resumeCoderCommitCount(
+        { branch: "feat/issue-256", base: "main", path: worktreePath },
+        "sess-coder",
+        undefined,
+      ),
+    ).toThrow(/before-resume HEAD/i);
   });
 
   it("dead-session fallback does not route resumed coders through normal runStep commit truth", () => {

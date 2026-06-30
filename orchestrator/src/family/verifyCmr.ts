@@ -336,19 +336,24 @@ async function runIntegratedCmrPass(input: {
     resolvedFamilyHeadAfter,
     pass,
   );
+  const postWorkerFamilyHead = await readPostCmrFamilyHead(
+    familyBackend,
+    familyBase,
+    resolvedFamilyHeadAfter,
+  );
   if (cmrResult.kind === "escalated") {
     const reason = `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`;
     await recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
       reason,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
     await familyBackend.escalateFamily?.({
       reason,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
-    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   if (cmrResult.kind !== "completed" || cmrResult.output.kind !== "cmr") {
     const startupAbortAlreadyRecorded =
@@ -360,20 +365,20 @@ async function runIntegratedCmrPass(input: {
           ? `family integrated cmr ${pass} worker failed: ${cmrResult.reason}`
           : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
       await familyBackend.recordAborted?.({
-        phase: "final",
-        cmrPass: pass,
-        familyBase,
-        errorPackage: { reason },
-        familyHeadAfter: resolvedFamilyHeadAfter,
-      });
-      await recordDurableAbort(familyBackend, {
-        phase: "final",
-        cmrPass: pass,
-        reason,
-        familyHeadAfter: resolvedFamilyHeadAfter,
-      });
-    }
-    return { result: INCOMPLETE_GATE, familyHeadAfter: resolvedFamilyHeadAfter };
+          phase: "final",
+          cmrPass: pass,
+          familyBase,
+          errorPackage: { reason },
+          familyHeadAfter: postWorkerFamilyHead,
+        });
+        await recordDurableAbort(familyBackend, {
+          phase: "final",
+          cmrPass: pass,
+          reason,
+          familyHeadAfter: postWorkerFamilyHead,
+        });
+      }
+    return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
   }
   if (!cmrResult.output.converged) {
     const reason =
@@ -382,13 +387,13 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
     await familyBackend.escalateFamily?.({
       reason,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
-    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   const legAccountingFailure = cmrLegAccountingFailure({
     successfulLegs: cmrResult.output.successfulLegs ?? [],
@@ -400,13 +405,13 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
     await familyBackend.escalateFamily?.({
       reason,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
-    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   const floorFailure = cmrFloorFailureReason({
     pass,
@@ -418,13 +423,13 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason: floorFailure,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
     await familyBackend.escalateFamily?.({
       reason: floorFailure,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
-    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   const closureFailure = cmrClosureFailureReason({
     pass,
@@ -437,25 +442,20 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason: closureFailure,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
     await familyBackend.escalateFamily?.({
       reason: closureFailure,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
-    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
-  const postCmrFamilyHead = await readPostCmrFamilyHead(
-    familyBackend,
-    familyBase,
-    resolvedFamilyHeadAfter,
-  );
   await recordCmrPassed(familyBackend, {
     cmrPass: pass,
-    familyHeadAfter: postCmrFamilyHead,
+    familyHeadAfter: postWorkerFamilyHead,
     routeFingerprint,
   });
-  return { result: { ok: true, ran: true }, familyHeadAfter: postCmrFamilyHead };
+  return { result: { ok: true, ran: true }, familyHeadAfter: postWorkerFamilyHead };
 }
 
 /**
@@ -579,6 +579,11 @@ export async function runVerifyCmr(
     phase,
     cmrPassedFamilyHeadAfter,
   );
+  const postShipFamilyHead = await readPostCmrFamilyHead(
+    familyBackend,
+    familyBase,
+    cmrPassedFamilyHeadAfter,
+  );
   // An ESCALATED family ship worker (gstack-ship STOP/HITL) is the family
   // escalate续跑 path, not a false success — call the escalate seam (codex cmr R4
   // finding: keep escalate semantics). A `completed` non-ship payload / crash /
@@ -587,7 +592,7 @@ export async function runVerifyCmr(
   if (shipResult.kind === "escalated") {
     await familyBackend.escalateFamily?.({
       reason: `${shipResult.escalation.reason} — ${shipResult.escalation.diagnosis}`,
-      familyHeadAfter: cmrPassedFamilyHeadAfter,
+      familyHeadAfter: postShipFamilyHead,
     });
     return { ok: false, ran: true };
   }
@@ -600,7 +605,7 @@ export async function runVerifyCmr(
     await recordDurableAbort(familyBackend, {
       phase,
       reason: "family ship worker returned no valid result (crash/malformed)",
-      familyHeadAfter: cmrPassedFamilyHeadAfter,
+      familyHeadAfter: postShipFamilyHead,
     });
     return INCOMPLETE_GATE;
   }
