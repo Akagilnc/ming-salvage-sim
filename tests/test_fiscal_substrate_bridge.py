@@ -892,6 +892,38 @@ def test_all_ming_settle_substrates_advance_with_observable_shadow_tlog(fresh_ga
         "楚藩重省宗禄 Due 应重于江南基准"
 
 
+def test_shadow_spine_uses_single_fiscal_payload_scan(fresh_game, monkeypatch):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: None)
+
+    statements: list[str] = []
+    db.conn.set_trace_callback(statements.append)
+    try:
+        flows_mod._advance_province_fiscal_substrate(db, state)
+    finally:
+        db.conn.set_trace_callback(None)
+
+    fiscal_selects = [
+        stmt for stmt in statements
+        if stmt.strip().upper().startswith("SELECT")
+        and "FISCAL" in stmt.upper()
+        and "FROM REGIONS" in stmt.upper()
+    ]
+    per_region_reloads = [
+        stmt for stmt in fiscal_selects
+        if "WHERE ID =" in stmt.upper()
+    ]
+
+    assert len(fiscal_selects) == 1, fiscal_selects
+    assert per_region_reloads == []
+    assert len([
+        stmt for stmt in statements
+        if stmt.strip().upper().startswith("UPDATE REGIONS SET FISCAL")
+    ]) == 17
+
+
 def test_seeded_substrates_keep_multi_tick_historical_trajectories(fresh_db):
     """#70 capstone：用真实 content seed 跑多 tick 轨迹，而非只测首 tick golden。"""
     jiangnan = ("nanzhili", "zhejiang", "jiangxi", "huguang")
