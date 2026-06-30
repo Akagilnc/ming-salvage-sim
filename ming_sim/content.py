@@ -405,6 +405,13 @@ def load_army_content() -> Dict[str, Army]:
             # fresh seed 曾不写两列致新档全 0，被 data/probe.db 老档 fixture 掩盖（CMR codexB）。
             firearm_equipment=max(0, min(100, int(item.get("firearm_equipment", 30) or 0))),
             cannon_equipment=max(0, min(12, int(item.get("cannon_equipment", 0) or 0))),
+            pay_source_region=str(item.get("pay_source_region") or "").strip(),
+            province_pay_share=float(item.get("province_pay_share") or 0.0),
+            central_pay_share=float(item.get("central_pay_share") or 0.0),
+            province_pay_arrears=float(item.get("province_pay_arrears") or 0.0),
+            central_pay_arrears=float(item.get("central_pay_arrears") or 0.0),
+            is_tusi=1 if item.get("is_tusi") else 0,
+            self_funded_pay=1 if item.get("self_funded_pay") else 0,
             status=str_field(item, "status", f"armies.json.armies[{idx}]"),
             owner_power=str_field(item, "owner_power", f"armies.json.armies[{idx}]"),
         )
