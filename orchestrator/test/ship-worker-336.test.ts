@@ -27,6 +27,7 @@ import {
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
+  SHIP_FOCUS_FILENAME,
   SPAWNED_WORKER_ENV,
 } from "../src/realBackend.js";
 import type { ShipAuth } from "../src/realBackend.js";
@@ -449,6 +450,66 @@ describe("#336 single-slice runShipWorker — fail-closed when gh auth is missin
       /shipSandbox should not be built/,
     );
     expect(be.sandboxReached).toBe(true);
+  });
+});
+
+describe("#439 single-slice ship worker resume answer focus", () => {
+  it(".ship-focus.md is repo-ignored even if a per-worktree exclude update fails", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const ignore = readFileSync(join(here, "..", "..", ".gitignore"), "utf8");
+    expect(ignore.split(/\r?\n/)).toContain(SHIP_FOCUS_FILENAME);
+  });
+
+  it("writes the answered S7 decision escalation into .ship-focus.md before sandbox startup", async () => {
+    const focusWorktree: WorktreeHandle = {
+      branch: "feat/orchestrator/issue-439",
+      base: "main",
+      path: mkDir("ship-answer-focus-worktree-"),
+    };
+    let focusBody = "";
+    class ShipAnswerFocusBackend extends RealBackend {
+      public run(spec: WorkerSpec, ctx: DispatchContext): Promise<ShipWorkerOutcome> {
+        return this.runShipWorker(spec, ctx);
+      }
+      protected override buildOrReuseClone(): string {
+        return mkDir("ship-answer-focus-clone-");
+      }
+      protected override assertIndependentClone(): void {}
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "claude-token", ghToken: "gho_token" };
+      }
+      protected override shipSandbox(): never {
+        focusBody = readFileSync(
+          join(focusWorktree.path, SHIP_FOCUS_FILENAME),
+          "utf8",
+        );
+        throw new Error("shipSandbox reached after writing focus");
+      }
+    }
+    const be = new ShipAnswerFocusBackend({
+      sourceRepo: mkDir("ship-answer-focus-src-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      runKey: "k439shipanswer",
+    });
+
+    await expect(
+      be.run(shipWorkerSpec(), {
+        worktree: focusWorktree,
+        escalationAnswer: {
+          event: "escalation_answered",
+          forStep: "S7",
+          answer: "retry-ship-after-human-fix",
+          note: "Human resolved the delivery blocker; retry ship.",
+        },
+      }),
+    ).rejects.toThrow(/shipSandbox reached/);
+
+    expect(focusBody).toContain("retry-ship-after-human-fix");
+    expect(focusBody).toContain("Human resolved the delivery blocker");
+    expect(focusBody).toContain('"forStep": "S7"');
   });
 });
 

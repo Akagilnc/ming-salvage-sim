@@ -337,6 +337,12 @@ describe("Finding 2: malformed-escalate-terminated run reports error on re-feed 
           "session-escalated-S2",
         ),
         s8("escalate"),
+        {
+          ...entry("S2"),
+          event: "escalation_answered",
+          forStep: "S2",
+          answer: "continue after product decision",
+        },
       ],
     };
     const backend = new SeamBackend(resumeState);

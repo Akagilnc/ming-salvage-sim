@@ -253,6 +253,13 @@ describe("spine reconcile — branch ③ inconsistent (fail-closed escalate)", (
     // Fail-closed: no child run, no merge attempted.
     expect(childBackend.ran).toEqual([]);
     expect(familyBackend.merges).toEqual([]);
+    expect(familyBackend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "failure",
+      }),
+    );
   });
 });
 

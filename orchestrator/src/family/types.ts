@@ -17,6 +17,7 @@ import type {
   Backend,
   DispatchContext,
   Escalation,
+  EscalationAnswerPayload,
   PriorFindingDisposition,
   WorkerResult,
   WorkerSpec,
@@ -104,13 +105,27 @@ export interface FamilyLedgerEntry {
    *     the family head at the time (`familyHeadAfter`) + the `phase` + a `reason`
    *     for triage (#291 缺口 2). NOT counted as merged.
    *   - `"shipped"` — the terminal family ship (止于-PR) SUCCEEDED (online review r2,
-   *     codex P1). A PHASE-LEVEL terminal marker carrying the family `pr` URL; the
-   *     spine's resume guard reads it so an already-delivered family run is NOT
-   *     re-verified / re-cmr'd / re-shipped. NOT counted as merged (no `childIssue`).
+   *     codex P1). A PHASE-LEVEL terminal marker carrying the family `pr` URL and
+   *     the covered `familyHeadAfter`; the spine's resume guard reads it so only
+   *     the same already-delivered HEAD skips re-verify / re-cmr / re-ship. NOT
+   *     counted as merged (no `childIssue`).
    *   - `"cmr_passed"` — a PHASE-LEVEL audit event recording one green integrated
    *     CMR pass (#419). NOT counted as merged.
+   *   - `"escalated"` — a PHASE-LEVEL family pause/failure marker (#439). Decision
+   *     escalations are answerable by a later append-only `escalation_answered`
+   *     row; failure escalations are terminal until human/manual repair outside
+   *     this runner. NOT counted as merged.
+   *   - `"escalation_answered"` — a PHASE-LEVEL append-only human answer event
+   *     (#439). It reopens a prior decision escalation without editing/deleting
+   *     that prior row. NOT counted as merged.
    */
-  readonly status: "merged" | "aborted" | "shipped" | "cmr_passed";
+  readonly status:
+    | "merged"
+    | "aborted"
+    | "shipped"
+    | "cmr_passed"
+    | "escalated"
+    | "escalation_answered";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -124,9 +139,19 @@ export interface FamilyLedgerEntry {
    *     止于-PR success so a resume sees the family is already delivered.
    *   - `"cmr_passed"` — paired with `status:"cmr_passed"`; records the pass
    *     verdict so step5 and step6 are visible in the family ledger (#419).
+   *   - `"escalated"` — paired with `status:"escalated"`; records the family
+   *     escalation bucket (#439).
+   *   - `"escalation_answered"` — paired with `status:"escalation_answered"`; an
+   *     append-only human answer to a prior decision escalation (#439).
    * Not the unblock truth (that is `status`); the tag is for observability.
    */
-  readonly event?: "reconciled" | "aborted" | "shipped" | "cmr_passed";
+  readonly event?:
+    | "reconciled"
+    | "aborted"
+    | "shipped"
+    | "cmr_passed"
+    | "escalated"
+    | "escalation_answered";
   /**
    * Which phase this PHASE-LEVEL event belongs to. Set on `aborted` entries and
    * on `cmr_passed` audit entries; `merged` / `reconciled` entries omit it because
@@ -136,9 +161,8 @@ export interface FamilyLedgerEntry {
   /** Which integrated CMR pass this phase-level audit/failure event belongs to. */
   readonly cmrPass?: IntegratedCmrPass;
   /**
-   * Human-readable abort reason — ONLY on a PHASE-LEVEL `aborted` entry (#291 缺口
-   * 2), forwarded from the verify error package / cmr non-convergence reason so the
-   * failure is locatable from the ledger alone (decision 3④/5 "不静默吞").
+   * Human-readable phase-level reason. `aborted` rows use it for verify/cmr
+   * failures; `escalated` rows use it for answerable family decision pauses.
    */
   readonly reason?: string;
   /** The child branch that was merged (full schema, #298). */
@@ -177,6 +201,12 @@ export interface FamilyLedgerEntry {
    * guard's "already delivered" decision is locatable from the ledger alone.
    */
   readonly pr?: string;
+  /** Decision pauses can be reopened by an answer row; failure escalations cannot. */
+  readonly escalationKind?: "decision" | "failure";
+  /** Human answer payload when `event === "escalation_answered"` (#439). */
+  readonly answer?: string;
+  /** Optional human note attached to an escalation answer (#439). */
+  readonly note?: string;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────
@@ -394,6 +424,15 @@ export interface FamilyBackend {
    */
   openFamilyPr?(request: OpenFamilyPrRequest): Promise<OpenFamilyPrResult>;
   /**
+   * Resume-skip trust boundary: before a durable `shipped` marker can skip the
+   * final verify/cmr/ship barrier, re-check that the recorded PR still exists,
+   * is OPEN, targets the expected PR base, uses this family branch as head, and
+   * has `headRefOid === expectedHead`.
+   */
+  verifyFamilyShippedPr?(
+    request: VerifyFamilyShippedPrRequest,
+  ): Promise<VerifyFamilyShippedPrResult>;
+  /**
    * #298-OWNED aborted-event seam — #296 only CALLS it. A red verify writes an
    * `aborted` event (携带错误包 + the family base at the time) so a failed wave is
    * NOT silently dropped (decision 3④/5 "不静默吞"). The CONCRETE ledger schema
@@ -404,11 +443,11 @@ export interface FamilyBackend {
    */
   recordAborted?(event: FamilyAbortedEvent): Promise<void>;
   /**
-   * #298-OWNED escalate seam — #296 only CALLS it. A NOT-converged integrated cmr
-   * (decision 3⑥) escalates续跑 (复用 ADR 0017/0018 的升级续跑: 卡点 → 返回调用端
-   * → 拍 → resumeSession 注入). #296 does NOT build the escalate machine — it
-   * hands the non-convergence reason to #298's seam. Optional ⇒ a backend without
-   * it surfaces the red purely via the returned `{ok:false}`.
+   * #298-OWNED escalate seam. A NOT-converged integrated cmr or family ship
+   * HITL (decision 3⑥/4) records a decision escalation in the append-only family
+   * ledger. A later `escalation_answered` row reopens the family runner; without
+   * that answer the runner stays paused. Optional ⇒ a backend without it surfaces
+   * the red purely via the returned `{ok:false}`.
    */
   escalateFamily?(escalation: FamilyEscalation): Promise<void>;
 }
@@ -456,6 +495,8 @@ export interface IntegratedCmrRequest {
    * the back-compatible `{familyBase}`-only shape.
    */
   readonly llmResolvedChildren?: readonly number[];
+  /** Human answer that reopened a prior family decision escalation (#439). */
+  readonly escalationAnswer?: EscalationAnswerPayload;
 }
 
 /** The integrated-cmr outcome (the load-bearing cross-slice-seam gate). */
@@ -484,7 +525,22 @@ export interface OpenFamilyPrRequest {
 export interface OpenFamilyPrResult {
   /** The opened PR's URL (or a synthetic handle in the fake). */
   readonly url: string;
+  /** The opened PR's head commit SHA/OID, verified from PR metadata when available. */
+  readonly prHead?: string;
 }
+
+export interface VerifyFamilyShippedPrRequest {
+  /** The shipped marker's PR URL/handle from the family ledger. */
+  readonly pr: string;
+  /** The family base branch the PR must use as its head branch. */
+  readonly familyBase: string;
+  /** The current local family base HEAD the PR must still cover. */
+  readonly expectedHead: string;
+}
+
+export type VerifyFamilyShippedPrResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: string };
 
 /**
  * An `aborted` event #296 hands to #298's `recordAborted` seam on a red verify
@@ -512,13 +568,14 @@ export interface FamilyAbortedEvent {
 
 /**
  * The escalation #296 hands to #298's `escalateFamily` seam when the integrated
- * cmr does not converge (ADR 0022 decision 3⑥/4 → 升级续跑). The CONCRETE
- * escalate/resume machine is #298's (复用 ADR 0017/0018); this is the minimal
- * call shape #296 depends on.
+ * cmr does not converge or family ship hits HITL (ADR 0022 decision 3⑥/4 →
+ * 升级续跑).
  */
 export interface FamilyEscalation {
-  /** Why the integrated cmr did not converge (the cross-slice-seam finding). */
+  /** Why the family gate paused. */
   readonly reason: string;
+  /** Family base HEAD at the pause point, when known. */
+  readonly familyHeadAfter?: string;
 }
 
 /** What the merger needs to merge one child branch into the family base. */

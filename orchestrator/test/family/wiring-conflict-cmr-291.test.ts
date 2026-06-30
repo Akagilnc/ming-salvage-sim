@@ -125,7 +125,7 @@ class ConflictCmrFamilyBackend implements FamilyBackend {
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);
-    return { url: `pr://${req.familyBase}` };
+    return { url: `pr://${req.familyBase}`, prHead: this.head };
   }
 }
 
@@ -173,6 +173,27 @@ describe("Wiring 1 â€” conflictResolvedByLlm flows to the integrated cmr (#291 ç
       "correctness",
     ]);
     expect(backend.cmrCalls.every((c) => c.familyBase === "family/291-base")).toBe(true);
+    expect(backend.cmrCalls.map((c) => c.llmResolvedChildren)).toEqual([
+      [295],
+      [295],
+    ]);
+  });
+
+  it("ignores malformed LLM-resolved ledger rows whose childIssue is not a number", async () => {
+    const backend = new ConflictCmrFamilyBackend(new Set([295]));
+    backend.ledger.push({
+      status: "merged",
+      childIssue: "295",
+      conflictResolvedByLlm: true,
+    } as unknown as FamilyLedgerEntry);
+
+    await runFamily({
+      epic,
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+    });
+
     expect(backend.cmrCalls.map((c) => c.llmResolvedChildren)).toEqual([
       [295],
       [295],

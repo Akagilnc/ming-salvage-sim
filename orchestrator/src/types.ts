@@ -202,6 +202,28 @@ export interface Escalation {
   readonly diagnosis: string;
 }
 
+/** Escalation bucket recorded on a terminal S8 entry (#439). */
+export type EscalationKind = "decision" | "failure";
+
+/**
+ * Append-only human answer event for a paused decision escalation (#439).
+ *
+ * Minimal JSONL shape:
+ * `{ "step":"S4", "event":"escalation_answered", "forStep":"S4", "answer":"..." }`
+ *
+ * It intentionally remains a ledger row, not an edit to the prior S8 boundary.
+ */
+export interface EscalationAnswerPayload {
+  readonly event: "escalation_answered";
+  readonly forStep?: StepId;
+  readonly answer: string;
+  readonly note?: string;
+}
+
+export interface EscalationAnswerEvent extends EscalationAnswerPayload {
+  readonly forStep: StepId;
+}
+
 /**
  * The structured output of any worker step.
  *
@@ -411,6 +433,13 @@ export interface DispatchContext {
    */
   readonly blockingFindingIdentityKeys?: ReadonlyArray<string>;
   /**
+   * S5 coder-fix, S7 ship, or family-level CMR/ship worker: the human answer that
+   * reopened a prior decision-escalate pause (#439). The runner passes it to the
+   * re-dispatched worker so the resume instruction is visible without deleting or
+   * rewriting the terminal ledger row that paused the run.
+   */
+  readonly escalationAnswer?: EscalationAnswerPayload;
+  /**
    * FAMILY cmr worker only: the child issue numbers whose merge into the family
    * base was LLM-resolved (#295) — forwarded to the integrated cmr 承重闸 so it
    * focuses on the merges a machine touched (PRD #330 / #291 缺口 1). Undefined for
@@ -480,6 +509,8 @@ export interface ShipResult {
   readonly branch: string;
   /** The opened PR URL/handle (undefined when ship stopped before a PR). */
   readonly pr?: string;
+  /** The PR head commit SHA/OID verified by the host, when available. */
+  readonly prHead?: string;
   /** A short status string (e.g. "pushed" | "pr_opened"). Values: #336. */
   readonly status: string;
   // NOTE: a ship worker that STOPS for a human (gstack-ship STOP/HITL) is the
@@ -585,7 +616,11 @@ export interface IssueSnapshotMeta {
 export interface IssueSnapshot {
   readonly number: number;
   readonly body: string;
+  /** Login of the issue-body author, when the host snapshot carried it. */
+  readonly bodyAuthorLogin?: string;
   readonly comments: ReadonlyArray<string>;
+  /** Author login aligned by index with `comments`, when available. */
+  readonly commentAuthorLogins?: ReadonlyArray<string>;
   readonly agentBrief: string;
   readonly nativeMeta?: IssueSnapshotMeta;
 }
@@ -608,6 +643,14 @@ export interface LedgerEntry {
   readonly step: StepId;
   /** Structured output for agent steps; undefined for runner-action steps. */
   readonly output?: StepOutput;
+  /** Append-only event marker for non-step ledger facts (#439). */
+  readonly event?: EscalationAnswerEvent["event"];
+  /** Step this answer reopens when `event === "escalation_answered"` (#439). */
+  readonly forStep?: StepId;
+  /** Human answer payload when `event === "escalation_answered"` (#439). */
+  readonly answer?: string;
+  /** Optional human note attached to an escalation answer (#439). */
+  readonly note?: string;
   /**
    * Runner-owned ADR0030 finding dispositions after an S4 classification.
    *
@@ -685,6 +728,11 @@ export interface PersistentLedgerEntry extends LedgerEntry {
    * Undefined for every non-S8 (in-flight) entry.
    */
   readonly handoffStatus?: HandoffStatus;
+  /**
+   * Distinguishes answerable decision pauses from true terminal failure
+   * escalations (#439). Set only with `handoffStatus:"escalate"` on S8.
+   */
+  readonly escalationKind?: EscalationKind;
 }
 
 // ──────────────────────────── resume state ────────────────────────────

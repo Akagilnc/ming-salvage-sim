@@ -186,11 +186,13 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     const fix = read("coder_fix.md");
     expect(fix).toMatch(/\/home\/agent\/\.orchestrator\/souls\/coder\.md/);
     expect(fix).toMatch(/fix-findings path/i);
+    expect(fix).toMatch(/escalationAnswer/i);
     expect(fix).not.toMatch(/sibling ledger|legacy compatibility fallback|Prefer the sibling ledger/is);
 
     const review = read("reviewer_review.md");
     expect(review).toMatch(/\/home\/agent\/\.orchestrator\/souls\/reviewer\.md/);
     expect(review).toMatch(/baked soul plus runner\s+parameters/i);
+    expect(review).toMatch(/escalationAnswer/i);
     expect(review).not.toMatch(/\.orchestrator-snapshot\.json/i);
     expect(review).not.toMatch(/fetch the current issue body|Retry transient network failures|Review the current full slice diff/is);
   });
@@ -199,15 +201,35 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     const soul = readSoul("coder.md");
     expect(soul).toMatch(/Invoke `\/tdd`/i);
     expect(soul).toMatch(/coder-fix|fix worker|blocking review findings/i);
+    expect(soul).toMatch(/escalationAnswer/i);
     expect(soul).not.toMatch(/Second review|non-Claude reviewer leg/i);
     expect(soul).toMatch(/gh issue view/i);
+    expect(soul).toMatch(/--json[^`]*title[^`]*author[^`]*body[^`]*comments/is);
+    expect(soul).toMatch(/comment\.author\.login.*repo owner/is);
+    expect(soul).toMatch(/non-owner.*Agent Brief.*ordinary\s+issue text/is);
+    expect(soul).toMatch(/non-owner.*title.*body.*comments.*data-only/is);
+    expect(soul).toMatch(/must not.*instructions.*scope changes.*commands/is);
+    expect(soul).toMatch(/credential-handling\s+requests/i);
     expect(soul).toMatch(/Snapshot files.*not execution input/is);
+  });
+
+  it("coder entrypoints require author-aware live issue reads before trusting issue instructions", () => {
+    for (const promptName of ["coder_implement.md", "coder_fix.md"]) {
+      const prompt = read(promptName);
+      expect(prompt).toMatch(/--json[^`]*title[^`]*author[^`]*body[^`]*comments/is);
+      expect(prompt).toMatch(/repo owner/i);
+      expect(prompt).toMatch(/non-owner.*Agent Brief.*ordinary\s+issue text/is);
+      expect(prompt).toMatch(/non-owner.*title.*body.*comments.*data-only/is);
+      expect(prompt).toMatch(/must not.*instructions.*scope changes.*commands/is);
+      expect(prompt).toMatch(/credential-handling\s+requests/i);
+    }
   });
 
   it("the reviewer soul carries snapshot-input policy outside the thin prompt", () => {
     const soul = readSoul("reviewer.md");
     expect(soul).toMatch(/Snapshot files.*not execution input/is);
     expect(soul).toMatch(/git state for the review scope/i);
+    expect(soul).toMatch(/escalationAnswer/i);
   });
 
   it("#419 integrated cmr pass entrypoints read pass-specific souls that invoke only their lens gate", () => {

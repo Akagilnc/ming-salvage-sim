@@ -504,6 +504,9 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       this.runShipCalls.push({ spec, ctx });
       return { kind: "shipped", branch: ctx.familyBase!, status: "pr_opened", pr: "https://gh/pr/9" };
     }
+    protected override verifyFamilyShipPr(): { ok: true; headOid: string } | { ok: false; reason: string } {
+      return { ok: true, headOid: "head-1" };
+    }
   }
 
   function fixtured(): FixturedCmrBackend {
@@ -896,6 +899,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     public focus(ctx: {
       familyBase: string;
       llmResolvedChildren?: readonly number[];
+      escalationAnswer?: DispatchContext["escalationAnswer"];
     }): void {
       this.writeCmrFocusFile(ctx as never);
     }
@@ -1030,6 +1034,34 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     });
     const exclude = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
     expect(exclude.split("\n")).toContain(CMR_ROUTE_FILENAME);
+  });
+
+  it("threads a human escalation answer into the CMR focus file", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    be.focus({
+      familyBase: "feat/330-pure-scheduler",
+      escalationAnswer: {
+        event: "escalation_answered",
+        answer: "continue-same-class",
+        note: "Human says continue the same-class CMR fix loop.",
+      },
+    });
+
+    const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
+    expect(body).toContain("Human escalation answer");
+    expect(body).toContain("continue-same-class");
+    expect(body).toContain("Human says continue the same-class CMR fix loop.");
   });
 });
 

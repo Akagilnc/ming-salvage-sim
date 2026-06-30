@@ -117,7 +117,8 @@ function writeFixFindingsLandingFile(
 ): (FixFindingsLandingFile & { cleanup: boolean }) | undefined {
   const needsFindingsLanding =
     (spec.id === "S5" && spec.kind === "coder") ||
-    (spec.id === "S6" && spec.kind === "reviewer");
+    (spec.id === "S6" && spec.kind === "reviewer") ||
+    ctx.escalationAnswer !== undefined;
   if (!needsFindingsLanding || ctx.worktree === undefined) {
     return undefined;
   }
@@ -138,6 +139,9 @@ function writeFixFindingsLandingFile(
       {
         blockingFindings: ctx.blockingFindings ?? [],
         blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
+        ...(ctx.escalationAnswer !== undefined
+          ? { escalationAnswer: ctx.escalationAnswer }
+          : {}),
       },
       null,
       2,

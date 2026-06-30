@@ -31,7 +31,16 @@ import {
 } from "../modelRoutes.js";
 import type { Backend } from "../types.js";
 import { assertAcyclic, selectWave } from "./commander.js";
-import { familyAlreadyShipped, mergedSet, recordMerged } from "./ledger.js";
+import {
+  familyEscalationState,
+  familyShippedRecordForHead,
+  hasBoundShippedMarker,
+  hasUnboundLegacyShippedMarker,
+  isMergedAccountingEntry,
+  mergedSet,
+  recordFamilyEscalated,
+  recordMerged,
+} from "./ledger.js";
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import { runVerifyCmr } from "./verifyCmr.js";
@@ -112,6 +121,19 @@ async function currentMerged(
   return mergedSet(await familyBackend.readFamilyLedger());
 }
 
+async function readCurrentFamilyHead(
+  familyBackend: FamilyBackend,
+  familyBase: string,
+): Promise<string | undefined> {
+  if (familyBackend.readFamilyHead === undefined) return undefined;
+  try {
+    const head = (await familyBackend.readFamilyHead(familyBase)).trim();
+    return head.length > 0 ? head : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Derive the child issue numbers whose merge into the family base was LLM-resolved
  * (#291 缺口 1), read from the DURABLE family ledger — the only truth that survives
@@ -128,9 +150,8 @@ async function llmResolvedChildren(
   const out: number[] = [];
   for (const e of ledger) {
     if (
-      e.status === "merged" &&
+      isMergedAccountingEntry(e) &&
       e.conflictResolvedByLlm === true &&
-      e.childIssue !== undefined &&
       !seen.has(e.childIssue)
     ) {
       seen.add(e.childIssue);
@@ -170,6 +191,39 @@ export async function runFamily(
     `[orchestrator:family] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
   );
   const { familyBackend, singleSliceBackend, familyBase } = input;
+  const initialFamilyLedger = await familyBackend.readFamilyLedger();
+  const priorEscalation = familyEscalationState(initialFamilyLedger);
+  if (priorEscalation !== undefined) {
+    const { escalation, answer } = priorEscalation;
+    if (escalation.escalationKind !== "decision" || answer === undefined) {
+      const ledgerMerged = mergedSet(initialFamilyLedger);
+      return {
+        status: "escalated",
+        familyBase,
+        ...(typeof escalation.familyHeadAfter === "string" &&
+        escalation.familyHeadAfter.trim().length > 0
+          ? { familyHead: escalation.familyHeadAfter }
+          : {}),
+        escalation: {
+          reason:
+            typeof escalation.reason === "string" && escalation.reason.trim().length > 0
+              ? escalation.reason
+              : "family escalation is not answered",
+          diagnosis:
+            escalation.escalationKind === "failure"
+              ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
+              : escalation.escalationKind !== "decision"
+                ? "Prior family escalation kind is missing or invalid; append-only answers only reopen decision escalations."
+              : "Prior family decision escalation has no later valid escalation_answered ledger event.",
+        },
+        children: input.epic.children.map((child) => ({
+          issue: child.issue,
+          status: ledgerMerged.has(child.issue) ? "merged" : "skipped",
+        })),
+      };
+    }
+  }
+  const escalationAnswer = priorEscalation?.answer;
   // ── #298 escalate-resume dependency-graph rebuild (ADR 0022 decision 4) ─────
   // APPEND-ONLY resume entry: when a `refetchEpic` hook is injected (a re-entry
   // after escalation — cmr non-convergence / a cycle a human edited in GitHub),
@@ -280,6 +334,12 @@ export async function runFamily(
           ? { issue: c.issue, status: "merged" as const }
           : { issue: c.issue, status: "skipped" as const },
       );
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind: "failure",
+        phase: "final",
+        reason: "family reconcile found the live family-base HEAD inconsistent with the ledger",
+        familyHeadAfter: plan.liveHead,
+      });
       return { status: "escalated", familyBase, familyHead, children };
     }
     // Append each reconcile補账条 (status:"merged" + event:"reconciled") through
@@ -446,17 +506,73 @@ export async function runFamily(
   }
 
   // ── already-shipped resume guard (online review r2, codex P1) ────────────────
-  // If a prior invocation already ran the terminal 止于-PR family ship (a `shipped`
-  // ledger entry exists), the family PR is open and the base carries the ship
-  // (VERSION/CHANGELOG bump) commit. Re-running the final barrier would re-verify,
-  // re-cmr, and re-invoke the ship worker — a duplicate VERSION bump / PR attempt.
-  // Reconcile already tolerates the ship-commit advance (branch ②, no escalate), so
-  // the run reaches here on resume; the durable `shipped` marker is the terminal
-  // truth. Treat the family as already delivered: finalize WITHOUT re-shipping. Every
-  // child is ledger-merged (completeness gate above), so finalize() returns
-  // "success" with the reconcile-seeded `familyHead`.
-  if (familyAlreadyShipped(await familyBackend.readFamilyLedger())) {
+  // If a prior invocation already ran the terminal 止于-PR family ship for the SAME
+  // family HEAD (a complete `shipped` ledger entry with matching `familyHeadAfter`),
+  // the family PR is open and covers the current base. Re-running the final barrier
+  // would re-verify, re-cmr, and re-invoke the ship worker — a duplicate VERSION bump
+  // / PR attempt. But an older shipped marker for a different head must NOT hide a
+  // later live-base advance; that new head needs a fresh final barrier / ship.
+  const preFinalLedger = await familyBackend.readFamilyLedger();
+  const preFinalFamilyHead =
+    familyHead ?? (await readCurrentFamilyHead(familyBackend, familyBase));
+  const shippedRecord = familyShippedRecordForHead(
+    preFinalLedger,
+    preFinalFamilyHead,
+  );
+  if (shippedRecord !== undefined) {
+    const ledgerMerged = await currentMerged(familyBackend);
+    const children: FamilyChildResult[] = epic.children.map((c) =>
+      ledgerMerged.has(c.issue)
+        ? { issue: c.issue, status: "merged" as const }
+        : { issue: c.issue, status: "skipped" as const },
+    );
+    if (familyBackend.verifyFamilyShippedPr === undefined) {
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind: "failure",
+        phase: "final",
+        reason:
+          "family ledger contains a shipped marker but this backend cannot verify the PR still covers the current family HEAD",
+        familyHeadAfter: preFinalFamilyHead,
+      });
+      return { status: "escalated", familyBase, familyHead: preFinalFamilyHead, children };
+    }
+    const shippedPr = await familyBackend.verifyFamilyShippedPr({
+      pr: shippedRecord.pr,
+      familyBase,
+      expectedHead: preFinalFamilyHead!,
+    });
+    if (!shippedPr.ok) {
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind: "failure",
+        phase: "final",
+        reason: `family shipped marker no longer verifies: ${shippedPr.reason}`,
+        familyHeadAfter: preFinalFamilyHead,
+      });
+      return { status: "escalated", familyBase, familyHead: preFinalFamilyHead, children };
+    }
+    familyHead = preFinalFamilyHead;
     return await finalize();
+  }
+  if (
+    hasUnboundLegacyShippedMarker(preFinalLedger) ||
+    (preFinalFamilyHead === undefined && hasBoundShippedMarker(preFinalLedger))
+  ) {
+    const ledgerMerged = await currentMerged(familyBackend);
+    const children: FamilyChildResult[] = epic.children.map((c) =>
+      ledgerMerged.has(c.issue)
+        ? { issue: c.issue, status: "merged" as const }
+        : { issue: c.issue, status: "skipped" as const },
+    );
+    await recordFamilyEscalated(familyBackend, {
+      escalationKind: "failure",
+      phase: "final",
+      reason:
+        preFinalFamilyHead === undefined && hasBoundShippedMarker(preFinalLedger)
+          ? "family ledger contains a shipped marker but current family HEAD could not be resolved"
+          : "family ledger contains a legacy shipped marker without familyHeadAfter; cannot prove which family HEAD the prior PR covered",
+      familyHeadAfter: preFinalFamilyHead,
+    });
+    return { status: "escalated", familyBase, familyHead: preFinalFamilyHead, children };
   }
 
   // ── verify-cmr hook: end-of-run barrier (#293 no-op seam, #296 fills) ─────────
@@ -473,6 +589,7 @@ export async function runFamily(
     // touched. The wave barrier is verify-only (no cmr), so only the final call
     // needs it; an empty list ⇒ the cmr request omits the field.
     llmResolvedChildren: await llmResolvedChildren(familyBackend),
+    ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     // #291 缺口 2: the abort-time head for a RED final verify's durable aborted entry.
     familyHeadAfter: familyHead,
   });

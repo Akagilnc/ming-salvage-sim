@@ -357,6 +357,10 @@ _Avoid_: 批次、轮(混淆评审轮)
 家族集成层的账本(家族 base worktree 的 sibling、worktree 外),记已合子片 hash / 当前波次 / 家族 base HEAD,供 merger 幂等续跑(崩溃重启跳过已合)。区别于单片的 step ledger。
 _Avoid_: step ledger(那是单片的)、状态文件(太泛)
 
+**family escalation answer**:
+家族层 decision escalation 被人类回答后的 append-only 续跑信号。它是 family ledger 里的 `escalation_answered` 事件,不编辑/删除原来的 pause 或 `S8(escalate)` 行;runner 只用它重开 decision escalation,把答案传回对应 CMR / coder-fix / reviewer / ship worker。failure escalation 不被 answer row 自动重开。
+_Avoid_: 改写旧 ledger 行、把 answer 当新的需求 brief、用 answer 覆盖 runner 固定 repo/base/head 控制字段、把 failure escalation 当可自动恢复
+
 **路线 / route**:
 一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …),显式列出本轮**全部模型槽**(coder / per-slice reviewer / coder-fix / ship / merger / cmr 腿)各自用哪个模型。切路线 = 拨一个总开关、整套翻;任一槽可被单 env override 盖过。本质 = 「按额度死活选哪些家族干活」——额度按家族整片死(claude 100% → sonnet/opus/haiku 全死),故没有槽能钉死在某家族。切换手动(额度紧但未耗尽时提前调)。(ADR 0031)
 _Avoid_: 环境/profile(那是镜像)、家族(那是模型 vendor 分组)

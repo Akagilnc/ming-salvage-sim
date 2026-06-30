@@ -70,6 +70,9 @@ docs/IMPERIAL_NOTES.md
 # Orchestrator (integ-cmr 256 r3) fix-loop findings — host-written read-only
 # context handed to the S5 coder_fix step; same clean-room rule as the snapshot.
 .orchestrator-fix-findings.json
+# Orchestrator (#439) ship retry focus — generated from human escalation answers
+# in resident worktrees; local exclude also covers it, repo ignore is the fallback.
+.ship-focus.md
 
 # Orchestrator dogfood / verify 运行时产物（巨大或临时，绝不入库）
 .hermes/

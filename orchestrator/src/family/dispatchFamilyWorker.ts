@@ -165,6 +165,9 @@ export async function legacyDispatchFamilyWorker(
       ctx.llmResolvedChildren.length > 0
         ? { llmResolvedChildren: ctx.llmResolvedChildren }
         : {}),
+      ...(ctx.escalationAnswer !== undefined
+        ? { escalationAnswer: ctx.escalationAnswer }
+        : {}),
     });
     // A `red` (non-converged) verdict is `completed` with payload — NOT `failed`
     // (PRD #330 R2). The verify-cmr hook reads `converged` off the payload.
@@ -199,9 +202,19 @@ export async function legacyDispatchFamilyWorker(
     const pr: OpenFamilyPrResult = await familyBackend.openFamilyPr({
       familyBase,
     });
+    const prHead =
+      typeof pr.prHead === "string" && pr.prHead.trim().length > 0
+        ? pr.prHead.trim()
+        : undefined;
     return {
       kind: "completed",
-      output: { kind: "ship", branch: familyBase, pr: pr.url, status: "pr_opened" },
+      output: {
+        kind: "ship",
+        branch: familyBase,
+        pr: pr.url,
+        ...(prHead !== undefined ? { prHead } : {}),
+        status: "pr_opened",
+      },
     };
   }
 

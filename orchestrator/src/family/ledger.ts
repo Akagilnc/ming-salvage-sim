@@ -18,6 +18,7 @@
  * append-only invariant but does NOT dedup — reconcile is #298.)
  */
 
+import type { EscalationAnswerPayload, EscalationKind } from "../types.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -72,14 +73,14 @@ export interface AbortedRecord {
  * The fields a PHASE-LEVEL `shipped` event (terminal 止于-PR success) carries
  * (online review r2, codex P1). Like {@link AbortedRecord} it is a phase-level
  * event (NOT a child), so it carries NO `childIssue`. It records the family `pr`
- * URL. `familyHeadAfter` is intentionally OMITTED: the ship commit is a descendant
- * of the last recorded baseline, so reconcile branch ② tolerates the advance
- * without escalating — the `shipped` entry is a TERMINAL FLAG for the spine's
- * resume guard, not a new reconcile baseline.
+ * URL and the exact family HEAD covered by that PR. The spine may skip a later
+ * final barrier only when the current family HEAD still equals this head.
  */
 export interface ShippedRecord {
   /** The family PR URL the terminal ship opened. */
   readonly pr: string;
+  /** The family base HEAD covered by the terminal ship / PR. */
+  readonly familyHeadAfter: string;
 }
 
 /** The fields for a green integrated CMR pass audit event (#419). */
@@ -89,6 +90,20 @@ export interface CmrPassedRecord {
   readonly familyHeadAfter?: string;
   /** Resolved route fingerprint for the CMR worker and declared review legs. */
   readonly routeFingerprint?: string;
+}
+
+/** A PHASE-LEVEL family escalation marker (#439). */
+export interface FamilyEscalatedRecord {
+  readonly escalationKind: EscalationKind;
+  readonly phase?: "wave" | "final";
+  readonly reason?: string;
+  readonly familyHeadAfter?: string;
+}
+
+/** A PHASE-LEVEL append-only answer to a prior family decision escalation (#439). */
+export interface FamilyEscalationAnswerRecord {
+  readonly answer: string;
+  readonly note?: string;
 }
 
 /**
@@ -184,6 +199,120 @@ export async function recordCmrPassed(
   );
 }
 
+/** Append a PHASE-LEVEL family escalation marker (#439). */
+export async function recordFamilyEscalated(
+  backend: FamilyBackend,
+  record: FamilyEscalatedRecord,
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      status: "escalated",
+      event: "escalated",
+      phase: record.phase,
+      reason: record.reason,
+      familyHeadAfter: record.familyHeadAfter,
+      escalationKind: record.escalationKind,
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/** Append a PHASE-LEVEL human answer to a family decision escalation (#439). */
+export async function recordFamilyEscalationAnswered(
+  backend: FamilyBackend,
+  record: FamilyEscalationAnswerRecord,
+): Promise<void> {
+  const answer = record.answer.trim();
+  if (answer.length === 0) {
+    throw new Error("family escalation answer must be a non-empty string");
+  }
+  await backend.appendFamilyLedger(
+    compact({
+      status: "escalation_answered",
+      event: "escalation_answered",
+      phase: "final",
+      answer,
+      note: record.note,
+    }) as FamilyLedgerEntry,
+  );
+}
+
+function isValidFamilyAnswer(entry: FamilyLedgerEntry): boolean {
+  return (
+    entry.status === "escalation_answered" &&
+    entry.event === "escalation_answered" &&
+    entry.phase === "final" &&
+    typeof entry.answer === "string" &&
+    entry.answer.trim().length > 0 &&
+    (entry.note === undefined || typeof entry.note === "string")
+  );
+}
+
+function isValidFamilyShipped(
+  entry: FamilyLedgerEntry,
+): entry is FamilyLedgerEntry & { readonly pr: string; readonly familyHeadAfter: string } {
+  return (
+    entry.status === "shipped" &&
+    entry.event === "shipped" &&
+    entry.phase === "final" &&
+    typeof entry.pr === "string" &&
+    entry.pr.trim().length > 0 &&
+    typeof entry.familyHeadAfter === "string" &&
+    entry.familyHeadAfter.trim().length > 0
+  );
+}
+
+function familyAnswerPayload(entry: FamilyLedgerEntry): EscalationAnswerPayload {
+  return {
+    event: "escalation_answered",
+    answer: entry.answer!,
+    ...(entry.note !== undefined ? { note: entry.note } : {}),
+  };
+}
+
+export function isMergedAccountingEntry(
+  entry: FamilyLedgerEntry,
+): entry is FamilyLedgerEntry & { readonly childIssue: number } {
+  return (
+    entry.status === "merged" &&
+    Number.isSafeInteger(entry.childIssue) &&
+    entry.childIssue! > 0
+  );
+}
+
+function latestValidFamilyAnswerAfter(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  index: number,
+): EscalationAnswerPayload | undefined {
+  for (let i = entries.length - 1; i > index; i--) {
+    const entry = entries[i]!;
+    if (isValidFamilyAnswer(entry)) return familyAnswerPayload(entry);
+  }
+  return undefined;
+}
+
+/** Latest family escalation and the later valid answer row that reopens it (#439). */
+export function familyEscalationState(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+):
+  | {
+      readonly escalation: FamilyLedgerEntry;
+      readonly answer?: EscalationAnswerPayload;
+    }
+  | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (isValidFamilyShipped(entry)) return undefined;
+    if (entry.status !== "escalated") continue;
+    if (entry.event !== "escalated") return { escalation: entry };
+    const answer =
+      entry.escalationKind === "decision"
+        ? latestValidFamilyAnswerAfter(entries, i)
+        : undefined;
+    return answer !== undefined ? { escalation: entry, answer } : { escalation: entry };
+  }
+  return undefined;
+}
+
 /**
  * Did a specific integrated CMR pass already pass for the CURRENT family base
  * HEAD? This is a resume guard, so it fails closed when the current head is
@@ -236,37 +365,83 @@ export async function recordShipped(
   backend: FamilyBackend,
   record: ShippedRecord,
 ): Promise<void> {
+  const pr = record.pr.trim();
+  const familyHeadAfter = record.familyHeadAfter.trim();
+  if (pr.length === 0) {
+    throw new Error("family shipped marker must include a non-empty PR URL");
+  }
+  if (familyHeadAfter.length === 0) {
+    throw new Error("family shipped marker must include a non-empty familyHeadAfter");
+  }
   await backend.appendFamilyLedger(
     compact({
       status: "shipped",
       event: "shipped",
       phase: "final",
-      pr: record.pr,
+      pr,
+      familyHeadAfter,
     }) as FamilyLedgerEntry,
   );
 }
 
 /**
- * Did the terminal family ship already succeed? True once a `status:"shipped"`
- * marker is on the ledger (online review r2, codex P1). The spine reads this
- * BEFORE the final barrier so an already-delivered family run is not re-shipped.
+ * Did the terminal family ship already succeed for THIS family HEAD? True only
+ * when a complete `status:"shipped"` marker is on the ledger and its
+ * `familyHeadAfter` equals the current family HEAD. The spine reads this BEFORE
+ * the final barrier so an already-delivered family run is not re-shipped, while a
+ * later live HEAD advance is re-verified / re-shipped instead of being hidden by
+ * an older PR marker.
  */
 export function familyAlreadyShipped(
   entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
 ): boolean {
+  return familyShippedRecordForHead(entries, familyHeadAfter) !== undefined;
+}
+
+export function familyShippedRecordForHead(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
+): ShippedRecord | undefined {
   // Fail-CLOSED on a malformed row (online review r3, coderabbit): the spine skips
   // the final barrier on this, so a corrupt/hand-edited `status:"shipped"` row with
   // no real delivery must NOT bypass verify/cmr/ship. Require the COMPLETE shape
-  // `recordShipped` always writes — status + event + final phase + a non-blank `pr`
-  // URL — so only a genuine terminal ship counts as delivered.
+  // `recordShipped` writes — status + event + final phase + a non-blank `pr` URL
+  // + a non-blank `familyHeadAfter` — so only a genuine terminal ship for the
+  // current HEAD counts as delivered.
+  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) return undefined;
+  const shipped = entries.find(
+    (e): e is FamilyLedgerEntry & { readonly pr: string; readonly familyHeadAfter: string } =>
+      isValidFamilyShipped(e) && e.familyHeadAfter === familyHeadAfter,
+  );
+  if (shipped === undefined) return undefined;
+  return { pr: shipped.pr, familyHeadAfter: shipped.familyHeadAfter };
+}
+
+/**
+ * Does the ledger contain a legacy terminal shipped marker that predates
+ * `familyHeadAfter` binding? It proves a ship/PR already happened, but it cannot
+ * prove which HEAD that PR covers, so resume must fail closed instead of either
+ * silently skipping a newer head or re-running ship and duplicating the PR attempt.
+ */
+export function hasUnboundLegacyShippedMarker(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+): boolean {
   return entries.some(
     (e) =>
       e.status === "shipped" &&
       e.event === "shipped" &&
       e.phase === "final" &&
       typeof e.pr === "string" &&
-      e.pr.trim().length > 0,
+      e.pr.trim().length > 0 &&
+      (typeof e.familyHeadAfter !== "string" || e.familyHeadAfter.trim().length === 0),
   );
+}
+
+export function hasBoundShippedMarker(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+): boolean {
+  return entries.some((e) => isValidFamilyShipped(e));
 }
 
 /**
@@ -290,7 +465,7 @@ export function mergedSet(
     // Only `status:"merged"` entries count, and only via their `childIssue`. A
     // PHASE-LEVEL `aborted` entry (#291 缺口 2) has the wrong status AND no
     // `childIssue`; the `childIssue !== undefined` guard makes optionality explicit.
-    if (e.status === "merged" && e.childIssue !== undefined) out.add(e.childIssue);
+    if (isMergedAccountingEntry(e)) out.add(e.childIssue!);
   }
   return out;
 }

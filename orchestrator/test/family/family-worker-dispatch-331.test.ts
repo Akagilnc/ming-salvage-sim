@@ -43,6 +43,9 @@ class CapableFamilyBackend implements FamilyBackend {
   async readFamilyLedger(): Promise<[]> {
     return [];
   }
+  async readFamilyHead(): Promise<string> {
+    return "head-1";
+  }
   async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
     this.verifyCalls.push(req);
     return { ok: true };
@@ -57,7 +60,7 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);
-    return { url: `https://example/pr/${req.familyBase}` };
+    return { url: `https://example/pr/${req.familyBase}`, prHead: "head-1" };
   }
 }
 
@@ -129,6 +132,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       kind: WorkerSpec["kind"];
       promptFile: string;
       cmrPass?: DispatchContext["cmrPass"];
+      escalationAnswer?: DispatchContext["escalationAnswer"];
     }> = [];
     completenessConverged = true;
     async mergeChildIntoFamilyBase(): Promise<never> {
@@ -137,6 +141,9 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
     async appendFamilyLedger(): Promise<void> {}
     async readFamilyLedger(): Promise<[]> {
       return [];
+    }
+    async readFamilyHead(): Promise<string> {
+      return "head-1";
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
@@ -148,7 +155,10 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       this.dispatched.push({
         kind: spec.kind,
         promptFile: spec.promptFile,
-        cmrPass: ctx.cmrPass,
+        ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+        ...(ctx.escalationAnswer !== undefined
+          ? { escalationAnswer: ctx.escalationAnswer }
+          : {}),
       });
       if (spec.kind === "cmr") {
         return {
@@ -168,7 +178,13 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       // cmr S336 r4) with a real pr_opened + pr URL.
       return {
         kind: "completed",
-        output: { kind: "ship", branch: "feat/330", pr: "u", status: "pr_opened" },
+        output: {
+          kind: "ship",
+          branch: "feat/330",
+          pr: "u",
+          prHead: "head-1",
+          status: "pr_opened",
+        },
       };
     }
   }
@@ -192,7 +208,39 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
         promptFile: "integrated_cmr_correctness.md",
         cmrPass: "correctness",
       },
-      { kind: "ship", promptFile: "family_ship.md", cmrPass: undefined },
+      { kind: "ship", promptFile: "family_ship.md" },
+    ]);
+  });
+
+  it("threads the human escalation answer through both CMR passes and the ship worker", async () => {
+    const be = new NewSeamFamilyBackend();
+    const escalationAnswer = {
+      event: "escalation_answered" as const,
+      answer: "continue-same-class",
+      note: "Human approved another family gate pass.",
+    };
+
+    await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: be,
+      escalationAnswer,
+    });
+
+    expect(be.dispatched).toEqual([
+      {
+        kind: "cmr",
+        promptFile: "integrated_cmr_completeness.md",
+        cmrPass: "completeness",
+        escalationAnswer,
+      },
+      {
+        kind: "cmr",
+        promptFile: "integrated_cmr_correctness.md",
+        cmrPass: "correctness",
+        escalationAnswer,
+      },
+      { kind: "ship", promptFile: "family_ship.md", escalationAnswer },
     ]);
   });
 
@@ -224,6 +272,9 @@ describe("#331 the family ship worker must return a SHIP payload (codex R2 guard
     async appendFamilyLedger(): Promise<void> {}
     async readFamilyLedger(): Promise<[]> {
       return [];
+    }
+    async readFamilyHead(): Promise<string> {
+      return "head-1";
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
@@ -268,6 +319,9 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     async appendFamilyLedger(): Promise<void> {}
     async readFamilyLedger(): Promise<[]> {
       return [];
+    }
+    async readFamilyHead(): Promise<string> {
+      return "head-1";
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
@@ -320,12 +374,59 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     expect(res).toEqual({ ok: false, ran: true });
   });
 
+  it("a completed pr_opened ship missing its verified PR head ⇒ INCOMPLETE_GATE", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: "feat/330",
+        status: "pr_opened",
+        pr: "https://gh/pr/1",
+      },
+    });
+    expect(res).toEqual({ ok: false, ran: true });
+  });
+
+  it("a completed pr_opened ship with a blank verified PR head ⇒ INCOMPLETE_GATE", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: "feat/330",
+        status: "pr_opened",
+        pr: "https://gh/pr/1",
+        prHead: "   ",
+      },
+    });
+    expect(res).toEqual({ ok: false, ran: true });
+  });
+
   it("a completed pr_opened ship on familyBase with a real pr ⇒ ok (the contract holds)", async () => {
     const res = await gate({
       kind: "completed",
-      output: { kind: "ship", branch: "feat/330", status: "pr_opened", pr: "https://gh/pr/1" },
+      output: {
+        kind: "ship",
+        branch: "feat/330",
+        status: "pr_opened",
+        pr: "https://gh/pr/1",
+        prHead: "head-1",
+      },
     });
     expect(res).toEqual({ ok: true, ran: true });
+  });
+
+  it("a completed pr_opened ship whose PR head does not match the current family HEAD ⇒ INCOMPLETE_GATE", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: "feat/330",
+        status: "pr_opened",
+        pr: "https://gh/pr/1",
+        prHead: "stale-head",
+      },
+    });
+    expect(res).toEqual({ ok: false, ran: true });
   });
 });
 
@@ -473,7 +574,28 @@ describe("#331 legacyDispatchFamilyWorker — wraps legacy returns as WorkerResu
     expect(res.kind).toBe("completed");
     if (res.kind === "completed" && res.output.kind === "ship") {
       expect(res.output.pr).toBe("https://example/pr/fb");
+      expect(res.output.prHead).toBe("head-1");
       expect(res.output.status).toBe("pr_opened");
+    } else {
+      throw new Error("expected completed ship payload");
+    }
+  });
+
+  it("ship worker: does not synthesize prHead from the local family ref when openFamilyPr did not verify it", async () => {
+    class UnverifiedPrBackend extends CapableFamilyBackend {
+      override async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
+        this.prCalls.push(req);
+        return { url: `https://example/pr/${req.familyBase}` };
+      }
+    }
+    const be = new UnverifiedPrBackend();
+    const res = await legacyDispatchFamilyWorker(be, familyShipWorkerSpec(), {
+      familyBase: "fb",
+    });
+    expect(res.kind).toBe("completed");
+    if (res.kind === "completed" && res.output.kind === "ship") {
+      expect(res.output.pr).toBe("https://example/pr/fb");
+      expect(res.output.prHead).toBeUndefined();
     } else {
       throw new Error("expected completed ship payload");
     }

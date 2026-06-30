@@ -58,6 +58,7 @@ import {
   resolveActiveModelRoute,
 } from "../modelRoutes.js";
 import { modelIsStrongLeg } from "../realBackend.js";
+import type { EscalationAnswerPayload } from "../types.js";
 import {
   cmrPassAlreadyPassed,
   recordAborted as recordDurableAbort,
@@ -107,6 +108,8 @@ export interface VerifyCmrInput {
    * resolution this run; the cmr request omits the field (the back-compat shape).
    */
   readonly llmResolvedChildren?: readonly number[];
+  /** Human answer that reopened a prior family decision escalation (#439). */
+  readonly escalationAnswer?: EscalationAnswerPayload;
   /**
    * The family base HEAD at the time the hook runs (#291 缺口 2), supplied by the
    * spine. On a RED barrier the hook forwards it onto BOTH the in-memory seam
@@ -238,6 +241,19 @@ async function readPostCmrFamilyHead(
   }
 }
 
+async function readRequiredFamilyHead(
+  familyBackend: FamilyBackend,
+  familyBase: string,
+): Promise<string | undefined> {
+  if (familyBackend.readFamilyHead === undefined) return undefined;
+  try {
+    const liveHead = (await familyBackend.readFamilyHead(familyBase)).trim();
+    return liveHead.length > 0 ? liveHead : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Dispatch a family worker, converting ANY thrown STARTUP error into a documented
  * gate result instead of letting it escape verifyCmr (cmr S336 r8 — startup/error
@@ -247,19 +263,16 @@ async function readPostCmrFamilyHead(
  * escalate, but the worker ALSO `git checkout`s the family base + writes the focus
  * file + spins docker, any of which can still throw) — would propagate out of
  * `runVerifyCmr` and reject the WHOLE family run, bypassing the INCOMPLETE_GATE
- * fail-safe the malformed / non-completed paths already use. So catch it, record an
- * `aborted` event (decision 3⑤ "不静默吞" — the gate failure stays observable, not a
- * silent swallow), and hand back the discriminated `failed` WorkerResult the callers
- * already fail-safe to INCOMPLETE_GATE. A NON-throwing dispatch is returned
- * unchanged (escalated / completed / malformed are handled by the callers).
+ * fail-safe the malformed / non-completed paths already use. So catch it and hand
+ * back the discriminated `failed` WorkerResult; the caller records the abort after
+ * re-reading the live family head, because a write-capable worker may have committed
+ * before throwing. A NON-throwing dispatch is returned unchanged (escalated /
+ * completed / malformed are handled by the callers).
  */
 async function dispatchOrAbort(
   familyBackend: FamilyBackend,
   spec: Parameters<typeof dispatchFamilyWorker>[1],
   ctx: Parameters<typeof dispatchFamilyWorker>[2],
-  phase: VerifyCmrPhase,
-  familyHeadAfter: string | undefined,
-  cmrPass?: IntegratedCmrPass,
 ): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
   try {
     return await dispatchFamilyWorker(familyBackend, spec, ctx);
@@ -267,19 +280,6 @@ async function dispatchOrAbort(
     const reason = `family ${spec.kind} worker threw on startup: ${
       err instanceof Error ? err.message : String(err)
     }`;
-    await familyBackend.recordAborted?.({
-      phase,
-      ...(cmrPass !== undefined ? { cmrPass } : {}),
-      familyBase: ctx.familyBase!,
-      errorPackage: { reason },
-      familyHeadAfter,
-    });
-    await recordDurableAbort(familyBackend, {
-      phase,
-      ...(cmrPass !== undefined ? { cmrPass } : {}),
-      reason,
-      familyHeadAfter,
-    });
     return { kind: "failed", reason };
   }
 }
@@ -289,6 +289,7 @@ async function runIntegratedCmrPass(input: {
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
   readonly llmResolvedChildren?: readonly number[];
+  readonly escalationAnswer?: EscalationAnswerPayload;
   readonly familyHeadAfter?: string;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
@@ -296,6 +297,7 @@ async function runIntegratedCmrPass(input: {
     familyBackend,
     familyBase,
     llmResolvedChildren,
+    escalationAnswer,
     familyHeadAfter,
   } = input;
   const routeFingerprint = modelRouteFingerprint(resolveActiveModelRoute());
@@ -325,10 +327,13 @@ async function runIntegratedCmrPass(input: {
       ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
         ? { llmResolvedChildren }
         : {}),
+      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     },
-    "final",
+  );
+  const postWorkerFamilyHead = await readPostCmrFamilyHead(
+    familyBackend,
+    familyBase,
     resolvedFamilyHeadAfter,
-    pass,
   );
   if (cmrResult.kind === "escalated") {
     const reason = `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`;
@@ -336,37 +341,33 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
     await familyBackend.escalateFamily?.({
       reason,
+      familyHeadAfter: postWorkerFamilyHead,
     });
-    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   if (cmrResult.kind !== "completed" || cmrResult.output.kind !== "cmr") {
-    const startupAbortAlreadyRecorded =
-      cmrResult.kind === "failed" &&
-      cmrResult.reason.startsWith("family cmr worker threw on startup:");
-    if (!startupAbortAlreadyRecorded) {
-      const reason =
-        cmrResult.kind === "failed"
-          ? `family integrated cmr ${pass} worker failed: ${cmrResult.reason}`
-          : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
-      await familyBackend.recordAborted?.({
-        phase: "final",
-        cmrPass: pass,
-        familyBase,
-        errorPackage: { reason },
-        familyHeadAfter: resolvedFamilyHeadAfter,
-      });
-      await recordDurableAbort(familyBackend, {
-        phase: "final",
-        cmrPass: pass,
-        reason,
-        familyHeadAfter: resolvedFamilyHeadAfter,
-      });
-    }
-    return { result: INCOMPLETE_GATE, familyHeadAfter: resolvedFamilyHeadAfter };
+    const reason =
+      cmrResult.kind === "failed"
+        ? `family integrated cmr ${pass} worker failed: ${cmrResult.reason}`
+        : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
+    await familyBackend.recordAborted?.({
+      phase: "final",
+      cmrPass: pass,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postWorkerFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter: postWorkerFamilyHead,
+    });
+    return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
   }
   if (!cmrResult.output.converged) {
     const reason =
@@ -375,10 +376,13 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
-    await familyBackend.escalateFamily?.({ reason });
-    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
+    await familyBackend.escalateFamily?.({
+      reason,
+      familyHeadAfter: postWorkerFamilyHead,
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   const legAccountingFailure = cmrLegAccountingFailure({
     successfulLegs: cmrResult.output.successfulLegs ?? [],
@@ -390,10 +394,13 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
-    await familyBackend.escalateFamily?.({ reason });
-    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
+    await familyBackend.escalateFamily?.({
+      reason,
+      familyHeadAfter: postWorkerFamilyHead,
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   const floorFailure = cmrFloorFailureReason({
     pass,
@@ -405,10 +412,13 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason: floorFailure,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
-    await familyBackend.escalateFamily?.({ reason: floorFailure });
-    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
+    await familyBackend.escalateFamily?.({
+      reason: floorFailure,
+      familyHeadAfter: postWorkerFamilyHead,
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   const closureFailure = cmrClosureFailureReason({
     pass,
@@ -421,22 +431,20 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason: closureFailure,
-      familyHeadAfter: resolvedFamilyHeadAfter,
+      familyHeadAfter: postWorkerFamilyHead,
     });
-    await familyBackend.escalateFamily?.({ reason: closureFailure });
-    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
+    await familyBackend.escalateFamily?.({
+      reason: closureFailure,
+      familyHeadAfter: postWorkerFamilyHead,
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
-  const postCmrFamilyHead = await readPostCmrFamilyHead(
-    familyBackend,
-    familyBase,
-    resolvedFamilyHeadAfter,
-  );
   await recordCmrPassed(familyBackend, {
     cmrPass: pass,
-    familyHeadAfter: postCmrFamilyHead,
+    familyHeadAfter: postWorkerFamilyHead,
     routeFingerprint,
   });
-  return { result: { ok: true, ran: true }, familyHeadAfter: postCmrFamilyHead };
+  return { result: { ok: true, ran: true }, familyHeadAfter: postWorkerFamilyHead };
 }
 
 /**
@@ -453,8 +461,14 @@ async function runIntegratedCmrPass(input: {
 export async function runVerifyCmr(
   input: VerifyCmrInput,
 ): Promise<VerifyCmrResult> {
-  const { phase, familyBase, familyBackend, llmResolvedChildren, familyHeadAfter } =
-    input;
+  const {
+    phase,
+    familyBase,
+    familyBackend,
+    llmResolvedChildren,
+    escalationAnswer,
+    familyHeadAfter,
+  } = input;
 
   // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
   if (familyBackend.runFamilyVerify === undefined) return NOOP;
@@ -510,6 +524,7 @@ export async function runVerifyCmr(
     familyBackend,
     familyBase,
     llmResolvedChildren,
+    escalationAnswer,
     familyHeadAfter,
   });
   if (!completeness.result.ok) return completeness.result;
@@ -519,6 +534,7 @@ export async function runVerifyCmr(
     familyBackend,
     familyBase,
     llmResolvedChildren,
+    escalationAnswer,
     familyHeadAfter: completeness.familyHeadAfter,
   });
   if (!correctness.result.ok) return correctness.result;
@@ -545,9 +561,10 @@ export async function runVerifyCmr(
   const shipResult = await dispatchOrAbort(
     familyBackend,
     familyShipWorkerSpec(),
-    { familyBase },
-    phase,
-    cmrPassedFamilyHeadAfter,
+    {
+      familyBase,
+      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
+    },
   );
   // An ESCALATED family ship worker (gstack-ship STOP/HITL) is the family
   // escalate续跑 path, not a false success — call the escalate seam (codex cmr R4
@@ -555,8 +572,14 @@ export async function runVerifyCmr(
   // malformed means the PR did not open → fail-safe INCOMPLETE_GATE (decision 3⑤;
   // mirrors the cmr-stage guard above). #331's legacy wrapper produces neither.
   if (shipResult.kind === "escalated") {
+    const postShipFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      cmrPassedFamilyHeadAfter,
+    );
     await familyBackend.escalateFamily?.({
       reason: `${shipResult.escalation.reason} — ${shipResult.escalation.diagnosis}`,
+      familyHeadAfter: postShipFamilyHead,
     });
     return { ok: false, ran: true };
   }
@@ -566,10 +589,25 @@ export async function runVerifyCmr(
     // event (online review r3, codex P2): without it a resume sees neither a shipped
     // marker nor a failure marker and re-runs the whole final verify/cmr/ship,
     // losing the original failure context (decision 3⑤ 不静默吞).
+    const reason =
+      shipResult.kind === "failed"
+        ? `family ship worker failed: ${shipResult.reason}`
+        : "family ship worker returned no valid result (crash/malformed)";
+    const postShipFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      cmrPassedFamilyHeadAfter,
+    );
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postShipFamilyHead,
+    });
     await recordDurableAbort(familyBackend, {
       phase,
-      reason: "family ship worker returned no valid result (crash/malformed)",
-      familyHeadAfter: cmrPassedFamilyHeadAfter,
+      reason,
+      familyHeadAfter: postShipFamilyHead,
     });
     return INCOMPLETE_GATE;
   }
@@ -592,6 +630,41 @@ export async function runVerifyCmr(
   ) {
     return INCOMPLETE_GATE;
   }
+  const exactPostShipFamilyHead = await readRequiredFamilyHead(familyBackend, familyBase);
+  if (exactPostShipFamilyHead === undefined) {
+    const reason =
+      "family ship worker opened a PR, but the current family HEAD could not be resolved; refusing to persist a stale shipped marker";
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: cmrPassedFamilyHeadAfter,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: cmrPassedFamilyHeadAfter,
+    });
+    return INCOMPLETE_GATE;
+  }
+  if (!isFilledString(ship.prHead) || ship.prHead !== exactPostShipFamilyHead) {
+    const reason =
+      `family ship worker opened a PR, but the PR head (${ship.prHead ?? "missing"}) ` +
+      `does not match current family HEAD (${exactPostShipFamilyHead}); refusing to persist a shipped marker`;
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: exactPostShipFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: exactPostShipFamilyHead,
+    });
+    return INCOMPLETE_GATE;
+  }
+
   // ── Persist the terminal SHIPPED marker before reporting success (online review
   // r2, codex P1). The family ship commit (VERSION/CHANGELOG bump) advanced the
   // family base, but nothing durable recorded that the terminal 止于-PR ship ALREADY
@@ -599,7 +672,11 @@ export async function runVerifyCmr(
   // child merged) and it would re-enter this final barrier — re-running the full
   // verify + integrated cmr and re-invoking the ship worker (a duplicate VERSION
   // bump / PR attempt). Writing a `shipped` ledger entry makes the delivery durable
-  // resume truth: the spine's `familyAlreadyShipped` guard short-circuits the barrier.
-  await recordShipped(familyBackend, { pr: ship.pr });
+  // resume truth: the spine's `familyAlreadyShipped` guard short-circuits the barrier
+  // only when the current family HEAD still equals this shipped head.
+  await recordShipped(familyBackend, {
+    pr: ship.pr,
+    familyHeadAfter: exactPostShipFamilyHead,
+  });
   return { ok: true, ran: true };
 }

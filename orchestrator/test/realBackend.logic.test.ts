@@ -4,8 +4,8 @@
  * Scope (per #256 acceptance criteria): only the zero-container, zero-LLM logic
  * — gh-snapshot parsing, auth-mount path construction, model-slug mapping,
  * per-step sessionId extraction (seam extension), branchHEAD consistency
- * (codex#2), StructuredOutputError dead-session classification, and failedStep
- * attribution (codex#3). The real container / real-LLM / real-gh paths are #256
+ * (codex#2), resume error classification, and failedStep attribution
+ * (codex#3). The real container / real-LLM / real-gh paths are #256
  * MANUAL smoke and are NOT exercised here.
  *
  * These imports load `@ai-hero/sandcastle` (side-effect-free) but never start a
@@ -14,6 +14,8 @@
  */
 
 import { dirname, join } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -44,6 +46,8 @@ import {
   promptsDirError,
   realCommitCount,
   reconcileCoderCommits,
+  reconcileResumeCoderCommits,
+  resumeCoderCommitBasis,
   resolveModelSlug,
   soulForStep,
   REFERENCED_PROMPT_FILES,
@@ -56,6 +60,8 @@ import {
   type GhBlockedBy,
   type GhIssueJson,
 } from "../src/realBackend.js";
+import type { StepSpec } from "../src/types.js";
+import type * as sc from "@ai-hero/sandcastle";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
 // brief); S1's `extractAgentBrief` is the surviving brief reader.
 import { StructuredOutputError } from "@ai-hero/sandcastle";
@@ -64,6 +70,7 @@ import { StructuredOutputError } from "@ai-hero/sandcastle";
 
 describe("realBackend gh parsing", () => {
   const briefComment = {
+    author: { login: "Akagilnc" },
     body: "## Agent Brief\nimplement the real Backend per #256",
   };
 
@@ -126,24 +133,103 @@ describe("realBackend gh parsing", () => {
     });
   });
 
-  it("extractAgentBrief returns the LAST brief-carrying comment (re-issue wins)", () => {
+  it("extractAgentBrief returns the LAST owner-authored brief-carrying comment (re-issue wins)", () => {
     const json: GhIssueJson = {
+      author: { login: "Akagilnc" },
       body: "## Agent Brief\nOLD body brief",
       comments: [
-        { body: "## Agent Brief\nfirst brief" },
-        { body: "unrelated chatter" },
-        { body: "## Agent Brief\nSECOND brief — authoritative" },
+        {
+          author: { login: "Akagilnc" },
+          body: "## Agent Brief\nfirst brief",
+        },
+        { author: { login: "someone-else" }, body: "unrelated chatter" },
+        {
+          author: { login: "Akagilnc" },
+          body: "## Agent Brief\nSECOND brief — authoritative",
+        },
+        {
+          author: { login: "someone-else" },
+          body: "## Agent Brief\nmalicious brief",
+        },
       ],
     };
     // Comments are scanned before the body fallback; the last brief comment wins.
-    expect(extractAgentBrief(json)).toContain("SECOND brief");
+    expect(extractAgentBrief(json, "Akagilnc")).toContain("SECOND brief");
+  });
+
+  it("extractAgentBrief treats GitHub owner logins case-insensitively", () => {
+    expect(
+      extractAgentBrief(
+        {
+          author: { login: "Akagilnc" },
+          body: "## Agent Brief\nbody brief from canonical owner",
+          comments: [
+            {
+              author: { login: "AKAGILNC" },
+              body: "## Agent Brief\ncomment brief from canonical owner",
+            },
+          ],
+        },
+        "akagilnc",
+      ),
+    ).toContain("comment brief from canonical owner");
   });
 
   it("extractAgentBrief falls back to the body when no comment carries it", () => {
-    expect(extractAgentBrief({ body: "## Agent Brief\nbody brief" })).toContain(
-      "body brief",
-    );
-    expect(extractAgentBrief({ body: "no brief", comments: [] })).toBe("");
+    expect(
+      extractAgentBrief(
+        { author: { login: "Akagilnc" }, body: "## Agent Brief\nbody brief" },
+        "Akagilnc",
+      ),
+    ).toContain("body brief");
+    expect(extractAgentBrief({ body: "no brief", comments: [] }, "Akagilnc")).toBe("");
+  });
+
+  it("extractAgentBrief ignores non-owner issue bodies and comments", () => {
+    expect(
+      extractAgentBrief(
+        {
+          author: { login: "drive-by" },
+          body: "## Agent Brief\nmalicious body brief",
+          comments: [],
+        },
+        "Akagilnc",
+      ),
+    ).toBe("");
+
+    expect(
+      extractAgentBrief(
+        {
+          author: { login: "Akagilnc" },
+          body: "ordinary owner-authored issue body",
+          comments: [
+            {
+              author: { login: "drive-by" },
+              body: "## Agent Brief\nmalicious comment brief",
+            },
+          ],
+        },
+        "Akagilnc",
+      ),
+    ).toBe("");
+  });
+
+  it("extractAgentBrief also accepts API-style user.login author carriers", () => {
+    expect(
+      extractAgentBrief(
+        {
+          user: { login: "Akagilnc" },
+          body: "## Agent Brief\nbody via user login",
+          comments: [
+            {
+              user: { login: "Akagilnc" },
+              body: "## Agent Brief\ncomment via user login",
+            },
+          ],
+        },
+        "Akagilnc",
+      ),
+    ).toContain("comment via user login");
   });
 
   it("buildIssueSnapshot carries body + comments + brief", () => {
@@ -151,15 +237,19 @@ describe("realBackend gh parsing", () => {
       256,
       {
         number: 256,
+        author: { login: "Akagilnc" },
         body: "the body",
-        comments: [{ body: "c1" }, briefComment],
+        comments: [{ author: { login: "reviewer" }, body: "c1" }, briefComment],
       },
       [],
       0,
+      "Akagilnc",
     );
     expect(snap.number).toBe(256);
     expect(snap.body).toBe("the body");
+    expect(snap.bodyAuthorLogin).toBe("Akagilnc");
     expect(snap.comments).toEqual(["c1", briefComment.body]);
+    expect(snap.commentAuthorLogins).toEqual(["reviewer", "Akagilnc"]);
     expect(snap.agentBrief).toContain("## Agent Brief");
   });
 
@@ -172,6 +262,7 @@ describe("realBackend gh parsing", () => {
       number: 256,
       title: "Slice: real Backend",
       state: "open",
+      author: { login: "Akagilnc" },
       body: "the body",
       labels: [{ name: "ready-for-agent" }, { name: "enhancement" }],
       comments: [briefComment],
@@ -180,7 +271,7 @@ describe("realBackend gh parsing", () => {
       { number: 248, state: "closed" },
       { number: 254, state: "open" },
     ];
-    const snap = buildIssueSnapshot(256, json, blockedBy, /*subIssueCount*/ 3);
+    const snap = buildIssueSnapshot(256, json, blockedBy, /*subIssueCount*/ 3, "Akagilnc");
     expect(snap.nativeMeta).toEqual({
       title: "Slice: real Backend",
       state: "open",
@@ -194,7 +285,7 @@ describe("realBackend gh parsing", () => {
   });
 
   it("buildIssueSnapshot tolerates missing title/state/labels (empty native metadata)", () => {
-    const snap = buildIssueSnapshot(99, {}, [], 0);
+    const snap = buildIssueSnapshot(99, {}, [], 0, "Akagilnc");
     expect(snap.nativeMeta).toEqual({
       title: "",
       state: "",
@@ -714,10 +805,10 @@ describe("realBackend resume HEAD reconciliation (codex#2 wiring, F5)", () => {
   });
 });
 
-// ─── StructuredOutputError dead-session classification (#256) ─────────────────
+// ─── resume error classification (#285) ─────────────────────────────────────
 
 describe("realBackend classifyResumeError", () => {
-  it("retry-structured when a StructuredOutputError carries a sessionId", () => {
+  it("propagates StructuredOutputError instead of falling back to a fresh run", () => {
     const err = new StructuredOutputError("bad output", {
       tag: "review",
       rawMatched: undefined,
@@ -725,27 +816,59 @@ describe("realBackend classifyResumeError", () => {
       branch: "feat/x",
       sessionId: "sess-123",
     });
-    expect(classifyResumeError(err)).toEqual({
-      kind: "retry-structured",
-      sessionId: "sess-123",
-    });
+    expect(classifyResumeError(err)).toEqual({ kind: "propagate" });
   });
 
-  it("fresh-run when a StructuredOutputError has no sessionId", () => {
+  it("propagates schema-parse style StructuredOutputError with no sessionId", () => {
     const err = new StructuredOutputError("bad output", {
       tag: "review",
       rawMatched: undefined,
       commits: [],
       branch: "feat/x",
     });
-    expect(classifyResumeError(err)).toEqual({ kind: "fresh-run" });
+    expect(classifyResumeError(err)).toEqual({ kind: "propagate" });
   });
 
-  it("fresh-run for a generic dead-session / transport error", () => {
+  it("fresh-run only for an explicit dead or missing resume session", () => {
     expect(classifyResumeError(new Error("session not found"))).toEqual({
       kind: "fresh-run",
     });
-    expect(classifyResumeError("string error")).toEqual({ kind: "fresh-run" });
+    expect(classifyResumeError(new Error("resume session expired"))).toEqual({
+      kind: "fresh-run",
+    });
+    expect(
+      classifyResumeError(
+        new Error('resumeSession "session-escalated-S2" not found under /tmp/sc'),
+      ),
+    ).toEqual({ kind: "fresh-run" });
+    expect(
+      classifyResumeError(
+        new Error(
+          "Session resume failed: session session-escalated-S2 not found in /tmp/sc",
+        ),
+      ),
+    ).toEqual({ kind: "fresh-run" });
+  });
+
+  it("propagates signal, auth, model, and generic errors", () => {
+    expect(
+      classifyResumeError(
+        new Error("step S2-coder-resume did not fire its required completion signal"),
+      ),
+    ).toEqual({ kind: "propagate" });
+    expect(classifyResumeError(new Error("401 unauthorized"))).toEqual({
+      kind: "propagate",
+    });
+    expect(classifyResumeError(new Error("session token not found"))).toEqual({
+      kind: "propagate",
+    });
+    expect(classifyResumeError(new Error("model overloaded"))).toEqual({
+      kind: "propagate",
+    });
+    expect(
+      classifyResumeError(new Error("could not resume session: 401 unauthorized")),
+    ).toEqual({ kind: "propagate" });
+    expect(classifyResumeError("string error")).toEqual({ kind: "propagate" });
   });
 });
 
@@ -881,6 +1004,131 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
   });
 });
 
+// ─── #286 toolchain preflight before agent dispatch ─────────────────────────
+
+describe("RealBackend runStep toolchain preflight (#286)", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const realPromptsDir = join(here, "..", "prompts");
+
+  const coderSpec: StepSpec = {
+    id: "S2",
+    role: "coder",
+    promptFile: "coder_implement.md",
+    model: "gpt-5.5",
+    completionSignal: "CODER_STEP_COMPLETE",
+    maxIter: 5,
+    soul: "coder",
+    toolchain: ["python", "node", "npm", "typescript"],
+  };
+
+  class PreflightBackend extends RealBackend {
+    public agentRunReached = false;
+    public agentResult?: Awaited<ReturnType<typeof sc.run>>;
+    public preflightResults = new Map<string, boolean>();
+    public preflightHook?: (tool: string) => Promise<void>;
+
+    protected override cloneDirExists(): boolean {
+      return true;
+    }
+
+    protected override sh(file: string, args: string[]): string {
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+        return ".git";
+      }
+      return "";
+    }
+
+    protected override async preflightToolchainTool(tool: string): Promise<void> {
+      if (this.preflightHook !== undefined) return this.preflightHook(tool);
+      if (this.preflightResults.get(tool) === false) {
+        throw new Error(`${tool}: command not found`);
+      }
+    }
+
+    protected override async runAgentSandbox(
+      _options: Parameters<typeof sc.run>[0],
+    ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+      this.agentRunReached = true;
+      if (this.agentResult !== undefined) return this.agentResult;
+      throw new Error("agent sandbox should not run during this test");
+    }
+  }
+
+  function makeBackend(): PreflightBackend {
+    return new PreflightBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 286,
+      repo: "owner/name",
+      imageName: "ming-worker:bad",
+      promptsDir: realPromptsDir,
+    });
+  }
+
+  it("fails before the agent sandbox when the declared image lacks a tool", async () => {
+    const backend = makeBackend();
+    backend.preflightResults.set("npm", false);
+
+    await expect(
+      backend.runStep(coderSpec, {
+        branch: "feat/issue-286",
+        base: "main",
+        path: "/tmp/worktree/issue-286",
+      }),
+    ).rejects.toThrow(/toolchain preflight.*ming-worker:bad.*npm/is);
+    expect(backend.agentRunReached).toBe(false);
+  });
+
+  it("continues to the agent sandbox when all declared tools exist", async () => {
+    const backend = makeBackend();
+    backend.agentResult = {
+      completionSignal: "CODER_STEP_COMPLETE",
+      stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
+      commits: [],
+      iterations: [{ sessionId: "sess-286" }],
+    } as Awaited<ReturnType<typeof sc.run>>;
+
+    const result = await backend.runStep(coderSpec, {
+      branch: "feat/issue-286",
+      base: "main",
+      path: "/tmp/worktree/issue-286",
+    });
+
+    expect(backend.agentRunReached).toBe(true);
+    expect(result).toEqual({
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
+      sessionId: "sess-286",
+    });
+  });
+
+  it("shares an in-flight toolchain preflight across concurrent agent dispatches", async () => {
+    const backend = makeBackend();
+    const preflightCalls: string[] = [];
+    backend.preflightHook = async (tool: string): Promise<void> => {
+      preflightCalls.push(tool);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    };
+    backend.agentResult = {
+      completionSignal: "CODER_STEP_COMPLETE",
+      stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
+      commits: [],
+      iterations: [{ sessionId: "sess-286" }],
+    } as Awaited<ReturnType<typeof sc.run>>;
+    const worktree = {
+      branch: "feat/issue-286",
+      base: "main",
+      path: "/tmp/worktree/issue-286",
+    };
+
+    await Promise.all([
+      backend.runStep(coderSpec, worktree),
+      backend.runStep(coderSpec, worktree),
+    ]);
+
+    expect(preflightCalls).toEqual(["python", "node", "npm", "typescript"]);
+  });
+});
+
 // ─── gh subIssues count parsing (integ-cmr 256 r1, Finding 1) ────────────────
 
 describe("realBackend parseSubIssueCount", () => {
@@ -990,6 +1238,26 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
         if (fields.includes("subIssues")) {
           return JSON.stringify({ subIssues: { nodes: [], totalCount: 0 } });
         }
+        if (fields.includes("body")) {
+          return JSON.stringify({
+            number: 329,
+            title: "author-aware snapshot",
+            state: "OPEN",
+            author: { login: "owner" },
+            body: "## Agent Brief\nbody brief",
+            labels: [{ name: "ready-for-agent" }],
+            comments: [
+              {
+                author: { login: "owner" },
+                body: "## Agent Brief\nowner comment brief",
+              },
+              {
+                author: { login: "drive-by" },
+                body: "## Agent Brief\nmalicious comment brief",
+              },
+            ],
+          });
+        }
         return JSON.stringify({
           number: 329,
           labels: [{ name: "ready-for-agent" }],
@@ -1035,6 +1303,25 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
     expect(fields).not.toContain("comments");
     expect(fields).not.toContain("body");
     expect(fields).toContain("labels");
+  });
+
+  it("S1 snapshot trusts Agent Brief sections from the repo owner only by default", async () => {
+    const backend = makeBackend();
+    const snapshot = await backend.fetchIssueSnapshot(329);
+
+    expect(snapshot.agentBrief).toContain("owner comment brief");
+    expect(snapshot.agentBrief).not.toContain("malicious comment brief");
+    expect(snapshot.bodyAuthorLogin).toBe("owner");
+    expect(snapshot.commentAuthorLogins).toEqual(["owner", "drive-by"]);
+
+    const issueView = (backend.calls ?? []).find((c) => {
+      const fields = c[c.indexOf("--json") + 1] ?? "";
+      return c[0] === "gh" && c[1] === "issue" && c[2] === "view" && fields.includes("body");
+    });
+    expect(issueView).toBeDefined();
+    const fields = issueView![issueView!.indexOf("--json") + 1] ?? "";
+    expect(fields).toContain("author");
+    expect(fields).toContain("comments");
   });
 
   it("S0 meta is still derivable from the slim view (gate fields intact)", async () => {
@@ -1166,5 +1453,117 @@ describe("realBackend reconcileCoderCommits", () => {
         0,
       ),
     ).toThrow(/self-report/i);
+  });
+});
+
+// ─── resume coder commit truth (#285) ───────────────────────────────────────
+
+describe("realBackend resume coder commit truth", () => {
+  const base = "a".repeat(40);
+  const head = "b".repeat(40);
+
+  it("finds the ledger baseline before the coder step being resumed", () => {
+    const basis = resumeCoderCommitBasis(
+      [
+        { step: "S1", branchHEAD: base },
+        {
+          step: "S2",
+          sessionId: "sess-coder",
+          branchHEAD: head,
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        { step: "S8", branchHEAD: head, handoffStatus: "escalate" },
+      ],
+      "sess-coder",
+    );
+    expect(basis).toEqual({
+      baselineHead: base,
+      priorCommitsAdded: 1,
+    });
+  });
+
+  it("allows a resume that only re-emits the structured tag when cumulative git truth matches", () => {
+    expect(
+      reconcileResumeCoderCommits(
+        { committed: true, commitsAdded: 1 },
+        /*cumulativeGitCommitCount*/ 1,
+      ),
+    ).toEqual({ committed: true, commitsAdded: 1 });
+  });
+
+  it("rejects a resumed coder self-report that claims commits git does not have", () => {
+    expect(() =>
+      reconcileResumeCoderCommits(
+        { committed: true, commitsAdded: 1 },
+        /*cumulativeGitCommitCount*/ 0,
+      ),
+    ).toThrow(/resume/i);
+  });
+
+  it("fails closed when a prior commit-count fallback has no before-resume HEAD", () => {
+    class ResumeCommitBackend extends RealBackend {
+      protected override cloneDirExists(): boolean {
+        return true;
+      }
+      protected override sh(file: string, args: string[]): string {
+        if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+          return ".git";
+        }
+        throw new Error(`unexpected shell call: ${file} ${args.join(" ")}`);
+      }
+    }
+    const here = dirname(fileURLToPath(import.meta.url));
+    const root = mkdtempSync(join(tmpdir(), "resume-commit-truth-"));
+    const worktreePath = join(root, "wt");
+    const stateDir = join(root, ".ledger-256");
+    mkdirSync(worktreePath, { recursive: true });
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(
+      join(stateDir, "steps.jsonl"),
+      `${JSON.stringify({
+        step: "S2",
+        sessionId: "sess-coder",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      })}\n`,
+      "utf8",
+    );
+    const backend = new ResumeCommitBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 285,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "prompts"),
+    });
+
+    expect(() =>
+      (
+        backend as unknown as {
+          resumeCoderCommitCount(
+            worktree: { branch: string; base: string; path: string },
+            sessionId: string,
+            beforeResumeHead: string | undefined,
+          ): number;
+        }
+      ).resumeCoderCommitCount(
+        { branch: "feat/issue-256", base: "main", path: worktreePath },
+        "sess-coder",
+        undefined,
+      ),
+    ).toThrow(/before-resume HEAD/i);
+  });
+
+  it("dead-session fallback does not route resumed coders through normal runStep commit truth", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(here, "..", "src", "realBackend.ts"), "utf8");
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .map((l) => l.replace(/\/\/.*$/, ""))
+      .join("\n");
+
+    expect(code).not.toMatch(
+      /recovery\.kind\s*===\s*"fresh-run"[\s\S]*?return\s+await\s+this\.runStep\s*\(/,
+    );
   });
 });

@@ -87,6 +87,7 @@ class ChildBackend implements Backend {
 class AbortingFamilyBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly aborted: FamilyAbortedEvent[] = [];
+  currentFamilyHead = "head-1";
   constructor(
     private readonly script: {
       verify?: (req: FamilyVerifyRequest) => FamilyVerifyResult;
@@ -94,13 +95,17 @@ class AbortingFamilyBackend implements FamilyBackend {
     } = {},
   ) {}
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {
-    return { familyHead: `+${child.childIssue}`, childHead: `c${child.childIssue}` };
+    this.currentFamilyHead = `+${child.childIssue}`;
+    return { familyHead: this.currentFamilyHead, childHead: `c${child.childIssue}` };
   }
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
   async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
     return this.ledger;
+  }
+  async readFamilyHead(): Promise<string> {
+    return this.currentFamilyHead;
   }
   async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
     return this.script.verify?.(req) ?? { ok: true };
@@ -109,7 +114,7 @@ class AbortingFamilyBackend implements FamilyBackend {
     return this.script.cmr?.(req) ?? { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
-    return { url: `pr://${req.familyBase}` };
+    return { url: `pr://${req.familyBase}`, prHead: this.currentFamilyHead };
   }
   async recordAborted(event: FamilyAbortedEvent): Promise<void> {
     this.aborted.push(event);

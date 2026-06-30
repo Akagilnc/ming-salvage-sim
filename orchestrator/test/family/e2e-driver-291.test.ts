@@ -219,6 +219,12 @@ class E2EFamilyBackend extends RealFamilyBackend {
       pr: "https://example.invalid/pr/291",
     };
   }
+  protected override verifyFamilyShipPr(input: {
+    readonly pr: string;
+    readonly familyBase: string;
+  }): { ok: true; headOid: string } | { ok: false; reason: string } {
+    return { ok: true, headOid: git(this.opts.workingRepo, "rev-parse", input.familyBase) };
+  }
   override async openFamilyPr(req: OpenFamilyPrRequest) {
     // LEGACY inline 止于 PR — RETAINED only to record that the production path no
     // longer reaches it (#336 routes ship through runShipWorker). The assertion
