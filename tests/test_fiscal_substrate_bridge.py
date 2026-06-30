@@ -90,6 +90,39 @@ def _province_pay_arrears(db, region_id):
     ).fetchone()["total"] or 0)
 
 
+def _non_self_funded_pay_arrears(db):
+    row = db.conn.execute(
+        """
+        SELECT
+          COALESCE(SUM(province_pay_arrears), 0) AS province_total,
+          COALESCE(SUM(central_pay_arrears), 0) AS central_total,
+          COALESCE(SUM(arrears), 0) AS army_total
+        FROM armies
+        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+        """
+    ).fetchone()
+    return (
+        float(row["province_total"] or 0),
+        float(row["central_total"] or 0),
+        float(row["army_total"] or 0),
+    )
+
+
+def _province_container_total(db):
+    total = 0.0
+    for row in db.conn.execute(
+        "SELECT fiscal FROM regions WHERE controlled_by = 'ming'"
+    ).fetchall():
+        try:
+            fiscal = json.loads(str(row["fiscal"] or "{}"))
+        except (TypeError, ValueError):
+            continue
+        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        if isinstance(settle, dict) and isinstance(settle.get("st"), dict):
+            total += float(settle["st"].get("军饷欠", 0) or 0)
+    return total
+
+
 def _region_with_settle(settle):
     return {
         "id": "test_province",
@@ -192,6 +225,9 @@ def test_army_pay_source_spine_seed_splits_arrears_and_reconciles_tusi(fresh_db)
     assert tusi["province_pay_arrears"] == pytest.approx(0.0)
     assert tusi["central_pay_arrears"] == pytest.approx(0.0)
     assert tusi["arrears"] == pytest.approx(0.0)
+    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+        _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
+    )
 
     log = fresh_db.conn.execute(
         """
@@ -362,6 +398,12 @@ def test_fixed_flows_cutover_accrues_unpaid_central_pay_share(fresh_game):
     assert row["arrears"] == pytest.approx(
         row["province_pay_arrears"] + row["central_pay_arrears"]
     )
+    assert db.get_central_army_pay_arrears_container() == pytest.approx(3.5)
+    province_total, central_total, army_total = _non_self_funded_pay_arrears(db)
+    assert db.get_central_army_pay_arrears_container() == pytest.approx(central_total)
+    assert _province_container_total(db) + db.get_central_army_pay_arrears_container() == pytest.approx(
+        army_total
+    )
 
 
 def test_fixed_flows_cutover_carries_fractional_central_pay_due(fresh_game):
@@ -431,6 +473,7 @@ def test_fixed_flows_cutover_carries_fractional_central_pay_due(fresh_game):
     assert row["arrears"] == pytest.approx(
         row["province_pay_arrears"] + row["central_pay_arrears"]
     )
+    assert db.get_central_army_pay_arrears_container() == pytest.approx(0.35)
 
 
 def test_fixed_flows_cutover_allocates_central_pool_by_due_not_priority(fresh_game):
@@ -870,6 +913,30 @@ def test_army_delta_owner_power_from_ming_clears_pay_source_arrears(fresh_db):
     assert row["province_pay_arrears"] == pytest.approx(0)
     assert row["central_pay_arrears"] == pytest.approx(0)
     assert row["arrears"] == pytest.approx(0)
+    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+        _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
+    )
+    logs = fresh_db.conn.execute(
+        """
+        SELECT id, field, old_value, new_value, delta, reason
+        FROM army_logs
+        WHERE army_id = 'shaanxi_army'
+          AND field IN ('arrears', 'owner_power')
+        ORDER BY id DESC
+        LIMIT 6
+        """
+    ).fetchall()
+    writeoff = next(
+        (log for log in logs if log["field"] == "arrears" and "核销" in log["reason"]),
+        None,
+    )
+    owner_log = next((log for log in logs if log["field"] == "owner_power"), None)
+    assert writeoff is not None
+    assert owner_log is not None
+    assert writeoff["id"] < owner_log["id"]
+    assert float(writeoff["old_value"]) > 0
+    assert float(writeoff["new_value"]) == pytest.approx(0)
+    assert writeoff["delta"] < 0
     settle = _read_settle(fresh_db, "shaanxi")
     assert settle["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
@@ -906,6 +973,9 @@ def test_economy_pay_arrears_reconciles_pay_source_container_immediately(fresh_d
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
     )
     assert _province_pay_arrears(fresh_db, "shaanxi") < before
+    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+        _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
+    )
 
 
 def test_economy_pay_arrears_does_not_over_debit_fractional_pay_source_debt(fresh_db):

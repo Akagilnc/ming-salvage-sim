@@ -475,6 +475,7 @@ def _pay_single_army_arrears(
             (province_new, central_new, new_arrears, str(row["id"])),
         )
         db._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
+        db._reconcile_central_army_pay_arrears_container()
     else:
         new_arrears = max(0.0, current_arrears + float(actual))
         db.conn.execute(
@@ -738,6 +739,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 """,
                 (central_arrears, new_arrears, new_morale, army_id),
             )
+            db._reconcile_central_army_pay_arrears_container()
         else:
             db.conn.execute(
                 "UPDATE armies SET arrears = ?, morale = ? WHERE id = ?",
@@ -814,6 +816,9 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # ── #66 省级财政基座（settle_tick）shadow 推进 ──
     try:
         _advance_province_fiscal_substrate(db, state)
+        if pay_source_cutover:
+            db._reconcile_central_army_pay_arrears_container()
+            db.assert_army_pay_source_container_conservation()
     finally:
         if pay_source_cutover:
             for attr in (
