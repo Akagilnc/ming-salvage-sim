@@ -61,7 +61,7 @@ export interface SkippedFamilyChild {
   readonly message: string;
 }
 
-interface SubIssueAdmission {
+export interface SubIssueAdmission {
   readonly admitted: ReadonlyArray<number>;
   readonly skipped: ReadonlyArray<SkippedFamilyChild>;
 }
@@ -138,7 +138,7 @@ function skipMessage(issue: number, reason: SkippedFamilyChild["reason"]): strin
  * left to the single-slice S0 backstop, preserving the older pure parser behavior
  * for odd/GraphQL payloads.
  */
-function parseSubIssueAdmission(parsed: unknown): SubIssueAdmission {
+export function parseSubIssueAdmission(parsed: unknown): SubIssueAdmission {
   const nodes = subIssueNodes(parsed);
   const seen = new Set<number>();
   const admitted: number[] = [];
@@ -158,13 +158,25 @@ function parseSubIssueAdmission(parsed: unknown): SubIssueAdmission {
 }
 
 /**
- * Extract the runnable child issue NUMBERS from a native sub-issues payload.
+ * Extract child issue NUMBERS from a native sub-issues payload.
  *
- * Pure compatibility wrapper used by older tests/callers. For the full admission
- * result (including skip reasons), the driver uses `parseSubIssueAdmission`.
+ * Pure compatibility wrapper used by older tests/callers. This preserves the
+ * narrow historical behavior: skip CLOSED children, but leave readiness / parent
+ * checks to the explicit `parseSubIssueAdmission` interface.
  */
 export function parseSubIssueNumbers(parsed: unknown): number[] {
-  return [...parseSubIssueAdmission(parsed).admitted];
+  const nodes = subIssueNodes(parsed);
+  const seen = new Set<number>();
+  const childNumbers: number[] = [];
+  for (const n of nodes) {
+    const num = (n as { number?: unknown })?.number;
+    if (typeof num !== "number" || !Number.isFinite(num) || seen.has(num)) continue;
+    seen.add(num);
+    const state = (n as { state?: unknown })?.state;
+    if (typeof state === "string" && state.toUpperCase() === "CLOSED") continue;
+    childNumbers.push(num);
+  }
+  return childNumbers;
 }
 
 /**

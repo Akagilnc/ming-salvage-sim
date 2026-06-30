@@ -296,7 +296,8 @@ describe("persisted step ledger (#249)", () => {
       },
       async writeSnapshot() { /* no-op */ },
       async runStep() {
-        // ADR 0026: S2 build worker is the only agent step.
+        // This persistence test does not exercise worker routing; any worker
+        // reaching this stub can return a committed coder payload.
         return { kind: "coder", committed: true, commitsAdded: 1 };
       },
       async push() { /* no-op */ },
@@ -360,7 +361,7 @@ describe("persisted step ledger (#249)", () => {
       },
       async writeSnapshot() { /* no-op */ },
       async runStep() {
-        // ADR 0026: S2 build worker is the only agent step.
+        // This path only needs a committed worker payload to reach ledger writes.
         return { kind: "coder", committed: true, commitsAdded: 1 };
       },
       async push() { /* no-op */ },

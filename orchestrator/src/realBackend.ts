@@ -1179,8 +1179,8 @@ export function attributeFailure(
  * (#256 AC "对一个真叶子 issue 端到端跑通").
  *
  * integ-cmr int-r1 (C-3): DERIVED from the actual worker specs — STEP_SPECS
- * (S2 coder build, coder_implement.md) + shipWorkerSpec() (S7 ship, ship.md) —
- * rather than a hand-maintained literal. The hand-kept list omitted ship.md, so
+ * (S2/S3/S5/S6 agent workers) + shipWorkerSpec() (S7 ship, ship.md) — rather
+ * than a hand-maintained literal. The hand-kept list omitted ship.md, so
  * promptsDir validation passed yet S7 crashed at run time looking for the absent
  * prompt. By reading the prompt off every dispatched spec, a new/changed worker
  * step can never silently drift out of the validation list again. De-duped.
@@ -1225,7 +1225,7 @@ export function promptsDirError(
     return (
       `RealBackend: promptsDir "${promptsDir}" is missing required promptFile(s): ` +
       `${missingFiles.join(", ")}. All of [${REFERENCED_PROMPT_FILES.join(", ")}] ` +
-      `must be present (the runner's S2 build + S7 ship reference them).`
+      `must be present (S2 coder, S3/S6 reviewer, S5 coder-fix, and S7 ship reference them).`
     );
   }
   return undefined;
@@ -1279,9 +1279,10 @@ export interface RealBackendOptions {
    */
   readonly skillsMount?: string;
   /**
-   * Dir holding the versioned promptFiles (`coder_implement.md` for the S2 build
-   * worker, `ship.md` for S7; ADR 0026 collapsed the single-slice loop, so there
-   * are no reviewer/fix prompts).
+   * Dir holding the versioned promptFiles (`coder_implement.md` for S2,
+   * `reviewer_review.md` for S3/S6, `coder_fix.md` for S5, and `ship.md` for
+   * S7). ADR 0030 keeps the single-slice review/fix loop runner-visible: S3/S6
+   * are reviewer workers, and S5 is the coder-fix worker.
    *
    * MUST be an ABSOLUTE path (validated at construction, F4): Sandcastle
    * resolves `promptFile` against `process.cwd()`, NOT the run `cwd` option

@@ -21,11 +21,10 @@
  *     reporting its true tagged error. Fix: gate Case 2 on isValidEscalation.
  *
  *  (3 + 4 tested the runner-level no-progress guard — streak reconstruction on
- *   resume, and guarding the no-progress bail's S8 write. ADR 0026 (2026-06-24)
- *   collapsed the single-slice runner to a PURE SCHEDULER: the review→fix→
- *   re-review LOOP no longer lives at the runner level (it runs INSIDE the S2
- *   build worker), so there is NO runner-level no-progress guard anymore. Both
- *   suites are DELETED.)
+ *   resume, and guarding the no-progress bail's S8 write. ADR 0030 later restored
+ *   a runner-visible per-slice review/fix loop; this suite keeps only the
+ *   merge-seam resume status-fidelity cases, with loop convergence covered by
+ *   the ADR 0030 per-slice tests.)
  */
 
 import { describe, expect, it } from "vitest";
@@ -225,7 +224,7 @@ describe("Finding 1: terminal-error S8 is tagged handoffStatus:'error' (#254 ⋈
 
   it("RESUME: re-feeding a 0-commit-error ledger reports ERROR, not re-run", async () => {
     // Prior run: S2 build worker produced 0 commits → S8(error). On re-feed it
-    // must report the tagged ERROR, NOT route S2→S7 and re-run.
+    // must report the tagged ERROR, NOT re-enter the happy path and re-run.
     const resumeState: ResumeState = {
       worktree: WORKTREE,
       stateDir: STATE_DIR,
