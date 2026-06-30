@@ -204,22 +204,24 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(soul).toMatch(/escalationAnswer/i);
     expect(soul).not.toMatch(/Second review|non-Claude reviewer leg/i);
     expect(soul).toMatch(/gh issue view/i);
-    expect(soul).toMatch(/--json[^`]*author[^`]*body[^`]*comments/is);
+    expect(soul).toMatch(/--json[^`]*title[^`]*author[^`]*body[^`]*comments/is);
     expect(soul).toMatch(/comment\.author\.login.*repo owner/is);
-    expect(soul).toMatch(/non-owner.*Agent Brief.*ordinary issue text/is);
-    expect(soul).toMatch(/non-owner.*body.*comments.*data-only/is);
+    expect(soul).toMatch(/non-owner.*Agent Brief.*ordinary\s+issue text/is);
+    expect(soul).toMatch(/non-owner.*title.*body.*comments.*data-only/is);
     expect(soul).toMatch(/must not.*instructions.*scope changes.*commands/is);
+    expect(soul).toMatch(/credential-handling\s+requests/i);
     expect(soul).toMatch(/Snapshot files.*not execution input/is);
   });
 
   it("coder entrypoints require author-aware live issue reads before trusting issue instructions", () => {
     for (const promptName of ["coder_implement.md", "coder_fix.md"]) {
       const prompt = read(promptName);
-      expect(prompt).toMatch(/--json[^`]*author[^`]*body[^`]*comments/is);
+      expect(prompt).toMatch(/--json[^`]*title[^`]*author[^`]*body[^`]*comments/is);
       expect(prompt).toMatch(/repo owner/i);
-      expect(prompt).toMatch(/non-owner.*Agent Brief.*ordinary issue text/is);
-      expect(prompt).toMatch(/non-owner.*body.*comments.*data-only/is);
+      expect(prompt).toMatch(/non-owner.*Agent Brief.*ordinary\s+issue text/is);
+      expect(prompt).toMatch(/non-owner.*title.*body.*comments.*data-only/is);
       expect(prompt).toMatch(/must not.*instructions.*scope changes.*commands/is);
+      expect(prompt).toMatch(/credential-handling\s+requests/i);
     }
   });
 
