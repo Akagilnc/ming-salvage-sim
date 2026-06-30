@@ -2172,10 +2172,16 @@ export class RealBackend implements Backend {
       return this.countCommitsSince(worktree, basis.baselineHead);
     }
     if (basis.priorCommitsAdded !== undefined) {
+      if (beforeResumeHead === undefined) {
+        throw new Error(
+          `realBackend: cannot git-truth resumed coder session ${sessionId}; ` +
+            "the persisted ledger only has a prior commit count fallback, but " +
+            "the before-resume HEAD could not be read. Refusing to count " +
+            "resume-only commits as zero.",
+        );
+      }
       const resumeOnlyCommits =
-        beforeResumeHead === undefined
-          ? 0
-          : this.countCommitsSince(worktree, beforeResumeHead);
+        this.countCommitsSince(worktree, beforeResumeHead);
       return basis.priorCommitsAdded + resumeOnlyCommits;
     }
     throw new Error(
