@@ -7,9 +7,14 @@ army_report/欠饷月数/simulator TSV）统一到 army_needed，玩家与审计
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from ming_sim.flows import army_needed
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_army_payload_exposes_army_needed(game):
@@ -41,6 +46,50 @@ def test_army_report_shows_actual_charge(game):
     from ming_sim.models import monthly_amount
     expected = format_money(monthly_amount(total_needed))
     assert expected in report, f"army_report 月饷总额应=实扣总和格式化『{expected}』"
+
+
+def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats(game):
+    """#305/D10：军饷欠是真钱，可奏报 approximate 总额；玩家不见省/中央分账，抽象忠诚不出裸数。"""
+    db, _state, _ = game
+    row = db.conn.execute(
+        "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET arrears=63, province_pay_arrears=17, central_pay_arrears=46, loyalty=73
+        WHERE id=?
+        """,
+        (row["id"],),
+    )
+    db.conn.commit()
+
+    detail = db.army_detail(row["name"])
+    report = db.army_report(limit=20)
+    roster = db.army_roster(filter_names=[row["name"]])
+    joined = "\n".join((detail, report, roster))
+
+    assert "欠饷约60万两" in joined
+    assert "欠饷63万两" not in joined
+    assert "忠诚73" not in joined
+    assert "忠诚：尚稳" in joined
+    for forbidden in ("province_pay_arrears", "central_pay_arrears", "省份额欠", "中央份额欠"):
+        assert forbidden not in joined
+
+
+def test_army_arrears_p4_prompt_contract_is_documented():
+    """#305/D10：LLM 层须知道欠饷可 approximate 报钱，抽象 stat 仍不向皇帝报裸数。"""
+    surfaces = {
+        "game_world": ROOT / "content/prompts/game_world.md",
+        "minister_agent": ROOT / "content/prompts/minister_agent.md",
+        "season_simulator": ROOT / "content/prompts/season_simulator.md",
+    }
+    for name, path in surfaces.items():
+        text = path.read_text(encoding="utf-8")
+        assert "军饷欠是真钱" in text, name
+        assert "approximate" in text, name
+        assert "不拆省/中央分账" in text, name
+        assert "忠诚/能力" in text, name
 
 
 def test_simulator_payload_exposes_army_needed(game):

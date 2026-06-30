@@ -73,6 +73,80 @@ _ARMY_PAY_SOURCE_SEED: Dict[str, Tuple[str, float, float, bool]] = {
 }
 
 
+def _approx_wanliang(amount: object) -> str:
+    """奏报口吻的万两近似数；军饷欠是真钱，但玩家不看 DB 精确账格。"""
+    try:
+        value = float(amount or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    if value <= 0:
+        return "无欠饷"
+    if value < 10:
+        return "欠饷不足十万两"
+    if value < 20:
+        rounded = int(round(value / 5.0) * 5)
+    else:
+        rounded = int(round(value / 10.0) * 10)
+    rounded = max(1, rounded)
+    return f"欠饷约{rounded}万两"
+
+
+def _approx_pay_months(arrears: object, monthly_pay: object) -> str:
+    try:
+        arr = float(arrears or 0)
+        pay = float(monthly_pay or 0)
+    except (TypeError, ValueError):
+        return ""
+    if arr <= 0 or pay <= 0:
+        return ""
+    months = arr / pay
+    if months < 1:
+        return "，不足一月军饷"
+    if months < 3:
+        return "，约两月军饷"
+    if months < 6:
+        return "，数月军饷"
+    if months < 12:
+        return "，约半年军饷"
+    years = int(round(months / 12.0))
+    if years <= 1:
+        return "，逾一年军饷"
+    return f"，约{years}年军饷"
+
+
+_ARMY_QUALITATIVE_WORDS: Dict[str, Tuple[str, str, str, str, str]] = {
+    "supply": ("断绝", "匮乏", "吃紧", "尚可", "充足"),
+    "morale": ("涣散", "低迷", "不振", "尚稳", "高昂"),
+    "training": ("散漫", "生疏", "粗疏", "尚可", "精熟"),
+    "equipment": ("残破", "简陋", "短缺", "尚可", "精良"),
+    "mobility": ("迟滞", "缓慢", "受限", "尚可", "灵便"),
+    "loyalty": ("危殆", "浮动", "不稳", "尚稳", "稳固"),
+}
+
+
+def _qualitative_army_stat(field: str, value: object) -> str:
+    try:
+        n = int(value or 0)
+    except (TypeError, ValueError):
+        n = 0
+    words = _ARMY_QUALITATIVE_WORDS.get(field, ("极低", "偏低", "中等", "尚可", "优良"))
+    if n >= 80:
+        word = words[4]
+    elif n >= 60:
+        word = words[3]
+    elif n >= 40:
+        word = words[2]
+    elif n >= 20:
+        word = words[1]
+    else:
+        word = words[0]
+    return f"{ARMY_FIELD_LABELS.get(field, field)}：{word}"
+
+
+def _army_arrears_report_text(row: sqlite3.Row, monthly_pay: object) -> str:
+    return _approx_wanliang(row["arrears"]) + _approx_pay_months(row["arrears"], monthly_pay)
+
+
 def _is_commitment_stop_condition(resolve_condition: object) -> bool:
     return bool(_COMMITMENT_STOP_CONDITION_RE.fullmatch(str(resolve_condition or "").strip()))
 
@@ -4396,16 +4470,13 @@ class GameDB:
         parts = []
         for row in rows:
             pay = self._army_pay(row)
-            arr = int(row["arrears"]) or 0
-            if pay > 0 and arr > 0:
-                months = arr / pay
-                arr_text = f"欠饷{arr}万两（约{months:.1f}月军饷）"
-            else:
-                arr_text = f"欠饷{arr}万两"
+            arr_text = _army_arrears_report_text(row, pay)
             parts.append(
                 f"{row['name']}：驻{row['station']}，兵{row['manpower']}，"
-                f"饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，补给{row['supply']}、"
-                f"士气{row['morale']}、火器{row['firearm_equipment']}、炮{row['cannon_equipment']}、{arr_text}，{row['status']}"
+                f"饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，"
+                f"{_qualitative_army_stat('supply', row['supply'])}、"
+                f"{_qualitative_army_stat('morale', row['morale'])}、"
+                f"火器{row['firearm_equipment']}、炮{row['cannon_equipment']}、{arr_text}，{row['status']}"
             )
         return (
             f"军队警讯：{'；'.join(parts)}。"
@@ -4426,19 +4497,18 @@ class GameDB:
         if row is None:
             raise ValueError(f"未找到军队：{raw_name}")
         pay = self._army_pay(row)  # #173：月饷取引擎实扣应发
-        arr = int(row["arrears"]) or 0
-        if pay > 0 and arr > 0:
-            months = arr / pay
-            arr_text = f"欠饷{arr}万两（约{months:.1f}月军饷）"
-        else:
-            arr_text = f"欠饷{arr}万两"
+        arr_text = _army_arrears_report_text(row, pay)
         return (
             f"{row['name']}：驻扎地{row['station']}，统帅{row['commander']}，"
             f"兵种{row['troop_type']}，人数{row['manpower']}人，"
-            f"月应发军饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，补给{row['supply']}，"
-            f"士气{row['morale']}，训练{row['training']}，装备{row['equipment']}，"
+            f"月应发军饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，"
+            f"{_qualitative_army_stat('supply', row['supply'])}，"
+            f"{_qualitative_army_stat('morale', row['morale'])}，"
+            f"{_qualitative_army_stat('training', row['training'])}，"
+            f"{_qualitative_army_stat('equipment', row['equipment'])}，"
             f"火器{row['firearm_equipment']}，随军大炮{row['cannon_equipment']}门，"
-            f"{arr_text}，机动{row['mobility']}，忠诚{row['loyalty']}。"
+            f"{arr_text}，{_qualitative_army_stat('mobility', row['mobility'])}，"
+            f"{_qualitative_army_stat('loyalty', row['loyalty'])}。"
             f"状态：{row['status']}"
         )
 
@@ -4454,8 +4524,7 @@ class GameDB:
             lines = []
             for row in rows:
                 if str(row["owner_power"]) == "ming":
-                    arr = int(row["arrears"]) or 0
-                    lines.append(f"{row['name']}：欠饷{arr}万两，{row['status']}")
+                    lines.append(f"{row['name']}：{_approx_wanliang(row['arrears'])}，{row['status']}")
             return (
                 "【全军名册索引（涉及军队欠饷/补给/士气时先调 query_army_roster 查完整信息）】\n"
                 + "\n".join(lines)
@@ -4465,18 +4534,22 @@ class GameDB:
         own: List[str] = []
         other: List[str] = []
         for row in rows:
-            arr = int(row["arrears"]) or 0
             # #173：月饷取引擎实扣应发 army_needed（替退役 maintenance_per_turn）。全按月度，不除 3。
             monthly_pay = self._army_pay(row)
-            months = f"{arr / monthly_pay:.1f}" if monthly_pay > 0 and arr > 0 else "0"
+            arrears_text = _army_arrears_report_text(row, monthly_pay)
             if str(row["owner_power"]) == "ming":
-                # 列序见表头。兵力/月饷/欠饷单位万两；补给…忠诚为 0-100。
+                # 列序见表头。兵力/月饷/欠饷为真钱；补给…忠诚以奏报定性呈现。
                 own.append(
                     "|".join(str(x) for x in (
                         row["name"], row["station"], row["commander"], row["troop_type"],
-                        row["manpower"], monthly_pay, row["supply"], row["morale"],
-                        row["training"], row["equipment"], row["mobility"], row["loyalty"],
-                        arr, months, row["status"],
+                        row["manpower"], monthly_pay,
+                        _qualitative_army_stat("supply", row["supply"]),
+                        _qualitative_army_stat("morale", row["morale"]),
+                        _qualitative_army_stat("training", row["training"]),
+                        _qualitative_army_stat("equipment", row["equipment"]),
+                        _qualitative_army_stat("mobility", row["mobility"]),
+                        _qualitative_army_stat("loyalty", row["loyalty"]),
+                        arrears_text, row["status"],
                         row["firearm_equipment"], row["cannon_equipment"],
                     ))
                 )
@@ -4488,8 +4561,8 @@ class GameDB:
                     ))
                 )
         out = [
-            "【全军名册（现状以此为准，谈某军欠饷/补给/士气直接据此；欠饷万两为精确累计值，非抽象分）】",
-            "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷万两|欠饷月数|状态|火器|随军大炮；补给…忠诚及火器为0-100，随军大炮为门数0-12）：",
+            "【全军名册（现状以此为准，谈某军欠饷/补给/士气直接据此；欠饷为奏报近似总额，不拆省/中央分账）】",
+            "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为0-100，随军大炮为门数0-12）：",
             *own,
         ]
         if other:
