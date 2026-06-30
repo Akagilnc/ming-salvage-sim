@@ -84,11 +84,15 @@ def _approx_wanliang(amount: object) -> str:
     if value < 10:
         return "欠饷不足十万两"
     if value < 20:
-        rounded = int(round(value / 5.0) * 5)
+        rounded = _round_half_up_to_step(value, 5)
     else:
-        rounded = int(round(value / 10.0) * 10)
+        rounded = _round_half_up_to_step(value, 10)
     rounded = max(1, rounded)
     return f"欠饷约{rounded}万两"
+
+
+def _round_half_up_to_step(value: float, step: int) -> int:
+    return int(math.floor(value / step + 0.5) * step)
 
 
 def _approx_pay_months(arrears: object, monthly_pay: object) -> str:
