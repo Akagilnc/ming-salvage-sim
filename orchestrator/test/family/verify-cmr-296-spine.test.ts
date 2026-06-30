@@ -103,7 +103,8 @@ class CapableFamilyBackend implements FamilyBackend {
 
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
     this.merges.push(child);
-    return { familyHead: `+${child.childIssue}` };
+    this.liveHead = `+${child.childIssue}`;
+    return { familyHead: this.liveHead };
   }
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
@@ -466,6 +467,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
       { childIssue: 295, status: "merged" },
       { status: "shipped", event: "shipped", phase: "final", pr: "pr://legacy" },
     );
+    backend.liveHead = "new-head";
 
     const result = await runFamily({
       epic: epicWith(294, 295),
@@ -600,6 +602,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
       verify: () => ({ ok: true }),
       cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
     });
+    backend.liveHead = "new-head";
     backend.ledger.push(
       { childIssue: 294, status: "merged", childHead: "c294", familyHeadAfter: "old-head" },
       { childIssue: 295, status: "merged", childHead: "c295" },

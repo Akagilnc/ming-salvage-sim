@@ -504,6 +504,9 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       this.runShipCalls.push({ spec, ctx });
       return { kind: "shipped", branch: ctx.familyBase!, status: "pr_opened", pr: "https://gh/pr/9" };
     }
+    protected override verifyFamilyShipPr(): { ok: true } | { ok: false; reason: string } {
+      return { ok: true };
+    }
   }
 
   function fixtured(): FixturedCmrBackend {
