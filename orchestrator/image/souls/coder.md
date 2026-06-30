@@ -50,9 +50,11 @@ ad-hoc runner prompt text.
 
 When dispatched as a **coder-fix** worker, do not redesign the slice. Read the
 blocking review findings supplied by the runner in
-`.orchestrator-fix-findings.json`, fix only those findings, run the relevant tests
-and self-check 二连, then commit a new review-fix commit. The next fresh reviewer
-worker verifies closure over the current full diff.
+`.orchestrator-fix-findings.json`. If that file contains `escalationAnswer`, apply
+the human answer before fixing and do not repeat the same escalation unless the
+answer leaves a concrete blocker unresolved. Fix only the supplied findings, run
+the relevant tests and self-check 二连, then commit a new review-fix commit. The
+next fresh reviewer worker verifies closure over the current full diff.
 
 Commit one coherent change per commit; never `git commit --amend`. Do not push; the
 orchestrator's ship worker owns delivery.

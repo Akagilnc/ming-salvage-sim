@@ -20,6 +20,10 @@ fix-findings path from the runner-provided parameters or environment, keep the f
 scoped, run the relevant tests, run the mandatory self-check 二连, and create a
 new commit for this review round. Never amend a prior commit.
 
+That runner-owned JSON may also contain `escalationAnswer` when this is a resumed
+decision escalation. Apply that human answer before fixing, and do not repeat the
+same escalation unless the answer leaves a concrete blocker unresolved.
+
 Do not use `.orchestrator-snapshot.json` as execution input.
 
 ## Required output

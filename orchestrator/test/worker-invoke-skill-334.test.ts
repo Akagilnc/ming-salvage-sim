@@ -186,6 +186,7 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     const fix = read("coder_fix.md");
     expect(fix).toMatch(/\/home\/agent\/\.orchestrator\/souls\/coder\.md/);
     expect(fix).toMatch(/fix-findings path/i);
+    expect(fix).toMatch(/escalationAnswer/i);
     expect(fix).not.toMatch(/sibling ledger|legacy compatibility fallback|Prefer the sibling ledger/is);
 
     const review = read("reviewer_review.md");
@@ -199,6 +200,7 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     const soul = readSoul("coder.md");
     expect(soul).toMatch(/Invoke `\/tdd`/i);
     expect(soul).toMatch(/coder-fix|fix worker|blocking review findings/i);
+    expect(soul).toMatch(/escalationAnswer/i);
     expect(soul).not.toMatch(/Second review|non-Claude reviewer leg/i);
     expect(soul).toMatch(/gh issue view/i);
     expect(soul).toMatch(/--json[^`]*author[^`]*body[^`]*comments/is);
