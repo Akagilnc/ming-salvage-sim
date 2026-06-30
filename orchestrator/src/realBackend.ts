@@ -1242,6 +1242,7 @@ export function classifyResumeError(err: unknown): ResumeRecovery {
   const message = err instanceof Error ? err.message : String(err);
   const isDeadSession =
     /\bresumeSession\b.*\b(not found|missing|expired|dead)\b/i.test(message) ||
+    /\bSession resume failed:\s*session\s+\S+\s+(not found|missing|expired|dead)\b/i.test(message) ||
     /\bresume session\b.*\b(not found|missing|expired|dead)\b/i.test(message) ||
     /\bsession\s+(not found|missing|expired|dead)\b/i.test(message) ||
     /\b(no|missing|expired|dead)\s+(resume\s+)?session\b/i.test(message);

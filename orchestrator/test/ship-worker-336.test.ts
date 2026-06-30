@@ -454,6 +454,12 @@ describe("#336 single-slice runShipWorker — fail-closed when gh auth is missin
 });
 
 describe("#439 single-slice ship worker resume answer focus", () => {
+  it(".ship-focus.md is repo-ignored even if a per-worktree exclude update fails", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const ignore = readFileSync(join(here, "..", "..", ".gitignore"), "utf8");
+    expect(ignore.split(/\r?\n/)).toContain(SHIP_FOCUS_FILENAME);
+  });
+
   it("writes the answered S7 decision escalation into .ship-focus.md before sandbox startup", async () => {
     const focusWorktree: WorktreeHandle = {
       branch: "feat/orchestrator/issue-439",
