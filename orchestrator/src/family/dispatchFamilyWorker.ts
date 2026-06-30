@@ -37,23 +37,19 @@ import type {
 /**
  * The integrated-cmr family worker spec (#335 invoke `ak-cross-m-review`).
  *
- * The corrected design (ADR 0026 2026-06-24): the cmr worker is a SINGLE
- * memory-bearing `sc.run` session that IS the fixer — it invokes
- * `ak-cross-m-review` (--scenario ship-pre), which dispatches fresh review legs,
- * grades, FIXES on the family base, and re-reviews until convergence, the WHOLE
- * loop INSIDE this one session. Only the 3 review LEGS are fresh each round; the
- * worker's main session has memory. So:
- *   - `session: "fresh"` = start a NEW session (not a crash/escalate `resume`,
- *     which skips git-truthing) — the worker is dispatched ONCE per family run, not
- *     re-dispatched per round.
- *   - `soul: "cmr"` = the integrated-cmr fixer soul (WRITE — it commits fixes), NOT
- *     the READ-ONLY per-slice reviewer soul.
+ * ADR 0030 splits integrated cmr into ordered runner-dispatched pass workers:
+ * completeness first, correctness second. This spec describes ONE such pass
+ * worker, not the whole integrated gate:
+ *   - `session: "fresh"` = start a NEW pass session (not a crash/escalate
+ *     `resume`, which skips git-truthing). `verifyCmr` dispatches one fresh worker
+ *     per pass and gates correctness on completeness.
+ *   - `soul: "cmr"` = the pass worker is WRITE-capable (it may commit pass-local
+ *     fixes on the family base), NOT the READ-ONLY per-slice reviewer soul.
  *   - `maxIter: 5` = the within-step Ralph iteration budget (StepSpec.maxIter
  *     semantics, same as the coder/ship workers), NOT the count of cmr fix rounds.
- *     The review→fix→re-review convergence loop is the `ak-cross-m-review` skill's
- *     OWN loop inside this one session; it is judged by the worker (drift/converge),
- *     never round-counted by the runner — maxIter must not degrade into a
- *     "count-to-N-then-give-up" fix-loop cap (types.ts maxIter SEMANTICS, US#18).
+ *     `maxIter` is the sandbox iteration budget for this pass worker, not a
+ *     runner-level cmr round counter. `verifyCmr` consumes only the terminal pass
+ *     verdict and performs route/closure accounting.
  */
 export function cmrWorkerSpec(
   session: WorkerSessionMode = "fresh",
@@ -69,8 +65,8 @@ export function cmrWorkerSpec(
     // top-level (PRD #330 [J]).
     host: "claude",
     session,
-    // The worker's main session has MEMORY (it is the fixer, looping internally);
-    // only the review legs are fresh — ADR 0026 2026-06-24.
+    // The pass worker may retain context while producing its terminal pass verdict;
+    // `verifyCmr` still owns the ADR 0030 pass boundary and pass ordering.
     contextRetention: "retain",
     skill: "ak-cross-m-review",
     promptFile:
