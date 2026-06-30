@@ -85,7 +85,7 @@ k=action力度系数(ΣCost仅含action银,Due不入;Cost>0 action其 delta/scal
 >
 > **起运(对齐引擎 cap 模型)**:`起运池=min(实征,起运定额)` 是收入侧 cap、**不是「余额起运」**(ADR 0007 旧措辞与此矛盾,由 ADR 0019 一并对齐)。`起运定额` 按 posture 构造:江南高到起运池≈实征大份额(使「江南正起运」可测)、边镇低。开局静态 seed,注释标「#259 后由饷率通道动态接管、此值届时失效」防超额三饷困省内池。
 >
-> **精度 = 量级定稿**:web 量级值即定稿(陕西同标准、逐条可驳);虚字段(宗禄/起运存留比/田亩逐项)的 provisional 标记走 **`settle._meta`**(如 `_meta.provisional:[...]`)或 `_comment` 键,**不写裸 `#`/`//` 注释**(json.loads 崩);一手核降级日后小刀。
+> **精度 = 量级定稿**:web 量级值即定稿(陕西同标准、逐条可驳);虚字段(宗禄/起运存留比/田亩逐项)的 provisional 标记走 **`settle._meta`**(如 `_meta.provisional:[...]`)或 `_comment` 键,**不写裸 `#`/`//` 注释**(json.loads 崩);一手核降级日后小刀。重复元数据走 `content/regions.json` 顶层 `settle_meta_defaults` 共享组 + 各省 `settle._meta_defaults` 引用，加载期会深合并到 `settle._meta` 并删除 `_meta_defaults`；空组名、未知组、非对象 `_meta` 和非对象默认组容器均 fail-loud，避免内容包坏配置被当缺省吞掉。
 >
 > **静态开局**:三饷只 seed 辽饷九厘(剿饷1637/练饷1639 不进 seed);时间线注入 + 起运定额联动选型移出 → 饷率 effect 通道 #259。
 

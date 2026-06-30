@@ -645,34 +645,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     return flows
 
 
-def _fiscal_substrate_region_ids(db: GameDB) -> List[str]:
-    """动态 shadow spine：明控且已有 settle 基座的省才推进。
-
-    失地省通过 controlled_by 自然出列；无 settle 的省保持旧路径，不在这里创建基座。
-    坏 fiscal 容器和 st/p 形状不在 spine 预验证，交由 settle_province_tick fail-loud
-    并由 shadow 隔离留痕。
-    """
-    region_ids: List[str] = []
-    rows = db.conn.execute(
-        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
-    ).fetchall()
-    for row in rows:
-        region_id = str(row["id"])
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError):
-            # 坏 fiscal 也进入 spine，让 shadow bridge 记录隔离原因；这里不静默跳过。
-            region_ids.append(region_id)
-            continue
-        if not isinstance(fiscal, dict):
-            # 同上：非 dict 容器由 settle_province_tick fail-loud 并写入 tlog。
-            region_ids.append(region_id)
-            continue
-        if "settle" in fiscal:
-            region_ids.append(region_id)
-    return region_ids
-
-
 def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
     """#66/#266：月末固定财政相位推进省级 settle_tick 基座（动态 shadow spine）。
 
@@ -688,21 +660,22 @@ def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
 
     action 翻译（玩家旨意/事件 → settle_tick actions）属 slice4；本 slice 以空 action 跑基线螺旋。
     """
-    from ming_sim.fiscal_tick import FiscalConservationError
-
     owns_transaction = db.owns_transaction()
     advanced = False
-    for region_id in _fiscal_substrate_region_ids(db):
-        try:
-            res = db.settle_province_tick(region_id, actions=[])
-            advanced = True
-        except (ValueError, FiscalConservationError) as exc:
+    for outcome in db.settle_ming_province_substrate_ticks():
+        if outcome.error is not None:
             # settle_tick 的契约失败（坏态/守恒破）+ 基座缺失 → shadow 隔离，不炸 pre_settle
-            tlog(f"[fiscal-substrate] {region_id} 本{TURN_UNIT}未推进（隔离）：{type(exc).__name__}: {exc}")
+            exc = outcome.error
+            tlog(
+                f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}未推进（隔离）："
+                f"{type(exc).__name__}: {exc}"
+            )
             continue
+        res = outcome.result
+        advanced = True
         b = res.breakdown
         tlog(
-            f"[fiscal-substrate] {region_id} 推进：实征{b.get('实征', 0):.1f}/起运{b.get('起运到京', 0):.1f}/"
+            f"[fiscal-substrate] {outcome.region_id} 推进：实征{b.get('实征', 0):.1f}/起运{b.get('起运到京', 0):.1f}/"
             f"火耗入截留{b.get('火耗实收', 0):.1f}；末态欠账 "
             f"军饷欠{res.new_st.get('军饷欠', 0):.0f}/官俸欠{res.new_st.get('官俸欠', 0):.0f}/"
             f"宗禄欠{res.new_st.get('宗禄欠', 0):.0f}/民欠{res.new_st.get('民欠旧赋', 0):.0f}"
