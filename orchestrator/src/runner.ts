@@ -524,6 +524,14 @@ function planResume(
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
       };
     }
+    if (lastEntry.escalationKind !== "decision") {
+      return {
+        terminalStatus: "escalate",
+        resumeStep: "S8",
+        lastOutput: agentEntry?.output,
+        priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+      };
+    }
 
     const decisionStep = lastNonTerminalStep(executableLedger);
     const answer =

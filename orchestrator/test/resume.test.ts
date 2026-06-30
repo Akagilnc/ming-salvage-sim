@@ -528,6 +528,21 @@ describe("#439 decision-escalate answer channel", () => {
     expect(backend.cleanResidueCount).toBe(0);
   });
 
+  it("unknown tagged escalationKind remains terminal even if an answer row is appended", async () => {
+    const backend = new DispatchRecordingResumeBackend(
+      decisionEscalatedAtS4({
+        escalationKind: "maybe" as unknown as "decision",
+        answer: escalationAnswer("S4", "try-anyway"),
+      }),
+    );
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatchSpecs).toEqual([]);
+    expect(backend.cleanResidueCount).toBe(0);
+  });
+
   it("legacy untagged agent decision escalation without an appended answer remains paused", async () => {
     const backend = new ResumeBackend({
       worktree: WORKTREE,
