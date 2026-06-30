@@ -77,6 +77,27 @@ def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats
         assert forbidden not in joined
 
 
+def test_army_arrears_presentation_rounds_half_steps_up(game):
+    """#305 review fix：奏报近似数须显式半档进位，避免 Python bankers rounding 压低欠饷。"""
+    db, _state, _ = game
+    row = db.conn.execute(
+        "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()
+
+    for arrears, expected in ((12.5, "欠饷约15万两"), (25, "欠饷约30万两")):
+        db.conn.execute(
+            """
+            UPDATE armies
+            SET arrears=?, province_pay_arrears=?, central_pay_arrears=0
+            WHERE id=?
+            """,
+            (arrears, arrears, row["id"]),
+        )
+        db.conn.commit()
+
+        assert expected in db.army_detail(row["name"])
+
+
 def test_army_arrears_p4_prompt_contract_is_documented():
     """#305/D10：LLM 层须知道欠饷可 approximate 报钱，抽象 stat 仍不向皇帝报裸数。"""
     surfaces = {
