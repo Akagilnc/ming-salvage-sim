@@ -589,6 +589,44 @@ describe("#439 decision-escalate answer channel", () => {
     });
   });
 
+  it("tagged agent decision escalation reopens without keeping superseded S2/S8 entries", async () => {
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry(
+          "S2",
+          {
+            kind: "coder",
+            committed: false,
+            commitsAdded: 0,
+            escalate: { reason: "design ambiguity", diagnosis: "needs a human answer" },
+          },
+          "session-escalated-S2",
+        ),
+        { ...s8("escalate"), escalationKind: "decision" },
+        escalationAnswer("S2", "continue-with-x-required"),
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.resumeSessionCalls[0]).toEqual(["S2", "session-escalated-S2"]);
+    expect(result.stepLedger.filter((e) => e.step === "S2")).toHaveLength(1);
+    expect(result.stepLedger).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          step: "S8",
+          handoffStatus: "escalate",
+          escalationKind: "decision",
+        }),
+      ]),
+    );
+  });
+
   it("malformed answer event rows do not replay as S4 classifications", async () => {
     const backend = new DispatchRecordingResumeBackend({
       worktree: WORKTREE,

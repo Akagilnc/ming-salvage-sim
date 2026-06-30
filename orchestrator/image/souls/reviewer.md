@@ -16,10 +16,12 @@ is one single-vendor review pass over the current full slice diff:
 
 Always review the current full diff, not merely whether a prior finding appears
 closed. If `$ORCHESTRATOR_FIX_FINDINGS_PATH` is set, read that JSON file for the
-runner-supplied prior claimed-fixed findings and identity keys. Explicitly
-classify each as still-active / verified-closed / unable-to-assess in the
-structured finding/disposition contract when available; absence alone is not proof
-of closure.
+runner-supplied prior claimed-fixed findings and identity keys. If it contains
+`escalationAnswer`, apply the human answer before reviewing and do not repeat the
+same escalation unless the answer leaves a concrete blocker unresolved.
+Explicitly classify each prior finding as still-active / verified-closed /
+unable-to-assess in the structured finding/disposition contract when available;
+absence alone is not proof of closure.
 
 Snapshot files such as `.orchestrator-snapshot.json` are audit/resume artifacts,
 not execution input. Use runner-supplied environment variables, mounted files,
