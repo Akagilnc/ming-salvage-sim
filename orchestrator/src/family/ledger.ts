@@ -261,6 +261,14 @@ function familyAnswerPayload(entry: FamilyLedgerEntry): EscalationAnswerPayload 
   };
 }
 
+export function isMergedAccountingEntry(entry: FamilyLedgerEntry): boolean {
+  return (
+    entry.status === "merged" &&
+    Number.isSafeInteger(entry.childIssue) &&
+    entry.childIssue! > 0
+  );
+}
+
 function latestValidFamilyAnswerAfter(
   entries: ReadonlyArray<FamilyLedgerEntry>,
   index: number,
@@ -285,7 +293,10 @@ export function familyEscalationState(
     const entry = entries[i]!;
     if (isValidFamilyShipped(entry)) return undefined;
     if (entry.status !== "escalated" || entry.event !== "escalated") continue;
-    const answer = latestValidFamilyAnswerAfter(entries, i);
+    const answer =
+      entry.escalationKind === "decision"
+        ? latestValidFamilyAnswerAfter(entries, i)
+        : undefined;
     return answer !== undefined ? { escalation: entry, answer } : { escalation: entry };
   }
   return undefined;
@@ -390,7 +401,7 @@ export function mergedSet(
     // Only `status:"merged"` entries count, and only via their `childIssue`. A
     // PHASE-LEVEL `aborted` entry (#291 缺口 2) has the wrong status AND no
     // `childIssue`; the `childIssue !== undefined` guard makes optionality explicit.
-    if (e.status === "merged" && e.childIssue !== undefined) out.add(e.childIssue);
+    if (isMergedAccountingEntry(e)) out.add(e.childIssue!);
   }
   return out;
 }

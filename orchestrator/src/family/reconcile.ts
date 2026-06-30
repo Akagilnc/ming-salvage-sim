@@ -52,7 +52,7 @@
  * double-merge either way.
  */
 
-import { mergedSet } from "./ledger.js";
+import { isMergedAccountingEntry, mergedSet } from "./ledger.js";
 import type {
   ChildSlice,
   FamilyLedgerEntry,
@@ -117,9 +117,7 @@ async function headlessTailIsConsistent(
 }
 
 function hasHeadlessAccountingRow(ledger: ReadonlyArray<FamilyLedgerEntry>): boolean {
-  return ledger.some(
-    (entry) => entry.status === "merged" && entry.childIssue !== undefined,
-  );
+  return ledger.some((entry) => isMergedAccountingEntry(entry));
 }
 
 /**

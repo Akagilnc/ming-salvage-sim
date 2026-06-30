@@ -180,7 +180,7 @@ export async function runFamily(
   const priorEscalation = familyEscalationState(initialFamilyLedger);
   if (priorEscalation !== undefined) {
     const { escalation, answer } = priorEscalation;
-    if (escalation.escalationKind === "failure" || answer === undefined) {
+    if (escalation.escalationKind !== "decision" || answer === undefined) {
       const ledgerMerged = mergedSet(initialFamilyLedger);
       return {
         status: "escalated",
@@ -197,6 +197,8 @@ export async function runFamily(
           diagnosis:
             escalation.escalationKind === "failure"
               ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
+              : escalation.escalationKind !== "decision"
+                ? "Prior family escalation kind is missing or invalid; append-only answers only reopen decision escalations."
               : "Prior family decision escalation has no later valid escalation_answered ledger event.",
         },
         children: input.epic.children.map((child) => ({

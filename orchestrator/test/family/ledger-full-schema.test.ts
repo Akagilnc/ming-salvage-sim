@@ -242,14 +242,30 @@ describe("#439 family escalation answer events", () => {
     });
     await recordFamilyEscalationAnswered(backend, { answer: "try-anyway" });
 
-    expect(familyEscalationState(backend.appended)).toMatchObject({
-      answer: {
-        event: "escalation_answered",
-        answer: "try-anyway",
-      },
-      escalation: { escalationKind: "failure" },
+    expect(familyEscalationState(backend.appended)).toEqual({
+      escalation: backend.appended[0],
     });
     expect(mergedSet(backend.appended).size).toBe(0);
+  });
+
+  it("malformed escalation kinds are not reopened by later answer rows", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "maybe" as unknown as "decision",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue",
+      },
+    ];
+
+    expect(familyEscalationState(entries)).toEqual({
+      escalation: entries[0],
+    });
   });
 });
 
@@ -265,5 +281,15 @@ describe("mergedSet — reconcile補账条 COUNTS (decision 5 / codex R3)", () =
     expect(set.has(10)).toBe(true);
     expect(set.has(11)).toBe(true);
     expect(set.has(12)).toBe(false);
+  });
+
+  it("ignores malformed merged rows whose childIssue is not a safe integer", () => {
+    const entries = [
+      { status: "merged", childIssue: null },
+      { status: "merged", childIssue: "10" },
+      { status: "merged", childIssue: 11 },
+    ] as unknown as FamilyLedgerEntry[];
+
+    expect([...mergedSet(entries)].sort()).toEqual([11]);
   });
 });

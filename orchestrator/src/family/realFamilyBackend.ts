@@ -432,7 +432,11 @@ export class RealFamilyBackend implements FamilyBackend {
         typeof record.reason === "string" && record.reason.trim().length > 0
           ? record.reason
           : "legacy family escalation",
-      escalationKind: record.escalationKind ?? "decision",
+      ...(record.escalationKind === undefined
+        ? { escalationKind: "decision" as const }
+        : record.escalationKind === "decision" || record.escalationKind === "failure"
+          ? { escalationKind: record.escalationKind }
+          : {}),
       ...(record.familyHeadAfter !== undefined
         ? { familyHeadAfter: record.familyHeadAfter }
         : {}),
