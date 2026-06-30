@@ -2260,7 +2260,7 @@ class GameDB:
         out: List[Dict[str, float | str]] = []
         rows = self.conn.execute(
             """
-            SELECT id, name, manpower, salary_rate, owner_power, pay_source_region,
+            SELECT id, name, manpower, salary_rate, owner_power, pay_source_region, morale,
                    province_pay_share, central_pay_share, province_pay_arrears,
                    central_pay_arrears, is_tusi, self_funded_pay
             FROM armies
@@ -2281,6 +2281,8 @@ class GameDB:
             out.append({
                 "id": str(row["id"]),
                 "due": army_needed(row) * float(row["province_pay_share"] or 0),
+                "total_due": army_needed(row),
+                "morale": float(row["morale"]),
                 "province_pay_arrears": float(row["province_pay_arrears"] or 0),
                 "central_pay_arrears": float(row["central_pay_arrears"] or 0),
             })
@@ -2341,6 +2343,7 @@ class GameDB:
         repaid = float((result.breakdown.get("Repaid") or {}).get("军饷欠", 0) or 0)
         action_paid = float((result.breakdown.get("action还") or {}).get("军饷欠", 0) or 0)
         balances = {str(row["id"]): float(row["province_pay_arrears"]) for row in pay_rows}
+        province_shortfalls = {str(row["id"]): 0.0 for row in pay_rows}
         if action_paid > 0:
             basis = sum(balances.values())
             if basis > 0:
@@ -2350,7 +2353,10 @@ class GameDB:
         due_total = sum(float(row["due"]) for row in pay_rows)
         if new_debt > 0 and due_total > 0:
             for row in pay_rows:
-                balances[str(row["id"])] += new_debt * float(row["due"]) / due_total
+                army_id = str(row["id"])
+                shortfall = new_debt * float(row["due"]) / due_total
+                province_shortfalls[army_id] = shortfall
+                balances[army_id] += shortfall
         if repaid > 0:
             basis = sum(balances.values())
             if basis > 0:
@@ -2361,13 +2367,32 @@ class GameDB:
             army_id = str(row["id"])
             province_arrears = balances[army_id]
             central_arrears = float(row["central_pay_arrears"])
+            central_shortfalls = getattr(self, "_current_month_central_pay_shortfalls", {})
+            opening_arrears = getattr(self, "_current_month_pay_opening_arrears", {})
+            total_shortfall = float(central_shortfalls.get(army_id, 0.0)) + province_shortfalls[army_id]
+            old_total_arrears = float(
+                opening_arrears.get(
+                    army_id,
+                    float(row["province_pay_arrears"]) + float(row["central_pay_arrears"]),
+                )
+            )
+            old_morale = int(row["morale"])
+            total_due = float(row["total_due"])
+            if total_shortfall > 0 and total_due > 0:
+                morale_delta = -max(1, round(8 * total_shortfall / total_due))
+            elif old_total_arrears == 0:
+                morale_delta = 2
+            else:
+                morale_delta = 0
+            new_morale = max(0, min(100, old_morale + morale_delta))
             self.conn.execute(
                 """
                 UPDATE armies
-                SET province_pay_arrears = ?, arrears = ?, updated_at = CURRENT_TIMESTAMP
+                SET province_pay_arrears = ?, arrears = ?, morale = ?,
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (province_arrears, province_arrears + central_arrears, army_id),
+                (province_arrears, province_arrears + central_arrears, new_morale, army_id),
             )
 
     def _reconcile_region_army_pay_container(self, region_id: str, settle: Dict[str, Any]) -> None:

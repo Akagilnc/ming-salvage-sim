@@ -364,6 +364,161 @@ def test_fixed_flows_cutover_accrues_unpaid_central_pay_share(fresh_game):
     )
 
 
+def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
+    _write_settle(
+        fresh_db,
+        "fujian",
+        {
+            "st": {
+                "省库库银": 0,
+                "C_地方截留": 0,
+                "C_中饱": 0,
+                "C_漂没": 0,
+                "C_eff损耗": 0,
+                "民欠旧赋": 0,
+                "军饷欠": 0,
+                "官俸欠": 0,
+                "宗禄欠": 0,
+                "官民田": 0,
+                "隐田": 0,
+            },
+            "p": {
+                "正赋应征": 0,
+                "三饷应征": 0,
+                "火耗率": 0,
+                "逋赋率": 0,
+                "起运定额": 0,
+                "拨付gross": 0,
+                "中饱率": 0,
+                "漂没率": 0,
+                "Due": {"军饷": 999, "官俸": 0, "宗禄": 0, "赈济": 0},
+            },
+        },
+    )
+    fresh_db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    fresh_db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'fujian', province_pay_share = 1.0,
+            central_pay_share = 0.0, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0, morale = 80,
+            manpower = 10000, salary_rate = 10
+        WHERE id = 'fujian_navy'
+        """
+    )
+    fresh_db.conn.commit()
+
+    fresh_db.settle_province_tick("fujian")
+
+    row = fresh_db.conn.execute(
+        """
+        SELECT morale, arrears, province_pay_arrears, central_pay_arrears
+        FROM armies WHERE id = 'fujian_navy'
+        """
+    ).fetchone()
+    assert row["province_pay_arrears"] == pytest.approx(10)
+    assert row["central_pay_arrears"] == pytest.approx(0)
+    assert row["arrears"] == pytest.approx(row["province_pay_arrears"])
+    assert row["morale"] == 72
+
+
+def test_fixed_flows_cutover_uses_total_source_shortfall_for_mixed_army_morale(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 0
+    db.save_state(state)
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.execute(
+        """
+        UPDATE fiscal_config
+        SET value = 0
+        WHERE kind != 'meta'
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET tax_per_turn = 0,
+            fiscal = json_set(
+                fiscal, '$.huang_tian', 0, '$.liao_xiang', 0,
+                '$.salt_tax', 0, '$.commerce_tax', 0
+            )
+        """
+    )
+    _write_settle(
+        db,
+        "shaanxi",
+        {
+            "st": {
+                "省库库银": 0,
+                "C_地方截留": 0,
+                "C_中饱": 0,
+                "C_漂没": 0,
+                "C_eff损耗": 0,
+                "民欠旧赋": 0,
+                "军饷欠": 0,
+                "官俸欠": 0,
+                "宗禄欠": 0,
+                "官民田": 0,
+                "隐田": 0,
+            },
+            "p": {
+                "正赋应征": 0,
+                "三饷应征": 0,
+                "火耗率": 0,
+                "逋赋率": 0,
+                "起运定额": 0,
+                "拨付gross": 0,
+                "中饱率": 0,
+                "漂没率": 0,
+                "Due": {"军饷": 999, "官俸": 0, "宗禄": 0, "赈济": 0},
+            },
+        },
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'shaanxi', province_pay_share = 0.65,
+            central_pay_share = 0.35, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0, morale = 80,
+            manpower = 10000, salary_rate = 10
+        WHERE id = 'shaanxi_army'
+        """
+    )
+    db.conn.commit()
+
+    flows_mod.apply_fixed_period_flows(db, state)
+
+    row = db.conn.execute(
+        """
+        SELECT morale, arrears, province_pay_arrears, central_pay_arrears
+        FROM armies WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    assert row["province_pay_arrears"] == pytest.approx(6.5)
+    assert row["central_pay_arrears"] == pytest.approx(3.5)
+    assert row["arrears"] == pytest.approx(10)
+    assert row["morale"] == 72
+
+
 def test_army_delta_arrears_splits_positive_and_rejects_negative_under_cutover(fresh_db):
     state = fresh_db.load_state()
     event = SimpleNamespace(id="test", title="剧情加欠")
