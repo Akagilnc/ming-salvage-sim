@@ -54,6 +54,8 @@ class CapableFamilyBackend implements FamilyBackend {
   readonly aborted: FamilyAbortedEvent[] = [];
   readonly escalations: FamilyEscalation[] = [];
   readonly prCalls: OpenFamilyPrRequest[] = [];
+  readonly readFamilyHeadCalls: string[] = [];
+  currentFamilyHead = "head-1";
 
   constructor(
     private readonly script: {
@@ -72,6 +74,10 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
     return this.ledger;
+  }
+  async readFamilyHead(familyBase: string): Promise<string> {
+    this.readFamilyHeadCalls.push(familyBase);
+    return this.currentFamilyHead;
   }
 
   // ── #296 verify/cmr/PR capabilities (optional methods) ──
@@ -453,6 +459,51 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       phase: "final",
       pr: "pr://family/291-base",
     });
+  });
+
+  it("records the post-CMR-worker family HEAD and uses it for the next pass resume guard", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: (req) => {
+        if (req.cmrPass === "completeness") {
+          backend.currentFamilyHead = "head-after-cmr-fix";
+        }
+        return { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
+      },
+    });
+    backend.currentFamilyHead = "head-before-cmr";
+    backend.ledger.push({
+      status: "cmr_passed",
+      event: "cmr_passed",
+      phase: "final",
+      cmrPass: "correctness",
+      familyHeadAfter: "head-after-cmr-fix",
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-before-cmr",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "completeness" },
+    ]);
+    expect(backend.ledger).toContainEqual({
+      status: "cmr_passed",
+      event: "cmr_passed",
+      phase: "final",
+      cmrPass: "completeness",
+      familyHeadAfter: "head-after-cmr-fix",
+    });
+    expect(
+      backend.ledger.filter(
+        (e) => e.status === "cmr_passed" && e.cmrPass === "correctness",
+      ),
+    ).toHaveLength(1);
+    expect(backend.readFamilyHeadCalls).toEqual(["family/291-base"]);
   });
 
   it("RED full verify → ok:false, ran:true, aborted event, and NO cmr / NO PR (verify gates cmr)", async () => {
