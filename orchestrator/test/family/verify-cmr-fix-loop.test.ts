@@ -92,7 +92,13 @@ class SchedulerFamilyBackend implements FamilyBackend {
       return (
         this.script.ship?.(round) ?? {
           kind: "completed",
-          output: { kind: "ship", branch: ctx.familyBase!, status: "pr_opened", pr: `pr://${ctx.familyBase}` },
+          output: {
+            kind: "ship",
+            branch: ctx.familyBase!,
+            status: "pr_opened",
+            pr: `pr://${ctx.familyBase}`,
+            prHead: this.currentFamilyHead,
+          },
         }
       );
     }

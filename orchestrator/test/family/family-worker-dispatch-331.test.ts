@@ -178,7 +178,13 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       // cmr S336 r4) with a real pr_opened + pr URL.
       return {
         kind: "completed",
-        output: { kind: "ship", branch: "feat/330", pr: "u", status: "pr_opened" },
+        output: {
+          kind: "ship",
+          branch: "feat/330",
+          pr: "u",
+          prHead: "head-1",
+          status: "pr_opened",
+        },
       };
     }
   }
@@ -371,9 +377,29 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
   it("a completed pr_opened ship on familyBase with a real pr ⇒ ok (the contract holds)", async () => {
     const res = await gate({
       kind: "completed",
-      output: { kind: "ship", branch: "feat/330", status: "pr_opened", pr: "https://gh/pr/1" },
+      output: {
+        kind: "ship",
+        branch: "feat/330",
+        status: "pr_opened",
+        pr: "https://gh/pr/1",
+        prHead: "head-1",
+      },
     });
     expect(res).toEqual({ ok: true, ran: true });
+  });
+
+  it("a completed pr_opened ship whose PR head does not match the current family HEAD ⇒ INCOMPLETE_GATE", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: "feat/330",
+        status: "pr_opened",
+        pr: "https://gh/pr/1",
+        prHead: "stale-head",
+      },
+    });
+    expect(res).toEqual({ ok: false, ran: true });
   });
 });
 

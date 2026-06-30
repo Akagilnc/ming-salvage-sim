@@ -642,6 +642,23 @@ export async function runVerifyCmr(
     });
     return INCOMPLETE_GATE;
   }
+  if (!isFilledString(ship.prHead) || ship.prHead !== exactPostShipFamilyHead) {
+    const reason =
+      `family ship worker opened a PR, but the PR head (${ship.prHead ?? "missing"}) ` +
+      `does not match current family HEAD (${exactPostShipFamilyHead}); refusing to persist a shipped marker`;
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: exactPostShipFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: exactPostShipFamilyHead,
+    });
+    return INCOMPLETE_GATE;
+  }
 
   // ── Persist the terminal SHIPPED marker before reporting success (online review
   // r2, codex P1). The family ship commit (VERSION/CHANGELOG bump) advanced the

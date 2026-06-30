@@ -352,7 +352,7 @@ export class RealFamilyBackend implements FamilyBackend {
   protected verifyFamilyShipPr(input: {
     readonly pr: string;
     readonly familyBase: string;
-  }): { ok: true } | { ok: false; reason: string } {
+  }): { ok: true; headOid: string } | { ok: false; reason: string } {
     try {
       const raw = this.sh(
         "gh",
@@ -363,13 +363,14 @@ export class RealFamilyBackend implements FamilyBackend {
           "--repo",
           this.opts.repo,
           "--json",
-          "baseRefName,headRefName",
+          "baseRefName,headRefName,headRefOid",
         ],
         this.opts.workingRepo,
       );
       const parsed = JSON.parse(raw) as {
         readonly baseRefName?: unknown;
         readonly headRefName?: unknown;
+        readonly headRefOid?: unknown;
       };
       if (parsed.baseRefName !== this.opts.base) {
         return {
@@ -383,7 +384,13 @@ export class RealFamilyBackend implements FamilyBackend {
           reason: `family PR "${input.pr}" uses head "${String(parsed.headRefName)}" but expected "${input.familyBase}"`,
         };
       }
-      return { ok: true };
+      if (typeof parsed.headRefOid !== "string" || parsed.headRefOid.trim().length === 0) {
+        return {
+          ok: false,
+          reason: `family PR "${input.pr}" did not expose a non-empty headRefOid`,
+        };
+      }
+      return { ok: true, headOid: parsed.headRefOid.trim() };
     } catch (err) {
       return {
         ok: false,
@@ -1470,6 +1477,7 @@ export class RealFamilyBackend implements FamilyBackend {
         branch: outcome.branch,
         status: outcome.status,
         pr: outcome.pr,
+        prHead: verifiedPr.headOid,
       },
     };
   }

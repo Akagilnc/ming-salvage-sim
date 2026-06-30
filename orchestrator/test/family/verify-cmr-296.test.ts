@@ -492,8 +492,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       status: "aborted",
       event: "aborted",
       phase: "final",
-      reason:
-        "family ship worker opened a PR, but the current family HEAD could not be resolved; refusing to persist a stale shipped marker",
+      reason: "family ship worker failed: family ship worker threw on startup: git rev-parse failed",
       familyHeadAfter: "head-1",
     });
   });
@@ -687,6 +686,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       ),
     ).toHaveLength(1);
     expect(backend.readFamilyHeadCalls).toEqual([
+      "family/291-base",
       "family/291-base",
       "family/291-base",
       "family/291-base",
