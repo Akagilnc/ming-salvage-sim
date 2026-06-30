@@ -15,6 +15,7 @@ import sqlite3
 
 import pytest
 
+import ming_sim.content as content_mod
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
@@ -39,6 +40,59 @@ def fresh_db(tmp_path):
 def _read_settle(db, region_id="shaanxi"):
     row = db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", (region_id,)).fetchone()
     return json.loads(str(row["fiscal"] or "{}")).get("settle")
+
+
+def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
+    region = {
+        "id": "test_province",
+        "name": "测试省",
+        "kind": "布政司",
+        "population": 1,
+        "public_support": 50,
+        "unrest": 0,
+        "natural_disaster": "无",
+        "human_disaster": "无",
+        "registered_land": 1,
+        "hidden_land": 1,
+        "tax_per_turn": 1,
+        "grain_security": 1,
+        "gentry_resistance": 0,
+        "military_pressure": 0,
+        "status": "测试",
+        "controlled_by": "ming",
+        "fiscal": {
+            "settle": {
+                "_meta_defaults": "ming_province",
+                "_meta": {
+                    "postures": ["江南财赋核心"],
+                    "notes": {"漕粮": "保留省份专属说明"},
+                },
+                "st": {},
+                "p": {},
+            }
+        },
+    }
+    fake_regions = {
+        "settle_meta_defaults": {
+            "ming_province": {
+                "provisional": ["宗禄", "起运定额", "官民田", "隐田"],
+                "levies": {"seeded": ["辽饷"], "not_seeded": ["剿饷", "练饷"]},
+                "notes": {"起运定额": "#259 后由饷率通道动态接管、此值届时失效"},
+            }
+        },
+        "regions": [region],
+    }
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda name: fake_regions)
+
+    loaded = content_mod.load_region_content()["test_province"].fiscal["settle"]
+
+    assert "_meta_defaults" not in loaded
+    assert loaded["_meta"]["provisional"] == ["宗禄", "起运定额", "官民田", "隐田"]
+    assert loaded["_meta"]["levies"]["seeded"] == ["辽饷"]
+    assert loaded["_meta"]["levies"]["not_seeded"] == ["剿饷", "练饷"]
+    assert loaded["_meta"]["postures"] == ["江南财赋核心"]
+    assert loaded["_meta"]["notes"]["起运定额"].startswith("#259")
+    assert loaded["_meta"]["notes"]["漕粮"] == "保留省份专属说明"
 
 
 ZHONGYUAN_JINGSHI_GOLDEN = {
