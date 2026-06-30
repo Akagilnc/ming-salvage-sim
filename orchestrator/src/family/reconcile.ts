@@ -117,7 +117,9 @@ async function headlessTailIsConsistent(
 }
 
 function hasHeadlessAccountingRow(ledger: ReadonlyArray<FamilyLedgerEntry>): boolean {
-  return ledger.some((entry) => entry.status === "merged");
+  return ledger.some(
+    (entry) => entry.status === "merged" && entry.childIssue !== undefined,
+  );
 }
 
 /**
