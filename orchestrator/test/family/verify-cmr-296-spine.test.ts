@@ -47,6 +47,7 @@ import type {
   MergeRequest,
   OpenFamilyPrRequest,
   OpenFamilyPrResult,
+  ReconcileGit,
 } from "../../src/family/types.js";
 
 /** A single-slice Backend that drives every child to S8(success). */
@@ -132,6 +133,22 @@ class CapableFamilyBackend implements FamilyBackend {
       reason: esc.reason,
       familyHeadAfter: esc.familyHeadAfter,
     });
+  }
+}
+
+class StaticReconcileGit implements ReconcileGit {
+  constructor(private readonly liveHead: string, private readonly startHead: string = "base0") {}
+  async liveFamilyHead(): Promise<string> {
+    return this.liveHead;
+  }
+  async familyBaseStartHead(): Promise<string> {
+    return this.startHead;
+  }
+  async childHeadExists(): Promise<{ exists: boolean; childHead?: string }> {
+    return { exists: false };
+  }
+  async isAncestor(a: string, b: string): Promise<boolean> {
+    return a === b || a === this.startHead || b === this.liveHead;
   }
 }
 
@@ -408,13 +425,20 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
     backend.ledger.push(
       { childIssue: 294, status: "merged" },
       { childIssue: 295, status: "merged" },
-      { status: "shipped", event: "shipped", phase: "final", pr: "pr://family/291-base" },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "pr://family/291-base",
+        familyHeadAfter: "ship-head",
+      },
     );
     const result = await runFamily({
       epic: epicWith(294, 295),
       familyBackend: backend,
       singleSliceBackend: new ChildBackend(),
       familyBase: "family/291-base",
+      reconcileGit: new StaticReconcileGit("ship-head"),
     });
     // The already-shipped guard short-circuits BEFORE the final barrier.
     expect(backend.verifyCalls.map((v) => v.phase)).not.toContain("final");
@@ -425,5 +449,44 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
     // Honest: every child is ledger-merged ⇒ already delivered = success.
     expect(result.status).toBe("success");
     expect(result.children.every((c) => c.status === "merged")).toBe(true);
+  });
+
+  it("a shipped marker for an older family HEAD does NOT skip the final barrier", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
+    });
+    backend.ledger.push(
+      { childIssue: 294, status: "merged", childHead: "c294", familyHeadAfter: "old-head" },
+      { childIssue: 295, status: "merged", childHead: "c295" },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "pr://old",
+        familyHeadAfter: "old-head",
+      },
+    );
+
+    const result = await runFamily({
+      epic: epicWith(294, 295),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+      reconcileGit: new StaticReconcileGit("new-head"),
+    });
+
+    expect(backend.verifyCalls.map((v) => v.phase)).toContain("final");
+    expect(backend.cmrCalls.map((c) => c.cmrPass)).toEqual(["completeness", "correctness"]);
+    expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+    expect(backend.ledger.filter((e) => e.status === "shipped")).toHaveLength(2);
+    expect(backend.ledger).toContainEqual({
+      status: "shipped",
+      event: "shipped",
+      phase: "final",
+      pr: "pr://family/291-base",
+      familyHeadAfter: "new-head",
+    });
+    expect(result.status).toBe("success");
   });
 });

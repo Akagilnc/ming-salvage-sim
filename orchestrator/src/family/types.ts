@@ -105,9 +105,10 @@ export interface FamilyLedgerEntry {
    *     the family head at the time (`familyHeadAfter`) + the `phase` + a `reason`
    *     for triage (#291 缺口 2). NOT counted as merged.
    *   - `"shipped"` — the terminal family ship (止于-PR) SUCCEEDED (online review r2,
-   *     codex P1). A PHASE-LEVEL terminal marker carrying the family `pr` URL; the
-   *     spine's resume guard reads it so an already-delivered family run is NOT
-   *     re-verified / re-cmr'd / re-shipped. NOT counted as merged (no `childIssue`).
+   *     codex P1). A PHASE-LEVEL terminal marker carrying the family `pr` URL and
+   *     the covered `familyHeadAfter`; the spine's resume guard reads it so only
+   *     the same already-delivered HEAD skips re-verify / re-cmr / re-ship. NOT
+   *     counted as merged (no `childIssue`).
    *   - `"cmr_passed"` — a PHASE-LEVEL audit event recording one green integrated
    *     CMR pass (#419). NOT counted as merged.
    *   - `"escalated"` — a PHASE-LEVEL family pause/failure marker (#439). Decision

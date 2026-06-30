@@ -62,31 +62,57 @@ describe("family-ledger.recordMerged (#293 seam 3)", () => {
 });
 
 describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r3, codex P1)", () => {
-  it("recordShipped appends the terminal {status,event,phase,pr} marker", async () => {
+  it("recordShipped appends the terminal marker with the shipped family HEAD", async () => {
     const backend = new FakeFamilyBackend();
-    await recordShipped(backend, { pr: "https://gh/pr/352" });
+    await recordShipped(backend, { pr: "https://gh/pr/352", familyHeadAfter: "head-1" });
     expect(backend.appended).toEqual([
-      { status: "shipped", event: "shipped", phase: "final", pr: "https://gh/pr/352" },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "https://gh/pr/352",
+        familyHeadAfter: "head-1",
+      },
     ]);
   });
 
-  it("familyAlreadyShipped is TRUE only for the complete shipped marker", () => {
+  it("familyAlreadyShipped is TRUE only for the complete shipped marker matching the current head", () => {
     expect(
       familyAlreadyShipped([
         { childIssue: 1, status: "merged" },
-        { status: "shipped", event: "shipped", phase: "final", pr: "https://gh/pr/352" },
-      ]),
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr: "https://gh/pr/352",
+          familyHeadAfter: "head-1",
+        },
+      ], "head-1"),
     ).toBe(true);
+    expect(
+      familyAlreadyShipped([
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr: "https://gh/pr/352",
+          familyHeadAfter: "head-1",
+        },
+      ], "head-2"),
+    ).toBe(false);
   });
 
   it("familyAlreadyShipped FAILS CLOSED on a malformed shipped row (no skip on garbage, r3 coderabbit)", () => {
     // A corrupt/hand-edited row must NOT let the spine skip the final barrier.
-    expect(familyAlreadyShipped([{ status: "shipped" } as FamilyLedgerEntry])).toBe(false);
+    expect(familyAlreadyShipped([{ status: "shipped" } as FamilyLedgerEntry], "head-1")).toBe(false);
     expect(
-      familyAlreadyShipped([{ status: "shipped", event: "shipped", phase: "final", pr: "  " }]),
+      familyAlreadyShipped([{ status: "shipped", event: "shipped", phase: "final", pr: "  " }], "head-1"),
     ).toBe(false);
     expect(
-      familyAlreadyShipped([{ status: "shipped", event: "shipped", phase: "wave", pr: "u" } as FamilyLedgerEntry]),
+      familyAlreadyShipped([{ status: "shipped", event: "shipped", phase: "wave", pr: "u" } as FamilyLedgerEntry], "head-1"),
+    ).toBe(false);
+    expect(
+      familyAlreadyShipped([{ status: "shipped", event: "shipped", phase: "final", pr: "u" }], "head-1"),
     ).toBe(false);
   });
 
@@ -95,7 +121,7 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
       familyAlreadyShipped([
         { childIssue: 1, status: "merged" },
         { status: "aborted", event: "aborted", phase: "final", reason: "x" },
-      ]),
+      ], "head-1"),
     ).toBe(false);
   });
 });

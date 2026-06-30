@@ -73,14 +73,14 @@ export interface AbortedRecord {
  * The fields a PHASE-LEVEL `shipped` event (terminal 止于-PR success) carries
  * (online review r2, codex P1). Like {@link AbortedRecord} it is a phase-level
  * event (NOT a child), so it carries NO `childIssue`. It records the family `pr`
- * URL. `familyHeadAfter` is intentionally OMITTED: the ship commit is a descendant
- * of the last recorded baseline, so reconcile branch ② tolerates the advance
- * without escalating — the `shipped` entry is a TERMINAL FLAG for the spine's
- * resume guard, not a new reconcile baseline.
+ * URL and the exact family HEAD covered by that PR. The spine may skip a later
+ * final barrier only when the current family HEAD still equals this head.
  */
 export interface ShippedRecord {
   /** The family PR URL the terminal ship opened. */
   readonly pr: string;
+  /** The family base HEAD covered by the terminal ship / PR. */
+  readonly familyHeadAfter?: string;
 }
 
 /** The fields for a green integrated CMR pass audit event (#419). */
@@ -249,7 +249,9 @@ function isValidFamilyShipped(entry: FamilyLedgerEntry): boolean {
     entry.event === "shipped" &&
     entry.phase === "final" &&
     typeof entry.pr === "string" &&
-    entry.pr.trim().length > 0
+    entry.pr.trim().length > 0 &&
+    typeof entry.familyHeadAfter === "string" &&
+    entry.familyHeadAfter.trim().length > 0
   );
 }
 
@@ -363,24 +365,33 @@ export async function recordShipped(
       event: "shipped",
       phase: "final",
       pr: record.pr,
+      familyHeadAfter: record.familyHeadAfter,
     }) as FamilyLedgerEntry,
   );
 }
 
 /**
- * Did the terminal family ship already succeed? True once a `status:"shipped"`
- * marker is on the ledger (online review r2, codex P1). The spine reads this
- * BEFORE the final barrier so an already-delivered family run is not re-shipped.
+ * Did the terminal family ship already succeed for THIS family HEAD? True only
+ * when a complete `status:"shipped"` marker is on the ledger and its
+ * `familyHeadAfter` equals the current family HEAD. The spine reads this BEFORE
+ * the final barrier so an already-delivered family run is not re-shipped, while a
+ * later live HEAD advance is re-verified / re-shipped instead of being hidden by
+ * an older PR marker.
  */
 export function familyAlreadyShipped(
   entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
 ): boolean {
   // Fail-CLOSED on a malformed row (online review r3, coderabbit): the spine skips
   // the final barrier on this, so a corrupt/hand-edited `status:"shipped"` row with
   // no real delivery must NOT bypass verify/cmr/ship. Require the COMPLETE shape
-  // `recordShipped` always writes — status + event + final phase + a non-blank `pr`
-  // URL — so only a genuine terminal ship counts as delivered.
-  return entries.some((e) => isValidFamilyShipped(e));
+  // `recordShipped` writes — status + event + final phase + a non-blank `pr` URL
+  // + a non-blank `familyHeadAfter` — so only a genuine terminal ship for the
+  // current HEAD counts as delivered.
+  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) return false;
+  return entries.some(
+    (e) => isValidFamilyShipped(e) && e.familyHeadAfter === familyHeadAfter,
+  );
 }
 
 /**

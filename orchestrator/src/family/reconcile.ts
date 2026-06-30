@@ -120,6 +120,14 @@ function isValidRecordedHeadEntry(entry: FamilyLedgerEntry): boolean {
       (entry.escalationKind === "decision" || entry.escalationKind === "failure")
     );
   }
+  if (entry.status === "shipped") {
+    return (
+      entry.event === "shipped" &&
+      entry.phase === "final" &&
+      typeof entry.pr === "string" &&
+      entry.pr.trim().length > 0
+    );
+  }
   return false;
 }
 

@@ -491,16 +491,13 @@ export async function runFamily(
   }
 
   // ── already-shipped resume guard (online review r2, codex P1) ────────────────
-  // If a prior invocation already ran the terminal 止于-PR family ship (a `shipped`
-  // ledger entry exists), the family PR is open and the base carries the ship
-  // (VERSION/CHANGELOG bump) commit. Re-running the final barrier would re-verify,
-  // re-cmr, and re-invoke the ship worker — a duplicate VERSION bump / PR attempt.
-  // Reconcile already tolerates the ship-commit advance (branch ②, no escalate), so
-  // the run reaches here on resume; the durable `shipped` marker is the terminal
-  // truth. Treat the family as already delivered: finalize WITHOUT re-shipping. Every
-  // child is ledger-merged (completeness gate above), so finalize() returns
-  // "success" with the reconcile-seeded `familyHead`.
-  if (familyAlreadyShipped(await familyBackend.readFamilyLedger())) {
+  // If a prior invocation already ran the terminal 止于-PR family ship for the SAME
+  // family HEAD (a complete `shipped` ledger entry with matching `familyHeadAfter`),
+  // the family PR is open and covers the current base. Re-running the final barrier
+  // would re-verify, re-cmr, and re-invoke the ship worker — a duplicate VERSION bump
+  // / PR attempt. But an older shipped marker for a different head must NOT hide a
+  // later live-base advance; that new head needs a fresh final barrier / ship.
+  if (familyAlreadyShipped(await familyBackend.readFamilyLedger(), familyHead)) {
     return await finalize();
   }
 

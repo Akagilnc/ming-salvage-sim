@@ -343,6 +343,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       event: "shipped",
       phase: "final",
       pr: "pr://family/291-base",
+      familyHeadAfter: "head-1",
     });
   });
 
@@ -628,6 +629,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       event: "shipped",
       phase: "final",
       pr: "pr://family/291-base",
+      familyHeadAfter: "head-1",
     });
   });
 
