@@ -415,6 +415,12 @@ export function hasUnboundLegacyShippedMarker(
   );
 }
 
+export function hasBoundShippedMarker(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+): boolean {
+  return entries.some((e) => isValidFamilyShipped(e));
+}
+
 /**
  * Derive the set of merged child issue numbers from the ledger entries.
  *
