@@ -139,9 +139,15 @@ export interface GhIssueJson {
   readonly number?: number;
   readonly title?: string | null;
   readonly state?: string | null;
+  readonly author?: { readonly login?: string | null } | null;
+  readonly user?: { readonly login?: string | null } | null;
   readonly body?: string | null;
   readonly labels?: ReadonlyArray<{ readonly name?: string }> | null;
-  readonly comments?: ReadonlyArray<{ readonly body?: string }> | null;
+  readonly comments?: ReadonlyArray<{
+    readonly body?: string;
+    readonly author?: { readonly login?: string | null } | null;
+    readonly user?: { readonly login?: string | null } | null;
+  }> | null;
 }
 
 /** Native blocked_by dependency summary from `gh api .../dependencies`. */
@@ -203,19 +209,47 @@ export function buildIssueMeta(
  * brief is not an S0 gate, design decision); the coder then works from the whole
  * live issue (body + comments) fetched in-container.
  */
-export function extractAgentBrief(json: GhIssueJson): string {
+function actorLogin(
+  carrier: {
+    readonly author?: { readonly login?: string | null } | null;
+    readonly user?: { readonly login?: string | null } | null;
+  } | null | undefined,
+): string {
+  return carrier?.author?.login ?? carrier?.user?.login ?? "";
+}
+
+function repoOwnerLogin(repo: string): string {
+  return repo.split("/", 1)[0] ?? "";
+}
+
+function isTrustedBriefAuthor(
+  carrier: {
+    readonly author?: { readonly login?: string | null } | null;
+    readonly user?: { readonly login?: string | null } | null;
+  } | null | undefined,
+  ownerLogin: string,
+): boolean {
+  return ownerLogin !== "" && actorLogin(carrier) === ownerLogin;
+}
+
+export function extractAgentBrief(json: GhIssueJson, ownerLogin: string): string {
   // Priority order, LOWEST first: the issue body is the fallback, then comments
   // in order (newest last). A later carrier overwrites an earlier one, so the
   // LAST brief-bearing COMMENT wins over both earlier comments and the body
   // (a re-issued brief supersedes the original) — the body only stands when no
   // comment carries a brief.
   const carriers = [
-    json.body ?? "",
-    ...(json.comments ?? []).map((c) => c.body ?? ""),
+    { text: json.body ?? "", author: json },
+    ...(json.comments ?? []).map((c) => ({ text: c.body ?? "", author: c })),
   ];
   let brief = "";
-  for (const text of carriers) {
-    if (text.includes(AGENT_BRIEF_HEADING)) brief = text;
+  for (const carrier of carriers) {
+    if (
+      carrier.text.includes(AGENT_BRIEF_HEADING) &&
+      isTrustedBriefAuthor(carrier.author, ownerLogin)
+    ) {
+      brief = carrier.text;
+    }
   }
   return brief;
 }
@@ -298,12 +332,15 @@ export function buildIssueSnapshot(
   json: GhIssueJson,
   blockedBy: ReadonlyArray<GhBlockedBy>,
   subIssueCount: number,
+  ownerLogin: string,
 ): IssueSnapshot {
   return {
     number: json.number ?? issueNumber,
     body: json.body ?? "",
+    bodyAuthorLogin: actorLogin(json),
     comments: (json.comments ?? []).map((c) => c.body ?? ""),
-    agentBrief: extractAgentBrief(json),
+    commentAuthorLogins: (json.comments ?? []).map((c) => actorLogin(c)),
+    agentBrief: extractAgentBrief(json, ownerLogin),
     nativeMeta: buildIssueSnapshotMeta(json, blockedBy, subIssueCount),
   };
 }
@@ -1269,6 +1306,12 @@ export interface RealBackendOptions {
   readonly runKey: number;
   /** GitHub repo slug for `gh` (`owner/name`). */
   readonly repo: string;
+  /**
+   * Login allowed to author trusted `## Agent Brief` sections. Defaults to the
+   * owner segment of {@link RealBackendOptions.repo}; kept separate so the trust
+   * source can grow into an allowlist later without changing parser callers.
+   */
+  readonly ownerLogin?: string;
   /** The profile image (#253): toolchain + souls + model CLIs baked in. */
   readonly imageName: string;
   /**
@@ -1340,6 +1383,7 @@ const coderOutputSchema = z.object({
 
 export class RealBackend implements Backend {
   private readonly opts: RealBackendOptions;
+  private readonly ownerLogin: string;
   /**
    * The dedicated clone this invocation owns (ADR 0024). All resident slice
    * worktrees are cut from HERE, and every internal git/Sandcastle op anchors on
@@ -1351,6 +1395,7 @@ export class RealBackend implements Backend {
 
   constructor(opts: RealBackendOptions) {
     this.opts = opts;
+    this.ownerLogin = opts.ownerLogin ?? repoOwnerLogin(opts.repo);
     this.validatePromptsDir();
     this.workingRepo = this.buildOrReuseClone();
     this.assertIndependentClone();
@@ -1573,7 +1618,7 @@ export class RealBackend implements Backend {
         "--repo",
         this.opts.repo,
         "--json",
-        "number,title,state,body,labels,comments",
+        "number,title,state,author,body,labels,comments",
       ]);
       return JSON.parse(raw) as GhIssueJson;
     });
@@ -1583,7 +1628,13 @@ export class RealBackend implements Backend {
     // attributed to S1 (not S0) for the US#30 error package.
     const subIssueCount = this.fetchSubIssueCount(issueNumber, "S1");
     const blockedBy = this.fetchBlockedBy(issueNumber, "S1");
-    return buildIssueSnapshot(issueNumber, json, blockedBy, subIssueCount);
+    return buildIssueSnapshot(
+      issueNumber,
+      json,
+      blockedBy,
+      subIssueCount,
+      this.ownerLogin,
+    );
   }
 
   // ── S1: resident slice worktree (Sandcastle native createWorktree) ─────────

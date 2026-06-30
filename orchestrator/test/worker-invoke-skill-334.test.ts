@@ -201,7 +201,19 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(soul).toMatch(/coder-fix|fix worker|blocking review findings/i);
     expect(soul).not.toMatch(/Second review|non-Claude reviewer leg/i);
     expect(soul).toMatch(/gh issue view/i);
+    expect(soul).toMatch(/--json[^`]*author[^`]*body[^`]*comments/is);
+    expect(soul).toMatch(/comment\.author\.login.*repo owner/is);
+    expect(soul).toMatch(/non-owner.*Agent Brief.*ordinary issue text/is);
     expect(soul).toMatch(/Snapshot files.*not execution input/is);
+  });
+
+  it("coder entrypoints require author-aware live issue reads before treating Agent Brief as authoritative", () => {
+    for (const promptName of ["coder_implement.md", "coder_fix.md"]) {
+      const prompt = read(promptName);
+      expect(prompt).toMatch(/--json[^`]*author[^`]*body[^`]*comments/is);
+      expect(prompt).toMatch(/repo owner/i);
+      expect(prompt).toMatch(/non-owner.*Agent Brief.*ordinary issue text/is);
+    }
   });
 
   it("the reviewer soul carries snapshot-input policy outside the thin prompt", () => {
