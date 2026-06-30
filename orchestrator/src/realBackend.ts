@@ -1225,7 +1225,7 @@ export function promptsDirError(
     return (
       `RealBackend: promptsDir "${promptsDir}" is missing required promptFile(s): ` +
       `${missingFiles.join(", ")}. All of [${REFERENCED_PROMPT_FILES.join(", ")}] ` +
-      `must be present (the runner's S2 build + S7 ship reference them).`
+      `must be present (S2 coder, S3/S6 reviewer, S5 coder-fix, and S7 ship reference them).`
     );
   }
   return undefined;

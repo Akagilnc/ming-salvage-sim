@@ -214,8 +214,8 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
 
     await runOrchestrator({ issueNumber: 247, backend });
 
-    // The single agent step dispatched a fixed, versioned promptFile (recorded
-    // in the call log) — no step assembled an inline prompt string.
+    // The S2 coder and S3 reviewer steps dispatched fixed, versioned promptFiles
+    // (recorded in the call log) — no step assembled an inline prompt string.
     const runCalls = backend.calls.filter((c) => c.startsWith("runStep("));
     expect(runCalls).toEqual([
       "runStep(S2:coder:coder_implement.md)",
