@@ -419,8 +419,7 @@ export function hasUnboundLegacyShippedMarker(
       e.phase === "final" &&
       typeof e.pr === "string" &&
       e.pr.trim().length > 0 &&
-      (e.familyHeadAfter === undefined ||
-        (typeof e.familyHeadAfter === "string" && e.familyHeadAfter.trim().length === 0)),
+      (typeof e.familyHeadAfter !== "string" || e.familyHeadAfter.trim().length === 0),
   );
 }
 

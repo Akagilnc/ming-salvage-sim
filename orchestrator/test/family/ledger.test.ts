@@ -120,6 +120,17 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
       hasUnboundLegacyShippedMarker([{ status: "shipped", event: "shipped", phase: "final", pr: "u" }]),
     ).toBe(true);
     expect(
+      hasUnboundLegacyShippedMarker([
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr: "u",
+          familyHeadAfter: 123,
+        } as unknown as FamilyLedgerEntry,
+      ]),
+    ).toBe(true);
+    expect(
       hasBoundShippedMarker([
         {
           status: "shipped",
