@@ -1382,7 +1382,7 @@ export class RealFamilyBackend implements FamilyBackend {
    * runs on the driver / manual-smoke / e2e path).
    *
    * The worker is the container's TOP-LEVEL agent (gstack-ship's pipeline + any
-   * rerun loops run inside it — ADR 0026), under the WRITE (`coder`) soul (it
+   * retry cycles run there), under the WRITE (`coder`) soul (it
    * commits the VERSION/CHANGELOG bump + pushes + opens the PR).
    * `branchStrategy:{type:"head"}` keeps it on the checked-out family base. Its
    * `<ship>` tag is gated on the completion signal then classified.

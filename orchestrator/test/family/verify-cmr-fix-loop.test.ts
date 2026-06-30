@@ -301,7 +301,7 @@ describe("the verifyCmr seam keeps cmr pass outcomes at the WorkerResult boundar
     expect(src).not.toMatch(/NO_PROGRESS_LIMIT/);
     expect(src).not.toMatch(/noProgressStreak/);
     expect(src).not.toMatch(/prevReasonKey/);
-    // No ad-hoc infinite loop inside this hook.
+    // No ad-hoc unbounded iteration in this hook.
     expect(src).not.toMatch(/for\s*\(;;\)/);
     // No legacy priorFindings/cmrReason threading through the family hook.
     expect(src).not.toMatch(/priorFindings/);
