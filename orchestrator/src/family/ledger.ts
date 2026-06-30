@@ -87,6 +87,8 @@ export interface CmrPassedRecord {
   readonly cmrPass: IntegratedCmrPass;
   /** The family base HEAD that this pass reviewed and passed. */
   readonly familyHeadAfter?: string;
+  /** Resolved route fingerprint for the CMR worker and declared review legs. */
+  readonly routeFingerprint?: string;
 }
 
 /**
@@ -177,6 +179,7 @@ export async function recordCmrPassed(
       phase: "final",
       cmrPass: record.cmrPass,
       familyHeadAfter: record.familyHeadAfter,
+      routeFingerprint: record.routeFingerprint,
     }) as FamilyLedgerEntry,
   );
 }
@@ -188,9 +191,19 @@ export async function recordCmrPassed(
  */
 export function cmrPassAlreadyPassed(
   entries: ReadonlyArray<FamilyLedgerEntry>,
-  input: { readonly cmrPass: IntegratedCmrPass; readonly familyHeadAfter?: string },
+  input: {
+    readonly cmrPass: IntegratedCmrPass;
+    readonly familyHeadAfter?: string;
+    readonly routeFingerprint?: string;
+  },
 ): boolean {
   if (input.familyHeadAfter === undefined || input.familyHeadAfter.trim().length === 0) {
+    return false;
+  }
+  if (
+    input.routeFingerprint === undefined ||
+    input.routeFingerprint.trim().length === 0
+  ) {
     return false;
   }
   return entries.some(
@@ -199,7 +212,8 @@ export function cmrPassAlreadyPassed(
       e.event === "cmr_passed" &&
       e.phase === "final" &&
       e.cmrPass === input.cmrPass &&
-      e.familyHeadAfter === input.familyHeadAfter,
+      e.familyHeadAfter === input.familyHeadAfter &&
+      e.routeFingerprint === input.routeFingerprint,
   );
 }
 
