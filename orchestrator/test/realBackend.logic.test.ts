@@ -4,8 +4,8 @@
  * Scope (per #256 acceptance criteria): only the zero-container, zero-LLM logic
  * — gh-snapshot parsing, auth-mount path construction, model-slug mapping,
  * per-step sessionId extraction (seam extension), branchHEAD consistency
- * (codex#2), StructuredOutputError dead-session classification, and failedStep
- * attribution (codex#3). The real container / real-LLM / real-gh paths are #256
+ * (codex#2), resume error classification, and failedStep attribution
+ * (codex#3). The real container / real-LLM / real-gh paths are #256
  * MANUAL smoke and are NOT exercised here.
  *
  * These imports load `@ai-hero/sandcastle` (side-effect-free) but never start a
@@ -14,6 +14,7 @@
  */
 
 import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -44,6 +45,8 @@ import {
   promptsDirError,
   realCommitCount,
   reconcileCoderCommits,
+  reconcileResumeCoderCommits,
+  resumeCoderCommitBasis,
   resolveModelSlug,
   soulForStep,
   REFERENCED_PROMPT_FILES,
@@ -781,10 +784,10 @@ describe("realBackend resume HEAD reconciliation (codex#2 wiring, F5)", () => {
   });
 });
 
-// ─── StructuredOutputError dead-session classification (#256) ─────────────────
+// ─── resume error classification (#285) ─────────────────────────────────────
 
 describe("realBackend classifyResumeError", () => {
-  it("retry-structured when a StructuredOutputError carries a sessionId", () => {
+  it("propagates StructuredOutputError instead of falling back to a fresh run", () => {
     const err = new StructuredOutputError("bad output", {
       tag: "review",
       rawMatched: undefined,
@@ -792,27 +795,44 @@ describe("realBackend classifyResumeError", () => {
       branch: "feat/x",
       sessionId: "sess-123",
     });
-    expect(classifyResumeError(err)).toEqual({
-      kind: "retry-structured",
-      sessionId: "sess-123",
-    });
+    expect(classifyResumeError(err)).toEqual({ kind: "propagate" });
   });
 
-  it("fresh-run when a StructuredOutputError has no sessionId", () => {
+  it("propagates schema-parse style StructuredOutputError with no sessionId", () => {
     const err = new StructuredOutputError("bad output", {
       tag: "review",
       rawMatched: undefined,
       commits: [],
       branch: "feat/x",
     });
-    expect(classifyResumeError(err)).toEqual({ kind: "fresh-run" });
+    expect(classifyResumeError(err)).toEqual({ kind: "propagate" });
   });
 
-  it("fresh-run for a generic dead-session / transport error", () => {
+  it("fresh-run only for an explicit dead or missing resume session", () => {
     expect(classifyResumeError(new Error("session not found"))).toEqual({
       kind: "fresh-run",
     });
-    expect(classifyResumeError("string error")).toEqual({ kind: "fresh-run" });
+    expect(classifyResumeError(new Error("resume session expired"))).toEqual({
+      kind: "fresh-run",
+    });
+  });
+
+  it("propagates signal, auth, model, and generic errors", () => {
+    expect(
+      classifyResumeError(
+        new Error("step S2-coder-resume did not fire its required completion signal"),
+      ),
+    ).toEqual({ kind: "propagate" });
+    expect(classifyResumeError(new Error("401 unauthorized"))).toEqual({
+      kind: "propagate",
+    });
+    expect(classifyResumeError(new Error("session token not found"))).toEqual({
+      kind: "propagate",
+    });
+    expect(classifyResumeError(new Error("model overloaded"))).toEqual({
+      kind: "propagate",
+    });
+    expect(classifyResumeError("string error")).toEqual({ kind: "propagate" });
   });
 });
 
@@ -1272,5 +1292,64 @@ describe("realBackend reconcileCoderCommits", () => {
         0,
       ),
     ).toThrow(/self-report/i);
+  });
+});
+
+// ─── resume coder commit truth (#285) ───────────────────────────────────────
+
+describe("realBackend resume coder commit truth", () => {
+  const base = "a".repeat(40);
+  const head = "b".repeat(40);
+
+  it("finds the ledger baseline before the coder step being resumed", () => {
+    const basis = resumeCoderCommitBasis(
+      [
+        { step: "S1", branchHEAD: base },
+        {
+          step: "S2",
+          sessionId: "sess-coder",
+          branchHEAD: head,
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        { step: "S8", branchHEAD: head, handoffStatus: "escalate" },
+      ],
+      "sess-coder",
+    );
+    expect(basis).toEqual({
+      baselineHead: base,
+      priorCommitsAdded: 1,
+    });
+  });
+
+  it("allows a resume that only re-emits the structured tag when cumulative git truth matches", () => {
+    expect(
+      reconcileResumeCoderCommits(
+        { committed: true, commitsAdded: 1 },
+        /*cumulativeGitCommitCount*/ 1,
+      ),
+    ).toEqual({ committed: true, commitsAdded: 1 });
+  });
+
+  it("rejects a resumed coder self-report that claims commits git does not have", () => {
+    expect(() =>
+      reconcileResumeCoderCommits(
+        { committed: true, commitsAdded: 1 },
+        /*cumulativeGitCommitCount*/ 0,
+      ),
+    ).toThrow(/resume/i);
+  });
+
+  it("dead-session fallback does not route resumed coders through normal runStep commit truth", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(here, "..", "src", "realBackend.ts"), "utf8");
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .map((l) => l.replace(/\/\/.*$/, ""))
+      .join("\n");
+
+    expect(code).not.toMatch(
+      /recovery\.kind\s*===\s*"fresh-run"[\s\S]*?return\s+await\s+this\.runStep\s*\(/,
+    );
   });
 });
