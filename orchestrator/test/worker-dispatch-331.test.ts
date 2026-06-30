@@ -460,9 +460,9 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
 
   it("forwards a resume worker (resumeSessionId present) to resumeSession with the recorded session id", async () => {
     const be = new LegacyBackend();
-    // The resume path is keyed by resumeSessionId; the only agent step is the S2
-    // build worker (ADR 0026 — the per-slice fix loop runs inside it, so there is
-    // no separate fix step to thread findings to).
+    // The resume path is keyed by resumeSessionId. ADR 0030 uses separate
+    // runner-visible worker steps for build/review/fix; this assertion only
+    // covers forwarding one recorded worker session id through the legacy seam.
     await legacyDispatchWorker(be as unknown as Backend, { ...coderWorker, id: "S2" }, {
       worktree: be.worktree,
       resumeSessionId: "sess-abc",

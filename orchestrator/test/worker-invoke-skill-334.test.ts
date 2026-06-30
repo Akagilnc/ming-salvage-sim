@@ -1,7 +1,8 @@
 /**
- * #334 — the first end-to-end tracer: the coder worker runs the whole slice
- * (build + per-slice review/fix loop) through the unified dispatchWorker seam
- * (ADR 0026 / PRD #330), running on the baked 2b image.
+ * #334 — the first end-to-end tracer for running slice workers through the
+ * unified dispatchWorker seam (ADR 0026 / PRD #330), on the baked 2b image.
+ * ADR 0030 later split per-slice review/fix convergence into separate
+ * runner-visible reviewer/coder-fix worker boundaries.
  *
  * This slice makes the seam REAL in two ways the #331 prefactor only declared:
  *
