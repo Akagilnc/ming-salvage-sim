@@ -34,6 +34,7 @@ import { assertAcyclic, selectWave } from "./commander.js";
 import {
   familyAlreadyShipped,
   familyEscalationState,
+  isMergedAccountingEntry,
   mergedSet,
   recordFamilyEscalated,
   recordMerged,
@@ -134,9 +135,8 @@ async function llmResolvedChildren(
   const out: number[] = [];
   for (const e of ledger) {
     if (
-      e.status === "merged" &&
+      isMergedAccountingEntry(e) &&
       e.conflictResolvedByLlm === true &&
-      e.childIssue !== undefined &&
       !seen.has(e.childIssue)
     ) {
       seen.add(e.childIssue);

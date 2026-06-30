@@ -83,13 +83,44 @@ function lastRecordedHead(ledger: ReadonlyArray<FamilyLedgerEntry>): {
     const entry = ledger[i]!;
     const after = entry.familyHeadAfter;
     if (after !== undefined) {
-      if (entry.status === "merged" && !isMergedAccountingEntry(entry)) {
+      if (!isValidRecordedHeadEntry(entry)) {
         return { head: undefined, index: i, invalid: true };
       }
       return { head: after, index: i, invalid: false };
     }
   }
   return { head: undefined, index: -1, invalid: false };
+}
+
+function hasNonBlankFamilyHeadAfter(entry: FamilyLedgerEntry): boolean {
+  return (
+    typeof entry.familyHeadAfter === "string" &&
+    entry.familyHeadAfter.trim().length > 0
+  );
+}
+
+function isValidRecordedHeadEntry(entry: FamilyLedgerEntry): boolean {
+  if (!hasNonBlankFamilyHeadAfter(entry)) return false;
+  if (entry.status === "merged") return isMergedAccountingEntry(entry);
+  if (entry.status === "aborted") {
+    return entry.event === "aborted" && (entry.phase === "wave" || entry.phase === "final");
+  }
+  if (entry.status === "cmr_passed") {
+    return (
+      entry.event === "cmr_passed" &&
+      entry.phase === "final" &&
+      (entry.cmrPass === "completeness" || entry.cmrPass === "correctness") &&
+      typeof entry.routeFingerprint === "string" &&
+      entry.routeFingerprint.trim().length > 0
+    );
+  }
+  if (entry.status === "escalated") {
+    return (
+      entry.event === "escalated" &&
+      (entry.escalationKind === "decision" || entry.escalationKind === "failure")
+    );
+  }
+  return false;
 }
 
 /**

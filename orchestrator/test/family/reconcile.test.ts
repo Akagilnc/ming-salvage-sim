@@ -398,6 +398,25 @@ describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
     expect(plan.reconciled).toEqual([]);
     expect(plan.merged.size).toBe(0);
   });
+
+  it("does not trust phase-only answer rows with familyHeadAfter as a baseline", async () => {
+    const ledger = [
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue",
+        familyHeadAfter: "base1",
+      },
+    ] as unknown as FamilyLedgerEntry[];
+    const git = new FakeReconcileGit("base1", {}, new Set(["base0"]), "base0");
+
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect(plan.merged.size).toBe(0);
+  });
 });
 
 describe("reconcileFamilyLedger — full-field merged entries reach branch ② (the prod path)", () => {

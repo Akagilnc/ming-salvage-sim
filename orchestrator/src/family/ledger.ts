@@ -261,7 +261,9 @@ function familyAnswerPayload(entry: FamilyLedgerEntry): EscalationAnswerPayload 
   };
 }
 
-export function isMergedAccountingEntry(entry: FamilyLedgerEntry): boolean {
+export function isMergedAccountingEntry(
+  entry: FamilyLedgerEntry,
+): entry is FamilyLedgerEntry & { readonly childIssue: number } {
   return (
     entry.status === "merged" &&
     Number.isSafeInteger(entry.childIssue) &&

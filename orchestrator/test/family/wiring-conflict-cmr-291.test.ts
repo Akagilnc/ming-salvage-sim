@@ -179,6 +179,27 @@ describe("Wiring 1 â€” conflictResolvedByLlm flows to the integrated cmr (#291 ç
     ]);
   });
 
+  it("ignores malformed LLM-resolved ledger rows whose childIssue is not a number", async () => {
+    const backend = new ConflictCmrFamilyBackend(new Set([295]));
+    backend.ledger.push({
+      status: "merged",
+      childIssue: "295",
+      conflictResolvedByLlm: true,
+    } as unknown as FamilyLedgerEntry);
+
+    await runFamily({
+      epic,
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+    });
+
+    expect(backend.cmrCalls.map((c) => c.llmResolvedChildren)).toEqual([
+      [295],
+      [295],
+    ]);
+  });
+
   it("with NO conflicts, the cmr request omits llmResolvedChildren (no false signal)", async () => {
     const backend = new ConflictCmrFamilyBackend(/* no conflicts */);
     await runFamily({
