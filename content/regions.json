@@ -284,7 +284,8 @@
             ],
             "notes": {
               "军饷": "宣大边镇军饷按 military_pressure=65 与九边京运年例量级 seed",
-              "宗禄": "晋藩/代藩宗禄按 wang_tian=60 与宗藩禄粮量级 seed"
+              "宗禄": "晋藩/代藩宗禄按 wang_tian=60 与宗藩禄粮量级 seed",
+              "田亩口径": "settle.st.官民田按史实田亩校准口径，可与 fiscal.guan_min_tian 的小游戏字段折算存在小差额。"
             }
           },
           "st": {
@@ -417,7 +418,11 @@
         "settle": {
           "_note": "#66 省级 settle_tick 基座（陕西，#70 全 17 省 seed 之一）。#266 已重标到史实量级 shadow seed；1627.10 开局三饷仅辽饷九厘，剿饷1637/练饷1639 事件驱动注入见 #259。",
           "_meta_defaults": "ming_province",
-          "_meta": {},
+          "_meta": {
+            "notes": {
+              "田亩口径": "settle.st.官民田按史实田亩校准口径，可与 fiscal.guan_min_tian 的小游戏字段折算存在小差额。"
+            }
+          },
           "st": {
             "省库库银": 0,
             "C_地方截留": 0,
