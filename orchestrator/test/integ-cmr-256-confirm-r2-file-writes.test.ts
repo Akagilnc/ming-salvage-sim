@@ -80,15 +80,16 @@ describe("integ-cmr 256 confirm r2 — writeSnapshot serialises the native metad
       number: 256,
       title: "Slice: real Backend",
       state: "open",
+      author: { login: "Akagilnc" },
       body: "the body",
       labels: [{ name: "ready-for-agent" }, { name: "enhancement" }],
-      comments: [{ body: "## Agent Brief\nimplement #256" }],
+      comments: [{ author: { login: "Akagilnc" }, body: "## Agent Brief\nimplement #256" }],
     };
     const blockedBy: GhBlockedBy[] = [
       { number: 248, state: "closed" },
       { number: 254, state: "open" },
     ];
-    const snapshot = buildIssueSnapshot(256, json, blockedBy, /*subIssueCount*/ 3);
+    const snapshot = buildIssueSnapshot(256, json, blockedBy, /*subIssueCount*/ 3, "Akagilnc");
 
     const backend = newBackend(tmp);
     await backend.writeSnapshot(worktree, snapshot);
@@ -98,6 +99,8 @@ describe("integ-cmr 256 confirm r2 — writeSnapshot serialises the native metad
     );
     // The body/comments/brief still serialize…
     expect(onDisk.body).toBe("the body");
+    expect(onDisk.bodyAuthorLogin).toBe("Akagilnc");
+    expect(onDisk.commentAuthorLogins).toEqual(["Akagilnc"]);
     expect(onDisk.agentBrief).toContain("## Agent Brief");
     // …AND the native metadata #244 names reaches the file the container reads.
     expect(onDisk.nativeMeta).toEqual({

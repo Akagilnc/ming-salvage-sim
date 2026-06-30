@@ -92,7 +92,10 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);
-    return this.script.pr?.(req) ?? { url: `pr://${req.familyBase}` };
+    return this.script.pr?.(req) ?? {
+      url: `pr://${req.familyBase}`,
+      prHead: this.currentFamilyHead,
+    };
   }
 
   // ── #298-owned abort/escalate seam (minimal shapes #296 only CALLS) ──
@@ -343,6 +346,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       event: "shipped",
       phase: "final",
       pr: "pr://family/291-base",
+      familyHeadAfter: "head-1",
     });
   });
 
@@ -446,7 +450,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
   });
 
-  it("resume falls back to the supplied familyHeadAfter when reading the live family HEAD fails", async () => {
+  it("does not persist a shipped marker when the post-ship family HEAD cannot be resolved", async () => {
     class ReadHeadFailureBackend extends CapableFamilyBackend {
       override async readFamilyHead(familyBase: string): Promise<string> {
         this.readFamilyHeadCalls.push(familyBase);
@@ -483,9 +487,18 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-1",
     });
 
-    expect(result).toEqual({ ok: true, ran: true });
+    expect(result).toEqual({ ok: false, ran: true });
     expect(backend.cmrCalls).toEqual([]);
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+    expect(backend.ledger).toContainEqual({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      reason:
+        "family ship worker opened a PR, but the current family HEAD could not be resolved; refusing to persist a stale shipped marker",
+      familyHeadAfter: "head-1",
+    });
   });
 
   it("resume reruns a CMR pass when the family HEAD advanced after the pass marker", async () => {
@@ -628,6 +641,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       event: "shipped",
       phase: "final",
       pr: "pr://family/291-base",
+      familyHeadAfter: "head-1",
     });
   });
 
@@ -676,6 +690,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       ),
     ).toHaveLength(1);
     expect(backend.readFamilyHeadCalls).toEqual([
+      "family/291-base",
       "family/291-base",
       "family/291-base",
       "family/291-base",
@@ -731,13 +746,19 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("ESCALATED cmr worker → durable final aborted entry includes the cmr pass before escalate", async () => {
     class EscalatingCmrWorkerBackend extends BareFamilyBackend {
       readonly escalations: FamilyEscalation[] = [];
+      currentFamilyHead = "head-after-final-verify";
 
       async runFamilyVerify(): Promise<FamilyVerifyResult> {
         return { ok: true };
       }
 
+      async readFamilyHead(_familyBase: string): Promise<string> {
+        return this.currentFamilyHead;
+      }
+
       async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
         if (spec.kind === "cmr") {
+          this.currentFamilyHead = "head-after-cmr-worker-fix";
           return {
             kind: "escalated",
             escalation: {
@@ -773,6 +794,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]?.reason).toContain("completeness cmr");
+    expect(backend.escalations[0]?.familyHeadAfter).toBe("head-after-cmr-worker-fix");
     expect(backend.ledger).toContainEqual({
       status: "aborted",
       event: "aborted",
@@ -780,9 +802,65 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       cmrPass: "completeness",
       reason:
         "completeness cmr needs human review — review workers disagreed on whether the pass can converge",
-      familyHeadAfter: "head-after-final-verify",
+      familyHeadAfter: "head-after-cmr-worker-fix",
     });
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+  });
+
+  it("ESCALATED ship worker records the post-worker family head in the family pause", async () => {
+    class EscalatingShipWorkerBackend extends BareFamilyBackend {
+      readonly escalations: FamilyEscalation[] = [];
+      currentFamilyHead = "head-after-final-verify";
+
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+
+      async readFamilyHead(_familyBase: string): Promise<string> {
+        return this.currentFamilyHead;
+      }
+
+      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          this.currentFamilyHead = `head-after-${ctx.cmrPass}-cmr`;
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: true,
+              successfulLegs: ["opus", "gpt-5.5", "agy"],
+            },
+          };
+        }
+        this.currentFamilyHead = "head-after-ship-worker-bump";
+        return {
+          kind: "escalated",
+          escalation: {
+            reason: "ship needs human review",
+            diagnosis: "release note conflict",
+          },
+        };
+      }
+
+      async escalateFamily(esc: FamilyEscalation): Promise<void> {
+        this.escalations.push(esc);
+      }
+    }
+
+    const backend = new EscalatingShipWorkerBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-final-verify",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.escalations).toHaveLength(1);
+    expect(backend.escalations[0]).toMatchObject({
+      reason: "ship needs human review — release note conflict",
+      familyHeadAfter: "head-after-ship-worker-bump",
+    });
   });
 });
 
@@ -857,17 +935,22 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
    */
   class ThrowingDispatchBackend extends BareFamilyBackend {
     readonly aborted: FamilyAbortedEvent[] = [];
+    currentFamilyHead = "head-before-worker";
     constructor(private readonly throwOnKind: "cmr" | "ship") {
       super();
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
     }
+    async readFamilyHead(_familyBase: string): Promise<string> {
+      return this.currentFamilyHead;
+    }
     async recordAborted(event: FamilyAbortedEvent): Promise<void> {
       this.aborted.push(event);
     }
     async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
       if (spec.kind === this.throwOnKind) {
+        this.currentFamilyHead = `head-after-${spec.kind}-worker`;
         throw new Error(`${spec.kind} worker: git checkout ${ctx.familyBase} failed (no such ref)`);
       }
       // The cmr worker converges so the run reaches the ship stage (for the ship case).
@@ -889,6 +972,16 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/cmr worker threw on startup/i);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/no such ref/i);
+    expect(backend.aborted[0]?.familyHeadAfter).toBe("head-after-cmr-worker");
+    expect(backend.ledger).toContainEqual({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason:
+        "family integrated cmr completeness worker failed: family cmr worker threw on startup: cmr worker: git checkout family/291-base failed (no such ref)",
+      familyHeadAfter: "head-after-cmr-worker",
+    });
   });
 
   it("a ship worker that throws on startup (after a converged cmr) ⇒ INCOMPLETE_GATE, abort recorded — never an escaped throw", async () => {

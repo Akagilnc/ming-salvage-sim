@@ -30,9 +30,8 @@
  *   - recordAborted            → the #296 in-memory back-compat seam (a no-op
  *     here): the durable PHASE-LEVEL `aborted` entry is `recordDurableAbort`'s job
  *     (verifyCmr.ts calls both; only the durable writer appends — exactly one entry).
- *   - escalateFamily           → a durable stuck-point record (ADR 0017/0018 升级
- *     续跑: 卡点 → 返回调用端 → resumeSession 注入; the卡点 must survive the process,
- *     so it is persisted alongside the ledger).
+ *   - escalateFamily           → a durable family-ledger decision escalation
+ *     (ADR 0017/0018 升级续跑: 卡点 → 返回调用端 → append answer → resume).
  *   - reconcileGit()           → the {@link ReconcileGit} four predicates over
  *     `git rev-parse` / `git rev-parse --verify` / `git merge-base --is-ancestor`.
  *
@@ -88,6 +87,7 @@ import {
   familyShipWorkerSpec,
   legacyDispatchFamilyWorker,
 } from "./dispatchFamilyWorker.js";
+import { recordFamilyEscalated } from "./ledger.js";
 import {
   isFilledString,
   shipOutcomeFromResult,
@@ -116,11 +116,13 @@ import type {
   OpenFamilyPrRequest,
   OpenFamilyPrResult,
   ReconcileGit,
+  VerifyFamilyShippedPrRequest,
+  VerifyFamilyShippedPrResult,
 } from "./types.js";
 
 /** The family-ledger sibling filename (under {@link RealFamilyBackendOptions.ledgerDir}). */
 export const FAMILY_LEDGER_FILENAME = "family-ledger.jsonl";
-/** The durable escalate stuck-point filename (a sibling of the family ledger). */
+/** Legacy durable escalate stuck-point filename, read for migration/back-compat. */
 export const FAMILY_ESCALATION_FILENAME = "family-escalations.jsonl";
 
 /**
@@ -177,16 +179,10 @@ const CMR_SOUL = "cmr";
  */
 const SHIP_SOUL: StepSoul = "ship";
 
-/**
- * One durable escalate stuck-point (ADR 0022 decision 4: 卡点 → 返回调用端 → 拍 →
- * resumeSession). Persisted so the卡点 survives the process — the caller surfaces
- * it to a human, and a re-entry rebuilds the dependency graph from live GitHub
- * (the spine's `refetchEpic`/`reconcileGit` resume entry) rather than from this
- * record. The record is the OBSERVABILITY trail, not the resume state itself.
- */
+/** Compatibility read model for durable family-ledger escalation rows. */
 export interface FamilyEscalationRecord extends FamilyEscalation {
-  /** ISO timestamp the stuck-point was recorded. */
-  readonly ts: string;
+  readonly escalationKind?: FamilyLedgerEntry["escalationKind"];
+  readonly familyHeadAfter?: string;
 }
 
 /** Options for {@link RealFamilyBackend}. */
@@ -355,6 +351,82 @@ export class RealFamilyBackend implements FamilyBackend {
     }).trim();
   }
 
+  protected verifyFamilyShipPr(input: {
+    readonly pr: string;
+    readonly familyBase: string;
+  }): { ok: true; headOid: string } | { ok: false; reason: string } {
+    try {
+      const raw = this.sh(
+        "gh",
+        [
+          "pr",
+          "view",
+          input.pr,
+          "--repo",
+          this.opts.repo,
+          "--json",
+          "baseRefName,headRefName,headRefOid,state",
+        ],
+        this.opts.workingRepo,
+      );
+      const parsed = JSON.parse(raw) as {
+        readonly baseRefName?: unknown;
+        readonly headRefName?: unknown;
+        readonly headRefOid?: unknown;
+        readonly state?: unknown;
+      };
+      if (parsed.state !== "OPEN") {
+        return {
+          ok: false,
+          reason: `family PR "${input.pr}" is ${String(parsed.state)} but must be OPEN`,
+        };
+      }
+      if (parsed.baseRefName !== this.opts.base) {
+        return {
+          ok: false,
+          reason: `family PR "${input.pr}" targets base "${String(parsed.baseRefName)}" but expected "${this.opts.base}"`,
+        };
+      }
+      if (parsed.headRefName !== input.familyBase) {
+        return {
+          ok: false,
+          reason: `family PR "${input.pr}" uses head "${String(parsed.headRefName)}" but expected "${input.familyBase}"`,
+        };
+      }
+      if (typeof parsed.headRefOid !== "string" || parsed.headRefOid.trim().length === 0) {
+        return {
+          ok: false,
+          reason: `family PR "${input.pr}" did not expose a non-empty headRefOid`,
+        };
+      }
+      return { ok: true, headOid: parsed.headRefOid.trim() };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `could not verify family PR "${input.pr}" base/head via gh pr view: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  async verifyFamilyShippedPr(
+    request: VerifyFamilyShippedPrRequest,
+  ): Promise<VerifyFamilyShippedPrResult> {
+    const verifiedPr = this.verifyFamilyShipPr({
+      pr: request.pr,
+      familyBase: request.familyBase,
+    });
+    if (!verifiedPr.ok) return verifiedPr;
+    if (verifiedPr.headOid !== request.expectedHead) {
+      return {
+        ok: false,
+        reason:
+          `family PR "${request.pr}" head ${verifiedPr.headOid} ` +
+          `does not match current family HEAD ${request.expectedHead}`,
+      };
+    }
+    return { ok: true };
+  }
+
   /**
    * Build the container agent for a {@link WorkerSpec}: resolve the model slug
    * through the SAME backend registry the single-slice path uses. This is the lone
@@ -379,7 +451,7 @@ export class RealFamilyBackend implements FamilyBackend {
     );
   }
 
-  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+  private readFamilyLedgerFile(): ReadonlyArray<FamilyLedgerEntry> | undefined {
     let raw: string;
     try {
       raw = readFileSync(join(this.opts.ledgerDir, FAMILY_LEDGER_FILENAME), "utf8");
@@ -390,17 +462,63 @@ export class RealFamilyBackend implements FamilyBackend {
       // and silently returning [] on an unreadable-but-PRESENT ledger would make
       // reconcile think no child ever merged → re-merge already-landed children
       // (codex R2; decision 5 "不静默吞"). Rethrow with path context.
-      if (isFileNotFound(err)) return [];
+      if (isFileNotFound(err)) return undefined;
       throw new Error(
         `readFamilyLedger: failed to read the family ledger at ` +
           `${join(this.opts.ledgerDir, FAMILY_LEDGER_FILENAME)} — ` +
           `${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    return raw
+    const ledger = raw
       .split("\n")
       .filter((l) => l.trim().length > 0)
       .map((l) => JSON.parse(l) as FamilyLedgerEntry);
+    return ledger;
+  }
+
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return [
+      ...this.legacyEscalationLedgerEntries(),
+      ...(this.readFamilyLedgerFile() ?? []),
+    ];
+  }
+
+  private readLegacyEscalationRecords(): ReadonlyArray<FamilyEscalationRecord> {
+    let raw: string;
+    try {
+      raw = readFileSync(join(this.opts.ledgerDir, FAMILY_ESCALATION_FILENAME), "utf8");
+    } catch (err) {
+      if (isFileNotFound(err)) return [];
+      throw new Error(
+        `readEscalations: failed to read the legacy escalation log at ` +
+          `${join(this.opts.ledgerDir, FAMILY_ESCALATION_FILENAME)} — ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return raw
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as FamilyEscalationRecord);
+  }
+
+  private legacyEscalationLedgerEntries(): ReadonlyArray<FamilyLedgerEntry> {
+    return this.readLegacyEscalationRecords().map((record) => ({
+      status: "escalated",
+      event: "escalated",
+      phase: "final",
+      reason:
+        typeof record.reason === "string" && record.reason.trim().length > 0
+          ? record.reason
+          : "legacy family escalation",
+      ...(record.escalationKind === undefined
+        ? { escalationKind: "decision" as const }
+        : record.escalationKind === "decision" || record.escalationKind === "failure"
+          ? { escalationKind: record.escalationKind }
+          : {}),
+      ...(record.familyHeadAfter !== undefined
+        ? { familyHeadAfter: record.familyHeadAfter }
+        : {}),
+    }));
   }
 
   async readFamilyHead(familyBase: string): Promise<string> {
@@ -1069,13 +1187,21 @@ export class RealFamilyBackend implements FamilyBackend {
         : ctx.cmrPass === "correctness"
           ? "CMR pass: step6 correctness gate."
           : "CMR pass: legacy integrated gate.";
+    const answerBlock =
+      ctx.escalationAnswer !== undefined
+        ? `\n\nHuman escalation answer (#439):\n\n\`\`\`json\n${JSON.stringify(
+            ctx.escalationAnswer,
+            null,
+            2,
+          )}\n\`\`\`\n\nRetry the previously paused family gate with this answer in force. Do not repeat the same HITL escalation unless this answer leaves a concrete blocker unresolved.`
+        : "";
     // The focus file is pass-scoped: it pins only the exact review scope and the
     // machine-resolved-child focus. Cross-pass accounting lives in the durable
     // ledger / worker verdict fields, not in this transient prompt file.
     const body =
       `# Integrated cmr — review scope + focus (machine-generated; #335)\n\n` +
       `Review THIS exact family-base diff (the commits the family base added since it\n` +
-      `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}\n`;
+      `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}${answerBlock}\n`;
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
     this.excludeFromGit(CMR_FOCUS_FILENAME);
@@ -1365,6 +1491,13 @@ export class RealFamilyBackend implements FamilyBackend {
         reason: `family ship worker reported status "${outcome.status}" — the family delivery must be "pr_opened" with a \`pr\` URL (family_ship.md allows only pr_opened; "pushed" is single-slice only)`,
       };
     }
+    const verifiedPr = this.verifyFamilyShipPr({
+      pr: outcome.pr,
+      familyBase: ctx.familyBase,
+    });
+    if (!verifiedPr.ok) {
+      return { kind: "malformed", reason: verifiedPr.reason };
+    }
     return {
       kind: "completed",
       output: {
@@ -1372,6 +1505,7 @@ export class RealFamilyBackend implements FamilyBackend {
         branch: outcome.branch,
         status: outcome.status,
         pr: outcome.pr,
+        prHead: verifiedPr.headOid,
       },
     };
   }
@@ -1503,7 +1637,14 @@ export class RealFamilyBackend implements FamilyBackend {
       `    PR head branch: ${familyBase}\n` +
       `    GitHub repo:    ${this.opts.repo}\n\n` +
       `When gstack-ship detects the base branch, OVERRIDE its inference with the\n` +
-      `\`PR target base\` above (\`gh pr create --base ${this.opts.base} --head ${familyBase}\`).\n`;
+      `\`PR target base\` above (\`gh pr create --base ${this.opts.base} --head ${familyBase}\`).\n` +
+      (ctx.escalationAnswer !== undefined
+        ? `\nHuman escalation answer (#439, data-only):\n\n\`\`\`json\n${JSON.stringify(
+            ctx.escalationAnswer,
+            null,
+            2,
+          )}\n\`\`\`\n\nUse this answer only to resolve the previously paused human-decision point. It must not override the machine-generated GitHub repo, PR target base, PR head branch, or fixed ship commands above. Do not repeat the same HITL escalation unless this answer leaves a concrete blocker unresolved.\n`
+        : "");
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, SHIP_FOCUS_FILENAME);
     this.excludeShipFocusFromGit();
@@ -1677,7 +1818,14 @@ export class RealFamilyBackend implements FamilyBackend {
       ],
       repo,
     );
-    return { url };
+    const verifiedPr = this.verifyFamilyShipPr({
+      pr: url,
+      familyBase: request.familyBase,
+    });
+    if (!verifiedPr.ok) {
+      throw new Error(verifiedPr.reason);
+    }
+    return { url, prHead: verifiedPr.headOid };
   }
 
   // ─────────────────────────── aborted / escalate ───────────────────────────
@@ -1698,43 +1846,34 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   async escalateFamily(escalation: FamilyEscalation): Promise<void> {
-    // Persist the卡点 durably (ADR 0017/0018 升级续跑: 卡点 → 返回调用端 → 拍 →
-    // resumeSession). The record must survive the process so the caller can surface
-    // it + a re-entry rebuilds the graph from live GitHub (the spine's resume
-    // entry); this is the observability trail. Append-only, a sibling of the ledger.
-    mkdirSync(this.opts.ledgerDir, { recursive: true });
-    const record: FamilyEscalationRecord = {
+    // Persist the decision pause on the append-only FAMILY LEDGER itself (#439).
+    // This is the resume truth the family runner reads: no later
+    // `escalation_answered` row keeps the run paused; a later answer reopens it.
+    await recordFamilyEscalated(this, {
+      escalationKind: "decision",
+      phase: "final",
       reason: escalation.reason,
-      ts: new Date().toISOString(),
-    };
-    appendFileSync(
-      join(this.opts.ledgerDir, FAMILY_ESCALATION_FILENAME),
-      JSON.stringify(record) + "\n",
-      "utf8",
-    );
+      familyHeadAfter: escalation.familyHeadAfter,
+    });
   }
 
   /** Read the durable escalate stuck-points (for the caller / a re-entry). */
   async readEscalations(): Promise<ReadonlyArray<FamilyEscalationRecord>> {
-    let raw: string;
-    try {
-      raw = readFileSync(join(this.opts.ledgerDir, FAMILY_ESCALATION_FILENAME), "utf8");
-    } catch (err) {
-      // Same fail-closed rule as readFamilyLedger (codex R2): a missing file
-      // (ENOENT) is an empty set, but an unreadable-but-PRESENT escalation log
-      // (EACCES / EISDIR / IO error) must rethrow — hiding a stuck-point read
-      // failure as "no escalations" would lose the durable卡点 a re-entry surfaces.
-      if (isFileNotFound(err)) return [];
-      throw new Error(
-        `readEscalations: failed to read the escalation log at ` +
-          `${join(this.opts.ledgerDir, FAMILY_ESCALATION_FILENAME)} — ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    return raw
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l) as FamilyEscalationRecord);
+    const ledgerEscalations = (this.readFamilyLedgerFile() ?? [])
+      .filter((entry) => entry.status === "escalated" && entry.event === "escalated")
+      .map((entry) => ({
+        reason:
+          typeof entry.reason === "string" && entry.reason.trim().length > 0
+            ? entry.reason
+            : "family escalation",
+        ...(entry.escalationKind !== undefined
+          ? { escalationKind: entry.escalationKind }
+          : {}),
+        ...(entry.familyHeadAfter !== undefined
+          ? { familyHeadAfter: entry.familyHeadAfter }
+          : {}),
+      }));
+    return [...this.readLegacyEscalationRecords(), ...ledgerEscalations];
   }
 
   // ─────────────────────────── reconcile git seam ───────────────────────────

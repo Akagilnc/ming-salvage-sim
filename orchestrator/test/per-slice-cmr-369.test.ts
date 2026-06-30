@@ -434,6 +434,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S5:coder",
       "S6:reviewer",
     ]);
+    expect(backend.ledgerWrites.at(-1)).toEqual(
+      expect.objectContaining({
+        step: "S8",
+        handoffStatus: "escalate",
+        escalationKind: "decision",
+      }),
+    );
   });
 });
 
@@ -521,6 +528,12 @@ describe("#369 runner resume/retry review fixes", () => {
           },
         },
         { step: "S8", handoffStatus: "escalate" },
+        {
+          step: "S5",
+          event: "escalation_answered",
+          forStep: "S5",
+          answer: "continue after human answer",
+        },
       ] as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend(
@@ -1145,12 +1158,24 @@ describe("#369 legacy S5 landing file", () => {
       stateDir,
       blockingFindings: [finding],
       blockingFindingIdentityKeys: ["correctness|src/x.ts:1|fix me"],
+      escalationAnswer: {
+        event: "escalation_answered",
+        forStep: "S4",
+        answer: "continue-same-class",
+        note: "human approved another targeted fix round",
+      },
     });
 
     expect(result.kind).toBe("completed");
     expect(observedLanding).toEqual({
       blockingFindings: [finding],
       blockingFindingIdentityKeys: ["correctness|src/x.ts:1|fix me"],
+      escalationAnswer: {
+        event: "escalation_answered",
+        forStep: "S4",
+        answer: "continue-same-class",
+        note: "human approved another targeted fix round",
+      },
     });
     expect(JSON.parse(readFileSync(join(worktree.path, ".orchestrator-fix-findings.json"), "utf8"))).toEqual({
       blockingFindings: [],

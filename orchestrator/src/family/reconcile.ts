@@ -14,7 +14,9 @@
  *   ① equal           → trust the merged set, skip already-merged, continue.
  *   ② live HEAD LEADS  → the common crash window (a merge landed, its `merged`
  *      (live is a            write crashed). For each NOT-yet-accounted child:
- *       descendant)          - childHead exists AND is an ancestor of live HEAD
+ *       descendant)          - childHead exists, is not already ancestor-or-equal
+ *                              to the effective base head, AND is an ancestor of
+ *                              live HEAD
  *                              → its merge LANDED →补 a `status:"merged"` +
  *                              `event:"reconciled"` entry (counted merged, codex
  *                              R3) and do NOT re-merge it;
@@ -41,18 +43,15 @@
  * `--no-ff` conflict fallback). So in production reconcile branch ② is reachable.
  *
  * BACK-COMPAT WITH #293 THIN ENTRIES. A pre-#298 thin entry `{childIssue,
- * status:"merged"}` (no `familyHeadAfter`) stays a VALID ledger entry, and a
- * NON-EMPTY thin ledger DEGRADES SAFELY on resume: it has no `familyHeadAfter`
- * baseline → reconcile trusts the recorded merged set (those entries DO account
- * for their merged children), no补账, NO escalate — even though the live base has
- * moved past the start head (that move is the recorded merges, not a lost one). A
- * never-recorded child is left to the wave loop. The family-base-start-head
- * first-merge-crash check (below) applies ONLY to a TRULY EMPTY ledger, so a
- * non-empty thin ledger is never false-escalated (cmr R4). No corruption / no
- * double-merge either way.
+ * status:"merged"}` (no `familyHeadAfter`) stays a VALID merged-set row so we do
+ * not double-merge already-recorded children. But when the live family base has
+ * advanced past the recorded start head, a headless row explains that advance only
+ * if it carries a `childHead` that is still an ancestor of live. A bare thin row
+ * is still visible in the returned merged set for audit, but the plan fail-closes
+ * before scheduling can trust it.
  */
 
-import { mergedSet } from "./ledger.js";
+import { isMergedAccountingEntry, mergedSet } from "./ledger.js";
 import type {
   ChildSlice,
   FamilyLedgerEntry,
@@ -77,12 +76,59 @@ import type {
 function lastRecordedHead(ledger: ReadonlyArray<FamilyLedgerEntry>): {
   head: string | undefined;
   index: number;
+  invalid: boolean;
 } {
   for (let i = ledger.length - 1; i >= 0; i--) {
-    const after = ledger[i]!.familyHeadAfter;
-    if (after !== undefined) return { head: after, index: i };
+    const entry = ledger[i]!;
+    const after = entry.familyHeadAfter;
+    if (after !== undefined) {
+      if (!isValidRecordedHeadEntry(entry)) {
+        return { head: undefined, index: i, invalid: true };
+      }
+      return { head: after, index: i, invalid: false };
+    }
   }
-  return { head: undefined, index: -1 };
+  return { head: undefined, index: -1, invalid: false };
+}
+
+function hasNonBlankFamilyHeadAfter(entry: FamilyLedgerEntry): boolean {
+  return (
+    typeof entry.familyHeadAfter === "string" &&
+    entry.familyHeadAfter.trim().length > 0
+  );
+}
+
+function isValidRecordedHeadEntry(entry: FamilyLedgerEntry): boolean {
+  if (!hasNonBlankFamilyHeadAfter(entry)) return false;
+  if (entry.status === "merged") return isMergedAccountingEntry(entry);
+  if (entry.status === "aborted") {
+    return entry.event === "aborted" && (entry.phase === "wave" || entry.phase === "final");
+  }
+  if (entry.status === "cmr_passed") {
+    return (
+      entry.event === "cmr_passed" &&
+      entry.phase === "final" &&
+      (entry.cmrPass === "completeness" || entry.cmrPass === "correctness") &&
+      typeof entry.routeFingerprint === "string" &&
+      entry.routeFingerprint.trim().length > 0
+    );
+  }
+  if (entry.status === "escalated") {
+    return (
+      entry.event === "escalated" &&
+      entry.phase === "final" &&
+      (entry.escalationKind === "decision" || entry.escalationKind === "failure")
+    );
+  }
+  if (entry.status === "shipped") {
+    return (
+      entry.event === "shipped" &&
+      entry.phase === "final" &&
+      typeof entry.pr === "string" &&
+      entry.pr.trim().length > 0
+    );
+  }
+  return false;
 }
 
 /**
@@ -101,6 +147,7 @@ async function headlessTailIsConsistent(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
   baselineIndex: number,
   liveHead: string,
+  startHead: string,
   git: ReconcileGit,
 ): Promise<boolean> {
   for (let i = baselineIndex + 1; i < ledger.length; i++) {
@@ -109,11 +156,37 @@ async function headlessTailIsConsistent(
     // the baseline. (An aborted tail entry does not count as merged; a tail entry
     // that DOES carry familyHeadAfter would have been the baseline.)
     if (entry.status !== "merged" || entry.familyHeadAfter !== undefined) continue;
+    if (!isMergedAccountingEntry(entry)) return false;
     // A headless merged entry with no childHead cannot be verified → fail-closed.
     if (entry.childHead === undefined) return false;
+    if (await git.isAncestor(entry.childHead, startHead)) return false;
     if (!(await git.isAncestor(entry.childHead, liveHead))) return false;
   }
   return true;
+}
+
+async function verifyHeadlessAccountingRows(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  liveHead: string,
+  baseHead: string,
+  git: ReconcileGit,
+): Promise<{ consistent: boolean; hasVerified: boolean }> {
+  let hasVerified = false;
+  for (const entry of ledger) {
+    if (!isMergedAccountingEntry(entry)) continue;
+    if (entry.familyHeadAfter !== undefined) continue;
+    if (entry.childHead === undefined) {
+      return { consistent: false, hasVerified };
+    }
+    if (await git.isAncestor(entry.childHead, baseHead)) {
+      return { consistent: false, hasVerified };
+    }
+    if (!(await git.isAncestor(entry.childHead, liveHead))) {
+      return { consistent: false, hasVerified };
+    }
+    hasVerified = true;
+  }
+  return { consistent: true, hasVerified };
 }
 
 /**
@@ -137,8 +210,12 @@ export async function reconcileFamilyLedger(
   git: ReconcileGit,
 ): Promise<ReconcilePlan> {
   const ledgerMerged = mergedSet(ledger);
-  const { head: baseline, index: baselineIndex } = lastRecordedHead(ledger);
+  const { head: baseline, index: baselineIndex, invalid: invalidBaseline } =
+    lastRecordedHead(ledger);
   const liveHead = await git.liveFamilyHead();
+  if (invalidBaseline) {
+    return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
+  }
 
   // ── branch ① ledger末条 === live HEAD ──────────────────────────────────────
   // The baseline-bearing entry's head IS the live head: no merge landed past it.
@@ -151,7 +228,8 @@ export async function reconcileFamilyLedger(
   // tail entry's `childHead` is still an ancestor of live; any missing or non-ancestor
   // → fail-closed escalate (do not silently skip a child whose merge is gone).
   if (baseline !== undefined && baseline === liveHead) {
-    if (await headlessTailIsConsistent(ledger, baselineIndex, liveHead, git)) {
+    const startHead = await git.familyBaseStartHead();
+    if (await headlessTailIsConsistent(ledger, baselineIndex, liveHead, startHead, git)) {
       return { escalate: false, reconciled: [], merged: ledgerMerged, liveHead };
     }
     return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
@@ -173,22 +251,32 @@ export async function reconcileFamilyLedger(
   // neither "always escalate" nor "blindly trust" was right — RECONCILE PER CHILD
   // is).
   if (baseline === undefined) {
+    const startHead = await git.familyBaseStartHead();
+    const headlessAccounting = await verifyHeadlessAccountingRows(
+      ledger,
+      liveHead,
+      startHead,
+      git,
+    );
+    if (!headlessAccounting.consistent) {
+      return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
+    }
+
     const { reconciled, merged } = await reconcileLandedChildren(
       children,
       ledgerMerged,
       liveHead,
+      startHead,
       git,
     );
-    // Safety net for the TRULY EMPTY ledger: if the family base moved past its
-    // start head yet NO child explains the move (nothing补账ed), a merge landed
-    // that we cannot attribute to any known child → fail-closed escalate (decision
-    // 5 真有未落/不一致 → 升级) rather than silently proceed. A non-empty thin ledger
-    // whose recorded children explain the position never trips this. (For a
-    // non-empty ledger the recorded entries account for the base position, so the
-    // start-head check is unnecessary and would false-alarm — it is gated on
-    // ledger.length === 0.)
-    if (ledger.length === 0 && reconciled.length === 0) {
-      const startHead = await git.familyBaseStartHead();
+    // Safety net for a headless ledger: after every existing headless merged row
+    // has been individually verified, still fail closed if the family base moved
+    // past its start head and NO child explains the move (nothing补账ed, and no
+    // verified accounting row exists).
+    if (
+      reconciled.length === 0 &&
+      !headlessAccounting.hasVerified
+    ) {
       if (liveHead !== startHead) {
         return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
       }
@@ -211,6 +299,7 @@ export async function reconcileFamilyLedger(
     children,
     ledgerMerged,
     liveHead,
+    baseline,
     git,
   );
   return { escalate: false, reconciled, merged, liveHead };
@@ -219,13 +308,16 @@ export async function reconcileFamilyLedger(
 /**
  * The per-child crash-window reconcile, shared by branch ② AND the headless-ledger
  * path. For each child NOT already accounted in `ledgerMerged`, ask git whether its
- * branch HEAD landed on the live family base (`isAncestor(childHead, liveHead)`):
+ * branch HEAD landed on the live family base (`!isAncestor(childHead, baseHead)`
+ * AND `isAncestor(childHead, liveHead)`):
  *
- *   - landed (ancestor-confirmed) → 补 a reconciled entry + count it merged (no
- *     double-merge). The caller writes the補账条 `status:"merged"` + `event:"reconciled"`
- *     so the unblock predicate counts it (codex R3);
+ *   - landed (non-base ancestor-confirmed) → 补 a reconciled entry + count it
+ *     merged (no double-merge). The caller writes the補账条 `status:"merged"` +
+ *     `event:"reconciled"` so the unblock predicate counts it (codex R3);
  *   - childHead/branch absent (crashed before any commit) → never merged → leave
  *     OUT of `merged`, the wave loop reruns it (no error, agy R4);
+ *   - childHead exists but is already ancestor-or-equal to the effective base head
+ *     → branch exists but has no post-base child commit yet → rerun;
  *   - childHead exists but is NOT an ancestor → genuinely unmerged → rerun.
  *
  * The check is self-sufficient (no baseline needed), which is why the headless
@@ -235,6 +327,7 @@ async function reconcileLandedChildren(
   children: ReadonlyArray<ChildSlice>,
   ledgerMerged: ReadonlySet<number>,
   liveHead: string,
+  baseHead: string,
   git: ReconcileGit,
 ): Promise<{
   reconciled: Array<{ childIssue: number; childHead: string }>;
@@ -246,6 +339,7 @@ async function reconcileLandedChildren(
     if (merged.has(child.issue)) continue; // already accounted (ledger-merged)
     const { exists, childHead } = await git.childHeadExists(child.issue);
     if (!exists || childHead === undefined) continue; // crashed pre-commit → rerun
+    if (await git.isAncestor(childHead, baseHead)) continue; // branch has no post-base child commit
     if (await git.isAncestor(childHead, liveHead)) {
       reconciled.push({ childIssue: child.issue, childHead });
       merged.add(child.issue);

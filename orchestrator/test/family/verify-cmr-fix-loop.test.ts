@@ -45,6 +45,7 @@ class SchedulerFamilyBackend implements FamilyBackend {
   readonly aborted: FamilyAbortedEvent[] = [];
   readonly escalations: FamilyEscalation[] = [];
   private shipRound = 0;
+  currentFamilyHead = "head-1";
 
   constructor(
     private readonly script: {
@@ -62,6 +63,9 @@ class SchedulerFamilyBackend implements FamilyBackend {
   }
   async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
     return this.ledger;
+  }
+  async readFamilyHead(): Promise<string> {
+    return this.currentFamilyHead;
   }
   async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
     return this.script.verify?.(req) ?? { ok: true };
@@ -88,7 +92,13 @@ class SchedulerFamilyBackend implements FamilyBackend {
       return (
         this.script.ship?.(round) ?? {
           kind: "completed",
-          output: { kind: "ship", branch: ctx.familyBase!, status: "pr_opened", pr: `pr://${ctx.familyBase}` },
+          output: {
+            kind: "ship",
+            branch: ctx.familyBase!,
+            status: "pr_opened",
+            pr: `pr://${ctx.familyBase}`,
+            prHead: this.currentFamilyHead,
+          },
         }
       );
     }

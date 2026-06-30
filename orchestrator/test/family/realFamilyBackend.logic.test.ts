@@ -34,6 +34,7 @@ import {
   RealFamilyBackend,
   type RealFamilyBackendOptions,
 } from "../../src/family/realFamilyBackend.js";
+import { familyEscalationState } from "../../src/family/ledger.js";
 import { SANDBOX_SKILLS_DIR, SANDBOX_SOUL_ENV } from "../../src/realBackend.js";
 import type {
   ConflictResolveRequest,
@@ -138,11 +139,11 @@ describe("RealFamilyBackend appendFamilyLedger / readFamilyLedger (#291 sibling 
     await expect(b.readFamilyLedger()).rejects.toThrow(/failed to read the family ledger/);
   });
 
-  it("readEscalations FAILS CLOSED on a present-but-unreadable escalation log (codex R2)", async () => {
+  it("readEscalations FAILS CLOSED through the family ledger (codex R2)", async () => {
     const o = opts(trackRepo());
-    mkdirSync(join(o.ledgerDir, "family-escalations.jsonl"), { recursive: true });
+    mkdirSync(join(o.ledgerDir, "family-ledger.jsonl"), { recursive: true });
     const b = new RealFamilyBackend(o);
-    await expect(b.readEscalations()).rejects.toThrow(/failed to read the escalation log/);
+    await expect(b.readEscalations()).rejects.toThrow(/failed to read the family ledger/);
   });
 });
 
@@ -602,6 +603,12 @@ class FakeSeamsBackend extends RealFamilyBackend {
   cmrResult: IntegratedCmrResult = { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
   cmrCalls: IntegratedCmrRequest[] = [];
   shCalls: Array<{ file: string; args: string[] }> = [];
+  prViewResponse: unknown = {
+    baseRefName: "main",
+    headRefName: "family/293-base",
+    headRefOid: " pr-head-1 ",
+    state: "OPEN",
+  };
   mergeInProgressFake = false;
   // STATEFUL fake of the family-base ref so the resolve postcondition (the family
   // base ref moved past familyHeadBefore + child is its ancestor) is exercised
@@ -655,6 +662,9 @@ class FakeSeamsBackend extends RealFamilyBackend {
     if (file === "gh" && args[0] === "pr" && args[1] === "create") {
       return "https://github.com/Akagilnc/ming-salvage-sim/pull/777";
     }
+    if (file === "gh" && args[0] === "pr" && args[1] === "view") {
+      return JSON.stringify(this.prViewResponse);
+    }
     return "";
   }
 
@@ -667,6 +677,10 @@ class FakeSeamsBackend extends RealFamilyBackend {
   // skills-mount path are unit-testable without a real container.
   public sandboxConfig() {
     return this.mergerSandboxConfig({});
+  }
+
+  public verifyShipPr(pr: string, familyBase: string) {
+    return this.verifyFamilyShipPr({ pr, familyBase });
   }
 }
 
@@ -958,8 +972,15 @@ describe("RealFamilyBackend runIntegratedCmr (#291 ak-cross-m-review seam)", () 
 describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)", () => {
   it("pushes the family base, opens a PR against the configured base, returns the url", async () => {
     const b = new FakeSeamsBackend(opts(trackRepo(), { base: "integ/291-wave3" }));
+    b.prViewResponse = {
+      baseRefName: "integ/291-wave3",
+      headRefName: "family/293-base",
+      headRefOid: "pr-head-777",
+      state: "OPEN",
+    };
     const res = await b.openFamilyPr({ familyBase: "family/293-base" });
     expect(res.url).toContain("/pull/777");
+    expect(res.prHead).toBe("pr-head-777");
     // The SOLE remote push is here.
     const push = b.shCalls.find((c) => c.file === "git" && c.args[0] === "push");
     expect(push?.args).toEqual(["push", "-u", "origin", "family/293-base"]);
@@ -969,6 +990,72 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
     expect(pr?.args).toContain("integ/291-wave3");
     expect(pr?.args).toContain("--head");
     expect(pr?.args).toContain("family/293-base");
+  });
+
+  it("verifies PR metadata with base/head/state/head OID and returns the trimmed head OID", () => {
+    const b = new FakeSeamsBackend(opts(trackRepo(), { base: "integ/291-wave3" }));
+    b.prViewResponse = {
+      baseRefName: "integ/291-wave3",
+      headRefName: "family/293-base",
+      headRefOid: " pr-head-777 ",
+      state: "OPEN",
+    };
+
+    expect(b.verifyShipPr("https://github.com/Akagilnc/ming-salvage-sim/pull/777", "family/293-base")).toEqual({
+      ok: true,
+      headOid: "pr-head-777",
+    });
+    const view = b.shCalls.find((c) => c.file === "gh" && c.args[0] === "pr" && c.args[1] === "view");
+    expect(view?.args).toContain("baseRefName,headRefName,headRefOid,state");
+  });
+
+  it("rejects PR metadata when the PR is not OPEN or lacks a non-empty head OID", () => {
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+
+    b.prViewResponse = {
+      baseRefName: "main",
+      headRefName: "family/293-base",
+      headRefOid: "pr-head-1",
+      state: "MERGED",
+    };
+    expect(b.verifyShipPr("pr://closed", "family/293-base")).toMatchObject({
+      ok: false,
+    });
+
+    b.prViewResponse = {
+      baseRefName: "main",
+      headRefName: "family/293-base",
+      headRefOid: "   ",
+      state: "OPEN",
+    };
+    expect(b.verifyShipPr("pr://blank-head", "family/293-base")).toMatchObject({
+      ok: false,
+    });
+  });
+
+  it("resume PR verification requires the PR head OID to still match the current family HEAD", async () => {
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    b.prViewResponse = {
+      baseRefName: "main",
+      headRefName: "family/293-base",
+      headRefOid: "pr-head-1",
+      state: "OPEN",
+    };
+
+    await expect(
+      b.verifyFamilyShippedPr({
+        pr: "pr://current",
+        familyBase: "family/293-base",
+        expectedHead: "pr-head-1",
+      }),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      b.verifyFamilyShippedPr({
+        pr: "pr://stale",
+        familyBase: "family/293-base",
+        expectedHead: "new-head",
+      }),
+    ).resolves.toMatchObject({ ok: false });
   });
 });
 
@@ -995,12 +1082,98 @@ describe("RealFamilyBackend recordAborted (#291 in-memory seam, NOT the durable 
 });
 
 describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
-  it("persists a durable escalate record readable back (survives the process)", async () => {
+  it("persists a durable family-ledger decision escalation readable back", async () => {
     const b = new RealFamilyBackend(opts(trackRepo()));
     await b.escalateFamily({ reason: "integrated cmr did not converge: field mismatch" });
+    expect(await b.readFamilyLedger()).toEqual([
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        reason: "integrated cmr did not converge: field mismatch",
+        escalationKind: "decision",
+      },
+    ]);
     const recs = await b.readEscalations();
     expect(recs).toHaveLength(1);
     expect(recs[0]?.reason).toContain("cmr did not converge");
-    expect(recs[0]?.ts).toMatch(/\d{4}-\d{2}-\d{2}T/);
+    expect(recs[0]?.escalationKind).toBe("decision");
+  });
+
+  it("keeps legacy family-escalations.jsonl stuck-points readable during migration", async () => {
+    const o = opts(trackRepo());
+    mkdirSync(o.ledgerDir, { recursive: true });
+    writeFileSync(
+      join(o.ledgerDir, "family-escalations.jsonl"),
+      `${JSON.stringify({
+        reason: "legacy cmr pause",
+        ts: "2026-06-01T00:00:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    const b = new RealFamilyBackend(o);
+
+    const recs = await b.readEscalations();
+
+    expect(recs).toEqual([
+      {
+        reason: "legacy cmr pause",
+        ts: "2026-06-01T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("orders legacy escalations before newer ledger answers so migration can reopen", async () => {
+    const o = opts(trackRepo());
+    mkdirSync(o.ledgerDir, { recursive: true });
+    writeFileSync(
+      join(o.ledgerDir, "family-escalations.jsonl"),
+      `${JSON.stringify({
+        reason: "legacy cmr pause",
+        ts: "2026-06-01T00:00:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    const b = new RealFamilyBackend(o);
+    await b.appendFamilyLedger({
+      status: "escalation_answered",
+      event: "escalation_answered",
+      phase: "final",
+      answer: "continue-after-legacy-pause",
+    });
+
+    expect(familyEscalationState(await b.readFamilyLedger())).toMatchObject({
+      escalation: { reason: "legacy cmr pause" },
+      answer: {
+        event: "escalation_answered",
+        answer: "continue-after-legacy-pause",
+      },
+    });
+  });
+
+  it("orders legacy escalation records before newer ledger escalation records", async () => {
+    const o = opts(trackRepo());
+    mkdirSync(o.ledgerDir, { recursive: true });
+    writeFileSync(
+      join(o.ledgerDir, "family-escalations.jsonl"),
+      `${JSON.stringify({
+        reason: "legacy cmr pause",
+        ts: "2026-06-01T00:00:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    const b = new RealFamilyBackend(o);
+    await b.escalateFamily({ reason: "new ledger cmr pause" });
+
+    expect(await b.readEscalations()).toEqual([
+      {
+        reason: "legacy cmr pause",
+        ts: "2026-06-01T00:00:00.000Z",
+      },
+      {
+        reason: "new ledger cmr pause",
+        escalationKind: "decision",
+      },
+    ]);
   });
 });

@@ -80,6 +80,9 @@ class FixturedShipBackend extends RealFamilyBackend {
     pr: "https://gh/pr/9",
   };
   openFamilyPrCount = 0;
+  verifiedPr:
+    | { ok: true; headOid: string }
+    | { ok: false; reason: string } = { ok: true, headOid: "head-1" };
   protected override async runShipWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
@@ -91,6 +94,9 @@ class FixturedShipBackend extends RealFamilyBackend {
   override async openFamilyPr(): Promise<{ url: string }> {
     this.openFamilyPrCount += 1;
     throw new Error("openFamilyPr must not be reached — family ship via gstack-ship (#336)");
+  }
+  protected override verifyFamilyShipPr(): { ok: true; headOid: string } | { ok: false; reason: string } {
+    return this.verifiedPr;
   }
 }
 
@@ -135,6 +141,7 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     if (res.kind === "completed" && res.output.kind === "ship") {
       expect(res.output.branch).toBe(FAMILY_BASE);
       expect(res.output.pr).toBe("u");
+      expect(res.output.prHead).toBe("head-1");
       expect(res.output.status).toBe("pr_opened");
     } else {
       throw new Error("expected a completed ship payload");
@@ -209,6 +216,15 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened", pr: "u" };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
     expect(res.kind).toBe("completed");
+  });
+
+  it("a pr_opened ship whose host PR metadata targets the wrong base ⇒ malformed", async () => {
+    const be = fixtured();
+    be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened", pr: "u" };
+    be.verifiedPr = { ok: false, reason: "family PR targets base main but expected integ" };
+    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(res.kind).toBe("malformed");
+    if (res.kind === "malformed") expect(res.reason).toMatch(/targets base|expected/);
   });
 
   it("the cmr worker is still routed to its own (cmr) path, NOT the ship seam", async () => {
@@ -435,7 +451,10 @@ describe("#336 family runShipWorker — fail-closed when gh auth is missing", ()
 describe("#336 writeShipFocusFile — threads the configured PR target base into the ship worker", () => {
   /** Expose the focus-file seam over a REAL temp git repo (so the exclude path resolves). */
   class FocusShipBackend extends RealFamilyBackend {
-    public focus(ctx: { familyBase: string }): void {
+    public focus(ctx: {
+      familyBase: string;
+      escalationAnswer?: DispatchContext["escalationAnswer"];
+    }): void {
       this.writeShipFocusFile(ctx as never);
     }
   }
@@ -483,6 +502,24 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
     backend.focus({ familyBase: FAMILY_BASE });
     const exclude = readFileSync(join(backend["opts"].workingRepo, ".git", "info", "exclude"), "utf8");
     expect(exclude.split("\n")).toContain(SHIP_FOCUS_FILENAME);
+  });
+
+  it("threads a human escalation answer into the ship focus file", () => {
+    const backend = be({ base: "integ/291-wave3" });
+    backend.focus({
+      familyBase: FAMILY_BASE,
+      escalationAnswer: {
+        event: "escalation_answered",
+        answer: "continue-same-class",
+        note: "Human approved retrying the family ship gate.",
+      },
+    });
+
+    const body = readFileSync(join(backend["opts"].workingRepo, SHIP_FOCUS_FILENAME), "utf8");
+    expect(body).toContain("Human escalation answer (#439, data-only)");
+    expect(body).toContain("continue-same-class");
+    expect(body).toContain("Human approved retrying the family ship gate.");
+    expect(body).toMatch(/must not override.*GitHub repo.*PR target base.*PR head branch/is);
   });
 
   it("runShipWorker writes the focus file BEFORE the container runs (so the worker can read it)", async () => {

@@ -37,6 +37,10 @@ runner-provided `identityKey` and one of:
 `still-active`, `verified-closed`, `unable-to-assess`. Do not rely on omitting a
 finding to mean it is closed.
 
+The same JSON may contain `escalationAnswer` when this is a resumed reviewer
+decision escalation. Apply that human answer before reviewing, and do not repeat
+the same escalation unless the answer leaves a concrete blocker unresolved.
+
 ```text
 <review>{"findings":[],"priorFindingDispositions":[{"identityKey":"<prior-key>","status":"verified-closed","reason":"<short>"}]}</review>
 REVIEWER_STEP_COMPLETE

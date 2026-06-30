@@ -22,8 +22,8 @@
  * the zero-container automated suite. So this file is split:
  *   - PURE host-side logic — gh-snapshot parsing, the auth-mount path
  *     construction, the prompt-content hash, the branchHEAD consistency check,
- *     the failedStep attribution, the StructuredOutputError dead-session
- *     fallback decision — is factored into exported, dependency-light functions
+ *     the failedStep attribution, the resume error fallback decision — is
+ *     factored into exported, dependency-light functions
  *     that `realBackend.logic.test.ts` unit-tests WITHOUT a container.
  *   - The thin container glue calls those pure functions and Sandcastle.
  *
@@ -139,9 +139,15 @@ export interface GhIssueJson {
   readonly number?: number;
   readonly title?: string | null;
   readonly state?: string | null;
+  readonly author?: { readonly login?: string | null } | null;
+  readonly user?: { readonly login?: string | null } | null;
   readonly body?: string | null;
   readonly labels?: ReadonlyArray<{ readonly name?: string }> | null;
-  readonly comments?: ReadonlyArray<{ readonly body?: string }> | null;
+  readonly comments?: ReadonlyArray<{
+    readonly body?: string;
+    readonly author?: { readonly login?: string | null } | null;
+    readonly user?: { readonly login?: string | null } | null;
+  }> | null;
 }
 
 /** Native blocked_by dependency summary from `gh api .../dependencies`. */
@@ -195,27 +201,57 @@ export function buildIssueMeta(
   };
 }
 
+function actorLogin(
+  carrier: {
+    readonly author?: { readonly login?: string | null } | null;
+    readonly user?: { readonly login?: string | null } | null;
+  } | null | undefined,
+): string {
+  return carrier?.author?.login ?? carrier?.user?.login ?? "";
+}
+
+function repoOwnerLogin(repo: string): string {
+  return repo.split("/", 1)[0] ?? "";
+}
+
+function isTrustedBriefAuthor(
+  carrier: {
+    readonly author?: { readonly login?: string | null } | null;
+    readonly user?: { readonly login?: string | null } | null;
+  } | null | undefined,
+  ownerLogin: string,
+): boolean {
+  const normalizedOwner = ownerLogin.trim().toLowerCase();
+  return (
+    normalizedOwner !== "" &&
+    actorLogin(carrier).trim().toLowerCase() === normalizedOwner
+  );
+}
+
 /**
- * Extract the latest `## Agent Brief` body from the issue's comments (falling
- * back to the issue body). The brief is the most-authoritative part of the spec
- * WHEN present; the LAST comment carrying it wins (a re-issued brief supersedes
- * earlier ones). Returns "" when no brief is present — that is a VALID slice (the
- * brief is not an S0 gate, design decision); the coder then works from the whole
- * live issue (body + comments) fetched in-container.
+ * Extract the latest trusted `## Agent Brief` from the issue body/comments. Only
+ * repo-owner-authored carriers count; among those, later comments supersede
+ * earlier comments and the body. Returns "" when no trusted brief is present —
+ * that is a valid slice, not an S0 gate.
  */
-export function extractAgentBrief(json: GhIssueJson): string {
+export function extractAgentBrief(json: GhIssueJson, ownerLogin: string): string {
   // Priority order, LOWEST first: the issue body is the fallback, then comments
   // in order (newest last). A later carrier overwrites an earlier one, so the
   // LAST brief-bearing COMMENT wins over both earlier comments and the body
   // (a re-issued brief supersedes the original) — the body only stands when no
   // comment carries a brief.
   const carriers = [
-    json.body ?? "",
-    ...(json.comments ?? []).map((c) => c.body ?? ""),
+    { text: json.body ?? "", author: json },
+    ...(json.comments ?? []).map((c) => ({ text: c.body ?? "", author: c })),
   ];
   let brief = "";
-  for (const text of carriers) {
-    if (text.includes(AGENT_BRIEF_HEADING)) brief = text;
+  for (const carrier of carriers) {
+    if (
+      carrier.text.includes(AGENT_BRIEF_HEADING) &&
+      isTrustedBriefAuthor(carrier.author, ownerLogin)
+    ) {
+      brief = carrier.text;
+    }
   }
   return brief;
 }
@@ -298,12 +334,15 @@ export function buildIssueSnapshot(
   json: GhIssueJson,
   blockedBy: ReadonlyArray<GhBlockedBy>,
   subIssueCount: number,
+  ownerLogin: string,
 ): IssueSnapshot {
   return {
     number: json.number ?? issueNumber,
     body: json.body ?? "",
+    bodyAuthorLogin: actorLogin(json),
     comments: (json.comments ?? []).map((c) => c.body ?? ""),
-    agentBrief: extractAgentBrief(json),
+    commentAuthorLogins: (json.comments ?? []).map((c) => actorLogin(c)),
+    agentBrief: extractAgentBrief(json, ownerLogin),
     nativeMeta: buildIssueSnapshotMeta(json, blockedBy, subIssueCount),
   };
 }
@@ -460,6 +499,8 @@ export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
 export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
 /** S5 coder-fix worker path to runner-owned blocking findings JSON. */
 export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
+/** Optional ship-worker focus file read by the ship prompt before gstack-ship. */
+export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
 
 /**
  * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
@@ -783,10 +824,10 @@ export function realCommitCount(
  * already throws (extractCoderTag / schema.parse → S8(error)); this closes the
  * complete-but-UNSIGNALED leak the missing-output throw does not cover.
  *
- * On mismatch/undefined: THROW. The caller (runStep / resumeSession /
- * resume-retry) lets it propagate to the runner's error edge = S8(error) +
- * error package, never a silently-trusted advance. `stepName` is woven into the
- * message so the runner attributes the failure to the right step.
+ * On mismatch/undefined: THROW. The caller (runStep / resumeSession) lets it
+ * propagate to the runner's error edge = S8(error) + error package, never a
+ * silently-trusted advance. `stepName` is woven into the message so the runner
+ * attributes the failure to the right step.
  *
  * Pure (a check on the RunResultLike shape): unit-tested without a container.
  */
@@ -924,6 +965,67 @@ export function reconcileCoderCommits(
   return selfReported.escalate !== undefined
     ? { ...base, escalate: selfReported.escalate }
     : base;
+}
+
+export interface ResumeCoderCommitBasis {
+  readonly baselineHead?: string;
+  readonly priorCommitsAdded?: number;
+}
+
+/**
+ * Locate the git truth basis for a resumed coder step.
+ *
+ * On escalate-resume, the runner re-opens the agent entry that escalated and
+ * truncates it from the in-memory ledger, but the persisted ledger still has the
+ * superseded coder entry plus the branch HEADs around it. The cumulative commit
+ * truth for the resumed output is therefore:
+ *
+ *   commits from the ledger entry immediately BEFORE the resumed coder step
+ *   through the current resident HEAD.
+ *
+ * If an older ledger has no usable SHA, the previous coder output's truthified
+ * `commitsAdded` is retained as a fallback basis; the caller adds any commits
+ * created during the resume iteration via a before/after HEAD diff.
+ */
+export function resumeCoderCommitBasis(
+  ledger: ReadonlyArray<{
+    readonly sessionId?: string;
+    readonly branchHEAD?: string;
+    readonly output?: StepOutput;
+  }>,
+  sessionId: string,
+): ResumeCoderCommitBasis {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.sessionId !== sessionId || entry.output?.kind !== "coder") {
+      continue;
+    }
+    let baselineHead: string | undefined;
+    for (let j = i - 1; j >= 0; j--) {
+      const head = ledger[j]?.branchHEAD;
+      if (typeof head === "string" && isLikelySha(head)) {
+        baselineHead = head;
+        break;
+      }
+    }
+    return {
+      ...(baselineHead !== undefined ? { baselineHead } : {}),
+      priorCommitsAdded: entry.output.commitsAdded,
+    };
+  }
+  return {};
+}
+
+export function reconcileResumeCoderCommits(
+  selfReported: SelfReportedCoder,
+  cumulativeGitCommitCount: number,
+): SelfReportedCoder {
+  try {
+    return reconcileCoderCommits(selfReported, cumulativeGitCommitCount);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`resume coder commit truth mismatch: ${reason}`);
+  }
 }
 
 // ── branchHEAD consistency (codex#2) ────────────────────────────────────────
@@ -1114,32 +1216,38 @@ export function lastLedgerBranchHead(
   return undefined;
 }
 
-// ── StructuredOutputError dead-session fallback decision (#256) ──────────────
+// ── resumeSession fallback decision (#256/#285) ─────────────────────────────
 
 /**
  * Decide how to recover when `resumeSession` of a prior session fails because
  * the session is dead/missing (Sandcastle cannot resume a session whose JSONL is
  * gone — a pruned container, a cleaned host store).
  *
- * - A {@link sc.StructuredOutputError} carrying a sessionId means the resumed run
- *   reached the agent but the structured output was malformed → recover by
- *   resuming THAT session id with a corrective prompt (Sandcastle's own pattern).
  * - A dead-session error (no resumable session) means the original session is
  *   gone → fall back to a FRESH `run()` (lose in-session memory, keep the
  *   committed worktree progress — the resident branch survives).
+ * - Every other error (completion-signal mismatch, schema/structured-output
+ *   parse failure, auth/model failure, commit-truth contradiction) propagates to
+ *   S8(error). It must not be masked by a fresh run.
  *
  * Pure: classifies the error only; the caller performs the chosen recovery.
  */
 export type ResumeRecovery =
-  | { readonly kind: "retry-structured"; readonly sessionId: string }
-  | { readonly kind: "fresh-run" };
+  | { readonly kind: "fresh-run" }
+  | { readonly kind: "propagate" };
 
 export function classifyResumeError(err: unknown): ResumeRecovery {
-  if (err instanceof sc.StructuredOutputError && err.sessionId) {
-    return { kind: "retry-structured", sessionId: err.sessionId };
+  const message = err instanceof Error ? err.message : String(err);
+  const isDeadSession =
+    /\bresumeSession\b.*\b(not found|missing|expired|dead)\b/i.test(message) ||
+    /\bSession resume failed:\s*session\s+\S+\s+(not found|missing|expired|dead)\b/i.test(message) ||
+    /\bresume session\b.*\b(not found|missing|expired|dead)\b/i.test(message) ||
+    /\bsession\s+(not found|missing|expired|dead)\b/i.test(message) ||
+    /\b(no|missing|expired|dead)\s+(resume\s+)?session\b/i.test(message);
+  if (isDeadSession) {
+    return { kind: "fresh-run" };
   }
-  // Any other resume failure (dead/missing session, transport) → fresh run.
-  return { kind: "fresh-run" };
+  return { kind: "propagate" };
 }
 
 // ── failedStep attribution (codex#3) ─────────────────────────────────────────
@@ -1231,6 +1339,11 @@ export function promptsDirError(
   return undefined;
 }
 
+function toolchainVersionCommand(tool: string): string[] {
+  if (tool === "typescript") return ["tsc", "--version"];
+  return [tool, "--version"];
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Container glue (MANUAL smoke; not in the zero-container automated suite)
 // ════════════════════════════════════════════════════════════════════════════
@@ -1267,6 +1380,12 @@ export interface RealBackendOptions {
   readonly runKey: number;
   /** GitHub repo slug for `gh` (`owner/name`). */
   readonly repo: string;
+  /**
+   * Login allowed to author trusted `## Agent Brief` sections. Defaults to the
+   * owner segment of {@link RealBackendOptions.repo}; kept separate so the trust
+   * source can grow into an allowlist later without changing parser callers.
+   */
+  readonly ownerLogin?: string;
   /** The profile image (#253): toolchain + souls + model CLIs baked in. */
   readonly imageName: string;
   /**
@@ -1338,6 +1457,9 @@ const coderOutputSchema = z.object({
 
 export class RealBackend implements Backend {
   private readonly opts: RealBackendOptions;
+  private readonly ownerLogin: string;
+  private readonly preflightedToolchains = new Set<string>();
+  private readonly inFlightToolchainPreflights = new Map<string, Promise<void>>();
   /**
    * The dedicated clone this invocation owns (ADR 0024). All resident slice
    * worktrees are cut from HERE, and every internal git/Sandcastle op anchors on
@@ -1349,6 +1471,7 @@ export class RealBackend implements Backend {
 
   constructor(opts: RealBackendOptions) {
     this.opts = opts;
+    this.ownerLogin = opts.ownerLogin ?? repoOwnerLogin(opts.repo);
     this.validatePromptsDir();
     this.workingRepo = this.buildOrReuseClone();
     this.assertIndependentClone();
@@ -1571,7 +1694,7 @@ export class RealBackend implements Backend {
         "--repo",
         this.opts.repo,
         "--json",
-        "number,title,state,body,labels,comments",
+        "number,title,state,author,body,labels,comments",
       ]);
       return JSON.parse(raw) as GhIssueJson;
     });
@@ -1581,7 +1704,13 @@ export class RealBackend implements Backend {
     // attributed to S1 (not S0) for the US#30 error package.
     const subIssueCount = this.fetchSubIssueCount(issueNumber, "S1");
     const blockedBy = this.fetchBlockedBy(issueNumber, "S1");
-    return buildIssueSnapshot(issueNumber, json, blockedBy, subIssueCount);
+    return buildIssueSnapshot(
+      issueNumber,
+      json,
+      blockedBy,
+      subIssueCount,
+      this.ownerLogin,
+    );
   }
 
   // ── S1: resident slice worktree (Sandcastle native createWorktree) ─────────
@@ -1832,6 +1961,60 @@ export class RealBackend implements Backend {
   }
 
   /**
+   * #286 decision: implement the StepSpec.toolchain assertion instead of
+   * downgrading it to documentation. Sandcastle v0.10.0 exposes no public
+   * `sandbox.exec()` on the consumer sandbox, so the cheapest no-LLM preflight is
+   * a direct one-shot `docker run --rm <image> <tool> --version` against the same
+   * profile image, before any agent `sc.run()` can burn model time.
+   */
+  private async preflightToolchain(spec: StepSpec): Promise<void> {
+    const tools = [...new Set(spec.toolchain)];
+    if (tools.length === 0) return;
+    const cacheKey = `${this.opts.imageName}\0${tools.join("\0")}`;
+    if (this.preflightedToolchains.has(cacheKey)) return;
+    const inFlight = this.inFlightToolchainPreflights.get(cacheKey);
+    if (inFlight !== undefined) {
+      await inFlight;
+      return;
+    }
+    const run = this.runToolchainPreflight(tools, cacheKey);
+    this.inFlightToolchainPreflights.set(cacheKey, run);
+    try {
+      await run;
+    } finally {
+      this.inFlightToolchainPreflights.delete(cacheKey);
+    }
+  }
+
+  private async runToolchainPreflight(
+    tools: ReadonlyArray<string>,
+    cacheKey: string,
+  ): Promise<void> {
+    for (const tool of tools) {
+      try {
+        await this.preflightToolchainTool(tool);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `RealBackend toolchain preflight failed for image ` +
+            `"${this.opts.imageName}": missing or unusable tool "${tool}" ` +
+            `(${toolchainVersionCommand(tool).join(" ")}). ${detail}`,
+        );
+      }
+    }
+    this.preflightedToolchains.add(cacheKey);
+  }
+
+  protected async preflightToolchainTool(tool: string): Promise<void> {
+    this.sh("docker", [
+      "run",
+      "--rm",
+      this.opts.imageName,
+      ...toolchainVersionCommand(tool),
+    ]);
+  }
+
+  /**
    * The docker options the agent sandbox runs under — the pure SANDBOX-CONFIG
    * seam (mirrors the family `mergerSandboxConfig()` testability pattern). No
    * container, no I/O: a unit test asserts the mounts + soul env without spinning
@@ -1943,14 +2126,11 @@ export class RealBackend implements Backend {
    * count from git and throws on a contradiction (a model claiming a commit it
    * never made) — the caller propagates that to the runner's S8(error) edge.
    *
-   * `gitCommitCount === undefined` skips git-truthing and trusts the self-report
-   * (used ONLY on the resume path): a `resumeSession` re-runs ONE iteration that
-   * may just re-emit corrected structured output WITHOUT a new commit, so its
-   * per-run `result.commits.length` is NOT a reliable cumulative truth (the
-   * original run's commits already live on the branch and are not re-counted).
-   * Git-truthing there would falsely flag `committed:true` as a 0-commit
-   * contradiction. The normal `runStep` completion path the finding targets
-   * always passes the real count.
+   * `gitCommitCount === undefined` is allowed only for roles where commit truth
+   * is irrelevant (reviewer). A resumed coder still gets git-truthed, but the
+   * count is cumulative from the persisted ledger baseline to the resident HEAD,
+   * not `result.commits.length`: resume may only re-emit corrected structured
+   * output while earlier commits already live on the branch.
    *
    * Ignored for the reviewer role (commits are not part of a review's contract).
    */
@@ -1971,15 +2151,18 @@ export class RealBackend implements Backend {
         ...(r.escalate ? { escalate: r.escalate } : {}),
       };
     }
-    // Coder: parse the self-report for shape, then (normal path) TRUTH the commit
-    // count from git (result.commits.length). reconcileCoderCommits throws on a
-    // self-report that contradicts git → S8(error) at the runner (never a
-    // trusted success). On the resume path (undefined) trust the self-report.
+    // Coder: parse the self-report for shape, then TRUTH the commit count from
+    // git. Fresh runs use result.commits.length; resumed runs pass a cumulative
+    // ledger-baseline count. A contradiction throws → S8(error) at the runner.
     const c = coderOutputSchema.parse(raw);
-    const out =
-      gitCommitCount === undefined
-        ? c
-        : reconcileCoderCommits(c, gitCommitCount);
+    if (gitCommitCount === undefined) {
+      throw new Error(
+        "realBackend: coder output decoded without git commit truth. " +
+          "Fresh and resumed coder steps must reconcile committed/commitsAdded " +
+          "against git; trusting the model self-report would bypass S8(error).",
+      );
+    }
+    const out = reconcileCoderCommits(c, gitCommitCount);
     return out.escalate
       ? {
           kind: "coder",
@@ -1994,17 +2177,67 @@ export class RealBackend implements Backend {
         };
   }
 
+  private resumeCoderCommitCount(
+    worktree: WorktreeHandle,
+    sessionId: string,
+    beforeResumeHead: string | undefined,
+  ): number {
+    const stateDir = this.stateDirFor(worktree.path, this.issueOf(worktree));
+    const ledger = this.readLedger(stateDir);
+    const basis =
+      ledger === undefined ? {} : resumeCoderCommitBasis(ledger, sessionId);
+    if (basis.baselineHead !== undefined) {
+      return this.countCommitsSince(worktree, basis.baselineHead);
+    }
+    if (basis.priorCommitsAdded !== undefined) {
+      if (beforeResumeHead === undefined) {
+        throw new Error(
+          `realBackend: cannot git-truth resumed coder session ${sessionId}; ` +
+            "the persisted ledger only has a prior commit count fallback, but " +
+            "the before-resume HEAD could not be read. Refusing to count " +
+            "resume-only commits as zero.",
+        );
+      }
+      const resumeOnlyCommits =
+        this.countCommitsSince(worktree, beforeResumeHead);
+      return basis.priorCommitsAdded + resumeOnlyCommits;
+    }
+    throw new Error(
+      `realBackend: cannot git-truth resumed coder session ${sessionId}; ` +
+        "the persisted ledger has no matching coder entry with a baseline HEAD " +
+        "or prior commit count. Refusing to trust the resumed <coder> self-report.",
+    );
+  }
+
+  private countCommitsSince(worktree: WorktreeHandle, fromHead: string): number {
+    const raw = this.sh(
+      "git",
+      ["rev-list", "--count", `${fromHead}..HEAD`],
+      worktree.path,
+    );
+    const count = Number.parseInt(raw, 10);
+    if (!Number.isInteger(count) || count < 0) {
+      throw new Error(
+        `realBackend: git rev-list returned invalid commit count "${raw}" ` +
+          `for ${fromHead}..HEAD in ${worktree.path}`,
+      );
+    }
+    return count;
+  }
+
   // ── S2/S3/S5/S6 agent workers (ADR 0030; #256 seam extension returns
   //    StepResult). S2/S5 run the coder soul; S3/S6 run the fresh read-only
   //    reviewer soul. The runner owns the visible review/fix loop and threads
   //    S4 blocking findings to S5 through DispatchContext/landing artifacts. ─
-  async runStep(
+  private async runFreshAgentStep(
     spec: StepSpec,
     worktree: WorktreeHandle,
     options?: AgentStepRunOptions,
+    coderCommitCount?: (result: Pick<RunResultLike, "commits">) => number,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
-    const result = await sc.run({
+    await this.preflightToolchain(spec);
+    const result = await this.runAgentSandbox({
       name: `${spec.id}-${spec.role}`,
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: worktree.path,
@@ -2035,8 +2268,20 @@ export class RealBackend implements Backend {
     const raw = this.rawOutputFor(result, typedOutputUsed);
     // #256 commit-truth: the coder's committed/commitsAdded is derived from the
     // REAL commits Sandcastle observed (result.commits), not the self-report.
-    const output = this.decodeOutput(spec, raw, realCommitCount(result));
+    const gitCommitCount =
+      spec.role === "coder"
+        ? (coderCommitCount?.(result) ?? realCommitCount(result))
+        : undefined;
+    const output = this.decodeOutput(spec, raw, gitCommitCount);
     return { output, sessionId: lastSessionId(result) };
+  }
+
+  async runStep(
+    spec: StepSpec,
+    worktree: WorktreeHandle,
+    options?: AgentStepRunOptions,
+  ): Promise<StepResult> {
+    return await this.runFreshAgentStep(spec, worktree, options);
   }
 
   // ── #255: resume the prior agent session (native + dead-session fallback) ───
@@ -2047,8 +2292,11 @@ export class RealBackend implements Backend {
     options?: AgentStepRunOptions,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
+    const beforeResumeHead =
+      spec.role === "coder" ? await this.worktreeHead(worktree) : undefined;
+    await this.preflightToolchain(spec);
     try {
-      const result = await sc.run({
+      const result = await this.runAgentSandbox({
         name: `${spec.id}-${spec.role}-resume`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
@@ -2078,59 +2326,51 @@ export class RealBackend implements Backend {
         spec.completionSignal,
         `${spec.id}-${spec.role}-resume`,
       );
-      // Resume path: trust the self-report (undefined realCommitCount). A resume
-      // re-runs ONE iteration that may re-emit corrected output with no new
-      // commit, so its per-run commits.length is not a cumulative truth (#256
-      // git-truthing applies to the normal runStep completion path only).
+      // Resume path: git-truth against the cumulative resident-branch commit
+      // count, not this one-iteration result.commits.length. The resumed
+      // iteration may only re-emit the structured tag while prior commits already
+      // live on the branch.
+      const gitCommitCount =
+        spec.role === "coder"
+          ? this.resumeCoderCommitCount(worktree, sessionId, beforeResumeHead)
+          : undefined;
       const output = this.decodeOutput(
         spec,
         this.rawOutputFor(result, /*typedOutputUsed*/ true),
-        /*realCommitCount (skip git-truth on resume)*/ undefined,
+        gitCommitCount,
       );
       return { output, sessionId: lastSessionId(result) ?? sessionId };
     } catch (err) {
-      // Dead-session fallback (#256): a missing/dead session → fresh run() (keep
-      // the committed worktree progress, lose in-session memory). A
-      // StructuredOutputError carrying a sessionId → retry that session with the
-      // same prompt (Sandcastle's structured-retry pattern).
+      // Dead-session fallback (#256/#285): ONLY a clearly missing/dead prior
+      // session falls back to a fresh run() (keep committed worktree progress,
+      // lose in-session memory). Signal mismatches, schema parse failures, auth
+      // failures, model errors, and commit-truth contradictions propagate to the
+      // runner's S8(error) edge instead of being masked by a fresh run.
       const recovery = classifyResumeError(err);
-      if (recovery.kind === "retry-structured") {
-        const result = await sc.run({
-          name: `${spec.id}-${spec.role}-resume-retry`,
-          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-          cwd: worktree.path,
-          sandbox: this.box(issueNumber, spec, options),
-          // Same CLI as the fresh/native-resume build worker (agentForSlug).
-          agent: agentForSlug(spec.model),
-          maxIterations: 1,
-          completionSignal: spec.completionSignal,
-          branchStrategy: { type: "head" },
-          resumeSession: recovery.sessionId,
-          promptFile: join(this.opts.promptsDir, spec.promptFile),
-          // maxIterations:1 ⇒ typed output valid for both roles (F4, as above).
-          output: this.outputFor(spec),
-        });
-        // #244 step-advance gate (resume-retry path): same gate as the fresh and
-        // native-resume runs — no signal, no advance (throws → S8(error)).
-        assertCompletionSignal(
-          result,
-          spec.completionSignal,
-          `${spec.id}-${spec.role}-resume-retry`,
-        );
-        // Resume-retry path: trust the self-report (undefined), same rationale as
-        // the resume path above — a per-run commit count is not a cumulative
-        // truth here (#256 git-truthing is the normal runStep path).
-        const output = this.decodeOutput(
+      if (recovery.kind === "fresh-run") {
+        // Re-dispatch the build worker (a dead resume session ⇒ start a fresh
+        // sandbox.run for the same step). Coder commit truth still uses the
+        // resume ledger baseline, because prior committed work may already live
+        // on the resident branch even though the old session is gone.
+        const coderCommitCount =
+          spec.role === "coder"
+            ? () => this.resumeCoderCommitCount(worktree, sessionId, beforeResumeHead)
+            : undefined;
+        return await this.runFreshAgentStep(
           spec,
-          this.rawOutputFor(result, /*typedOutputUsed*/ true),
-          /*realCommitCount (skip git-truth on resume)*/ undefined,
+          worktree,
+          options,
+          coderCommitCount,
         );
-        return { output, sessionId: lastSessionId(result) ?? recovery.sessionId };
       }
-      // fresh-run fallback: re-dispatch the build worker (a dead resume session
-      // ⇒ start a fresh sandbox.run for the same step).
-      return await this.runStep(spec, worktree, options);
+      throw err;
     }
+  }
+
+  protected async runAgentSandbox(
+    options: Parameters<typeof sc.run>[0],
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    return await sc.run(options);
   }
 
   // ── S7: ship WORKER (invoke gstack-ship) ────────────────────────────────────
@@ -2277,6 +2517,7 @@ export class RealBackend implements Backend {
             "in-container `gh pr create` failure would surface as an opaque S8 error).",
         };
       }
+      this.syncShipFocusFile(ctx);
       const result = await sc.run({
         name: `${spec.id}-ship`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -2303,6 +2544,62 @@ export class RealBackend implements Backend {
           // best-effort: the run already returned/threw.
         }
       }
+    }
+  }
+
+  /**
+   * Keep the single-slice ship focus file in sync with the current dispatch. S7
+   * normally ships with no focus file, but an answered decision escalation must be
+   * visible to the clean ship worker session that is retrying the blocked delivery.
+   */
+  protected syncShipFocusFile(ctx: DispatchContext): void {
+    const worktree = ctx.worktree;
+    if (worktree === undefined) return;
+    const target = join(worktree.path, SHIP_FOCUS_FILENAME);
+    const answer = ctx.escalationAnswer;
+    if (answer === undefined) {
+      rmSync(target, { force: true });
+      return;
+    }
+    this.excludeShipFocusFromGit(worktree.path);
+    const body =
+      `# Single-slice ship focus (machine-generated; #439)\n\n` +
+      `A human answered a prior S7 decision escalation. Retry the ship worker with\n` +
+      `this answer in force; do not repeat the same HITL stop unless a new blocker\n` +
+      `remains.\n\n` +
+      `\`\`\`json\n${JSON.stringify(answer, null, 2)}\n\`\`\`\n`;
+    writeFileSync(target, body, "utf8");
+  }
+
+  /** Add the generated ship focus file to local git excludes so it is never committed. */
+  protected excludeShipFocusFromGit(worktreePath: string): void {
+    try {
+      const excludePath = this.sh(
+        "git",
+        ["rev-parse", "--git-path", "info/exclude"],
+        worktreePath,
+      );
+      const abs = isAbsolute(excludePath)
+        ? excludePath
+        : resolve(worktreePath, excludePath);
+      let existing = "";
+      try {
+        existing = readFileSync(abs, "utf8");
+      } catch {
+        // no exclude file yet
+      }
+      if (!existing.split(/\r?\n/).includes(SHIP_FOCUS_FILENAME)) {
+        mkdirSync(join(abs, ".."), { recursive: true });
+        appendFileSync(
+          abs,
+          (existing.endsWith("\n") || existing === "" ? "" : "\n") +
+            SHIP_FOCUS_FILENAME +
+            "\n",
+          "utf8",
+        );
+      }
+    } catch {
+      // Non-git fixtures still get the focus file; real worktrees get the exclude.
     }
   }
 

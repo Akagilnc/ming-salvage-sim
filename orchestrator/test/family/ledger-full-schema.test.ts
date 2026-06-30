@@ -12,7 +12,14 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { mergedSet, recordAborted, recordMerged } from "../../src/family/ledger.js";
+import {
+  familyEscalationState,
+  mergedSet,
+  recordAborted,
+  recordFamilyEscalated,
+  recordFamilyEscalationAnswered,
+  recordMerged,
+} from "../../src/family/ledger.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -110,6 +117,188 @@ describe("recordAborted — PHASE-LEVEL verify/cmr failure event (#291 缺口 2)
   });
 });
 
+describe("#439 family escalation answer events", () => {
+  it("writes decision escalation and answer rows append-only", async () => {
+    const backend = new FakeFamilyBackend();
+    await recordFamilyEscalated(backend, {
+      escalationKind: "decision",
+      phase: "final",
+      reason: "cmr needs human disposition",
+      familyHeadAfter: "baseZ",
+    });
+    await recordFamilyEscalationAnswered(backend, {
+      answer: "continue-same-class",
+      note: "human approved another pass",
+    });
+
+    expect(backend.appended).toEqual([
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        reason: "cmr needs human disposition",
+        familyHeadAfter: "baseZ",
+        escalationKind: "decision",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue-same-class",
+        note: "human approved another pass",
+      },
+    ]);
+    expect(familyEscalationState(backend.appended)).toMatchObject({
+      answer: {
+        event: "escalation_answered",
+        answer: "continue-same-class",
+        note: "human approved another pass",
+      },
+      escalation: { escalationKind: "decision" },
+    });
+  });
+
+  it("rejects blank answer rows before appending them", async () => {
+    const backend = new FakeFamilyBackend();
+
+    await expect(
+      recordFamilyEscalationAnswered(backend, { answer: "   " }),
+    ).rejects.toThrow("family escalation answer must be a non-empty string");
+
+    expect(backend.appended).toEqual([]);
+  });
+
+  it("returns the latest valid answer payload after the latest escalation", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "decision",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue-old",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "   ",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue-latest",
+        note: "latest human answer wins",
+      },
+    ];
+
+    expect(familyEscalationState(entries)).toEqual({
+      escalation: entries[0],
+      answer: {
+        event: "escalation_answered",
+        answer: "continue-latest",
+        note: "latest human answer wins",
+      },
+    });
+  });
+
+  it("rejects malformed family answer rows that do not match the writer shape", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "decision",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        answer: "continue-without-final-phase",
+      },
+    ];
+
+    expect(familyEscalationState(entries)).toEqual({
+      escalation: entries[0],
+    });
+  });
+
+  it("does not reopen an older escalation after a terminal shipped marker", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "decision",
+        reason: "old migration pause",
+      },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "https://github.com/o/r/pull/1",
+        familyHeadAfter: "head-1",
+      },
+    ];
+
+    expect(familyEscalationState(entries)).toBeUndefined();
+  });
+
+  it("failure escalations remain failure even when a later answer row exists", async () => {
+    const backend = new FakeFamilyBackend();
+    await recordFamilyEscalated(backend, {
+      escalationKind: "failure",
+      reason: "family base diverged from ledger",
+    });
+    await recordFamilyEscalationAnswered(backend, { answer: "try-anyway" });
+
+    expect(familyEscalationState(backend.appended)).toEqual({
+      escalation: backend.appended[0],
+    });
+    expect(mergedSet(backend.appended).size).toBe(0);
+  });
+
+  it("malformed escalation kinds are not reopened by later answer rows", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "maybe" as unknown as "decision",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue",
+      },
+    ];
+
+    expect(familyEscalationState(entries)).toEqual({
+      escalation: entries[0],
+    });
+  });
+
+  it("malformed escalation rows missing event still pause instead of disappearing", () => {
+    const entries = [
+      {
+        status: "escalated",
+        escalationKind: "decision",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue",
+      },
+    ] as unknown as FamilyLedgerEntry[];
+
+    expect(familyEscalationState(entries)).toEqual({
+      escalation: entries[0],
+    });
+  });
+});
+
 describe("mergedSet — reconcile補账条 COUNTS (decision 5 / codex R3)", () => {
   it("a status:'merged' + event:'reconciled' entry is in the merged set (no deadlock)", () => {
     const entries: FamilyLedgerEntry[] = [
@@ -122,5 +311,15 @@ describe("mergedSet — reconcile補账条 COUNTS (decision 5 / codex R3)", () =
     expect(set.has(10)).toBe(true);
     expect(set.has(11)).toBe(true);
     expect(set.has(12)).toBe(false);
+  });
+
+  it("ignores malformed merged rows whose childIssue is not a safe integer", () => {
+    const entries = [
+      { status: "merged", childIssue: null },
+      { status: "merged", childIssue: "10" },
+      { status: "merged", childIssue: 11 },
+    ] as unknown as FamilyLedgerEntry[];
+
+    expect([...mergedSet(entries)].sort()).toEqual([11]);
   });
 });

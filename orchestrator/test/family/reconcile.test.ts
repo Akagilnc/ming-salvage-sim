@@ -50,6 +50,7 @@ class FakeReconcileGit implements ReconcileGit {
     // empty-ledger-first-merge-crash scenario passes a DIFFERENT start (live
     // moved past it with an empty ledger → fail-closed escalate).
     private readonly start: string = live,
+    private readonly targetedAncestors: ReadonlySet<string> = new Set(),
   ) {}
   async liveFamilyHead(): Promise<string> {
     return this.live;
@@ -64,6 +65,8 @@ class FakeReconcileGit implements ReconcileGit {
     return head === undefined ? { exists: false } : { exists: true, childHead: head };
   }
   async isAncestor(childHead: string, liveHead: string): Promise<boolean> {
+    if (childHead === liveHead) return true;
+    if (this.targetedAncestors.has(`${childHead}->${liveHead}`)) return true;
     return liveHead === this.live && this.ancestors.has(childHead);
   }
 }
@@ -128,7 +131,7 @@ describe("reconcileFamilyLedger — branch ① ledger末条 === live HEAD", () =
       { childIssue: 10, status: "merged", childHead: "c10", familyHeadAfter: "base1" },
       { childIssue: 11, status: "merged", event: "reconciled", childHead: "c11" },
     ];
-    const git = new FakeReconcileGit("base1", { 10: "c10", 11: "c11" }, new Set(["c10", "c11"]));
+    const git = new FakeReconcileGit("base1", { 10: "c10", 11: "c11" }, new Set(["c10", "c11"]), "base0");
     const plan = await reconcileFamilyLedger(ledger, children, git);
     expect(plan.escalate).toBe(false);
     expect([...plan.merged].sort()).toEqual([10, 11]);
@@ -200,6 +203,31 @@ describe("reconcileFamilyLedger — branch ② live HEAD LEADS (the crash window
     expect(plan.reconciled).toEqual([]); // 11 not补
     expect([...plan.merged].sort()).toEqual([10]);
   });
+
+  it("does not reconcile a stale zero-commit child branch that is already behind the recorded baseline", async () => {
+    // Child 10's merge recorded baseline base1. Child 11 then landed and advanced
+    // live to base2. Child 12's branch exists but still points at pre-wave base0,
+    // which is an ancestor of base1; that is not landed child work and must not be
+    //補账ed just because base0 is also an ancestor of live.
+    const ledger: FamilyLedgerEntry[] = [
+      { childIssue: 10, status: "merged", childHead: "c10", familyHeadAfter: "base1" },
+    ];
+    const childrenWithStale = [
+      ...children,
+      { issue: 12, blockedBy: [] as number[] },
+    ];
+    const git = new FakeReconcileGit(
+      "base2",
+      { 10: "c10", 11: "c11", 12: "base0" },
+      new Set(["base1", "c10", "c11", "base0"]),
+      "base0",
+      new Set(["base0->base1"]),
+    );
+    const plan = await reconcileFamilyLedger(ledger, childrenWithStale, git);
+    expect(plan.escalate).toBe(false);
+    expect(plan.reconciled).toEqual([{ childIssue: 11, childHead: "c11" }]);
+    expect([...plan.merged].sort()).toEqual([10, 11]);
+  });
 });
 
 describe("reconcileFamilyLedger — branch ③ inconsistent → fail-closed escalate", () => {
@@ -215,37 +243,75 @@ describe("reconcileFamilyLedger — branch ③ inconsistent → fail-closed esca
 });
 
 describe("reconcileFamilyLedger — thin (#293-style) entries degrade SAFELY", () => {
-  it("a NON-empty thin ledger (no familyHeadAfter) → conservative no-escalate, even when live HEAD moved past the base start", async () => {
-    // A legitimate #293 thin ledger: child 10 merged (status:"merged") but the
-    // entry carries NO familyHeadAfter. After that merge LANDED, the live family
-    // base has moved PAST the base start (live="base1", start="base0" — the
-    // realistic state, cmr R4: codex-s2 + agy). This must DEGRADE SAFELY — NOT
-    // false-escalate: child 10 IS recorded merged, so it is not a lost/unrecorded
-    // merge (that is the empty-ledger first-merge-crash case, which is distinct).
-    // The first-merge-crash start-head check applies ONLY to a truly EMPTY ledger;
-    // a NON-empty headless/thin ledger keeps the conservative back-compat
-    // behavior: trust the recorded merged set, no补账, no escalate.
+  it("a bare thin ledger row without childHead does not explain a live HEAD advance → fail-closed escalate", async () => {
+    // A bare #293 thin row records child 10 as merged but carries neither
+    // familyHeadAfter nor childHead. If the live family base moved past the start
+    // head and no unrecorded child is reconciled, the row is not verifiable
+    // evidence for what advanced the base. Fail closed instead of treating any
+    // accounting row as enough to suppress the start-head safety net.
     const ledger: FamilyLedgerEntry[] = [{ childIssue: 10, status: "merged" }];
+    const git = new FakeReconcileGit("base1", { 10: "c10" }, new Set(["base0", "c10"]), "base0");
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect([...plan.merged].sort()).toEqual([10]);
+  });
+
+  it("a bare thin ledger row is not trusted even when live HEAD still equals the start head", async () => {
+    // If nothing moved on the family base, a headless merged row without childHead
+    // is not evidence that the child is actually present. Trusting it would let
+    // the wave loop skip child 10 on an incomplete base.
+    const ledger: FamilyLedgerEntry[] = [{ childIssue: 10, status: "merged" }];
+    const git = new FakeReconcileGit("base0", { 10: "c10" }, new Set(["base0"]), "base0");
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect([...plan.merged].sort()).toEqual([10]);
+  });
+
+  it("a headless accounting row with childHead can explain the live HEAD advance when verified", async () => {
+    // A headless merged entry that carries childHead can be verified directly:
+    // child 10's head is still an ancestor of the live family base, so the live
+    // advance is attributable to an already-accounted child. No补账 and no
+    // double-merge are needed.
+    const ledger: FamilyLedgerEntry[] = [
+      { childIssue: 10, status: "merged", childHead: "c10" },
+    ];
     const git = new FakeReconcileGit("base1", { 10: "c10" }, new Set(["base0", "c10"]), "base0");
     const plan = await reconcileFamilyLedger(ledger, children, git);
     expect(plan.escalate).toBe(false);
     expect(plan.reconciled).toEqual([]);
-    // 10 is still counted merged (from the thin ledger entry) → not double-merged.
     expect([...plan.merged].sort()).toEqual([10]);
   });
 
-  it("a NON-empty thin ledger where an UNRECORDED child already landed →补账 it, NOT escalate, NOT double-merge", async () => {
-    // The thin-ledger crash window (cmr R5: codex-s1 + codex-s2 + agy ×3): a #293
-    // thin ledger records child 10 (status:"merged", no familyHeadAfter); then child
-    // 11's merge LANDED on the live family base (live="base2", c11 ancestor) but the
-    // process crashed before 11's ledger write. Blindly trusting ledgerMerged={10}
-    // would let the wave loop re-run + re-merge the already-landed 11 (a
-    // double-merge). The per-child reconcile must run for a headless ledger too:
-    // 11's childHead is an ancestor of live ⇒ it landed ⇒ 补账 (status:"merged" +
-    // event:"reconciled"), counted merged, NOT re-merged. The per-child
-    // isAncestor(childHead, liveHead) check is self-sufficient — it needs no
-    // baseline.
-    const ledger: FamilyLedgerEntry[] = [{ childIssue: 10, status: "merged" }];
+  it("a verified headless row does not launder a separate bare thin row", async () => {
+    // Child 11's row is verifiable, but child 10's bare thin row has no childHead.
+    // The verified row explains its own merge only; it must not make every other
+    // headless accounting row safe to trust when live moved past the start head.
+    const ledger: FamilyLedgerEntry[] = [
+      { childIssue: 10, status: "merged" },
+      { childIssue: 11, status: "merged", childHead: "c11" },
+    ];
+    const git = new FakeReconcileGit(
+      "base2",
+      { 10: "c10", 11: "c11" },
+      new Set(["base0", "c11"]),
+      "base0",
+    );
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect([...plan.merged].sort()).toEqual([10, 11]);
+  });
+
+  it("a verified headless ledger where an UNRECORDED child already landed →补账 it, NOT escalate, NOT double-merge", async () => {
+    // A headless ledger records child 10 without a familyHeadAfter, but it carries
+    // childHead and that head is still an ancestor of live. Then child 11's merge
+    // landed but its ledger write crashed. Reconcile verifies the existing row and
+    // 补账s only the unrecorded landed child.
+    const ledger: FamilyLedgerEntry[] = [
+      { childIssue: 10, status: "merged", childHead: "c10" },
+    ];
     const git = new FakeReconcileGit(
       "base2",
       { 10: "c10", 11: "c11" },
@@ -257,6 +323,80 @@ describe("reconcileFamilyLedger — thin (#293-style) entries degrade SAFELY", (
     expect(plan.reconciled).toEqual([{ childIssue: 11, childHead: "c11" }]);
     expect([...plan.merged].sort()).toEqual([10, 11]);
   });
+
+  it("phase-only escalation and answer rows do not bypass the start-head safety net", async () => {
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "decision",
+        reason: "legacy cmr pause",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue",
+      },
+    ];
+    const git = new FakeReconcileGit(
+      "base1",
+      {},
+      new Set(["base0"]),
+      "base0",
+    );
+
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect(plan.merged.size).toBe(0);
+  });
+
+  it("malformed merged rows without a childIssue do not count as accounting evidence", async () => {
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        status: "merged",
+      },
+    ];
+    const git = new FakeReconcileGit(
+      "base1",
+      {},
+      new Set(["base0"]),
+      "base0",
+    );
+
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect(plan.merged.size).toBe(0);
+  });
+
+  it("malformed merged rows with non-numeric childIssue do not count as accounting evidence", async () => {
+    const ledger = [
+      {
+        status: "merged",
+        childIssue: null,
+      },
+      {
+        status: "merged",
+        childIssue: "10",
+      },
+    ] as unknown as FamilyLedgerEntry[];
+    const git = new FakeReconcileGit(
+      "base1",
+      {},
+      new Set(["base0"]),
+      "base0",
+    );
+
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect(plan.merged.size).toBe(0);
+  });
 });
 
 describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
@@ -264,6 +404,22 @@ describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
     // Nothing recorded yet AND the live family-base HEAD is still the start head
     // (no merge landed) — a genuine fresh start, nothing to reconcile.
     const git = new FakeReconcileGit("base0", {}, new Set()); // start defaults to live
+    const plan = await reconcileFamilyLedger([], children, git);
+    expect(plan.escalate).toBe(false);
+    expect(plan.reconciled).toEqual([]);
+    expect(plan.merged.size).toBe(0);
+  });
+
+  it("an empty ledger does not reconcile a zero-commit child branch whose HEAD is the base start", async () => {
+    // A child branch can exist immediately after prepareWorktree but before the
+    // coder commits. Its HEAD equals the family base start, which is technically
+    // an ancestor of live but is not evidence that the child landed.
+    const git = new FakeReconcileGit(
+      "base0",
+      { 10: "base0" },
+      new Set(["base0"]),
+      "base0",
+    );
     const plan = await reconcileFamilyLedger([], children, git);
     expect(plan.escalate).toBe(false);
     expect(plan.reconciled).toEqual([]);
@@ -289,6 +445,22 @@ describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
     expect([...plan.merged].sort()).toEqual([10]);
   });
 
+  it("an empty ledger only reconciles landed children when another child branch still points at the base start", async () => {
+    // Child 10 exists but has no commits beyond the cut SHA. Child 11 landed and
+    // advanced live. Reconcile must补账 only child 11 and leave child 10 for the
+    // wave loop rather than marking both merged because both heads are ancestors.
+    const git = new FakeReconcileGit(
+      "base1",
+      { 10: "base0", 11: "c11" },
+      new Set(["base0", "c11"]),
+      "base0",
+    );
+    const plan = await reconcileFamilyLedger([], children, git);
+    expect(plan.escalate).toBe(false);
+    expect(plan.reconciled).toEqual([{ childIssue: 11, childHead: "c11" }]);
+    expect([...plan.merged].sort()).toEqual([11]);
+  });
+
   it("an empty ledger + live MOVED but NO child explains it → fail-closed escalate (unattributable landed merge)", async () => {
     // The base moved past its start head, but NO known child's head is an ancestor
     // of live (here child 10's branch doesn't even exist, child 11's neither) — a
@@ -306,6 +478,82 @@ describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
     const plan = await reconcileFamilyLedger([], children, git);
     expect(plan.escalate).toBe(true);
     expect(plan.reconciled).toEqual([]);
+  });
+
+  it("does not trust a malformed headless merged tail after a valid baseline", async () => {
+    const ledger = [
+      {
+        status: "aborted",
+        event: "aborted",
+        phase: "final",
+        reason: "previous barrier failed",
+        familyHeadAfter: "base1",
+      },
+      {
+        status: "merged",
+        childHead: "c10",
+      },
+    ] as unknown as FamilyLedgerEntry[];
+    const git = new FakeReconcileGit("base1", { 10: "c10" }, new Set(["c10"]));
+
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+  });
+
+  it("does not trust a malformed merged row with familyHeadAfter as a baseline", async () => {
+    const ledger = [
+      {
+        status: "merged",
+        childIssue: null,
+        familyHeadAfter: "base1",
+      },
+    ] as unknown as FamilyLedgerEntry[];
+    const git = new FakeReconcileGit("base1", {}, new Set(["base0"]), "base0");
+
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect(plan.merged.size).toBe(0);
+  });
+
+  it("does not trust phase-only answer rows with familyHeadAfter as a baseline", async () => {
+    const ledger = [
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue",
+        familyHeadAfter: "base1",
+      },
+    ] as unknown as FamilyLedgerEntry[];
+    const git = new FakeReconcileGit("base1", {}, new Set(["base0"]), "base0");
+
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect(plan.merged.size).toBe(0);
+  });
+
+  it("does not trust escalated rows missing phase as a baseline", async () => {
+    const ledger = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "decision",
+        familyHeadAfter: "base1",
+      },
+    ] as unknown as FamilyLedgerEntry[];
+    const git = new FakeReconcileGit("base1", {}, new Set(["base0"]), "base0");
+
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect(plan.merged.size).toBe(0);
   });
 });
 

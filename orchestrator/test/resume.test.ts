@@ -41,9 +41,12 @@ import type {
   IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
+  DispatchContext,
   StepId,
   StepOutput,
   StepSpec,
+  WorkerResult,
+  WorkerSpec,
   WorktreeHandle,
 } from "../src/types.js";
 
@@ -97,6 +100,20 @@ function s8(handoffStatus: "success" | "escalate" | "error"): PersistentLedgerEn
   };
 }
 
+function escalationAnswer(
+  forStep: StepId,
+  answer: string,
+  note?: string,
+): PersistentLedgerEntry {
+  return {
+    ...entry(forStep),
+    event: "escalation_answered",
+    forStep,
+    answer,
+    ...(note !== undefined ? { note } : {}),
+  };
+}
+
 /**
  * A configurable resume-aware fake Backend.
  *
@@ -109,6 +126,7 @@ function s8(handoffStatus: "success" | "escalate" | "error"): PersistentLedgerEn
 class ResumeBackend implements Backend {
   readonly calls: string[] = [];
   readonly runStepIds: string[] = [];
+  readonly ledgerWrites: PersistentLedgerEntry[] = [];
   /** Each resumeSession call: [stepId, sessionId]. */
   readonly resumeSessionCalls: Array<[string, string]> = [];
   prepareWorktreeCount = 0;
@@ -195,10 +213,53 @@ class ResumeBackend implements Backend {
   }
 
   async writeLedger(
-    _entry: PersistentLedgerEntry,
+    entry: PersistentLedgerEntry,
     _stateDir: string,
   ): Promise<void> {
-    // no-op
+    this.ledgerWrites.push(entry);
+  }
+}
+
+class DispatchRecordingResumeBackend extends ResumeBackend {
+  readonly dispatchSpecs: WorkerSpec[] = [];
+  readonly dispatchContexts: DispatchContext[] = [];
+
+  async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    this.dispatchSpecs.push(spec);
+    this.dispatchContexts.push(ctx);
+
+    if (spec.kind === "ship") {
+      if (ctx.worktree === undefined) {
+        throw new Error("test backend: ship dispatch requires a worktree");
+      }
+      await this.push(ctx.worktree);
+      return {
+        kind: "completed",
+        output: { kind: "ship", branch: ctx.worktree.branch, status: "pushed" },
+      };
+    }
+
+    const stepSpec = spec as unknown as StepSpec;
+    if (spec.id === "S6") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: CLAIMED_FIXED_KEY, status: "verified-closed" },
+          ],
+        },
+      };
+    }
+    const output =
+      ctx.resumeSessionId !== undefined
+        ? await this.resumeSession(stepSpec, ctx.worktree!, ctx.resumeSessionId)
+        : await this.runStep(stepSpec, ctx.worktree!);
+    return { kind: "completed", output };
   }
 }
 
@@ -351,6 +412,262 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
     expect(backend.pushCount).toBe(0);
     expect(backend.runStepIds).toEqual([]);
     expect(result.stepLedger.map((e) => e.step).slice(-2)).toEqual(["S4", "S8"]);
+    expect(backend.ledgerWrites.find((e) => e.step === "S8")).toMatchObject({
+      handoffStatus: "escalate",
+      escalationKind: "decision",
+    });
+  });
+});
+
+describe("#439 decision-escalate answer channel", () => {
+  function decisionEscalatedAtS4(opts?: {
+    answer?: PersistentLedgerEntry;
+    escalationKind?: "decision" | "failure";
+  }): ResumeState {
+    return {
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
+        entry("S4"),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S6", {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
+          ],
+        }),
+        entry("S4"),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S6", {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
+          ],
+        }),
+        entry("S4"),
+        {
+          ...s8("escalate"),
+          escalationKind: opts?.escalationKind ?? "decision",
+        },
+        ...(opts?.answer !== undefined ? [opts.answer] : []),
+      ],
+    };
+  }
+
+  it("decision-escalate without an appended answer remains paused at escalate", async () => {
+    const backend = new DispatchRecordingResumeBackend(decisionEscalatedAtS4());
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatchSpecs).toEqual([]);
+    expect(backend.cleanResidueCount).toBe(0);
+  });
+
+  it("decision-escalate with a malformed blank answer row remains paused", async () => {
+    const backend = new DispatchRecordingResumeBackend(
+      decisionEscalatedAtS4({ answer: escalationAnswer("S4", "   ") }),
+    );
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatchSpecs).toEqual([]);
+    expect(backend.cleanResidueCount).toBe(0);
+  });
+
+  it("appended answer reopens the S4 decision escalation at S5 and injects the answer", async () => {
+    const answer = escalationAnswer(
+      "S4",
+      "continue-same-class",
+      "Human says keep fixing this same no-progress class.",
+    );
+    const backend = new DispatchRecordingResumeBackend(
+      decisionEscalatedAtS4({ answer }),
+    );
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S5");
+    expect(backend.dispatchContexts[0]?.escalationAnswer).toEqual({
+      event: "escalation_answered",
+      forStep: "S4",
+      answer: "continue-same-class",
+      note: "Human says keep fixing this same no-progress class.",
+    });
+    expect(result.stepLedger).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: "escalation_answered",
+          forStep: "S4",
+          answer: "continue-same-class",
+        }),
+      ]),
+    );
+  });
+
+  it("failure-escalate remains terminal even if an answer row is appended", async () => {
+    const backend = new DispatchRecordingResumeBackend(
+      decisionEscalatedAtS4({
+        escalationKind: "failure",
+        answer: escalationAnswer("S4", "try-anyway"),
+      }),
+    );
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatchSpecs).toEqual([]);
+    expect(backend.cleanResidueCount).toBe(0);
+  });
+
+  it("unknown tagged escalationKind remains terminal even if an answer row is appended", async () => {
+    const backend = new DispatchRecordingResumeBackend(
+      decisionEscalatedAtS4({
+        escalationKind: "maybe" as unknown as "decision",
+        answer: escalationAnswer("S4", "try-anyway"),
+      }),
+    );
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatchSpecs).toEqual([]);
+    expect(backend.cleanResidueCount).toBe(0);
+  });
+
+  it("legacy untagged agent decision escalation without an appended answer remains paused", async () => {
+    const backend = new ResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry(
+          "S2",
+          {
+            kind: "coder",
+            committed: false,
+            commitsAdded: 0,
+            escalate: { reason: "design ambiguity", diagnosis: "needs a human answer" },
+          },
+          "session-escalated-S2",
+        ),
+        s8("escalate"),
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.resumeSessionCalls).toHaveLength(0);
+    expect(backend.cleanResidueCount).toBe(0);
+  });
+
+  it("legacy untagged agent decision escalation reopens only after an appended answer", async () => {
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry(
+          "S2",
+          {
+            kind: "coder",
+            committed: false,
+            commitsAdded: 0,
+            escalate: { reason: "design ambiguity", diagnosis: "needs a human answer" },
+          },
+          "session-escalated-S2",
+        ),
+        s8("escalate"),
+        escalationAnswer("S2", "continue-with-x-required"),
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.resumeSessionCalls[0]).toEqual(["S2", "session-escalated-S2"]);
+    expect(backend.dispatchContexts[0]?.escalationAnswer).toEqual({
+      event: "escalation_answered",
+      forStep: "S2",
+      answer: "continue-with-x-required",
+    });
+  });
+
+  it("tagged agent decision escalation reopens without keeping superseded S2/S8 entries", async () => {
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry(
+          "S2",
+          {
+            kind: "coder",
+            committed: false,
+            commitsAdded: 0,
+            escalate: { reason: "design ambiguity", diagnosis: "needs a human answer" },
+          },
+          "session-escalated-S2",
+        ),
+        { ...s8("escalate"), escalationKind: "decision" },
+        escalationAnswer("S2", "continue-with-x-required"),
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.resumeSessionCalls[0]).toEqual(["S2", "session-escalated-S2"]);
+    expect(result.stepLedger.filter((e) => e.step === "S2")).toHaveLength(1);
+    expect(result.stepLedger).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          step: "S8",
+          handoffStatus: "escalate",
+          escalationKind: "decision",
+        }),
+      ]),
+    );
+  });
+
+  it("malformed answer event rows do not replay as S4 classifications", async () => {
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
+        entry("S4"),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S6", {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
+          ],
+        }),
+        escalationAnswer("S4", "   "),
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S5");
   });
 });
 
@@ -391,6 +708,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
           "session-escalated-S2",
         ),
         entry("S8"),
+        escalationAnswer("S2", "continue-after-human-answer"),
       ],
     };
   }
@@ -451,7 +769,10 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
    * failing step without one) and a trailing S8 tagged 'escalate'. The human has
    * answered the blocker and re-feeds the issue.
    */
-  function escalatedAtS7(): ResumeState {
+  function escalatedAtS7(
+    answer?: PersistentLedgerEntry,
+    escalationKind?: "decision" | "failure",
+  ): ResumeState {
     return {
       worktree: WORKTREE,
       stateDir: STATE_DIR,
@@ -462,35 +783,51 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
         entry("S3", { kind: "reviewer", findings: [] }),
         entry("S4"),
         entry("S7"), // failing step recorded without an output (escalateTermination)
-        s8("escalate"),
+        {
+          ...s8("escalate"),
+          ...(escalationKind !== undefined ? { escalationKind } : {}),
+        },
+        ...(answer !== undefined ? [answer] : []),
       ],
     };
   }
 
-  it("re-opens S7: re-runs the ship worker (push) instead of reporting the prior escalate", async () => {
+  it("S7 decision escalation without an appended answer remains paused", async () => {
     const backend = new ResumeBackend(escalatedAtS7());
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    // The ship worker is re-dispatched (legacy seam → push) — the slice ships.
-    expect(backend.pushCount).toBe(1);
-    // The re-opened run completes (the human answer unblocked the ship).
-    expect(result.status).toBe("success");
-    expect(result.branch).toBe(WORKTREE.branch);
-    // SAME machine: reuse the worktree + clean residue, no re-cut from S0.
-    expect(backend.prepareWorktreeCount).toBe(0);
-    expect(backend.cleanResidueCount).toBe(1);
-    // No agent steps re-run (S2/S3 already done; the re-open is just S7).
+    expect(result.status).toBe("escalate");
+    expect(backend.pushCount).toBe(0);
+    expect(backend.cleanResidueCount).toBe(0);
     expect(backend.runStepIds).toEqual([]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
   });
 
-  it("re-opening S7 drops the SUPERSEDED S7 entry — no double-S7 in the ledger (online review r1)", async () => {
+  it("answered S7 decision escalation re-opens: re-runs the ship worker instead of reporting the prior escalate", async () => {
+    const backend = new ResumeBackend(
+      escalatedAtS7(escalationAnswer("S7", "retry-ship-after-human-fix")),
+    );
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(backend.pushCount).toBe(1);
+    expect(result.status).toBe("success");
+    expect(result.branch).toBe(WORKTREE.branch);
+    expect(backend.prepareWorktreeCount).toBe(0);
+    expect(backend.cleanResidueCount).toBe(1);
+    expect(backend.runStepIds).toEqual([]);
+    expect(backend.resumeSessionCalls).toHaveLength(0);
+  });
+
+  it("answered S7 re-opening drops the SUPERSEDED S7 entry — no double-S7 in the ledger (online review r1)", async () => {
     // The prior escalate left `[…, S7(failing), S8(escalate)]`. Re-opening S7
     // must truncate BOTH the trailing S8 boundary AND the superseded S7 entry;
     // otherwise the re-dispatch appends a SECOND S7 → two consecutive S7 entries
     // (3 bots). The final stepLedger must hold exactly ONE S7.
-    const backend = new ResumeBackend(escalatedAtS7());
+    const backend = new ResumeBackend(
+      escalatedAtS7(escalationAnswer("S7", "retry-ship-after-human-fix")),
+    );
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
@@ -505,7 +842,57 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     ]);
   });
 
-  it("only S7-escalate re-opens: a prior S2-escalate S8 still reports/resumes the agent step, not S7", async () => {
+  it("answered tagged S7 decision escalation drops the stale S7/S8 pause before re-dispatch", async () => {
+    const backend = new ResumeBackend(
+      escalatedAtS7(
+        escalationAnswer("S7", "retry-ship-after-human-fix"),
+        "decision",
+      ),
+    );
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("success");
+    const s7Entries = result.stepLedger.filter((e) => e.step === "S7");
+    expect(s7Entries).toHaveLength(1);
+    expect(s7Entries[0]!.output).toBeDefined();
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+    ]);
+    expect(result.stepLedger).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          step: "S8",
+          handoffStatus: "escalate",
+          escalationKind: "decision",
+        }),
+      ]),
+    );
+  });
+
+  it("answered S7 decision escalation passes the human answer to the ship worker", async () => {
+    const answer = escalationAnswer(
+      "S7",
+      "retry-ship-after-human-fix",
+      "Human resolved the delivery blocker; retry ship.",
+    );
+    const backend = new DispatchRecordingResumeBackend(
+      escalatedAtS7(answer, "decision"),
+    );
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S7");
+    expect(backend.dispatchContexts[0]?.escalationAnswer).toEqual({
+      event: "escalation_answered",
+      forStep: "S7",
+      answer: "retry-ship-after-human-fix",
+      note: "Human resolved the delivery blocker; retry ship.",
+    });
+  });
+
+  it("only answered S7-escalate re-opens: a prior answered S2-escalate S8 still resumes the agent step, not S7", async () => {
     // Guard: the new S7-reopen pattern must NOT swallow the existing agent
     // escalate-resume. A prior AGENT escalate (S2) still drives resumeSession on
     // S2 — it is not mistaken for an S7 re-open.
@@ -526,6 +913,7 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
           "session-escalated-S2",
         ),
         s8("escalate"),
+        escalationAnswer("S2", "continue-agent-work"),
       ],
     });
 

@@ -4,6 +4,26 @@
 
 ## [未发布]
 
+## [0.19.1.0] - 2026-06-30
+
+### 新增
+- **family escalation answer resume**：family decision escalation 现在可通过 append-only answer 事件恢复，答案会贯穿 CMR 与 ship worker，避免已回答的 family pause 卡死或丢上下文。
+- **worker/toolchain preflight**：RealBackend 在启动 worker 前显式检查运行所需工具链，失败时给出可诊断的错误，而不是进入半启动状态。
+- **family ship PR 复核口径**：family ship 与 resume skip 都会验证 PR 仍为 OPEN、目标 base / head branch 正确，并且 PR head OID 覆盖当前 family HEAD。
+
+### 变更
+- **resume truth 收紧**：runner 对 dead fallback、tagged S7 resume、worker throw、zero-commit child head、stale child head 与 headless ledger row 改为读取实际 git / ledger 真相后再恢复。
+- **family ledger / reconcile 更严格**：reconcile baseline、merged / shipped / escalation / answer 行都按完整 shape 校验；坏行、过期 baseline、缺失 head 的 shipped marker 会 fail closed。
+- **agent prompt trust boundary**：coder / reviewer / ship prompts 与 souls 明确 owner-authored brief、review/fix/ship 边界，以及 escalation answer 的数据流。
+
+### 修复
+- **PR ship marker 不再误绑定**：shipped marker 只在 PR head OID 与当前 family HEAD 完全一致时写入；legacy openFamilyPr 不能再用本地 HEAD 伪造 PR 覆盖。
+- **resume skip 不再信过期 PR**：已有 shipped marker 只能作为候选；resume 前必须重新验证 PR 状态和 head OID，closed / retargeted / force-pushed / malformed ledger 情况都会升级失败而不是跳过 final barrier。
+- **family escalation 不再误重开**：malformed answer、无进展 escalation、旧 pause ordering 与 tagged S7 resume 均按安全路径处理，避免重复执行或错误恢复。
+
+### 测试
+- 新增 RealBackend toolchain、resume session truth、family escalation answer、ledger/reconcile malformed rows、ship PR metadata、resume PR revalidation 与 family verify-cmr/spine 覆盖；ship 验证为 `1953 passed, 13 skipped`（root pytest），orchestrator typecheck 通过，orchestrator Vitest `912 passed, 1 skipped`，web build 通过。
+
 ## [0.19.0.0] - 2026-06-30
 
 ### 新增
