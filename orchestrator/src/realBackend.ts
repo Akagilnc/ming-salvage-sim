@@ -201,14 +201,6 @@ export function buildIssueMeta(
   };
 }
 
-/**
- * Extract the latest `## Agent Brief` body from the issue's comments (falling
- * back to the issue body). The brief is the most-authoritative part of the spec
- * WHEN present; the LAST comment carrying it wins (a re-issued brief supersedes
- * earlier ones). Returns "" when no brief is present — that is a VALID slice (the
- * brief is not an S0 gate, design decision); the coder then works from the whole
- * live issue (body + comments) fetched in-container.
- */
 function actorLogin(
   carrier: {
     readonly author?: { readonly login?: string | null } | null;
@@ -236,6 +228,12 @@ function isTrustedBriefAuthor(
   );
 }
 
+/**
+ * Extract the latest trusted `## Agent Brief` from the issue body/comments. Only
+ * repo-owner-authored carriers count; among those, later comments supersede
+ * earlier comments and the body. Returns "" when no trusted brief is present —
+ * that is a valid slice, not an S0 gate.
+ */
 export function extractAgentBrief(json: GhIssueJson, ownerLogin: string): string {
   // Priority order, LOWEST first: the issue body is the fallback, then comments
   // in order (newest last). A later carrier overwrites an earlier one, so the

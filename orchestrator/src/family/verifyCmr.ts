@@ -260,9 +260,6 @@ async function dispatchOrAbort(
   familyBackend: FamilyBackend,
   spec: Parameters<typeof dispatchFamilyWorker>[1],
   ctx: Parameters<typeof dispatchFamilyWorker>[2],
-  _phase: VerifyCmrPhase,
-  _familyHeadAfter: string | undefined,
-  _cmrPass?: IntegratedCmrPass,
 ): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
   try {
     return await dispatchFamilyWorker(familyBackend, spec, ctx);
@@ -319,9 +316,6 @@ async function runIntegratedCmrPass(input: {
         : {}),
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     },
-    "final",
-    resolvedFamilyHeadAfter,
-    pass,
   );
   const postWorkerFamilyHead = await readPostCmrFamilyHead(
     familyBackend,
@@ -558,8 +552,6 @@ export async function runVerifyCmr(
       familyBase,
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     },
-    phase,
-    cmrPassedFamilyHeadAfter,
   );
   const postShipFamilyHead = await readPostCmrFamilyHead(
     familyBackend,

@@ -223,10 +223,12 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
 
   it("CMR decision escalation is a family-ledger pause: no answer stays paused, appended answer reopens", async () => {
     let cmrCalls = 0;
+    const seenAnswers: IntegratedCmrRequest["escalationAnswer"][] = [];
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => {
+      cmr: (req) => {
         cmrCalls += 1;
+        seenAnswers.push(req.escalationAnswer);
         return cmrCalls === 1
           ? {
               converged: false,
@@ -269,6 +271,17 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
 
     expect(answered.status).toBe("success");
     expect(cmrCalls).toBeGreaterThan(callsAfterFirst);
+    expect(seenAnswers).toEqual([
+      undefined,
+      {
+        event: "escalation_answered",
+        answer: "continue-same-class",
+      },
+      {
+        event: "escalation_answered",
+        answer: "continue-same-class",
+      },
+    ]);
     expect(backend.prCalls).toHaveLength(1);
   });
 });
