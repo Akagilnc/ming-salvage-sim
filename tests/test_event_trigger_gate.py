@@ -4015,6 +4015,9 @@ def test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback(g
                     "name": "测试事务营",
                     "manpower": 1200,
                     "owner_power": "ming",
+                    "pay_source_region": "shaanxi",
+                    "province_pay_share": 1.0,
+                    "central_pay_share": 0.0,
                     "reason": "测试建军事务",
                 }
             ]

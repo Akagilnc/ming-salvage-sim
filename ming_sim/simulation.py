@@ -155,6 +155,11 @@ ITEM_FIELD_ALIASES = {
     "training": "training", "训练": "training",
     "equipment": "equipment", "装备": "equipment",
     "arrears": "arrears", "欠饷": "arrears",
+    "pay_source_region": "pay_source_region", "饷源省": "pay_source_region",
+    "province_pay_share": "province_pay_share", "省份额": "province_pay_share", "省份额比例": "province_pay_share",
+    "central_pay_share": "central_pay_share", "中央份额": "central_pay_share", "中央份额比例": "central_pay_share",
+    "is_tusi": "is_tusi", "土司": "is_tusi",
+    "self_funded_pay": "self_funded_pay", "自养军饷": "self_funded_pay",
     "mobility": "mobility", "机动": "mobility",
     "loyalty": "loyalty", "忠诚": "loyalty",
 }

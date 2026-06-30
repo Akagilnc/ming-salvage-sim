@@ -132,6 +132,27 @@ def _coerce_new_salary_rate(raw, default: float = SALARY_RATE_ANCHOR) -> float:
     return v if (math.isfinite(v) and v > 0) else default
 
 
+def _coerce_bool_flag(raw: object) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return False
+    if isinstance(raw, (int, float)):
+        return raw != 0
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "是", "土司", "自养", "自养军饷"}
+
+
+def _coerce_pay_source_float(raw: object, *, default: float = 0.0) -> float:
+    if raw in (None, ""):
+        return default
+    if isinstance(raw, bool):
+        raise ValueError("布尔值不是合法比例")
+    value = float(raw)
+    if not math.isfinite(value):
+        raise ValueError("非有限数")
+    return value
+
+
 # #9 派系势力联动（全重算，offset 锚定钦定基线）：
 # leverage(faction) = clamp(0,100, offset + 当前在朝(active)成员官职权重和)
 # 其中 offset = 钦定基线 − 开局校准时的权重和（开局时两者相等 → leverage==钦定基线，保开局平衡）。
@@ -2141,6 +2162,27 @@ class GameDB:
                 "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (json.dumps(fiscal, ensure_ascii=False), str(row["id"])),
             )
+
+    def _reconcile_army_pay_source_region_container(self, region_id: str) -> None:
+        if not region_id or not self.is_army_pay_source_cutover_enabled():
+            return
+        row = self.conn.execute(
+            "SELECT fiscal FROM regions WHERE id = ?", (region_id,)
+        ).fetchone()
+        if row is None:
+            return
+        try:
+            fiscal = json.loads(str(row["fiscal"] or "{}"))
+        except (TypeError, ValueError):
+            return
+        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
+            return
+        self._reconcile_region_army_pay_container(region_id, settle)
+        self.conn.execute(
+            "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(fiscal, ensure_ascii=False), region_id),
+        )
 
     def _apply_region_army_pay_tick(self, pay_rows: List[Dict[str, float | str]], result: Any) -> None:
         if not pay_rows:
@@ -4414,6 +4456,7 @@ class GameDB:
                                 reason, event.id, edict_id, actor,
                             ),
                         )
+                        self._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
                         changes.append({
                             "army": row["name"], "field": field,
                             "label": ARMY_FIELD_LABELS.get(field, field),
@@ -4676,6 +4719,41 @@ class GameDB:
                     return max(0, int(item.get("arrears", 0)))
                 except (TypeError, ValueError):
                     return 0
+            initial_arrears = _arrears_init()
+            pay_source_region = ""
+            province_pay_share = central_pay_share = 0.0
+            province_pay_arrears = central_pay_arrears = 0.0
+            is_tusi = self_funded_pay = False
+            stored_arrears = float(initial_arrears)
+            if self.is_army_pay_source_cutover_enabled():
+                try:
+                    pay_source_region = str(item.get("pay_source_region") or "").strip()
+                    province_pay_share = _coerce_pay_source_float(item.get("province_pay_share"))
+                    central_pay_share = _coerce_pay_source_float(item.get("central_pay_share"))
+                    is_tusi = _coerce_bool_flag(item.get("is_tusi"))
+                    self_funded_pay = _coerce_bool_flag(item.get("self_funded_pay"))
+                    exempt = owner != "ming" or is_tusi or self_funded_pay
+                    if exempt:
+                        stored_arrears = province_pay_arrears = central_pay_arrears = 0.0
+                    else:
+                        province_pay_arrears = initial_arrears * province_pay_share
+                        central_pay_arrears = initial_arrears * central_pay_share
+                        stored_arrears = province_pay_arrears + central_pay_arrears
+                    self._validate_pay_source_values(
+                        aid, owner, pay_source_region, province_pay_share, central_pay_share,
+                        is_tusi, self_funded_pay, province_pay_arrears, central_pay_arrears,
+                    )
+                    if pay_source_region and self.conn.execute(
+                        "SELECT 1 FROM regions WHERE id = ?", (pay_source_region,)
+                    ).fetchone() is None:
+                        raise ValueError(f"army {aid} pay_source_region 未入库：{pay_source_region}")
+                except (TypeError, ValueError) as exc:
+                    created.append({
+                        "id": aid, "rejected": True, "category": "invalid_enum",
+                        "reason": f"new_armies '{aid}' 饷源字段非法：{exc}",
+                        "item": raw,
+                    })
+                    continue
             commander = str(item.get("commander") or "")
             row = (
                 aid,
@@ -4690,7 +4768,14 @@ class GameDB:
                 _score("morale"),
                 _score("training"),
                 _score("equipment"),
-                _arrears_init(),
+                stored_arrears,
+                province_pay_arrears,
+                central_pay_arrears,
+                pay_source_region,
+                province_pay_share,
+                central_pay_share,
+                1 if is_tusi else 0,
+                1 if self_funded_pay else 0,
                 _score("mobility"),
                 _score("loyalty"),
                 _score("firearm_equipment", 0),
@@ -4707,13 +4792,16 @@ class GameDB:
                     INSERT INTO armies
                     (id, name, station, theater, commander, controller, troop_type, manpower,
                      supply, morale, training, equipment, arrears,
+                     province_pay_arrears, central_pay_arrears, pay_source_region,
+                     province_pay_share, central_pay_share, is_tusi, self_funded_pay,
                      mobility, loyalty, firearm_equipment, cannon_equipment, salary_rate, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     row,
                 )
             except sqlite3.IntegrityError as exc:
                 raise ValueError(f"new_armies INSERT 失败 '{aid}'：{exc}") from exc
+            self._reconcile_army_pay_source_region_container(pay_source_region)
             reason = str(item.get("reason") or item.get("status") or "新立军队")[:80]
             self.conn.execute(
                 """

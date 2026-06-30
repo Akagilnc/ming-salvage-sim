@@ -336,6 +336,99 @@ def test_army_delta_arrears_splits_positive_and_rejects_negative_under_cutover(f
     assert again["arrears"] == pytest.approx(after["arrears"])
 
 
+def test_army_delta_arrears_reconciles_pay_source_container_immediately(fresh_db):
+    state = fresh_db.load_state()
+    event = SimpleNamespace(id="test", title="剧情加欠")
+
+    fresh_db.apply_army_deltas(
+        state, event, None, "测试", {"shaanxi_army": {"arrears": 10, "reason": "剧情加欠"}},
+        commit=False,
+    )
+
+    assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
+        _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
+    )
+
+
+def test_economy_pay_arrears_reconciles_pay_source_container_immediately(fresh_db):
+    from ming_sim.flows import _apply_economy_list
+
+    state = fresh_db.load_state()
+    before = _province_pay_arrears(fresh_db, "shaanxi")
+    assert before > 0
+
+    applied = _apply_economy_list(
+        fresh_db,
+        state,
+        [{
+            "account": "国库",
+            "delta": -5,
+            "category": "补饷",
+            "reason": "测试补饷",
+            "purpose": "补饷",
+            "target_kind": "army",
+            "target_id": "shaanxi_army",
+        }],
+        commit=False,
+    )
+
+    assert applied == [{"account": "国库", "delta": -5, "reason": "测试补饷"}]
+    assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
+        _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
+    )
+    assert _province_pay_arrears(fresh_db, "shaanxi") < before
+
+
+def test_new_ming_army_requires_valid_pay_source_under_cutover(fresh_db):
+    state = fresh_db.load_state()
+
+    rejected = fresh_db.create_armies_from_extraction(state, [{
+        "id": "no_pay_source",
+        "name": "无饷源新军",
+        "manpower": 1000,
+        "owner_power": "ming",
+    }], commit=False)
+
+    assert rejected and rejected[0]["rejected"] is True
+    assert "pay_source_region" in rejected[0]["reason"]
+    assert fresh_db.conn.execute(
+        "SELECT 1 FROM armies WHERE id = 'no_pay_source'"
+    ).fetchone() is None
+
+
+def test_new_ming_army_stores_pay_source_columns_under_cutover(fresh_db):
+    state = fresh_db.load_state()
+
+    created = fresh_db.create_armies_from_extraction(state, [{
+        "id": "valid_pay_source",
+        "name": "有饷源新军",
+        "manpower": 1000,
+        "owner_power": "ming",
+        "pay_source_region": "shaanxi",
+        "province_pay_share": 0.65,
+        "central_pay_share": 0.35,
+        "arrears": 10,
+    }], commit=False)
+
+    assert created and created[0].get("created") is True
+    row = fresh_db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears,
+               pay_source_region, province_pay_share, central_pay_share
+        FROM armies WHERE id = 'valid_pay_source'
+        """
+    ).fetchone()
+    assert row["pay_source_region"] == "shaanxi"
+    assert row["province_pay_share"] == pytest.approx(0.65)
+    assert row["central_pay_share"] == pytest.approx(0.35)
+    assert row["province_pay_arrears"] == pytest.approx(6.5)
+    assert row["central_pay_arrears"] == pytest.approx(3.5)
+    assert row["arrears"] == pytest.approx(10)
+    assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
+        _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
+    )
+
+
 @pytest.mark.parametrize("bad_defaults", [None, [], "not-a-dict"])
 def test_region_loader_rejects_bad_shared_settle_meta_defaults_container(monkeypatch, bad_defaults):
     fake_regions = {
