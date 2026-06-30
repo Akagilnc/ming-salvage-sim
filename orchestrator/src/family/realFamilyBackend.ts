@@ -363,7 +363,7 @@ export class RealFamilyBackend implements FamilyBackend {
           "--repo",
           this.opts.repo,
           "--json",
-          "baseRefName,headRefName,headRefOid",
+          "baseRefName,headRefName,headRefOid,state",
         ],
         this.opts.workingRepo,
       );
@@ -371,7 +371,14 @@ export class RealFamilyBackend implements FamilyBackend {
         readonly baseRefName?: unknown;
         readonly headRefName?: unknown;
         readonly headRefOid?: unknown;
+        readonly state?: unknown;
       };
+      if (parsed.state !== "OPEN") {
+        return {
+          ok: false,
+          reason: `family PR "${input.pr}" is ${String(parsed.state)} but must be OPEN`,
+        };
+      }
       if (parsed.baseRefName !== this.opts.base) {
         return {
           ok: false,
@@ -1790,7 +1797,14 @@ export class RealFamilyBackend implements FamilyBackend {
       ],
       repo,
     );
-    return { url };
+    const verifiedPr = this.verifyFamilyShipPr({
+      pr: url,
+      familyBase: request.familyBase,
+    });
+    if (!verifiedPr.ok) {
+      throw new Error(verifiedPr.reason);
+    }
+    return { url, prHead: verifiedPr.headOid };
   }
 
   // ─────────────────────────── aborted / escalate ───────────────────────────

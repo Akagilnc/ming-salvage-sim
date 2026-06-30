@@ -60,7 +60,7 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);
-    return { url: `https://example/pr/${req.familyBase}` };
+    return { url: `https://example/pr/${req.familyBase}`, prHead: "head-1" };
   }
 }
 
@@ -374,6 +374,33 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     expect(res).toEqual({ ok: false, ran: true });
   });
 
+  it("a completed pr_opened ship missing its verified PR head ⇒ INCOMPLETE_GATE", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: "feat/330",
+        status: "pr_opened",
+        pr: "https://gh/pr/1",
+      },
+    });
+    expect(res).toEqual({ ok: false, ran: true });
+  });
+
+  it("a completed pr_opened ship with a blank verified PR head ⇒ INCOMPLETE_GATE", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: "feat/330",
+        status: "pr_opened",
+        pr: "https://gh/pr/1",
+        prHead: "   ",
+      },
+    });
+    expect(res).toEqual({ ok: false, ran: true });
+  });
+
   it("a completed pr_opened ship on familyBase with a real pr ⇒ ok (the contract holds)", async () => {
     const res = await gate({
       kind: "completed",
@@ -547,7 +574,28 @@ describe("#331 legacyDispatchFamilyWorker — wraps legacy returns as WorkerResu
     expect(res.kind).toBe("completed");
     if (res.kind === "completed" && res.output.kind === "ship") {
       expect(res.output.pr).toBe("https://example/pr/fb");
+      expect(res.output.prHead).toBe("head-1");
       expect(res.output.status).toBe("pr_opened");
+    } else {
+      throw new Error("expected completed ship payload");
+    }
+  });
+
+  it("ship worker: does not synthesize prHead from the local family ref when openFamilyPr did not verify it", async () => {
+    class UnverifiedPrBackend extends CapableFamilyBackend {
+      override async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
+        this.prCalls.push(req);
+        return { url: `https://example/pr/${req.familyBase}` };
+      }
+    }
+    const be = new UnverifiedPrBackend();
+    const res = await legacyDispatchFamilyWorker(be, familyShipWorkerSpec(), {
+      familyBase: "fb",
+    });
+    expect(res.kind).toBe("completed");
+    if (res.kind === "completed" && res.output.kind === "ship") {
+      expect(res.output.pr).toBe("https://example/pr/fb");
+      expect(res.output.prHead).toBeUndefined();
     } else {
       throw new Error("expected completed ship payload");
     }

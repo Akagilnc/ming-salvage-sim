@@ -566,17 +566,17 @@ export async function runVerifyCmr(
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     },
   );
-  const postShipFamilyHead = await readPostCmrFamilyHead(
-    familyBackend,
-    familyBase,
-    cmrPassedFamilyHeadAfter,
-  );
   // An ESCALATED family ship worker (gstack-ship STOP/HITL) is the family
   // escalate续跑 path, not a false success — call the escalate seam (codex cmr R4
   // finding: keep escalate semantics). A `completed` non-ship payload / crash /
   // malformed means the PR did not open → fail-safe INCOMPLETE_GATE (decision 3⑤;
   // mirrors the cmr-stage guard above). #331's legacy wrapper produces neither.
   if (shipResult.kind === "escalated") {
+    const postShipFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      cmrPassedFamilyHeadAfter,
+    );
     await familyBackend.escalateFamily?.({
       reason: `${shipResult.escalation.reason} — ${shipResult.escalation.diagnosis}`,
       familyHeadAfter: postShipFamilyHead,
@@ -593,6 +593,11 @@ export async function runVerifyCmr(
       shipResult.kind === "failed"
         ? `family ship worker failed: ${shipResult.reason}`
         : "family ship worker returned no valid result (crash/malformed)";
+    const postShipFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      cmrPassedFamilyHeadAfter,
+    );
     await familyBackend.recordAborted?.({
       phase,
       familyBase,
@@ -633,12 +638,12 @@ export async function runVerifyCmr(
       phase,
       familyBase,
       errorPackage: { reason },
-      familyHeadAfter: postShipFamilyHead,
+      familyHeadAfter: cmrPassedFamilyHeadAfter,
     });
     await recordDurableAbort(familyBackend, {
       phase,
       reason,
-      familyHeadAfter: postShipFamilyHead,
+      familyHeadAfter: cmrPassedFamilyHeadAfter,
     });
     return INCOMPLETE_GATE;
   }

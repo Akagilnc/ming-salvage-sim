@@ -92,7 +92,10 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);
-    return this.script.pr?.(req) ?? { url: `pr://${req.familyBase}` };
+    return this.script.pr?.(req) ?? {
+      url: `pr://${req.familyBase}`,
+      prHead: this.currentFamilyHead,
+    };
   }
 
   // ── #298-owned abort/escalate seam (minimal shapes #296 only CALLS) ──
@@ -492,7 +495,8 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       status: "aborted",
       event: "aborted",
       phase: "final",
-      reason: "family ship worker failed: family ship worker threw on startup: git rev-parse failed",
+      reason:
+        "family ship worker opened a PR, but the current family HEAD could not be resolved; refusing to persist a stale shipped marker",
       familyHeadAfter: "head-1",
     });
   });
@@ -686,8 +690,6 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       ),
     ).toHaveLength(1);
     expect(backend.readFamilyHeadCalls).toEqual([
-      "family/291-base",
-      "family/291-base",
       "family/291-base",
       "family/291-base",
       "family/291-base",
