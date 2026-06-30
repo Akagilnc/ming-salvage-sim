@@ -429,9 +429,9 @@ export interface DispatchContext {
 export type CoderResult = CoderOutput;
 
 /**
- * Compatibility reviewer worker output. The active ADR 0026 path keeps per-slice
- * review/fix convergence inside the coder worker; if an older reviewer seam is
- * used, it must still return structured findings rather than a bare verdict.
+ * Per-slice reviewer worker output. ADR 0030 keeps review/fix convergence
+ * runner-visible: reviewer workers return structured findings for S4
+ * classification rather than a bare verdict.
  */
 export type ReviewerResult = ReviewerOutput;
 
