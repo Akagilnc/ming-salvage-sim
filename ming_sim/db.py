@@ -2328,9 +2328,10 @@ class GameDB:
         except (TypeError, ValueError):
             return
         settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
-        if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
+        if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
+                or not isinstance(settle.get("p"), dict):
             return
-        self._reconcile_region_army_pay_container(region_id, settle)
+        self._derive_region_army_pay_due(region_id, settle)
         self.conn.execute(
             "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (json.dumps(fiscal, ensure_ascii=False), region_id),
