@@ -53,9 +53,9 @@ import {
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
 import {
-  activeModelRoute,
   cmrLegAccountingFailure,
   modelRouteFingerprint,
+  resolveActiveModelRoute,
 } from "../modelRoutes.js";
 import { modelIsStrongLeg } from "../realBackend.js";
 import {
@@ -294,7 +294,7 @@ async function runIntegratedCmrPass(input: {
     llmResolvedChildren,
     familyHeadAfter,
   } = input;
-  const routeFingerprint = modelRouteFingerprint(activeModelRoute());
+  const routeFingerprint = modelRouteFingerprint(resolveActiveModelRoute());
   if (
     cmrPassAlreadyPassed(await familyBackend.readFamilyLedger(), {
       cmrPass: pass,
