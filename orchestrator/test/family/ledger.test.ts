@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   cmrPassAlreadyPassed,
   familyAlreadyShipped,
+  hasUnboundLegacyShippedMarker,
   mergedSet,
   recordCmrPassed,
   recordMerged,
@@ -114,6 +115,9 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
     expect(
       familyAlreadyShipped([{ status: "shipped", event: "shipped", phase: "final", pr: "u" }], "head-1"),
     ).toBe(false);
+    expect(
+      hasUnboundLegacyShippedMarker([{ status: "shipped", event: "shipped", phase: "final", pr: "u" }]),
+    ).toBe(true);
   });
 
   it("familyAlreadyShipped is FALSE for a ledger with only merged/aborted entries", () => {

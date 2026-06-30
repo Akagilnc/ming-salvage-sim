@@ -34,6 +34,7 @@ import { assertAcyclic, selectWave } from "./commander.js";
 import {
   familyAlreadyShipped,
   familyEscalationState,
+  hasUnboundLegacyShippedMarker,
   isMergedAccountingEntry,
   mergedSet,
   recordFamilyEscalated,
@@ -497,8 +498,25 @@ export async function runFamily(
   // would re-verify, re-cmr, and re-invoke the ship worker — a duplicate VERSION bump
   // / PR attempt. But an older shipped marker for a different head must NOT hide a
   // later live-base advance; that new head needs a fresh final barrier / ship.
-  if (familyAlreadyShipped(await familyBackend.readFamilyLedger(), familyHead)) {
+  const preFinalLedger = await familyBackend.readFamilyLedger();
+  if (familyAlreadyShipped(preFinalLedger, familyHead)) {
     return await finalize();
+  }
+  if (hasUnboundLegacyShippedMarker(preFinalLedger)) {
+    const ledgerMerged = await currentMerged(familyBackend);
+    const children: FamilyChildResult[] = epic.children.map((c) =>
+      ledgerMerged.has(c.issue)
+        ? { issue: c.issue, status: "merged" as const }
+        : { issue: c.issue, status: "skipped" as const },
+    );
+    await recordFamilyEscalated(familyBackend, {
+      escalationKind: "failure",
+      phase: "final",
+      reason:
+        "family ledger contains a legacy shipped marker without familyHeadAfter; cannot prove which family HEAD the prior PR covered",
+      familyHeadAfter: familyHead,
+    });
+    return { status: "escalated", familyBase, familyHead, children };
   }
 
   // ── verify-cmr hook: end-of-run barrier (#293 no-op seam, #296 fills) ─────────
