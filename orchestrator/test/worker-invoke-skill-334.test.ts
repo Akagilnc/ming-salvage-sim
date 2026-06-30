@@ -192,6 +192,7 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     const review = read("reviewer_review.md");
     expect(review).toMatch(/\/home\/agent\/\.orchestrator\/souls\/reviewer\.md/);
     expect(review).toMatch(/baked soul plus runner\s+parameters/i);
+    expect(review).toMatch(/escalationAnswer/i);
     expect(review).not.toMatch(/\.orchestrator-snapshot\.json/i);
     expect(review).not.toMatch(/fetch the current issue body|Retry transient network failures|Review the current full slice diff/is);
   });
@@ -222,6 +223,7 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     const soul = readSoul("reviewer.md");
     expect(soul).toMatch(/Snapshot files.*not execution input/is);
     expect(soul).toMatch(/git state for the review scope/i);
+    expect(soul).toMatch(/escalationAnswer/i);
   });
 
   it("#419 integrated cmr pass entrypoints read pass-specific souls that invoke only their lens gate", () => {

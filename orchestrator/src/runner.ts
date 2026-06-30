@@ -566,12 +566,13 @@ function planResume(
       agentEntry.step === decisionStep &&
       isValidEscalation(escalateOf(agentEntry.output))
     ) {
+      const escalatedLedgerIdx = ledger.lastIndexOf(agentEntry);
       return {
         resumeStep: agentEntry.step,
         resumeSessionId: agentEntry.sessionId,
         escalationAnswer: answer,
         lastOutput: agentEntry.output,
-        priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+        priorLedger: ledger.slice(0, escalatedLedgerIdx) as ReadonlyArray<LedgerEntry>,
       };
     }
 
