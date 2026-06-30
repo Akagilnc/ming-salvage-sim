@@ -412,6 +412,7 @@ def _pay_single_army_arrears(
             """,
             (province_new, central_new, new_arrears, str(row["id"])),
         )
+        db._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
     else:
         new_arrears = max(0.0, current_arrears + float(actual))
         db.conn.execute(

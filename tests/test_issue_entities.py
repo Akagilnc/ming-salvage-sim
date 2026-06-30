@@ -18,13 +18,21 @@ def _army_count(db) -> int:
     return db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
 
 
+def _pay_source() -> dict[str, object]:
+    return {
+        "pay_source_region": "shaanxi",
+        "province_pay_share": 1.0,
+        "central_pay_share": 0.0,
+    }
+
+
 def test_resolve_creates_army(game):
     db, state, _ = game
     before = _army_count(db)
     effect = {"new_armies": [{
         "id": "tianxiongjun_test", "name": "天雄军测试", "owner_power": "ming",
         "manpower": 18000, "maintenance_per_turn": 3, "commander": "卢象升",
-        "station": "大名", "troop_type": "步",
+        "station": "大名", "troop_type": "步", **_pay_source(),
     }]}
     I._apply_issue_entities(db, state, effect, "局势#测试结案")
     assert _army_count(db) == before + 1
@@ -487,7 +495,7 @@ def test_inertia_natural_resolve_applies_entities(game):
         bar_value=99, inertia=1,
         effect_on_resolve={"new_armies": [{
             "id": "inertia_army_test", "name": "惯性军", "owner_power": "ming",
-            "manpower": 5000, "maintenance_per_turn": 1}]},
+            "manpower": 5000, "maintenance_per_turn": 1, **_pay_source()}]},
     )
     apply_issue_inertia_and_ongoing(db, state)   # inertia +1 把 bar 99→100 → resolved
     cnt = db.conn.execute(
