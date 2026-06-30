@@ -837,7 +837,9 @@ def test_army_delta_owner_power_from_ming_clears_pay_source_arrears(fresh_db):
     state = fresh_db.load_state()
     event = SimpleNamespace(id="test", title="陷没")
     before = _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"]
+    before_due = _read_settle(fresh_db, "shaanxi")["p"]["Due"]["军饷"]
     assert before > 0
+    assert before_due > 0
 
     changes = fresh_db.apply_army_deltas(
         state, event, None, "测试", {"shaanxi_army": {"owner_power": "houjin"}},
@@ -853,10 +855,13 @@ def test_army_delta_owner_power_from_ming_clears_pay_source_arrears(fresh_db):
     assert row["province_pay_arrears"] == pytest.approx(0)
     assert row["central_pay_arrears"] == pytest.approx(0)
     assert row["arrears"] == pytest.approx(0)
-    assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
+    settle = _read_settle(fresh_db, "shaanxi")
+    assert settle["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
     )
-    assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] < before
+    assert settle["st"]["军饷欠"] < before
+    assert settle["p"]["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, "shaanxi"))
+    assert settle["p"]["Due"]["军饷"] < before_due
 
 
 def test_economy_pay_arrears_reconciles_pay_source_container_immediately(fresh_db):
@@ -988,6 +993,7 @@ def test_new_ming_army_rejects_non_ming_pay_source_region(fresh_db):
 
 def test_new_ming_army_stores_pay_source_columns_under_cutover(fresh_db):
     state = fresh_db.load_state()
+    before_due = _read_settle(fresh_db, "shaanxi")["p"]["Due"]["军饷"]
 
     created = fresh_db.create_armies_from_extraction(state, [{
         "id": "valid_pay_source",
@@ -1014,9 +1020,12 @@ def test_new_ming_army_stores_pay_source_columns_under_cutover(fresh_db):
     assert row["province_pay_arrears"] == pytest.approx(6.5)
     assert row["central_pay_arrears"] == pytest.approx(3.5)
     assert row["arrears"] == pytest.approx(10)
-    assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
+    settle = _read_settle(fresh_db, "shaanxi")
+    assert settle["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
     )
+    assert settle["p"]["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, "shaanxi"))
+    assert settle["p"]["Due"]["军饷"] > before_due
 
 
 @pytest.mark.parametrize("bad_defaults", [None, [], "not-a-dict"])
