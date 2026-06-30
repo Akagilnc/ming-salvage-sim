@@ -250,19 +250,19 @@ async function readPostCmrFamilyHead(
  * escalate, but the worker ALSO `git checkout`s the family base + writes the focus
  * file + spins docker, any of which can still throw) — would propagate out of
  * `runVerifyCmr` and reject the WHOLE family run, bypassing the INCOMPLETE_GATE
- * fail-safe the malformed / non-completed paths already use. So catch it, record an
- * `aborted` event (decision 3⑤ "不静默吞" — the gate failure stays observable, not a
- * silent swallow), and hand back the discriminated `failed` WorkerResult the callers
- * already fail-safe to INCOMPLETE_GATE. A NON-throwing dispatch is returned
- * unchanged (escalated / completed / malformed are handled by the callers).
+ * fail-safe the malformed / non-completed paths already use. So catch it and hand
+ * back the discriminated `failed` WorkerResult; the caller records the abort after
+ * re-reading the live family head, because a write-capable worker may have committed
+ * before throwing. A NON-throwing dispatch is returned unchanged (escalated /
+ * completed / malformed are handled by the callers).
  */
 async function dispatchOrAbort(
   familyBackend: FamilyBackend,
   spec: Parameters<typeof dispatchFamilyWorker>[1],
   ctx: Parameters<typeof dispatchFamilyWorker>[2],
-  phase: VerifyCmrPhase,
-  familyHeadAfter: string | undefined,
-  cmrPass?: IntegratedCmrPass,
+  _phase: VerifyCmrPhase,
+  _familyHeadAfter: string | undefined,
+  _cmrPass?: IntegratedCmrPass,
 ): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
   try {
     return await dispatchFamilyWorker(familyBackend, spec, ctx);
@@ -270,19 +270,6 @@ async function dispatchOrAbort(
     const reason = `family ${spec.kind} worker threw on startup: ${
       err instanceof Error ? err.message : String(err)
     }`;
-    await familyBackend.recordAborted?.({
-      phase,
-      ...(cmrPass !== undefined ? { cmrPass } : {}),
-      familyBase: ctx.familyBase!,
-      errorPackage: { reason },
-      familyHeadAfter,
-    });
-    await recordDurableAbort(familyBackend, {
-      phase,
-      ...(cmrPass !== undefined ? { cmrPass } : {}),
-      reason,
-      familyHeadAfter,
-    });
     return { kind: "failed", reason };
   }
 }
@@ -356,28 +343,23 @@ async function runIntegratedCmrPass(input: {
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   if (cmrResult.kind !== "completed" || cmrResult.output.kind !== "cmr") {
-    const startupAbortAlreadyRecorded =
-      cmrResult.kind === "failed" &&
-      cmrResult.reason.startsWith("family cmr worker threw on startup:");
-    if (!startupAbortAlreadyRecorded) {
-      const reason =
-        cmrResult.kind === "failed"
-          ? `family integrated cmr ${pass} worker failed: ${cmrResult.reason}`
-          : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
-      await familyBackend.recordAborted?.({
-          phase: "final",
-          cmrPass: pass,
-          familyBase,
-          errorPackage: { reason },
-          familyHeadAfter: postWorkerFamilyHead,
-        });
-        await recordDurableAbort(familyBackend, {
-          phase: "final",
-          cmrPass: pass,
-          reason,
-          familyHeadAfter: postWorkerFamilyHead,
-        });
-      }
+    const reason =
+      cmrResult.kind === "failed"
+        ? `family integrated cmr ${pass} worker failed: ${cmrResult.reason}`
+        : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
+    await familyBackend.recordAborted?.({
+      phase: "final",
+      cmrPass: pass,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postWorkerFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter: postWorkerFamilyHead,
+    });
     return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
   }
   if (!cmrResult.output.converged) {
@@ -602,9 +584,19 @@ export async function runVerifyCmr(
     // event (online review r3, codex P2): without it a resume sees neither a shipped
     // marker nor a failure marker and re-runs the whole final verify/cmr/ship,
     // losing the original failure context (decision 3⑤ 不静默吞).
+    const reason =
+      shipResult.kind === "failed"
+        ? `family ship worker failed: ${shipResult.reason}`
+        : "family ship worker returned no valid result (crash/malformed)";
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postShipFamilyHead,
+    });
     await recordDurableAbort(familyBackend, {
       phase,
-      reason: "family ship worker returned no valid result (crash/malformed)",
+      reason,
       familyHeadAfter: postShipFamilyHead,
     });
     return INCOMPLETE_GATE;
