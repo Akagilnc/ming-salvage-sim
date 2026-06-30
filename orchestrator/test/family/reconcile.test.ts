@@ -382,6 +382,22 @@ describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
     expect(plan.merged.size).toBe(0);
   });
 
+  it("an empty ledger does not reconcile a zero-commit child branch whose HEAD is the base start", async () => {
+    // A child branch can exist immediately after prepareWorktree but before the
+    // coder commits. Its HEAD equals the family base start, which is technically
+    // an ancestor of live but is not evidence that the child landed.
+    const git = new FakeReconcileGit(
+      "base0",
+      { 10: "base0" },
+      new Set(["base0"]),
+      "base0",
+    );
+    const plan = await reconcileFamilyLedger([], children, git);
+    expect(plan.escalate).toBe(false);
+    expect(plan.reconciled).toEqual([]);
+    expect(plan.merged.size).toBe(0);
+  });
+
   it("an empty ledger + first merge LANDED (childHead ancestor of live) →补账 it, no escalate (first-merge crash recovered)", async () => {
     // The crash window can hit the VERY FIRST merge: mergeChild lands the merge
     // on the family base THEN writes the ledger. A crash in between leaves the
@@ -399,6 +415,22 @@ describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
     expect(plan.escalate).toBe(false);
     expect(plan.reconciled).toEqual([{ childIssue: 10, childHead: "c10" }]);
     expect([...plan.merged].sort()).toEqual([10]);
+  });
+
+  it("an empty ledger only reconciles landed children when another child branch still points at the base start", async () => {
+    // Child 10 exists but has no commits beyond the cut SHA. Child 11 landed and
+    // advanced live. Reconcile must补账 only child 11 and leave child 10 for the
+    // wave loop rather than marking both merged because both heads are ancestors.
+    const git = new FakeReconcileGit(
+      "base1",
+      { 10: "base0", 11: "c11" },
+      new Set(["base0", "c11"]),
+      "base0",
+    );
+    const plan = await reconcileFamilyLedger([], children, git);
+    expect(plan.escalate).toBe(false);
+    expect(plan.reconciled).toEqual([{ childIssue: 11, childHead: "c11" }]);
+    expect([...plan.merged].sort()).toEqual([11]);
   });
 
   it("an empty ledger + live MOVED but NO child explains it → fail-closed escalate (unattributable landed merge)", async () => {
