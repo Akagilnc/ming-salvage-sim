@@ -20,6 +20,10 @@
  */
 
 import { describe, expect, it } from "vitest";
+import {
+  recordFamilyEscalated,
+  recordFamilyEscalationAnswered,
+} from "../../src/family/ledger.js";
 import { runFamily } from "../../src/family/runner.js";
 import type {
   Backend,
@@ -122,6 +126,12 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async escalateFamily(esc: FamilyEscalation): Promise<void> {
     this.escalations.push(esc);
+    await recordFamilyEscalated(this, {
+      escalationKind: "decision",
+      phase: "final",
+      reason: esc.reason,
+      familyHeadAfter: esc.familyHeadAfter,
+    });
   }
 }
 
@@ -209,6 +219,57 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
     // Observably verify_failed at the final phase.
     expect(result.status).toBe("verify_failed");
     expect(result.failedPhase).toBe("final");
+  });
+
+  it("CMR decision escalation is a family-ledger pause: no answer stays paused, appended answer reopens", async () => {
+    let cmrCalls = 0;
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => {
+        cmrCalls += 1;
+        return cmrCalls === 1
+          ? {
+              converged: false,
+              reason: "same-class findings need a human continue decision",
+            }
+          : { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
+      },
+    });
+    const input = {
+      epic: epicWith(294, 295),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+    };
+
+    const first = await runFamily(input);
+
+    expect(first.status).toBe("verify_failed");
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        escalationKind: "decision",
+        familyHeadAfter: "+295",
+        reason: expect.stringContaining("same-class findings"),
+      }),
+    );
+    const callsAfterFirst = cmrCalls;
+
+    const unanswered = await runFamily(input);
+
+    expect(unanswered.status).toBe("escalated");
+    expect(cmrCalls).toBe(callsAfterFirst);
+
+    await recordFamilyEscalationAnswered(backend, {
+      answer: "continue-same-class",
+    });
+    const answered = await runFamily(input);
+
+    expect(answered.status).toBe("success");
+    expect(cmrCalls).toBeGreaterThan(callsAfterFirst);
+    expect(backend.prCalls).toHaveLength(1);
   });
 });
 

@@ -340,6 +340,7 @@ async function runIntegratedCmrPass(input: {
     });
     await familyBackend.escalateFamily?.({
       reason,
+      familyHeadAfter: resolvedFamilyHeadAfter,
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
@@ -377,7 +378,10 @@ async function runIntegratedCmrPass(input: {
       reason,
       familyHeadAfter: resolvedFamilyHeadAfter,
     });
-    await familyBackend.escalateFamily?.({ reason });
+    await familyBackend.escalateFamily?.({
+      reason,
+      familyHeadAfter: resolvedFamilyHeadAfter,
+    });
     return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   const legAccountingFailure = cmrLegAccountingFailure({
@@ -392,7 +396,10 @@ async function runIntegratedCmrPass(input: {
       reason,
       familyHeadAfter: resolvedFamilyHeadAfter,
     });
-    await familyBackend.escalateFamily?.({ reason });
+    await familyBackend.escalateFamily?.({
+      reason,
+      familyHeadAfter: resolvedFamilyHeadAfter,
+    });
     return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   const floorFailure = cmrFloorFailureReason({
@@ -407,7 +414,10 @@ async function runIntegratedCmrPass(input: {
       reason: floorFailure,
       familyHeadAfter: resolvedFamilyHeadAfter,
     });
-    await familyBackend.escalateFamily?.({ reason: floorFailure });
+    await familyBackend.escalateFamily?.({
+      reason: floorFailure,
+      familyHeadAfter: resolvedFamilyHeadAfter,
+    });
     return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   const closureFailure = cmrClosureFailureReason({
@@ -423,7 +433,10 @@ async function runIntegratedCmrPass(input: {
       reason: closureFailure,
       familyHeadAfter: resolvedFamilyHeadAfter,
     });
-    await familyBackend.escalateFamily?.({ reason: closureFailure });
+    await familyBackend.escalateFamily?.({
+      reason: closureFailure,
+      familyHeadAfter: resolvedFamilyHeadAfter,
+    });
     return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   const postCmrFamilyHead = await readPostCmrFamilyHead(
@@ -557,6 +570,7 @@ export async function runVerifyCmr(
   if (shipResult.kind === "escalated") {
     await familyBackend.escalateFamily?.({
       reason: `${shipResult.escalation.reason} — ${shipResult.escalation.diagnosis}`,
+      familyHeadAfter: cmrPassedFamilyHeadAfter,
     });
     return { ok: false, ran: true };
   }
