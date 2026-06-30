@@ -598,6 +598,7 @@ class GameDB:
                 central_pay_share REAL NOT NULL DEFAULT 0,
                 is_tusi INTEGER NOT NULL DEFAULT 0,
                 self_funded_pay INTEGER NOT NULL DEFAULT 0,
+                mutiny_status TEXT NOT NULL DEFAULT '',
                 mobility INTEGER NOT NULL,
                 loyalty INTEGER NOT NULL,
                 firearm_equipment INTEGER NOT NULL DEFAULT 0,
@@ -1079,6 +1080,7 @@ class GameDB:
         self.ensure_column("armies", "central_pay_share", "REAL NOT NULL DEFAULT 0")
         self.ensure_column("armies", "is_tusi", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "self_funded_pay", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "mutiny_status", "TEXT NOT NULL DEFAULT ''")
         # 火器装备(鸟铳,野战+守城)/大炮装备(红夷炮,守城攻城、不利野战)：simulator 软判用的两条军备轴
         self.ensure_column("armies", "firearm_equipment", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "cannon_equipment", "INTEGER NOT NULL DEFAULT 0")
@@ -2340,6 +2342,8 @@ class GameDB:
     def _apply_region_army_pay_tick(self, pay_rows: List[Dict[str, float | str]], result: Any) -> None:
         if not pay_rows:
             return
+        from ming_sim.flows import army_pay_morale_delta
+
         new_debt = float((result.breakdown.get("NewDebt") or {}).get("军饷欠", 0) or 0)
         repaid = float((result.breakdown.get("Repaid") or {}).get("军饷欠", 0) or 0)
         action_paid = float((result.breakdown.get("action还") or {}).get("军饷欠", 0) or 0)
@@ -2379,12 +2383,7 @@ class GameDB:
             )
             old_morale = int(row["morale"])
             total_due = float(row["total_due"])
-            if total_shortfall > 0 and total_due > 0:
-                morale_delta = -max(1, round(8 * total_shortfall / total_due))
-            elif old_total_arrears == 0:
-                morale_delta = 2
-            else:
-                morale_delta = 0
+            morale_delta = army_pay_morale_delta(total_due, total_shortfall, old_total_arrears)
             new_morale = max(0, min(100, old_morale + morale_delta))
             self.conn.execute(
                 """
