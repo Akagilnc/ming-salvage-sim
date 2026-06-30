@@ -81,8 +81,8 @@ class FixturedShipBackend extends RealFamilyBackend {
   };
   openFamilyPrCount = 0;
   verifiedPr:
-    | { ok: true }
-    | { ok: false; reason: string } = { ok: true };
+    | { ok: true; headOid: string }
+    | { ok: false; reason: string } = { ok: true, headOid: "head-1" };
   protected override async runShipWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
@@ -95,7 +95,7 @@ class FixturedShipBackend extends RealFamilyBackend {
     this.openFamilyPrCount += 1;
     throw new Error("openFamilyPr must not be reached — family ship via gstack-ship (#336)");
   }
-  protected override verifyFamilyShipPr(): { ok: true } | { ok: false; reason: string } {
+  protected override verifyFamilyShipPr(): { ok: true; headOid: string } | { ok: false; reason: string } {
     return this.verifiedPr;
   }
 }
@@ -141,6 +141,7 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     if (res.kind === "completed" && res.output.kind === "ship") {
       expect(res.output.branch).toBe(FAMILY_BASE);
       expect(res.output.pr).toBe("u");
+      expect(res.output.prHead).toBe("head-1");
       expect(res.output.status).toBe("pr_opened");
     } else {
       throw new Error("expected a completed ship payload");

@@ -509,6 +509,8 @@ export interface ShipResult {
   readonly branch: string;
   /** The opened PR URL/handle (undefined when ship stopped before a PR). */
   readonly pr?: string;
+  /** The PR head commit SHA/OID verified by the host, when available. */
+  readonly prHead?: string;
   /** A short status string (e.g. "pushed" | "pr_opened"). Values: #336. */
   readonly status: string;
   // NOTE: a ship worker that STOPS for a human (gstack-ship STOP/HITL) is the
