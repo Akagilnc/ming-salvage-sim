@@ -395,6 +395,27 @@ export function familyAlreadyShipped(
 }
 
 /**
+ * Does the ledger contain a legacy terminal shipped marker that predates
+ * `familyHeadAfter` binding? It proves a ship/PR already happened, but it cannot
+ * prove which HEAD that PR covers, so resume must fail closed instead of either
+ * silently skipping a newer head or re-running ship and duplicating the PR attempt.
+ */
+export function hasUnboundLegacyShippedMarker(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+): boolean {
+  return entries.some(
+    (e) =>
+      e.status === "shipped" &&
+      e.event === "shipped" &&
+      e.phase === "final" &&
+      typeof e.pr === "string" &&
+      e.pr.trim().length > 0 &&
+      (e.familyHeadAfter === undefined ||
+        (typeof e.familyHeadAfter === "string" && e.familyHeadAfter.trim().length === 0)),
+  );
+}
+
+/**
  * Derive the set of merged child issue numbers from the ledger entries.
  *
  * This is the unblock truth the commander reads (ADR 0022 decision 6②): a child
