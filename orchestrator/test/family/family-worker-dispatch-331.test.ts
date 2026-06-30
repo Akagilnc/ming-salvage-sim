@@ -129,6 +129,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       kind: WorkerSpec["kind"];
       promptFile: string;
       cmrPass?: DispatchContext["cmrPass"];
+      escalationAnswer?: DispatchContext["escalationAnswer"];
     }> = [];
     completenessConverged = true;
     async mergeChildIntoFamilyBase(): Promise<never> {
@@ -148,7 +149,10 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       this.dispatched.push({
         kind: spec.kind,
         promptFile: spec.promptFile,
-        cmrPass: ctx.cmrPass,
+        ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+        ...(ctx.escalationAnswer !== undefined
+          ? { escalationAnswer: ctx.escalationAnswer }
+          : {}),
       });
       if (spec.kind === "cmr") {
         return {
@@ -192,7 +196,39 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
         promptFile: "integrated_cmr_correctness.md",
         cmrPass: "correctness",
       },
-      { kind: "ship", promptFile: "family_ship.md", cmrPass: undefined },
+      { kind: "ship", promptFile: "family_ship.md" },
+    ]);
+  });
+
+  it("threads the human escalation answer through both CMR passes and the ship worker", async () => {
+    const be = new NewSeamFamilyBackend();
+    const escalationAnswer = {
+      event: "escalation_answered" as const,
+      answer: "continue-same-class",
+      note: "Human approved another family gate pass.",
+    };
+
+    await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: be,
+      escalationAnswer,
+    });
+
+    expect(be.dispatched).toEqual([
+      {
+        kind: "cmr",
+        promptFile: "integrated_cmr_completeness.md",
+        cmrPass: "completeness",
+        escalationAnswer,
+      },
+      {
+        kind: "cmr",
+        promptFile: "integrated_cmr_correctness.md",
+        cmrPass: "correctness",
+        escalationAnswer,
+      },
+      { kind: "ship", promptFile: "family_ship.md", escalationAnswer },
     ]);
   });
 

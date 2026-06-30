@@ -8,7 +8,9 @@ Read the baked role soul first:
 
 Then invoke the baked `gstack-ship` skill on the current reviewed slice branch. The
 runner only schedules you; delivery method belongs to `gstack-ship`, not this
-prompt. Do not hand-roll push or PR creation. A single-slice ship runs without a
+prompt. Do not hand-roll push or PR creation. If `.ship-focus.md` is present at
+the repo root, read it first and apply its runner-supplied focus (for example, an
+answered S7 decision escalation). A single-slice ship can also run without a
 `.ship-focus.md` (the soul does not block on its absence — let `gstack-ship` detect
 the base).
 

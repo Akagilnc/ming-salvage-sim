@@ -12,7 +12,14 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { mergedSet, recordAborted, recordMerged } from "../../src/family/ledger.js";
+import {
+  familyEscalationState,
+  mergedSet,
+  recordAborted,
+  recordFamilyEscalated,
+  recordFamilyEscalationAnswered,
+  recordMerged,
+} from "../../src/family/ledger.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -107,6 +114,104 @@ describe("recordAborted — PHASE-LEVEL verify/cmr failure event (#291 缺口 2)
     const set = mergedSet(await backend.readFamilyLedger());
     expect(set.has(10)).toBe(true);
     expect(set.size).toBe(1); // only the real merge — the aborted phase entry never counts
+  });
+});
+
+describe("#439 family escalation answer events", () => {
+  it("writes decision escalation and answer rows append-only", async () => {
+    const backend = new FakeFamilyBackend();
+    await recordFamilyEscalated(backend, {
+      escalationKind: "decision",
+      phase: "final",
+      reason: "cmr needs human disposition",
+      familyHeadAfter: "baseZ",
+    });
+    await recordFamilyEscalationAnswered(backend, {
+      answer: "continue-same-class",
+      note: "human approved another pass",
+    });
+
+    expect(backend.appended).toEqual([
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        reason: "cmr needs human disposition",
+        familyHeadAfter: "baseZ",
+        escalationKind: "decision",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue-same-class",
+        note: "human approved another pass",
+      },
+    ]);
+    expect(familyEscalationState(backend.appended)).toMatchObject({
+      answer: {
+        event: "escalation_answered",
+        answer: "continue-same-class",
+        note: "human approved another pass",
+      },
+      escalation: { escalationKind: "decision" },
+    });
+  });
+
+  it("returns the latest valid answer payload after the latest escalation", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "decision",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue-old",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "   ",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue-latest",
+        note: "latest human answer wins",
+      },
+    ];
+
+    expect(familyEscalationState(entries)).toEqual({
+      escalation: entries[0],
+      answer: {
+        event: "escalation_answered",
+        answer: "continue-latest",
+        note: "latest human answer wins",
+      },
+    });
+  });
+
+  it("failure escalations remain failure even when a later answer row exists", async () => {
+    const backend = new FakeFamilyBackend();
+    await recordFamilyEscalated(backend, {
+      escalationKind: "failure",
+      reason: "family base diverged from ledger",
+    });
+    await recordFamilyEscalationAnswered(backend, { answer: "try-anyway" });
+
+    expect(familyEscalationState(backend.appended)).toMatchObject({
+      answer: {
+        event: "escalation_answered",
+        answer: "try-anyway",
+      },
+      escalation: { escalationKind: "failure" },
+    });
+    expect(mergedSet(backend.appended).size).toBe(0);
   });
 });
 

@@ -18,6 +18,7 @@
  * append-only invariant but does NOT dedup — reconcile is #298.)
  */
 
+import type { EscalationAnswerPayload, EscalationKind } from "../types.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -89,6 +90,20 @@ export interface CmrPassedRecord {
   readonly familyHeadAfter?: string;
   /** Resolved route fingerprint for the CMR worker and declared review legs. */
   readonly routeFingerprint?: string;
+}
+
+/** A PHASE-LEVEL family escalation marker (#439). */
+export interface FamilyEscalatedRecord {
+  readonly escalationKind: EscalationKind;
+  readonly phase?: "wave" | "final";
+  readonly reason?: string;
+  readonly familyHeadAfter?: string;
+}
+
+/** A PHASE-LEVEL append-only answer to a prior family decision escalation (#439). */
+export interface FamilyEscalationAnswerRecord {
+  readonly answer: string;
+  readonly note?: string;
 }
 
 /**
@@ -182,6 +197,86 @@ export async function recordCmrPassed(
       routeFingerprint: record.routeFingerprint,
     }) as FamilyLedgerEntry,
   );
+}
+
+/** Append a PHASE-LEVEL family escalation marker (#439). */
+export async function recordFamilyEscalated(
+  backend: FamilyBackend,
+  record: FamilyEscalatedRecord,
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      status: "escalated",
+      event: "escalated",
+      phase: record.phase,
+      reason: record.reason,
+      familyHeadAfter: record.familyHeadAfter,
+      escalationKind: record.escalationKind,
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/** Append a PHASE-LEVEL human answer to a family decision escalation (#439). */
+export async function recordFamilyEscalationAnswered(
+  backend: FamilyBackend,
+  record: FamilyEscalationAnswerRecord,
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      status: "escalation_answered",
+      event: "escalation_answered",
+      phase: "final",
+      answer: record.answer,
+      note: record.note,
+    }) as FamilyLedgerEntry,
+  );
+}
+
+function isValidFamilyAnswer(entry: FamilyLedgerEntry): boolean {
+  return (
+    entry.status === "escalation_answered" &&
+    entry.event === "escalation_answered" &&
+    typeof entry.answer === "string" &&
+    entry.answer.trim().length > 0 &&
+    (entry.note === undefined || typeof entry.note === "string")
+  );
+}
+
+function familyAnswerPayload(entry: FamilyLedgerEntry): EscalationAnswerPayload {
+  return {
+    event: "escalation_answered",
+    answer: entry.answer!,
+    ...(entry.note !== undefined ? { note: entry.note } : {}),
+  };
+}
+
+function latestValidFamilyAnswerAfter(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  index: number,
+): EscalationAnswerPayload | undefined {
+  for (let i = entries.length - 1; i > index; i--) {
+    const entry = entries[i]!;
+    if (isValidFamilyAnswer(entry)) return familyAnswerPayload(entry);
+  }
+  return undefined;
+}
+
+/** Latest family escalation and the later valid answer row that reopens it (#439). */
+export function familyEscalationState(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+):
+  | {
+      readonly escalation: FamilyLedgerEntry;
+      readonly answer?: EscalationAnswerPayload;
+    }
+  | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (entry.status !== "escalated" || entry.event !== "escalated") continue;
+    const answer = latestValidFamilyAnswerAfter(entries, i);
+    return answer !== undefined ? { escalation: entry, answer } : { escalation: entry };
+  }
+  return undefined;
 }
 
 /**
