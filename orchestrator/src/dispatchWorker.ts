@@ -138,6 +138,9 @@ function writeFixFindingsLandingFile(
       {
         blockingFindings: ctx.blockingFindings ?? [],
         blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
+        ...(ctx.escalationAnswer !== undefined
+          ? { escalationAnswer: ctx.escalationAnswer }
+          : {}),
       },
       null,
       2,

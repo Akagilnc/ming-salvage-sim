@@ -138,11 +138,11 @@ describe("RealFamilyBackend appendFamilyLedger / readFamilyLedger (#291 sibling 
     await expect(b.readFamilyLedger()).rejects.toThrow(/failed to read the family ledger/);
   });
 
-  it("readEscalations FAILS CLOSED on a present-but-unreadable escalation log (codex R2)", async () => {
+  it("readEscalations FAILS CLOSED through the family ledger (codex R2)", async () => {
     const o = opts(trackRepo());
-    mkdirSync(join(o.ledgerDir, "family-escalations.jsonl"), { recursive: true });
+    mkdirSync(join(o.ledgerDir, "family-ledger.jsonl"), { recursive: true });
     const b = new RealFamilyBackend(o);
-    await expect(b.readEscalations()).rejects.toThrow(/failed to read the escalation log/);
+    await expect(b.readEscalations()).rejects.toThrow(/failed to read the family ledger/);
   });
 });
 
@@ -995,12 +995,21 @@ describe("RealFamilyBackend recordAborted (#291 in-memory seam, NOT the durable 
 });
 
 describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
-  it("persists a durable escalate record readable back (survives the process)", async () => {
+  it("persists a durable family-ledger decision escalation readable back", async () => {
     const b = new RealFamilyBackend(opts(trackRepo()));
     await b.escalateFamily({ reason: "integrated cmr did not converge: field mismatch" });
+    expect(await b.readFamilyLedger()).toEqual([
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        reason: "integrated cmr did not converge: field mismatch",
+        escalationKind: "decision",
+      },
+    ]);
     const recs = await b.readEscalations();
     expect(recs).toHaveLength(1);
     expect(recs[0]?.reason).toContain("cmr did not converge");
-    expect(recs[0]?.ts).toMatch(/\d{4}-\d{2}-\d{2}T/);
+    expect(recs[0]?.escalationKind).toBe("decision");
   });
 });
