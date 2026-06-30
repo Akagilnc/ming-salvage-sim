@@ -229,6 +229,18 @@ describe("reconcileFamilyLedger — thin (#293-style) entries degrade SAFELY", (
     expect([...plan.merged].sort()).toEqual([10]);
   });
 
+  it("a bare thin ledger row is not trusted even when live HEAD still equals the start head", async () => {
+    // If nothing moved on the family base, a headless merged row without childHead
+    // is not evidence that the child is actually present. Trusting it would let
+    // the wave loop skip child 10 on an incomplete base.
+    const ledger: FamilyLedgerEntry[] = [{ childIssue: 10, status: "merged" }];
+    const git = new FakeReconcileGit("base0", { 10: "c10" }, new Set(["base0"]), "base0");
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect([...plan.merged].sort()).toEqual([10]);
+  });
+
   it("a headless accounting row with childHead can explain the live HEAD advance when verified", async () => {
     // A headless merged entry that carries childHead can be verified directly:
     // child 10's head is still an ancestor of the live family base, so the live
@@ -244,18 +256,34 @@ describe("reconcileFamilyLedger — thin (#293-style) entries degrade SAFELY", (
     expect([...plan.merged].sort()).toEqual([10]);
   });
 
-  it("a NON-empty thin ledger where an UNRECORDED child already landed →补账 it, NOT escalate, NOT double-merge", async () => {
-    // The thin-ledger crash window (cmr R5: codex-s1 + codex-s2 + agy ×3): a #293
-    // thin ledger records child 10 (status:"merged", no familyHeadAfter); then child
-    // 11's merge LANDED on the live family base (live="base2", c11 ancestor) but the
-    // process crashed before 11's ledger write. Blindly trusting ledgerMerged={10}
-    // would let the wave loop re-run + re-merge the already-landed 11 (a
-    // double-merge). The per-child reconcile must run for a headless ledger too:
-    // 11's childHead is an ancestor of live ⇒ it landed ⇒ 补账 (status:"merged" +
-    // event:"reconciled"), counted merged, NOT re-merged. The per-child
-    // isAncestor(childHead, liveHead) check is self-sufficient — it needs no
-    // baseline.
-    const ledger: FamilyLedgerEntry[] = [{ childIssue: 10, status: "merged" }];
+  it("a verified headless row does not launder a separate bare thin row", async () => {
+    // Child 11's row is verifiable, but child 10's bare thin row has no childHead.
+    // The verified row explains its own merge only; it must not make every other
+    // headless accounting row safe to trust when live moved past the start head.
+    const ledger: FamilyLedgerEntry[] = [
+      { childIssue: 10, status: "merged" },
+      { childIssue: 11, status: "merged", childHead: "c11" },
+    ];
+    const git = new FakeReconcileGit(
+      "base2",
+      { 10: "c10", 11: "c11" },
+      new Set(["base0", "c11"]),
+      "base0",
+    );
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect([...plan.merged].sort()).toEqual([10, 11]);
+  });
+
+  it("a verified headless ledger where an UNRECORDED child already landed →补账 it, NOT escalate, NOT double-merge", async () => {
+    // A headless ledger records child 10 without a familyHeadAfter, but it carries
+    // childHead and that head is still an ancestor of live. Then child 11's merge
+    // landed but its ledger write crashed. Reconcile verifies the existing row and
+    // 补账s only the unrecorded landed child.
+    const ledger: FamilyLedgerEntry[] = [
+      { childIssue: 10, status: "merged", childHead: "c10" },
+    ];
     const git = new FakeReconcileGit(
       "base2",
       { 10: "c10", 11: "c11" },

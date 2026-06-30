@@ -45,8 +45,8 @@
  * not double-merge already-recorded children. But when the live family base has
  * advanced past the recorded start head, a headless row explains that advance only
  * if it carries a `childHead` that is still an ancestor of live. A bare thin row
- * remains counted for scheduling, but it is not sufficient evidence to suppress
- * the start-head safety net for an otherwise unattributed live-base advance.
+ * is still visible in the returned merged set for audit, but the plan fail-closes
+ * before scheduling can trust it.
  */
 
 import { isMergedAccountingEntry, mergedSet } from "./ledger.js";
@@ -153,18 +153,24 @@ async function headlessTailIsConsistent(
   return true;
 }
 
-async function hasVerifiedHeadlessAccountingRow(
+async function verifyHeadlessAccountingRows(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
   liveHead: string,
   git: ReconcileGit,
-): Promise<boolean> {
+): Promise<{ consistent: boolean; hasVerified: boolean }> {
+  let hasVerified = false;
   for (const entry of ledger) {
     if (!isMergedAccountingEntry(entry)) continue;
     if (entry.familyHeadAfter !== undefined) continue;
-    if (entry.childHead === undefined) continue;
-    if (await git.isAncestor(entry.childHead, liveHead)) return true;
+    if (entry.childHead === undefined) {
+      return { consistent: false, hasVerified };
+    }
+    if (!(await git.isAncestor(entry.childHead, liveHead))) {
+      return { consistent: false, hasVerified };
+    }
+    hasVerified = true;
   }
-  return false;
+  return { consistent: true, hasVerified };
 }
 
 /**
@@ -228,21 +234,28 @@ export async function reconcileFamilyLedger(
   // neither "always escalate" nor "blindly trust" was right — RECONCILE PER CHILD
   // is).
   if (baseline === undefined) {
+    const headlessAccounting = await verifyHeadlessAccountingRows(
+      ledger,
+      liveHead,
+      git,
+    );
+    if (!headlessAccounting.consistent) {
+      return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
+    }
+
     const { reconciled, merged } = await reconcileLandedChildren(
       children,
       ledgerMerged,
       liveHead,
       git,
     );
-    // Safety net for a headless ledger: if the family base moved past its start
-    // head yet NO child explains the move (nothing补账ed, and no headless
-    // accounting row carries a childHead that verifies as landed), the advance is
-    // unattributed → fail-closed escalate rather than silently proceed. A bare
-    // thin `status:"merged"` row is still counted in `merged`, but without a
-    // verifiable childHead it cannot explain the live-base advance.
+    // Safety net for a headless ledger: after every existing headless merged row
+    // has been individually verified, still fail closed if the family base moved
+    // past its start head and NO child explains the move (nothing补账ed, and no
+    // verified accounting row exists).
     if (
       reconciled.length === 0 &&
-      !(await hasVerifiedHeadlessAccountingRow(ledger, liveHead, git))
+      !headlessAccounting.hasVerified
     ) {
       const startHead = await git.familyBaseStartHead();
       if (liveHead !== startHead) {
