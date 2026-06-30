@@ -2056,6 +2056,7 @@ class GameDB:
                     army_id, owner, source, province_share, central_share,
                     False, False, 0.0, 0.0,
                 )
+                self._require_valid_pay_source_region(army_id, source)
                 province_arrears = old_arrears * province_share
                 central_arrears = old_arrears * central_share
                 total_arrears = province_arrears + central_arrears
@@ -2108,6 +2109,25 @@ class GameDB:
         if abs((province_share + central_share) - 1.0) > 1e-9:
             raise ValueError(f"army {army_id} 饷源比例和必须为 1")
 
+    def _require_valid_pay_source_region(self, army_id: str, pay_source_region: str) -> None:
+        row = self.conn.execute(
+            "SELECT controlled_by, fiscal FROM regions WHERE id = ?", (pay_source_region,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"army {army_id} pay_source_region 未入库：{pay_source_region}")
+        if str(row["controlled_by"] or "") != "ming":
+            raise ValueError(f"army {army_id} pay_source_region 非明控省：{pay_source_region}")
+        try:
+            fiscal = json.loads(str(row["fiscal"] or "{}"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"army {army_id} pay_source_region 财政基座 JSON 非法：{pay_source_region}"
+            ) from exc
+        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
+                or not isinstance(settle.get("p"), dict):
+            raise ValueError(f"army {army_id} pay_source_region 无 settle st/p 基座：{pay_source_region}")
+
     def _apply_army_pay_source_delta(
         self,
         state: GameState,
@@ -2157,10 +2177,8 @@ class GameDB:
                 army_id, owner_power, pay_source_region, province_share, central_share,
                 is_tusi, self_funded, province_arrears, central_arrears,
             )
-            if pay_source_region and self.conn.execute(
-                "SELECT 1 FROM regions WHERE id = ?", (pay_source_region,)
-            ).fetchone() is None:
-                raise ValueError(f"army {army_id} pay_source_region 未入库：{pay_source_region}")
+            if pay_source_region:
+                self._require_valid_pay_source_region(army_id, pay_source_region)
         except (TypeError, ValueError) as exc:
             changes.append({
                 "army": row["name"], "field": "pay_source",
@@ -4882,10 +4900,8 @@ class GameDB:
                         aid, owner, pay_source_region, province_pay_share, central_pay_share,
                         is_tusi, self_funded_pay, province_pay_arrears, central_pay_arrears,
                     )
-                    if pay_source_region and self.conn.execute(
-                        "SELECT 1 FROM regions WHERE id = ?", (pay_source_region,)
-                    ).fetchone() is None:
-                        raise ValueError(f"army {aid} pay_source_region 未入库：{pay_source_region}")
+                    if pay_source_region:
+                        self._require_valid_pay_source_region(aid, pay_source_region)
                 except (TypeError, ValueError) as exc:
                     created.append({
                         "id": aid, "rejected": True, "category": "invalid_enum",
