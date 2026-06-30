@@ -4,6 +4,19 @@
 
 ## [未发布]
 
+## [0.18.1.0] - 2026-06-30
+
+### 变更
+- **财政 shadow spine 批量推进**：月末省级财政 shadow 现在一次扫描明控省 fiscal payload，再逐省推进已有 settle 基座，减少重复读取并保留坏基座隔离留痕。
+- **省级 settle 元数据复用**：`regions.json` 的财政 settle 元数据改为共享默认组展开，17 省 seed 保持运行时语义不变，但内容包更易维护。
+- **shadow spine 边界测试更稳**：批量桥测试改为验证流程调用边界，不再依赖 SQLite trace 文本细节。
+
+### 修复
+- **settle 元数据坏配置 fail-loud**：空 `_meta_defaults`、未知默认组、非对象 `_meta` 与错误的 `settle_meta_defaults` 容器会在内容加载时明确拒收，避免坏内容被当作缺省值吞掉。
+
+### 测试
+- 新增 settle 元数据展开与坏配置拒收覆盖，并验证 shadow spine 走批量桥、不回退到单省 reload；ship 验证为 `1948 passed, 13 skipped`（root pytest），覆盖审计 88%，ship review / red-team 无阻塞发现。
+
 ## [0.18.0.0] - 2026-06-29
 
 ### 新增
