@@ -424,6 +424,15 @@ export interface FamilyBackend {
    */
   openFamilyPr?(request: OpenFamilyPrRequest): Promise<OpenFamilyPrResult>;
   /**
+   * Resume-skip trust boundary: before a durable `shipped` marker can skip the
+   * final verify/cmr/ship barrier, re-check that the recorded PR still exists,
+   * is OPEN, targets the expected PR base, uses this family branch as head, and
+   * has `headRefOid === expectedHead`.
+   */
+  verifyFamilyShippedPr?(
+    request: VerifyFamilyShippedPrRequest,
+  ): Promise<VerifyFamilyShippedPrResult>;
+  /**
    * #298-OWNED aborted-event seam — #296 only CALLS it. A red verify writes an
    * `aborted` event (携带错误包 + the family base at the time) so a failed wave is
    * NOT silently dropped (decision 3④/5 "不静默吞"). The CONCRETE ledger schema
@@ -519,6 +528,19 @@ export interface OpenFamilyPrResult {
   /** The opened PR's head commit SHA/OID, verified from PR metadata when available. */
   readonly prHead?: string;
 }
+
+export interface VerifyFamilyShippedPrRequest {
+  /** The shipped marker's PR URL/handle from the family ledger. */
+  readonly pr: string;
+  /** The family base branch the PR must use as its head branch. */
+  readonly familyBase: string;
+  /** The current local family base HEAD the PR must still cover. */
+  readonly expectedHead: string;
+}
+
+export type VerifyFamilyShippedPrResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: string };
 
 /**
  * An `aborted` event #296 hands to #298's `recordAborted` seam on a red verify
