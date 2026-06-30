@@ -98,6 +98,18 @@ def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
     assert loaded["_meta"]["notes"]["漕粮"] == "保留省份专属说明"
 
 
+@pytest.mark.parametrize("bad_defaults", [None, [], "not-a-dict"])
+def test_region_loader_rejects_bad_shared_settle_meta_defaults_container(monkeypatch, bad_defaults):
+    fake_regions = {
+        "settle_meta_defaults": bad_defaults,
+        "regions": [_region_with_settle({"st": {}, "p": {}})],
+    }
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda name: fake_regions)
+
+    with pytest.raises(SystemExit, match="content/regions.json.settle_meta_defaults"):
+        content_mod.load_region_content()
+
+
 @pytest.mark.parametrize(
     "settle,defaults,error",
     [
@@ -115,6 +127,11 @@ def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
             {"_meta_defaults": "ming_province", "_meta": [], "st": {}, "p": {}},
             {"ming_province": {}},
             "_meta 必须是 JSON 对象",
+        ),
+        (
+            {"_meta_defaults": "ming_province", "_meta": {}, "st": {}, "p": {}},
+            {"ming_province": []},
+            "settle_meta_defaults.ming_province 必须是 JSON 对象",
         ),
     ],
 )
