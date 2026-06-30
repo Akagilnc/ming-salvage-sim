@@ -53,9 +53,9 @@ export type HandoffStatus = "success" | "escalate" | "error";
  * - `"coder"`: implementation/fix soul (TDD for S2, finding fix contract for S5).
  * - `"READ-ONLY"`: reviewer soul with READ-ONLY soft constraint baked in
  *   (prompt-level, not an OS-level mount — same image, separate `run()`).
- * - `"cmr"`: the family integrated-cmr fixer soul (ADR 0026 2026-06-24) — a WRITE
- *   soul: the cmr worker invokes `ak-cross-m-review` and commits its cross-slice
- *   fixes inside its own memory-bearing session (it is the fixer, not read-only).
+ * - `"cmr"`: family integrated-cmr pass worker soul (ADR 0030) — a WRITE-capable
+ *   soul: the pass worker invokes `ak-cross-m-review` for the selected gate and may
+ *   commit pass-local cross-slice fixes; it is not the read-only reviewer soul.
  * - `"ship"`: the delivery soul the family ship worker runs under — a WRITE soul
  *   distinct from `"coder"`: it invokes `gstack-ship`, stops at PR creation, and
  *   records deferred findings in a tracker (issue / TODOS.md), never the PR body.

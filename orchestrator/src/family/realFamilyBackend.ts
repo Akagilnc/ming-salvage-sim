@@ -162,10 +162,10 @@ export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
 /** The cmr worker's completion signal (matches the integrated CMR pass prompts). */
 const CMR_COMPLETION_SIGNAL = "CMR_STEP_COMPLETE";
 /**
- * The WRITE soul the cmr worker runs under (ADR 0026 2026-06-24). The cmr worker is
- * the integrated-cmr FIXER: it invokes `ak-cross-m-review` and commits its
- * cross-slice fixes inside its own memory-bearing session — NOT a READ-ONLY
- * reviewer. The dedicated `cmr` soul carries that fixer discipline.
+ * The WRITE-capable soul the integrated-cmr pass worker runs under (ADR 0030).
+ * The worker invokes `ak-cross-m-review` for one selected gate and may commit
+ * pass-local cross-slice fixes on the family base; it is NOT the READ-ONLY
+ * reviewer soul. The dedicated `cmr` soul carries that pass-worker discipline.
  */
 const CMR_SOUL = "cmr";
 
@@ -829,17 +829,15 @@ export class RealFamilyBackend implements FamilyBackend {
    * Every OTHER family worker kind (merge — B 段) still forwards to the legacy
    * wrapper until its own slice wires it.
    *
-   * The cmr worker (`cmrWorkerSpec`) = the 2b container's TOP-LEVEL claude; it
-   * `Skill`-invokes ak-cross-m-review (1 Agent + 2 CLI legs in-container, #333) and
-   * IS the fixer: the WHOLE review → grade → fix → re-review loop runs INSIDE its
-   * one memory-bearing session (only the 3 review legs are fresh each round — ADR
-   * 0026 2026-06-24). It returns a TERMINAL
-   * `{converged, reason?, successfulLegs, skippedLegs?}` verdict; the runner
-   * (`verifyCmr.ts`) dispatches it ONCE and ships on `converged` only if the
-   * reported successful legs meet ADR0032's strong-leg floor / escalates otherwise
-   * — there is NO separate fix worker, NO runner round-loop. A
-   * non-converged or escalate verdict is the runner's escalate/abort fork. A
-   * `completed` verdict is `WorkerResult.completed` (a CmrResult payload), NOT `failed`.
+   * The cmr worker (`cmrWorkerSpec`) = the 2b container's TOP-LEVEL route-selected
+   * agent for ONE ADR 0030 pass (completeness or correctness). It `Skill`-invokes
+   * ak-cross-m-review in-container, may commit pass-local fixes on the family base,
+   * and returns a TERMINAL `{converged, reason?, successfulLegs, skippedLegs?}`
+   * verdict. The runner (`verifyCmr.ts`) owns the pass order (Step 5 before Step 6),
+   * route-leg accounting, ADR0032 strong-leg floor, and closure checks before ship.
+   * A non-converged or escalate verdict is the runner's escalate/abort fork. A
+   * `completed` verdict is `WorkerResult.completed` (a CmrResult payload), NOT
+   * `failed`.
    */
   async dispatchWorker(
     spec: WorkerSpec,
@@ -932,13 +930,12 @@ export class RealFamilyBackend implements FamilyBackend {
    * `protected` so a unit test fixtures the outcome without a real container (the
    * real container only runs on the driver / manual-smoke / e2e path).
    *
-   * The worker is the container's TOP-LEVEL agent (so it can start its own Agent +
-   * CLI legs — ADR 0026), running on the resident family base (`branchStrategy:
-   * head` keeps it in place — it COMMITS its cross-slice fixes there), under the
-   * WRITE `cmr` soul (it is the fixer: review → grade → fix → re-review loop INSIDE
-   * one memory-bearing session; only the review legs are fresh — ADR 0026
-   * 2026-06-24). Its `<cmr>` tag TERMINAL verdict is gated on the completion signal
-   * then parsed into a {@link CmrWorkerOutcome}.
+   * The worker is the container's TOP-LEVEL route-selected agent, running on the
+   * resident family base (`branchStrategy: head` keeps it in place so pass-local
+   * fixes land there) under the WRITE-capable `cmr` soul. Its `<cmr>` tag TERMINAL
+   * pass verdict is gated on the completion signal then parsed into a
+   * {@link CmrWorkerOutcome}; `verifyCmr.ts` performs the ADR 0030 pass sequencing
+   * and accounting around that verdict.
    */
   protected async runCmrWorker(
     spec: WorkerSpec,
@@ -1015,10 +1012,9 @@ export class RealFamilyBackend implements FamilyBackend {
         // single-slice + family ship paths — no constant that could silently drift
         // from the spec the runner declares.
         agent: this.agentForSpec(spec),
-        // The cmr worker runs the WHOLE review → grade → fix → re-review loop inside
-        // this ONE session (ADR 0026 2026-06-24: the worker IS the fixer; only the
-        // review legs are fresh). `maxIter` (=5) is its iterative budget, NOT a
-        // single review pass.
+        // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
+        // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
+        // sequencing and accounting.
         maxIterations: spec.maxIter,
         completionSignal: spec.completionSignal,
         // On the resident family base — the worker COMMITS its cross-slice fixes
@@ -1072,10 +1068,9 @@ export class RealFamilyBackend implements FamilyBackend {
         : ctx.cmrPass === "correctness"
           ? "CMR pass: step6 correctness gate."
           : "CMR pass: legacy integrated gate.";
-    // ADR 0026 2026-06-24: the cmr worker is a SINGLE memory-bearing session — its
-    // own round-to-round continuity is its session memory, NOT a prior-findings blob
-    // threaded in as data. So the focus file pins ONLY the review scope + the
-    // machine-resolved-child focus; there is no priorFindings block.
+    // The focus file is pass-scoped: it pins only the exact review scope and the
+    // machine-resolved-child focus. Cross-pass accounting lives in the durable
+    // ledger / worker verdict fields, not in this transient prompt file.
     const body =
       `# Integrated cmr — review scope + focus (machine-generated; #335)\n\n` +
       `Review THIS exact family-base diff (the commits the family base added since it\n` +
@@ -1265,8 +1260,8 @@ export class RealFamilyBackend implements FamilyBackend {
    * there), and the claude OAuth token (env var). Without the agy mount the agy
    * cmr leg has no auth and the cmr degrades to codex-only. NO skills mount: the 2b
    * image BAKES ak-cross-m-review + its closure (#333) — a runtime mount would
-   * SHADOW the baked skill (#334). The WRITE `cmr` soul (the cmr worker IS the
-   * fixer: it commits cross-slice fixes inside its own session — ADR 0026 2026-06-24).
+   * SHADOW the baked skill (#334). The WRITE-capable `cmr` soul lets the pass worker
+   * commit pass-local cross-slice fixes when the gate requires them.
    */
   protected cmrSandboxConfig(auth: CmrAuth): {
     imageName: string;

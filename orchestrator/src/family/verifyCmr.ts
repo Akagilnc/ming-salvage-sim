@@ -23,23 +23,16 @@
  *   - "wave"  → run the family verify (typecheck + unit tests) against the family
  *     base; RED ⇒ `{ok:false}` (the spine aborts before the next wave) + an
  *     `aborted` ledger event (decision 3④/5).
- *   - "final" → run the FULL verify; green ⇒ SCHEDULE the integrated cross-model cmr
- *     承重闸 (decision 3⑥). The runner is a PURE SCHEDULER: dispatch ONE cmr WORKER →
- *     read its TERMINAL verdict (converged | escalate). Converged ⇒ the worker
- *     ALREADY fixed every cross-slice finding inside its own memory-bearing session
- *     (it IS the fixer) so the family base holds the fixes ⇒ dispatch the ship worker
- *     (decision 4, 止于 PR) + `{ok:true}`. Escalate ⇒ the worker judged it cannot
- *     converge (drift / architectural rework) ⇒ escalate续跑 (#298) + `{ok:false}`.
- *     The cmr worker is a SINGLE memory-bearing `sc.run` session that runs the WHOLE
- *     review → grade → fix → re-review loop INTERNALLY (the `ak-cross-m-review` skill
- *     drives it — Step 5 termination + Step 6 drift 三联 + Step 7 fix loop; ADR 0026
- *     2026-06-24). Only the 3 review LEGS are fresh each round; the worker's main
- *     session has memory. So the runner dispatches the cmr worker ONCE and never
- *     loops — there is NO separate coder-fix worker, NO runner round-loop, NO
- *     prior-round findings threaded as data between fresh workers, NO drift
- *     constant, NO round counter, NO grade logic here. The runner escalates ONLY when the WORKER
- *     says so (it emits `escalate`) or a contract slip (a `completed` non-converged
- *     verdict ⇒ fail-safe escalate; a malformed/crash ⇒ INCOMPLETE_GATE).
+ *   - "final" → run the FULL verify; green ⇒ run the two ADR 0030 integrated-cmr
+ *     passes as ordered runner-dispatched boundaries: Step 5 completeness first,
+ *     Step 6 correctness only after completeness passes. Each pass is a write-capable
+ *     cmr worker over the current family base and returns a TERMINAL pass verdict
+ *     (`converged` | `escalate`). A converged pass may have committed pass-local
+ *     fixes, so the next pass reads the post-worker family HEAD. Escalate / malformed
+ *     / contract-slip verdicts are recorded as durable aborts and stop before ship.
+ *     `verifyCmr` owns pass ordering, route-leg accounting, ADR0032 strong-leg floor,
+ *     and claimed-fixed closure checks; it does not inline reviewer grading or patch
+ *     logic in this hook.
  *
  * The verify / cmr / PR / abort / escalate capabilities are reached as OPTIONAL
  * methods on the injected `FamilyBackend` (the frozen spine input is `{phase,

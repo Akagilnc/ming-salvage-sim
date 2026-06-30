@@ -1,26 +1,10 @@
 /**
- * Family integrated-cmr gate = PURE SCHEDULER (corrected design, ADR 0026
- * 2026-06-24).
+ * Family integrated-cmr pass dispatch (ADR 0030).
  *
- * The runner (`verifyCmr.ts`) is a pure scheduler: it dispatches ONE cmr WORKER,
- * reads its TERMINAL verdict (converged | escalate), and acts:
- *   - converged ⇒ the worker ALREADY fixed every cross-slice finding inside its
- *     own memory-bearing session (it IS the fixer) and the family base now holds
- *     the fixes ⇒ dispatch the ship worker (止于 PR), ok:true.
- *   - escalate ⇒ the worker judged it cannot converge (drift / architectural
- *     rework) ⇒ escalateFamily, ok:false, NO ship.
- *   - a `completed` cmr that is NOT converged (the worker ended its internal loop
- *     without converging AND without escalating — a contract slip) ⇒ fail-safe
- *     escalateFamily with the reason, ok:false, NO ship.
- *   - a malformed / crash result ⇒ recordAborted + INCOMPLETE_GATE.
- *
- * The corrected design (ADR 0026): the cmr worker is a SINGLE memory-bearing
- * `sc.run` session that runs the WHOLE review → grade → fix → re-review loop
- * INTERNALLY (the `ak-cross-m-review` skill drives it; only the 3 review LEGS are
- * fresh each round). So the runner dispatches it ONCE and never loops. There is
- * NO separate coder-fix worker dispatched by the runner, NO runner round-loop, NO
- * priorFindings/cmrReason threaded between fresh workers, ZERO drift/grade/round
- * logic in the runner.
+ * `verifyCmr.ts` dispatches ordered cmr pass workers (completeness before
+ * correctness), reads each worker's TERMINAL pass verdict, records abort/escalate
+ * outcomes, and ships only after both passes converge and satisfy leg/floor/closure
+ * accounting. The tests here pin that seam without starting real containers.
  *
  * Driven entirely by a zero-container injected-seam fake (no real codex / container).
  */
@@ -50,10 +34,10 @@ interface DispatchRecord {
 }
 
 /**
- * A scriptable family backend exercising the PURE-SCHEDULER dispatch via the
- * unified `dispatchWorker` seam. The cmr worker is dispatched exactly once; every
- * dispatch is recorded so a test can assert the runner scheduled ONE cmr worker,
- * never a coder-fix worker, and only ships on a converged verdict.
+ * A scriptable family backend exercising pass-worker dispatch via the unified
+ * `dispatchWorker` seam. Every dispatch is recorded so tests can assert the runner
+ * schedules cmr pass workers, never a family coder-fix worker, and only ships on
+ * converged/accounted pass verdicts.
  */
 class SchedulerFamilyBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
@@ -291,7 +275,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
-  it("the cmr worker dispatch is FRESH (a new memory-bearing session, not a resume) — NO resume plumbing", async () => {
+  it("the cmr pass worker dispatch is FRESH (not a crash/escalate resume) — NO resume plumbing", async () => {
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({ kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] } }),
     });
@@ -305,25 +289,24 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
   });
 });
 
-describe("the runner contains NO drift constant / round-counter / grade logic / fix loop", () => {
-  it("verifyCmr.ts source has no round-loop, no NO_PROGRESS_LIMIT, no priorFindings/cmrReason threading", async () => {
+describe("the verifyCmr seam keeps cmr pass outcomes at the WorkerResult boundary", () => {
+  it("verifyCmr.ts source has no local drift constants or legacy priorFindings/cmrReason threading", async () => {
     const { readFileSync } = await import("node:fs");
     const { fileURLToPath } = await import("node:url");
     const src = readFileSync(
       fileURLToPath(new URL("../../src/family/verifyCmr.ts", import.meta.url)),
       "utf8",
     );
-    // No runner-level round counter / drift constant (the worker judges drift).
+    // No local round counter / drift constant in this hook.
     expect(src).not.toMatch(/NO_PROGRESS_LIMIT/);
     expect(src).not.toMatch(/noProgressStreak/);
     expect(src).not.toMatch(/prevReasonKey/);
-    // No runner round-loop dispatching reviewer→fix→reviewer.
+    // No ad-hoc infinite loop inside this hook.
     expect(src).not.toMatch(/for\s*\(;;\)/);
-    // No continuity-as-data threading between fresh workers (the worker has memory
-    // within its own session — the runner does not simulate it with data).
+    // No legacy priorFindings/cmrReason threading through the family hook.
     expect(src).not.toMatch(/priorFindings/);
     expect(src).not.toMatch(/cmrReason/);
-    // No coder-fix worker dispatched by the runner (the fix is inside the cmr worker).
+    // No family coder-fix worker spec has been introduced at this seam.
     expect(src).not.toMatch(/familyCoderFixWorkerSpec/);
     // No resume-session plumbing for the cmr worker.
     expect(src).not.toMatch(/resumeSessionId:/);
