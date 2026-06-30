@@ -841,6 +841,13 @@ describe("realBackend classifyResumeError", () => {
         new Error('resumeSession "session-escalated-S2" not found under /tmp/sc'),
       ),
     ).toEqual({ kind: "fresh-run" });
+    expect(
+      classifyResumeError(
+        new Error(
+          "Session resume failed: session session-escalated-S2 not found in /tmp/sc",
+        ),
+      ),
+    ).toEqual({ kind: "fresh-run" });
   });
 
   it("propagates signal, auth, model, and generic errors", () => {

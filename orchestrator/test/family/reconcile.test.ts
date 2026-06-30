@@ -257,6 +257,35 @@ describe("reconcileFamilyLedger — thin (#293-style) entries degrade SAFELY", (
     expect(plan.reconciled).toEqual([{ childIssue: 11, childHead: "c11" }]);
     expect([...plan.merged].sort()).toEqual([10, 11]);
   });
+
+  it("phase-only escalation and answer rows do not bypass the start-head safety net", async () => {
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "decision",
+        reason: "legacy cmr pause",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue",
+      },
+    ];
+    const git = new FakeReconcileGit(
+      "base1",
+      {},
+      new Set(["base0"]),
+      "base0",
+    );
+
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect(plan.merged.size).toBe(0);
+  });
 });
 
 describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
