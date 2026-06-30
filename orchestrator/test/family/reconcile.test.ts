@@ -50,6 +50,7 @@ class FakeReconcileGit implements ReconcileGit {
     // empty-ledger-first-merge-crash scenario passes a DIFFERENT start (live
     // moved past it with an empty ledger → fail-closed escalate).
     private readonly start: string = live,
+    private readonly targetedAncestors: ReadonlySet<string> = new Set(),
   ) {}
   async liveFamilyHead(): Promise<string> {
     return this.live;
@@ -64,6 +65,8 @@ class FakeReconcileGit implements ReconcileGit {
     return head === undefined ? { exists: false } : { exists: true, childHead: head };
   }
   async isAncestor(childHead: string, liveHead: string): Promise<boolean> {
+    if (childHead === liveHead) return true;
+    if (this.targetedAncestors.has(`${childHead}->${liveHead}`)) return true;
     return liveHead === this.live && this.ancestors.has(childHead);
   }
 }
@@ -128,7 +131,7 @@ describe("reconcileFamilyLedger — branch ① ledger末条 === live HEAD", () =
       { childIssue: 10, status: "merged", childHead: "c10", familyHeadAfter: "base1" },
       { childIssue: 11, status: "merged", event: "reconciled", childHead: "c11" },
     ];
-    const git = new FakeReconcileGit("base1", { 10: "c10", 11: "c11" }, new Set(["c10", "c11"]));
+    const git = new FakeReconcileGit("base1", { 10: "c10", 11: "c11" }, new Set(["c10", "c11"]), "base0");
     const plan = await reconcileFamilyLedger(ledger, children, git);
     expect(plan.escalate).toBe(false);
     expect([...plan.merged].sort()).toEqual([10, 11]);
@@ -199,6 +202,31 @@ describe("reconcileFamilyLedger — branch ② live HEAD LEADS (the crash window
     expect(plan.escalate).toBe(false);
     expect(plan.reconciled).toEqual([]); // 11 not补
     expect([...plan.merged].sort()).toEqual([10]);
+  });
+
+  it("does not reconcile a stale zero-commit child branch that is already behind the recorded baseline", async () => {
+    // Child 10's merge recorded baseline base1. Child 11 then landed and advanced
+    // live to base2. Child 12's branch exists but still points at pre-wave base0,
+    // which is an ancestor of base1; that is not landed child work and must not be
+    //補账ed just because base0 is also an ancestor of live.
+    const ledger: FamilyLedgerEntry[] = [
+      { childIssue: 10, status: "merged", childHead: "c10", familyHeadAfter: "base1" },
+    ];
+    const childrenWithStale = [
+      ...children,
+      { issue: 12, blockedBy: [] as number[] },
+    ];
+    const git = new FakeReconcileGit(
+      "base2",
+      { 10: "c10", 11: "c11", 12: "base0" },
+      new Set(["base1", "c10", "c11", "base0"]),
+      "base0",
+      new Set(["base0->base1"]),
+    );
+    const plan = await reconcileFamilyLedger(ledger, childrenWithStale, git);
+    expect(plan.escalate).toBe(false);
+    expect(plan.reconciled).toEqual([{ childIssue: 11, childHead: "c11" }]);
+    expect([...plan.merged].sort()).toEqual([10, 11]);
   });
 });
 
