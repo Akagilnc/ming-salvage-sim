@@ -98,6 +98,27 @@ def test_army_arrears_presentation_rounds_half_steps_up(game):
         assert expected in db.army_detail(row["name"])
 
 
+def test_army_payload_preserves_fractional_arrears_for_web_rendering(game):
+    """#305 cmr：web 只读 army_payload；12.5 万两不可被截成 12，否则前端近似会报约10万两。"""
+    db, _state, _ = game
+    row = db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET arrears=12.5, province_pay_arrears=12.5, central_pay_arrears=0
+        WHERE id=?
+        """,
+        (row["id"],),
+    )
+    db.conn.commit()
+
+    payload = {army["id"]: army for army in db.army_payload()}
+
+    assert payload[row["id"]]["arrears"] == pytest.approx(12.5)
+
+
 def test_army_arrears_p4_prompt_contract_is_documented():
     """#305/D10：LLM 层须知道欠饷可 approximate 报钱，抽象 stat 仍不向皇帝报裸数。"""
     surfaces = {
@@ -166,6 +187,33 @@ def test_danger_order_uses_army_needed_for_arrears_months(game):
     assert ordered.index(b["name"]) < ordered.index(a["name"]), (
         f"欠饷月数高(army_needed 低)者应排更前(更危)；danger 归一须用 army_needed。序={ordered[:6]}"
     )
+
+
+def test_danger_order_preserves_fractional_arrears(game):
+    """#305 same-pattern：danger_order 的欠饷月数排序键也不得截断小数。"""
+    db, _state, _ = game
+    rows = db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 LIMIT 2"
+    ).fetchall()
+    if len(rows) < 2:
+        pytest.skip("需≥2 支 salary_rate>0 的明军作排序对比（数据前提）")
+    low, high = rows
+    for aid in (low["id"], high["id"]):
+        db.conn.execute(
+            """
+            UPDATE armies
+            SET supply=80,morale=80,loyalty=80,training=80,manpower=20000,salary_rate=1.0
+            WHERE id=?
+            """,
+            (aid,),
+        )
+    db.conn.execute("UPDATE armies SET name='A低欠饷军', arrears=12.1 WHERE id=?", (low["id"],))
+    db.conn.execute("UPDATE armies SET name='Z高欠饷军', arrears=12.9 WHERE id=?", (high["id"],))
+    db.conn.commit()
+
+    ordered = [r["name"] for r in db.army_rows(danger_order=True)]
+
+    assert ordered.index("Z高欠饷军") < ordered.index("A低欠饷军")
 
 
 def test_army_rows_non_danger_sorted_by_theater_name(game):
