@@ -744,6 +744,34 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     ]);
   });
 
+  it("answered tagged S7 decision escalation drops the stale S7/S8 pause before re-dispatch", async () => {
+    const backend = new ResumeBackend(
+      escalatedAtS7(
+        escalationAnswer("S7", "retry-ship-after-human-fix"),
+        "decision",
+      ),
+    );
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("success");
+    const s7Entries = result.stepLedger.filter((e) => e.step === "S7");
+    expect(s7Entries).toHaveLength(1);
+    expect(s7Entries[0]!.output).toBeDefined();
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+    ]);
+    expect(result.stepLedger).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          step: "S8",
+          handoffStatus: "escalate",
+          escalationKind: "decision",
+        }),
+      ]),
+    );
+  });
+
   it("answered S7 decision escalation passes the human answer to the ship worker", async () => {
     const answer = escalationAnswer(
       "S7",
