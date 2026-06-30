@@ -34,6 +34,7 @@ import { assertAcyclic, selectWave } from "./commander.js";
 import {
   familyAlreadyShipped,
   familyEscalationState,
+  hasBoundShippedMarker,
   hasUnboundLegacyShippedMarker,
   isMergedAccountingEntry,
   mergedSet,
@@ -118,6 +119,19 @@ async function currentMerged(
   familyBackend: FamilyBackend,
 ): Promise<ReadonlySet<number>> {
   return mergedSet(await familyBackend.readFamilyLedger());
+}
+
+async function readCurrentFamilyHead(
+  familyBackend: FamilyBackend,
+  familyBase: string,
+): Promise<string | undefined> {
+  if (familyBackend.readFamilyHead === undefined) return undefined;
+  try {
+    const head = (await familyBackend.readFamilyHead(familyBase)).trim();
+    return head.length > 0 ? head : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -499,10 +513,16 @@ export async function runFamily(
   // / PR attempt. But an older shipped marker for a different head must NOT hide a
   // later live-base advance; that new head needs a fresh final barrier / ship.
   const preFinalLedger = await familyBackend.readFamilyLedger();
-  if (familyAlreadyShipped(preFinalLedger, familyHead)) {
+  const preFinalFamilyHead =
+    familyHead ?? (await readCurrentFamilyHead(familyBackend, familyBase));
+  if (familyAlreadyShipped(preFinalLedger, preFinalFamilyHead)) {
+    familyHead = preFinalFamilyHead;
     return await finalize();
   }
-  if (hasUnboundLegacyShippedMarker(preFinalLedger)) {
+  if (
+    hasUnboundLegacyShippedMarker(preFinalLedger) ||
+    (preFinalFamilyHead === undefined && hasBoundShippedMarker(preFinalLedger))
+  ) {
     const ledgerMerged = await currentMerged(familyBackend);
     const children: FamilyChildResult[] = epic.children.map((c) =>
       ledgerMerged.has(c.issue)
@@ -513,10 +533,12 @@ export async function runFamily(
       escalationKind: "failure",
       phase: "final",
       reason:
-        "family ledger contains a legacy shipped marker without familyHeadAfter; cannot prove which family HEAD the prior PR covered",
-      familyHeadAfter: familyHead,
+        preFinalFamilyHead === undefined && hasBoundShippedMarker(preFinalLedger)
+          ? "family ledger contains a shipped marker but current family HEAD could not be resolved"
+          : "family ledger contains a legacy shipped marker without familyHeadAfter; cannot prove which family HEAD the prior PR covered",
+      familyHeadAfter: preFinalFamilyHead,
     });
-    return { status: "escalated", familyBase, familyHead, children };
+    return { status: "escalated", familyBase, familyHead: preFinalFamilyHead, children };
   }
 
   // ── verify-cmr hook: end-of-run barrier (#293 no-op seam, #296 fills) ─────────

@@ -92,6 +92,7 @@ class CapableFamilyBackend implements FamilyBackend {
   readonly aborted: FamilyAbortedEvent[] = [];
   readonly escalations: FamilyEscalation[] = [];
   readonly prCalls: OpenFamilyPrRequest[] = [];
+  liveHead: string | undefined;
 
   constructor(
     private readonly script: {
@@ -109,6 +110,10 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
     return this.ledger;
+  }
+  async readFamilyHead(): Promise<string> {
+    if (this.liveHead === undefined) throw new Error("no live head");
+    return this.liveHead;
   }
   async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
     this.verifyCalls.push(req);
@@ -515,6 +520,77 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
       escalationKind: "failure",
       reason:
         "family ledger contains a legacy shipped marker without familyHeadAfter; cannot prove which family HEAD the prior PR covered",
+    });
+    expect(result.status).toBe("escalated");
+  });
+
+  it("a current-head shipped marker skips the final barrier even without reconcileGit", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
+    });
+    backend.liveHead = "ship-head";
+    backend.ledger.push(
+      { childIssue: 294, status: "merged" },
+      { childIssue: 295, status: "merged" },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "pr://current",
+        familyHeadAfter: "ship-head",
+      },
+    );
+
+    const result = await runFamily({
+      epic: epicWith(294, 295),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+    });
+
+    expect(backend.verifyCalls.map((v) => v.phase)).not.toContain("final");
+    expect(backend.cmrCalls).toEqual([]);
+    expect(backend.prCalls).toEqual([]);
+    expect(backend.ledger.filter((e) => e.status === "shipped")).toHaveLength(1);
+    expect(result.status).toBe("success");
+    expect(result.familyHead).toBe("ship-head");
+  });
+
+  it("a bound shipped marker fails closed when the current family HEAD cannot be resolved", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
+    });
+    backend.ledger.push(
+      { childIssue: 294, status: "merged" },
+      { childIssue: 295, status: "merged" },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "pr://current",
+        familyHeadAfter: "ship-head",
+      },
+    );
+
+    const result = await runFamily({
+      epic: epicWith(294, 295),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+    });
+
+    expect(backend.verifyCalls.map((v) => v.phase)).not.toContain("final");
+    expect(backend.cmrCalls).toEqual([]);
+    expect(backend.prCalls).toEqual([]);
+    expect(backend.ledger.filter((e) => e.status === "shipped")).toHaveLength(1);
+    expect(backend.ledger).toContainEqual({
+      status: "escalated",
+      event: "escalated",
+      phase: "final",
+      escalationKind: "failure",
+      reason: "family ledger contains a shipped marker but current family HEAD could not be resolved",
     });
     expect(result.status).toBe("escalated");
   });

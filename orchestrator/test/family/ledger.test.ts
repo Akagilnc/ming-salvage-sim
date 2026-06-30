@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   cmrPassAlreadyPassed,
   familyAlreadyShipped,
+  hasBoundShippedMarker,
   hasUnboundLegacyShippedMarker,
   mergedSet,
   recordCmrPassed,
@@ -117,6 +118,17 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
     ).toBe(false);
     expect(
       hasUnboundLegacyShippedMarker([{ status: "shipped", event: "shipped", phase: "final", pr: "u" }]),
+    ).toBe(true);
+    expect(
+      hasBoundShippedMarker([
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr: "u",
+          familyHeadAfter: "head-1",
+        },
+      ]),
     ).toBe(true);
   });
 
