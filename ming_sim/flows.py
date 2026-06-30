@@ -183,16 +183,30 @@ def calc_province_fiscal(
 
 def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, list]]:
     """唯一定额预算源。返回 {"国库":{"income":[{name,amount,note}],"expense":[...]},"内库":{...}}。
-    税收/皇庄＝calc_province_fiscal 动态值；军饷＝SUM(明军 maint)；建筑＝按 condition 折产/维护；
+    税收/皇庄＝calc_province_fiscal 动态值；军饷＝SUM(明军应发；省源 cutover 后只算中央份额)；
+    建筑＝按 condition 折产/维护；
     其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。"""
     cfg = db.get_fiscal_config()
     gk_tax, nk_huang, _ = calc_province_fiscal(state, db)
     # #44 军饷=SUM(应发)，应发挂钩兵力(army_needed=ceil(manpower×salary_rate/10000))，非旧 maintenance 定额。
-    army_total = sum(
-        army_needed(r) for r in db.conn.execute(
-            "SELECT manpower, salary_rate, owner_power FROM armies WHERE owner_power='ming'"
-        ).fetchall()
-    )
+    # #302 cutover 后国库预算行只展示/共享中央京运份额；省份额由各省 settle spine 承载。
+    if db.is_army_pay_source_cutover_enabled():
+        army_total = sum(
+            army_needed(r) * float(r["central_pay_share"] or 0)
+            for r in db.conn.execute(
+                """
+                SELECT manpower, salary_rate, owner_power, central_pay_share
+                FROM armies
+                WHERE owner_power='ming' AND is_tusi = 0 AND self_funded_pay = 0
+                """
+            ).fetchall()
+        )
+    else:
+        army_total = sum(
+            army_needed(r) for r in db.conn.execute(
+                "SELECT manpower, salary_rate, owner_power FROM armies WHERE owner_power='ming'"
+            ).fetchall()
+        )
 
     budget: Dict[str, Dict[str, list]] = {
         "国库": {"income": [], "expense": []},

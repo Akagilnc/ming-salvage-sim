@@ -364,6 +364,59 @@ def test_fixed_flows_cutover_accrues_unpaid_central_pay_share(fresh_game):
     )
 
 
+def test_budget_lines_cutover_counts_only_central_pay_share(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = ''
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'shaanxi', province_pay_share = 0.65,
+            central_pay_share = 0.35, manpower = 10000, salary_rate = 10
+        WHERE id = 'shaanxi_army'
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'fujian', province_pay_share = 1.0,
+            central_pay_share = 0.0, manpower = 10000, salary_rate = 10
+        WHERE id = 'fujian_navy'
+        """
+    )
+    db.conn.commit()
+
+    cutover_budget = flows_mod.compute_budget_lines(db, state)
+    cutover_pay = next(
+        row["amount"] for row in cutover_budget["国库"]["expense"]
+        if row["name"] == "各军军饷"
+    )
+    assert cutover_pay == 3
+
+    _disable_army_pay_source_cutover(db)
+
+    legacy_budget = flows_mod.compute_budget_lines(db, state)
+    legacy_pay = next(
+        row["amount"] for row in legacy_budget["国库"]["expense"]
+        if row["name"] == "各军军饷"
+    )
+    legacy_expected = sum(
+        army_needed(row) for row in db.conn.execute(
+            "SELECT manpower, salary_rate, owner_power FROM armies WHERE owner_power='ming'"
+        ).fetchall()
+    )
+    assert legacy_pay == legacy_expected
+
+
 def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
     _write_settle(
         fresh_db,
