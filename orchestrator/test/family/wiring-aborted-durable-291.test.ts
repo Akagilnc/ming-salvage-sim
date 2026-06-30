@@ -114,7 +114,7 @@ class AbortingFamilyBackend implements FamilyBackend {
     return this.script.cmr?.(req) ?? { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
-    return { url: `pr://${req.familyBase}` };
+    return { url: `pr://${req.familyBase}`, prHead: this.currentFamilyHead };
   }
   async recordAborted(event: FamilyAbortedEvent): Promise<void> {
     this.aborted.push(event);

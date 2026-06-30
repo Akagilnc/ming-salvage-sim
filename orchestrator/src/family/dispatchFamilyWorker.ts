@@ -130,15 +130,6 @@ export async function dispatchFamilyWorker(
   return legacyDispatchFamilyWorker(familyBackend, spec, ctx);
 }
 
-async function readLegacyShipHead(
-  familyBackend: FamilyBackend,
-  familyBase: string,
-): Promise<string | undefined> {
-  if (familyBackend.readFamilyHead === undefined) return undefined;
-  const head = (await familyBackend.readFamilyHead(familyBase)).trim();
-  return head.length > 0 ? head : undefined;
-}
-
 /**
  * The #331 PREFACTOR thin wrapper: forward a family worker to the EXISTING
  * `FamilyBackend` methods and wrap into a {@link WorkerResult}.
@@ -211,7 +202,10 @@ export async function legacyDispatchFamilyWorker(
     const pr: OpenFamilyPrResult = await familyBackend.openFamilyPr({
       familyBase,
     });
-    const prHead = await readLegacyShipHead(familyBackend, familyBase);
+    const prHead =
+      typeof pr.prHead === "string" && pr.prHead.trim().length > 0
+        ? pr.prHead.trim()
+        : undefined;
     return {
       kind: "completed",
       output: {

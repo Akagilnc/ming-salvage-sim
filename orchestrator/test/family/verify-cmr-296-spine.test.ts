@@ -126,7 +126,7 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);
-    return { url: `pr://${req.familyBase}` };
+    return { url: `pr://${req.familyBase}`, prHead: this.liveHead };
   }
   async recordAborted(event: FamilyAbortedEvent): Promise<void> {
     this.aborted.push(event);

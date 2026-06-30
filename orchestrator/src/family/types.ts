@@ -516,6 +516,8 @@ export interface OpenFamilyPrRequest {
 export interface OpenFamilyPrResult {
   /** The opened PR's URL (or a synthetic handle in the fake). */
   readonly url: string;
+  /** The opened PR's head commit SHA/OID, verified from PR metadata when available. */
+  readonly prHead?: string;
 }
 
 /**
