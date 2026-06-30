@@ -374,12 +374,44 @@ def _auto_pay_arrears_by_priority(
 
 
 def _payable_army_arrears_cap(current_arrears: float, pay_source_cutover: bool) -> int:
-    """Integer ledger cap: under cutover, one whole 万两 may clear a fractional tail."""
+    """Integer ledger cap: fractional cutover tails wait until they can be paid without over-debit."""
     if current_arrears <= 1e-9:
         return 0
-    if pay_source_cutover:
-        return max(1, math.ceil(current_arrears - 1e-9))
     return int(current_arrears)
+
+
+def _allocate_integer_payments_pro_rata(
+    weights_by_id: Dict[str, float],
+    budget: int,
+) -> Dict[str, int]:
+    """Allocate an integer 万两 pool by positive weights without exceeding the pool."""
+    positive = {key: weight for key, weight in weights_by_id.items() if weight > 0}
+    if budget <= 0 or not positive:
+        return {key: 0 for key in weights_by_id}
+    caps = {key: max(0, math.ceil(weight - 1e-9)) for key, weight in positive.items()}
+    full_cost = sum(caps.values())
+    if budget >= full_cost:
+        payments = {key: caps.get(key, 0) for key in weights_by_id}
+        return payments
+
+    total_weight = sum(positive.values())
+    raw = {key: budget * weight / total_weight for key, weight in positive.items()}
+    payments = {
+        key: min(caps[key], int(math.floor(raw[key])))
+        for key in positive
+    }
+    remaining = budget - sum(payments.values())
+    for key, _fraction in sorted(
+        ((key, raw[key] - math.floor(raw[key])) for key in positive),
+        key=lambda item: (-item[1], item[0]),
+    ):
+        if remaining <= 0:
+            break
+        if payments[key] >= caps[key]:
+            continue
+        payments[key] += 1
+        remaining -= 1
+    return {key: payments.get(key, 0) for key in weights_by_id}
 
 
 def _pay_single_army_arrears(
@@ -541,10 +573,13 @@ def _apply_economy_list(
                 current_arrears, db.is_army_pay_source_cutover_enabled()
             )
             if payable_arrears <= 0:
-                # 该军已无欠饷，不扣
+                if current_arrears > 0:
+                    reason_text = f"{row['name']}欠饷未满1万两，{abs(delta)}万两未拨"
+                else:
+                    reason_text = f"{row['name']}已无欠饷，{abs(delta)}万两未拨"
                 applied.append({
                     "account": account, "delta": 0,
-                    "reason": f"{row['name']}已无欠饷，{abs(delta)}万两未拨"
+                    "reason": reason_text,
                 })
                 continue
             spent = _pay_single_army_arrears(
@@ -635,6 +670,16 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     army_map = {str(r["id"]): r for r in army_rows_raw}
     ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
     ordered += [r for r in army_rows_raw if str(r["id"]) not in ARMY_SALARY_PRIORITY]
+    cutover_central_payments: Dict[str, int] = {}
+    if pay_source_cutover:
+        central_due_by_id = {
+            str(row["id"]): army_needed(row) * float(row["central_pay_share"] or 0)
+            for row in ordered
+        }
+        cutover_central_payments = _allocate_integer_payments_pro_rata(
+            central_due_by_id,
+            max(0, int(state.metrics["国库"])),
+        )
 
     for row in ordered:
         army_id = str(row["id"])
@@ -645,10 +690,10 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             needed = needed * float(row["central_pay_share"] or 0)
         if needed <= 0:
             continue
-        available = max(0, int(state.metrics["国库"]))
-        if pay_source_cutover and available >= needed:
-            pay_current = min(available, math.ceil(needed))
+        if pay_source_cutover:
+            pay_current = cutover_central_payments.get(army_id, 0)
         else:
+            available = max(0, int(state.metrics["国库"]))
             pay_current = min(needed, available)
         shortfall = max(0.0, needed - pay_current)
 
