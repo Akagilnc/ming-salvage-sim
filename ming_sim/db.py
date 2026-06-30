@@ -39,6 +39,10 @@ _REGION_DIRECT_TUPLE = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEX
 _REGION_DIRECT_SET = frozenset(_REGION_DIRECT_TUPLE)
 _REGION_NUMERIC_SET = frozenset(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS)
 _ARMY_VALID_SET = frozenset(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
+_ARMY_PAY_SOURCE_DELTA_FIELDS = frozenset((
+    "owner_power", "pay_source_region", "province_pay_share", "central_pay_share",
+    "is_tusi", "self_funded_pay",
+))
 _COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
 
 
@@ -2103,6 +2107,134 @@ class GameDB:
             raise ValueError(f"army {army_id} 明军须有 pay_source_region")
         if abs((province_share + central_share) - 1.0) > 1e-9:
             raise ValueError(f"army {army_id} 饷源比例和必须为 1")
+
+    def _apply_army_pay_source_delta(
+        self,
+        state: GameState,
+        event: Event,
+        edict_id: int | None,
+        actor: str,
+        row: sqlite3.Row,
+        raw_changes: Dict[str, object],
+        reason: str,
+        changes: List[Dict[str, object]],
+    ) -> None:
+        normalized = {
+            ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v
+            for k, v in raw_changes.items()
+        }
+        present = _ARMY_PAY_SOURCE_DELTA_FIELDS.intersection(normalized)
+        if not present:
+            return
+
+        army_id = str(row["id"])
+        old_source = str(row["pay_source_region"] or "")
+        owner_power = str(normalized.get("owner_power", row["owner_power"]) or "").strip()
+        pay_source_region = str(normalized.get("pay_source_region", row["pay_source_region"]) or "").strip()
+        try:
+            province_share = _coerce_pay_source_float(
+                normalized.get("province_pay_share", row["province_pay_share"])
+            )
+            central_share = _coerce_pay_source_float(
+                normalized.get("central_pay_share", row["central_pay_share"])
+            )
+            is_tusi = (
+                _coerce_bool_flag(normalized["is_tusi"])
+                if "is_tusi" in normalized else bool(row["is_tusi"])
+            )
+            self_funded = (
+                _coerce_bool_flag(normalized["self_funded_pay"])
+                if "self_funded_pay" in normalized else bool(row["self_funded_pay"])
+            )
+            province_arrears = float(row["province_pay_arrears"] or 0)
+            central_arrears = float(row["central_pay_arrears"] or 0)
+            exempt = owner_power != "ming" or is_tusi or self_funded
+            if exempt:
+                pay_source_region = ""
+                province_share = central_share = 0.0
+                province_arrears = central_arrears = 0.0
+            self._validate_pay_source_values(
+                army_id, owner_power, pay_source_region, province_share, central_share,
+                is_tusi, self_funded, province_arrears, central_arrears,
+            )
+            if pay_source_region and self.conn.execute(
+                "SELECT 1 FROM regions WHERE id = ?", (pay_source_region,)
+            ).fetchone() is None:
+                raise ValueError(f"army {army_id} pay_source_region 未入库：{pay_source_region}")
+        except (TypeError, ValueError) as exc:
+            changes.append({
+                "army": row["name"], "field": "pay_source",
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"army_delta 饷源字段非法：{exc}",
+                "item": {"army_id": army_id, "changes": raw_changes},
+            })
+            return
+
+        old_values = {
+            "owner_power": row["owner_power"],
+            "pay_source_region": row["pay_source_region"],
+            "province_pay_share": float(row["province_pay_share"] or 0),
+            "central_pay_share": float(row["central_pay_share"] or 0),
+            "is_tusi": int(row["is_tusi"] or 0),
+            "self_funded_pay": int(row["self_funded_pay"] or 0),
+            "province_pay_arrears": float(row["province_pay_arrears"] or 0),
+            "central_pay_arrears": float(row["central_pay_arrears"] or 0),
+            "arrears": float(row["arrears"] or 0),
+        }
+        new_values = {
+            "owner_power": owner_power,
+            "pay_source_region": pay_source_region,
+            "province_pay_share": province_share,
+            "central_pay_share": central_share,
+            "is_tusi": 1 if is_tusi else 0,
+            "self_funded_pay": 1 if self_funded else 0,
+            "province_pay_arrears": province_arrears,
+            "central_pay_arrears": central_arrears,
+            "arrears": province_arrears + central_arrears,
+        }
+        changed_fields = [field for field, new in new_values.items() if old_values[field] != new]
+        if not changed_fields:
+            return
+
+        self.conn.execute(
+            """
+            UPDATE armies
+            SET owner_power = ?, pay_source_region = ?,
+                province_pay_share = ?, central_pay_share = ?,
+                is_tusi = ?, self_funded_pay = ?,
+                province_pay_arrears = ?, central_pay_arrears = ?,
+                arrears = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                owner_power, pay_source_region, province_share, central_share,
+                1 if is_tusi else 0, 1 if self_funded else 0,
+                province_arrears, central_arrears, province_arrears + central_arrears,
+                army_id,
+            ),
+        )
+        for field in changed_fields:
+            self.conn.execute(
+                """
+                INSERT INTO army_logs
+                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+                """,
+                (
+                    state.turn, state.year, state.period, army_id, field,
+                    str(old_values[field]), str(new_values[field]), reason,
+                    event.id, edict_id, actor,
+                ),
+            )
+            changes.append({
+                "army": row["name"], "field": field,
+                "label": ARMY_FIELD_LABELS.get(field, field),
+                "old": old_values[field], "new": new_values[field],
+                "delta": None, "reason": reason,
+            })
+        if old_source != pay_source_region:
+            self._reconcile_army_pay_source_region_container(old_source)
+        self._reconcile_army_pay_source_region_container(pay_source_region)
 
     def _army_pay_source_rows_for_region(self, region_id: str) -> List[Dict[str, float | str]]:
         from ming_sim.flows import army_needed
@@ -4373,9 +4505,16 @@ class GameDB:
                 })
                 continue
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
+            if self.is_army_pay_source_cutover_enabled():
+                self._apply_army_pay_source_delta(
+                    state, event, edict_id, actor, row, raw_changes, reason, changes
+                )
+                row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field == "reason":
+                    continue
+                if self.is_army_pay_source_cutover_enabled() and field in _ARMY_PAY_SOURCE_DELTA_FIELDS:
                     continue
                 if field not in _ARMY_VALID_SET:
                     # ADR 0008 决定 1:LLM 引用非法军队字段 = 逐项拒收留痕(invalid_enum),

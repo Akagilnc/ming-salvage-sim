@@ -350,6 +350,83 @@ def test_army_delta_arrears_reconciles_pay_source_container_immediately(fresh_db
     )
 
 
+def test_army_delta_owner_power_to_ming_requires_same_delta_pay_source(fresh_db):
+    state = fresh_db.load_state()
+    event = SimpleNamespace(id="test", title="招抚")
+    fresh_db.conn.execute(
+        """
+        UPDATE armies
+        SET owner_power = 'houjin', pay_source_region = '',
+            province_pay_share = 0, central_pay_share = 0,
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        WHERE id = 'shaanxi_army'
+        """
+    )
+    fresh_db.conn.commit()
+
+    rejected = fresh_db.apply_army_deltas(
+        state, event, None, "测试", {"shaanxi_army": {"owner_power": "ming"}},
+        commit=False,
+    )
+
+    row = fresh_db.conn.execute("SELECT * FROM armies WHERE id = 'shaanxi_army'").fetchone()
+    assert rejected and rejected[0]["rejected"] is True
+    assert "pay_source_region" in rejected[0]["reason"]
+    assert row["owner_power"] == "houjin"
+
+    changes = fresh_db.apply_army_deltas(
+        state,
+        event,
+        None,
+        "测试",
+        {
+            "shaanxi_army": {
+                "owner_power": "ming",
+                "pay_source_region": "shaanxi",
+                "province_pay_share": 0.65,
+                "central_pay_share": 0.35,
+            }
+        },
+        commit=False,
+    )
+
+    row = fresh_db.conn.execute("SELECT * FROM armies WHERE id = 'shaanxi_army'").fetchone()
+    assert not any(c.get("rejected") for c in changes)
+    assert row["owner_power"] == "ming"
+    assert row["pay_source_region"] == "shaanxi"
+    assert row["province_pay_share"] == pytest.approx(0.65)
+    assert row["central_pay_share"] == pytest.approx(0.35)
+    assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
+        _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
+    )
+
+
+def test_army_delta_owner_power_from_ming_clears_pay_source_arrears(fresh_db):
+    state = fresh_db.load_state()
+    event = SimpleNamespace(id="test", title="陷没")
+    before = _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"]
+    assert before > 0
+
+    changes = fresh_db.apply_army_deltas(
+        state, event, None, "测试", {"shaanxi_army": {"owner_power": "houjin"}},
+        commit=False,
+    )
+
+    row = fresh_db.conn.execute("SELECT * FROM armies WHERE id = 'shaanxi_army'").fetchone()
+    assert not any(c.get("rejected") for c in changes)
+    assert row["owner_power"] == "houjin"
+    assert row["pay_source_region"] == ""
+    assert row["province_pay_share"] == pytest.approx(0)
+    assert row["central_pay_share"] == pytest.approx(0)
+    assert row["province_pay_arrears"] == pytest.approx(0)
+    assert row["central_pay_arrears"] == pytest.approx(0)
+    assert row["arrears"] == pytest.approx(0)
+    assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
+        _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
+    )
+    assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] < before
+
+
 def test_economy_pay_arrears_reconciles_pay_source_container_immediately(fresh_db):
     from ming_sim.flows import _apply_economy_list
 
