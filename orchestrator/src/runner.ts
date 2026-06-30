@@ -1045,9 +1045,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     ledger.push({ step: "S8" });
     await persistBestEffort("S8", undefined, undefined, "error");
 
-    // An error abort surfaces an (always-empty) defer list. ADR 0030 keeps
-    // per-slice review/fix work in runner-visible S3/S4/S5/S6 steps; deferral
-    // tracking belongs to the later family/integrated gates, not this error path.
+    // An error abort returns whatever deferred findings were already collected
+    // (typically none before S4). ADR 0030 keeps per-slice review/fix work in
+    // runner-visible S3/S4/S5/S6 steps; deferral tracking belongs to the later
+    // family/integrated gates, not this error path.
     return {
       status: "error",
       errorPackage,
