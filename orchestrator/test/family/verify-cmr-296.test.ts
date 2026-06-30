@@ -446,6 +446,48 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
   });
 
+  it("resume falls back to the supplied familyHeadAfter when reading the live family HEAD fails", async () => {
+    class ReadHeadFailureBackend extends CapableFamilyBackend {
+      override async readFamilyHead(familyBase: string): Promise<string> {
+        this.readFamilyHeadCalls.push(familyBase);
+        throw new Error("git rev-parse failed");
+      }
+    }
+    const backend = new ReadHeadFailureBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
+    });
+    backend.ledger.push(
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-1",
+        routeFingerprint: currentRouteFingerprint(),
+      },
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadAfter: "head-1",
+        routeFingerprint: currentRouteFingerprint(),
+      },
+    );
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.cmrCalls).toEqual([]);
+    expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+  });
+
   it("resume reruns a CMR pass when the family HEAD advanced after the pass marker", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
