@@ -326,6 +326,7 @@ def _auto_pay_arrears_by_priority(
     返回实际花出去的总额（万两）。"""
     if budget <= 0:
         return 0
+    pay_source_cutover = db.is_army_pay_source_cutover_enabled()
     # #44：受饷资格用 arrears>0（不再 maintenance_per_turn>0）。#44 把欠饷累计从 maintenance 改成
     # army_needed(salary_rate 派生)，二者已解耦——salary_rate>0 但 maintenance=0 的军会累 arrears 却被
     # 旧 filter 排除、拨饷永远散不到（cmr r2 claude）。arrears>0 本就隐含曾有应发（needed>0 才累）。
@@ -343,17 +344,28 @@ def _auto_pay_arrears_by_priority(
             break
         army_id = str(row["id"])
         name = str(row["name"])
-        current_arrears = int(row["arrears"])
-        if current_arrears <= 0:
+        current_arrears = float(row["arrears"] or 0)
+        payable_arrears = _payable_army_arrears_cap(current_arrears, pay_source_cutover)
+        if payable_arrears <= 0:
             continue
+        pay_cap = min(payable_arrears, remaining)
         spent_now = _pay_single_army_arrears(
-            db, state, row, account, min(current_arrears, remaining), category,
-            f"{reason}（按优先级分给{name}{min(current_arrears, remaining)}万两）",
+            db, state, row, account, pay_cap, category,
+            f"{reason}（按优先级分给{name}{pay_cap}万两）",
             "诏拨补饷", "按优先级", commit=commit,
         )
         spent += spent_now
         remaining -= spent_now
     return spent
+
+
+def _payable_army_arrears_cap(current_arrears: float, pay_source_cutover: bool) -> int:
+    """Integer ledger cap: under cutover, one whole 万两 may clear a fractional tail."""
+    if current_arrears <= 1e-9:
+        return 0
+    if pay_source_cutover:
+        return max(1, math.ceil(current_arrears - 1e-9))
+    return int(current_arrears)
 
 
 def _pay_single_army_arrears(
@@ -372,7 +384,11 @@ def _pay_single_army_arrears(
     current_arrears = float(row["arrears"] or 0)
     if amount <= 0 or current_arrears <= 0:
         return 0
-    actual_pay = min(int(amount), int(current_arrears))
+    pay_source_cutover = db.is_army_pay_source_cutover_enabled()
+    actual_pay = min(
+        int(amount),
+        _payable_army_arrears_cap(current_arrears, pay_source_cutover),
+    )
     if actual_pay <= 0:
         return 0
     actual = db.record_issue_economy_move(
@@ -383,7 +399,7 @@ def _pay_single_army_arrears(
     if not actual:
         return 0
     paid = abs(float(actual))
-    if db.is_army_pay_source_cutover_enabled():
+    if pay_source_cutover:
         province_old = float(row["province_pay_arrears"] or 0)
         central_old = float(row["central_pay_arrears"] or 0)
         total_old = province_old + central_old
@@ -506,8 +522,11 @@ def _apply_economy_list(
                 spent = _auto_pay_arrears_by_priority(db, state, account, budget, category, reason, commit=commit)
                 applied.append({"account": account, "delta": -spent, "reason": reason})
                 continue
-            current_arrears = int(row["arrears"])
-            if current_arrears <= 0:
+            current_arrears = float(row["arrears"] or 0)
+            payable_arrears = _payable_army_arrears_cap(
+                current_arrears, db.is_army_pay_source_cutover_enabled()
+            )
+            if payable_arrears <= 0:
                 # 该军已无欠饷，不扣
                 applied.append({
                     "account": account, "delta": 0,
@@ -515,7 +534,7 @@ def _apply_economy_list(
                 })
                 continue
             spent = _pay_single_army_arrears(
-                db, state, row, account, min(abs(delta), current_arrears), category,
+                db, state, row, account, min(abs(delta), payable_arrears), category,
                 reason, "诏拨补饷", commit=commit,
             )
             if spent:

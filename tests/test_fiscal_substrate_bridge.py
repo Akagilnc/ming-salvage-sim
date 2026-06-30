@@ -546,6 +546,63 @@ def test_economy_pay_arrears_reconciles_pay_source_container_immediately(fresh_d
     assert _province_pay_arrears(fresh_db, "shaanxi") < before
 
 
+def test_economy_pay_arrears_clears_fractional_pay_source_debt(fresh_db):
+    from ming_sim.flows import _apply_economy_list
+
+    state = fresh_db.load_state()
+    fresh_db.conn.execute(
+        """
+        UPDATE armies
+        SET province_pay_arrears = 0.3,
+            central_pay_arrears = 0.2,
+            arrears = 0.5
+        WHERE id = 'shaanxi_army'
+        """
+    )
+    fresh_db._reconcile_army_pay_source_region_container("shaanxi")
+
+    applied = _apply_economy_list(
+        fresh_db,
+        state,
+        [{
+            "account": "国库",
+            "delta": -1,
+            "category": "补饷",
+            "reason": "测试小数欠饷补齐",
+            "purpose": "补饷",
+            "target_kind": "army",
+            "target_id": "shaanxi_army",
+        }],
+        commit=False,
+    )
+
+    row = fresh_db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears
+        FROM armies
+        WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    ledger_delta = fresh_db.conn.execute(
+        """
+        SELECT delta
+        FROM economy_ledger
+        WHERE purpose = '补饷' AND target_kind = 'army' AND target_id = 'shaanxi_army'
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    ).fetchone()["delta"]
+
+    assert applied == [{"account": "国库", "delta": -1, "reason": "测试小数欠饷补齐"}]
+    assert ledger_delta == -1
+    assert row["province_pay_arrears"] == pytest.approx(0)
+    assert row["central_pay_arrears"] == pytest.approx(0)
+    assert row["arrears"] == pytest.approx(0)
+    assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
+        _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
+    )
+
+
 def test_new_ming_army_requires_valid_pay_source_under_cutover(fresh_db):
     state = fresh_db.load_state()
 
