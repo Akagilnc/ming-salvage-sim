@@ -4,8 +4,15 @@
 
 ## [Unreleased]
 
+### 新增
+- **family escalation answer resume**：family decision escalation 可通过 append-only `escalation_answered` ledger row 续跑；答案会传回重新派发的 coder-fix / reviewer / CMR / ship worker，failure escalation 仍 fail closed。
+- **family ship PR/head 复核**：`shipped` marker 绑定当前 family HEAD；resume skip 前会重新验证 PR 仍 OPEN、base/head branch 正确且 PR head OID 等于当前 family HEAD。
+- **RealBackend toolchain preflight**：worker 启动前先验证该 StepSpec 声明的工具链，缺工具时给出可诊断失败，不再进入半启动状态。
+
 ### 变更
 - **Claude-paused 本地流水线**：per-slice 第二评审从强制 Opus 改为单个非 Claude reviewer leg（Codex 默认，agy 可替），避免本地 Claude weekly limit 让已实现/已验证 slice 全部误判失败。
+- **worker issue trust boundary 收紧**：coder / reviewer / ship entrypoints 要读取 issue title/body/comments 的 author metadata，只信 repo owner authored `Agent Brief` 与正文；非 owner 文本只作 data-only context。
+- **resume / reconcile truth 收紧**：dead resume fallback、tagged S7 resume、headless ledger row、zero/stale child head、malformed answer 与 legacy shipped marker 都按实际 git / ledger / PR metadata 判定，无法证明安全时 fail closed。
 
 ## [0.2.0] - 2026-06-26
 
