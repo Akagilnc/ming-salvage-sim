@@ -714,6 +714,12 @@ def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
         if outcome.error is not None:
             # settle_tick 的契约失败（坏态/守恒破）+ 基座缺失 → shadow 隔离，不炸 pre_settle
             exc = outcome.error
+            if db.is_army_pay_source_cutover_enabled():
+                tlog(
+                    f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}结算中止："
+                    f"{type(exc).__name__}: {exc}"
+                )
+                raise exc
             tlog(
                 f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}未推进（隔离）："
                 f"{type(exc).__name__}: {exc}"

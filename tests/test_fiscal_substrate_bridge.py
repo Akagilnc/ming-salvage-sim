@@ -55,6 +55,17 @@ def _write_settle(db, region_id, settle):
     db.conn.commit()
 
 
+def _disable_army_pay_source_cutover(db):
+    db.conn.execute(
+        """
+        INSERT INTO fiscal_config (key, value, kind, note)
+        VALUES ('__army_pay_source_cutover', 0, 'meta', 'test legacy shadow mode')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
+        """
+    )
+    db.conn.commit()
+
+
 def _province_pay_due(db, region_id):
     rows = db.conn.execute(
         """
@@ -181,6 +192,26 @@ def test_army_pay_source_spine_seed_splits_arrears_and_reconciles_tusi(fresh_db)
     assert tusi["province_pay_arrears"] == pytest.approx(0.0)
     assert tusi["central_pay_arrears"] == pytest.approx(0.0)
     assert tusi["arrears"] == pytest.approx(0.0)
+
+    log = fresh_db.conn.execute(
+        """
+        SELECT turn, year, period, army_id, field, old_value, new_value, delta, reason,
+               event_id, edict_id, actor
+        FROM army_logs
+        WHERE army_id = 'southwest_tusi' AND field = 'arrears'
+        """
+    ).fetchone()
+    assert log is not None
+    assert log["turn"] == 1
+    assert log["year"] == 1627
+    assert log["period"] == 10
+    assert log["old_value"] == "4.0"
+    assert log["new_value"] == "0.0"
+    assert log["delta"] == -4
+    assert "自养核销" in log["reason"]
+    assert log["event_id"] is None
+    assert log["edict_id"] is None
+    assert log["actor"] == "system"
 
 
 def test_province_tick_derives_due_and_allocates_province_arrears_by_pay_source(fresh_db):
@@ -857,9 +888,10 @@ def test_substrate_absent_does_not_break_flows(game):
 
 
 def test_substrate_corrupt_isolated_from_flows(fresh_game):
-    # 坏基座（删必填火耗率）→ settle_tick raise → 隔离：固定财政照常完成 + 基座不推进（港口锁）
+    # Legacy shadow：坏基座（删必填火耗率）→ settle_tick raise → 隔离：固定财政照常完成 + 基座不推进（港口锁）
     from ming_sim.flows import apply_fixed_period_flows
     db, state = fresh_game
+    _disable_army_pay_source_cutover(db)
     row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
     fiscal = json.loads(str(row["fiscal"]))
     del fiscal["settle"]["p"]["火耗率"]
@@ -881,6 +913,7 @@ def test_substrate_corrupt_due_isolated(fresh_game):
     # ValueError 后→被隔离捕获，固定财政照常完成 + 基座不推进（港口锁）。
     from ming_sim.flows import apply_fixed_period_flows
     db, state = fresh_game
+    _disable_army_pay_source_cutover(db)
     row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
     fiscal = json.loads(str(row["fiscal"]))
     fiscal["settle"]["p"]["Due"] = None  # 非字典
@@ -901,6 +934,7 @@ def test_substrate_corrupt_stock_isolated(fresh_game):
     # TypeError 逃逸 flows 隔离炸 pre_settle。前置验形归 ValueError 后→被隔离捕获，固定财政照常。
     from ming_sim.flows import apply_fixed_period_flows
     db, state = fresh_game
+    _disable_army_pay_source_cutover(db)
     row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
     fiscal = json.loads(str(row["fiscal"]))
     fiscal["settle"]["st"]["省库库银"] = []  # 非数值
@@ -921,6 +955,7 @@ def test_substrate_malformed_settle_shape_is_logged_not_prefiltered(fresh_game, 
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
+    _disable_army_pay_source_cutover(db)
     row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
     fiscal = json.loads(str(row["fiscal"]))
     fiscal["settle"]["p"] = []  # malformed settle block: 有 settle key，但缺合法 p dict
@@ -948,6 +983,7 @@ def test_substrate_malformed_fiscal_container_is_logged_not_prefiltered(fresh_ga
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
+    _disable_army_pay_source_cutover(db)
     db.conn.execute("UPDATE regions SET fiscal='[]' WHERE id='shaanxi'")
     db.conn.commit()
 
@@ -961,11 +997,29 @@ def test_substrate_malformed_fiscal_container_is_logged_not_prefiltered(fresh_ga
     assert surfaced, msgs
 
 
+def test_cutover_pay_source_errors_abort_fixed_flows(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET province_pay_share = 0.7, central_pay_share = 0.2
+        WHERE id = 'shaanxi_army'
+        """
+    )
+    db.conn.commit()
+
+    with pytest.raises(ValueError, match="饷源比例和必须为 1"):
+        flows_mod.apply_fixed_period_flows(db, state)
+
+
 def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game, monkeypatch):
     # Public entry contract: fixed fiscal must not crash before shadow substrate isolation can log.
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
+    _disable_army_pay_source_cutover(db)
     _, _, before_details = flows_mod.calc_province_fiscal(state, db)
     expected_tax = sum(
         int(d["province_total"]) for d in before_details if d["region_id"] != "shaanxi"
@@ -993,6 +1047,7 @@ def test_substrate_malformed_fiscal_json_is_logged_not_prefiltered(fresh_game, m
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
+    _disable_army_pay_source_cutover(db)
     db.conn.execute("UPDATE regions SET fiscal='{bad' WHERE id='shaanxi'")
     db.conn.commit()
 
@@ -1011,6 +1066,7 @@ def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game, mon
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
+    _disable_army_pay_source_cutover(db)
     _, _, before_details = flows_mod.calc_province_fiscal(state, db)
     expected_tax = sum(
         int(d["province_total"]) for d in before_details if d["region_id"] != "shaanxi"
