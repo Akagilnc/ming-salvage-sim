@@ -85,6 +85,8 @@ export interface ShippedRecord {
 /** The fields for a green integrated CMR pass audit event (#419). */
 export interface CmrPassedRecord {
   readonly cmrPass: IntegratedCmrPass;
+  /** The family base HEAD that this pass reviewed and passed. */
+  readonly familyHeadAfter?: string;
 }
 
 /**
@@ -174,7 +176,30 @@ export async function recordCmrPassed(
       event: "cmr_passed",
       phase: "final",
       cmrPass: record.cmrPass,
+      familyHeadAfter: record.familyHeadAfter,
     }) as FamilyLedgerEntry,
+  );
+}
+
+/**
+ * Did a specific integrated CMR pass already pass for the CURRENT family base
+ * HEAD? This is a resume guard, so it fails closed when the current head is
+ * missing or the ledger row lacks the complete cmr_passed shape.
+ */
+export function cmrPassAlreadyPassed(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  input: { readonly cmrPass: IntegratedCmrPass; readonly familyHeadAfter?: string },
+): boolean {
+  if (input.familyHeadAfter === undefined || input.familyHeadAfter.trim().length === 0) {
+    return false;
+  }
+  return entries.some(
+    (e) =>
+      e.status === "cmr_passed" &&
+      e.event === "cmr_passed" &&
+      e.phase === "final" &&
+      e.cmrPass === input.cmrPass &&
+      e.familyHeadAfter === input.familyHeadAfter,
   );
 }
 

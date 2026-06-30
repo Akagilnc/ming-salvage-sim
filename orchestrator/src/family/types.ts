@@ -149,7 +149,10 @@ export interface FamilyLedgerEntry {
   readonly wave?: number;
   /** The family base HEAD BEFORE this child's merge. */
   readonly familyHeadBefore?: string;
-  /** The family base HEAD AFTER this child's merge (or, for `aborted`, at failure). */
+  /**
+   * The family base HEAD AFTER this child's merge, at barrier failure, or at the
+   * time a `cmr_passed` audit row's pass reviewed the base.
+   */
   readonly familyHeadAfter?: string;
   /**
    * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
@@ -316,6 +319,12 @@ export interface FamilyBackend {
    * order. The commander's unblock predicate reads the merged set from here.
    */
   readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>>;
+  /**
+   * Live family-base HEAD read seam. CMR workers may commit fixes before returning
+   * converged, so pass markers and later pass resume checks need the post-worker
+   * HEAD, not just the pre-pass head supplied by the spine.
+   */
+  readFamilyHead?(familyBase: string): Promise<string>;
 
   /**
    * THE unified worker-dispatch seam at the FAMILY layer (ADR 0026 / PRD #330
