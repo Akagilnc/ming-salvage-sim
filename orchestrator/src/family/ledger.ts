@@ -212,7 +212,9 @@ export function cmrPassAlreadyPassed(
       e.event === "cmr_passed" &&
       e.phase === "final" &&
       e.cmrPass === input.cmrPass &&
+      e.familyHeadAfter !== undefined &&
       e.familyHeadAfter === input.familyHeadAfter &&
+      e.routeFingerprint !== undefined &&
       e.routeFingerprint === input.routeFingerprint,
   );
 }

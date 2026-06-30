@@ -230,8 +230,12 @@ async function readPostCmrFamilyHead(
   fallbackHead: string | undefined,
 ): Promise<string | undefined> {
   if (familyBackend.readFamilyHead === undefined) return fallbackHead;
-  const liveHead = (await familyBackend.readFamilyHead(familyBase)).trim();
-  return liveHead.length > 0 ? liveHead : undefined;
+  try {
+    const liveHead = (await familyBackend.readFamilyHead(familyBase)).trim();
+    return liveHead.length > 0 ? liveHead : fallbackHead;
+  } catch {
+    return fallbackHead;
+  }
 }
 
 /**
