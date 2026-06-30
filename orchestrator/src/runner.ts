@@ -41,7 +41,7 @@ import {
   findingIdentityKey,
 } from "./findings.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
-// dispatches EVERY worker step (S2 build, S7 ship) through ONE free function
+// dispatches EVERY worker step (S2/S3/S5/S6 agent workers + S7 ship) through ONE free function
 // instead of reaching for runStep/resumeSession/push directly.
 import {
   dispatchWorker,

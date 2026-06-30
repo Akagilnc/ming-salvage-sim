@@ -224,7 +224,7 @@ describe("Finding 1: terminal-error S8 is tagged handoffStatus:'error' (#254 ⋈
 
   it("RESUME: re-feeding a 0-commit-error ledger reports ERROR, not re-run", async () => {
     // Prior run: S2 build worker produced 0 commits → S8(error). On re-feed it
-    // must report the tagged ERROR, NOT route S2→S7 and re-run.
+    // must report the tagged ERROR, NOT re-enter the happy path and re-run.
     const resumeState: ResumeState = {
       worktree: WORKTREE,
       stateDir: STATE_DIR,

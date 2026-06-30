@@ -293,7 +293,7 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     expect(pushed).toBe(false);
   });
 
-  it("a well-formed committed S2 build output routes to S7 ship (regression)", async () => {
+  it("a well-formed committed S2 plus clean S3/S4 review routes to S7 ship (regression)", async () => {
     // Sanity: the malformed-output guard must not break the real ship path. A
     // committed S2 coder output plus a clean S3 reviewer output routes to S7.
     const backend = new SpyBackend();

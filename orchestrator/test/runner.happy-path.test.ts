@@ -18,8 +18,9 @@ import type {
  *
  *   - S0/S1 read a compliant issue (rfa ∧ no sub-issues ∧ no open blocked_by)
  *     → gate passes.
- *   - S2 build worker → { committed: true, commitsAdded: 1 } (per-slice cmr
- *     already converged inside the worker's own session).
+ *   - S2 build worker → { committed: true, commitsAdded: 1 }.
+ *   - S3 reviewer returns no blocking findings; S4 classifies the clean review
+ *     and routes to S7. Blocking findings would instead enter S5/S6.
  *   - S7 ship succeeds → S8 handoff(status=success)
  */
 class HappyPathBackend implements Backend {
@@ -142,7 +143,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     );
   });
 
-  it("runs S0→S1→S2→S7→S8 in order and hands off status=success", async () => {
+  it("runs S0→S1→S2→S3→S4→S7→S8 in order and hands off status=success", async () => {
     const backend = new HappyPathBackend();
 
     const result = await runOrchestrator({ issueNumber: 247, backend });
