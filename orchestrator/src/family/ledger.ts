@@ -236,9 +236,20 @@ function isValidFamilyAnswer(entry: FamilyLedgerEntry): boolean {
   return (
     entry.status === "escalation_answered" &&
     entry.event === "escalation_answered" &&
+    entry.phase === "final" &&
     typeof entry.answer === "string" &&
     entry.answer.trim().length > 0 &&
     (entry.note === undefined || typeof entry.note === "string")
+  );
+}
+
+function isValidFamilyShipped(entry: FamilyLedgerEntry): boolean {
+  return (
+    entry.status === "shipped" &&
+    entry.event === "shipped" &&
+    entry.phase === "final" &&
+    typeof entry.pr === "string" &&
+    entry.pr.trim().length > 0
   );
 }
 
@@ -272,6 +283,7 @@ export function familyEscalationState(
   | undefined {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
+    if (isValidFamilyShipped(entry)) return undefined;
     if (entry.status !== "escalated" || entry.event !== "escalated") continue;
     const answer = latestValidFamilyAnswerAfter(entries, i);
     return answer !== undefined ? { escalation: entry, answer } : { escalation: entry };
@@ -354,14 +366,7 @@ export function familyAlreadyShipped(
   // no real delivery must NOT bypass verify/cmr/ship. Require the COMPLETE shape
   // `recordShipped` always writes — status + event + final phase + a non-blank `pr`
   // URL — so only a genuine terminal ship counts as delivered.
-  return entries.some(
-    (e) =>
-      e.status === "shipped" &&
-      e.event === "shipped" &&
-      e.phase === "final" &&
-      typeof e.pr === "string" &&
-      e.pr.trim().length > 0,
-  );
+  return entries.some((e) => isValidFamilyShipped(e));
 }
 
 /**

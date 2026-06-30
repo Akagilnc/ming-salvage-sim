@@ -1064,4 +1064,30 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
       },
     });
   });
+
+  it("orders legacy escalation records before newer ledger escalation records", async () => {
+    const o = opts(trackRepo());
+    mkdirSync(o.ledgerDir, { recursive: true });
+    writeFileSync(
+      join(o.ledgerDir, "family-escalations.jsonl"),
+      `${JSON.stringify({
+        reason: "legacy cmr pause",
+        ts: "2026-06-01T00:00:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    const b = new RealFamilyBackend(o);
+    await b.escalateFamily({ reason: "new ledger cmr pause" });
+
+    expect(await b.readEscalations()).toEqual([
+      {
+        reason: "legacy cmr pause",
+        ts: "2026-06-01T00:00:00.000Z",
+      },
+      {
+        reason: "new ledger cmr pause",
+        escalationKind: "decision",
+      },
+    ]);
+  });
 });
