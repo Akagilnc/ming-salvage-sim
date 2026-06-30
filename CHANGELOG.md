@@ -4,6 +4,24 @@
 
 ## [未发布]
 
+## [0.19.0.0] - 2026-06-30
+
+### 新增
+- **family CMR pass 恢复锚点**：integrated CMR 的 completeness / correctness 通过记录现在会带上实际审核过的 family base HEAD 与模型路线 fingerprint，resume 只会跳过同一 HEAD、同一路线下已经通过的 pass。
+- **CMR 后 HEAD 追踪**：family CMR worker 若在通过前提交 pass-local 修复，后续 correctness pass 与 ship worker 会读取并使用修复后的 family HEAD，避免在旧 head 上误判恢复状态。
+- **测试路线隔离**：orchestrator Vitest 默认清理 route/model override 环境变量，单测默认走 normal 路线，同时仍允许个别测试显式切到 tight route。
+
+### 变更
+- **ADR 0030 runner-visible 评审闭环对齐**：CMR worker、runner、StepSpec 与 reviewer 相关文案同步为 runner-dispatched pass / review / fix 边界，去掉旧的「单 session 内隐藏完整循环」描述。
+- **family sub-issue admission 拆分**：`parseSubIssueAdmission` 暴露完整准入结果与 skip reason；旧 `parseSubIssueNumbers` 保持兼容，只过滤 closed child，不再混入 ready / parent 过滤语义。
+
+### 修复
+- **CMR resume 不再跨路线误绿**：旧的 `cmr_passed` ledger 行缺少 route fingerprint 时会 fail closed；模型路线或 declared review legs 改变后，CMR pass 会重新跑而不是复用旧通过记录。
+- **family ship 输入 head 更准确**：止于 PR 的 family ship worker 现在接收 CMR pass 收敛后的 family HEAD，减少 CMR 修复提交后 ship / ledger 状态错位的风险。
+
+### 测试
+- 新增 family ledger / verify-cmr resume guard、post-CMR HEAD 传递、route fingerprint、sub-issue admission 与 test route isolation 覆盖；ship 验证为 `1953 passed, 13 skipped`（root pytest），orchestrator Vitest `833 passed, 1 skipped`，orchestrator typecheck 通过。
+
 ## [0.18.1.0] - 2026-06-30
 
 ### 变更
