@@ -382,6 +382,28 @@ describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
     expect(plan.reconciled).toEqual([]);
   });
 
+  it("does not trust a malformed headless merged tail after a valid baseline", async () => {
+    const ledger = [
+      {
+        status: "aborted",
+        event: "aborted",
+        phase: "final",
+        reason: "previous barrier failed",
+        familyHeadAfter: "base1",
+      },
+      {
+        status: "merged",
+        childHead: "c10",
+      },
+    ] as unknown as FamilyLedgerEntry[];
+    const git = new FakeReconcileGit("base1", { 10: "c10" }, new Set(["c10"]));
+
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+  });
+
   it("does not trust a malformed merged row with familyHeadAfter as a baseline", async () => {
     const ledger = [
       {
@@ -406,6 +428,24 @@ describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
         event: "escalation_answered",
         phase: "final",
         answer: "continue",
+        familyHeadAfter: "base1",
+      },
+    ] as unknown as FamilyLedgerEntry[];
+    const git = new FakeReconcileGit("base1", {}, new Set(["base0"]), "base0");
+
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect(plan.merged.size).toBe(0);
+  });
+
+  it("does not trust escalated rows missing phase as a baseline", async () => {
+    const ledger = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "decision",
         familyHeadAfter: "base1",
       },
     ] as unknown as FamilyLedgerEntry[];

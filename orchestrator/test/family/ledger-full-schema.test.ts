@@ -267,6 +267,25 @@ describe("#439 family escalation answer events", () => {
       escalation: entries[0],
     });
   });
+
+  it("malformed escalation rows missing event still pause instead of disappearing", () => {
+    const entries = [
+      {
+        status: "escalated",
+        escalationKind: "decision",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "continue",
+      },
+    ] as unknown as FamilyLedgerEntry[];
+
+    expect(familyEscalationState(entries)).toEqual({
+      escalation: entries[0],
+    });
+  });
 });
 
 describe("mergedSet — reconcile補账条 COUNTS (decision 5 / codex R3)", () => {

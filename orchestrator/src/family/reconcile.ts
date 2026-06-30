@@ -117,6 +117,7 @@ function isValidRecordedHeadEntry(entry: FamilyLedgerEntry): boolean {
   if (entry.status === "escalated") {
     return (
       entry.event === "escalated" &&
+      entry.phase === "final" &&
       (entry.escalationKind === "decision" || entry.escalationKind === "failure")
     );
   }
@@ -147,6 +148,7 @@ async function headlessTailIsConsistent(
     // the baseline. (An aborted tail entry does not count as merged; a tail entry
     // that DOES carry familyHeadAfter would have been the baseline.)
     if (entry.status !== "merged" || entry.familyHeadAfter !== undefined) continue;
+    if (!isMergedAccountingEntry(entry)) return false;
     // A headless merged entry with no childHead cannot be verified → fail-closed.
     if (entry.childHead === undefined) return false;
     if (!(await git.isAncestor(entry.childHead, liveHead))) return false;
