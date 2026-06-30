@@ -614,7 +614,11 @@ export interface IssueSnapshotMeta {
 export interface IssueSnapshot {
   readonly number: number;
   readonly body: string;
+  /** Login of the issue-body author, when the host snapshot carried it. */
+  readonly bodyAuthorLogin?: string;
   readonly comments: ReadonlyArray<string>;
+  /** Author login aligned by index with `comments`, when available. */
+  readonly commentAuthorLogins?: ReadonlyArray<string>;
   readonly agentBrief: string;
   readonly nativeMeta?: IssueSnapshotMeta;
 }
