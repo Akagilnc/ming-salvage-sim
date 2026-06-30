@@ -158,6 +158,16 @@ describe("#439 family escalation answer events", () => {
     });
   });
 
+  it("rejects blank answer rows before appending them", async () => {
+    const backend = new FakeFamilyBackend();
+
+    await expect(
+      recordFamilyEscalationAnswered(backend, { answer: "   " }),
+    ).rejects.toThrow("family escalation answer must be a non-empty string");
+
+    expect(backend.appended).toEqual([]);
+  });
+
   it("returns the latest valid answer payload after the latest escalation", () => {
     const entries: FamilyLedgerEntry[] = [
       {

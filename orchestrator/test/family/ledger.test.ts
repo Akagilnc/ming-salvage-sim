@@ -78,6 +78,19 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
     ]);
   });
 
+  it("recordShipped rejects blank PR/head values before appending", async () => {
+    const backend = new FakeFamilyBackend();
+
+    await expect(
+      recordShipped(backend, { pr: "   ", familyHeadAfter: "head-1" }),
+    ).rejects.toThrow("family shipped marker must include a non-empty PR URL");
+    await expect(
+      recordShipped(backend, { pr: "https://gh/pr/352", familyHeadAfter: "   " }),
+    ).rejects.toThrow("family shipped marker must include a non-empty familyHeadAfter");
+
+    expect(backend.appended).toEqual([]);
+  });
+
   it("familyAlreadyShipped is TRUE only for the complete shipped marker matching the current head", () => {
     expect(
       familyAlreadyShipped([

@@ -80,7 +80,7 @@ export interface ShippedRecord {
   /** The family PR URL the terminal ship opened. */
   readonly pr: string;
   /** The family base HEAD covered by the terminal ship / PR. */
-  readonly familyHeadAfter?: string;
+  readonly familyHeadAfter: string;
 }
 
 /** The fields for a green integrated CMR pass audit event (#419). */
@@ -221,12 +221,16 @@ export async function recordFamilyEscalationAnswered(
   backend: FamilyBackend,
   record: FamilyEscalationAnswerRecord,
 ): Promise<void> {
+  const answer = record.answer.trim();
+  if (answer.length === 0) {
+    throw new Error("family escalation answer must be a non-empty string");
+  }
   await backend.appendFamilyLedger(
     compact({
       status: "escalation_answered",
       event: "escalation_answered",
       phase: "final",
-      answer: record.answer,
+      answer,
       note: record.note,
     }) as FamilyLedgerEntry,
   );
@@ -243,7 +247,9 @@ function isValidFamilyAnswer(entry: FamilyLedgerEntry): boolean {
   );
 }
 
-function isValidFamilyShipped(entry: FamilyLedgerEntry): boolean {
+function isValidFamilyShipped(
+  entry: FamilyLedgerEntry,
+): entry is FamilyLedgerEntry & { readonly pr: string; readonly familyHeadAfter: string } {
   return (
     entry.status === "shipped" &&
     entry.event === "shipped" &&
@@ -359,13 +365,21 @@ export async function recordShipped(
   backend: FamilyBackend,
   record: ShippedRecord,
 ): Promise<void> {
+  const pr = record.pr.trim();
+  const familyHeadAfter = record.familyHeadAfter.trim();
+  if (pr.length === 0) {
+    throw new Error("family shipped marker must include a non-empty PR URL");
+  }
+  if (familyHeadAfter.length === 0) {
+    throw new Error("family shipped marker must include a non-empty familyHeadAfter");
+  }
   await backend.appendFamilyLedger(
     compact({
       status: "shipped",
       event: "shipped",
       phase: "final",
-      pr: record.pr,
-      familyHeadAfter: record.familyHeadAfter,
+      pr,
+      familyHeadAfter,
     }) as FamilyLedgerEntry,
   );
 }
@@ -397,10 +411,11 @@ export function familyShippedRecordForHead(
   // current HEAD counts as delivered.
   if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) return undefined;
   const shipped = entries.find(
-    (e) => isValidFamilyShipped(e) && e.familyHeadAfter === familyHeadAfter,
+    (e): e is FamilyLedgerEntry & { readonly pr: string; readonly familyHeadAfter: string } =>
+      isValidFamilyShipped(e) && e.familyHeadAfter === familyHeadAfter,
   );
   if (shipped === undefined) return undefined;
-  return { pr: shipped.pr!, familyHeadAfter: shipped.familyHeadAfter };
+  return { pr: shipped.pr, familyHeadAfter: shipped.familyHeadAfter };
 }
 
 /**
