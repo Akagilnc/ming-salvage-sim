@@ -149,7 +149,10 @@ export interface FamilyLedgerEntry {
   readonly wave?: number;
   /** The family base HEAD BEFORE this child's merge. */
   readonly familyHeadBefore?: string;
-  /** The family base HEAD AFTER this child's merge (or, for `aborted`, at failure). */
+  /**
+   * The family base HEAD AFTER this child's merge, at barrier failure, or at the
+   * time a `cmr_passed` audit row's pass reviewed the base.
+   */
   readonly familyHeadAfter?: string;
   /**
    * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
