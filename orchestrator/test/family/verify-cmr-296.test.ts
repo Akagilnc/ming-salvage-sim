@@ -261,6 +261,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       phase: "final",
       familyBase: "family/291-base",
       familyBackend: backend,
+      familyHeadAfter: "head-1",
     });
     expect(result).toEqual({ ok: true, ran: true });
     // Order: full verify FIRST, then step5 completeness, step6 correctness, then PR.
@@ -280,12 +281,171 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       event: "cmr_passed",
       phase: "final",
       cmrPass: "completeness",
+      familyHeadAfter: "head-1",
     });
     expect(backend.ledger).toContainEqual({
       status: "cmr_passed",
       event: "cmr_passed",
       phase: "final",
       cmrPass: "correctness",
+      familyHeadAfter: "head-1",
+    });
+    expect(backend.ledger).toContainEqual({
+      status: "shipped",
+      event: "shipped",
+      phase: "final",
+      pr: "pr://family/291-base",
+    });
+  });
+
+  it("resume skips a CMR pass that already passed for the current family HEAD", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
+    });
+    backend.ledger.push({
+      status: "cmr_passed",
+      event: "cmr_passed",
+      phase: "final",
+      cmrPass: "completeness",
+      familyHeadAfter: "head-1",
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "correctness" },
+    ]);
+  });
+
+  it("resume skips both CMR passes that already passed for the current family HEAD and ships", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
+    });
+    backend.ledger.push(
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-1",
+      },
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadAfter: "head-1",
+      },
+    );
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.cmrCalls).toEqual([]);
+    expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+  });
+
+  it("resume reruns a CMR pass when the family HEAD advanced after the pass marker", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
+    });
+    backend.ledger.push({
+      status: "cmr_passed",
+      event: "cmr_passed",
+      phase: "final",
+      cmrPass: "completeness",
+      familyHeadAfter: "old-head",
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "new-head",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "completeness" },
+      { familyBase: "family/291-base", cmrPass: "correctness" },
+    ]);
+  });
+
+  it("resume reruns both passes when old completeness and correctness markers are for a stale HEAD", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
+    });
+    backend.ledger.push(
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "old-head",
+      },
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadAfter: "old-head",
+      },
+    );
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "new-head",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "completeness" },
+      { familyBase: "family/291-base", cmrPass: "correctness" },
+    ]);
+  });
+
+  it("GREEN full verify + CONVERGED cmr records CMR passes with the family HEAD they reviewed", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.ledger).toContainEqual({
+      status: "cmr_passed",
+      event: "cmr_passed",
+      phase: "final",
+      cmrPass: "completeness",
+      familyHeadAfter: "head-1",
+    });
+    expect(backend.ledger).toContainEqual({
+      status: "cmr_passed",
+      event: "cmr_passed",
+      phase: "final",
+      cmrPass: "correctness",
+      familyHeadAfter: "head-1",
     });
     expect(backend.ledger).toContainEqual({
       status: "shipped",

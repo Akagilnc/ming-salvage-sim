@@ -62,6 +62,7 @@ import {
 import { cmrLegAccountingFailure } from "../modelRoutes.js";
 import { modelIsStrongLeg } from "../realBackend.js";
 import {
+  cmrPassAlreadyPassed,
   recordAborted as recordDurableAbort,
   recordCmrPassed,
   recordShipped,
@@ -281,6 +282,14 @@ async function runIntegratedCmrPass(input: {
     llmResolvedChildren,
     familyHeadAfter,
   } = input;
+  if (
+    cmrPassAlreadyPassed(await familyBackend.readFamilyLedger(), {
+      cmrPass: pass,
+      familyHeadAfter,
+    })
+  ) {
+    return { ok: true, ran: true };
+  }
   const cmrResult = await dispatchOrAbort(
     familyBackend,
     cmrWorkerSpec("fresh", pass),
@@ -391,7 +400,7 @@ async function runIntegratedCmrPass(input: {
     await familyBackend.escalateFamily?.({ reason: closureFailure });
     return { ok: false, ran: true };
   }
-  await recordCmrPassed(familyBackend, { cmrPass: pass });
+  await recordCmrPassed(familyBackend, { cmrPass: pass, familyHeadAfter });
   return { ok: true, ran: true };
 }
 

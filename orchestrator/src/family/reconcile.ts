@@ -63,9 +63,10 @@ import type {
 /**
  * Find the most recent `familyHeadAfter` recorded in the ledger — the baseline
  * the live HEAD is compared against — AND its index. The LAST entry that carries
- * one (a `merged` or `aborted` event with a head); the baseline-advancing reconcile
- * 補账条 carries one too. Returns `{head: undefined, index: -1}` when no entry
- * records a head (an empty ledger, or only #293-thin entries).
+ * one (a `merged`, `aborted`, or `cmr_passed` event with a head); the
+ * baseline-advancing reconcile 補账条 carries one too. Returns `{head: undefined,
+ * index: -1}` when no entry records a head (an empty ledger, or only #293-thin
+ * entries).
  *
  * The INDEX matters because the reconcile-append loop advances the baseline only on
  * the LAST補账条 (cmr R2): a mid-loop crash can leave HEADLESS `status:"merged"` tail
