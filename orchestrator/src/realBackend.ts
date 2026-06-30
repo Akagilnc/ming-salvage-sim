@@ -22,8 +22,8 @@
  * the zero-container automated suite. So this file is split:
  *   - PURE host-side logic — gh-snapshot parsing, the auth-mount path
  *     construction, the prompt-content hash, the branchHEAD consistency check,
- *     the failedStep attribution, the StructuredOutputError dead-session
- *     fallback decision — is factored into exported, dependency-light functions
+ *     the failedStep attribution, the resume error fallback decision — is
+ *     factored into exported, dependency-light functions
  *     that `realBackend.logic.test.ts` unit-tests WITHOUT a container.
  *   - The thin container glue calls those pure functions and Sandcastle.
  *
@@ -822,10 +822,10 @@ export function realCommitCount(
  * already throws (extractCoderTag / schema.parse → S8(error)); this closes the
  * complete-but-UNSIGNALED leak the missing-output throw does not cover.
  *
- * On mismatch/undefined: THROW. The caller (runStep / resumeSession /
- * resume-retry) lets it propagate to the runner's error edge = S8(error) +
- * error package, never a silently-trusted advance. `stepName` is woven into the
- * message so the runner attributes the failure to the right step.
+ * On mismatch/undefined: THROW. The caller (runStep / resumeSession) lets it
+ * propagate to the runner's error edge = S8(error) + error package, never a
+ * silently-trusted advance. `stepName` is woven into the message so the runner
+ * attributes the failure to the right step.
  *
  * Pure (a check on the RunResultLike shape): unit-tested without a container.
  */
@@ -963,6 +963,67 @@ export function reconcileCoderCommits(
   return selfReported.escalate !== undefined
     ? { ...base, escalate: selfReported.escalate }
     : base;
+}
+
+export interface ResumeCoderCommitBasis {
+  readonly baselineHead?: string;
+  readonly priorCommitsAdded?: number;
+}
+
+/**
+ * Locate the git truth basis for a resumed coder step.
+ *
+ * On escalate-resume, the runner re-opens the agent entry that escalated and
+ * truncates it from the in-memory ledger, but the persisted ledger still has the
+ * superseded coder entry plus the branch HEADs around it. The cumulative commit
+ * truth for the resumed output is therefore:
+ *
+ *   commits from the ledger entry immediately BEFORE the resumed coder step
+ *   through the current resident HEAD.
+ *
+ * If an older ledger has no usable SHA, the previous coder output's truthified
+ * `commitsAdded` is retained as a fallback basis; the caller adds any commits
+ * created during the resume iteration via a before/after HEAD diff.
+ */
+export function resumeCoderCommitBasis(
+  ledger: ReadonlyArray<{
+    readonly sessionId?: string;
+    readonly branchHEAD?: string;
+    readonly output?: StepOutput;
+  }>,
+  sessionId: string,
+): ResumeCoderCommitBasis {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.sessionId !== sessionId || entry.output?.kind !== "coder") {
+      continue;
+    }
+    let baselineHead: string | undefined;
+    for (let j = i - 1; j >= 0; j--) {
+      const head = ledger[j]?.branchHEAD;
+      if (typeof head === "string" && isLikelySha(head)) {
+        baselineHead = head;
+        break;
+      }
+    }
+    return {
+      ...(baselineHead !== undefined ? { baselineHead } : {}),
+      priorCommitsAdded: entry.output.commitsAdded,
+    };
+  }
+  return {};
+}
+
+export function reconcileResumeCoderCommits(
+  selfReported: SelfReportedCoder,
+  cumulativeGitCommitCount: number,
+): SelfReportedCoder {
+  try {
+    return reconcileCoderCommits(selfReported, cumulativeGitCommitCount);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`resume coder commit truth mismatch: ${reason}`);
+  }
 }
 
 // ── branchHEAD consistency (codex#2) ────────────────────────────────────────
@@ -1153,32 +1214,37 @@ export function lastLedgerBranchHead(
   return undefined;
 }
 
-// ── StructuredOutputError dead-session fallback decision (#256) ──────────────
+// ── resumeSession fallback decision (#256/#285) ─────────────────────────────
 
 /**
  * Decide how to recover when `resumeSession` of a prior session fails because
  * the session is dead/missing (Sandcastle cannot resume a session whose JSONL is
  * gone — a pruned container, a cleaned host store).
  *
- * - A {@link sc.StructuredOutputError} carrying a sessionId means the resumed run
- *   reached the agent but the structured output was malformed → recover by
- *   resuming THAT session id with a corrective prompt (Sandcastle's own pattern).
  * - A dead-session error (no resumable session) means the original session is
  *   gone → fall back to a FRESH `run()` (lose in-session memory, keep the
  *   committed worktree progress — the resident branch survives).
+ * - Every other error (completion-signal mismatch, schema/structured-output
+ *   parse failure, auth/model failure, commit-truth contradiction) propagates to
+ *   S8(error). It must not be masked by a fresh run.
  *
  * Pure: classifies the error only; the caller performs the chosen recovery.
  */
 export type ResumeRecovery =
-  | { readonly kind: "retry-structured"; readonly sessionId: string }
-  | { readonly kind: "fresh-run" };
+  | { readonly kind: "fresh-run" }
+  | { readonly kind: "propagate" };
 
 export function classifyResumeError(err: unknown): ResumeRecovery {
-  if (err instanceof sc.StructuredOutputError && err.sessionId) {
-    return { kind: "retry-structured", sessionId: err.sessionId };
+  const message = err instanceof Error ? err.message : String(err);
+  const isDeadSession =
+    /\bresume session\b.*\b(not found|missing|expired|dead)\b/i.test(message) ||
+    /\bsession\s+(not found|missing|expired|dead)\b/i.test(message) ||
+    /\b(no|missing|expired|dead)\s+(resume\s+)?session\b/i.test(message) ||
+    /\b(cannot|could not)\s+resume\b.*\bsession\b/i.test(message);
+  if (isDeadSession) {
+    return { kind: "fresh-run" };
   }
-  // Any other resume failure (dead/missing session, transport) → fresh run.
-  return { kind: "fresh-run" };
+  return { kind: "propagate" };
 }
 
 // ── failedStep attribution (codex#3) ─────────────────────────────────────────
@@ -1996,14 +2062,11 @@ export class RealBackend implements Backend {
    * count from git and throws on a contradiction (a model claiming a commit it
    * never made) — the caller propagates that to the runner's S8(error) edge.
    *
-   * `gitCommitCount === undefined` skips git-truthing and trusts the self-report
-   * (used ONLY on the resume path): a `resumeSession` re-runs ONE iteration that
-   * may just re-emit corrected structured output WITHOUT a new commit, so its
-   * per-run `result.commits.length` is NOT a reliable cumulative truth (the
-   * original run's commits already live on the branch and are not re-counted).
-   * Git-truthing there would falsely flag `committed:true` as a 0-commit
-   * contradiction. The normal `runStep` completion path the finding targets
-   * always passes the real count.
+   * `gitCommitCount === undefined` is allowed only for roles where commit truth
+   * is irrelevant (reviewer). A resumed coder still gets git-truthed, but the
+   * count is cumulative from the persisted ledger baseline to the resident HEAD,
+   * not `result.commits.length`: resume may only re-emit corrected structured
+   * output while earlier commits already live on the branch.
    *
    * Ignored for the reviewer role (commits are not part of a review's contract).
    */
@@ -2024,15 +2087,18 @@ export class RealBackend implements Backend {
         ...(r.escalate ? { escalate: r.escalate } : {}),
       };
     }
-    // Coder: parse the self-report for shape, then (normal path) TRUTH the commit
-    // count from git (result.commits.length). reconcileCoderCommits throws on a
-    // self-report that contradicts git → S8(error) at the runner (never a
-    // trusted success). On the resume path (undefined) trust the self-report.
+    // Coder: parse the self-report for shape, then TRUTH the commit count from
+    // git. Fresh runs use result.commits.length; resumed runs pass a cumulative
+    // ledger-baseline count. A contradiction throws → S8(error) at the runner.
     const c = coderOutputSchema.parse(raw);
-    const out =
-      gitCommitCount === undefined
-        ? c
-        : reconcileCoderCommits(c, gitCommitCount);
+    if (gitCommitCount === undefined) {
+      throw new Error(
+        "realBackend: coder output decoded without git commit truth. " +
+          "Fresh and resumed coder steps must reconcile committed/commitsAdded " +
+          "against git; trusting the model self-report would bypass S8(error).",
+      );
+    }
+    const out = reconcileCoderCommits(c, gitCommitCount);
     return out.escalate
       ? {
           kind: "coder",
@@ -2047,14 +2113,57 @@ export class RealBackend implements Backend {
         };
   }
 
+  private resumeCoderCommitCount(
+    worktree: WorktreeHandle,
+    sessionId: string,
+    beforeResumeHead: string | undefined,
+  ): number {
+    const stateDir = this.stateDirFor(worktree.path, this.issueOf(worktree));
+    const ledger = this.readLedger(stateDir);
+    const basis =
+      ledger === undefined ? {} : resumeCoderCommitBasis(ledger, sessionId);
+    if (basis.baselineHead !== undefined) {
+      return this.countCommitsSince(worktree, basis.baselineHead);
+    }
+    if (basis.priorCommitsAdded !== undefined) {
+      const resumeOnlyCommits =
+        beforeResumeHead === undefined
+          ? 0
+          : this.countCommitsSince(worktree, beforeResumeHead);
+      return basis.priorCommitsAdded + resumeOnlyCommits;
+    }
+    throw new Error(
+      `realBackend: cannot git-truth resumed coder session ${sessionId}; ` +
+        "the persisted ledger has no matching coder entry with a baseline HEAD " +
+        "or prior commit count. Refusing to trust the resumed <coder> self-report.",
+    );
+  }
+
+  private countCommitsSince(worktree: WorktreeHandle, fromHead: string): number {
+    const raw = this.sh(
+      "git",
+      ["rev-list", "--count", `${fromHead}..HEAD`],
+      worktree.path,
+    );
+    const count = Number.parseInt(raw, 10);
+    if (!Number.isInteger(count) || count < 0) {
+      throw new Error(
+        `realBackend: git rev-list returned invalid commit count "${raw}" ` +
+          `for ${fromHead}..HEAD in ${worktree.path}`,
+      );
+    }
+    return count;
+  }
+
   // ── S2/S3/S5/S6 agent workers (ADR 0030; #256 seam extension returns
   //    StepResult). S2/S5 run the coder soul; S3/S6 run the fresh read-only
   //    reviewer soul. The runner owns the visible review/fix loop and threads
   //    S4 blocking findings to S5 through DispatchContext/landing artifacts. ─
-  async runStep(
+  private async runFreshAgentStep(
     spec: StepSpec,
     worktree: WorktreeHandle,
     options?: AgentStepRunOptions,
+    coderCommitCount?: (result: Pick<RunResultLike, "commits">) => number,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     const result = await sc.run({
@@ -2088,8 +2197,20 @@ export class RealBackend implements Backend {
     const raw = this.rawOutputFor(result, typedOutputUsed);
     // #256 commit-truth: the coder's committed/commitsAdded is derived from the
     // REAL commits Sandcastle observed (result.commits), not the self-report.
-    const output = this.decodeOutput(spec, raw, realCommitCount(result));
+    const gitCommitCount =
+      spec.role === "coder"
+        ? (coderCommitCount?.(result) ?? realCommitCount(result))
+        : undefined;
+    const output = this.decodeOutput(spec, raw, gitCommitCount);
     return { output, sessionId: lastSessionId(result) };
+  }
+
+  async runStep(
+    spec: StepSpec,
+    worktree: WorktreeHandle,
+    options?: AgentStepRunOptions,
+  ): Promise<StepResult> {
+    return await this.runFreshAgentStep(spec, worktree, options);
   }
 
   // ── #255: resume the prior agent session (native + dead-session fallback) ───
@@ -2100,6 +2221,8 @@ export class RealBackend implements Backend {
     options?: AgentStepRunOptions,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
+    const beforeResumeHead =
+      spec.role === "coder" ? await this.worktreeHead(worktree) : undefined;
     try {
       const result = await sc.run({
         name: `${spec.id}-${spec.role}-resume`,
@@ -2131,58 +2254,44 @@ export class RealBackend implements Backend {
         spec.completionSignal,
         `${spec.id}-${spec.role}-resume`,
       );
-      // Resume path: trust the self-report (undefined realCommitCount). A resume
-      // re-runs ONE iteration that may re-emit corrected output with no new
-      // commit, so its per-run commits.length is not a cumulative truth (#256
-      // git-truthing applies to the normal runStep completion path only).
+      // Resume path: git-truth against the cumulative resident-branch commit
+      // count, not this one-iteration result.commits.length. The resumed
+      // iteration may only re-emit the structured tag while prior commits already
+      // live on the branch.
+      const gitCommitCount =
+        spec.role === "coder"
+          ? this.resumeCoderCommitCount(worktree, sessionId, beforeResumeHead)
+          : undefined;
       const output = this.decodeOutput(
         spec,
         this.rawOutputFor(result, /*typedOutputUsed*/ true),
-        /*realCommitCount (skip git-truth on resume)*/ undefined,
+        gitCommitCount,
       );
       return { output, sessionId: lastSessionId(result) ?? sessionId };
     } catch (err) {
-      // Dead-session fallback (#256): a missing/dead session → fresh run() (keep
-      // the committed worktree progress, lose in-session memory). A
-      // StructuredOutputError carrying a sessionId → retry that session with the
-      // same prompt (Sandcastle's structured-retry pattern).
+      // Dead-session fallback (#256/#285): ONLY a clearly missing/dead prior
+      // session falls back to a fresh run() (keep committed worktree progress,
+      // lose in-session memory). Signal mismatches, schema parse failures, auth
+      // failures, model errors, and commit-truth contradictions propagate to the
+      // runner's S8(error) edge instead of being masked by a fresh run.
       const recovery = classifyResumeError(err);
-      if (recovery.kind === "retry-structured") {
-        const result = await sc.run({
-          name: `${spec.id}-${spec.role}-resume-retry`,
-          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-          cwd: worktree.path,
-          sandbox: this.box(issueNumber, spec, options),
-          // Same CLI as the fresh/native-resume build worker (agentForSlug).
-          agent: agentForSlug(spec.model),
-          maxIterations: 1,
-          completionSignal: spec.completionSignal,
-          branchStrategy: { type: "head" },
-          resumeSession: recovery.sessionId,
-          promptFile: join(this.opts.promptsDir, spec.promptFile),
-          // maxIterations:1 ⇒ typed output valid for both roles (F4, as above).
-          output: this.outputFor(spec),
-        });
-        // #244 step-advance gate (resume-retry path): same gate as the fresh and
-        // native-resume runs — no signal, no advance (throws → S8(error)).
-        assertCompletionSignal(
-          result,
-          spec.completionSignal,
-          `${spec.id}-${spec.role}-resume-retry`,
-        );
-        // Resume-retry path: trust the self-report (undefined), same rationale as
-        // the resume path above — a per-run commit count is not a cumulative
-        // truth here (#256 git-truthing is the normal runStep path).
-        const output = this.decodeOutput(
+      if (recovery.kind === "fresh-run") {
+        // Re-dispatch the build worker (a dead resume session ⇒ start a fresh
+        // sandbox.run for the same step). Coder commit truth still uses the
+        // resume ledger baseline, because prior committed work may already live
+        // on the resident branch even though the old session is gone.
+        const coderCommitCount =
+          spec.role === "coder"
+            ? () => this.resumeCoderCommitCount(worktree, sessionId, beforeResumeHead)
+            : undefined;
+        return await this.runFreshAgentStep(
           spec,
-          this.rawOutputFor(result, /*typedOutputUsed*/ true),
-          /*realCommitCount (skip git-truth on resume)*/ undefined,
+          worktree,
+          options,
+          coderCommitCount,
         );
-        return { output, sessionId: lastSessionId(result) ?? recovery.sessionId };
       }
-      // fresh-run fallback: re-dispatch the build worker (a dead resume session
-      // ⇒ start a fresh sandbox.run for the same step).
-      return await this.runStep(spec, worktree, options);
+      throw err;
     }
   }
 
