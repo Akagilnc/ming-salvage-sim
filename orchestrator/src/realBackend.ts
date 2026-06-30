@@ -2106,10 +2106,11 @@ export class RealBackend implements Backend {
   //    StepResult). S2/S5 run the coder soul; S3/S6 run the fresh read-only
   //    reviewer soul. The runner owns the visible review/fix loop and threads
   //    S4 blocking findings to S5 through DispatchContext/landing artifacts. ─
-  async runStep(
+  private async runFreshAgentStep(
     spec: StepSpec,
     worktree: WorktreeHandle,
     options?: AgentStepRunOptions,
+    coderCommitCount?: (result: Pick<RunResultLike, "commits">) => number,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     const result = await sc.run({
@@ -2143,8 +2144,20 @@ export class RealBackend implements Backend {
     const raw = this.rawOutputFor(result, typedOutputUsed);
     // #256 commit-truth: the coder's committed/commitsAdded is derived from the
     // REAL commits Sandcastle observed (result.commits), not the self-report.
-    const output = this.decodeOutput(spec, raw, realCommitCount(result));
+    const gitCommitCount =
+      spec.role === "coder"
+        ? (coderCommitCount?.(result) ?? realCommitCount(result))
+        : undefined;
+    const output = this.decodeOutput(spec, raw, gitCommitCount);
     return { output, sessionId: lastSessionId(result) };
+  }
+
+  async runStep(
+    spec: StepSpec,
+    worktree: WorktreeHandle,
+    options?: AgentStepRunOptions,
+  ): Promise<StepResult> {
+    return await this.runFreshAgentStep(spec, worktree, options);
   }
 
   // ── #255: resume the prior agent session (native + dead-session fallback) ───
@@ -2211,8 +2224,19 @@ export class RealBackend implements Backend {
       const recovery = classifyResumeError(err);
       if (recovery.kind === "fresh-run") {
         // Re-dispatch the build worker (a dead resume session ⇒ start a fresh
-        // sandbox.run for the same step).
-        return await this.runStep(spec, worktree, options);
+        // sandbox.run for the same step). Coder commit truth still uses the
+        // resume ledger baseline, because prior committed work may already live
+        // on the resident branch even though the old session is gone.
+        const coderCommitCount =
+          spec.role === "coder"
+            ? () => this.resumeCoderCommitCount(worktree, sessionId, beforeResumeHead)
+            : undefined;
+        return await this.runFreshAgentStep(
+          spec,
+          worktree,
+          options,
+          coderCommitCount,
+        );
       }
       throw err;
     }

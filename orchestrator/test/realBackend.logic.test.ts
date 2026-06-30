@@ -14,6 +14,7 @@
  */
 
 import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -1230,5 +1231,19 @@ describe("realBackend resume coder commit truth", () => {
         /*cumulativeGitCommitCount*/ 0,
       ),
     ).toThrow(/resume/i);
+  });
+
+  it("dead-session fallback does not route resumed coders through normal runStep commit truth", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(here, "..", "src", "realBackend.ts"), "utf8");
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .map((l) => l.replace(/\/\/.*$/, ""))
+      .join("\n");
+
+    expect(code).not.toMatch(
+      /recovery\.kind\s*===\s*"fresh-run"[\s\S]*?return\s+await\s+this\.runStep\s*\(/,
+    );
   });
 });
