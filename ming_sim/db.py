@@ -2009,6 +2009,20 @@ class GameDB:
             self_funded = bool(is_tusi)
             old_arrears = float(row["arrears"] or 0)
             if owner != "ming" or self_funded:
+                if self_funded and old_arrears > 0:
+                    seed_state = GameState()
+                    self.conn.execute(
+                        """
+                        INSERT INTO army_logs
+                        (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                        VALUES (?, ?, ?, ?, 'arrears', ?, '0.0', ?, ?, NULL, NULL, 'system')
+                        """,
+                        (
+                            seed_state.turn, seed_state.year, seed_state.period, army_id,
+                            str(old_arrears), -int(old_arrears),
+                            "自养核销：土司/自养军欠饷不并入朝廷饷源双累加器",
+                        ),
+                    )
                 province_arrears = central_arrears = total_arrears = 0.0
                 source = ""
                 province_share = central_share = 0.0
