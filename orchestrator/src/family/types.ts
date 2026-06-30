@@ -109,8 +109,21 @@ export interface FamilyLedgerEntry {
    *     re-verified / re-cmr'd / re-shipped. NOT counted as merged (no `childIssue`).
    *   - `"cmr_passed"` — a PHASE-LEVEL audit event recording one green integrated
    *     CMR pass (#419). NOT counted as merged.
+   *   - `"escalated"` — a PHASE-LEVEL family pause/failure marker (#439). Decision
+   *     escalations are answerable by a later append-only `escalation_answered`
+   *     row; failure escalations are terminal until human/manual repair outside
+   *     this runner. NOT counted as merged.
+   *   - `"escalation_answered"` — a PHASE-LEVEL append-only human answer event
+   *     (#439). It reopens a prior decision escalation without editing/deleting
+   *     that prior row. NOT counted as merged.
    */
-  readonly status: "merged" | "aborted" | "shipped" | "cmr_passed";
+  readonly status:
+    | "merged"
+    | "aborted"
+    | "shipped"
+    | "cmr_passed"
+    | "escalated"
+    | "escalation_answered";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -124,9 +137,19 @@ export interface FamilyLedgerEntry {
    *     止于-PR success so a resume sees the family is already delivered.
    *   - `"cmr_passed"` — paired with `status:"cmr_passed"`; records the pass
    *     verdict so step5 and step6 are visible in the family ledger (#419).
+   *   - `"escalated"` — paired with `status:"escalated"`; records the family
+   *     escalation bucket (#439).
+   *   - `"escalation_answered"` — paired with `status:"escalation_answered"`; an
+   *     append-only human answer to a prior decision escalation (#439).
    * Not the unblock truth (that is `status`); the tag is for observability.
    */
-  readonly event?: "reconciled" | "aborted" | "shipped" | "cmr_passed";
+  readonly event?:
+    | "reconciled"
+    | "aborted"
+    | "shipped"
+    | "cmr_passed"
+    | "escalated"
+    | "escalation_answered";
   /**
    * Which phase this PHASE-LEVEL event belongs to. Set on `aborted` entries and
    * on `cmr_passed` audit entries; `merged` / `reconciled` entries omit it because
@@ -177,6 +200,12 @@ export interface FamilyLedgerEntry {
    * guard's "already delivered" decision is locatable from the ledger alone.
    */
   readonly pr?: string;
+  /** Decision pauses can be reopened by an answer row; failure escalations cannot. */
+  readonly escalationKind?: "decision" | "failure";
+  /** Human answer payload when `event === "escalation_answered"` (#439). */
+  readonly answer?: string;
+  /** Optional human note attached to an escalation answer (#439). */
+  readonly note?: string;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────
