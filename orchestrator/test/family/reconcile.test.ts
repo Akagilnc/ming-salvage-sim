@@ -381,6 +381,23 @@ describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
     expect(plan.escalate).toBe(true);
     expect(plan.reconciled).toEqual([]);
   });
+
+  it("does not trust a malformed merged row with familyHeadAfter as a baseline", async () => {
+    const ledger = [
+      {
+        status: "merged",
+        childIssue: null,
+        familyHeadAfter: "base1",
+      },
+    ] as unknown as FamilyLedgerEntry[];
+    const git = new FakeReconcileGit("base1", {}, new Set(["base0"]), "base0");
+
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect(plan.merged.size).toBe(0);
+  });
 });
 
 describe("reconcileFamilyLedger — full-field merged entries reach branch ② (the prod path)", () => {

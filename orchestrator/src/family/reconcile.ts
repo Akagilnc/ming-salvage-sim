@@ -77,12 +77,19 @@ import type {
 function lastRecordedHead(ledger: ReadonlyArray<FamilyLedgerEntry>): {
   head: string | undefined;
   index: number;
+  invalid: boolean;
 } {
   for (let i = ledger.length - 1; i >= 0; i--) {
-    const after = ledger[i]!.familyHeadAfter;
-    if (after !== undefined) return { head: after, index: i };
+    const entry = ledger[i]!;
+    const after = entry.familyHeadAfter;
+    if (after !== undefined) {
+      if (entry.status === "merged" && !isMergedAccountingEntry(entry)) {
+        return { head: undefined, index: i, invalid: true };
+      }
+      return { head: after, index: i, invalid: false };
+    }
   }
-  return { head: undefined, index: -1 };
+  return { head: undefined, index: -1, invalid: false };
 }
 
 /**
@@ -141,8 +148,12 @@ export async function reconcileFamilyLedger(
   git: ReconcileGit,
 ): Promise<ReconcilePlan> {
   const ledgerMerged = mergedSet(ledger);
-  const { head: baseline, index: baselineIndex } = lastRecordedHead(ledger);
+  const { head: baseline, index: baselineIndex, invalid: invalidBaseline } =
+    lastRecordedHead(ledger);
   const liveHead = await git.liveFamilyHead();
+  if (invalidBaseline) {
+    return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
+  }
 
   // ── branch ① ledger末条 === live HEAD ──────────────────────────────────────
   // The baseline-bearing entry's head IS the live head: no merge landed past it.
