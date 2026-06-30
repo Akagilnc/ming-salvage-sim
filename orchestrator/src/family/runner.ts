@@ -32,8 +32,8 @@ import {
 import type { Backend } from "../types.js";
 import { assertAcyclic, selectWave } from "./commander.js";
 import {
-  familyAlreadyShipped,
   familyEscalationState,
+  familyShippedRecordForHead,
   hasBoundShippedMarker,
   hasUnboundLegacyShippedMarker,
   isMergedAccountingEntry,
@@ -515,7 +515,41 @@ export async function runFamily(
   const preFinalLedger = await familyBackend.readFamilyLedger();
   const preFinalFamilyHead =
     familyHead ?? (await readCurrentFamilyHead(familyBackend, familyBase));
-  if (familyAlreadyShipped(preFinalLedger, preFinalFamilyHead)) {
+  const shippedRecord = familyShippedRecordForHead(
+    preFinalLedger,
+    preFinalFamilyHead,
+  );
+  if (shippedRecord !== undefined) {
+    const ledgerMerged = await currentMerged(familyBackend);
+    const children: FamilyChildResult[] = epic.children.map((c) =>
+      ledgerMerged.has(c.issue)
+        ? { issue: c.issue, status: "merged" as const }
+        : { issue: c.issue, status: "skipped" as const },
+    );
+    if (familyBackend.verifyFamilyShippedPr === undefined) {
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind: "failure",
+        phase: "final",
+        reason:
+          "family ledger contains a shipped marker but this backend cannot verify the PR still covers the current family HEAD",
+        familyHeadAfter: preFinalFamilyHead,
+      });
+      return { status: "escalated", familyBase, familyHead: preFinalFamilyHead, children };
+    }
+    const shippedPr = await familyBackend.verifyFamilyShippedPr({
+      pr: shippedRecord.pr,
+      familyBase,
+      expectedHead: preFinalFamilyHead!,
+    });
+    if (!shippedPr.ok) {
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind: "failure",
+        phase: "final",
+        reason: `family shipped marker no longer verifies: ${shippedPr.reason}`,
+        familyHeadAfter: preFinalFamilyHead,
+      });
+      return { status: "escalated", familyBase, familyHead: preFinalFamilyHead, children };
+    }
     familyHead = preFinalFamilyHead;
     return await finalize();
   }

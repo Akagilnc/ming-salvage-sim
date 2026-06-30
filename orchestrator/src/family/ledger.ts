@@ -382,16 +382,25 @@ export function familyAlreadyShipped(
   entries: ReadonlyArray<FamilyLedgerEntry>,
   familyHeadAfter: string | undefined,
 ): boolean {
+  return familyShippedRecordForHead(entries, familyHeadAfter) !== undefined;
+}
+
+export function familyShippedRecordForHead(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
+): ShippedRecord | undefined {
   // Fail-CLOSED on a malformed row (online review r3, coderabbit): the spine skips
   // the final barrier on this, so a corrupt/hand-edited `status:"shipped"` row with
   // no real delivery must NOT bypass verify/cmr/ship. Require the COMPLETE shape
   // `recordShipped` writes — status + event + final phase + a non-blank `pr` URL
   // + a non-blank `familyHeadAfter` — so only a genuine terminal ship for the
   // current HEAD counts as delivered.
-  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) return false;
-  return entries.some(
+  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) return undefined;
+  const shipped = entries.find(
     (e) => isValidFamilyShipped(e) && e.familyHeadAfter === familyHeadAfter,
   );
+  if (shipped === undefined) return undefined;
+  return { pr: shipped.pr!, familyHeadAfter: shipped.familyHeadAfter };
 }
 
 /**

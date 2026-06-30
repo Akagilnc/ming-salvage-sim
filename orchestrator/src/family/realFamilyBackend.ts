@@ -116,6 +116,8 @@ import type {
   OpenFamilyPrRequest,
   OpenFamilyPrResult,
   ReconcileGit,
+  VerifyFamilyShippedPrRequest,
+  VerifyFamilyShippedPrResult,
 } from "./types.js";
 
 /** The family-ledger sibling filename (under {@link RealFamilyBackendOptions.ledgerDir}). */
@@ -404,6 +406,25 @@ export class RealFamilyBackend implements FamilyBackend {
         reason: `could not verify family PR "${input.pr}" base/head via gh pr view: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
+  }
+
+  async verifyFamilyShippedPr(
+    request: VerifyFamilyShippedPrRequest,
+  ): Promise<VerifyFamilyShippedPrResult> {
+    const verifiedPr = this.verifyFamilyShipPr({
+      pr: request.pr,
+      familyBase: request.familyBase,
+    });
+    if (!verifiedPr.ok) return verifiedPr;
+    if (verifiedPr.headOid !== request.expectedHead) {
+      return {
+        ok: false,
+        reason:
+          `family PR "${request.pr}" head ${verifiedPr.headOid} ` +
+          `does not match current family HEAD ${request.expectedHead}`,
+      };
+    }
+    return { ok: true };
   }
 
   /**

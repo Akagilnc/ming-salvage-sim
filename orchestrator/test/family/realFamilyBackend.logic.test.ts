@@ -1032,6 +1032,31 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
       ok: false,
     });
   });
+
+  it("resume PR verification requires the PR head OID to still match the current family HEAD", async () => {
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    b.prViewResponse = {
+      baseRefName: "main",
+      headRefName: "family/293-base",
+      headRefOid: "pr-head-1",
+      state: "OPEN",
+    };
+
+    await expect(
+      b.verifyFamilyShippedPr({
+        pr: "pr://current",
+        familyBase: "family/293-base",
+        expectedHead: "pr-head-1",
+      }),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      b.verifyFamilyShippedPr({
+        pr: "pr://stale",
+        familyBase: "family/293-base",
+        expectedHead: "new-head",
+      }),
+    ).resolves.toMatchObject({ ok: false });
+  });
 });
 
 // ═══════════════════════════ 8. recordAborted / escalate ════════════════════
