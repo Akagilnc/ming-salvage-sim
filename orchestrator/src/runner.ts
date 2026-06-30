@@ -549,11 +549,15 @@ function planResume(
     }
 
     if (decisionStep === "S7") {
+      let reopenIdx = executableLedger.length - 1;
+      while (reopenIdx >= 0 && executableLedger[reopenIdx]!.step === "S8") {
+        reopenIdx--;
+      }
       return {
         resumeStep: "S7",
         escalationAnswer: answer,
         lastOutput: agentEntry?.output,
-        priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+        priorLedger: executableLedger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
       };
     }
 
