@@ -484,10 +484,9 @@ function adjudicatedBlockingFindingsForPersistedS4(
  * from any in-memory/LLM state (PRD #244 US#22 / #255 AC4):
  *
  *   1. Empty ledger              → resume from S0 (treat as a fresh run).
- *   2. The last agent output escalated → the human has answered; resume THAT
- *      step in its original session (resumeSession + sessionId). This takes
- *      precedence over a trailing S8(escalate) entry — re-feeding an escalation
- *      means "the human answered, continue", not "report escalate again".
+ *   2. The last agent output escalated AND a later escalation_answered row exists
+ *      → resume THAT step in its original session (resumeSession + sessionId).
+ *      Without the appended answer, report the prior escalate terminal status.
  *   3. The prior run reached a terminal handoff that is NOT being re-opened
  *      (S8 entry, or the last step routes straight to a handoff) → report that
  *      handoff's TRUE status (success / error / escalate) — never a hardcoded
@@ -580,10 +579,10 @@ function planResume(
     };
   }
 
-  // Case 2: escalate residue — the last agent output carries a WELL-FORMED
-  // escalation. The human has answered; resume THAT step in its original agent
-  // session. Checked before the terminal-handoff case so a trailing S8(escalate)
-  // entry does not short-circuit into "report escalate again".
+  // Case 2: legacy/untagged agent decision-escalate residue — the last agent
+  // output carries a WELL-FORMED escalation. Only a later escalation_answered row
+  // re-opens THAT step in its original agent session; otherwise the prior
+  // S8(escalate) remains a pause.
   //
   // integ-cmr m2 r1 (Finding 2): the guard is isValidEscalation, NOT a bare
   // non-null check. route.ts:81 / validate.ts treat a MALFORMED escalate (e.g.
@@ -593,7 +592,8 @@ function planResume(
   // terminal-status report, silently re-running the step via resumeSession
   // instead of reporting the true tagged error. Gating on isValidEscalation lets
   // a malformed escalate fall through to Case 3a — only a well-shaped escalate
-  // (a real "human answered an escalation" signal) triggers escalate-resume.
+  // plus a later answer event (a real "human answered an escalation" signal)
+  // triggers escalate-resume.
   //
   // integ-cmr m2 r2 (#252 ⋈ #255): a tagged terminal S8(error) ALSO supersedes
   // escalate-resume, even when the escalate is WELL-FORMED. An escalate handoff
@@ -602,7 +602,8 @@ function planResume(
   // trailing S8(error). The run errored; re-feeding must report that ERROR (Case
   // 3a), NOT re-run the escalating step via resumeSession. So Case 2 yields when
   // the last entry is a tagged terminal-error S8. (A legitimate human-answered
-  // escalate ends with S8(escalate) — NOT error — so it still resumes here.)
+  // escalate has S8(escalate) plus a later answer row — NOT error — so it still
+  // resumes here.)
   const lastIsTaggedError =
     lastEntry.step === "S8" && lastEntry.handoffStatus === "error";
   const agentEscalate = escalateOf(agentEntry?.output);
@@ -612,6 +613,22 @@ function planResume(
     agentEscalate != null &&
     isValidEscalation(agentEscalate)
   ) {
+    const escalatedLedgerIdx = ledger.lastIndexOf(agentEntry);
+    const answerSearchIndex =
+      lastEntry.step === "S8" ? lastEntryIndex : escalatedLedgerIdx;
+    const answer = latestAnswerAfter(
+      ledger,
+      answerSearchIndex,
+      agentEntry.step,
+    );
+    if (answer === undefined) {
+      return {
+        terminalStatus: "escalate",
+        resumeStep: "S8",
+        lastOutput: agentEntry.output,
+        priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+      };
+    }
     // Drop the prior terminal handoff (and any entries after the escalated
     // step): we are re-opening that step, so the prior boundary is superseded.
     // The slice is EXCLUSIVE of the escalated step itself — it is re-run via
@@ -619,11 +636,11 @@ function planResume(
     // here would duplicate it. ADR 0030 has multiple agent steps (S2/S3/S5/S6);
     // whichever one escalated is resumed in its recorded session after the human
     // answer, while normal review/fix rounds stay fresh dispatches.
-    const escalatedIdx = executableLedger.lastIndexOf(agentEntry);
-    const priorLedger = ledger.slice(0, escalatedIdx);
+    const priorLedger = ledger.slice(0, escalatedLedgerIdx);
     return {
       resumeStep: agentEntry.step,
       resumeSessionId: agentEntry.sessionId,
+      escalationAnswer: answer,
       lastOutput: agentEntry.output,
       priorLedger: priorLedger as ReadonlyArray<LedgerEntry>,
     };
@@ -639,10 +656,11 @@ function planResume(
   // report the escalate as a terminal status — leaving the slice permanently stuck
   // (#331 left this to #336; integ-cmr judged it the real S7-escalate-resume gap).
   //
-  // Recognise the pattern — last entry is S8(escalate) AND the deciding step is S7
-  // — and RE-DISPATCH S7 (re-run the ship worker fresh; ship is a clean-session
-  // runner action, so there is no agent session to resumeSession into). Drop the
-  // trailing S8 boundary: we are re-opening, so the prior terminal is superseded.
+  // Recognise the pattern — last entry is S8(escalate), the deciding step is S7,
+  // and a later answer row exists — and RE-DISPATCH S7 (re-run the ship worker
+  // fresh; ship is a clean-session runner action, so there is no agent session to
+  // resumeSession into). Drop the trailing S8 boundary: we are re-opening, so the
+  // prior terminal is superseded.
   // Only the SHIP step re-opens this way; an agent escalate (S2 build worker) is
   // caught by Case 2 above (it has a well-formed escalate output) and never reaches here.
   if (
@@ -650,6 +668,15 @@ function planResume(
     lastEntry.handoffStatus === "escalate" &&
     lastNonTerminalStep(executableLedger) === "S7"
   ) {
+    const answer = latestAnswerAfter(ledger, lastEntryIndex, "S7");
+    if (answer === undefined) {
+      return {
+        terminalStatus: "escalate",
+        resumeStep: "S8",
+        lastOutput: agentEntry?.output,
+        priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+      };
+    }
     // Re-opening S7 means the OLD S7 entry is superseded — drop BOTH the trailing
     // S8(escalate) boundary AND the failing S7 entry it terminated. Slicing only at
     // the S8 (the old `slice(0, s8Idx)`) LEFT the old S7 in the in-memory ledger, so
@@ -662,6 +689,7 @@ function planResume(
     // reopenIdx now points at the failing S7 entry (lastNonTerminalStep === "S7").
     return {
       resumeStep: "S7",
+      escalationAnswer: answer,
       lastOutput: agentEntry?.output,
       priorLedger: executableLedger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
     };
