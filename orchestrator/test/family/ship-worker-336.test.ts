@@ -121,9 +121,9 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     const spec = familyShipWorkerSpec();
     expect(spec.role).toBe("coder");
     expect(spec.maxIter).toBeGreaterThan(1);
-    // The cmr worker is ALSO iterative now (maxIter>1): it is the memory-bearing
-    // fixer that runs the whole review→fix→re-review loop inside one session (ADR
-    // 0026 2026-06-24), NOT a single-pass reviewer. Both write/iterate.
+    // The cmr pass worker is also iterative (maxIter>1): it is WRITE-capable and may
+    // spend more than one sandbox iteration producing its terminal pass verdict,
+    // not a single-pass read-only reviewer. Both family workers write/iterate.
     expect(cmrWorkerSpec().maxIter).toBeGreaterThan(1);
   });
 

@@ -518,18 +518,17 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     });
   }
 
-  it("dispatches the cmr worker spec to runCmrWorker — ak-cross-m-review + FRESH session + memory-bearing fixer (cmr soul, retain)", async () => {
+  it("dispatches the cmr pass worker spec to runCmrWorker — ak-cross-m-review + FRESH session + write-capable cmr soul", async () => {
     const be = fixtured();
     await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "feat/330-pure-scheduler" });
     expect(be.runCmrCalls.length).toBe(1);
     const spec = be.runCmrCalls[0]!.spec;
     expect(spec.kind).toBe("cmr");
     expect(spec.skill).toBe("ak-cross-m-review");
-    // FRESH session = a new session (not a crash/escalate resume). The worker is
-    // dispatched ONCE per family run and loops INTERNALLY (ADR 0026 2026-06-24).
+    // FRESH session = a new pass-worker session, not a crash/escalate resume.
     expect(spec.session).toBe("fresh");
-    // The worker's main session has MEMORY (it is the fixer); only its review legs
-    // are fresh — so the spec RETAINs context, under the WRITE `cmr` soul.
+    // The pass worker can retain context while producing its terminal verdict, under
+    // the WRITE-capable `cmr` soul.
     expect(spec.contextRetention).toBe("retain");
     expect(spec.soul).toBe("cmr");
   });
@@ -978,11 +977,11 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     expect(() => readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8")).toThrow();
   });
 
-  it("NEVER threads a prior-findings block — the worker has SESSION memory, not data (ADR 0026 2026-06-24)", () => {
-    // The cmr worker is a SINGLE memory-bearing session that loops internally; its
-    // round-to-round continuity is its OWN session memory, NOT a prior-findings blob
-    // threaded into the focus file. So the focus file pins ONLY the review scope +
-    // the machine-resolved-child focus, never a "prior round's findings" block.
+  it("keeps prior finding state out of the transient focus file", () => {
+    // The focus file is pass-scoped runtime input. It pins ONLY the review scope +
+    // the machine-resolved-child focus; pass/closure accounting travels via the
+    // worker verdict and durable ledger, never a "prior round's findings" prompt
+    // block in this file.
     const repo = realRepo();
     const be = new FocusBackend({
       workingRepo: repo,

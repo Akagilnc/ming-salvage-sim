@@ -56,9 +56,9 @@ export function cmrWorkerSpec(
   pass: IntegratedCmrPass = "correctness",
 ): WorkerSpec {
   return {
-    id: "S2", // the family integrated cmr is a WRITE/work step (ADR 0026: the
-    //           single-slice S3/S5/S6 ids were removed; the cmr worker is a build/
-    //           fix-kind step that runs before the family S7 ship, so it borrows S2).
+    id: "S2", // family cmr is a WRITE-capable pass worker before family S7 ship;
+    //           ADR 0030 exposes the pass boundary via `cmrPass`, not new S3/S5/S6
+    //           family step ids.
     kind: "cmr",
     role: "coder", // it WRITES (commits cross-slice fixes), not a read-only reviewer
     // The cmr skill fans out a Claude Agent leg + CLI legs → host pinned Claude
