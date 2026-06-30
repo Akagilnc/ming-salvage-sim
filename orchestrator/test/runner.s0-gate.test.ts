@@ -245,8 +245,7 @@ describe("S0 input gate — pass case (#248)", () => {
   it("compliant leaf (no parent) passes S0 and calls fetchIssueSnapshot in S1", async () => {
     // We only need to see S1 fire; we don't need the full run to succeed.
     // Use a backend whose S1+ methods record calls but runStep returns a stub
-    // that lets the runner proceed. ADR 0026: S2 (coder) is the ONLY agent step
-    // dispatched, so runStep just returns a committed coder output.
+    // that lets the ADR 0030 worker sequence proceed.
     class CompliantBackend extends GateTestBackend {
       constructor() {
         super(COMPLIANT_META);

@@ -126,7 +126,7 @@ class SpyBackend implements Backend {
   }
 }
 
-/** A backend whose S2 (the only agent step) returns a chosen output. */
+/** A backend whose selected agent step returns a chosen output. */
 function stepReturning(stepId: "S2", out: StepOutput): SpyBackend {
   const backend = new SpyBackend();
   backend.runStep = async (spec: StepSpec) => {

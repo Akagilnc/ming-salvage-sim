@@ -28,10 +28,10 @@
  * Slice #248: S0 input gate — three-way accept condition (rfa ∧ no sub-issues ∧
  *   blocked_by all closed); violations throw, stopping at S0. (Agent Brief was
  *   removed as a gate — design correction; the coder reads the whole issue.)
- * #331 (ADR 0026 / PRD #330): the runner dispatches every WORKER step (S2 build +
- *   S7 ship) through the single unified seam `dispatchWorker(backend, spec, ctx)`
- *   (dispatchWorker.ts) instead of reaching for `runStep` / `resumeSession` /
- *   `push` directly.
+ * #331 (ADR 0026 / PRD #330), extended by ADR 0030: the runner dispatches every
+ *   WORKER step (S2/S3/S5/S6 agent workers + S7 ship) through the single unified
+ *   seam `dispatchWorker(backend, spec, ctx)` (dispatchWorker.ts) instead of
+ *   reaching for `runStep` / `resumeSession` / `push` directly.
  */
 
 import { route } from "./route.js";
@@ -41,7 +41,7 @@ import {
   findingIdentityKey,
 } from "./findings.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
-// dispatches EVERY worker step (S2 build, S7 ship) through ONE free function
+// dispatches EVERY worker step (S2/S3/S5/S6 agent workers + S7 ship) through ONE free function
 // instead of reaching for runStep/resumeSession/push directly.
 import {
   dispatchWorker,
@@ -1045,8 +1045,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     ledger.push({ step: "S8" });
     await persistBestEffort("S8", undefined, undefined, "error");
 
-    // An error abort surfaces an (always-empty) defer list — the single-slice
-    // runner no longer collects defers (the per-slice cmr handles them inside S2).
+    // An error abort surfaces an (always-empty) defer list. ADR 0030 keeps
+    // per-slice review/fix work in runner-visible S3/S4/S5/S6 steps; deferral
+    // tracking belongs to the later family/integrated gates, not this error path.
     return {
       status: "error",
       errorPackage,
