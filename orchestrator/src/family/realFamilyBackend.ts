@@ -403,6 +403,10 @@ export class RealFamilyBackend implements FamilyBackend {
       .map((l) => JSON.parse(l) as FamilyLedgerEntry);
   }
 
+  async readFamilyHead(familyBase: string): Promise<string> {
+    return this.sh("git", ["rev-parse", familyBase], this.opts.workingRepo);
+  }
+
   // ─────────────────────────── merge ───────────────────────────
 
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {

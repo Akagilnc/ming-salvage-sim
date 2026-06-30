@@ -319,6 +319,12 @@ export interface FamilyBackend {
    * order. The commander's unblock predicate reads the merged set from here.
    */
   readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>>;
+  /**
+   * Live family-base HEAD read seam. CMR workers may commit fixes before returning
+   * converged, so pass markers and later pass resume checks need the post-worker
+   * HEAD, not just the pre-pass head supplied by the spine.
+   */
+  readFamilyHead?(familyBase: string): Promise<string>;
 
   /**
    * THE unified worker-dispatch seam at the FAMILY layer (ADR 0026 / PRD #330
