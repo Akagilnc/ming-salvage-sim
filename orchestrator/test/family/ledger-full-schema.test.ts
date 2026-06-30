@@ -228,6 +228,7 @@ describe("#439 family escalation answer events", () => {
         event: "shipped",
         phase: "final",
         pr: "https://github.com/o/r/pull/1",
+        familyHeadAfter: "head-1",
       },
     ];
 

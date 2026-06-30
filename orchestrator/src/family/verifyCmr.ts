@@ -619,7 +619,11 @@ export async function runVerifyCmr(
   // child merged) and it would re-enter this final barrier — re-running the full
   // verify + integrated cmr and re-invoking the ship worker (a duplicate VERSION
   // bump / PR attempt). Writing a `shipped` ledger entry makes the delivery durable
-  // resume truth: the spine's `familyAlreadyShipped` guard short-circuits the barrier.
-  await recordShipped(familyBackend, { pr: ship.pr });
+  // resume truth: the spine's `familyAlreadyShipped` guard short-circuits the barrier
+  // only when the current family HEAD still equals this shipped head.
+  await recordShipped(familyBackend, {
+    pr: ship.pr,
+    familyHeadAfter: postShipFamilyHead,
+  });
   return { ok: true, ran: true };
 }
