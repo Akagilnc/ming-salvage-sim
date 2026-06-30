@@ -306,6 +306,31 @@ describe("reconcileFamilyLedger — thin (#293-style) entries degrade SAFELY", (
     expect(plan.reconciled).toEqual([]);
     expect(plan.merged.size).toBe(0);
   });
+
+  it("malformed merged rows with non-numeric childIssue do not count as accounting evidence", async () => {
+    const ledger = [
+      {
+        status: "merged",
+        childIssue: null,
+      },
+      {
+        status: "merged",
+        childIssue: "10",
+      },
+    ] as unknown as FamilyLedgerEntry[];
+    const git = new FakeReconcileGit(
+      "base1",
+      {},
+      new Set(["base0"]),
+      "base0",
+    );
+
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
+    expect(plan.merged.size).toBe(0);
+  });
 });
 
 describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
