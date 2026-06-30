@@ -313,7 +313,9 @@ def _normalize_settle_meta_defaults(
     if not isinstance(defaults_raw, dict):
         raise SystemExit(f"{ctx}.fiscal.settle._meta_defaults 指向未知默认组：{default_name}。")
 
-    meta_raw = settle_raw.get("_meta") or {}
+    meta_raw = settle_raw.get("_meta", {})
+    if meta_raw is None:
+        meta_raw = {}
     if not isinstance(meta_raw, dict):
         raise SystemExit(f"{ctx}.fiscal.settle._meta 必须是 JSON 对象。")
 
@@ -326,7 +328,10 @@ def _normalize_settle_meta_defaults(
 
 def load_region_content() -> Dict[str, Region]:
     data = require_dict(load_json_asset("regions.json"), "regions.json")
-    settle_meta_defaults = require_dict(data.get("settle_meta_defaults") or {}, "regions.json.settle_meta_defaults")
+    settle_meta_defaults_raw = data.get("settle_meta_defaults", {})
+    if settle_meta_defaults_raw is None:
+        settle_meta_defaults_raw = {}
+    settle_meta_defaults = require_dict(settle_meta_defaults_raw, "regions.json.settle_meta_defaults")
     regions: Dict[str, Region] = {}
     for idx, raw in enumerate(require_list(data.get("regions"), "regions.json.regions"), 1):
         item = require_dict(raw, f"regions.json.regions[{idx}]")
