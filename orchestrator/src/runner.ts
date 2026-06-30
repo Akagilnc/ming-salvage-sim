@@ -395,7 +395,7 @@ function replayS4AdjudicationState(
   let lastReviewerStepForS4: StepId | undefined;
 
   for (const entry of ledger) {
-    if (isEscalationAnswerEntry(entry)) {
+    if (entry.event === "escalation_answered") {
       continue;
     }
     if (entry.output?.kind === "reviewer") {
@@ -1585,7 +1585,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             resumeFor = undefined;
           }
           const escalationAnswerForStep =
-            step === "S5" && resumedEscalationAnswer?.forStep === "S4"
+            resumedEscalationAnswer !== undefined &&
+            (resumedEscalationAnswer.forStep === step ||
+              (step === "S5" && resumedEscalationAnswer.forStep === "S4"))
               ? resumedEscalationAnswer
               : undefined;
           if (escalationAnswerForStep !== undefined) {
@@ -1607,15 +1609,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   worktree,
                   stateDir,
                   ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
+                  ...(escalationAnswerForStep !== undefined
+                    ? { escalationAnswer: escalationAnswerForStep }
+                    : {}),
                   ...(step === "S5" || step === "S6"
                     ? {
                         blockingFindings: pendingBlockingFindings,
                         blockingFindingIdentityKeys:
                           pendingBlockingFindingIdentityKeys,
-                        ...(step === "S5" &&
-                        escalationAnswerForStep !== undefined
-                          ? { escalationAnswer: escalationAnswerForStep }
-                          : {}),
                       }
                     : {}),
                 },

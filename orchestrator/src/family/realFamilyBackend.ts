@@ -120,6 +120,8 @@ import type {
 
 /** The family-ledger sibling filename (under {@link RealFamilyBackendOptions.ledgerDir}). */
 export const FAMILY_LEDGER_FILENAME = "family-ledger.jsonl";
+/** Legacy durable escalate stuck-point filename, read for migration/back-compat. */
+export const FAMILY_ESCALATION_FILENAME = "family-escalations.jsonl";
 
 /**
  * Where the agy (antigravity / gemini) CLI reads its OAuth token + writes its
@@ -371,7 +373,7 @@ export class RealFamilyBackend implements FamilyBackend {
     );
   }
 
-  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+  private readFamilyLedgerFile(): ReadonlyArray<FamilyLedgerEntry> | undefined {
     let raw: string;
     try {
       raw = readFileSync(join(this.opts.ledgerDir, FAMILY_LEDGER_FILENAME), "utf8");
@@ -382,17 +384,59 @@ export class RealFamilyBackend implements FamilyBackend {
       // and silently returning [] on an unreadable-but-PRESENT ledger would make
       // reconcile think no child ever merged → re-merge already-landed children
       // (codex R2; decision 5 "不静默吞"). Rethrow with path context.
-      if (isFileNotFound(err)) return [];
+      if (isFileNotFound(err)) return undefined;
       throw new Error(
         `readFamilyLedger: failed to read the family ledger at ` +
           `${join(this.opts.ledgerDir, FAMILY_LEDGER_FILENAME)} — ` +
           `${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    return raw
+    const ledger = raw
       .split("\n")
       .filter((l) => l.trim().length > 0)
       .map((l) => JSON.parse(l) as FamilyLedgerEntry);
+    return ledger;
+  }
+
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return [
+      ...(this.readFamilyLedgerFile() ?? []),
+      ...this.legacyEscalationLedgerEntries(),
+    ];
+  }
+
+  private readLegacyEscalationRecords(): ReadonlyArray<FamilyEscalationRecord> {
+    let raw: string;
+    try {
+      raw = readFileSync(join(this.opts.ledgerDir, FAMILY_ESCALATION_FILENAME), "utf8");
+    } catch (err) {
+      if (isFileNotFound(err)) return [];
+      throw new Error(
+        `readEscalations: failed to read the legacy escalation log at ` +
+          `${join(this.opts.ledgerDir, FAMILY_ESCALATION_FILENAME)} — ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return raw
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as FamilyEscalationRecord);
+  }
+
+  private legacyEscalationLedgerEntries(): ReadonlyArray<FamilyLedgerEntry> {
+    return this.readLegacyEscalationRecords().map((record) => ({
+      status: "escalated",
+      event: "escalated",
+      phase: "final",
+      reason:
+        typeof record.reason === "string" && record.reason.trim().length > 0
+          ? record.reason
+          : "legacy family escalation",
+      escalationKind: record.escalationKind ?? "decision",
+      ...(record.familyHeadAfter !== undefined
+        ? { familyHeadAfter: record.familyHeadAfter }
+        : {}),
+    }));
   }
 
   async readFamilyHead(familyBase: string): Promise<string> {
@@ -1718,7 +1762,7 @@ export class RealFamilyBackend implements FamilyBackend {
 
   /** Read the durable escalate stuck-points (for the caller / a re-entry). */
   async readEscalations(): Promise<ReadonlyArray<FamilyEscalationRecord>> {
-    return (await this.readFamilyLedger())
+    const ledgerEscalations = (this.readFamilyLedgerFile() ?? [])
       .filter((entry) => entry.status === "escalated" && entry.event === "escalated")
       .map((entry) => ({
         reason:
@@ -1728,6 +1772,7 @@ export class RealFamilyBackend implements FamilyBackend {
         escalationKind: entry.escalationKind,
         familyHeadAfter: entry.familyHeadAfter,
       }));
+    return [...ledgerEscalations, ...this.readLegacyEscalationRecords()];
   }
 
   // ─────────────────────────── reconcile git seam ───────────────────────────

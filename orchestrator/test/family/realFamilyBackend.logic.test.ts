@@ -1012,4 +1012,27 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
     expect(recs[0]?.reason).toContain("cmr did not converge");
     expect(recs[0]?.escalationKind).toBe("decision");
   });
+
+  it("keeps legacy family-escalations.jsonl stuck-points readable during migration", async () => {
+    const o = opts(trackRepo());
+    mkdirSync(o.ledgerDir, { recursive: true });
+    writeFileSync(
+      join(o.ledgerDir, "family-escalations.jsonl"),
+      `${JSON.stringify({
+        reason: "legacy cmr pause",
+        ts: "2026-06-01T00:00:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    const b = new RealFamilyBackend(o);
+
+    const recs = await b.readEscalations();
+
+    expect(recs).toEqual([
+      {
+        reason: "legacy cmr pause",
+        ts: "2026-06-01T00:00:00.000Z",
+      },
+    ]);
+  });
 });
