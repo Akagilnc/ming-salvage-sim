@@ -812,8 +812,8 @@ export interface Backend {
   /**
    * THE unified worker-dispatch seam (ADR 0026 / PRD #330 #331).
    *
-   * Every productive single-slice worker step (current path: S2 coder, S7 ship;
-   * legacy compatibility may still map reviewer specs) is
+   * Every productive single-slice worker step (S2/S3/S5/S6 agent workers + S7
+   * ship; legacy compatibility may still map reviewer specs) is
    * dispatched through this ONE method: the runner hands a {@link WorkerSpec}
    * (what to invoke, host, fresh|resume, soul, skill) + a {@link DispatchContext}
    * (worktree, stateDir, resumeSessionId, audit snapshot when present) and gets

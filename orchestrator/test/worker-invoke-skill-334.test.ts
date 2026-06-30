@@ -249,7 +249,7 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
   });
 });
 
-// ─── (3) the runner dispatches one S2 coder worker, then S7 ship ─────────────
+// ─── (3) the runner dispatches S2/S3, then S5/S6 while blockers remain ──────
 
 /** A fake backend that records dispatch + drives a one-round fix loop. */
 class ReviewWorkerBackend implements Backend {
