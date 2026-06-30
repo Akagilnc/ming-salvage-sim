@@ -757,7 +757,7 @@ def build_extractor_tools(context: CourtContext):
         """提交本月结算抽取结果。json_str 是严格 JSON 字符串（无 Markdown 包裹）。
         调用后本月 extractor 即结束；只能调用一次。
 
-        ══ 必须包含的 16 个顶层字段（无内容填 {} 或 []）══
+        ══ 必须包含的顶层字段（无内容填 {} 或 []）══
 
         metric_delta        两量表增量 {"民心":N,"皇威":N}（增量非新值）
         economy_moves       浮动收支列表，每项 {account(国库/内库),delta,category,reason}
@@ -776,6 +776,15 @@ def build_extractor_tools(context: CourtContext):
                             合法字段：supply/morale/training/equipment/arrears/mobility/loyalty/
                             manpower/station/commander/controller/troop_type/status
                             禁止写cohesion（势力字段）
+        new_armies          新建军队列表，每项含 id/name/owner_power/manpower/station/
+                            commander/troop_type/status 等完整军队字段。
+                            owner_power="ming" 且不是土司/自养军时，必须写饷源三字段：
+                            pay_source_region/饷源省=明控省 region_id，
+                            province_pay_share/省份额 与 central_pay_share/中央份额
+                            为 0-1 小数且两者和为 1（纯省源 1.0/0.0，混合如 0.65/0.35）。
+                            土司/自养明军才写 is_tusi/土司 或 self_funded_pay/自养军饷，
+                            且饷源比例为 0/0；非明军不写明军饷源。
+                            明军月饷总额由引擎按 manpower 派生，不写饷额。
         power_updates       别的势力三项简单属性 {power_id: {"威望":N,"实力":N,"经济":N}}
                             只写非大明势力；三项均为整数增量；不写立场/近动/状态
         world_advance       外交态度 KV；key 为势力名或 power_id，value 为简短态度字符串
@@ -841,6 +850,11 @@ def build_extractor_tools(context: CourtContext):
           "class_delta": {"农民@shaanxi": {"satisfaction": -6, "leverage": 5}},
           "region_delta": {"shaanxi": {"unrest": 5, "grain_security": -3}},
           "army_delta": {"guanning": {"morale": -3, "arrears": 5}},
+          "new_armies": [{"id":"qin_army","name":"秦军新营","owner_power":"ming",
+                          "manpower":8000,"station":"陕西/西安","commander":"孙传庭",
+                          "troop_type":"募兵步骑","pay_source_region":"shaanxi",
+                          "province_pay_share":0.65,"central_pay_share":0.35,
+                          "status":"新募，亟待操练"}],
           "power_updates": {"houjin": {"威望": -4, "实力": -3, "经济": -2}},
           "world_advance": {"后金": "敌对", "蒙古": "摇摆", "朝鲜": "倾明"},
           "issue_advances": [{"issue_id":12,"delta_bar":15,"stage_text":"户部主事至苏州","narrative":"..."}],
