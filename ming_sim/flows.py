@@ -384,11 +384,11 @@ def _allocate_integer_payments_pro_rata(
     weights_by_id: Dict[str, float],
     budget: int,
 ) -> Dict[str, int]:
-    """Allocate an integer 万两 pool by positive weights without exceeding the pool."""
+    """Allocate whole-万两 payments by positive weights without exceeding per-army due."""
     positive = {key: weight for key, weight in weights_by_id.items() if weight > 0}
     if budget <= 0 or not positive:
         return {key: 0 for key in weights_by_id}
-    caps = {key: max(0, math.ceil(weight - 1e-9)) for key, weight in positive.items()}
+    caps = {key: max(0, int(math.floor(weight + 1e-9))) for key, weight in positive.items()}
     full_cost = sum(caps.values())
     if budget >= full_cost:
         payments = {key: caps.get(key, 0) for key in weights_by_id}
