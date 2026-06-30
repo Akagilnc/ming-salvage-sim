@@ -447,7 +447,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
   });
 
-  it("resume falls back to the supplied familyHeadAfter when reading the live family HEAD fails", async () => {
+  it("does not persist a shipped marker when the post-ship family HEAD cannot be resolved", async () => {
     class ReadHeadFailureBackend extends CapableFamilyBackend {
       override async readFamilyHead(familyBase: string): Promise<string> {
         this.readFamilyHeadCalls.push(familyBase);
@@ -484,9 +484,18 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-1",
     });
 
-    expect(result).toEqual({ ok: true, ran: true });
+    expect(result).toEqual({ ok: false, ran: true });
     expect(backend.cmrCalls).toEqual([]);
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+    expect(backend.ledger).toContainEqual({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      reason:
+        "family ship worker opened a PR, but the current family HEAD could not be resolved; refusing to persist a stale shipped marker",
+      familyHeadAfter: "head-1",
+    });
   });
 
   it("resume reruns a CMR pass when the family HEAD advanced after the pass marker", async () => {
@@ -678,6 +687,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       ),
     ).toHaveLength(1);
     expect(backend.readFamilyHeadCalls).toEqual([
+      "family/291-base",
       "family/291-base",
       "family/291-base",
       "family/291-base",

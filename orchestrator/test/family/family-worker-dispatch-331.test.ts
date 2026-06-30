@@ -43,6 +43,9 @@ class CapableFamilyBackend implements FamilyBackend {
   async readFamilyLedger(): Promise<[]> {
     return [];
   }
+  async readFamilyHead(): Promise<string> {
+    return "head-1";
+  }
   async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
     this.verifyCalls.push(req);
     return { ok: true };
@@ -138,6 +141,9 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
     async appendFamilyLedger(): Promise<void> {}
     async readFamilyLedger(): Promise<[]> {
       return [];
+    }
+    async readFamilyHead(): Promise<string> {
+      return "head-1";
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
@@ -261,6 +267,9 @@ describe("#331 the family ship worker must return a SHIP payload (codex R2 guard
     async readFamilyLedger(): Promise<[]> {
       return [];
     }
+    async readFamilyHead(): Promise<string> {
+      return "head-1";
+    }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
     }
@@ -304,6 +313,9 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     async appendFamilyLedger(): Promise<void> {}
     async readFamilyLedger(): Promise<[]> {
       return [];
+    }
+    async readFamilyHead(): Promise<string> {
+      return "head-1";
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };

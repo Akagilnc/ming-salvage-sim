@@ -241,6 +241,19 @@ async function readPostCmrFamilyHead(
   }
 }
 
+async function readRequiredFamilyHead(
+  familyBackend: FamilyBackend,
+  familyBase: string,
+): Promise<string | undefined> {
+  if (familyBackend.readFamilyHead === undefined) return undefined;
+  try {
+    const liveHead = (await familyBackend.readFamilyHead(familyBase)).trim();
+    return liveHead.length > 0 ? liveHead : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Dispatch a family worker, converting ANY thrown STARTUP error into a documented
  * gate result instead of letting it escape verifyCmr (cmr S336 r8 — startup/error
@@ -612,6 +625,24 @@ export async function runVerifyCmr(
   ) {
     return INCOMPLETE_GATE;
   }
+  const exactPostShipFamilyHead = await readRequiredFamilyHead(familyBackend, familyBase);
+  if (exactPostShipFamilyHead === undefined) {
+    const reason =
+      "family ship worker opened a PR, but the current family HEAD could not be resolved; refusing to persist a stale shipped marker";
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postShipFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: postShipFamilyHead,
+    });
+    return INCOMPLETE_GATE;
+  }
+
   // ── Persist the terminal SHIPPED marker before reporting success (online review
   // r2, codex P1). The family ship commit (VERSION/CHANGELOG bump) advanced the
   // family base, but nothing durable recorded that the terminal 止于-PR ship ALREADY
@@ -623,7 +654,7 @@ export async function runVerifyCmr(
   // only when the current family HEAD still equals this shipped head.
   await recordShipped(familyBackend, {
     pr: ship.pr,
-    familyHeadAfter: postShipFamilyHead,
+    familyHeadAfter: exactPostShipFamilyHead,
   });
   return { ok: true, ran: true };
 }
