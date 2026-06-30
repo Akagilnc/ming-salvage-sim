@@ -30,9 +30,8 @@
  *   - recordAborted            → the #296 in-memory back-compat seam (a no-op
  *     here): the durable PHASE-LEVEL `aborted` entry is `recordDurableAbort`'s job
  *     (verifyCmr.ts calls both; only the durable writer appends — exactly one entry).
- *   - escalateFamily           → a durable stuck-point record (ADR 0017/0018 升级
- *     续跑: 卡点 → 返回调用端 → resumeSession 注入; the卡点 must survive the process,
- *     so it is persisted alongside the ledger).
+ *   - escalateFamily           → a durable family-ledger decision escalation
+ *     (ADR 0017/0018 升级续跑: 卡点 → 返回调用端 → append answer → resume).
  *   - reconcileGit()           → the {@link ReconcileGit} four predicates over
  *     `git rev-parse` / `git rev-parse --verify` / `git merge-base --is-ancestor`.
  *
@@ -88,6 +87,7 @@ import {
   familyShipWorkerSpec,
   legacyDispatchFamilyWorker,
 } from "./dispatchFamilyWorker.js";
+import { recordFamilyEscalated } from "./ledger.js";
 import {
   isFilledString,
   shipOutcomeFromResult,
@@ -120,8 +120,6 @@ import type {
 
 /** The family-ledger sibling filename (under {@link RealFamilyBackendOptions.ledgerDir}). */
 export const FAMILY_LEDGER_FILENAME = "family-ledger.jsonl";
-/** The durable escalate stuck-point filename (a sibling of the family ledger). */
-export const FAMILY_ESCALATION_FILENAME = "family-escalations.jsonl";
 
 /**
  * Where the agy (antigravity / gemini) CLI reads its OAuth token + writes its
@@ -177,16 +175,10 @@ const CMR_SOUL = "cmr";
  */
 const SHIP_SOUL: StepSoul = "ship";
 
-/**
- * One durable escalate stuck-point (ADR 0022 decision 4: 卡点 → 返回调用端 → 拍 →
- * resumeSession). Persisted so the卡点 survives the process — the caller surfaces
- * it to a human, and a re-entry rebuilds the dependency graph from live GitHub
- * (the spine's `refetchEpic`/`reconcileGit` resume entry) rather than from this
- * record. The record is the OBSERVABILITY trail, not the resume state itself.
- */
+/** Compatibility read model for durable family-ledger escalation rows. */
 export interface FamilyEscalationRecord extends FamilyEscalation {
-  /** ISO timestamp the stuck-point was recorded. */
-  readonly ts: string;
+  readonly escalationKind?: FamilyLedgerEntry["escalationKind"];
+  readonly familyHeadAfter?: string;
 }
 
 /** Options for {@link RealFamilyBackend}. */
@@ -1698,43 +1690,29 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   async escalateFamily(escalation: FamilyEscalation): Promise<void> {
-    // Persist the卡点 durably (ADR 0017/0018 升级续跑: 卡点 → 返回调用端 → 拍 →
-    // resumeSession). The record must survive the process so the caller can surface
-    // it + a re-entry rebuilds the graph from live GitHub (the spine's resume
-    // entry); this is the observability trail. Append-only, a sibling of the ledger.
-    mkdirSync(this.opts.ledgerDir, { recursive: true });
-    const record: FamilyEscalationRecord = {
+    // Persist the decision pause on the append-only FAMILY LEDGER itself (#439).
+    // This is the resume truth the family runner reads: no later
+    // `escalation_answered` row keeps the run paused; a later answer reopens it.
+    await recordFamilyEscalated(this, {
+      escalationKind: "decision",
+      phase: "final",
       reason: escalation.reason,
-      ts: new Date().toISOString(),
-    };
-    appendFileSync(
-      join(this.opts.ledgerDir, FAMILY_ESCALATION_FILENAME),
-      JSON.stringify(record) + "\n",
-      "utf8",
-    );
+      familyHeadAfter: escalation.familyHeadAfter,
+    });
   }
 
   /** Read the durable escalate stuck-points (for the caller / a re-entry). */
   async readEscalations(): Promise<ReadonlyArray<FamilyEscalationRecord>> {
-    let raw: string;
-    try {
-      raw = readFileSync(join(this.opts.ledgerDir, FAMILY_ESCALATION_FILENAME), "utf8");
-    } catch (err) {
-      // Same fail-closed rule as readFamilyLedger (codex R2): a missing file
-      // (ENOENT) is an empty set, but an unreadable-but-PRESENT escalation log
-      // (EACCES / EISDIR / IO error) must rethrow — hiding a stuck-point read
-      // failure as "no escalations" would lose the durable卡点 a re-entry surfaces.
-      if (isFileNotFound(err)) return [];
-      throw new Error(
-        `readEscalations: failed to read the escalation log at ` +
-          `${join(this.opts.ledgerDir, FAMILY_ESCALATION_FILENAME)} — ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    return raw
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l) as FamilyEscalationRecord);
+    return (await this.readFamilyLedger())
+      .filter((entry) => entry.status === "escalated" && entry.event === "escalated")
+      .map((entry) => ({
+        reason:
+          typeof entry.reason === "string" && entry.reason.trim().length > 0
+            ? entry.reason
+            : "family escalation",
+        escalationKind: entry.escalationKind,
+        familyHeadAfter: entry.familyHeadAfter,
+      }));
   }
 
   // ─────────────────────────── reconcile git seam ───────────────────────────

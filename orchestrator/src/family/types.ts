@@ -433,11 +433,11 @@ export interface FamilyBackend {
    */
   recordAborted?(event: FamilyAbortedEvent): Promise<void>;
   /**
-   * #298-OWNED escalate seam — #296 only CALLS it. A NOT-converged integrated cmr
-   * (decision 3⑥) escalates续跑 (复用 ADR 0017/0018 的升级续跑: 卡点 → 返回调用端
-   * → 拍 → resumeSession 注入). #296 does NOT build the escalate machine — it
-   * hands the non-convergence reason to #298's seam. Optional ⇒ a backend without
-   * it surfaces the red purely via the returned `{ok:false}`.
+   * #298-OWNED escalate seam. A NOT-converged integrated cmr or family ship
+   * HITL (decision 3⑥/4) records a decision escalation in the append-only family
+   * ledger. A later `escalation_answered` row reopens the family runner; without
+   * that answer the runner stays paused. Optional ⇒ a backend without it surfaces
+   * the red purely via the returned `{ok:false}`.
    */
   escalateFamily?(escalation: FamilyEscalation): Promise<void>;
 }
@@ -541,13 +541,14 @@ export interface FamilyAbortedEvent {
 
 /**
  * The escalation #296 hands to #298's `escalateFamily` seam when the integrated
- * cmr does not converge (ADR 0022 decision 3⑥/4 → 升级续跑). The CONCRETE
- * escalate/resume machine is #298's (复用 ADR 0017/0018); this is the minimal
- * call shape #296 depends on.
+ * cmr does not converge or family ship hits HITL (ADR 0022 decision 3⑥/4 →
+ * 升级续跑).
  */
 export interface FamilyEscalation {
-  /** Why the integrated cmr did not converge (the cross-slice-seam finding). */
+  /** Why the family gate paused. */
   readonly reason: string;
+  /** Family base HEAD at the pause point, when known. */
+  readonly familyHeadAfter?: string;
 }
 
 /** What the merger needs to merge one child branch into the family base. */
