@@ -59,6 +59,8 @@ import {
   type GhBlockedBy,
   type GhIssueJson,
 } from "../src/realBackend.js";
+import type { StepSpec } from "../src/types.js";
+import type * as sc from "@ai-hero/sandcastle";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
 // brief); S1's `extractAgentBrief` is the surviving brief reader.
 import { StructuredOutputError } from "@ai-hero/sandcastle";
@@ -965,6 +967,102 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
           promptsDir: "/definitely/not/a/real/dir/xyz",
         }),
     ).toThrow(/does not exist/);
+  });
+});
+
+// ─── #286 toolchain preflight before agent dispatch ─────────────────────────
+
+describe("RealBackend runStep toolchain preflight (#286)", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const realPromptsDir = join(here, "..", "prompts");
+
+  const coderSpec: StepSpec = {
+    id: "S2",
+    role: "coder",
+    promptFile: "coder_implement.md",
+    model: "gpt-5.5",
+    completionSignal: "CODER_STEP_COMPLETE",
+    maxIter: 5,
+    soul: "coder",
+    toolchain: ["python", "node", "npm", "typescript"],
+  };
+
+  class PreflightBackend extends RealBackend {
+    public agentRunReached = false;
+    public agentResult?: Awaited<ReturnType<typeof sc.run>>;
+    public preflightResults = new Map<string, boolean>();
+
+    protected override cloneDirExists(): boolean {
+      return true;
+    }
+
+    protected override sh(file: string, args: string[]): string {
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+        return ".git";
+      }
+      return "";
+    }
+
+    protected override async preflightToolchainTool(tool: string): Promise<void> {
+      if (this.preflightResults.get(tool) === false) {
+        throw new Error(`${tool}: command not found`);
+      }
+    }
+
+    protected override async runAgentSandbox(
+      _options: Parameters<typeof sc.run>[0],
+    ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+      this.agentRunReached = true;
+      if (this.agentResult !== undefined) return this.agentResult;
+      throw new Error("agent sandbox should not run during this test");
+    }
+  }
+
+  function makeBackend(): PreflightBackend {
+    return new PreflightBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 286,
+      repo: "owner/name",
+      imageName: "ming-worker:bad",
+      promptsDir: realPromptsDir,
+    });
+  }
+
+  it("fails before the agent sandbox when the declared image lacks a tool", async () => {
+    const backend = makeBackend();
+    backend.preflightResults.set("npm", false);
+
+    await expect(
+      backend.runStep(coderSpec, {
+        branch: "feat/issue-286",
+        base: "main",
+        path: "/tmp/worktree/issue-286",
+      }),
+    ).rejects.toThrow(/toolchain preflight.*ming-worker:bad.*npm/is);
+    expect(backend.agentRunReached).toBe(false);
+  });
+
+  it("continues to the agent sandbox when all declared tools exist", async () => {
+    const backend = makeBackend();
+    backend.agentResult = {
+      completionSignal: "CODER_STEP_COMPLETE",
+      stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
+      commits: [],
+      iterations: [{ sessionId: "sess-286" }],
+    } as Awaited<ReturnType<typeof sc.run>>;
+
+    const result = await backend.runStep(coderSpec, {
+      branch: "feat/issue-286",
+      base: "main",
+      path: "/tmp/worktree/issue-286",
+    });
+
+    expect(backend.agentRunReached).toBe(true);
+    expect(result).toEqual({
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
+      sessionId: "sess-286",
+    });
   });
 });
 

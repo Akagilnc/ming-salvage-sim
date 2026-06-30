@@ -1336,6 +1336,11 @@ export function promptsDirError(
   return undefined;
 }
 
+function toolchainVersionCommand(tool: string): string[] {
+  if (tool === "typescript") return ["tsc", "--version"];
+  return [tool, "--version"];
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Container glue (MANUAL smoke; not in the zero-container automated suite)
 // ════════════════════════════════════════════════════════════════════════════
@@ -1450,6 +1455,7 @@ const coderOutputSchema = z.object({
 export class RealBackend implements Backend {
   private readonly opts: RealBackendOptions;
   private readonly ownerLogin: string;
+  private readonly preflightedToolchains = new Set<string>();
   /**
    * The dedicated clone this invocation owns (ADR 0024). All resident slice
    * worktrees are cut from HERE, and every internal git/Sandcastle op anchors on
@@ -1951,6 +1957,42 @@ export class RealBackend implements Backend {
   }
 
   /**
+   * #286 decision: implement the StepSpec.toolchain assertion instead of
+   * downgrading it to documentation. Sandcastle v0.10.0 exposes no public
+   * `sandbox.exec()` on the consumer sandbox, so the cheapest no-LLM preflight is
+   * a direct one-shot `docker run --rm <image> <tool> --version` against the same
+   * profile image, before any agent `sc.run()` can burn model time.
+   */
+  private async preflightToolchain(spec: StepSpec): Promise<void> {
+    const tools = [...new Set(spec.toolchain)];
+    if (tools.length === 0) return;
+    const cacheKey = `${this.opts.imageName}\0${tools.join("\0")}`;
+    if (this.preflightedToolchains.has(cacheKey)) return;
+    for (const tool of tools) {
+      try {
+        await this.preflightToolchainTool(tool);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `RealBackend toolchain preflight failed for image ` +
+            `"${this.opts.imageName}": missing or unusable tool "${tool}" ` +
+            `(${toolchainVersionCommand(tool).join(" ")}). ${detail}`,
+        );
+      }
+    }
+    this.preflightedToolchains.add(cacheKey);
+  }
+
+  protected async preflightToolchainTool(tool: string): Promise<void> {
+    this.sh("docker", [
+      "run",
+      "--rm",
+      this.opts.imageName,
+      ...toolchainVersionCommand(tool),
+    ]);
+  }
+
+  /**
    * The docker options the agent sandbox runs under — the pure SANDBOX-CONFIG
    * seam (mirrors the family `mergerSandboxConfig()` testability pattern). No
    * container, no I/O: a unit test asserts the mounts + soul env without spinning
@@ -2166,7 +2208,8 @@ export class RealBackend implements Backend {
     coderCommitCount?: (result: Pick<RunResultLike, "commits">) => number,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
-    const result = await sc.run({
+    await this.preflightToolchain(spec);
+    const result = await this.runAgentSandbox({
       name: `${spec.id}-${spec.role}`,
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: worktree.path,
@@ -2223,8 +2266,9 @@ export class RealBackend implements Backend {
     const issueNumber = this.issueOf(worktree);
     const beforeResumeHead =
       spec.role === "coder" ? await this.worktreeHead(worktree) : undefined;
+    await this.preflightToolchain(spec);
     try {
-      const result = await sc.run({
+      const result = await this.runAgentSandbox({
         name: `${spec.id}-${spec.role}-resume`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
@@ -2293,6 +2337,12 @@ export class RealBackend implements Backend {
       }
       throw err;
     }
+  }
+
+  protected async runAgentSandbox(
+    options: Parameters<typeof sc.run>[0],
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    return await sc.run(options);
   }
 
   // ── S7: ship WORKER (invoke gstack-ship) ────────────────────────────────────
