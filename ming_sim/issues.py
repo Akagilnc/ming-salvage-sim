@@ -1278,7 +1278,7 @@ _GATE_AGG_FUNCS = {
     "max": max,
     "min": min,
     "sum": sum,
-    "avg": lambda xs: sum(xs) // max(1, len(xs)),
+    "avg": lambda xs: sum(xs) / max(1, len(xs)),
 }
 
 
@@ -1330,8 +1330,8 @@ def _gate_sql_field(table: str, field: str, key: str, *, kind: str) -> str:
     return field
 
 
-def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[int]:
-    """把 gate key 解析成一个 int 值。形式：
+def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[float]:
+    """把 gate key 解析成一个数值。形式：
       - 'metric_name'                           → metrics[key]
       - 'region.<id>.<field>'                   → regions 表
       - 'region.<id1>|<id2>|.<field>.<agg>'     → 多省聚合 (max/min/avg/sum)
@@ -1377,7 +1377,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
     if not ids:
         return None
     # class 表的 id 是 name 或 name@region；其它表 id 就是行 id
-    values: List[int] = []
+    values: List[float] = []
     for cid in ids:
         row = None
         if table == "event":
@@ -1410,9 +1410,9 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
         if row is None:
             return None
         try:
-            values.append(int(row[0]))
+            values.append(float(row[0]))
         except ValueError as exc:
-            # 非数值字符串 = 数值 cond 配了文本字段（如 region.x.controlled_by >=1）→ str 列 int 不动。
+            # 非数值字符串 = 数值 cond 配了文本字段（如 region.x.controlled_by >=1）→ 数值转换不动。
             # fail-loud 成清晰 content 错误（#159；Q3：trigger_gate 字段类型错属静态 content schema 错，
             # 不静默回 None 当条件不满足）。NULL/None 走 TypeError 分支视同不达标（合法数据，非内容错）。
             raise ValueError(
