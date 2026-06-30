@@ -12,9 +12,11 @@
 """
 import json
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
+import ming_sim.content as content_mod
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
@@ -39,6 +41,119 @@ def fresh_db(tmp_path):
 def _read_settle(db, region_id="shaanxi"):
     row = db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", (region_id,)).fetchone()
     return json.loads(str(row["fiscal"] or "{}")).get("settle")
+
+
+def _region_with_settle(settle):
+    return {
+        "id": "test_province",
+        "name": "测试省",
+        "kind": "布政司",
+        "population": 1,
+        "public_support": 50,
+        "unrest": 0,
+        "natural_disaster": "无",
+        "human_disaster": "无",
+        "registered_land": 1,
+        "hidden_land": 1,
+        "tax_per_turn": 1,
+        "grain_security": 1,
+        "gentry_resistance": 0,
+        "military_pressure": 0,
+        "status": "测试",
+        "controlled_by": "ming",
+        "fiscal": {"settle": settle},
+    }
+
+
+def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
+    region = _region_with_settle({
+        "_meta_defaults": "ming_province",
+        "_meta": {
+            "postures": ["江南财赋核心"],
+            "notes": {"漕粮": "保留省份专属说明"},
+        },
+        "st": {},
+        "p": {},
+    })
+    fake_regions = {
+        "settle_meta_defaults": {
+            "ming_province": {
+                "provisional": ["宗禄", "起运定额", "官民田", "隐田"],
+                "levies": {"seeded": ["辽饷"], "not_seeded": ["剿饷", "练饷"]},
+                "notes": {"起运定额": "#259 后由饷率通道动态接管、此值届时失效"},
+            }
+        },
+        "regions": [region],
+    }
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda name: fake_regions)
+
+    loaded = content_mod.load_region_content()["test_province"].fiscal["settle"]
+
+    assert "_meta_defaults" not in loaded
+    assert loaded["_meta"]["provisional"] == ["宗禄", "起运定额", "官民田", "隐田"]
+    assert loaded["_meta"]["levies"]["seeded"] == ["辽饷"]
+    assert loaded["_meta"]["levies"]["not_seeded"] == ["剿饷", "练饷"]
+    assert loaded["_meta"]["postures"] == ["江南财赋核心"]
+    assert loaded["_meta"]["notes"]["起运定额"].startswith("#259")
+    assert loaded["_meta"]["notes"]["漕粮"] == "保留省份专属说明"
+
+
+@pytest.mark.parametrize("bad_defaults", [None, [], "not-a-dict"])
+def test_region_loader_rejects_bad_shared_settle_meta_defaults_container(monkeypatch, bad_defaults):
+    fake_regions = {
+        "settle_meta_defaults": bad_defaults,
+        "regions": [_region_with_settle({"st": {}, "p": {}})],
+    }
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda name: fake_regions)
+
+    with pytest.raises(SystemExit, match="content/regions.json.settle_meta_defaults"):
+        content_mod.load_region_content()
+
+
+def test_region_loader_rejects_bad_plain_settle_meta(monkeypatch):
+    fake_regions = {
+        "regions": [_region_with_settle({"_meta": [], "st": {}, "p": {}})],
+    }
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda name: fake_regions)
+
+    with pytest.raises(SystemExit, match="_meta 必须是 JSON 对象"):
+        content_mod.load_region_content()
+
+
+@pytest.mark.parametrize(
+    "settle,defaults,error",
+    [
+        (
+            {"_meta_defaults": "", "_meta": {}, "st": {}, "p": {}},
+            {"ming_province": {}},
+            "_meta_defaults 必须是非空字符串",
+        ),
+        (
+            {"_meta_defaults": "missing_group", "_meta": {}, "st": {}, "p": {}},
+            {"ming_province": {}},
+            "_meta_defaults 指向未知默认组：missing_group",
+        ),
+        (
+            {"_meta_defaults": "ming_province", "_meta": [], "st": {}, "p": {}},
+            {"ming_province": {}},
+            "_meta 必须是 JSON 对象",
+        ),
+        (
+            {"_meta_defaults": "ming_province", "_meta": {}, "st": {}, "p": {}},
+            {"ming_province": []},
+            "settle_meta_defaults.ming_province 必须是 JSON 对象",
+        ),
+    ],
+)
+def test_region_loader_rejects_bad_settle_meta_defaults(monkeypatch, settle, defaults, error):
+    fake_regions = {
+        "settle_meta_defaults": defaults,
+        "regions": [_region_with_settle(settle)],
+    }
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda name: fake_regions)
+
+    with pytest.raises(SystemExit, match=error):
+        content_mod.load_region_content()
 
 
 ZHONGYUAN_JINGSHI_GOLDEN = {
@@ -890,6 +1005,39 @@ def test_all_ming_settle_substrates_advance_with_observable_shadow_tlog(fresh_ga
     assert _read_settle(db, "henan")["st"]["宗禄欠"] > 0, "周/福藩重省应有宗禄欠压"
     assert _read_settle(db, "huguang")["p"]["Due"]["宗禄"] > _read_settle(db, "nanzhili")["p"]["Due"]["宗禄"], \
         "楚藩重省宗禄 Due 应重于江南基准"
+
+
+def test_shadow_spine_uses_batch_bridge_without_per_region_reload(fresh_game, monkeypatch):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    msgs: list[str] = []
+    calls = {"batch": 0}
+    monkeypatch.setattr(flows_mod, "tlog", msgs.append)
+
+    def fake_batch_bridge():
+        calls["batch"] += 1
+        return [
+            SimpleNamespace(
+                region_id="shaanxi",
+                error=None,
+                result=SimpleNamespace(
+                    breakdown={"实征": 1.2, "起运到京": 0.3, "火耗实收": 0.4},
+                    new_st={"军饷欠": 2, "官俸欠": 0, "宗禄欠": 0, "民欠旧赋": 1},
+                ),
+            )
+        ]
+
+    def fail_single_region_reload(*args, **kwargs):
+        raise AssertionError("shadow spine must use the batch fiscal payload bridge")
+
+    monkeypatch.setattr(db, "settle_ming_province_substrate_ticks", fake_batch_bridge)
+    monkeypatch.setattr(db, "settle_province_tick", fail_single_region_reload)
+
+    flows_mod._advance_province_fiscal_substrate(db, state)
+
+    assert calls["batch"] == 1
+    assert any("[fiscal-substrate] shaanxi 推进：" in msg for msg in msgs)
 
 
 def test_seeded_substrates_keep_multi_tick_historical_trajectories(fresh_db):
