@@ -6,6 +6,7 @@ GameContent.load() 显式调用——模块导入本身不读盘、无副作用�
 
 from __future__ import annotations
 
+import copy
 import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Tuple
@@ -285,8 +286,47 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
     return events
 
 
+def _deep_merge_content_defaults(defaults: Dict[str, object], overrides: Dict[str, object]) -> Dict[str, object]:
+    merged = copy.deepcopy(defaults)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_content_defaults(merged[key], value)  # type: ignore[arg-type]
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
+def _normalize_settle_meta_defaults(
+    fiscal_raw: Dict[str, object],
+    settle_meta_defaults: Dict[str, object],
+    ctx: str,
+) -> Dict[str, object]:
+    fiscal = dict(fiscal_raw)
+    settle_raw = fiscal.get("settle")
+    if not isinstance(settle_raw, dict) or "_meta_defaults" not in settle_raw:
+        return fiscal
+
+    default_name = settle_raw.get("_meta_defaults")
+    if not isinstance(default_name, str) or not default_name.strip():
+        raise SystemExit(f"{ctx}.fiscal.settle._meta_defaults 必须是非空字符串。")
+    defaults_raw = settle_meta_defaults.get(default_name.strip())
+    if not isinstance(defaults_raw, dict):
+        raise SystemExit(f"{ctx}.fiscal.settle._meta_defaults 指向未知默认组：{default_name}。")
+
+    meta_raw = settle_raw.get("_meta") or {}
+    if not isinstance(meta_raw, dict):
+        raise SystemExit(f"{ctx}.fiscal.settle._meta 必须是 JSON 对象。")
+
+    settle = dict(settle_raw)
+    settle["_meta"] = _deep_merge_content_defaults(defaults_raw, meta_raw)
+    settle.pop("_meta_defaults", None)
+    fiscal["settle"] = settle
+    return fiscal
+
+
 def load_region_content() -> Dict[str, Region]:
     data = require_dict(load_json_asset("regions.json"), "regions.json")
+    settle_meta_defaults = require_dict(data.get("settle_meta_defaults") or {}, "regions.json.settle_meta_defaults")
     regions: Dict[str, Region] = {}
     for idx, raw in enumerate(require_list(data.get("regions"), "regions.json.regions"), 1):
         item = require_dict(raw, f"regions.json.regions[{idx}]")
@@ -295,6 +335,7 @@ def load_region_content() -> Dict[str, Region]:
         fiscal_raw = item.get("fiscal")
         if not isinstance(fiscal_raw, dict):
             raise SystemExit(f"{ctx}.fiscal 必须是 JSON 对象，实际为 {type(fiscal_raw).__name__}。")
+        fiscal = _normalize_settle_meta_defaults(fiscal_raw, settle_meta_defaults, ctx)
         regions[region_id] = Region(
             id=region_id,
             name=str_field(item, "name", ctx),
@@ -312,7 +353,7 @@ def load_region_content() -> Dict[str, Region]:
             military_pressure=int_field(item, "military_pressure", ctx),
             status=str_field(item, "status", ctx),
             controlled_by=str_field(item, "controlled_by", ctx),
-            fiscal=dict(fiscal_raw),
+            fiscal=fiscal,
             on_restore=dict(item.get("on_restore") or {}),
         )
     if not regions:
