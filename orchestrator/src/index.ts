@@ -29,10 +29,11 @@ export {
   runFamilyDriver,
   readFamilyEpic,
   buildFamilyEpic,
+  parseSubIssueAdmission,
   parseSubIssueNumbers,
   cutFamilyBase,
 } from "./familyDriver.js";
-export type { FamilyDriverOptions, Sh } from "./familyDriver.js";
+export type { FamilyDriverOptions, Sh, SubIssueAdmission } from "./familyDriver.js";
 export { selectWave } from "./family/commander.js";
 export { mergeChild } from "./family/merger.js";
 export { recordMerged, recordAborted, mergedSet } from "./family/ledger.js";

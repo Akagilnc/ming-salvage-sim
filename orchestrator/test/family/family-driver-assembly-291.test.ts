@@ -29,6 +29,7 @@ import {
   cutFamilyBase,
   FamilyExternalBlockerError,
   inferVerifyCwd,
+  parseSubIssueAdmission,
   parseSubIssueNumbers,
   readFamilyEpic,
   type Sh,
@@ -124,6 +125,25 @@ describe("#291 parseSubIssueNumbers", () => {
     };
     expect(parseSubIssueNumbers(parsed)).toEqual([378]);
   });
+  it("keeps open non-ready and parent children; admission filtering lives in parseSubIssueAdmission (#436)", () => {
+    const parsed = {
+      subIssues: {
+        nodes: [
+          { number: 341, state: "CLOSED", labels: [{ name: "ready-for-agent" }] },
+          { number: 370, state: "OPEN", labels: [{ name: "enhancement" }] },
+          {
+            number: 378,
+            state: "OPEN",
+            labels: [{ name: "ready-for-agent" }],
+            sub_issues_summary: { total: 2 },
+          },
+          { number: 99, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+        ],
+      },
+    };
+
+    expect(parseSubIssueNumbers(parsed)).toEqual([370, 378, 99]);
+  });
   it("returns [] for a missing / non-object subIssues (never throws)", () => {
     expect(parseSubIssueNumbers({})).toEqual([]);
     expect(parseSubIssueNumbers({ subIssues: null })).toEqual([]);
@@ -132,6 +152,43 @@ describe("#291 parseSubIssueNumbers", () => {
   it("a null / undefined `parsed` (e.g. JSON.parse returned null) ⇒ [] (never a TypeError) (online R2 Gemini)", () => {
     expect(parseSubIssueNumbers(null)).toEqual([]);
     expect(parseSubIssueNumbers(undefined)).toEqual([]);
+  });
+});
+
+describe("#436 parseSubIssueAdmission", () => {
+  it("returns admitted children plus visible skip reasons for full family admission", () => {
+    const parsed = [
+      { number: 341, state: "CLOSED", labels: [{ name: "ready-for-agent" }] },
+      { number: 370, state: "OPEN", labels: [{ name: "enhancement" }] },
+      {
+        number: 378,
+        state: "OPEN",
+        labels: [{ name: "ready-for-agent" }],
+        sub_issues_summary: { total: 2 },
+      },
+      { number: 99, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+    ];
+
+    expect(parseSubIssueAdmission(parsed)).toEqual({
+      admitted: [99],
+      skipped: [
+        {
+          issue: 341,
+          reason: "closed",
+          message: "family admission skipped child #341: issue is CLOSED",
+        },
+        {
+          issue: 370,
+          reason: "not_ready_for_agent",
+          message: "family admission skipped child #370: missing ready-for-agent label",
+        },
+        {
+          issue: 378,
+          reason: "parent_issue",
+          message: "family admission skipped child #378: issue is a parent issue",
+        },
+      ],
+    });
   });
 });
 
