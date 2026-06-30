@@ -110,6 +110,16 @@ def test_region_loader_rejects_bad_shared_settle_meta_defaults_container(monkeyp
         content_mod.load_region_content()
 
 
+def test_region_loader_rejects_bad_plain_settle_meta(monkeypatch):
+    fake_regions = {
+        "regions": [_region_with_settle({"_meta": [], "st": {}, "p": {}})],
+    }
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda name: fake_regions)
+
+    with pytest.raises(SystemExit, match="_meta 必须是 JSON 对象"):
+        content_mod.load_region_content()
+
+
 @pytest.mark.parametrize(
     "settle,defaults,error",
     [

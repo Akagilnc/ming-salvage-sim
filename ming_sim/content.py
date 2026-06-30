@@ -303,7 +303,20 @@ def _normalize_settle_meta_defaults(
 ) -> Dict[str, object]:
     fiscal = dict(fiscal_raw)
     settle_raw = fiscal.get("settle")
-    if not isinstance(settle_raw, dict) or "_meta_defaults" not in settle_raw:
+    if not isinstance(settle_raw, dict):
+        return fiscal
+
+    meta_raw = settle_raw.get("_meta", {})
+    if meta_raw is None:
+        meta_raw = {}
+    if not isinstance(meta_raw, dict):
+        raise SystemExit(f"{ctx}.fiscal.settle._meta 必须是 JSON 对象。")
+
+    if "_meta_defaults" not in settle_raw:
+        if settle_raw.get("_meta") is None and "_meta" in settle_raw:
+            settle = dict(settle_raw)
+            settle["_meta"] = {}
+            fiscal["settle"] = settle
         return fiscal
 
     default_name = settle_raw.get("_meta_defaults")
@@ -315,12 +328,6 @@ def _normalize_settle_meta_defaults(
     defaults_raw = settle_meta_defaults[default_key]
     if not isinstance(defaults_raw, dict):
         raise SystemExit(f"content/regions.json.settle_meta_defaults.{default_key} 必须是 JSON 对象。")
-
-    meta_raw = settle_raw.get("_meta", {})
-    if meta_raw is None:
-        meta_raw = {}
-    if not isinstance(meta_raw, dict):
-        raise SystemExit(f"{ctx}.fiscal.settle._meta 必须是 JSON 对象。")
 
     settle = dict(settle_raw)
     settle["_meta"] = _deep_merge_content_defaults(defaults_raw, meta_raw)
