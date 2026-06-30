@@ -64,4 +64,30 @@ describe("ArmyDrawer presentation", () => {
     expect(host.textContent).not.toContain("63万两");
     expect(host.textContent).not.toContain("忠诚73");
   });
+
+  it("renders fractional payload arrears with half-step approximation", () => {
+    const host = renderArmyDrawer({
+      id: "denglai",
+      name: "登莱兵与水师",
+      station: "山东 / 登莱",
+      theater: "山东",
+      commander: "登莱巡抚",
+      controller: "兵部",
+      troop_type: "水师、火器兵、步卒",
+      manpower: 26000,
+      army_needed: 4,
+      supply: 73,
+      morale: 73,
+      training: 73,
+      equipment: 73,
+      arrears: 12.5,
+      mobility: 73,
+      loyalty: 73,
+      status: "可支援辽东和海运",
+      owner_power: "ming",
+    });
+
+    expect(host.textContent).toContain("欠饷约15万两");
+    expect(host.textContent).not.toContain("12.5万两");
+  });
 });
