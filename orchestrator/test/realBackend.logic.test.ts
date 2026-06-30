@@ -1025,6 +1025,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     public agentRunReached = false;
     public agentResult?: Awaited<ReturnType<typeof sc.run>>;
     public preflightResults = new Map<string, boolean>();
+    public preflightHook?: (tool: string) => Promise<void>;
 
     protected override cloneDirExists(): boolean {
       return true;
@@ -1038,6 +1039,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     }
 
     protected override async preflightToolchainTool(tool: string): Promise<void> {
+      if (this.preflightHook !== undefined) return this.preflightHook(tool);
       if (this.preflightResults.get(tool) === false) {
         throw new Error(`${tool}: command not found`);
       }
@@ -1097,6 +1099,33 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       output: { kind: "coder", committed: false, commitsAdded: 0 },
       sessionId: "sess-286",
     });
+  });
+
+  it("shares an in-flight toolchain preflight across concurrent agent dispatches", async () => {
+    const backend = makeBackend();
+    const preflightCalls: string[] = [];
+    backend.preflightHook = async (tool: string): Promise<void> => {
+      preflightCalls.push(tool);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    };
+    backend.agentResult = {
+      completionSignal: "CODER_STEP_COMPLETE",
+      stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
+      commits: [],
+      iterations: [{ sessionId: "sess-286" }],
+    } as Awaited<ReturnType<typeof sc.run>>;
+    const worktree = {
+      branch: "feat/issue-286",
+      base: "main",
+      path: "/tmp/worktree/issue-286",
+    };
+
+    await Promise.all([
+      backend.runStep(coderSpec, worktree),
+      backend.runStep(coderSpec, worktree),
+    ]);
+
+    expect(preflightCalls).toEqual(["python", "node", "npm", "typescript"]);
   });
 });
 

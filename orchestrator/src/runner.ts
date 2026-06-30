@@ -1260,12 +1260,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * ledger discipline but tags the S8 entry 'escalate', so a re-feed's planResume
    * Case 3a reports `terminalStatus:"escalate"` (an honest escalate handoff).
    *
-   * The worker `sessionId` is PERSISTED on the failing-step entry (resume truth)
-   * so the data for a future human-answer RESUME exists. #331 scope: a re-feed
-   * reports the escalate cleanly; REOPENING the S7 ship worker in its session
-   * (S7 escalate-resume) is #336's concern (the real gstack-ship STOP/HITL with
-   * resume指引) — the legacy ship wrapper never escalates, so #331 needs only the
-   * honest terminal + the recorded session id, not a new S7 resume entry path.
+   * The worker `sessionId` is PERSISTED on the failing-step entry (resume truth).
+   * A later append-only answer row reopens S7 through `planResume`: the stale
+   * S7/S8 pause is truncated from the in-memory ledger and the ship worker is
+   * re-dispatched with the human answer in its focus file.
    */
   async function escalateTermination(
     failedStep: StepId,

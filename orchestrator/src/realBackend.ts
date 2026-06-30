@@ -1459,6 +1459,7 @@ export class RealBackend implements Backend {
   private readonly opts: RealBackendOptions;
   private readonly ownerLogin: string;
   private readonly preflightedToolchains = new Set<string>();
+  private readonly inFlightToolchainPreflights = new Map<string, Promise<void>>();
   /**
    * The dedicated clone this invocation owns (ADR 0024). All resident slice
    * worktrees are cut from HERE, and every internal git/Sandcastle op anchors on
@@ -1971,6 +1972,24 @@ export class RealBackend implements Backend {
     if (tools.length === 0) return;
     const cacheKey = `${this.opts.imageName}\0${tools.join("\0")}`;
     if (this.preflightedToolchains.has(cacheKey)) return;
+    const inFlight = this.inFlightToolchainPreflights.get(cacheKey);
+    if (inFlight !== undefined) {
+      await inFlight;
+      return;
+    }
+    const run = this.runToolchainPreflight(tools, cacheKey);
+    this.inFlightToolchainPreflights.set(cacheKey, run);
+    try {
+      await run;
+    } finally {
+      this.inFlightToolchainPreflights.delete(cacheKey);
+    }
+  }
+
+  private async runToolchainPreflight(
+    tools: ReadonlyArray<string>,
+    cacheKey: string,
+  ): Promise<void> {
     for (const tool of tools) {
       try {
         await this.preflightToolchainTool(tool);
