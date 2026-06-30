@@ -589,6 +589,9 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # cutover 后省份额由 substrate bridge 推进；本段只保留中央京运份额的国库实发/欠发路径。
     pay_source_cutover = db.is_army_pay_source_cutover_enabled()
     if pay_source_cutover:
+        db._current_month_central_pay_shortfalls = {}
+        db._current_month_pay_opening_arrears = {}
+    if pay_source_cutover:
         army_rows_raw = db.conn.execute(
             """
             SELECT id, name, manpower, salary_rate, owner_power, arrears, morale,
@@ -622,7 +625,8 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     for row in ordered:
         army_id = str(row["id"])
         name = str(row["name"])
-        needed = army_needed(row)  # #44 应发挂钩兵力(ceil(manpower×salary_rate/10000)，仅 ming)
+        full_needed = army_needed(row)  # #44 应发挂钩兵力(ceil(manpower×salary_rate/10000)，仅 ming)
+        needed = full_needed
         if pay_source_cutover:
             needed = needed * float(row["central_pay_share"] or 0)
         if needed <= 0:
@@ -648,11 +652,17 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             province_arrears = float(row["province_pay_arrears"] or 0)
             central_arrears = max(0.0, old_central_arrears + shortfall)
             new_arrears = max(0.0, province_arrears + central_arrears)
+            db._current_month_central_pay_shortfalls[army_id] = shortfall
+            db._current_month_pay_opening_arrears[army_id] = old_arrears
         else:
             central_arrears = 0.0
             new_arrears = max(0, old_arrears + shortfall)
-        if shortfall > 0:
-            morale_delta = -max(1, round(8 * shortfall / needed))
+        province_pay_share = float(row["province_pay_share"] or 0) if pay_source_cutover else 0.0
+        defer_morale_to_province_tick = pay_source_cutover and province_pay_share > 0
+        if defer_morale_to_province_tick:
+            morale_delta = 0
+        elif shortfall > 0:
+            morale_delta = -max(1, round(8 * shortfall / full_needed))
         elif old_arrears == 0:
             morale_delta = +2     # 长期足额且无旧欠：缓慢恢复
         else:
@@ -743,7 +753,16 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # 因此上面的固定收支（田赋/军饷/建筑产出）已自动被修正，无需独立 tick，否则会重复计。
 
     # ── #66 省级财政基座（settle_tick）shadow 推进 ──
-    _advance_province_fiscal_substrate(db, state)
+    try:
+        _advance_province_fiscal_substrate(db, state)
+    finally:
+        if pay_source_cutover:
+            for attr in (
+                "_current_month_central_pay_shortfalls",
+                "_current_month_pay_opening_arrears",
+            ):
+                if hasattr(db, attr):
+                    delattr(db, attr)
     return flows
 
 
