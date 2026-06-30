@@ -122,6 +122,47 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
     expect(familyBackend.merges).toEqual([]);
   });
 
+  it("unanswered family pause reports ledger-merged children and the pause head", async () => {
+    const childBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      {
+        childIssue: 10,
+        status: "merged",
+        childBranch: "feat/child-10",
+      },
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        reason: "cmr needs human disposition",
+        escalationKind: "decision",
+        familyHeadAfter: "head-after-cmr-pause",
+      },
+    );
+
+    const result = await runFamily({
+      epic: {
+        issue: 291,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: childBackend,
+      familyBase: "family/291-base",
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(result.familyHead).toBe("head-after-cmr-pause");
+    expect(result.children).toEqual([
+      { issue: 10, status: "merged" },
+      { issue: 11, status: "skipped" },
+    ]);
+    expect(childBackend.ran).toEqual([]);
+  });
+
   it("an appended answer reopens a family decision escalation through the live refetch path", async () => {
     const staleEpic: FamilyEpic = {
       issue: 291,

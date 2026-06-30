@@ -834,6 +834,9 @@ describe("realBackend classifyResumeError", () => {
     expect(classifyResumeError(new Error("model overloaded"))).toEqual({
       kind: "propagate",
     });
+    expect(
+      classifyResumeError(new Error("could not resume session: 401 unauthorized")),
+    ).toEqual({ kind: "propagate" });
     expect(classifyResumeError("string error")).toEqual({ kind: "propagate" });
   });
 });

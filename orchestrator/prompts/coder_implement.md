@@ -17,6 +17,11 @@ after retry, escalate instead of guessing from stale local context.
 
 Do not use `.orchestrator-snapshot.json` as execution input.
 
+If `ORCHESTRATOR_FIX_FINDINGS_PATH` is set, read that runner-owned JSON file
+before acting. On a resumed decision escalation it may contain
+`escalationAnswer`; apply that human answer and do not repeat the same escalation
+unless the answer leaves a concrete blocker unresolved.
+
 ## Required output
 
 When you are done (or are escalating), emit EXACTLY ONE `<coder>` tag on its own,

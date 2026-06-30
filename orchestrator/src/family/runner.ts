@@ -176,15 +176,19 @@ export async function runFamily(
     `[orchestrator:family] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
   );
   const { familyBackend, singleSliceBackend, familyBase } = input;
-  const priorEscalation = familyEscalationState(
-    await familyBackend.readFamilyLedger(),
-  );
+  const initialFamilyLedger = await familyBackend.readFamilyLedger();
+  const priorEscalation = familyEscalationState(initialFamilyLedger);
   if (priorEscalation !== undefined) {
     const { escalation, answer } = priorEscalation;
     if (escalation.escalationKind === "failure" || answer === undefined) {
+      const ledgerMerged = mergedSet(initialFamilyLedger);
       return {
         status: "escalated",
         familyBase,
+        ...(typeof escalation.familyHeadAfter === "string" &&
+        escalation.familyHeadAfter.trim().length > 0
+          ? { familyHead: escalation.familyHeadAfter }
+          : {}),
         escalation: {
           reason:
             typeof escalation.reason === "string" && escalation.reason.trim().length > 0
@@ -197,7 +201,7 @@ export async function runFamily(
         },
         children: input.epic.children.map((child) => ({
           issue: child.issue,
-          status: "skipped",
+          status: ledgerMerged.has(child.issue) ? "merged" : "skipped",
         })),
       };
     }

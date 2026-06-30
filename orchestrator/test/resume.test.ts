@@ -557,7 +557,7 @@ describe("#439 decision-escalate answer channel", () => {
   });
 
   it("legacy untagged agent decision escalation reopens only after an appended answer", async () => {
-    const backend = new ResumeBackend({
+    const backend = new DispatchRecordingResumeBackend({
       worktree: WORKTREE,
       stateDir: STATE_DIR,
       ledger: [
@@ -582,6 +582,39 @@ describe("#439 decision-escalate answer channel", () => {
 
     expect(result.status).toBe("success");
     expect(backend.resumeSessionCalls[0]).toEqual(["S2", "session-escalated-S2"]);
+    expect(backend.dispatchContexts[0]?.escalationAnswer).toEqual({
+      event: "escalation_answered",
+      forStep: "S2",
+      answer: "continue-with-x-required",
+    });
+  });
+
+  it("malformed answer event rows do not replay as S4 classifications", async () => {
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
+        entry("S4"),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S6", {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
+          ],
+        }),
+        escalationAnswer("S4", "   "),
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S5");
   });
 });
 

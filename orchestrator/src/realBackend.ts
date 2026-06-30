@@ -1239,8 +1239,7 @@ export function classifyResumeError(err: unknown): ResumeRecovery {
   const isDeadSession =
     /\bresume session\b.*\b(not found|missing|expired|dead)\b/i.test(message) ||
     /\bsession\s+(not found|missing|expired|dead)\b/i.test(message) ||
-    /\b(no|missing|expired|dead)\s+(resume\s+)?session\b/i.test(message) ||
-    /\b(cannot|could not)\s+resume\b.*\bsession\b/i.test(message);
+    /\b(no|missing|expired|dead)\s+(resume\s+)?session\b/i.test(message);
   if (isDeadSession) {
     return { kind: "fresh-run" };
   }
