@@ -236,12 +236,11 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
 
 describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 0030)", () => {
   /**
-   * Crash scenario (ADR 0026): the prior run completed S0, S1, S2 (the build
-   * worker committed a reviewed slice) and then died before S7. The ledger on
-   * disk therefore ends at S2 with a committed coder output. Re-feeding the same
-   * issue must reuse the worktree, clean the uncommitted residue, and continue
-   * from S7 (the route() successor of a committed S2 — there is no reviewer step
-   * to walk to anymore; the per-slice loop already ran inside the S2 worker).
+   * Crash scenario (ADR 0030): the prior run completed S0, S1, S2 (the build
+   * worker committed) and then died before review. The ledger on disk therefore
+   * ends at S2 with a committed coder output. Re-feeding the same issue must
+   * reuse the worktree, clean the uncommitted residue, and continue from S3, the
+   * route() successor of a committed S2.
    */
   function crashedAtS2(): ResumeState {
     return {
@@ -675,8 +674,7 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
     // write. planResume drives route({from:'S2', output: thatEntry}); route() is
     // the resume path's ONLY guard on this recorded shape (no isValidStepOutput
     // re-check). It must judge the malformed S2 → S8(error), NOT fall through to
-    // S7 and push unvalidated code. (ADR 0026: there is no reviewer step to
-    // validate on resume — only the recorded S2 coder output.)
+    // the ADR 0030 review/ship path and push unvalidated code.
     const resumeState: ResumeState = {
       worktree: WORKTREE,
       stateDir: STATE_DIR,

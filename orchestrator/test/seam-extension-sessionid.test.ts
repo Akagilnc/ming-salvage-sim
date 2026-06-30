@@ -94,11 +94,9 @@ class SeamExtensionBackend implements Backend {
 
 describe("#256 seam extension — real per-step sessionId in the ledger", () => {
   it("records the real per-step sessionId for the agent step (S2)", async () => {
-    // ADR 0026 (2026-06-24): S2 (the whole-slice build worker) is the ONLY agent
-    // step the runner dispatches — the per-slice review→fix→re-review loop runs
-    // INSIDE the S2 worker's session, so there is no separately-dispatched S3
-    // reviewer step to record a distinct per-step session for. We assert the S2
-    // session is the REAL per-step id surfaced by the seam, not the run-level UUID.
+    // ADR 0030 dispatches per-slice build/review/fix as separate worker steps.
+    // This assertion covers the S2 build worker's REAL per-step id surfaced by
+    // the seam, not the run-level UUID shared by runner-action steps.
     const backend = new SeamExtensionBackend(/*returnStepResult*/ true);
     const result = await runOrchestrator({ issueNumber: 256, backend });
     expect(result.status).toBe("success");

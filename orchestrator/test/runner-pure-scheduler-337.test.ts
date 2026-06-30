@@ -187,8 +187,8 @@ describe("#337 runner is a pure scheduler — no inline productive work (BEHAVIO
   });
 });
 
-// ─── (B) the build step is a WORKER (dispatched, not inlined) — and dispatched ──
-//     exactly ONCE: the fix loop is INSIDE the worker, not a runner re-dispatch.
+// ─── (B) implementation and fix are WORKERS (dispatched, not inlined) ────────
+//     ADR 0030 makes S2/S3/S5/S6 runner-visible dispatch boundaries.
 
 describe("#337 runner-visible per-slice review/fix worker dispatch", () => {
   it("dispatches S2 implementation and S5 fix as separate coder workers", async () => {
@@ -199,12 +199,12 @@ describe("#337 runner-visible per-slice review/fix worker dispatch", () => {
     expect(coderDispatches.map((s) => s.skill)).toEqual(["/tdd", "/tdd"]);
   });
 
-  it("the build worker spec carries the iterative maxIter (>1) and retains context (it owns the loop)", async () => {
+  it("the build worker spec carries the iterative maxIter (>1) and retains implementation context", async () => {
     // Assert on the spec the RUNNER ACTUALLY DISPATCHES (STEP_SPECS.S2 → the build
-    // worker). The whole-slice build keeps the within-step iterative budget (it
-    // runs /tdd + a single-vendor Opus /review leg internally; the full
-    // cross-model cmr is family-only), is a NORMAL fresh dispatch (NOT the
-    // crash/escalate resume path), and retains context.
+    // worker). S2 keeps the implementation-step iterative budget and retained
+    // context, while ADR 0030 dispatches per-slice review/fix as visible S3/S5/S6
+    // worker steps. This is a NORMAL fresh dispatch (NOT the crash/escalate resume
+    // path).
     const backend = new SeamOnlyBackend();
     await runOrchestrator({ issueNumber: 337, backend });
     const s2 = backend.specs.find((s) => s.id === "S2");
@@ -228,10 +228,19 @@ describe("#337 review-decomposition wording: runner owns per-slice review, integ
   const skillRouting = claudeMd.slice(claudeMd.indexOf("## Skill routing"));
 
   it("the reviewer soul is the live read-only full-diff reviewer", () => {
+    const staleCoderOwnedReviewClaim = new RegExp(
+      [
+        "per-slice review lives\\s+",
+        "inside\\s+the ",
+        "coder worker",
+      ].join(""),
+      "i",
+    );
+
     expect(reviewerSoul).toMatch(/READ-ONLY/);
     expect(reviewerSoul).toMatch(/current full slice diff/i);
     expect(reviewerSoul).toMatch(/fresh\s+full-diff re-review/i);
-    expect(reviewerSoul).not.toMatch(/per-slice review lives inside the coder worker/i);
+    expect(reviewerSoul).not.toMatch(staleCoderOwnedReviewClaim);
   });
 
   it("the reviewer soul routes the compatibility reviewer to a single-vendor review", () => {
@@ -241,7 +250,8 @@ describe("#337 review-decomposition wording: runner owns per-slice review, integ
 
   it("the reviewer soul names ak-cross-m-review only as the family-layer review", () => {
     // It may still mention ak-cross-m-review, but only as the integrated/
-    // cross-family gate — NOT as a second per-slice pass.
+    // cross-family gate — NOT as part of the runner-visible per-slice review/fix
+    // loop.
     expect(reviewerSoul).toMatch(/integrated|cross-family|跨片|family/i);
   });
 
@@ -249,7 +259,7 @@ describe("#337 review-decomposition wording: runner owns per-slice review, integ
     expect(skillRouting).not.toMatch(/two passes, both/i);
   });
 
-  it("the CLAUDE.md ## Skill routing keeps per-slice review inside coder and integrated cmr separate", () => {
+  it("the CLAUDE.md ## Skill routing keeps runner-visible per-slice review/fix and integrated cmr separate", () => {
     expect(skillRouting).toMatch(/\/review/);
     expect(skillRouting).toMatch(/runner/i);
     expect(skillRouting).toMatch(/reviewer/i);

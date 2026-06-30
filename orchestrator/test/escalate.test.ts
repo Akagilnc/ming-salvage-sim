@@ -227,7 +227,8 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
       const result = await runOrchestrator({ issueNumber: 251, backend });
 
       expect(result.status).toBe("success");
-      // The committed build routes straight to S7 ship (ADR 0026: no S3).
+      // ADR 0030: a committed build reaches S7 only after S3/S4 find no blocking
+      // review findings.
       expect(result.stepLedger.map((e) => e.step)).toContain("S7");
       expect(backend.pushCount).toBe(1);
     });
