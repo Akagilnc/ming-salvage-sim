@@ -429,10 +429,10 @@ export interface DispatchContext {
    */
   readonly blockingFindingIdentityKeys?: ReadonlyArray<string>;
   /**
-   * S5 coder-fix worker only: the human answer that reopened a prior
-   * decision-escalate pause (#439). The runner passes it alongside the current
-   * blocking findings so the fix worker receives the resume instruction without
-   * deleting or rewriting the terminal ledger row that paused the run.
+   * S5 coder-fix or S7 ship worker: the human answer that reopened a prior
+   * decision-escalate pause (#439). The runner passes it to the re-dispatched
+   * worker so the resume instruction is visible without deleting or rewriting the
+   * terminal ledger row that paused the run.
    */
   readonly escalationAnswer?: EscalationAnswerEvent;
   /**

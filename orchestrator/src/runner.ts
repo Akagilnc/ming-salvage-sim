@@ -1553,7 +1553,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             resumeFor = undefined;
           }
           const escalationAnswerForStep =
-            step === "S5" ? resumedEscalationAnswer : undefined;
+            step === "S5" && resumedEscalationAnswer?.forStep === "S4"
+              ? resumedEscalationAnswer
+              : undefined;
           if (escalationAnswerForStep !== undefined) {
             resumedEscalationAnswer = undefined;
           }
@@ -1739,8 +1741,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // produced. The escalateTermination path below ALSO uses it (resume truth).
           const shipSpec = shipWorkerSpec();
           promptFile = shipSpec.promptFile;
+          const escalationAnswerForStep =
+            resumedEscalationAnswer?.forStep === "S7"
+              ? resumedEscalationAnswer
+              : undefined;
+          if (escalationAnswerForStep !== undefined) {
+            resumedEscalationAnswer = undefined;
+          }
           const shipResult = await dispatchWorker(backend, shipSpec, {
             worktree,
+            ...(escalationAnswerForStep !== undefined
+              ? { escalationAnswer: escalationAnswerForStep }
+              : {}),
           });
           // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
           // S8(escalate) handoff, NOT an error — keep the escalate semantics so
