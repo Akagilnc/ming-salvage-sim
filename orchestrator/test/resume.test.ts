@@ -414,7 +414,7 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
     expect(result.stepLedger.map((e) => e.step).slice(-2)).toEqual(["S4", "S8"]);
     expect(backend.ledgerWrites.find((e) => e.step === "S8")).toMatchObject({
       handoffStatus: "escalate",
-      escalationKind: "failure",
+      escalationKind: "decision",
     });
   });
 });
