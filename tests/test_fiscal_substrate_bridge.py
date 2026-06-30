@@ -305,6 +305,65 @@ def test_province_tick_derives_due_and_allocates_province_arrears_by_pay_source(
     )
 
 
+def test_fixed_flows_cutover_accrues_unpaid_central_pay_share(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 0
+    db.save_state(state)
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.execute(
+        """
+        UPDATE fiscal_config
+        SET value = 0
+        WHERE kind != 'meta'
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET tax_per_turn = 0,
+            fiscal = json_set(
+                fiscal, '$.huang_tian', 0, '$.liao_xiang', 0,
+                '$.salt_tax', 0, '$.commerce_tax', 0
+            )
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'shaanxi', province_pay_share = 0.65,
+            central_pay_share = 0.35, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0,
+            manpower = 10000, salary_rate = 10
+        WHERE id = 'shaanxi_army'
+        """
+    )
+    db.conn.commit()
+
+    flows_mod.apply_fixed_period_flows(db, state)
+
+    row = db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears
+        FROM armies WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    assert row["central_pay_arrears"] == pytest.approx(3.5)
+    assert row["arrears"] == pytest.approx(
+        row["province_pay_arrears"] + row["central_pay_arrears"]
+    )
+
+
 def test_army_delta_arrears_splits_positive_and_rejects_negative_under_cutover(fresh_db):
     state = fresh_db.load_state()
     event = SimpleNamespace(id="test", title="剧情加欠")
