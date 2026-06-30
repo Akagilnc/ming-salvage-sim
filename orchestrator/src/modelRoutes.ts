@@ -301,6 +301,17 @@ export function printableRouteLineup(route: ResolvedModelRoute): string {
   ].join("\n");
 }
 
+export function modelRouteFingerprint(route: ResolvedModelRoute): string {
+  return JSON.stringify({
+    routeName: route.routeName,
+    slots: MODEL_ROUTE_SLOTS.map((slot) => [slot, route.slots[slot]]),
+    legCollections: MODEL_ROUTE_LEG_COLLECTIONS.map((collection) => [
+      collection,
+      route.legCollections[collection].map((leg) => [leg.family, leg.slug]),
+    ]),
+  });
+}
+
 export function tightRouteViolationDetails(route: ResolvedModelRoute): string {
   return route.tightFamilyViolations
     .map((v) => `${v.slot}=${v.slug}(${v.family})`)

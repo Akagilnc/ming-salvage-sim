@@ -103,7 +103,11 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
 describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guard)", () => {
   it("recordCmrPassed appends the pass marker with the family HEAD it reviewed", async () => {
     const backend = new FakeFamilyBackend();
-    await recordCmrPassed(backend, { cmrPass: "completeness", familyHeadAfter: "head-1" });
+    await recordCmrPassed(backend, {
+      cmrPass: "completeness",
+      familyHeadAfter: "head-1",
+      routeFingerprint: "route:v1",
+    });
     expect(backend.appended).toEqual([
       {
         status: "cmr_passed",
@@ -111,11 +115,12 @@ describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guar
         phase: "final",
         cmrPass: "completeness",
         familyHeadAfter: "head-1",
+        routeFingerprint: "route:v1",
       },
     ]);
   });
 
-  it("cmrPassAlreadyPassed is TRUE only for the matching pass at the current family HEAD", () => {
+  it("cmrPassAlreadyPassed is TRUE only for the matching pass, current family HEAD, and route fingerprint", () => {
     const entries: FamilyLedgerEntry[] = [
       {
         status: "cmr_passed",
@@ -123,33 +128,44 @@ describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guar
         phase: "final",
         cmrPass: "completeness",
         familyHeadAfter: "head-1",
+        routeFingerprint: "route:v1",
       },
     ];
     expect(
       cmrPassAlreadyPassed(entries, {
         cmrPass: "completeness",
         familyHeadAfter: "head-1",
+        routeFingerprint: "route:v1",
       }),
     ).toBe(true);
     expect(
       cmrPassAlreadyPassed(entries, {
         cmrPass: "correctness",
         familyHeadAfter: "head-1",
+        routeFingerprint: "route:v1",
       }),
     ).toBe(false);
     expect(
       cmrPassAlreadyPassed(entries, {
         cmrPass: "completeness",
         familyHeadAfter: "head-2",
+        routeFingerprint: "route:v1",
+      }),
+    ).toBe(false);
+    expect(
+      cmrPassAlreadyPassed(entries, {
+        cmrPass: "completeness",
+        familyHeadAfter: "head-1",
+        routeFingerprint: "route:v2",
       }),
     ).toBe(false);
   });
 
-  it("cmrPassAlreadyPassed FAILS CLOSED on malformed or headless rows", () => {
+  it("cmrPassAlreadyPassed FAILS CLOSED on malformed, headless, or route-less rows", () => {
     expect(
       cmrPassAlreadyPassed(
         [{ status: "cmr_passed", cmrPass: "completeness" } as FamilyLedgerEntry],
-        { cmrPass: "completeness", familyHeadAfter: "head-1" },
+        { cmrPass: "completeness", familyHeadAfter: "head-1", routeFingerprint: "route:v1" },
       ),
     ).toBe(false);
     expect(
@@ -162,7 +178,7 @@ describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guar
             cmrPass: "completeness",
           },
         ],
-        { cmrPass: "completeness", familyHeadAfter: "head-1" },
+        { cmrPass: "completeness", familyHeadAfter: "head-1", routeFingerprint: "route:v1" },
       ),
     ).toBe(false);
     expect(
@@ -176,7 +192,21 @@ describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guar
             familyHeadAfter: "head-1",
           },
         ],
-        { cmrPass: "completeness" },
+        { cmrPass: "completeness", routeFingerprint: "route:v1" },
+      ),
+    ).toBe(false);
+    expect(
+      cmrPassAlreadyPassed(
+        [
+          {
+            status: "cmr_passed",
+            event: "cmr_passed",
+            phase: "final",
+            cmrPass: "completeness",
+            familyHeadAfter: "head-1",
+          },
+        ],
+        { cmrPass: "completeness", familyHeadAfter: "head-1", routeFingerprint: "route:v1" },
       ),
     ).toBe(false);
   });

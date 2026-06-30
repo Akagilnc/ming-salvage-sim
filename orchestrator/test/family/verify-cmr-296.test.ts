@@ -23,6 +23,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { meetsCmrFloor, runVerifyCmr } from "../../src/family/verifyCmr.js";
+import { activeModelRoute, modelRouteFingerprint } from "../../src/modelRoutes.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -101,6 +102,10 @@ class CapableFamilyBackend implements FamilyBackend {
   async escalateFamily(esc: FamilyEscalation): Promise<void> {
     this.escalations.push(esc);
   }
+}
+
+function currentRouteFingerprint(): string {
+  return modelRouteFingerprint(activeModelRoute());
 }
 
 /** A #293-era backend WITHOUT the new optional methods (the no-op default). */
@@ -288,6 +293,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       phase: "final",
       cmrPass: "completeness",
       familyHeadAfter: "head-1",
+      routeFingerprint: currentRouteFingerprint(),
     });
     expect(backend.ledger).toContainEqual({
       status: "cmr_passed",
@@ -295,6 +301,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       phase: "final",
       cmrPass: "correctness",
       familyHeadAfter: "head-1",
+      routeFingerprint: currentRouteFingerprint(),
     });
     expect(backend.ledger).toContainEqual({
       status: "shipped",
@@ -315,6 +322,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       phase: "final",
       cmrPass: "completeness",
       familyHeadAfter: "head-1",
+      routeFingerprint: currentRouteFingerprint(),
     });
 
     const result = await runVerifyCmr({
@@ -342,6 +350,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         phase: "final",
         cmrPass: "completeness",
         familyHeadAfter: "head-1",
+        routeFingerprint: currentRouteFingerprint(),
       },
       {
         status: "cmr_passed",
@@ -349,6 +358,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         phase: "final",
         cmrPass: "correctness",
         familyHeadAfter: "head-1",
+        routeFingerprint: currentRouteFingerprint(),
       },
     );
 
@@ -375,6 +385,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       phase: "final",
       cmrPass: "completeness",
       familyHeadAfter: "old-head",
+      routeFingerprint: currentRouteFingerprint(),
     });
 
     const result = await runVerifyCmr({
@@ -403,6 +414,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         phase: "final",
         cmrPass: "completeness",
         familyHeadAfter: "old-head",
+        routeFingerprint: currentRouteFingerprint(),
       },
       {
         status: "cmr_passed",
@@ -410,6 +422,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         phase: "final",
         cmrPass: "correctness",
         familyHeadAfter: "old-head",
+        routeFingerprint: currentRouteFingerprint(),
       },
     );
 
@@ -445,6 +458,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       phase: "final",
       cmrPass: "completeness",
       familyHeadAfter: "head-1",
+      routeFingerprint: currentRouteFingerprint(),
     });
     expect(backend.ledger).toContainEqual({
       status: "cmr_passed",
@@ -452,6 +466,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       phase: "final",
       cmrPass: "correctness",
       familyHeadAfter: "head-1",
+      routeFingerprint: currentRouteFingerprint(),
     });
     expect(backend.ledger).toContainEqual({
       status: "shipped",
@@ -478,6 +493,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       phase: "final",
       cmrPass: "correctness",
       familyHeadAfter: "head-after-cmr-fix",
+      routeFingerprint: currentRouteFingerprint(),
     });
 
     const result = await runVerifyCmr({
@@ -497,6 +513,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       phase: "final",
       cmrPass: "completeness",
       familyHeadAfter: "head-after-cmr-fix",
+      routeFingerprint: currentRouteFingerprint(),
     });
     expect(
       backend.ledger.filter(
