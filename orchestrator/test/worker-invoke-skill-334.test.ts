@@ -1,7 +1,8 @@
 /**
- * #334 — the first end-to-end tracer: the coder worker runs the whole slice
- * (build + per-slice review/fix loop) through the unified dispatchWorker seam
- * (ADR 0026 / PRD #330), running on the baked 2b image.
+ * #334 — the first end-to-end tracer for running slice workers through the
+ * unified dispatchWorker seam (ADR 0026 / PRD #330), on the baked 2b image.
+ * ADR 0030 later split per-slice review/fix convergence into separate
+ * runner-visible reviewer/coder-fix worker boundaries.
  *
  * This slice makes the seam REAL in two ways the #331 prefactor only declared:
  *
@@ -248,7 +249,7 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
   });
 });
 
-// ─── (3) the runner dispatches one S2 coder worker, then S7 ship ─────────────
+// ─── (3) the runner dispatches S2/S3, then S5/S6 while blockers remain ──────
 
 /** A fake backend that records dispatch + drives a one-round fix loop. */
 class ReviewWorkerBackend implements Backend {

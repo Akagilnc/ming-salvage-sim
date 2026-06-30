@@ -117,7 +117,7 @@ class DispatchBackend implements Backend {
 }
 
 describe("#331 unified worker-dispatch seam — happy path", () => {
-  it("routes S2 (and S7 ship) through dispatchWorker, never the legacy methods", async () => {
+  it("routes S2/S3 (and S7 ship) through dispatchWorker, never the legacy methods", async () => {
     const backend = new DispatchBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
 
@@ -129,12 +129,12 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     expect(backend.pushCount).toBe(0);
   });
 
-  it("dispatches the worker SEQUENCE S2→S3→S7 with the right kind/role/session/retention/skill", async () => {
+  it("dispatches the worker SEQUENCE S2→S3→S4→S7 with the right kind/role/session/retention/skill", async () => {
     const backend = new DispatchBackend();
     await runOrchestrator({ issueNumber: 331, backend });
 
     // ADR 0030: implementation and review are separate runner-visible workers.
-    // The reviewer is fresh/clean; a clean review goes directly through S4 to S7.
+    // The reviewer is fresh/clean; a clean review is classified by S4 before S7.
     expect(backend.dispatched).toEqual([
       "S2:coder:coder:fresh:retain:/tdd",
       "S3:reviewer:reviewer:fresh:clean:/review",
@@ -460,9 +460,9 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
 
   it("forwards a resume worker (resumeSessionId present) to resumeSession with the recorded session id", async () => {
     const be = new LegacyBackend();
-    // The resume path is keyed by resumeSessionId; the only agent step is the S2
-    // build worker (ADR 0026 — the per-slice fix loop runs inside it, so there is
-    // no separate fix step to thread findings to).
+    // The resume path is keyed by resumeSessionId. ADR 0030 uses separate
+    // runner-visible worker steps for build/review/fix; this assertion only
+    // covers forwarding one recorded worker session id through the legacy seam.
     await legacyDispatchWorker(be as unknown as Backend, { ...coderWorker, id: "S2" }, {
       worktree: be.worktree,
       resumeSessionId: "sess-abc",
@@ -500,7 +500,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     for (const kind of ["cmr", "merge"] as const) {
       const be = new LegacyBackend();
       // cmr/merge are family-only kinds whose id is not in the single-slice
-      // StepId union (S0/S1/S2/S7/S8) — borrow the build id S2 so the WorkerSpec
+      // worker-step set (S2/S3/S5/S6/S7) — borrow the build id S2 so the WorkerSpec
       // type-checks; the kind (not the id) is what the fail-closed guard rejects.
       await expect(
         legacyDispatchWorker(

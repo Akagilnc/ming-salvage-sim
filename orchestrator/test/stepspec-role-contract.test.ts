@@ -5,13 +5,12 @@
  * static StepSpec constructor, as the tdd hint in #253 requires:
  *   "穿 dispatch 路径的 vertical 断言"
  *
- * ADR 0026 (2026-06-24, wiki line 42): the single-slice runner collapsed to a
- * pure scheduler — STEP_SPECS now holds ONLY S2 (the whole-slice build worker).
- * There is no runner-level reviewer step (S3) anymore: the per-slice review runs
- * INSIDE the S2 worker's session. The S3-reviewer AC tests are therefore dropped;
- * the surviving ACs all pin the single S2 coder spec.
+ * ADR 0030 keeps the single-slice runner as a pure scheduler while making the
+ * per-slice review/fix loop runner-visible: S2 implements, S3 reviews, S4
+ * classifies, S5 fixes, and S6 re-reviews as needed. This legacy suite still
+ * pins the S2 coder contract plus common agent StepSpec shape.
  *
- * Covered acceptance criteria (S2-only after ADR 0026):
+ * Covered acceptance criteria:
  *   AC-1  coder step (S2): role=coder, model=gpt-5.5, soul=coder
  *   AC-3  changing model only changes runtime CLI selection, not StepSpec shape
  *   AC-4  versioned promptFile on the agent step; no ad-hoc inline prompt
@@ -131,9 +130,7 @@ describe("StepSpec role contract + soul injection (#253)", () => {
     expect(s2!.soul).toBe("coder");
   });
 
-  // ── AC-2 (S3 reviewer step) DELETED per ADR 0026: there is no runner-level
-  //    reviewer step. STEP_SPECS holds only S2; the per-slice review runs INSIDE
-  //    the S2 build worker's session, not as a separate dispatched step. ──
+  // ── AC-2 (S3 reviewer step) lives in the ADR 0030 per-slice loop tests. ──
 
   // ── AC-4: every agent step carries a versioned promptFile (non-empty, file extension, no inline content) ──
 
@@ -171,9 +168,9 @@ describe("StepSpec role contract + soul injection (#253)", () => {
     }
   });
 
-  // ── AC-4b: coder maxIter present and > 1 (iterative within-step Ralph budget) ──
-  //   ADR 0026: the reviewer half is gone (no S3 step). The within-step retry
-  //   budget for the S2 build worker is > 1 (it iterates within its one run).
+  // ── AC-4b: coder maxIter present and > 1 (iterative within-step budget) ──
+  //   ADR 0030 uses separate reviewer/fix workers, but each worker still has its
+  //   own bounded retry budget for transient CLI/tool failures.
 
   it("coder maxIter > 1 (iterative within-step budget)", async () => {
     const specs = await runAndCapture();
@@ -193,11 +190,7 @@ describe("StepSpec role contract + soul injection (#253)", () => {
     }
   });
 
-  // ── AC-5 (reviewer READ-ONLY soul) DELETED per ADR 0026: there is no
-  //    dispatched reviewer step. The soul-vs-OS-mount distinction for the
-  //    READ-ONLY reviewer soul is now exercised only by the in-S2-worker review
-  //    and the family cmr worker, not by the single-slice runner's STEP_SPECS.
-  //    The coder soul is still asserted by AC-1 above. ──
+  // ── AC-5 (reviewer READ-ONLY soul) is covered by ADR 0030 reviewer-step tests. ──
 
   // ── AC-6: tool-chain declaration carried in StepSpec ──
   //   The spec includes a toolchain field listing Python + frontend stack.

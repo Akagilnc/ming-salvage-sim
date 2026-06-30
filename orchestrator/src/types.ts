@@ -53,9 +53,9 @@ export type HandoffStatus = "success" | "escalate" | "error";
  * - `"coder"`: implementation/fix soul (TDD for S2, finding fix contract for S5).
  * - `"READ-ONLY"`: reviewer soul with READ-ONLY soft constraint baked in
  *   (prompt-level, not an OS-level mount — same image, separate `run()`).
- * - `"cmr"`: the family integrated-cmr fixer soul (ADR 0026 2026-06-24) — a WRITE
- *   soul: the cmr worker invokes `ak-cross-m-review` and commits its cross-slice
- *   fixes inside its own memory-bearing session (it is the fixer, not read-only).
+ * - `"cmr"`: family integrated-cmr pass worker soul (ADR 0030) — a WRITE-capable
+ *   soul: the pass worker invokes `ak-cross-m-review` for the selected gate and may
+ *   commit pass-local cross-slice fixes; it is not the read-only reviewer soul.
  * - `"ship"`: the delivery soul the family ship worker runs under — a WRITE soul
  *   distinct from `"coder"`: it invokes `gstack-ship`, stops at PR creation, and
  *   records deferred findings in a tracker (issue / TODOS.md), never the PR body.
@@ -429,9 +429,9 @@ export interface DispatchContext {
 export type CoderResult = CoderOutput;
 
 /**
- * Compatibility reviewer worker output. The active ADR 0026 path keeps per-slice
- * review/fix convergence inside the coder worker; if an older reviewer seam is
- * used, it must still return structured findings rather than a bare verdict.
+ * Per-slice reviewer worker output. ADR 0030 keeps review/fix convergence
+ * runner-visible: reviewer workers return structured findings for S4
+ * classification rather than a bare verdict.
  */
 export type ReviewerResult = ReviewerOutput;
 
@@ -812,8 +812,8 @@ export interface Backend {
   /**
    * THE unified worker-dispatch seam (ADR 0026 / PRD #330 #331).
    *
-   * Every productive single-slice worker step (current path: S2 coder, S7 ship;
-   * legacy compatibility may still map reviewer specs) is
+   * Every productive single-slice worker step (S2/S3/S5/S6 agent workers + S7
+   * ship; legacy compatibility may still map reviewer specs) is
    * dispatched through this ONE method: the runner hands a {@link WorkerSpec}
    * (what to invoke, host, fresh|resume, soul, skill) + a {@link DispatchContext}
    * (worktree, stateDir, resumeSessionId, audit snapshot when present) and gets

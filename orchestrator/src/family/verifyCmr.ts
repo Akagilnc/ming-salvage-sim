@@ -23,23 +23,16 @@
  *   - "wave"  → run the family verify (typecheck + unit tests) against the family
  *     base; RED ⇒ `{ok:false}` (the spine aborts before the next wave) + an
  *     `aborted` ledger event (decision 3④/5).
- *   - "final" → run the FULL verify; green ⇒ SCHEDULE the integrated cross-model cmr
- *     承重闸 (decision 3⑥). The runner is a PURE SCHEDULER: dispatch ONE cmr WORKER →
- *     read its TERMINAL verdict (converged | escalate). Converged ⇒ the worker
- *     ALREADY fixed every cross-slice finding inside its own memory-bearing session
- *     (it IS the fixer) so the family base holds the fixes ⇒ dispatch the ship worker
- *     (decision 4, 止于 PR) + `{ok:true}`. Escalate ⇒ the worker judged it cannot
- *     converge (drift / architectural rework) ⇒ escalate续跑 (#298) + `{ok:false}`.
- *     The cmr worker is a SINGLE memory-bearing `sc.run` session that runs the WHOLE
- *     review → grade → fix → re-review loop INTERNALLY (the `ak-cross-m-review` skill
- *     drives it — Step 5 termination + Step 6 drift 三联 + Step 7 fix loop; ADR 0026
- *     2026-06-24). Only the 3 review LEGS are fresh each round; the worker's main
- *     session has memory. So the runner dispatches the cmr worker ONCE and never
- *     loops — there is NO separate coder-fix worker, NO runner round-loop, NO
- *     prior-round findings threaded as data between fresh workers, NO drift
- *     constant, NO round counter, NO grade logic here. The runner escalates ONLY when the WORKER
- *     says so (it emits `escalate`) or a contract slip (a `completed` non-converged
- *     verdict ⇒ fail-safe escalate; a malformed/crash ⇒ INCOMPLETE_GATE).
+ *   - "final" → run the FULL verify; green ⇒ run the two ADR 0030 integrated-cmr
+ *     passes as ordered runner-dispatched boundaries: Step 5 completeness first,
+ *     Step 6 correctness only after completeness passes. Each pass is a write-capable
+ *     cmr worker over the current family base and returns a TERMINAL pass verdict
+ *     (`converged` | `escalate`). A converged pass may have committed pass-local
+ *     fixes, so the next pass reads the post-worker family HEAD. Escalate / malformed
+ *     / contract-slip verdicts are recorded as durable aborts and stop before ship.
+ *     `verifyCmr` owns pass ordering, route-leg accounting, ADR0032 strong-leg floor,
+ *     and claimed-fixed closure checks; it does not inline reviewer grading or patch
+ *     logic in this hook.
  *
  * The verify / cmr / PR / abort / escalate capabilities are reached as OPTIONAL
  * methods on the injected `FamilyBackend` (the frozen spine input is `{phase,
@@ -59,9 +52,14 @@ import {
   dispatchFamilyWorker,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { cmrLegAccountingFailure } from "../modelRoutes.js";
+import {
+  cmrLegAccountingFailure,
+  modelRouteFingerprint,
+  resolveActiveModelRoute,
+} from "../modelRoutes.js";
 import { modelIsStrongLeg } from "../realBackend.js";
 import {
+  cmrPassAlreadyPassed,
   recordAborted as recordDurableAbort,
   recordCmrPassed,
   recordShipped,
@@ -221,6 +219,25 @@ function cmrClosureFailureReason(input: {
   return undefined;
 }
 
+interface IntegratedCmrPassOutcome {
+  readonly result: VerifyCmrResult;
+  readonly familyHeadAfter?: string;
+}
+
+async function readPostCmrFamilyHead(
+  familyBackend: FamilyBackend,
+  familyBase: string,
+  fallbackHead: string | undefined,
+): Promise<string | undefined> {
+  if (familyBackend.readFamilyHead === undefined) return fallbackHead;
+  try {
+    const liveHead = (await familyBackend.readFamilyHead(familyBase)).trim();
+    return liveHead.length > 0 ? liveHead : fallbackHead;
+  } catch {
+    return fallbackHead;
+  }
+}
+
 /**
  * Dispatch a family worker, converting ANY thrown STARTUP error into a documented
  * gate result instead of letting it escape verifyCmr (cmr S336 r8 — startup/error
@@ -273,7 +290,7 @@ async function runIntegratedCmrPass(input: {
   readonly familyBase: string;
   readonly llmResolvedChildren?: readonly number[];
   readonly familyHeadAfter?: string;
-}): Promise<VerifyCmrResult> {
+}): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
     familyBackend,
@@ -281,6 +298,24 @@ async function runIntegratedCmrPass(input: {
     llmResolvedChildren,
     familyHeadAfter,
   } = input;
+  const routeFingerprint = modelRouteFingerprint(resolveActiveModelRoute());
+  const resolvedFamilyHeadAfter = await readPostCmrFamilyHead(
+    familyBackend,
+    familyBase,
+    familyHeadAfter,
+  );
+  if (
+    cmrPassAlreadyPassed(await familyBackend.readFamilyLedger(), {
+      cmrPass: pass,
+      familyHeadAfter: resolvedFamilyHeadAfter,
+      routeFingerprint,
+    })
+  ) {
+    return {
+      result: { ok: true, ran: true },
+      familyHeadAfter: resolvedFamilyHeadAfter,
+    };
+  }
   const cmrResult = await dispatchOrAbort(
     familyBackend,
     cmrWorkerSpec("fresh", pass),
@@ -292,7 +327,7 @@ async function runIntegratedCmrPass(input: {
         : {}),
     },
     "final",
-    familyHeadAfter,
+    resolvedFamilyHeadAfter,
     pass,
   );
   if (cmrResult.kind === "escalated") {
@@ -301,12 +336,12 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason,
-      familyHeadAfter,
+      familyHeadAfter: resolvedFamilyHeadAfter,
     });
     await familyBackend.escalateFamily?.({
       reason,
     });
-    return { ok: false, ran: true };
+    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   if (cmrResult.kind !== "completed" || cmrResult.output.kind !== "cmr") {
     const startupAbortAlreadyRecorded =
@@ -322,16 +357,16 @@ async function runIntegratedCmrPass(input: {
         cmrPass: pass,
         familyBase,
         errorPackage: { reason },
-        familyHeadAfter,
+        familyHeadAfter: resolvedFamilyHeadAfter,
       });
       await recordDurableAbort(familyBackend, {
         phase: "final",
         cmrPass: pass,
         reason,
-        familyHeadAfter,
+        familyHeadAfter: resolvedFamilyHeadAfter,
       });
     }
-    return INCOMPLETE_GATE;
+    return { result: INCOMPLETE_GATE, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   if (!cmrResult.output.converged) {
     const reason =
@@ -340,10 +375,10 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason,
-      familyHeadAfter,
+      familyHeadAfter: resolvedFamilyHeadAfter,
     });
     await familyBackend.escalateFamily?.({ reason });
-    return { ok: false, ran: true };
+    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   const legAccountingFailure = cmrLegAccountingFailure({
     successfulLegs: cmrResult.output.successfulLegs ?? [],
@@ -355,10 +390,10 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason,
-      familyHeadAfter,
+      familyHeadAfter: resolvedFamilyHeadAfter,
     });
     await familyBackend.escalateFamily?.({ reason });
-    return { ok: false, ran: true };
+    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   const floorFailure = cmrFloorFailureReason({
     pass,
@@ -370,10 +405,10 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason: floorFailure,
-      familyHeadAfter,
+      familyHeadAfter: resolvedFamilyHeadAfter,
     });
     await familyBackend.escalateFamily?.({ reason: floorFailure });
-    return { ok: false, ran: true };
+    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
   const closureFailure = cmrClosureFailureReason({
     pass,
@@ -386,13 +421,22 @@ async function runIntegratedCmrPass(input: {
       phase: "final",
       cmrPass: pass,
       reason: closureFailure,
-      familyHeadAfter,
+      familyHeadAfter: resolvedFamilyHeadAfter,
     });
     await familyBackend.escalateFamily?.({ reason: closureFailure });
-    return { ok: false, ran: true };
+    return { result: { ok: false, ran: true }, familyHeadAfter: resolvedFamilyHeadAfter };
   }
-  await recordCmrPassed(familyBackend, { cmrPass: pass });
-  return { ok: true, ran: true };
+  const postCmrFamilyHead = await readPostCmrFamilyHead(
+    familyBackend,
+    familyBase,
+    resolvedFamilyHeadAfter,
+  );
+  await recordCmrPassed(familyBackend, {
+    cmrPass: pass,
+    familyHeadAfter: postCmrFamilyHead,
+    routeFingerprint,
+  });
+  return { result: { ok: true, ran: true }, familyHeadAfter: postCmrFamilyHead };
 }
 
 /**
@@ -468,16 +512,17 @@ export async function runVerifyCmr(
     llmResolvedChildren,
     familyHeadAfter,
   });
-  if (!completeness.ok) return completeness;
+  if (!completeness.result.ok) return completeness.result;
 
   const correctness = await runIntegratedCmrPass({
     pass: "correctness",
     familyBackend,
     familyBase,
     llmResolvedChildren,
-    familyHeadAfter,
+    familyHeadAfter: completeness.familyHeadAfter,
   });
-  if (!correctness.ok) return correctness;
+  if (!correctness.result.ok) return correctness.result;
+  const cmrPassedFamilyHeadAfter = correctness.familyHeadAfter;
   // Both CMR passes converged. Fall through to 止于 PR (the ship worker) below.
 
   // ── 止于 PR (decision 4): green verify + converged cmr ⇒ open the family PR and
@@ -502,7 +547,7 @@ export async function runVerifyCmr(
     familyShipWorkerSpec(),
     { familyBase },
     phase,
-    familyHeadAfter,
+    cmrPassedFamilyHeadAfter,
   );
   // An ESCALATED family ship worker (gstack-ship STOP/HITL) is the family
   // escalate续跑 path, not a false success — call the escalate seam (codex cmr R4
@@ -524,7 +569,7 @@ export async function runVerifyCmr(
     await recordDurableAbort(familyBackend, {
       phase,
       reason: "family ship worker returned no valid result (crash/malformed)",
-      familyHeadAfter,
+      familyHeadAfter: cmrPassedFamilyHeadAfter,
     });
     return INCOMPLETE_GATE;
   }
