@@ -400,8 +400,8 @@ export class RealFamilyBackend implements FamilyBackend {
 
   async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
     return [
-      ...(this.readFamilyLedgerFile() ?? []),
       ...this.legacyEscalationLedgerEntries(),
+      ...(this.readFamilyLedgerFile() ?? []),
     ];
   }
 

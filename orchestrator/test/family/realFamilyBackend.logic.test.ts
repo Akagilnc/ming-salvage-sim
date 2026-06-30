@@ -34,6 +34,7 @@ import {
   RealFamilyBackend,
   type RealFamilyBackendOptions,
 } from "../../src/family/realFamilyBackend.js";
+import { familyEscalationState } from "../../src/family/ledger.js";
 import { SANDBOX_SKILLS_DIR, SANDBOX_SOUL_ENV } from "../../src/realBackend.js";
 import type {
   ConflictResolveRequest,
@@ -1034,5 +1035,33 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
         ts: "2026-06-01T00:00:00.000Z",
       },
     ]);
+  });
+
+  it("orders legacy escalations before newer ledger answers so migration can reopen", async () => {
+    const o = opts(trackRepo());
+    mkdirSync(o.ledgerDir, { recursive: true });
+    writeFileSync(
+      join(o.ledgerDir, "family-escalations.jsonl"),
+      `${JSON.stringify({
+        reason: "legacy cmr pause",
+        ts: "2026-06-01T00:00:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    const b = new RealFamilyBackend(o);
+    await b.appendFamilyLedger({
+      status: "escalation_answered",
+      event: "escalation_answered",
+      phase: "final",
+      answer: "continue-after-legacy-pause",
+    });
+
+    expect(familyEscalationState(await b.readFamilyLedger())).toMatchObject({
+      escalation: { reason: "legacy cmr pause" },
+      answer: {
+        event: "escalation_answered",
+        answer: "continue-after-legacy-pause",
+      },
+    });
   });
 });
