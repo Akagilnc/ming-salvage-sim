@@ -460,6 +460,8 @@ export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
 export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
 /** S5 coder-fix worker path to runner-owned blocking findings JSON. */
 export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
+/** Optional ship-worker focus file read by the ship prompt before gstack-ship. */
+export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
 
 /**
  * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
@@ -2277,6 +2279,7 @@ export class RealBackend implements Backend {
             "in-container `gh pr create` failure would surface as an opaque S8 error).",
         };
       }
+      this.syncShipFocusFile(ctx);
       const result = await sc.run({
         name: `${spec.id}-ship`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -2303,6 +2306,62 @@ export class RealBackend implements Backend {
           // best-effort: the run already returned/threw.
         }
       }
+    }
+  }
+
+  /**
+   * Keep the single-slice ship focus file in sync with the current dispatch. S7
+   * normally ships with no focus file, but an answered decision escalation must be
+   * visible to the clean ship worker session that is retrying the blocked delivery.
+   */
+  protected syncShipFocusFile(ctx: DispatchContext): void {
+    const worktree = ctx.worktree;
+    if (worktree === undefined) return;
+    const target = join(worktree.path, SHIP_FOCUS_FILENAME);
+    const answer = ctx.escalationAnswer;
+    if (answer === undefined) {
+      rmSync(target, { force: true });
+      return;
+    }
+    this.excludeShipFocusFromGit(worktree.path);
+    const body =
+      `# Single-slice ship focus (machine-generated; #439)\n\n` +
+      `A human answered a prior S7 decision escalation. Retry the ship worker with\n` +
+      `this answer in force; do not repeat the same HITL stop unless a new blocker\n` +
+      `remains.\n\n` +
+      `\`\`\`json\n${JSON.stringify(answer, null, 2)}\n\`\`\`\n`;
+    writeFileSync(target, body, "utf8");
+  }
+
+  /** Add the generated ship focus file to local git excludes so it is never committed. */
+  protected excludeShipFocusFromGit(worktreePath: string): void {
+    try {
+      const excludePath = this.sh(
+        "git",
+        ["rev-parse", "--git-path", "info/exclude"],
+        worktreePath,
+      );
+      const abs = isAbsolute(excludePath)
+        ? excludePath
+        : resolve(worktreePath, excludePath);
+      let existing = "";
+      try {
+        existing = readFileSync(abs, "utf8");
+      } catch {
+        // no exclude file yet
+      }
+      if (!existing.split(/\r?\n/).includes(SHIP_FOCUS_FILENAME)) {
+        mkdirSync(join(abs, ".."), { recursive: true });
+        appendFileSync(
+          abs,
+          (existing.endsWith("\n") || existing === "" ? "" : "\n") +
+            SHIP_FOCUS_FILENAME +
+            "\n",
+          "utf8",
+        );
+      }
+    } catch {
+      // Non-git fixtures still get the focus file; real worktrees get the exclude.
     }
   }
 

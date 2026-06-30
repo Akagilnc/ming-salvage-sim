@@ -614,7 +614,10 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
    * failing step without one) and a trailing S8 tagged 'escalate'. The human has
    * answered the blocker and re-feeds the issue.
    */
-  function escalatedAtS7(): ResumeState {
+  function escalatedAtS7(
+    answer?: PersistentLedgerEntry,
+    escalationKind?: "decision" | "failure",
+  ): ResumeState {
     return {
       worktree: WORKTREE,
       stateDir: STATE_DIR,
@@ -625,7 +628,11 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
         entry("S3", { kind: "reviewer", findings: [] }),
         entry("S4"),
         entry("S7"), // failing step recorded without an output (escalateTermination)
-        s8("escalate"),
+        {
+          ...s8("escalate"),
+          ...(escalationKind !== undefined ? { escalationKind } : {}),
+        },
+        ...(answer !== undefined ? [answer] : []),
       ],
     };
   }
@@ -666,6 +673,28 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     expect(result.stepLedger.map((e) => e.step)).toEqual([
       "S0", "S1", "S2", "S3", "S4", "S7", "S8",
     ]);
+  });
+
+  it("answered S7 decision escalation passes the human answer to the ship worker", async () => {
+    const answer = escalationAnswer(
+      "S7",
+      "retry-ship-after-human-fix",
+      "Human resolved the delivery blocker; retry ship.",
+    );
+    const backend = new DispatchRecordingResumeBackend(
+      escalatedAtS7(answer, "decision"),
+    );
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S7");
+    expect(backend.dispatchContexts[0]?.escalationAnswer).toEqual({
+      event: "escalation_answered",
+      forStep: "S7",
+      answer: "retry-ship-after-human-fix",
+      note: "Human resolved the delivery blocker; retry ship.",
+    });
   });
 
   it("only S7-escalate re-opens: a prior S2-escalate S8 still reports/resumes the agent step, not S7", async () => {
