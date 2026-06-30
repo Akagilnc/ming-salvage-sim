@@ -566,23 +566,34 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 continue
             _expense(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}支")
 
-    # ── 各军军饷（按优先级，先发当月、余额抵旧欠；不足挂 arrears 累计万两）──
-    # arrears 字段语义=累计欠饷万两（整数，无上限）。flows 是唯一变更点：
-    #   缺口 → arrears += 缺口；当月足额且仍有国库余 → arrears -= 抵欠（不下穿 0）。
-    # 拨饷诏书走 economy_moves 加钱进国库，下月自动抵旧欠。extractor 禁写 arrears。
-    if db.is_army_pay_source_cutover_enabled():
-        # #287 S1: fresh saves use per-source accumulators. The legacy global
-        # 国库→全军 loop writes armies.arrears directly, which would create a
-        # third ledger; province-source accrual is advanced by the substrate
-        # bridge below, and central hub accrual is a later cutover slice.
-        army_rows_raw = []
+    # ── 各军军饷（按优先级，先发当月；不足挂 arrears 累计万两）──
+    # cutover 后省份额由 substrate bridge 推进；本段只保留中央京运份额的国库实发/欠发路径。
+    pay_source_cutover = db.is_army_pay_source_cutover_enabled()
+    if pay_source_cutover:
+        army_rows_raw = db.conn.execute(
+            """
+            SELECT id, name, manpower, salary_rate, owner_power, arrears, morale,
+                   pay_source_region, province_pay_share, central_pay_share,
+                   province_pay_arrears, central_pay_arrears, is_tusi, self_funded_pay
+            FROM armies
+            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+              AND central_pay_share > 0
+            """
+        ).fetchall()
+        for row in army_rows_raw:
+            db._validate_pay_source_values(
+                str(row["id"]), str(row["owner_power"]), str(row["pay_source_region"]),
+                float(row["province_pay_share"] or 0), float(row["central_pay_share"] or 0),
+                bool(row["is_tusi"]), bool(row["self_funded_pay"]),
+                float(row["province_pay_arrears"] or 0), float(row["central_pay_arrears"] or 0),
+            )
     else:
         army_rows_raw = db.conn.execute(
             # #44 army_needed 需 manpower/salary_rate/owner_power（应发挂钩兵力派生）
             "SELECT id, name, manpower, salary_rate, owner_power, arrears, morale FROM armies"
         ).fetchall()
     if not army_rows_raw:
-        if not db.is_army_pay_source_cutover_enabled():
+        if not pay_source_cutover:
             raise SystemExit("fiscal_tick: armies 表无数据，中止。")
         army_rows_raw = []
     army_map = {str(r["id"]): r for r in army_rows_raw}
@@ -593,22 +604,34 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         army_id = str(row["id"])
         name = str(row["name"])
         needed = army_needed(row)  # #44 应发挂钩兵力(ceil(manpower×salary_rate/10000)，仅 ming)
+        if pay_source_cutover:
+            needed = needed * float(row["central_pay_share"] or 0)
         if needed <= 0:
             continue
         available = max(0, int(state.metrics["国库"]))
-        pay_current = min(needed, available)
-        shortfall = needed - pay_current
+        if pay_source_cutover and available >= needed:
+            pay_current = min(available, math.ceil(needed))
+        else:
+            pay_current = min(needed, available)
+        shortfall = max(0.0, needed - pay_current)
 
-        old_arrears = int(row["arrears"])
+        old_arrears = float(row["arrears"]) if pay_source_cutover else int(row["arrears"])
         old_morale = int(row["morale"])
 
         # 月固定军饷只发当月，不主动还旧欠。旧欠累积拖着，等玩家下旨拨饷才清。
         if pay_current > 0:
             db.record_issue_economy_move(
-                state, "国库", -pay_current, "各军军饷", f"{name}{TURN_UNIT}军饷"
+                state, "国库", -int(pay_current), "各军军饷", f"{name}{TURN_UNIT}军饷"
             )
 
-        new_arrears = max(0, old_arrears + shortfall)
+        if pay_source_cutover:
+            old_central_arrears = float(row["central_pay_arrears"] or 0)
+            province_arrears = float(row["province_pay_arrears"] or 0)
+            central_arrears = max(0.0, old_central_arrears + shortfall)
+            new_arrears = max(0.0, province_arrears + central_arrears)
+        else:
+            central_arrears = 0.0
+            new_arrears = max(0, old_arrears + shortfall)
         if shortfall > 0:
             morale_delta = -max(1, round(8 * shortfall / needed))
         elif old_arrears == 0:
@@ -617,10 +640,21 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             morale_delta = 0      # 当月发足但仍有旧欠：不奖励也不惩罚
         new_morale = max(0, min(100, old_morale + morale_delta))
 
-        db.conn.execute(
-            "UPDATE armies SET arrears = ?, morale = ? WHERE id = ?",
-            (new_arrears, new_morale, army_id),
-        )
+        if pay_source_cutover:
+            db.conn.execute(
+                """
+                UPDATE armies
+                SET central_pay_arrears = ?, arrears = ?, morale = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (central_arrears, new_arrears, new_morale, army_id),
+            )
+        else:
+            db.conn.execute(
+                "UPDATE armies SET arrears = ?, morale = ? WHERE id = ?",
+                (new_arrears, new_morale, army_id),
+            )
         if shortfall > 0:
             reason_tag = f"{TURN_UNIT}军饷欠发{shortfall}万两"
         else:
