@@ -500,6 +500,7 @@ export async function runFamily(
     familyModule: epic.moduleDeclaration,
     runOptionModule: input.moduleDeclaration,
     undevelopedModules: input.undevelopedModules,
+    acceptedSuppressionSources: input.acceptedSuppressionSources,
   });
   const declaredModuleContext =
     moduleContext.currentModules.length > 0 || moduleContext.childModules.length > 0

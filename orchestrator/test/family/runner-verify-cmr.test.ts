@@ -160,6 +160,44 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     });
   });
 
+  it("passes run-option accepted suppression sources into the final CMR module context", async () => {
+    const calls: VerifyCmrInput[] = [];
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      calls.push(input);
+      return { ok: true, ran: false };
+    };
+    const acceptedSource = {
+      source: "#445",
+      scope: "orchestrator/src/family",
+      reason: "Owner accepted this exact finding for the family CMR scope",
+      findingIdentity:
+        "correctness|orchestrator/src/family/verifyCmr.ts:42|accepted source",
+      boundedReopen: "reopen on different scope, higher severity, or new evidence",
+    };
+
+    await runFamily({
+      epic: {
+        issue: 445,
+        moduleDeclaration: {
+          module: "orchestrator-family",
+          moduleScope: ["orchestrator/src/family"],
+          source: "family_issue",
+          issue: 445,
+        },
+        children: [{ issue: 10, blockedBy: [] }],
+      },
+      familyBackend: new FakeFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/445-base",
+      acceptedSuppressionSources: [acceptedSource],
+      verifyCmr,
+    });
+
+    expect(calls.at(-1)?.moduleContext?.acceptedSuppressionSources).toEqual([
+      acceptedSource,
+    ]);
+  });
+
   it("passes the known #287 hub-loss accepted suppression through production CMR context", async () => {
     const classified: ReturnType<typeof classifyFamilyCmrFindings>[] = [];
     const hubLossFinding: Finding = {

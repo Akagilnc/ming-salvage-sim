@@ -49,6 +49,30 @@ extra: forbidden
 \`\`\`
 `),
     ).toBeUndefined();
+    expect(
+      parseModuleDeclaration(`## Module Declaration
+\`\`\`yaml
+module: fiscal
+module_scope:
+\`\`\`
+`),
+    ).toBeUndefined();
+    expect(
+      parseModuleDeclaration(`## Module Declaration
+\`\`\`yaml
+module: fiscal
+module_scope:
+  - orchestrator/src/family
+\`\`\`
+
+## Module Declaration
+\`\`\`yaml
+module: second
+module_scope:
+  - orchestrator/src/runner.ts
+\`\`\`
+`),
+    ).toBeUndefined();
   });
 });
 
@@ -513,6 +537,58 @@ describe("#449 family CMR finding classification", () => {
       attribution: { method: "missing_module_context" },
     });
     expect(classified.dispositions).toEqual([]);
+  });
+
+  it("accepts a registered suppression source passed through the module context builder", () => {
+    const acceptedSource = {
+      source: "#445",
+      scope: "orchestrator/src/family",
+      reason: "Owner accepted this exact finding for the family CMR scope",
+      findingIdentity: findingIdentityKey(finding),
+      boundedReopen: "reopen on different scope, higher severity, or new evidence",
+    };
+    const suppressedFinding: Finding = {
+      ...finding,
+      action: "wont_fix",
+      disposition_reason: acceptedSource.reason,
+      disposition: {
+        kind: "accepted_suppressed",
+        source: acceptedSource.source,
+        scope: acceptedSource.scope,
+        reason: acceptedSource.reason,
+        findingIdentity: acceptedSource.findingIdentity,
+        boundedReopen: acceptedSource.boundedReopen,
+      },
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [suppressedFinding],
+      moduleContext: buildFamilyModuleContext({
+        childModules: [],
+        familyModule: {
+          module: "orchestrator-family",
+          moduleScope: ["orchestrator/src/family"],
+          source: "family_issue",
+          issue: 445,
+        },
+        acceptedSuppressionSources: [acceptedSource],
+      }),
+    });
+
+    expect(classified.blocking).toEqual([]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "accepted_suppressed",
+      source: "#445",
+    });
+    expect(classified.dispositions).toEqual([
+      expect.objectContaining({
+        status: "accepted_suppressed",
+        source: "#445",
+        scope: acceptedSource.scope,
+        reason: acceptedSource.reason,
+      }),
+    ]);
   });
 
   it("fails closed when a prior accepted suppression has stale module scope", () => {

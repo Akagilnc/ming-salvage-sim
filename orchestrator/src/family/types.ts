@@ -24,6 +24,7 @@ import type {
   WorkerSpec,
 } from "../types.js";
 import type {
+  AcceptedSuppressionSource,
   FamilyCmrClassification,
   FamilyModuleContext,
   SourcedModuleDeclaration,
@@ -720,6 +721,11 @@ export interface FamilyRunInput {
    * invent them.
    */
   readonly undevelopedModules?: ReadonlyArray<SourcedModuleDeclaration>;
+  /**
+   * Explicitly trusted accepted-suppression records supplied by runner/run-option
+   * context. Reviewers may cite these, but cannot self-author suppressions.
+   */
+  readonly acceptedSuppressionSources?: ReadonlyArray<AcceptedSuppressionSource>;
   /**
    * The verify-cmr hook (ADR 0022 decision 3④/⑤/⑥) — the family verify (per-wave
    * fail-fast) + end-of-run integrated cmr. Optional: defaults to the #293 no-op
