@@ -1693,6 +1693,92 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     expect(result.status).toBe("success");
     expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship"]);
   });
+
+  it("matches nested directory scope segments to active finding locations", async () => {
+    const fileScopedFinding: Finding = {
+      severity: "high",
+      category: "correctness",
+      claim_quote: "locations.has(normaliseScopePart(finding.location))",
+      location: "orchestrator/src/runner.ts:380",
+      suggested_fix: "match nested directory scope against path:line findings",
+      action: "fix_now",
+    };
+    const fileScopedFindingKey =
+      "correctness|orchestrator/src/runner.ts:380|locations.has(normalisescopepart(finding.location))";
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        {
+          step: "S2",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding] } },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [fileScopedFinding],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [fileScopedFinding],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "runner_bookkeeping",
+          intent: "continue_fixing",
+          findingScope: { locations: ["src"] },
+          source: "resume_input",
+          ts: "2026-07-01T00:00:04.000Z",
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship"]);
+  });
 });
 
 describe("#369 runner resume/retry review fixes", () => {
@@ -2204,7 +2290,7 @@ describe("#369 finding identity and classification", () => {
     const first: Finding = {
         ...finding,
         action: "wont_fix",
-        disposition_reason: "Accepted as outside this slice",
+        disposition_reason: "legacy fallback should not win",
         disposition: {
           kind: "accepted_suppressed",
           ...acceptedSource,

@@ -74,6 +74,22 @@ module_scope:
 `),
     ).toBeUndefined();
   });
+
+  it("preserves hash characters inside quoted module declaration values", () => {
+    expect(
+      parseModuleDeclaration(`## Module Declaration
+\`\`\`yaml
+module: "#fiscal"
+module_scope:
+  - "foo#bar"
+  - orchestrator/src/family # real comment
+\`\`\`
+`),
+    ).toEqual({
+      module: "#fiscal",
+      moduleScope: ["foo#bar", "orchestrator/src/family"],
+    });
+  });
 });
 
 const finding: Finding = {
@@ -208,6 +224,46 @@ describe("#449 family CMR finding classification", () => {
     expect(classified.results[0]).toMatchObject({
       classification: "same_module_still_red",
       attribution: { method: "family_module", issue: 445, module: "orchestrator-family" },
+    });
+  });
+
+  it("treats slug-like target module names as distinct identifiers", () => {
+    const fiscalReportsFinding: Finding = {
+      ...finding,
+      location: "docs/fiscal-reports/summary.md:12",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "fiscal-reports",
+        reason: "The report surface belongs to a separate undeveloped module.",
+      },
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [fiscalReportsFinding],
+      moduleContext: buildFamilyModuleContext({
+        childModules: [],
+        familyModule: {
+          module: "fiscal",
+          moduleScope: ["orchestrator/src/fiscal"],
+          source: "family_issue",
+          issue: 445,
+        },
+        undevelopedModules: [
+          {
+            module: "fiscal-reports",
+            moduleScope: ["docs/fiscal-reports"],
+            source: "run_option",
+          },
+        ],
+      }),
+    });
+
+    expect(classified.blocking).toEqual([]);
+    expect(classified.deferred).toEqual([fiscalReportsFinding]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "cross_module_defer",
+      targetModule: "fiscal-reports",
     });
   });
 

@@ -554,7 +554,9 @@ export async function runFamily(
     acceptedSuppressionSources: input.acceptedSuppressionSources,
   });
   const declaredModuleContext =
-    moduleContext.currentModules.length > 0 || moduleContext.childModules.length > 0
+    moduleContext.currentModules.length > 0 ||
+    moduleContext.childModules.length > 0 ||
+    (moduleContext.acceptedSuppressionSources?.length ?? 0) > 0
       ? moduleContext
       : undefined;
   // The verify-cmr hook: the injected impl (#296 / tests) or the #293 no-op module
