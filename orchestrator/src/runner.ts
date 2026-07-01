@@ -1247,7 +1247,11 @@ function successSummaryForCurrentState(input: {
 
 function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
   const repairHint = `inspect ${errorPackage.failedStep} and rerun after repairing the cause`;
-  if (/contract|malformed|does not match|no valid result|off-contract/i.test(errorPackage.reason)) {
+  if (
+    /contract|malformed|does not match|no valid result|off-contract|prior claimed-fixed finding|prior finding disposition/i.test(
+      errorPackage.reason,
+    )
+  ) {
     return contractDriftStopSummary({
       summary: errorPackage.reason,
       repairHint,

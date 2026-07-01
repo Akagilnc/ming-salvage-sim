@@ -7,9 +7,15 @@ import {
 } from "./family/cmrClassification.js";
 import { runFamily } from "./family/runner.js";
 import { parseCmrOutcome } from "./family/realFamilyBackend.js";
+import {
+  runVerifyCmr,
+  type VerifyCmrInput,
+  type VerifyCmrResult,
+} from "./family/verifyCmr.js";
 import type {
   FamilyBackend,
   FamilyEpic,
+  FamilyEscalation,
   FamilyLedgerEntry,
   MergeRequest,
 } from "./family/types.js";
@@ -29,7 +35,6 @@ import {
   type StopReason,
   type StopSummary,
 } from "./stopSummary.js";
-import type { VerifyCmrInput, VerifyCmrResult } from "./family/verifyCmr.js";
 import type {
   Backend,
   DispatchContext,
@@ -408,6 +413,60 @@ class DogfoodFamilyBackend implements FamilyBackend {
 
   async readFamilyHead(): Promise<string> {
     return this.currentHead;
+  }
+}
+
+class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
+  readonly dispatches: string[] = [];
+  readonly escalations: FamilyEscalation[] = [];
+  private familyWorkerAttempt = 0;
+
+  constructor(
+    currentHead = "family-head",
+    initialLedger: ReadonlyArray<FamilyLedgerEntry> = [],
+    private readonly familyWorkerOutputs: ReadonlyArray<WorkerResult> = [],
+  ) {
+    super(currentHead, initialLedger);
+  }
+
+  async runFamilyVerify(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
+
+  async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    this.dispatches.push(
+      `${spec.kind}:${ctx.cmrPass ?? ctx.familyBase ?? "unknown"}`,
+    );
+    const scripted = this.familyWorkerOutputs[this.familyWorkerAttempt];
+    this.familyWorkerAttempt += 1;
+    if (scripted !== undefined) return scripted;
+    if (spec.kind === "cmr") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+        },
+      };
+    }
+    return {
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: ctx.familyBase ?? "family/dogfood-base",
+        status: "pushed",
+      },
+    };
+  }
+
+  async escalateFamily(escalation: FamilyEscalation): Promise<void> {
+    this.escalations.push(escalation);
   }
 }
 
@@ -931,6 +990,189 @@ async function closurePositiveReplay(): Promise<SeamReplay> {
   };
 }
 
+function cmrClosureWorkerResult(input: {
+  readonly claimedFixedFindingIdentityKeys: readonly string[];
+  readonly priorFindingDispositions: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly status: "still-active" | "verified-closed" | "unable-to-assess";
+  }>;
+}): WorkerResult {
+  return {
+    kind: "completed",
+    output: {
+      kind: "cmr",
+      converged: true,
+      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      claimedFixedFindingIdentityKeys: input.claimedFixedFindingIdentityKeys,
+      priorFindingDispositions: input.priorFindingDispositions,
+    },
+  };
+}
+
+async function familyClosureFailure(input: {
+  readonly shape: string;
+  readonly claimedFixedFindingIdentityKeys: readonly string[];
+  readonly priorFindingDispositions: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly status: "still-active" | "verified-closed" | "unable-to-assess";
+  }>;
+}): Promise<{ readonly shape: string; readonly reason: string }> {
+  const backend = new DogfoodCmrFamilyBackend(
+    "closure-head",
+    [],
+    [
+      cmrClosureWorkerResult({
+        claimedFixedFindingIdentityKeys: input.claimedFixedFindingIdentityKeys,
+        priorFindingDispositions: input.priorFindingDispositions,
+      }),
+    ],
+  );
+  const result = await runVerifyCmr({
+    phase: "final",
+    familyBase: "family/376-closure",
+    familyBackend: backend,
+  });
+  const reason =
+    backend.escalations[0]?.reason ??
+    backend.ledger.find((entry) => entry.status === "aborted")?.reason;
+  if (result.ok || reason === undefined) {
+    throw new Error(`dogfood CMR closure replay ${input.shape} did not fail`);
+  }
+  if (backend.dispatches.some((dispatch) => dispatch.startsWith("ship:"))) {
+    throw new Error(`dogfood CMR closure replay ${input.shape} shipped`);
+  }
+  return { shape: input.shape, reason };
+}
+
+async function runnerClosureFailure(input: {
+  readonly shape: string;
+  readonly reviewerOutput: StepOutput;
+}): Promise<{
+  readonly shape: string;
+  readonly reason: string;
+  readonly stopSummary: StopSummary;
+}> {
+  const closureFinding = runnerFinding({
+    claimQuote: `closure failure ${input.shape}`,
+    location: "orchestrator/src/runner.ts:376",
+  });
+  const backend = new DogfoodSingleSliceBackend(undefined, [
+    { kind: "reviewer", findings: [closureFinding] },
+    input.reviewerOutput,
+  ]);
+  const result = await runOrchestrator({ issueNumber: 376, backend });
+  if (result.status !== "error" || result.errorPackage === undefined) {
+    throw new Error(`dogfood runner closure replay ${input.shape} ended ${result.status}`);
+  }
+  return {
+    shape: input.shape,
+    reason: result.errorPackage.reason,
+    stopSummary: result.stopSummary,
+  };
+}
+
+async function closureNegativeReplay(): Promise<SeamReplay> {
+  const stillActiveKey = "correctness|src/closure.ts:1|still active";
+  const unableKey = "correctness|src/closure.ts:2|unable";
+  const missingKey = "correctness|src/closure.ts:3|missing";
+  const staleKey = "correctness|src/closure.ts:4|stale";
+  const duplicateKey =
+    "correctness|orchestrator/src/runner.ts:376|closure failure duplicate-disposition";
+  const familyFailures = await Promise.all([
+    familyClosureFailure({
+      shape: "still-active",
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [
+        { identityKey: stillActiveKey, status: "still-active" },
+      ],
+    }),
+    familyClosureFailure({
+      shape: "unable-to-assess",
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [
+        { identityKey: unableKey, status: "unable-to-assess" },
+      ],
+    }),
+    familyClosureFailure({
+      shape: "missing-disposition",
+      claimedFixedFindingIdentityKeys: [missingKey],
+      priorFindingDispositions: [],
+    }),
+    familyClosureFailure({
+      shape: "extra-stale-disposition",
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [
+        { identityKey: staleKey, status: "verified-closed" },
+      ],
+    }),
+  ]);
+  const duplicateFailure = await runnerClosureFailure({
+    shape: "duplicate-disposition",
+    reviewerOutput: {
+      kind: "reviewer",
+      findings: [],
+      priorFindingDispositions: [
+        { identityKey: duplicateKey, status: "verified-closed" },
+        { identityKey: duplicateKey, status: "verified-closed" },
+      ],
+    },
+  });
+  if (duplicateFailure.stopSummary.reason !== "contract_drift") {
+    throw new Error(
+      "dogfood duplicate closure replay did not produce contract_drift",
+    );
+  }
+  const failures = [...familyFailures, duplicateFailure];
+  return {
+    stopSummary: contractDriftStopSummary({
+      summary: "closure contract rejected stale or duplicate dispositions",
+      repairHint: "provide one verified-closed disposition per claimed finding",
+    }),
+    sourceEvidence: {
+      seam: "family_cmr_closure",
+      runnerSeam: "runner_s6_closure_adjudication",
+      rejectedStatuses: ["still-active", "unable-to-assess"],
+      rejectedShapes: failures.map((failure) => failure.shape),
+      failureReasons: Object.fromEntries(
+        failures.map((failure) => [failure.shape, failure.reason]),
+      ),
+    },
+  };
+}
+
+async function closureContextMissingReplay(): Promise<SeamReplay> {
+  const closureFinding = runnerFinding({
+    claimQuote: "S6 missing prior finding context must fail closed",
+    location: "orchestrator/src/runner.ts:376",
+  });
+  const backend = new DogfoodSingleSliceBackend(undefined, [
+    { kind: "reviewer", findings: [closureFinding] },
+    { kind: "reviewer", findings: [] },
+  ]);
+  const result = await runOrchestrator({ issueNumber: 376, backend });
+  if (result.status !== "error" || result.errorPackage === undefined) {
+    throw new Error(
+      `dogfood closure-context-missing replay ended ${result.status}`,
+    );
+  }
+  if (result.stopSummary.reason !== "contract_drift") {
+    throw new Error(
+      "dogfood closure-context-missing replay did not produce contract_drift",
+    );
+  }
+  return {
+    stopSummary: result.stopSummary,
+    sourceEvidence: {
+      seam: "runner",
+      mechanism: "s6_missing_prior_context",
+      status: result.status,
+      closureContext: "missing",
+      errorReason: result.errorPackage.reason,
+      dispatched: backend.dispatched,
+    },
+  };
+}
+
 function uniqueSortedStopReasons(
   scenarios: ReadonlyArray<DogfoodReplayScenario>,
 ): ReadonlyArray<StopReason> {
@@ -1007,6 +1249,8 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   const legacyDispositionSource = legacyDispositionParserReplay();
   const routeAccountingSource = routeAccountingReplay();
   const routeFreezeSource = await routeFreezeReplay();
+  const closureNegativeSource = await closureNegativeReplay();
+  const closureContextMissingSource = await closureContextMissingReplay();
   const closurePositiveSource = await closurePositiveReplay();
   const currentHeadFamilySuccessSummary =
     await familyCurrentHeadSuccessStopSummary();
@@ -1275,20 +1519,20 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 376,
       title: "active or duplicate prior finding dispositions cannot pass closure",
       classification: "contract_drift",
-      stopSummary: contractDriftStopSummary({
-        summary: "closure contract rejected stale or duplicate dispositions",
-        repairHint: "provide one verified-closed disposition per claimed finding",
-      }),
+      stopSummary: closureNegativeSource.stopSummary,
+      source: "family",
+      sourceStopSummary: closureNegativeSource.stopSummary,
+      sourceEvidence: closureNegativeSource.sourceEvidence,
     }),
     staticScenario({
       id: "376-closure-context-missing",
       issue: 376,
       title: "fresh reviewer missing prior finding context fails with structured drift",
       classification: "contract_drift",
-      stopSummary: contractDriftStopSummary({
-        summary: "closure_context_missing",
-        repairHint: "pass current prior findings and claimed-fixed keys into S6",
-      }),
+      stopSummary: closureContextMissingSource.stopSummary,
+      source: "runner",
+      sourceStopSummary: closureContextMissingSource.stopSummary,
+      sourceEvidence: closureContextMissingSource.sourceEvidence,
     }),
     staticScenario({
       id: "376-closure-context-positive",
