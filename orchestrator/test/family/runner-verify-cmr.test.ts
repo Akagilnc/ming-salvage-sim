@@ -198,6 +198,65 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     ]);
   });
 
+  it("keeps pending correctness CMR finding keys across a newer unrelated completeness pass", async () => {
+    const priorKey =
+      "correctness|orchestrator/src/family/verifycmr.ts:42|correctness blocker";
+    const calls: VerifyCmrInput[] = [];
+    class PreSeededFamilyBackend extends FakeFamilyBackend {
+      constructor() {
+        super();
+        this.ledger.push(
+          { childIssue: 10, status: "merged" },
+          {
+            status: "aborted",
+            event: "aborted",
+            phase: "final",
+            cmrPass: "correctness",
+            cmrFindingClassification: {
+              blocking: [],
+              deferred: [],
+              dispositions: [],
+              moduleContext: {
+                currentModules: [],
+                childModules: [],
+                undevelopedModules: [],
+              },
+              results: [
+                {
+                  identityKey: priorKey,
+                  classification: "same_module_still_red",
+                  attribution: { method: "family_module", issue: 293 },
+                  reason: "correctness blocker remains open",
+                },
+              ],
+            },
+          },
+          {
+            status: "cmr_passed",
+            event: "cmr_passed",
+            phase: "final",
+            cmrPass: "completeness",
+            familyHeadAfter: "family-head",
+          },
+        );
+      }
+    }
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      calls.push(input);
+      return { ok: true, ran: true };
+    };
+
+    await runFamily({
+      epic: epicWith(10),
+      familyBackend: new PreSeededFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr,
+    });
+
+    expect(calls.at(-1)?.priorCmrFindingIdentityKeys).toEqual([priorKey]);
+  });
+
   it("passes the known #287 hub-loss accepted suppression through production CMR context", async () => {
     const classified: ReturnType<typeof classifyFamilyCmrFindings>[] = [];
     const hubLossFinding: Finding = {

@@ -23,6 +23,7 @@ import type {
   ReviewerOutput,
   StepOutput,
 } from "./types.js";
+import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
 
 /** Exact severity enum (no whitespace / case drift tolerated). */
 const SEVERITIES: ReadonlySet<string> = new Set([
@@ -161,9 +162,7 @@ function isValidDispositionEvidence(
       );
     case "accepted_suppressed":
       return (
-        isFilledString(obj.source) &&
-        isFilledString(obj.scope) &&
-        isFilledString(obj.boundedReopen)
+        hasAcceptedSuppressionAuthority(obj)
       );
     case "spec_conflict":
     case "infra_failure":
@@ -295,12 +294,7 @@ export function isValidPriorFindingDisposition(
   }
   if (obj.reason !== undefined && !isString(obj.reason)) return false;
   if (obj.status === "accepted_suppressed") {
-    return (
-      isFilledString(obj.source) &&
-      isFilledString(obj.scope) &&
-      isFilledString(obj.reason) &&
-      isFilledString(obj.boundedReopen)
-    );
+    return hasAcceptedSuppressionAuthority(obj);
   }
   return true;
 }

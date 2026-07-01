@@ -280,10 +280,19 @@ function pendingPriorCmrFindingIdentityKeys(
 ): ReadonlyArray<string> {
   const keys: string[] = [];
   const seen = new Set<string>();
+  const closedPasses = new Set<string>();
   for (let index = ledger.length - 1; index >= 0; index--) {
     const entry = ledger[index]!;
-    if (entry.status === "shipped" || entry.status === "cmr_passed") break;
+    if (entry.status === "shipped") break;
+    if (entry.status === "cmr_passed") {
+      if (entry.cmrPass === undefined) break;
+      closedPasses.add(entry.cmrPass);
+      continue;
+    }
     if (entry.status !== "aborted" || entry.cmrFindingClassification === undefined) {
+      continue;
+    }
+    if (entry.cmrPass !== undefined && closedPasses.has(entry.cmrPass)) {
       continue;
     }
     for (const result of entry.cmrFindingClassification.results) {

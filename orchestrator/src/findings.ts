@@ -5,6 +5,7 @@ import type {
   PriorFindingDisposition,
   ReviewerOutput,
 } from "./types.js";
+import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
 import { isBlockingFinding } from "./validate.js";
 
 function normalizeFindingPart(value: string): string {
@@ -81,9 +82,7 @@ function isSourcedAcceptedSuppression(
 } {
   return (
     disposition?.status === "accepted_suppressed" &&
-    isFilledString(disposition.source) &&
-    isFilledString(disposition.scope) &&
-    isFilledString(disposition.boundedReopen)
+    hasAcceptedSuppressionAuthority(disposition)
   );
 }
 
@@ -282,10 +281,7 @@ export function adjudicatePriorClaimedFixedFindings(input: {
     if (
       disposition.status === "verified-closed" ||
       (disposition.status === "accepted_suppressed" &&
-        isFilledString(disposition.source) &&
-        isFilledString(disposition.scope) &&
-        isFilledString(disposition.reason) &&
-        isFilledString(disposition.boundedReopen))
+        hasAcceptedSuppressionAuthority(disposition))
     ) {
       verifiedClosedIdentityKeys.push(key);
       continue;

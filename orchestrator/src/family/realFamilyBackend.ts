@@ -64,6 +64,10 @@ import { z } from "zod";
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
+import {
+  hasBoundedReopenCondition,
+  hasExplicitAcceptedSuppressionSource,
+} from "../acceptedSuppression.js";
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
 import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
@@ -2154,9 +2158,9 @@ const cmrFindingDispositionSchema = z
     boundedReopen: z.string().optional(),
   })
   .strict()
-  .superRefine((disposition, ctx) => {
-    if (disposition.status !== "accepted_suppressed") return;
-    for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
+	.superRefine((disposition, ctx) => {
+	  if (disposition.status !== "accepted_suppressed") return;
+	  for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
       if (disposition[field] === undefined || disposition[field].trim() === "") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -2164,8 +2168,28 @@ const cmrFindingDispositionSchema = z
           path: [field],
         });
       }
-    }
-  });
+	  }
+	  if (
+	    disposition.source !== undefined &&
+	    !hasExplicitAcceptedSuppressionSource(disposition.source)
+	  ) {
+	    ctx.addIssue({
+	      code: z.ZodIssueCode.custom,
+	      message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
+	      path: ["source"],
+	    });
+	  }
+	  if (
+	    disposition.boundedReopen !== undefined &&
+	    !hasBoundedReopenCondition(disposition.boundedReopen)
+	  ) {
+	    ctx.addIssue({
+	      code: z.ZodIssueCode.custom,
+	      message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
+	      path: ["boundedReopen"],
+	    });
+	  }
+	});
 const cmrClosureSchema = {
   claimedFixedFindingIdentityKeys: z.array(nonEmpty),
   priorFindingDispositions: z.array(cmrFindingDispositionSchema),
@@ -2212,7 +2236,23 @@ const cmrDispositionEvidenceSchema = z.discriminatedUnion("kind", [
       targetModule: nonEmpty.optional(),
       boundedReopen: nonEmpty,
     })
-    .strict(),
+    .strict()
+    .superRefine((disposition, ctx) => {
+      if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "accepted_suppressed requires explicit user/ADR/issue source",
+          path: ["source"],
+        });
+      }
+      if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "accepted_suppressed requires bounded reopen condition",
+          path: ["boundedReopen"],
+        });
+      }
+    }),
 ]);
 const cmrReviewerFindingSchema = z
   .object({
