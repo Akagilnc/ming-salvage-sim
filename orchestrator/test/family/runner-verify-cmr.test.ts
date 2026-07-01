@@ -19,6 +19,7 @@
 import { describe, expect, it } from "vitest";
 import { classifyFamilyCmrFindings } from "../../src/family/cmrClassification.js";
 import { runFamily } from "../../src/family/runner.js";
+import { findingIdentityKey } from "../../src/findings.js";
 import type { Finding } from "../../src/types.js";
 import type {
   Backend,
@@ -262,6 +263,12 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
 
   it("passes the known #287 hub-loss accepted suppression through production CMR context", async () => {
     const classified: ReturnType<typeof classifyFamilyCmrFindings>[] = [];
+    const acceptedScope =
+      "#287 hub-loss / central C_ accounts finding only; not #287 local integration or stub-contract failures";
+    const acceptedReason =
+      "#287 ADR0023 D9 central transport-loss C_ accounts are accepted as #261/ADR0021 hub implementation scope";
+    const boundedReopen =
+      "reopen if severity escalates, new evidence changes the scope, or the finding targets #287-owned local integration/stub contract behavior";
     const hubLossFinding: Finding = {
       severity: "medium",
       category: "correctness",
@@ -269,12 +276,23 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
       location: "docs/adr/0023.md:D9",
       suggested_fix: "do not block #287 on the accepted #261/ADR0021 hub implementation",
-      action: "defer",
+      action: "wont_fix",
+      disposition_reason: acceptedReason,
       disposition: {
-        kind: "cross_module",
-        targetModule: "hub",
-        reason: "the hub implementation is outside #287",
+        kind: "accepted_suppressed",
+        source: "#303",
+        scope: acceptedScope,
+        reason: acceptedReason,
+        targetModule: "#261/ADR0021 hub implementation",
+        boundedReopen,
       },
+    };
+    const acceptedSource = {
+      source: "#303",
+      scope: acceptedScope,
+      reason: acceptedReason,
+      findingIdentity: findingIdentityKey(hubLossFinding),
+      boundedReopen,
     };
     const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
       if (input.phase === "final") {
@@ -303,6 +321,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       familyBackend: new FakeFamilyBackend(),
       singleSliceBackend: new ChildBackend(),
       familyBase: "family/287-base",
+      acceptedSuppressionSources: [acceptedSource],
       verifyCmr,
     });
 

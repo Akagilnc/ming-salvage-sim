@@ -409,17 +409,34 @@ describe("#449 family CMR finding classification", () => {
   });
 
   it("records accepted suppression for the #287 hub-loss finding with bounded reopen conditions", () => {
+    const acceptedScope =
+      "#287 hub-loss / central C_ accounts finding only; not #287 local integration or stub-contract failures";
+    const acceptedReason =
+      "#287 ADR0023 D9 central transport-loss C_ accounts are accepted as #261/ADR0021 hub implementation scope";
+    const boundedReopen =
+      "reopen if severity escalates, new evidence changes the scope, or the finding targets #287-owned local integration/stub contract behavior";
     const hubLossFinding: Finding = {
       ...finding,
       claim_quote: "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
       location: "docs/adr/0023.md:D9",
-      action: "defer",
+      action: "wont_fix",
+      disposition_reason: acceptedReason,
       disposition: {
-        kind: "cross_module",
-        targetModule: "hub",
-        reason: "the hub implementation is outside #287",
+        kind: "accepted_suppressed",
+        source: "#303",
+        scope: acceptedScope,
+        reason: acceptedReason,
+        findingIdentity: findingIdentityKey({
+          ...finding,
+          claim_quote:
+            "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
+          location: "docs/adr/0023.md:D9",
+        }),
+        targetModule: "#261/ADR0021 hub implementation",
+        boundedReopen,
       },
     };
+    const hubLossIdentity = findingIdentityKey(hubLossFinding);
 
     const classified = classifyFamilyCmrFindings({
       familyIssue: 287,
@@ -437,13 +454,10 @@ describe("#449 family CMR finding classification", () => {
         acceptedSuppressionSources: [
           {
             source: "#303",
-            scope:
-              "#287 hub-loss / central C_ accounts finding only; not #287 local integration or stub-contract failures",
-            reason:
-              "#287 ADR0023 D9 central transport-loss C_ accounts are accepted as #261/ADR0021 hub implementation scope",
-            findingIdentity: findingIdentityKey(hubLossFinding),
-            boundedReopen:
-              "reopen if severity escalates, new evidence changes the scope, or the finding targets #287-owned local integration/stub contract behavior",
+            scope: acceptedScope,
+            reason: acceptedReason,
+            findingIdentity: hubLossIdentity,
+            boundedReopen,
           },
         ],
       },
@@ -463,6 +477,57 @@ describe("#449 family CMR finding classification", () => {
       source: "#303",
       targetModule: "#261/ADR0021 hub implementation",
     });
+  });
+
+  it("fails closed when #287 hub-loss prose lacks an accepted suppression disposition", () => {
+    const reviewerFinding: Finding = {
+      ...finding,
+      claim_quote:
+        "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
+      location: "docs/adr/0023.md:D9",
+      action: "defer",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "hub",
+        reason: "the hub implementation is outside #287",
+      },
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 287,
+      findings: [reviewerFinding],
+      moduleContext: {
+        currentModules: [
+          {
+            module: "fiscal",
+            moduleScope: ["docs/adr/0023.md"],
+            source: "family_issue",
+            issue: 287,
+          },
+        ],
+        childModules: [],
+        acceptedSuppressionSources: [
+          {
+            source: "#303",
+            scope:
+              "#287 hub-loss / central C_ accounts finding only; not #287 local integration or stub-contract failures",
+            reason:
+              "#287 ADR0023 D9 central transport-loss C_ accounts are accepted as #261/ADR0021 hub implementation scope",
+            findingIdentity: findingIdentityKey(reviewerFinding),
+            boundedReopen:
+              "reopen if severity escalates, new evidence changes the scope, or the finding targets #287-owned local integration/stub contract behavior",
+          },
+        ],
+      },
+    });
+
+    expect(classified.blocking).toEqual([reviewerFinding]);
+    expect(classified.deferred).toEqual([]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "same_module_still_red",
+      attribution: { method: "family_module", issue: 287, module: "fiscal" },
+    });
+    expect(classified.dispositions).toEqual([]);
   });
 
   it("fails closed when an accepted suppression names a different finding identity", () => {
