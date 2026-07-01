@@ -273,6 +273,7 @@ export function adjudicatePriorClaimedFixedFindings(input: {
   const verifiedClosedIdentityKeys: string[] = [];
   for (const key of input.priorIdentityKeys) {
     const disposition = dispositionByKey.get(key);
+    const priorFinding = priorByKey.get(key);
     if (disposition === undefined) {
       throw new Error(
         `reviewer omitted required disposition for prior claimed-fixed finding ${key}`,
@@ -281,12 +282,15 @@ export function adjudicatePriorClaimedFixedFindings(input: {
     if (
       disposition.status === "verified-closed" ||
       (disposition.status === "accepted_suppressed" &&
-        hasAcceptedSuppressionAuthority(disposition))
+        hasAcceptedSuppressionAuthority(disposition) &&
+        priorFinding !== undefined &&
+        priorFinding.severity !== "critical" &&
+        priorFinding.severity !== "high")
     ) {
       verifiedClosedIdentityKeys.push(key);
       continue;
     }
-    const finding = activeFindingsByKey.get(key) ?? priorByKey.get(key);
+    const finding = activeFindingsByKey.get(key) ?? priorFinding;
     if (finding === undefined) {
       throw new Error(
         `reviewer marked prior claimed-fixed finding ${key} still-active, but no active or prior finding payload exists`,
