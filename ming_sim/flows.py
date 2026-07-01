@@ -401,40 +401,6 @@ def _normalized_cutover_pay_arrears(row, current_arrears: float) -> Tuple[float,
     )
 
 
-def _allocate_integer_payments_pro_rata(
-    weights_by_id: Dict[str, float],
-    budget: int,
-) -> Dict[str, int]:
-    """Allocate whole-万两 payments by positive weights without exceeding per-army due."""
-    positive = {key: weight for key, weight in weights_by_id.items() if weight > 0}
-    if budget <= 0 or not positive:
-        return {key: 0 for key in weights_by_id}
-    caps = {key: max(0, int(math.floor(weight + 1e-9))) for key, weight in positive.items()}
-    full_cost = sum(caps.values())
-    if budget >= full_cost:
-        payments = {key: caps.get(key, 0) for key in weights_by_id}
-        return payments
-
-    total_weight = sum(positive.values())
-    raw = {key: budget * weight / total_weight for key, weight in positive.items()}
-    payments = {
-        key: min(caps[key], int(math.floor(raw[key])))
-        for key in positive
-    }
-    remaining = budget - sum(payments.values())
-    for key, _fraction in sorted(
-        ((key, raw[key] - math.floor(raw[key])) for key in positive),
-        key=lambda item: (-item[1], item[0]),
-    ):
-        if remaining <= 0:
-            break
-        if payments[key] >= caps[key]:
-            continue
-        payments[key] += 1
-        remaining -= 1
-    return {key: payments.get(key, 0) for key in weights_by_id}
-
-
 def _pay_single_army_arrears(
     db: GameDB,
     state: GameState,
@@ -675,15 +641,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         army_map = {str(r["id"]): r for r in army_rows_raw}
         ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
         ordered += [r for r in army_rows_raw if str(r["id"]) not in ARMY_SALARY_PRIORITY]
-        central_due_by_id = {
-            str(row["id"]): army_needed(row) * float(row["central_pay_share"] or 0)
-            for row in ordered
-        }
-        central_payments = _allocate_integer_payments_pro_rata(
-            central_due_by_id,
-            max(0, int(state.metrics["国库"])),
-        )
-
         for row in ordered:
             army_id = str(row["id"])
             name = str(row["name"])
@@ -691,15 +648,10 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             needed = full_needed * float(row["central_pay_share"] or 0)
             if needed <= 0:
                 continue
-            pay_current = central_payments.get(army_id, 0)
-            shortfall = max(0.0, needed - pay_current)
+            pay_current = 0
+            shortfall = needed
             old_arrears = float(row["arrears"] or 0)
             old_morale = int(row["morale"])
-
-            if pay_current > 0:
-                db.record_issue_economy_move(
-                    state, "国库", -int(pay_current), "中央军饷", f"{name}{TURN_UNIT}中央军饷"
-                )
 
             old_central_arrears = float(row["central_pay_arrears"] or 0)
             province_arrears = float(row["province_pay_arrears"] or 0)
@@ -745,7 +697,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             db.conn.commit()
 
             flows.append({
-                "dir": "expense", "account": "国库", "category": "中央军饷",
+                "dir": "arrears", "account": "中央军饷欠账", "category": "中央军饷",
                 "army": name, "needed": needed, "paid": pay_current,
                 "shortfall": shortfall,
                 "arrears_delta": new_arrears - old_arrears,

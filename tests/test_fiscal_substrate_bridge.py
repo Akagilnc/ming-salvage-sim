@@ -480,7 +480,8 @@ def test_fixed_flows_substrate_hub_does_not_allocate_legacy_central_pool(fresh_g
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
-    state.metrics["国库"] = 10
+    opening_treasury = 10
+    state.metrics["国库"] = opening_treasury
     db.save_state(state)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
     db.conn.execute(
@@ -536,13 +537,14 @@ def test_fixed_flows_substrate_hub_does_not_allocate_legacy_central_pool(fresh_g
         ).fetchall()
     }
     assert not any(
-        flow.get("account") == "国库" and flow.get("category") == "各军军饷"
+        flow.get("account") == "国库" and flow.get("category") in {"各军军饷", "中央军饷"}
         for flow in flow_rows
     )
-    assert rows["guanning"]["central_pay_arrears"] == pytest.approx(5)
-    assert rows["shaanxi_army"]["central_pay_arrears"] == pytest.approx(5)
-    assert rows["guanning"]["arrears"] == pytest.approx(5)
-    assert rows["shaanxi_army"]["arrears"] == pytest.approx(5)
+    assert state.metrics["国库"] == opening_treasury
+    assert rows["guanning"]["central_pay_arrears"] == pytest.approx(10)
+    assert rows["shaanxi_army"]["central_pay_arrears"] == pytest.approx(10)
+    assert rows["guanning"]["arrears"] == pytest.approx(10)
+    assert rows["shaanxi_army"]["arrears"] == pytest.approx(10)
 
 
 def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
