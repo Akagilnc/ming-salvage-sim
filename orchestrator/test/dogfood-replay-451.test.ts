@@ -380,6 +380,22 @@ describe("#451 dogfood replay fixture", () => {
       rejectedDefaultLeg: "opus",
       dispatches: ["cmr:completeness"],
     });
+    expect(rowsById.get("376-route-env-format-mismatch")).toMatchObject({
+      source: "family",
+      classification: "infra_failure",
+      stopReason: "infra_failure",
+      sourceStopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        repairHint: expect.stringContaining("route environment"),
+      }),
+      sourceEvidence: expect.objectContaining({
+        seam: "family_verify_cmr_route_env",
+        helperSeam: "model_route_cmr_leg_env",
+        envShape: "json-written-csv-read",
+        status: "aborted",
+        dispatches: [],
+      }),
+    });
     expect(rowsById.get("376-route-freeze-after-import")?.sourceEvidence).toMatchObject({
       seam: "runner",
       mechanism: "route_freeze_after_import",
