@@ -519,14 +519,13 @@ def _auto_pay_arrears_by_priority(
         )
         spent += spent_now
         remaining -= spent_now
-        if remaining > 0:
-            fresh_row = db.conn.execute(
-                "SELECT * FROM armies WHERE id = ?", (army_id,)
-            ).fetchone()
-            if fresh_row is not None:
-                _writeoff_fractional_army_arrears_tail(
-                    db, state, fresh_row, reason, "诏拨补饷", commit=commit
-                )
+        fresh_row = db.conn.execute(
+            "SELECT * FROM armies WHERE id = ?", (army_id,)
+        ).fetchone()
+        if fresh_row is not None:
+            _writeoff_fractional_army_arrears_tail(
+                db, state, fresh_row, reason, "诏拨补饷", commit=commit
+            )
     return spent
 
 
@@ -768,14 +767,13 @@ def _apply_economy_list(
                 reason, "诏拨补饷", commit=commit,
             )
             if spent:
-                if abs(delta) > spent:
-                    fresh_row = db.conn.execute(
-                        "SELECT * FROM armies WHERE id = ?", (raw_target_id,)
-                    ).fetchone()
-                    if fresh_row is not None:
-                        _writeoff_fractional_army_arrears_tail(
-                            db, state, fresh_row, reason, "诏拨补饷", commit=commit
-                        )
+                fresh_row = db.conn.execute(
+                    "SELECT * FROM armies WHERE id = ?", (raw_target_id,)
+                ).fetchone()
+                if fresh_row is not None:
+                    _writeoff_fractional_army_arrears_tail(
+                        db, state, fresh_row, reason, "诏拨补饷", commit=commit
+                    )
                 applied.append({"account": account, "delta": -spent, "reason": reason})
             continue
 

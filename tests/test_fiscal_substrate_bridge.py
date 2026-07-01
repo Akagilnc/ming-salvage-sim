@@ -2050,7 +2050,7 @@ def test_economy_pay_arrears_clamps_integer_spend_and_writes_off_tail(fresh_db):
         state,
         [{
             "account": "国库",
-            "delta": -4,
+            "delta": -3,
             "category": "补饷",
             "reason": "测试小数欠饷不超扣",
             "purpose": "补饷",
