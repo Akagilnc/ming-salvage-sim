@@ -889,9 +889,9 @@ function replayS4AdjudicationState(
       findingDispositions,
     );
     const reviewerBlocking = [...classification.blocking];
-    const reviewerBlockingIdentityKeys = [...classification.blockingIdentityKeys];
+    const reviewerBlockingIdentityKeys = reviewerBlocking.map(findingIdentityKey);
     let blocking = [...classification.blocking];
-    let blockingIdentityKeys = [...classification.blockingIdentityKeys];
+    let blockingIdentityKeys = blocking.map(findingIdentityKey);
     findingDispositions = [
       ...(entry.findingDispositions ?? classification.dispositions),
     ];
@@ -1639,9 +1639,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       findingDispositions,
     );
     const reviewerBlocking = [...classification.blocking];
-    const reviewerBlockingIdentityKeys = [...classification.blockingIdentityKeys];
+    const reviewerBlockingIdentityKeys = reviewerBlocking.map(findingIdentityKey);
     let blocking = [...classification.blocking];
-    let blockingIdentityKeys = [...classification.blockingIdentityKeys];
+    let blockingIdentityKeys = blocking.map(findingIdentityKey);
     findingDispositions = [...classification.dispositions];
     const noProgressIdentityKeys: string[] = [];
 

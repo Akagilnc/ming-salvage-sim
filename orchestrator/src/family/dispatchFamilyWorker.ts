@@ -26,7 +26,11 @@ import type {
   WorkerSessionMode,
   WorkerSpec,
 } from "../types.js";
-import { modelForSlot, type ResolvedModelRoute } from "../modelRoutes.js";
+import {
+  cmrReviewLegs as activeCmrReviewLegs,
+  modelForSlot,
+  type ResolvedModelRoute,
+} from "../modelRoutes.js";
 import type {
   FamilyBackend,
   IntegratedCmrPass,
@@ -79,6 +83,7 @@ export function cmrWorkerSpec(
     model:
       route?.slots[pass === "completeness" ? "cmrCompleteness" : "cmrCorrectness"] ??
       modelForSlot(pass === "completeness" ? "cmrCompleteness" : "cmrCorrectness"),
+    cmrReviewLegs: route?.legCollections.cmrReview ?? activeCmrReviewLegs(),
     soul: "cmr",
     toolchain: [],
   };

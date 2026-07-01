@@ -83,7 +83,7 @@ import {
   WORKER_IDLE_TIMEOUT_SECONDS,
   modelFamilyForSlug,
 } from "../realBackend.js";
-import { cmrLegAccountingFailure, cmrReviewLegs, modelForSlot } from "../modelRoutes.js";
+import { cmrLegAccountingFailure, modelForSlot } from "../modelRoutes.js";
 import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import { recordFamilyEscalated } from "./ledger.js";
 import {
@@ -1099,6 +1099,17 @@ export class RealFamilyBackend implements FamilyBackend {
     // `mountCmrAuth` creates per-run temp auth dirs (codex/agy) BEFORE the early
     // claude-token escalate below; the finally reclaims them on success, exception,
     // AND that early return (online review r1 — 3 bots: leaked temp dirs).
+    const frozenReviewLegs = spec.cmrReviewLegs;
+    if (frozenReviewLegs === undefined) {
+      return {
+        kind: "escalate",
+        reason: "cmr worker spec missing frozen review legs",
+        diagnosis:
+          "cmrWorkerSpec must freeze the route-selected cmrReview leg collection before " +
+          "dispatch. Refusing to re-read process.env in runCmrWorker because that can " +
+          "write a route file that disagrees with the verified route fingerprint.",
+      };
+    }
     const auth = this.mountCmrAuth();
     try {
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
@@ -1126,12 +1137,12 @@ export class RealFamilyBackend implements FamilyBackend {
       // exact `git diff <familyBaseStartHead>...<familyBase>` scope command + the
       // baseline SHA + the machine-resolved children.
       this.writeCmrFocusFile(ctx);
-      this.writeCmrRouteFile(ctx);
+      this.writeCmrRouteFile(ctx, frozenReviewLegs);
       const result = await sc.run({
         name: "family-cmr",
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: this.opts.workingRepo,
-        sandbox: this.cmrSandbox(auth),
+        sandbox: this.cmrSandbox(auth, frozenReviewLegs),
         // Derive the model from the spec via the shared validated seam (cmr S336 r7
         // symmetry): resolve the worker's slug through the same registry as the
         // single-slice + family ship paths — no constant that could silently drift
@@ -1231,7 +1242,10 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /** Write the route-selected CMR review legs for the in-container worker. */
-  protected writeCmrRouteFile(ctxOrPass: DispatchContext | DispatchContext["cmrPass"]): void {
+  protected writeCmrRouteFile(
+    ctxOrPass: DispatchContext | DispatchContext["cmrPass"],
+    reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+  ): void {
     const ctx =
       typeof ctxOrPass === "string" || ctxOrPass === undefined
         ? { cmrPass: ctxOrPass }
@@ -1239,7 +1253,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const body = JSON.stringify(
       {
         pass: ctx.cmrPass ?? "legacy",
-        reviewLegs: cmrReviewLegs(),
+        reviewLegs,
         ...(ctx.moduleContext !== undefined
           ? { moduleContext: ctx.moduleContext }
           : {}),
@@ -1293,10 +1307,14 @@ export class RealFamilyBackend implements FamilyBackend {
    * The cmr worker's sandbox (souls + skills + CLIs baked into the 2b image).
    * `runCmrWorker` mounts the auth ONCE up-front (so it can fail-closed on the
    * worker's own Claude token — codex cmr R4) and passes it here, avoiding a
-   * double-mount; the arg defaults to a fresh mount for any other caller.
+   * double-mount. The route legs are also explicit so the container env cannot
+   * drift from the already-resolved worker spec.
    */
-  protected cmrSandbox(auth: CmrAuth = this.mountCmrAuth()): sc.SandboxProvider {
-    return docker(this.cmrSandboxConfig(auth));
+  protected cmrSandbox(
+    auth: CmrAuth,
+    reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+  ): sc.SandboxProvider {
+    return docker(this.cmrSandboxConfig(auth, reviewLegs));
   }
 
   /**
@@ -1422,7 +1440,10 @@ export class RealFamilyBackend implements FamilyBackend {
    * SHADOW the baked skill (#334). The WRITE-capable `cmr` soul lets the pass worker
    * commit pass-local cross-slice fixes when the gate requires them.
    */
-  protected cmrSandboxConfig(auth: CmrAuth): {
+  protected cmrSandboxConfig(
+    auth: CmrAuth,
+    reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+  ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
@@ -1437,7 +1458,7 @@ export class RealFamilyBackend implements FamilyBackend {
       ...SPAWNED_WORKER_ENV,
       [SANDBOX_SOUL_ENV]: CMR_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
-      ORCHESTRATOR_CMR_REVIEW_LEGS: JSON.stringify(cmrReviewLegs()),
+      ORCHESTRATOR_CMR_REVIEW_LEGS: JSON.stringify(reviewLegs),
     };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // The in-container completeness gate's `gh issue view` (the live issue body =
