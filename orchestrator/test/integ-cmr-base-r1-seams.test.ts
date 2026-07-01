@@ -241,6 +241,21 @@ describe("F1: escalate shape validation (guards)", () => {
       } as unknown as StepOutput),
     ).toBe(true);
   });
+
+  it("isValidCoderOutput accepts repair evidence with empty optional arrays when another evidence array is non-empty", () => {
+    expect(
+      isValidCoderOutput({
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+        repairEvidence: {
+          findingScope: {},
+          changedFiles: [],
+          tests: ["npm test -- runner"],
+        },
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("F1: malformed escalate → S8(error), not S8(escalate) (runner end-to-end)", () => {

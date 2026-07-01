@@ -185,7 +185,7 @@ describe("#422 model route presets", () => {
 
     const overridden = activeModelRoute({
       ORCHESTRATOR_ROUTE: "normal",
-      ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: "gpt-5.5,opus",
+      ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: '"gpt-5.5", \'opus\'',
     });
 
     expect(overridden.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([

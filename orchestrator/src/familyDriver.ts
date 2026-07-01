@@ -429,7 +429,7 @@ function readIssueBody(issue: number, repo: string, sh: Sh): string {
       "--repo",
       repo,
       "--json",
-      "number,body,author",
+      "number,body,author,authorAssociation",
     ]);
     const parsedValue: unknown = JSON.parse(raw);
     if (
@@ -442,6 +442,7 @@ function readIssueBody(issue: number, repo: string, sh: Sh): string {
     const parsed = parsedValue as {
       readonly body?: unknown;
       readonly author?: { readonly login?: unknown };
+      readonly authorAssociation?: unknown;
     };
     const repoOwnerLogin = repo.split("/", 1)[0];
     const repoOwner = repoOwnerLogin?.toLowerCase();
@@ -449,8 +450,15 @@ function readIssueBody(issue: number, repo: string, sh: Sh): string {
       typeof parsed.author?.login === "string"
         ? parsed.author.login.toLowerCase()
         : undefined;
+    const trustedAssociation =
+      parsed.authorAssociation === "OWNER" ||
+      parsed.authorAssociation === "MEMBER" ||
+      parsed.authorAssociation === "COLLABORATOR";
     const body = typeof parsed.body === "string" ? parsed.body : "";
-    if (repoOwner === undefined || authorLogin !== repoOwner) {
+    if (
+      repoOwner === undefined ||
+      (authorLogin !== repoOwner && !trustedAssociation)
+    ) {
       if (body.length > 0 && parseModuleDeclaration(body) !== undefined) {
         console.warn(
           `family module declaration ignored for issue #${issue}: author ${

@@ -131,16 +131,25 @@ export interface FamilyCmrClassification {
 
 const MODULE_DECLARATION_HEADING = /^##\s+Module Declaration\s*$/gim;
 
+function isEscapedQuote(line: string, index: number): boolean {
+  let backslashes = 0;
+  for (let idx = index - 1; idx >= 0; idx -= 1) {
+    if (line[idx] !== "\\") break;
+    backslashes += 1;
+  }
+  return backslashes % 2 === 1;
+}
+
 function trimComment(line: string): string {
   let inSingleQuote = false;
   let inDoubleQuote = false;
   for (let idx = 0; idx < line.length; idx += 1) {
     const char = line[idx]!;
-    if (char === '"' && !inSingleQuote) {
+    if (char === '"' && !inSingleQuote && !isEscapedQuote(line, idx)) {
       inDoubleQuote = !inDoubleQuote;
       continue;
     }
-    if (char === "'" && !inDoubleQuote) {
+    if (char === "'" && !inDoubleQuote && !isEscapedQuote(line, idx)) {
       inSingleQuote = !inSingleQuote;
       continue;
     }

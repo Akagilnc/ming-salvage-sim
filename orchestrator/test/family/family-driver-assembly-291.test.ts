@@ -368,6 +368,43 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
       warn.mockRestore();
     }
   });
+  it("accepts Module Declaration issue bodies from organization members", () => {
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        const issue = Number(args[2]);
+        const body =
+          issue === 291
+            ? "## Module Declaration\n```yaml\nmodule: parent-fiscal\nmodule_scope:\n  - docs/fiscal\n```"
+            : "## Module Declaration\n```yaml\nmodule: child-hub\nmodule_scope:\n  - orchestrator/src/family\n```";
+        return JSON.stringify({
+          number: issue,
+          body,
+          author: { login: "org-member" },
+          authorAssociation: "MEMBER",
+        });
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 11 }]);
+      }
+      return "[]";
+    };
+
+    const epic = readFamilyEpic(291, "MingOrg/ming-salvage-sim", sh);
+
+    expect(epic.moduleDeclaration).toEqual({
+      module: "parent-fiscal",
+      moduleScope: ["docs/fiscal"],
+      source: "family_issue",
+      issue: 291,
+    });
+    expect(epic.children[0]?.moduleDeclaration).toEqual({
+      module: "child-hub",
+      moduleScope: ["orchestrator/src/family"],
+      source: "child_issue",
+      issue: 11,
+    });
+  });
   it("fails closed when a module declaration issue body cannot be read", () => {
     const sh: Sh = (file, args) => {
       expect(file).toBe("gh");

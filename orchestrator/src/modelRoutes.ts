@@ -343,7 +343,7 @@ export function routeLegCollectionOverridesFromEnv(
       }
       overrides[collection] = value
         .split(",")
-        .map((slug) => slug.trim())
+        .map((slug) => slug.trim().replace(/^["']|["']$/g, ""))
         .filter((slug) => slug !== "");
     }
   }
