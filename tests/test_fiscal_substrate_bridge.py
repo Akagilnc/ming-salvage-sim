@@ -1290,6 +1290,20 @@ def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
     assert row["central_pay_arrears"] == pytest.approx(0)
     assert row["arrears"] == pytest.approx(row["province_pay_arrears"])
     assert row["morale"] == 72
+    morale_log = fresh_db.conn.execute(
+        """
+        SELECT old_value, new_value, delta, reason
+        FROM army_logs
+        WHERE army_id = 'fujian_navy' AND field = 'morale'
+        ORDER BY id DESC LIMIT 1
+        """
+    ).fetchone()
+    assert morale_log is not None
+    assert morale_log["old_value"] == "80"
+    assert morale_log["new_value"] == "72"
+    assert morale_log["delta"] == -8
+    assert "省源军饷分账" in morale_log["reason"]
+    assert "福建水师士气-8" in fresh_db.turn_army_summary(fresh_db.load_state().turn)
 
 
 def test_armies_provision_empty_mutiny_status_flag(fresh_db):
@@ -1555,6 +1569,38 @@ def test_army_delta_arrears_splits_positive_and_rejects_negative_under_cutover(f
         "SELECT * FROM armies WHERE id = 'shaanxi_army'"
     ).fetchone()
     assert again["arrears"] == pytest.approx(after["arrears"])
+
+
+def test_army_delta_arrears_rejects_exempt_army_under_cutover(fresh_db):
+    state = fresh_db.load_state()
+    event = SimpleNamespace(id="test", title="剧情加欠")
+    before = fresh_db.conn.execute(
+        "SELECT arrears FROM armies WHERE id = 'southwest_tusi'"
+    ).fetchone()
+
+    changes = fresh_db.apply_army_deltas(
+        state,
+        event,
+        None,
+        "测试",
+        {"southwest_tusi": {"arrears": 10, "reason": "误记欠饷"}},
+        commit=False,
+    )
+
+    after = fresh_db.conn.execute(
+        "SELECT arrears FROM armies WHERE id = 'southwest_tusi'"
+    ).fetchone()
+    logs = fresh_db.conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM army_logs
+        WHERE army_id = 'southwest_tusi' AND field = 'arrears' AND reason = '误记欠饷'
+        """
+    ).fetchone()
+    assert changes and changes[0]["rejected"] is True
+    assert "自养/非明军" in changes[0]["reason"]
+    assert after["arrears"] == pytest.approx(before["arrears"])
+    assert logs["count"] == 0
 
 
 def test_army_delta_arrears_reconciles_pay_source_container_immediately(fresh_db):

@@ -604,6 +604,50 @@ def test_arrears_commitment_progress_preserves_fractional_remaining(game):
     assert "尚欠约15万两" in sim_issue["待办未解进度"]
 
 
+def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
+    """strict < gates use real-valued comparison once arrears can be fractional."""
+    db, state, _content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=0.5 WHERE id='guanning'")
+    db.conn.commit()
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="关宁欠饷降至一万以下",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:fractional-strict-arrears",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={"economy": []},
+        stop_condition=json.dumps({"army.guanning.arrears": "<1"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+
+    progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
+
+    assert progress["remaining_arrears"] == 0
+
+    db.conn.execute("UPDATE armies SET arrears=1.5 WHERE id='guanning'")
+    greater_issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="关宁欠饷升过一万",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:fractional-strict-arrears-greater",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={"economy": []},
+        stop_condition=json.dumps({"army.guanning.arrears": ">1"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+
+    greater_progress = commitment_progress_payload(db, state, _issue_row(db, greater_issue_id))
+
+    assert greater_progress["remaining_arrears"] == 0
+
+
 def test_commitment_progress_text_splits_by_commitment_shape_and_gate(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
