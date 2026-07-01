@@ -190,7 +190,7 @@ def build_minister_tools(character: Character, context: CourtContext,
             # arrears 累计欠饷万两，按【引擎实扣月应发 army_needed】归一成"平均欠饷月数"再加权
             # （#173：替退役 maintenance_per_turn；army_needed 是 Python 公式，故在此 Python 求均值）。
             ratios = [
-                int(r["arrears"] or 0) / pay
+                float(r["arrears"] or 0) / pay
                 for r in db.army_rows()  # 封装入口（线上 gemini），不直接碰 db.conn
                 if (pay := db._army_pay(r)) > 0
             ]
