@@ -105,8 +105,8 @@ describe("#451 dogfood replay fixture", () => {
           issue: 451,
           classification: "already_done",
           stopReason: "already_done",
-          source: "runner",
-          sourceStopSummary: expect.objectContaining({ reason: "already_done" }),
+          source: "family",
+          sourceStopSummary: expect.objectContaining({ reason: "success" }),
         }),
       ]),
     );
@@ -144,6 +144,51 @@ describe("#451 dogfood replay fixture", () => {
       "success",
     ]);
     expect(replay.summary).toContain("11 stop reasons");
+  });
+
+  it("uses seam-produced stop summaries for replay rows that claim success, resumed, or already-done", async () => {
+    const replay = await issue451DogfoodReplay();
+    const rowsById = new Map(replay.scenarios.map((scenario) => [scenario.id, scenario]));
+
+    for (const id of [
+      "307-continue-fixing-after-human-answer",
+      "307-local-progress-shape-changed",
+      "307-continue-fixing-targeted-reset",
+    ]) {
+      const row = rowsById.get(id);
+      expect(row, id).toBeDefined();
+      expect(row?.source, id).toBe("runner");
+      expect(row?.sourceStopSummary, id).toMatchObject({ reason: "success" });
+    }
+
+    for (const id of [
+      "287-module-declaration-fenced-yaml",
+      "287-family-attribution-child-before-parent",
+      "287-correctness-r3-legacy-disposition",
+      "287-correctness-final-legacy-disposition",
+      "287-stale-family-head-current-cmr-pass",
+      "376-route-accounting-non-default",
+      "376-route-freeze-after-import",
+      "376-closure-context-positive",
+    ]) {
+      const row = rowsById.get(id);
+      expect(row, id).toBeDefined();
+      expect(row?.source, id).not.toBe("stop_summary");
+      expect(row?.sourceStopSummary, id).toBeDefined();
+      expect(row?.stopSummary, id).toEqual(row?.sourceStopSummary);
+    }
+
+    expect(rowsById.get("family-resume-already-done-child")).toMatchObject({
+      source: "family",
+      sourceStopSummary: {
+        reason: "success",
+        metadata: {
+          heads: expect.objectContaining({
+            actualFamilyHead: "family-done-head",
+          }),
+        },
+      },
+    });
   });
 
   it("contains a replay row for each owner-specified #451 accident sample", async () => {

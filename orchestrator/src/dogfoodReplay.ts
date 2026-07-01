@@ -251,6 +251,7 @@ function ledgerEntry(
 
 class DogfoodSingleSliceBackend implements Backend {
   readonly resumeSessionCalls: Array<[StepId, string]> = [];
+  readonly runStepCalls: StepId[] = [];
 
   constructor(private readonly resumeState?: ResumeState) {}
 
@@ -302,6 +303,7 @@ class DogfoodSingleSliceBackend implements Backend {
   async writeSnapshot(): Promise<void> {}
 
   async runStep(spec: StepSpec): Promise<StepOutput> {
+    this.runStepCalls.push(spec.id);
     if (spec.role === "reviewer") {
       return { kind: "reviewer", findings: [] };
     }
@@ -316,12 +318,18 @@ class DogfoodSingleSliceBackend implements Backend {
 class DogfoodFamilyBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
 
-  constructor(private readonly currentHead = "family-head") {}
+  constructor(
+    private readonly currentHead = "family-head",
+    initialLedger: ReadonlyArray<FamilyLedgerEntry> = [],
+    private readonly mergeFamilyHead?: string,
+  ) {
+    this.ledger.push(...initialLedger);
+  }
 
   async mergeChildIntoFamilyBase(
     request: MergeRequest,
   ): Promise<{ familyHead: string }> {
-    return { familyHead: `+${request.childIssue}` };
+    return { familyHead: this.mergeFamilyHead ?? `+${request.childIssue}` };
   }
 
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
@@ -371,13 +379,44 @@ async function runnerAnsweredResumeStopSummary(): Promise<StopSummary> {
   return result.stopSummary;
 }
 
-async function runnerAlreadyDoneStopSummary(): Promise<StopSummary> {
-  const backend = new DogfoodSingleSliceBackend({
-    worktree: REPLAY_WORKTREE,
-    stateDir: "/dogfood/.ledger-451",
-    ledger: [ledgerEntry("S8", { handoffStatus: "success" })],
+async function runnerSuccessStopSummary(): Promise<StopSummary> {
+  const result = await runOrchestrator({
+    issueNumber: 451,
+    backend: new DogfoodSingleSliceBackend(),
   });
-  return (await runOrchestrator({ issueNumber: 451, backend })).stopSummary;
+  return result.stopSummary;
+}
+
+async function familyCurrentHeadSuccessStopSummary(): Promise<StopSummary> {
+  const familyBackend = new DogfoodFamilyBackend(
+    "current-head",
+    [],
+    "current-head",
+  );
+  const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+    if (input.phase === "final") {
+      await input.familyBackend.appendFamilyLedger({
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadAfter: "current-head",
+      });
+    }
+    return { ok: true, ran: true };
+  };
+  return (
+    await runFamily({
+      epic: {
+        issue: 287,
+        children: [{ issue: 287, blockedBy: [] }],
+      },
+      familyBackend,
+      singleSliceBackend: new DogfoodSingleSliceBackend(),
+      familyBase: "family/287-base",
+      verifyCmr,
+    })
+  ).stopSummary;
 }
 
 async function familyStaleHeadStopSummary(): Promise<StopSummary> {
@@ -409,6 +448,32 @@ async function familyStaleHeadStopSummary(): Promise<StopSummary> {
   ).stopSummary;
 }
 
+async function familyAlreadyDoneStopSummary(): Promise<StopSummary> {
+  const familyBackend = new DogfoodFamilyBackend("family-done-head", [
+    {
+      childIssue: 451,
+      childBranch: "feat/issue-451",
+      childHead: "child-done-head",
+      status: "merged",
+      familyHeadAfter: "family-done-head",
+    },
+  ]);
+  const singleSliceBackend = new DogfoodSingleSliceBackend();
+  const result = await runFamily({
+    epic: {
+      issue: 445,
+      children: [{ issue: 451, blockedBy: [] }],
+    },
+    familyBackend,
+    singleSliceBackend,
+    familyBase: "family/445-base",
+  });
+  if (singleSliceBackend.runStepCalls.length > 0) {
+    throw new Error("dogfood family already-done replay reran the child slice");
+  }
+  return result.stopSummary;
+}
+
 function uniqueSortedStopReasons(
   scenarios: ReadonlyArray<DogfoodReplayScenario>,
 ): ReadonlyArray<StopReason> {
@@ -417,8 +482,11 @@ function uniqueSortedStopReasons(
 
 export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   const answeredResumeStopSummary = await runnerAnsweredResumeStopSummary();
-  const alreadyDoneStopSummary = await runnerAlreadyDoneStopSummary();
+  const runnerSuccessSummary = await runnerSuccessStopSummary();
+  const currentHeadFamilySuccessSummary =
+    await familyCurrentHeadSuccessStopSummary();
   const staleFamilyHeadStopSummary = await familyStaleHeadStopSummary();
+  const familyAlreadyDoneSourceSummary = await familyAlreadyDoneStopSummary();
   const familyModule = {
     module: "orchestrator-family",
     moduleScope: ["orchestrator/src/family"],
@@ -565,40 +633,36 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 287,
       title: "module declaration is accepted only from fenced YAML or run options",
       classification: "success",
-      stopSummary: successStopSummary(),
+      stopSummary: runnerSuccessSummary,
+      source: "runner",
+      sourceStopSummary: runnerSuccessSummary,
     }),
     staticScenario({
       id: "287-family-attribution-child-before-parent",
       issue: 287,
       title: "finding attribution uses child module before parent fallback",
       classification: "success",
-      stopSummary: successStopSummary(),
+      stopSummary: currentHeadFamilySuccessSummary,
+      source: "family",
+      sourceStopSummary: currentHeadFamilySuccessSummary,
     }),
     staticScenario({
       id: "287-correctness-r3-legacy-disposition",
       issue: 287,
       title: "legacy disposition fields do not make a converged correctness pass malformed",
       classification: "success",
-      stopSummary: successStopSummary({
-        heads: {
-          reportedFamilyHead: "current-head",
-          actualFamilyHead: "current-head",
-          verifiedCmrHead: "current-head",
-        },
-      }),
+      stopSummary: currentHeadFamilySuccessSummary,
+      source: "family",
+      sourceStopSummary: currentHeadFamilySuccessSummary,
     }),
     staticScenario({
       id: "287-correctness-final-legacy-disposition",
       issue: 287,
       title: "final correctness CMR normalizes legacy disposition into pass",
       classification: "success",
-      stopSummary: successStopSummary({
-        heads: {
-          reportedFamilyHead: "current-head",
-          actualFamilyHead: "current-head",
-          verifiedCmrHead: "current-head",
-        },
-      }),
+      stopSummary: currentHeadFamilySuccessSummary,
+      source: "family",
+      sourceStopSummary: currentHeadFamilySuccessSummary,
     }),
     staticScenario({
       id: "287-stale-family-head-current-cmr-pass",
@@ -607,6 +671,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       classification: "success",
       stopSummary: staleFamilyHeadStopSummary,
       source: "family",
+      sourceStopSummary: staleFamilyHeadStopSummary,
     }),
     staticScenario({
       id: "287-coordinator-answer-reclassified",
@@ -632,7 +697,9 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 376,
       title: "non-default route accounting uses declared route legs",
       classification: "success",
-      stopSummary: successStopSummary(),
+      stopSummary: runnerSuccessSummary,
+      source: "runner",
+      sourceStopSummary: runnerSuccessSummary,
     }),
     staticScenario({
       id: "376-route-env-format-mismatch",
@@ -649,7 +716,9 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 376,
       title: "route is frozen at invocation even if env changes after import",
       classification: "success",
-      stopSummary: successStopSummary(),
+      stopSummary: runnerSuccessSummary,
+      source: "runner",
+      sourceStopSummary: runnerSuccessSummary,
     }),
     staticScenario({
       id: "376-startup-route-tight-violation",
@@ -686,7 +755,9 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 376,
       title: "S6 verifies prior finding closed and lets the run continue",
       classification: "success",
-      stopSummary: successStopSummary(),
+      stopSummary: runnerSuccessSummary,
+      source: "runner",
+      sourceStopSummary: runnerSuccessSummary,
     }),
     staticScenario({
       id: "376-owning-issue-still-red",
@@ -880,9 +951,13 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 451,
       title: "already completed child is skipped during family resume",
       classification: "already_done",
-      stopSummary: alreadyDoneStopSummary,
-      source: "runner",
-      sourceStopSummary: alreadyDoneStopSummary,
+      stopSummary: {
+        reason: "already_done",
+        summary: "family resume found child #451 already merged and skipped rerun",
+        metadata: familyAlreadyDoneSourceSummary.metadata,
+      },
+      source: "family",
+      sourceStopSummary: familyAlreadyDoneSourceSummary,
     }),
   ];
 
