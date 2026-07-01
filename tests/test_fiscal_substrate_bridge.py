@@ -366,6 +366,39 @@ def test_province_tick_derives_due_and_allocates_province_arrears_by_pay_source(
     assert settle["st"]["军饷欠"] == pytest.approx(
         mixed["province_pay_arrears"] + pure["province_pay_arrears"]
     )
+    log_rows = fresh_db.conn.execute(
+        """
+        SELECT army_id, field, old_value, new_value, delta, reason, actor
+        FROM army_logs
+        WHERE army_id IN ('shaanxi_army', 'fujian_navy')
+          AND field = 'province_pay_arrears'
+        ORDER BY army_id
+        """
+    ).fetchall()
+    assert {row["army_id"] for row in log_rows} == {"shaanxi_army", "fujian_navy"}
+    assert all("省源军饷" in row["reason"] for row in log_rows)
+    assert all("按本月省份额应付占比摊新增欠" in row["reason"] for row in log_rows)
+    assert all(row["actor"] == "户部" for row in log_rows)
+
+
+def test_conservation_rejects_excluded_army_with_pay_source_debt(fresh_db):
+    fresh_db.conn.execute(
+        """
+        UPDATE armies
+        SET owner_power = 'houjin',
+            province_pay_share = 0,
+            central_pay_share = 0,
+            province_pay_arrears = 2,
+            central_pay_arrears = 3,
+            arrears = 5
+        WHERE id = 'guanning'
+        """
+    )
+    fresh_db._reconcile_army_pay_source_region_container("liaodong")
+    fresh_db._reconcile_central_army_pay_arrears_container()
+
+    with pytest.raises(ValueError, match="自养/非明军双累加器必须为 0"):
+        fresh_db.assert_army_pay_source_container_conservation()
 
 
 def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
@@ -565,6 +598,22 @@ def test_fixed_flows_substrate_hub_does_not_allocate_legacy_central_pool(fresh_g
     assert rows["shaanxi_army"]["central_pay_arrears"] == pytest.approx(5)
     assert rows["guanning"]["arrears"] == pytest.approx(5)
     assert rows["shaanxi_army"]["arrears"] == pytest.approx(5)
+
+
+def test_substrate_hub_dual_track_sanity_keeps_legacy_calc_as_reference(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    legacy_treasury, legacy_inner, legacy_lines = flows_mod.calc_province_fiscal(state, db)
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    assert isinstance(legacy_treasury, int)
+    assert isinstance(legacy_inner, int)
+    assert isinstance(legacy_lines, list)
+    assert any(flow.get("category") == "边饷hub" for flow in flow_rows)
+    assert any(flow.get("category") == "中央军饷" for flow in flow_rows)
+    db.assert_army_pay_source_container_conservation()
 
 
 def test_fixed_flows_substrate_hub_central_capacity_reduces_current_central_arrears(fresh_game):
@@ -1812,7 +1861,6 @@ def test_new_ming_army_stores_pay_source_columns_under_cutover(fresh_db):
         "pay_source_region": "shaanxi",
         "province_pay_share": 0.65,
         "central_pay_share": 0.35,
-        "arrears": 10,
     }], commit=False)
 
     assert created and created[0].get("created") is True
@@ -1826,15 +1874,36 @@ def test_new_ming_army_stores_pay_source_columns_under_cutover(fresh_db):
     assert row["pay_source_region"] == "shaanxi"
     assert row["province_pay_share"] == pytest.approx(0.65)
     assert row["central_pay_share"] == pytest.approx(0.35)
-    assert row["province_pay_arrears"] == pytest.approx(6.5)
-    assert row["central_pay_arrears"] == pytest.approx(3.5)
-    assert row["arrears"] == pytest.approx(10)
+    assert row["province_pay_arrears"] == pytest.approx(0)
+    assert row["central_pay_arrears"] == pytest.approx(0)
+    assert row["arrears"] == pytest.approx(0)
     settle = _read_settle(fresh_db, "shaanxi")
     assert settle["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
     )
     assert settle["p"]["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, "shaanxi"))
     assert settle["p"]["Due"]["军饷"] > before_due
+
+
+def test_new_ming_army_rejects_initial_arrears_under_cutover(fresh_db):
+    state = fresh_db.load_state()
+
+    rejected = fresh_db.create_armies_from_extraction(state, [{
+        "id": "arrears_new_army",
+        "name": "带欠饷新军",
+        "manpower": 1000,
+        "owner_power": "ming",
+        "pay_source_region": "shaanxi",
+        "province_pay_share": 0.65,
+        "central_pay_share": 0.35,
+        "arrears": 10,
+    }], commit=False)
+
+    assert rejected and rejected[0]["rejected"] is True
+    assert "新军初始欠饷" in rejected[0]["reason"]
+    assert fresh_db.conn.execute(
+        "SELECT 1 FROM armies WHERE id = 'arrears_new_army'"
+    ).fetchone() is None
 
 
 @pytest.mark.parametrize("bad_defaults", [None, [], "not-a-dict"])
