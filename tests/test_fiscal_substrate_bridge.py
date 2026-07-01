@@ -2014,7 +2014,7 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
     )
 
 
-def test_economy_pay_arrears_writes_off_fractional_pay_source_tail(fresh_db):
+def test_economy_pay_arrears_preserves_fractional_pay_source_tail(fresh_db):
     from ming_sim.flows import _apply_economy_list
 
     state = fresh_db.load_state()
@@ -2064,18 +2064,18 @@ def test_economy_pay_arrears_writes_off_fractional_pay_source_tail(fresh_db):
     assert applied == [{
         "account": "国库",
         "delta": 0,
-        "reason": "陕西边军欠饷尾数0.5万两已核销，1万两未拨",
+        "reason": "陕西边军欠饷不足1万两，1万两未拨",
     }]
     assert ledger_row is None
-    assert row["province_pay_arrears"] == pytest.approx(0)
-    assert row["central_pay_arrears"] == pytest.approx(0)
-    assert row["arrears"] == pytest.approx(0)
+    assert row["province_pay_arrears"] == pytest.approx(0.3)
+    assert row["central_pay_arrears"] == pytest.approx(0.2)
+    assert row["arrears"] == pytest.approx(0.5)
     assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
     )
 
 
-def test_economy_pay_arrears_clamps_integer_spend_and_writes_off_tail(fresh_db):
+def test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail(fresh_db):
     from ming_sim.flows import _apply_economy_list
 
     state = fresh_db.load_state()
@@ -2124,12 +2124,74 @@ def test_economy_pay_arrears_clamps_integer_spend_and_writes_off_tail(fresh_db):
 
     assert applied == [{"account": "国库", "delta": -3, "reason": "测试小数欠饷不超扣"}]
     assert ledger_row["delta"] == -3
-    assert row["province_pay_arrears"] == pytest.approx(0)
-    assert row["central_pay_arrears"] == pytest.approx(0)
-    assert row["arrears"] == pytest.approx(0)
+    assert row["province_pay_arrears"] == pytest.approx(0.3)
+    assert row["central_pay_arrears"] == pytest.approx(0.2)
+    assert row["arrears"] == pytest.approx(0.5)
     assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
     )
+
+
+@pytest.mark.parametrize(
+    "move",
+    [
+        {
+            "account": "国库",
+            "delta": -5,
+            "category": "补饷",
+            "reason": "缺目标",
+            "purpose": "补饷",
+        },
+        {
+            "account": "国库",
+            "delta": -5,
+            "category": "补饷",
+            "reason": "错目标",
+            "purpose": "补饷",
+            "target_kind": "army",
+            "target_id": "__missing_army__",
+        },
+    ],
+)
+def test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_other_armies(
+    fresh_db, move
+):
+    from ming_sim.flows import _apply_economy_list
+
+    state = fresh_db.load_state()
+    before_treasury = state.metrics["国库"]
+    before_army = fresh_db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears
+        FROM armies
+        WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    before_province = _province_pay_arrears(fresh_db, "shaanxi")
+
+    applied = _apply_economy_list(fresh_db, state, [move], commit=False)
+
+    after_army = fresh_db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears
+        FROM armies
+        WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    ledger_row = fresh_db.conn.execute(
+        """
+        SELECT 1 FROM economy_ledger
+        WHERE purpose = '补饷'
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    assert applied and applied[0]["rejected"] is True
+    assert applied[0]["category"] == "missing_ref"
+    assert state.metrics["国库"] == before_treasury
+    assert ledger_row is None
+    assert dict(after_army) == dict(before_army)
+    assert _province_pay_arrears(fresh_db, "shaanxi") == pytest.approx(before_province)
 
 
 def test_manpower_zero_writeoffs_pay_source_arrears_before_retiring_army(fresh_db):

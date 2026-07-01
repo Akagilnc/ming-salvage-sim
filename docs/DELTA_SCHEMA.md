@@ -59,8 +59,8 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `category` | ≤40 字 | 自由文本 |
 | `reason` | ≤80 字 | 自由文本 |
 | `purpose` | 可选 `补饷` / `其它` | 补饷会跟 army arrears 联动 |
-| `target_kind` | 可选 `army` | 配合 target_id 用 |
-| `target_id` | 可选 | 当 purpose=补饷 时定向 |
+| `target_kind` | `purpose=补饷` 时必填 `army` | 配合 target_id 用 |
+| `target_id` | `purpose=补饷` 时必填合法 army_id | 缺失或不存在则整条拒收不扣账 |
 
 > ⚠️ **常踩坑**：建筑日常产出 / 固定月度收支 **不要写**（已由程序 `apply_fixed_period_flows` 落账）。这里只写本回合"诏书/事件导致的一次性真金白银收支"，每笔三要素「源→目标，金额」点死。
 > 「太仓岁亏三十万」是困境描述，不是本月一笔收支，**别照写成 economy_moves**。

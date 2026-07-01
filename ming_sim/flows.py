@@ -480,8 +480,9 @@ def _auto_pay_arrears_by_priority(
     *,
     commit: bool = True,
 ) -> int:
-    """LLM 补饷 economy_move 没指定 target 时的兜底：按 ARMY_SALARY_PRIORITY 顺序
-    分配 budget 给有欠账的明军，每军按当前省/中央欠额占比分销销账，扣完 budget 为止。
+    """按 ARMY_SALARY_PRIORITY 顺序分配一笔已明确允许非定向的补饷。
+
+    每军按当前省/中央欠额占比分销销账，扣完 budget 为止。
     返回实际花出去的总额（万两）。"""
     if budget <= 0:
         return 0
@@ -507,9 +508,6 @@ def _auto_pay_arrears_by_priority(
             float(row["arrears"] or 0), pay_source_cutover
         )
         if payable_arrears <= 0:
-            _writeoff_fractional_army_arrears_tail(
-                db, state, row, reason, "诏拨补饷", commit=commit
-            )
             continue
         pay_cap = min(payable_arrears, remaining)
         spent_now = _pay_single_army_arrears(
@@ -519,13 +517,6 @@ def _auto_pay_arrears_by_priority(
         )
         spent += spent_now
         remaining -= spent_now
-        fresh_row = db.conn.execute(
-            "SELECT * FROM armies WHERE id = ?", (army_id,)
-        ).fetchone()
-        if fresh_row is not None:
-            _writeoff_fractional_army_arrears_tail(
-                db, state, fresh_row, reason, "诏拨补饷", commit=commit
-            )
     return spent
 
 
@@ -549,50 +540,6 @@ def _normalized_cutover_pay_arrears(row, current_arrears: float) -> Tuple[float,
         current_arrears * float(row["province_pay_share"] or 0),
         current_arrears * float(row["central_pay_share"] or 0),
     )
-
-
-def _writeoff_fractional_army_arrears_tail(
-    db: GameDB,
-    state: GameState,
-    row,
-    reason: str,
-    actor: str,
-    *,
-    commit: bool = True,
-) -> float:
-    current_arrears = float(row["arrears"] or 0)
-    if current_arrears <= 1e-9 or current_arrears >= 1 - 1e-9:
-        return 0.0
-    pay_source_cutover = db.is_army_pay_source_cutover_enabled()
-    if pay_source_cutover:
-        province_old, central_old = _normalized_cutover_pay_arrears(row, current_arrears)
-        old_value = province_old + central_old
-        db.conn.execute(
-            """
-            UPDATE armies
-            SET province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
-            WHERE id = ?
-            """,
-            (str(row["id"]),),
-        )
-        db._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
-        db._reconcile_central_army_pay_arrears_container()
-    else:
-        old_value = current_arrears
-        db.conn.execute("UPDATE armies SET arrears = 0 WHERE id = ?", (str(row["id"]),))
-    db.conn.execute(
-        """INSERT INTO army_logs
-           (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)""",
-        (
-            state.turn, state.year, state.period, str(row["id"]), "arrears",
-            f"{old_value:g}", "0", -current_arrears,
-            f"补饷尾数核销{current_arrears:g}万两（{reason}）", actor,
-        ),
-    )
-    if commit:
-        db.conn.commit()
-    return current_arrears
 
 
 def _pay_single_army_arrears(
@@ -681,7 +628,8 @@ def _apply_economy_list(
         同步把 armies.arrears 减掉 actual_pay；多余的钱留在 account 不扣。
     - 其它（purpose='其它' 或 NULL）：按常规扣账（现状）。
 
-    LLM 写非法 purpose / 找不到 target_id → 退化为'其它'常规扣账。
+    LLM 写非法 purpose → 退化为'其它'常规扣账。
+    purpose='补饷' 但目标缺失/不存在 → 逐项拒收，不得改付其它军队。
     """
     from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS, TURN_UNIT as _TU
     applied: List[Dict[str, object]] = []
@@ -724,22 +672,29 @@ def _apply_economy_list(
         target_kind = raw_target_kind if raw_target_kind in ECONOMY_TARGET_KINDS else None
 
         # ── 补饷分发：按当前欠额占比分销两累加器 + 同步减 armies.arrears ───────
-        # purpose=补饷 但缺 target_kind/target_id → 按 ARMY_SALARY_PRIORITY 优先级
-        # 自动散到各军（每军按总欠账上限扣，扣完 budget 为止）。
+        # purpose=补饷 必须定向到具体 army_id；非定向补饷需要另立显式契约，
+        # 不能把缺失/错拼目标 fallback 成改付其它军队。
         if purpose == "补饷" and delta < 0 and (target_kind != "army" or not raw_target_id):
-            budget = abs(delta)
-            spent = _auto_pay_arrears_by_priority(db, state, account, budget, category, reason, commit=commit)
-            applied.append({"account": account, "delta": -spent, "reason": reason})
+            applied.append({
+                "account": account,
+                "rejected": True,
+                "category": "missing_ref",
+                "reason": "economy_moves 补饷必须指定 target_kind='army' 与有效 target_id",
+                "item": move,
+            })
             continue
         if purpose == "补饷" and target_kind == "army" and delta < 0 and raw_target_id:
             row = db.conn.execute(
                 "SELECT * FROM armies WHERE id = ?", (raw_target_id,)
             ).fetchone()
             if row is None:
-                # army_id 拼错 → 退化为按优先级散
-                budget = abs(delta)
-                spent = _auto_pay_arrears_by_priority(db, state, account, budget, category, reason, commit=commit)
-                applied.append({"account": account, "delta": -spent, "reason": reason})
+                applied.append({
+                    "account": account,
+                    "rejected": True,
+                    "category": "missing_ref",
+                    "reason": f"economy_moves 补饷目标军队未入库：{raw_target_id}",
+                    "item": move,
+                })
                 continue
             pay_source_cutover = db.is_army_pay_source_cutover_enabled()
             payable_arrears = _payable_army_arrears_cap(
@@ -748,11 +703,8 @@ def _apply_economy_list(
             if payable_arrears <= 0:
                 current_arrears = float(row["arrears"] or 0)
                 if current_arrears > 0:
-                    cleared = _writeoff_fractional_army_arrears_tail(
-                        db, state, row, reason, "诏拨补饷", commit=commit
-                    )
                     reason_text = (
-                        f"{row['name']}欠饷尾数{cleared:g}万两已核销，"
+                        f"{row['name']}欠饷不足1万两，"
                         f"{abs(delta)}万两未拨"
                     )
                 else:
@@ -767,13 +719,6 @@ def _apply_economy_list(
                 reason, "诏拨补饷", commit=commit,
             )
             if spent:
-                fresh_row = db.conn.execute(
-                    "SELECT * FROM armies WHERE id = ?", (raw_target_id,)
-                ).fetchone()
-                if fresh_row is not None:
-                    _writeoff_fractional_army_arrears_tail(
-                        db, state, fresh_row, reason, "诏拨补饷", commit=commit
-                    )
                 applied.append({"account": account, "delta": -spent, "reason": reason})
             continue
 
