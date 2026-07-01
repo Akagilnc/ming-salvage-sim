@@ -1241,6 +1241,46 @@ export async function runVerifyCmr(
     familyBackend.dispatchWorker === undefined &&
     familyBackend.openFamilyPr === undefined
   ) {
+    const reason =
+      "family ship worker unavailable after converged CMR: backend has neither dispatchWorker nor openFamilyPr";
+    const postCmrFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      cmrPassedFamilyHeadAfter,
+    );
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postCmrFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: postCmrFamilyHead,
+      stopSummary: infraFailureStopSummary({
+        summary: `${reason}; the terminal PR gate cannot open a PR`,
+        repairHint:
+          "provide the family ship worker dispatch seam or legacy openFamilyPr capability, then rerun the final family barrier",
+        ship: {
+          latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
+          currentFamilyHead: postCmrFamilyHead,
+          shipPrState: "ship-capability-missing",
+        },
+        heads: {
+          ...(postCmrFamilyHead !== undefined
+            ? { actualFamilyHead: postCmrFamilyHead }
+            : {}),
+          ...(cmrPassedFamilyHeadAfter !== undefined
+            ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+            : {}),
+          sources: {
+            actualFamilyHead: "family head after CMR before missing ship capability",
+            verifiedCmrHead: "latest cmr_passed ledger row",
+          },
+        },
+      }),
+    });
     return INCOMPLETE_GATE;
   }
   const shipResult = await dispatchOrAbort(

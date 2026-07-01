@@ -1043,6 +1043,66 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
   });
 });
 
+describe("RealBackend reviewer output contract", () => {
+  class DecodeOnlyBackend extends RealBackend {
+    protected override cloneDirExists(): boolean {
+      return true;
+    }
+    protected override sh(file: string, args: string[]): string {
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+        return ".git";
+      }
+      throw new Error(`unexpected shell call: ${file} ${args.join(" ")}`);
+    }
+  }
+
+  const reviewerSpec: StepSpec = {
+    id: "S6",
+    role: "reviewer",
+    promptFile: "reviewer_review.md",
+    model: "gpt-5.5",
+    completionSignal: "REVIEWER_STEP_COMPLETE",
+    maxIter: 1,
+    soul: "READ-ONLY",
+    toolchain: ["node", "typescript"],
+  };
+
+  it("rejects accepted_suppressed prior dispositions without a reviewer reason", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 445,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "prompts"),
+    });
+
+    expect(() =>
+      (
+        backend as unknown as {
+          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+        }
+      ).decodeOutput(
+        reviewerSpec,
+        {
+          findings: [],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|orchestrator/src/x.ts:1|accepted",
+              status: "accepted_suppressed",
+              source: "#445 owner answer",
+              scope: "runner review/fix loop",
+              boundedReopen: "reopen if the same finding recurs in this scope",
+            },
+          ],
+        },
+        undefined,
+      ),
+    ).toThrow(/accepted_suppressed prior finding disposition requires reason/);
+  });
+});
+
 // ─── #286 toolchain preflight before agent dispatch ─────────────────────────
 
 describe("RealBackend runStep toolchain preflight (#286)", () => {

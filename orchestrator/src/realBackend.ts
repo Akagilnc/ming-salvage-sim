@@ -1598,7 +1598,7 @@ const priorFindingDispositionSchema = z.object({
   boundedReopen: z.string().optional(),
 }).superRefine((disposition, ctx) => {
   if (disposition.status !== "accepted_suppressed") return;
-  for (const field of ["source", "scope", "boundedReopen"] as const) {
+  for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
     if (disposition[field] === undefined || disposition[field].trim() === "") {
       ctx.addIssue({
         code: "custom",
