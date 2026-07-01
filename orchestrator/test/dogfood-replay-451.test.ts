@@ -41,14 +41,14 @@ describe("#451 dogfood replay fixture", () => {
           issue: 287,
           classification: "accepted_suppressed",
           stopReason: "accepted_suppressed",
-          metadata: {
+          metadata: expect.objectContaining({
             acceptedSuppressions: [
               expect.objectContaining({
                 source: "#303",
                 scope: expect.stringContaining("#287 hub-loss / central C_ accounts"),
               }),
             ],
-          },
+          }),
         }),
         expect.objectContaining({
           id: "376-provider-degraded-nonblocking",

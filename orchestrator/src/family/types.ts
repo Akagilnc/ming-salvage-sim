@@ -764,13 +764,21 @@ export interface FamilyRunInput {
  *   So `"ran"` is the seam state #295 needs; #293 only ever transits through it.
  * - `"merged"` — the child's reviewed branch is merged into the family base (a
  *   `status:"merged"` ledger entry exists, decision 5).
+ * - `"already_done"` — this invocation skipped the child because the durable
+ *   family ledger already proved it merged/shipped/completed in an earlier run.
  * - `"failed"` — the child's single-slice run did not reach success (it cannot
  *   merge); recorded honestly rather than silently dropped.
  * - `"skipped"` — the child was never schedulable (a blocker never merged, so it
  *   stayed blocked when the wave loop terminated). Recorded so the family result
  *   accounts for every child (#294's richer wave/cycle logic refines this).
  */
-export type FamilyChildStatus = "ran" | "merged" | "skipped" | "failed";
+export type FamilyChildStatus =
+  | "ran"
+  | "merged"
+  | "already_done"
+  | "resumed"
+  | "skipped"
+  | "failed";
 
 /** Per-child outcome record in the family result. */
 export interface FamilyChildResult {

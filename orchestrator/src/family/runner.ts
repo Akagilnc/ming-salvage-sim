@@ -275,6 +275,34 @@ function latestVerifiedCmrHead(
   return undefined;
 }
 
+function pendingPriorCmrFindingIdentityKeys(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+): ReadonlyArray<string> {
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  for (let index = ledger.length - 1; index >= 0; index--) {
+    const entry = ledger[index]!;
+    if (entry.status === "shipped" || entry.status === "cmr_passed") break;
+    if (entry.status !== "aborted" || entry.cmrFindingClassification === undefined) {
+      continue;
+    }
+    for (const result of entry.cmrFindingClassification.results) {
+      if (
+        result.classification === "cross_module_defer" ||
+        result.classification === "accepted_suppressed" ||
+        result.classification === "not_converged"
+      ) {
+        continue;
+      }
+      if (!seen.has(result.identityKey)) {
+        seen.add(result.identityKey);
+        keys.push(result.identityKey);
+      }
+    }
+  }
+  return keys.reverse();
+}
+
 function latestStopSummary(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
 ): StopSummary | undefined {
@@ -512,14 +540,14 @@ export async function runFamily(
       .filter((c) => !recorded.has(c.issue))
       .map((c) =>
         ledgerMerged.has(c.issue)
-          ? { issue: c.issue, status: "merged" as const }
+          ? { issue: c.issue, status: "already_done" as const }
           : { issue: c.issue, status: "skipped" as const },
       );
     const children = [...childResults, ...extra];
     const status: FamilyRunStatus =
       verifyFailedPhase !== undefined
         ? "verify_failed"
-        : children.every((c) => c.status === "merged")
+        : children.every((c) => c.status === "merged" || c.status === "already_done")
           ? "success"
           : "incomplete";
     const actualFamilyHead = await readCurrentFamilyHead(familyBackend, familyBase);
@@ -535,7 +563,7 @@ export async function runFamily(
     const barrierStopSummary =
       status === "verify_failed" ? latestStopSummary(familyLedger) : undefined;
     const alreadyDone = extra
-      .filter((child) => child.status === "merged")
+      .filter((child) => child.status === "already_done")
       .map((child) => ({
         issue: child.issue,
         status: "merged" as const,
@@ -812,7 +840,7 @@ export async function runFamily(
     const ledgerMerged = await currentMerged(familyBackend);
     const children: FamilyChildResult[] = epic.children.map((c) =>
       ledgerMerged.has(c.issue)
-        ? { issue: c.issue, status: "merged" as const }
+        ? { issue: c.issue, status: "already_done" as const }
         : { issue: c.issue, status: "skipped" as const },
     );
     if (familyBackend.verifyFamilyShippedPr === undefined) {
@@ -943,6 +971,12 @@ export async function runFamily(
     // touched. The wave barrier is verify-only (no cmr), so only the final call
     // needs it; an empty list ⇒ the cmr request omits the field.
     llmResolvedChildren: await llmResolvedChildren(familyBackend),
+    ...(() => {
+      const priorKeys = pendingPriorCmrFindingIdentityKeys(preFinalLedger);
+      return priorKeys.length > 0
+        ? { priorCmrFindingIdentityKeys: priorKeys }
+        : {};
+    })(),
     ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     // #291 缺口 2: the abort-time head for a RED final verify's durable aborted entry.
     familyHeadAfter: familyHead,

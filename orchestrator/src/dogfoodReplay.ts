@@ -139,22 +139,63 @@ function finding(overrides: Partial<Finding>): Finding {
   return { ...BASE_FINDING, ...overrides };
 }
 
-function familyClassificationScenario(input: {
+async function familyClassificationScenario(input: {
   readonly id: string;
   readonly issue: number;
   readonly title: string;
   readonly familyIssue: number;
   readonly finding: Finding;
   readonly moduleContext: FamilyModuleContext;
-}): DogfoodReplayScenario {
-  const classified = classifyFamilyCmrFindings({
+}): Promise<DogfoodReplayScenario> {
+  const cmrOutput: WorkerResult = {
+    kind: "completed",
+    output: {
+      kind: "cmr",
+      converged: false,
+      reason: "dogfood family CMR classification replay",
+      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      findings: [input.finding],
+    },
+  };
+  const backend = new DogfoodCmrFamilyBackend(
+    "dogfood-classification-head",
+    [],
+    [
+      cmrOutput,
+      cmrOutput,
+      {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: "family/dogfood-classification",
+          status: "pr_opened",
+          pr: "pr://family/dogfood-classification",
+          prHead: "dogfood-classification-head",
+        },
+      },
+    ],
+  );
+  const run = await runVerifyCmr({
+    phase: "final",
+    familyBase: "family/dogfood-classification",
+    familyBackend: backend,
     familyIssue: input.familyIssue,
-    findings: [input.finding],
     moduleContext: input.moduleContext,
   });
-  const result = classified.results[0];
+  const ledgerEntry =
+    backend.ledger.find((entry) => entry.status === "aborted") ??
+    backend.ledger.find(
+      (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
+    );
+  const result = ledgerEntry?.cmrFindingClassification?.results[0];
   if (result === undefined) {
     throw new Error(`dogfood replay ${input.id} produced no classification`);
+  }
+  const stopSummary = ledgerEntry?.stopSummary;
+  if (stopSummary === undefined) {
+    throw new Error(`dogfood replay ${input.id} produced no stop summary`);
   }
 
   if (result.classification === "cross_module_defer") {
@@ -163,46 +204,34 @@ function familyClassificationScenario(input: {
       issue: input.issue,
       title: input.title,
       classification: result.classification,
-      stopSummary: stopReasonForFindingDisposition({
-        kind: "cross_module",
-        finding: input.finding,
-        targetModule: result.targetModule ?? "unknown",
-        reason: result.reason,
-      }),
-      source: "family_cmr_classification",
+      stopSummary,
+      source: "family",
+      sourceStopSummary: stopSummary,
+      sourceEvidence: {
+        seam: "family_verify_cmr",
+        dispatches: backend.dispatches,
+        runStatus: run.ok ? "success" : "verify_failed",
+      },
     });
   }
 
   if (result.classification === "accepted_suppressed") {
-    const disposition = classified.dispositions.find(
-      (item) => item.identityKey === findingIdentityKey(input.finding),
-    );
     return scenario({
       id: input.id,
       issue: input.issue,
       title: input.title,
       classification: result.classification,
       stopSummary: {
+        ...stopSummary,
         reason: "accepted_suppressed",
-        summary: result.reason,
-        finding: input.finding,
-        metadata: {
-          acceptedSuppressions: [
-            {
-              source: result.source ?? "unknown",
-              scope:
-                disposition?.scope ??
-                "#287 hub-loss / central C_ accounts finding only",
-              reason: result.reason,
-              findingIdentity: findingIdentityKey(input.finding),
-              boundedReopen:
-                disposition?.boundedReopen ??
-                "reopen on severity escalation, new evidence, or #287-owned local integration scope",
-            },
-          ],
-        },
       },
-      source: "family_cmr_classification",
+      source: "family",
+      sourceStopSummary: stopSummary,
+      sourceEvidence: {
+        seam: "family_verify_cmr",
+        dispatches: backend.dispatches,
+        runStatus: run.ok ? "success" : "verify_failed",
+      },
     });
   }
 
@@ -211,18 +240,14 @@ function familyClassificationScenario(input: {
     issue: input.issue,
     title: input.title,
     classification: result.classification,
-    stopSummary: stopReasonForFindingDisposition({
-      kind:
-        result.classification === "owning_issue_still_red"
-          ? "owning_issue_still_red"
-          : result.classification === "spec_conflict"
-            ? "spec_conflict"
-            : "same_module",
-      finding: input.finding,
-      owningIssue: result.owningIssue ?? `#${input.familyIssue}`,
-      reason: result.reason,
-    }),
-    source: "family_cmr_classification",
+    stopSummary,
+    source: "family",
+    sourceStopSummary: stopSummary,
+    sourceEvidence: {
+      seam: "family_verify_cmr",
+      dispatches: backend.dispatches,
+      runStatus: run.ok ? "success" : "verify_failed",
+    },
   });
 }
 
@@ -2069,7 +2094,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: targetedResetReplay.stopSummary,
       sourceEvidence: targetedResetReplay.sourceEvidence,
     }),
-    familyClassificationScenario({
+    await familyClassificationScenario({
       id: "287-same-module-cmr-gap",
       issue: 287,
       title: "same-module CMR gap remains blocking",
@@ -2077,7 +2102,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       finding: sameModuleFinding,
       moduleContext,
     }),
-    familyClassificationScenario({
+    await familyClassificationScenario({
       id: "287-cross-module-defer-with-module",
       issue: 287,
       title: "declared cross-module defer carries the target module",
@@ -2144,7 +2169,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         staleReportedHeadIgnored: true,
       },
     }),
-    familyClassificationScenario({
+    await familyClassificationScenario({
       id: "287-coordinator-answer-reclassified",
       issue: 287,
       title: "coordinator-written escalation answer is replayed as evidence, not success",
@@ -2158,7 +2183,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       },
       moduleContext,
     }),
-    familyClassificationScenario({
+    await familyClassificationScenario({
       id: "287-known-hub-loss-suppression",
       issue: 287,
       title: "ADR0023 hub-loss finding is accepted suppressed with bounded reopen",
@@ -2236,7 +2261,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: closurePositiveSource.stopSummary,
       sourceEvidence: closurePositiveSource.sourceEvidence,
     }),
-    familyClassificationScenario({
+    await familyClassificationScenario({
       id: "376-owning-issue-still-red",
       issue: 376,
       title: "surface owned by a named child remains blocking",

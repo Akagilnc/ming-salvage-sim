@@ -297,12 +297,11 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(familyBackend.ledger).toEqual([]);
   });
 
-  it("LEDGER-AWARE finalize: a child already merged in the ledger is reported 'merged', not 'skipped'", async () => {
+  it("LEDGER-AWARE finalize: a child already merged in the ledger is reported already_done, not skipped", async () => {
     // Pre-seed the family ledger with child 10 already merged (e.g. a prior
     // invocation — #298's resume truth). The commander excludes 10 (already
-    // merged), so it is never run THIS invocation; finalize must report it
-    // "merged" (FamilyChildStatus contract: "merged" ⇔ a merged ledger entry
-    // exists), NOT "skipped".
+    // merged), so it is never run THIS invocation; finalize must report it as
+    // already_done, NOT "skipped".
     class PreSeededFamilyBackend extends FakeFamilyBackend {
       constructor() {
         super();
@@ -319,7 +318,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     // Only 11 actually runs + merges this invocation; 10 is already-merged truth.
     expect(familyBackend.merges.map((m) => m.childIssue)).toEqual([11]);
     const byIssue = new Map(result.children.map((c) => [c.issue, c.status]));
-    expect(byIssue.get(10)).toBe("merged"); // from the ledger, not "skipped"
+    expect(byIssue.get(10)).toBe("already_done"); // from the ledger, not "skipped"
     expect(byIssue.get(11)).toBe("merged");
     // Every child merged (one via ledger, one this run) → "success".
     expect(result.status).toBe("success");

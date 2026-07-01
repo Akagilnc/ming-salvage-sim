@@ -460,7 +460,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
     expect(backend.ledger.filter((e) => e.status === "shipped")).toHaveLength(1);
     // Honest: every child is ledger-merged ⇒ already delivered = success.
     expect(result.status).toBe("success");
-    expect(result.children.every((c) => c.status === "merged")).toBe(true);
+    expect(result.children.every((c) => c.status === "already_done")).toBe(true);
   });
 
   it("a current-head shipped marker whose PR no longer verifies fails closed", async () => {
@@ -509,7 +509,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
       familyHeadAfter: "ship-head",
     }));
     expect(result.status).toBe("escalated");
-    expect(result.children.every((c) => c.status === "merged")).toBe(true);
+    expect(result.children.every((c) => c.status === "already_done")).toBe(true);
   });
 
   it("a current-head shipped marker fails closed when the backend cannot re-verify the PR", async () => {

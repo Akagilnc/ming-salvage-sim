@@ -569,8 +569,13 @@ function gitOutputLines(
   }
 }
 
+function gitHead(worktree: WorktreeHandle | undefined): string | undefined {
+  return gitOutputLines(worktree, ["rev-parse", "HEAD"])[0];
+}
+
 function actualRepairMovementPaths(
   worktree: WorktreeHandle | undefined,
+  sinceHead?: string,
 ): ReadonlyArray<string> {
   if (worktree === undefined) return [];
   const paths = new Set<string>();
@@ -578,19 +583,14 @@ function actualRepairMovementPaths(
     if (path !== undefined) paths.add(path);
   };
 
-  for (const line of gitOutputLines(worktree, [
-    "diff",
-    "--name-only",
-    `${worktree.base}...HEAD`,
-  ])) {
-    add(normalizeGitPath(line));
-  }
-  for (const line of gitOutputLines(worktree, [
-    "diff",
-    "--name-only",
-    `${worktree.base}..HEAD`,
-  ])) {
-    add(normalizeGitPath(line));
+  if (sinceHead !== undefined) {
+    for (const line of gitOutputLines(worktree, [
+      "diff",
+      "--name-only",
+      `${sinceHead}..HEAD`,
+    ])) {
+      add(normalizeGitPath(line));
+    }
   }
   for (const line of gitOutputLines(worktree, ["status", "--porcelain"])) {
     add(normalizeGitPath(line.length > 3 ? line.slice(3) : line));
@@ -2252,6 +2252,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
         promptFile = stepSpecs[step].promptFile;
         const expectedKind = stepSpecs[step].role;
+        const coderHeadBeforeStep =
+          expectedKind === "coder" ? gitHead(worktree) : undefined;
         try {
           let resumeSessionId: string | undefined;
           if (resumeFor !== undefined && resumeFor.step === step) {
@@ -2395,7 +2397,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         lastOutput = output;
         if (output.kind === "coder") {
           lastCoderRepairEvidence = output.repairEvidence;
-          lastCoderActualRepairPaths = actualRepairMovementPaths(worktree);
+          lastCoderActualRepairPaths = actualRepairMovementPaths(
+            worktree,
+            coderHeadBeforeStep,
+          );
         }
         if (step === "S3" || step === "S6") lastReviewerStepId = step;
         break;
