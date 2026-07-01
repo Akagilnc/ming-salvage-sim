@@ -222,6 +222,23 @@ function currentModuleNames(context: FamilyModuleContext): ReadonlySet<string> {
   return new Set(context.currentModules.map((decl) => normalizedModule(decl.module)));
 }
 
+const SEVERITY_RANK: Readonly<Record<Finding["severity"], number>> = {
+  clarity: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+  critical: 4,
+};
+
+const KNOWN_287_HUB_LOSS_ACCEPTED_SEVERITY: Finding["severity"] = "medium";
+
+function exceedsKnown287HubLossAcceptedSeverity(finding: Finding): boolean {
+  return (
+    SEVERITY_RANK[finding.severity] >
+    SEVERITY_RANK[KNOWN_287_HUB_LOSS_ACCEPTED_SEVERITY]
+  );
+}
+
 function isKnown287HubLossFinding(familyIssue: number, finding: Finding): boolean {
   if (familyIssue !== 287) return false;
   const text = `${finding.claim_quote}\n${finding.location}`.toLowerCase();
@@ -308,6 +325,12 @@ export function classifyFamilyCmrFindings(input: {
 
   for (const finding of input.findings) {
     if (isKnown287HubLossFinding(input.familyIssue, finding)) {
+      if (exceedsKnown287HubLossAcceptedSeverity(finding)) {
+        blocking.push(finding);
+        results.push(resultForBlocking(finding, input.moduleContext));
+        continue;
+      }
+
       const disposition = acceptedSuppressionDisposition(finding);
       seededDispositions.push(disposition);
       results.push({

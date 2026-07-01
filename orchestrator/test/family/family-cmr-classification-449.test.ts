@@ -209,6 +209,52 @@ describe("#449 family CMR finding classification", () => {
       targetModule: "#261/ADR0021 hub implementation",
     });
   });
+
+  it.each(["high", "critical"] as const)(
+    "reopens the #287 hub-loss suppression when reviewer severity escalates to %s",
+    (severity) => {
+      const escalatedHubLossFinding: Finding = {
+        ...finding,
+        severity,
+        claim_quote: "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
+        location: "docs/adr/0023.md:D9",
+        action: "defer",
+        disposition: {
+          kind: "cross_module",
+          targetModule: "hub",
+          reason: "the hub implementation is outside #287",
+        },
+      };
+
+      const classified = classifyFamilyCmrFindings({
+        familyIssue: 287,
+        findings: [escalatedHubLossFinding],
+        moduleContext: {
+          currentModules: [
+            {
+              module: "fiscal",
+              moduleScope: ["docs/adr/0023.md"],
+              source: "family_issue",
+              issue: 287,
+            },
+          ],
+          childModules: [],
+        },
+      });
+
+      expect(classified.blocking).toEqual([escalatedHubLossFinding]);
+      expect(classified.deferred).toEqual([]);
+      expect(classified.results[0]).toMatchObject({
+        classification: "same_module_still_red",
+        attribution: { method: "family_module", issue: 287, module: "fiscal" },
+      });
+      expect(classified.dispositions).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ status: "accepted_suppressed" }),
+        ]),
+      );
+    },
+  );
 });
 
 describe("#449 CMR worker output parsing", () => {
