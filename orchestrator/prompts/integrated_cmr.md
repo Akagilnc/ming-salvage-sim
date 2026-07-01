@@ -68,6 +68,9 @@ Rules:
   `nextStep`, and `reason`; `spec_conflict` needs `source` and `reason`;
   `infra_failure` needs `source` and `reason`.
 - `accepted_suppressed` requires an explicit user/ADR/issue source, matching
-  scope, reason, `findingIdentity`, and `boundedReopen`.
+  scope, reason, and `boundedReopen`. `findingIdentity` is optional; omit it
+  unless a prior finding key was provided, because the runner derives it from
+  category, location, and claim quote. `disposition.reason` is the canonical
+  rationale; top-level `disposition_reason` may repeat it but is not required.
 - Emit the `<cmr>` tag LAST; if you iterate, the LAST tag is the one that counts.
 - Always print `CMR_STEP_COMPLETE` on its own line at the very end.

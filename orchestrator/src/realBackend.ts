@@ -68,6 +68,7 @@ import { z } from "zod";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
+import { findingIdentityKey } from "./findings.js";
 import {
   sourceAuthFailureStopSummary,
   type StopSummary,
@@ -1518,7 +1519,7 @@ const findingDispositionSchema = z.discriminatedUnion("kind", [
     source: z.string().min(1),
     scope: z.string().min(1),
     reason: z.string().min(1),
-    findingIdentity: z.string().min(1),
+    findingIdentity: z.string().min(1).optional(),
     targetModule: z.string().min(1).optional(),
     boundedReopen: z.string().min(1),
   }),
@@ -1545,7 +1546,7 @@ const findingSchema = z.object({
   }
   if (
     (finding.action === "wont_fix" || finding.action === "rejected") &&
-    (!finding.disposition_reason ||
+    ((!finding.disposition_reason && !finding.disposition?.reason) ||
       finding.disposition?.kind !== "accepted_suppressed")
   ) {
     ctx.addIssue({
@@ -1566,6 +1567,23 @@ const findingSchema = z.object({
     });
   }
 });
+function normalizeReviewerFinding(finding: Finding): Finding {
+  if (
+    (finding.action !== "wont_fix" && finding.action !== "rejected") ||
+    finding.disposition?.kind !== "accepted_suppressed"
+  ) {
+    return finding;
+  }
+  return {
+    ...finding,
+    disposition_reason: finding.disposition_reason ?? finding.disposition.reason,
+    disposition: {
+      ...finding.disposition,
+      findingIdentity:
+        finding.disposition.findingIdentity ?? findingIdentityKey(finding),
+    },
+  };
+}
 const priorFindingDispositionSchema = z.object({
   identityKey: z.string().min(1),
   status: z.enum([
@@ -2311,7 +2329,9 @@ export class RealBackend implements Backend {
   ): StepOutput {
     if (spec.role === "reviewer") {
       const r = reviewerOutputSchema.parse(raw);
-      const findings: Finding[] = r.findings.map((f) => ({ ...f }));
+      const findings: Finding[] = r.findings.map((f) =>
+        normalizeReviewerFinding({ ...f }),
+      );
       return {
         kind: "reviewer",
         findings,

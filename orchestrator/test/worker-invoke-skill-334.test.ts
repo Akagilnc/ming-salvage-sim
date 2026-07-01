@@ -287,7 +287,7 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
       expect(text).toMatch(/spec_conflict[\s\S]*source[\s\S]*reason/i);
       expect(text).toMatch(/infra_failure[\s\S]*source[\s\S]*reason/i);
       expect(text).toMatch(
-        /accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*(findingIdentity|finding identity)[\s\S]*boundedReopen/i,
+        /accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen[\s\S]*(findingIdentity|finding identity)[\s\S]*optional/i,
       );
     }
   });

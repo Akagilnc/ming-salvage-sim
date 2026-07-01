@@ -244,6 +244,7 @@ describe("#451 dogfood replay fixture", () => {
         seam: "family",
         mechanism: "already_done_child_resume",
         skippedChildIssue: 451,
+        childDispatches: [],
       }),
     });
   });
@@ -255,6 +256,7 @@ describe("#451 dogfood replay fixture", () => {
       expect(row.source, row.id).toBeDefined();
       expect(row.source, row.id).not.toBe("stop_summary");
       expect(row.sourceStopSummary, row.id).toBeDefined();
+      expect(row.stopSummary, row.id).toEqual(row.sourceStopSummary);
       expect(row.sourceEvidence, row.id).toBeDefined();
     }
   });

@@ -65,6 +65,7 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
+import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
 import {
   agentForSlug,
@@ -2207,7 +2208,7 @@ const cmrDispositionEvidenceSchema = z.discriminatedUnion("kind", [
       source: nonEmpty,
       scope: nonEmpty,
       reason: nonEmpty,
-      findingIdentity: nonEmpty,
+      findingIdentity: nonEmpty.optional(),
       targetModule: nonEmpty.optional(),
       boundedReopen: nonEmpty,
     })
@@ -2249,7 +2250,7 @@ const cmrReviewerFindingSchema = z
     }
     if (
       (finding.action === "wont_fix" || finding.action === "rejected") &&
-      (!finding.disposition_reason ||
+      ((!finding.disposition_reason && !finding.disposition?.reason) ||
         finding.disposition?.kind !== "accepted_suppressed")
     ) {
       ctx.addIssue({
@@ -2259,6 +2260,25 @@ const cmrReviewerFindingSchema = z
       });
     }
   });
+function normalizeCmrReviewerFinding(
+  finding: z.infer<typeof cmrReviewerFindingSchema>,
+): Finding {
+  if (
+    (finding.action !== "wont_fix" && finding.action !== "rejected") ||
+    finding.disposition?.kind !== "accepted_suppressed"
+  ) {
+    return finding;
+  }
+  return {
+    ...finding,
+    disposition_reason: finding.disposition_reason ?? finding.disposition.reason,
+    disposition: {
+      ...finding.disposition,
+      findingIdentity:
+        finding.disposition.findingIdentity ?? findingIdentityKey(finding),
+    },
+  };
+}
 const cmrFindingsSchema = {
   findings: z.array(cmrReviewerFindingSchema).optional(),
 } as const;
@@ -2369,7 +2389,9 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
       claimedFixedFindingIdentityKeys:
         converged.claimedFixedFindingIdentityKeys,
       priorFindingDispositions: converged.priorFindingDispositions,
-      ...(converged.findings !== undefined ? { findings: converged.findings } : {}),
+      ...(converged.findings !== undefined
+        ? { findings: converged.findings.map(normalizeCmrReviewerFinding) }
+        : {}),
     };
   }
   const red = cmrRedSchema.safeParse(normalizedParsed);
@@ -2395,7 +2417,9 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
       ...(red.data.skippedLegs !== undefined ? { skippedLegs: red.data.skippedLegs } : {}),
       claimedFixedFindingIdentityKeys: red.data.claimedFixedFindingIdentityKeys,
       priorFindingDispositions: red.data.priorFindingDispositions,
-      ...(red.data.findings !== undefined ? { findings: red.data.findings } : {}),
+      ...(red.data.findings !== undefined
+        ? { findings: red.data.findings.map(normalizeCmrReviewerFinding) }
+        : {}),
     };
   }
   return {

@@ -163,7 +163,6 @@ function isValidDispositionEvidence(
       return (
         isFilledString(obj.source) &&
         isFilledString(obj.scope) &&
-        isFilledString(obj.findingIdentity) &&
         isFilledString(obj.boundedReopen)
       );
     case "spec_conflict":
@@ -241,7 +240,12 @@ export function isValidFinding(f: unknown): f is Finding {
   }
   if (
     (obj.action === "wont_fix" || obj.action === "rejected") &&
-    !isFilledString(obj.disposition_reason)
+    !(
+      isFilledString(obj.disposition_reason) ||
+      (isValidDispositionEvidence(obj.disposition) &&
+        obj.disposition.kind === "accepted_suppressed" &&
+        isFilledString(obj.disposition.reason))
+    )
   ) {
     return false;
   }

@@ -260,6 +260,14 @@ function childAttribution(
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+function declarationCoversFinding(
+  declaration: SourcedModuleDeclaration,
+  finding: Finding,
+): boolean {
+  const path = locationPath(finding.location);
+  return declaration.moduleScope.some((scope) => pathMatchesScope(path, scope));
+}
+
 function fallbackModule(
   context: FamilyModuleContext,
 ): SourcedModuleDeclaration | undefined {
@@ -283,7 +291,11 @@ function attributionFor(
     };
   }
   const fallback = fallbackModule(context);
-  if (fallback !== undefined) {
+  const path = locationPath(finding.location);
+  if (
+    fallback !== undefined &&
+    fallback.moduleScope.some((scope) => pathMatchesScope(path, scope))
+  ) {
     return {
       method: "family_module",
       issue: fallback.issue,
@@ -376,17 +388,19 @@ function acceptedSuppressionFindingMatchesContext(
     return true;
   }
   const disposition = finding.disposition;
+  const dispositionIdentity =
+    disposition.findingIdentity ?? findingIdentityKey(finding);
   const matchingSource = (context.acceptedSuppressionSources ?? []).find(
     (source) =>
       source.source === disposition.source &&
       source.scope === disposition.scope &&
-      source.findingIdentity === disposition.findingIdentity &&
+      source.findingIdentity === dispositionIdentity &&
       source.boundedReopen === disposition.boundedReopen &&
       source.reason === disposition.reason,
   );
   if (matchingSource === undefined) return false;
   return (
-    disposition.findingIdentity === findingIdentityKey(finding) &&
+    dispositionIdentity === findingIdentityKey(finding) &&
     suppressionScopeMatchesContext({
       finding,
       context,
@@ -595,12 +609,16 @@ export function classifyFamilyCmrFindings(input: {
         finding.disposition.targetModule,
         input.moduleContext,
       );
+      const findingIsInsideUndevelopedTarget =
+        undevelopedTarget !== undefined &&
+        declarationCoversFinding(undevelopedTarget, finding);
       if (
-        attribution.method !== "missing_module_context" &&
         undevelopedTarget !== undefined &&
         currentModules.size > 0 &&
         !currentModules.has(targetModule) &&
-        targetModuleIsOutsideCurrentModules(targetModule, currentModules)
+        targetModuleIsOutsideCurrentModules(targetModule, currentModules) &&
+        (attribution.method !== "missing_module_context" ||
+          findingIsInsideUndevelopedTarget)
       ) {
         deferred.push(finding);
         results.push(resultForDeferred(finding, input.moduleContext));
