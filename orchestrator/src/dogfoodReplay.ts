@@ -215,26 +215,6 @@ async function familyClassificationScenario(input: {
     });
   }
 
-  if (result.classification === "accepted_suppressed") {
-    return scenario({
-      id: input.id,
-      issue: input.issue,
-      title: input.title,
-      classification: result.classification,
-      stopSummary: {
-        ...stopSummary,
-        reason: "accepted_suppressed",
-      },
-      source: "family",
-      sourceStopSummary: stopSummary,
-      sourceEvidence: {
-        seam: "family_verify_cmr",
-        dispatches: backend.dispatches,
-        runStatus: run.ok ? "success" : "verify_failed",
-      },
-    });
-  }
-
   return scenario({
     id: input.id,
     issue: input.issue,

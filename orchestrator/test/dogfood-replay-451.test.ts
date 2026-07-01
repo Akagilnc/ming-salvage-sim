@@ -40,7 +40,7 @@ describe("#451 dogfood replay fixture", () => {
           id: "287-known-hub-loss-suppression",
           issue: 287,
           classification: "accepted_suppressed",
-          stopReason: "accepted_suppressed",
+          stopReason: "success",
           metadata: expect.objectContaining({
             acceptedSuppressions: [
               expect.objectContaining({
@@ -164,7 +164,6 @@ describe("#451 dogfood replay fixture", () => {
     });
 
     expect(replay.coveredStopReasons).toEqual([
-      "accepted_suppressed",
       "already_done",
       "contract_drift",
       "cross_module_defer",
@@ -175,7 +174,7 @@ describe("#451 dogfood replay fixture", () => {
       "spec_conflict",
       "success",
     ]);
-    expect(replay.summary).toContain("10 stop reasons");
+    expect(replay.summary).toContain("9 stop reasons");
   });
 
   it("uses seam-produced stop summaries for replay rows that claim success or already-done", async () => {
@@ -372,6 +371,16 @@ describe("#451 dogfood replay fixture", () => {
         "cmr:correctness",
         "ship:family/287-final-legacy-disposition",
       ]),
+    });
+    expect(rowsById.get("287-known-hub-loss-suppression")).toMatchObject({
+      source: "family",
+      classification: "accepted_suppressed",
+      stopReason: "success",
+      sourceStopSummary: expect.objectContaining({ reason: "success" }),
+      sourceEvidence: expect.objectContaining({
+        seam: "family_verify_cmr",
+        runStatus: "success",
+      }),
     });
     expect(rowsById.get("376-route-accounting-non-default")?.sourceEvidence).toMatchObject({
       seam: "family_verify_cmr",

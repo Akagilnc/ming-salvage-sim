@@ -717,14 +717,23 @@ function reviewerObservedProgress(input: {
   );
 }
 
-function latestCoderRepairEvidence(
-  ledger: ReadonlyArray<LedgerEntry>,
-): RepairEvidence | undefined {
+interface LatestCoderRepair {
+  readonly repairEvidence?: RepairEvidence;
+  readonly repairMovementPaths: ReadonlyArray<string>;
+}
+
+function latestCoderRepair(ledger: ReadonlyArray<LedgerEntry>): LatestCoderRepair {
   for (let i = ledger.length - 1; i >= 0; i--) {
-    const output = ledger[i]!.output;
-    if (output?.kind === "coder") return output.repairEvidence;
+    const entry = ledger[i]!;
+    const output = entry.output;
+    if (output?.kind === "coder") {
+      return {
+        repairEvidence: output.repairEvidence,
+        repairMovementPaths: entry.repairMovementPaths ?? [],
+      };
+    }
   }
-  return undefined;
+  return { repairMovementPaths: [] };
 }
 
 interface ContinueFixingRepair {
@@ -2166,7 +2175,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         prompt_hash: await hashPrompt(undefined, "S4", backend),
         branchHEAD: await resolveBranchHEAD(),
       };
-      await backend.writeLedger(repairIntentEntry, stateDir);
+      try {
+        await backend.writeLedger(repairIntentEntry, stateDir);
+      } catch (err) {
+        return await errorTermination("S4", err);
+      }
       resumeLedger = [...resumeLedger, repairIntentEntry];
     }
     const plan = planResume(resumeLedger);
@@ -2194,7 +2207,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       noProgressByFindingIdentityKey.delete(key);
     }
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
-    lastCoderRepairEvidence = latestCoderRepairEvidence(plan.priorLedger);
+    const latestRepair = latestCoderRepair(plan.priorLedger);
+    lastCoderRepairEvidence = latestRepair.repairEvidence;
+    lastCoderActualRepairPaths = latestRepair.repairMovementPaths;
 
     if (plan.terminalStatus !== undefined) {
       // The prior run already reached a terminal handoff that is NOT being

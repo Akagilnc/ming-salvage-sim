@@ -294,6 +294,7 @@ export function isValidPriorFindingDisposition(
     return (
       isFilledString(obj.source) &&
       isFilledString(obj.scope) &&
+      isFilledString(obj.reason) &&
       isFilledString(obj.boundedReopen)
     );
   }

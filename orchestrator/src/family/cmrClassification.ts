@@ -379,6 +379,7 @@ function acceptedSuppressionFindingMatchesContext(
   const matchingSource = (context.acceptedSuppressionSources ?? []).find(
     (source) =>
       source.source === disposition.source &&
+      source.scope === disposition.scope &&
       source.findingIdentity === disposition.findingIdentity &&
       source.boundedReopen === disposition.boundedReopen &&
       source.reason === disposition.reason,
@@ -403,6 +404,7 @@ function priorDispositionMatchesContext(
   const matchingSource = (context.acceptedSuppressionSources ?? []).find(
     (source) =>
       source.source === disposition.source &&
+      source.scope === disposition.scope &&
       source.findingIdentity === disposition.identityKey &&
       source.boundedReopen === disposition.boundedReopen &&
       source.reason === disposition.reason,
