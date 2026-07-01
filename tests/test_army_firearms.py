@@ -10,6 +10,14 @@ from __future__ import annotations
 from ming_sim.constants import ARMY_SCORE_FIELDS
 
 
+def _pay_source():
+    return {
+        "pay_source_region": "shaanxi",
+        "province_pay_share": 1.0,
+        "central_pay_share": 0.0,
+    }
+
+
 def _cols(db, table):
     return {r["name"] for r in db.conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
@@ -33,7 +41,7 @@ def test_new_army_defaults_zero_firearm(game):
     db, state, _ = game
     db.create_armies_from_extraction(state, [{
         "id": "plain_army_test", "name": "白杆兵测试", "owner_power": "ming",
-        "manpower": 3000, "maintenance_per_turn": 1,
+        "manpower": 3000, "maintenance_per_turn": 1, **_pay_source(),
     }], actor="测试")
     row = db.conn.execute(
         "SELECT firearm_equipment, cannon_equipment FROM armies WHERE id='plain_army_test'"
@@ -78,7 +86,7 @@ def test_create_army_with_firearm(game):
     db.create_armies_from_extraction(state, [{
         "id": "shenjiying_test", "name": "神机营测试", "owner_power": "ming",
         "manpower": 5000, "maintenance_per_turn": 2,
-        "firearm_equipment": 70, "cannon_equipment": 12,
+        "firearm_equipment": 70, "cannon_equipment": 12, **_pay_source(),
     }], actor="测试")
     row = db.conn.execute(
         "SELECT firearm_equipment, cannon_equipment FROM armies WHERE id='shenjiying_test'"
@@ -93,6 +101,7 @@ def test_create_army_cannon_count_clamped(game):
     db.create_armies_from_extraction(state, [{
         "id": "heavy_test", "name": "重炮营测试", "owner_power": "ming",
         "manpower": 5000, "maintenance_per_turn": 2, "cannon_equipment": 99,
+        **_pay_source(),
     }], actor="测试")
     val = db.conn.execute("SELECT cannon_equipment FROM armies WHERE id='heavy_test'").fetchone()[0]
     assert val == 12
@@ -149,7 +158,7 @@ def test_army_detail_dynamic_new_army_shows_firearm(game):
     db.create_armies_from_extraction(state, [{
         "id": "probe_fire_new", "name": "火器新营", "owner_power": "ming",
         "manpower": 4000, "maintenance_per_turn": 1,
-        "firearm_equipment": 77, "cannon_equipment": 5,
+        "firearm_equipment": 77, "cannon_equipment": 5, **_pay_source(),
     }], actor="测试")
     for key in ("probe_fire_new", "火器新营"):     # id 和 name 都能查到
         detail = db.army_detail(key)
@@ -193,6 +202,7 @@ def test_create_army_cannon_nonint_rejected_not_crash(game):
     created = db.create_armies_from_extraction(state, [{
         "id": "cannon_nonint_test", "name": "炮非数测试", "owner_power": "ming",
         "manpower": 2000, "maintenance_per_turn": 1, "cannon_equipment": "几门",
+        **_pay_source(),
     }], actor="测试")
     assert db.conn.execute(
         "SELECT COUNT(*) FROM armies WHERE id='cannon_nonint_test'").fetchone()[0] == 0
@@ -205,7 +215,7 @@ def test_apply_army_delta_chinese_keys(game):
     db, state, _ = game
     db.create_armies_from_extraction(state, [{
         "id": "alias_test_army", "name": "别名测试军", "owner_power": "ming",
-        "manpower": 3000, "maintenance_per_turn": 1,
+        "manpower": 3000, "maintenance_per_turn": 1, **_pay_source(),
     }], actor="测试")
     pseudo = type("E", (), {"id": "test", "title": "配火器"})()
     db.apply_army_deltas(state, pseudo, None, "测试",

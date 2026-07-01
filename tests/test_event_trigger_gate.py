@@ -657,6 +657,19 @@ def test_character_numeric_gate_supports_aggregation(game):
     assert not _gate_passed({"character.毛文龙|袁崇焕.loyalty.min": ">=60"}, state.metrics, db)
 
 
+def test_army_numeric_gate_preserves_fractional_arrears_tail(game):
+    """#302 cmr：并轨后 armies.arrears 可为小数尾差，trigger_gate 不得 int 截断成 0。"""
+    from ming_sim.issues import _gate_passed
+    db, state, _content = game
+
+    army_id = db.conn.execute("SELECT id FROM armies ORDER BY id LIMIT 1").fetchone()["id"]
+    db.conn.execute("UPDATE armies SET arrears=? WHERE id=?", (0.5, army_id))
+    db.conn.commit()
+
+    assert not _gate_passed({f"army.{army_id}.arrears": "<=0"}, state.metrics, db)
+    assert _gate_passed({f"army.{army_id}.arrears": ">0"}, state.metrics, db)
+
+
 def test_character_gate_rejects_malformed_field_before_sql(game):
     """trigger_gate 字段名必须先过白名单，不能把畸形字段拼进 SQL。"""
     import pytest
@@ -4015,6 +4028,9 @@ def test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback(g
                     "name": "测试事务营",
                     "manpower": 1200,
                     "owner_power": "ming",
+                    "pay_source_region": "shaanxi",
+                    "province_pay_share": 1.0,
+                    "central_pay_share": 0.0,
                     "reason": "测试建军事务",
                 }
             ]

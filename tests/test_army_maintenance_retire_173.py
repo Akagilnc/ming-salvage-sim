@@ -21,6 +21,25 @@ def _pseudo(title="测试"):
     return type("E", (), {"id": "test", "title": title})()
 
 
+def _pay_source():
+    return {
+        "pay_source_region": "shaanxi",
+        "province_pay_share": 1.0,
+        "central_pay_share": 0.0,
+    }
+
+
+def _disable_army_pay_source_cutover(db):
+    db.conn.execute(
+        """
+        INSERT INTO fiscal_config (key, value, kind, note)
+        VALUES ('__army_pay_source_cutover', 0, 'meta', 'legacy new-army test')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
+        """
+    )
+    db.conn.commit()
+
+
 # ── schema：列已物理删除 ──────────────────────────────────────────────
 
 def test_armies_table_has_no_maintenance_column(game):
@@ -61,7 +80,9 @@ def test_existing_save_drops_maintenance_column_on_open(content, tmp_path):
         assert "maintenance_per_turn" not in cols, "现存档重开应在 init_schema 路径 drop 维护费列"
         state2 = db2.load_state()
         created = db2.create_armies_from_extraction(state2, [{
-            "id": "post_drop_army", "name": "迁移后新军", "owner_power": "ming", "manpower": 5000}])
+            "id": "post_drop_army", "name": "迁移后新军", "owner_power": "ming",
+            "manpower": 5000, **_pay_source(),
+        }])
         assert not created[0].get("rejected"), f"drop 后建新军 INSERT 应成功不崩：{created[0]}"
         assert db2.conn.execute("SELECT id FROM armies WHERE id='post_drop_army'").fetchone() is not None
     finally:
@@ -70,8 +91,9 @@ def test_existing_save_drops_maintenance_column_on_open(content, tmp_path):
 
 # ── 建军：manpower 唯一必填，维护费不再是字段 ──────────────────────────
 
-def test_new_army_needs_only_manpower(game):
+def test_legacy_new_army_needs_only_manpower(game):
     db, state, _ = game
+    _disable_army_pay_source_cutover(db)
     created = db.create_armies_from_extraction(state, [{
         "id": "qin_army_x", "name": "秦军营", "owner_power": "ming", "manpower": 8000,
     }])
@@ -84,7 +106,7 @@ def test_new_army_maintenance_key_ignored(game):
     db, state, _ = game
     created = db.create_armies_from_extraction(state, [{
         "id": "qin_army_y", "name": "秦军乙", "owner_power": "ming",
-        "manpower": 5000, "maintenance_per_turn": 99, "维护费": 99,
+        "manpower": 5000, "maintenance_per_turn": 99, "维护费": 99, **_pay_source(),
     }])
     assert not created[0].get("rejected"), f"塞维护费键不应拒整军：{created[0]}"
     assert db.conn.execute("SELECT id FROM armies WHERE id='qin_army_y'").fetchone() is not None
@@ -116,8 +138,8 @@ def test_pay_derives_from_manpower(game):
     # 两军缺省 salary_rate 落同一锚点，兵力多者 army_needed 严格更大 → 月饷由兵力派生（非维护费）。
     db, state, _ = game
     db.create_armies_from_extraction(state, [
-        {"id": "pay_lo", "name": "少兵营", "owner_power": "ming", "manpower": 10000},
-        {"id": "pay_hi", "name": "多兵营", "owner_power": "ming", "manpower": 40000},
+        {"id": "pay_lo", "name": "少兵营", "owner_power": "ming", "manpower": 10000, **_pay_source()},
+        {"id": "pay_hi", "name": "多兵营", "owner_power": "ming", "manpower": 40000, **_pay_source()},
     ])
     lo = db.conn.execute("SELECT * FROM armies WHERE id='pay_lo'").fetchone()
     hi = db.conn.execute("SELECT * FROM armies WHERE id='pay_hi'").fetchone()

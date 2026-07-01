@@ -21,7 +21,7 @@ from ming_sim.constants import (
 )
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
-from ming_sim.db import GameDB, infer_office_type_from_office, normalize_office
+from ming_sim.db import GameDB, _approx_wanliang, infer_office_type_from_office, normalize_office
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
@@ -223,8 +223,8 @@ def _commitment_remaining_from_gate(
     gate: Dict[str, str],
     state: GameState,
     db: GameDB,
-) -> Optional[int]:
-    remaining = 0
+) -> Optional[float]:
+    remaining = 0.0
     found = False
     for key, cond in gate.items():
         cond_text = str(cond or "").strip()
@@ -235,20 +235,20 @@ def _commitment_remaining_from_gate(
         if val is None:
             continue
         try:
-            val_int = int(val)
+            val_num = float(val)
         except (TypeError, ValueError):
             continue
         op, target = m.group(1), int(m.group(2))
         if op == "<=":
-            need = max(0, val_int - target)
+            need = max(0.0, val_num - target)
         elif op == "<":
-            need = max(0, val_int - target + 1)
+            need = 0.0 if val_num < target else float(int(val_num - target) + 1)
         elif op == ">=":
-            need = max(0, target - val_int)
+            need = max(0.0, target - val_num)
         elif op == ">":
-            need = max(0, target - val_int + 1)
+            need = 0.0 if val_num > target else float(int(target - val_num) + 1)
         else:
-            need = abs(val_int - target)
+            need = abs(val_num - target)
         remaining += need
         found = True
     return remaining if found else None
@@ -280,7 +280,7 @@ def commitment_progress_payload(
     *,
     paid_this_month: int = 0,
     include_current_month: bool = False,
-) -> Optional[Dict[str, int]]:
+) -> Optional[Dict[str, object]]:
     keys = row.keys() if hasattr(row, "keys") else []
     if not str(row["commitment_kind"] if "commitment_kind" in keys else "").strip():
         return None
@@ -301,19 +301,26 @@ def commitment_progress_payload(
     months_elapsed = max(0, int(state.turn) - origin_turn)
     if include_current_month:
         months_elapsed = int(months_elapsed) + 1
-    payload: Dict[str, int] = {
+    payload: Dict[str, object] = {
         "months_elapsed": int(months_elapsed),
         "paid_total": int(paid_total),
     }
     if remaining is not None:
         if _commitment_gate_references_arrears(row):
-            payload["remaining_arrears"] = int(remaining)
+            payload["remaining_arrears"] = float(remaining)
         else:
             payload["remaining_to_goal"] = int(remaining)
     return payload
 
 
-def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
+def _commitment_arrears_remaining_text(amount: object) -> str:
+    text = _approx_wanliang(amount)
+    if text.startswith("欠饷"):
+        return "尚欠" + text[len("欠饷"):]
+    return text
+
+
+def commitment_display_text(progress: Dict[str, object], row: sqlite3.Row) -> str:
     keys = row.keys() if hasattr(row, "keys") else []
     ongoing = loads_effect_dict(row["ongoing_effects"] if "ongoing_effects" in keys else {})
     end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
@@ -328,7 +335,7 @@ def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
     if stop_gate and _commitment_gate_references_arrears(row):
         parts = [f"已第{months}月"]
         if "remaining_arrears" in progress:
-            parts.append(f"尚欠{int(progress['remaining_arrears'])}万两")
+            parts.append(_commitment_arrears_remaining_text(progress["remaining_arrears"]))
         parts.append("直到补齐")
         return "·".join(parts)
 
@@ -346,7 +353,7 @@ def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
     return f"已履行{months}月·开放承诺"
 
 
-def commitment_timed_bar_value(progress: Dict[str, int], row: sqlite3.Row) -> Optional[int]:
+def commitment_timed_bar_value(progress: Dict[str, object], row: sqlite3.Row) -> Optional[int]:
     """Time-based bar for auto-expiring timed commitments (ongoing effects + end_turn + no gate).
 
     Returns None for bar-driven (stop_gate), arrears, or passive (no ongoing effects) commitments.
@@ -369,11 +376,14 @@ def commitment_timed_bar_value(progress: Dict[str, int], row: sqlite3.Row) -> Op
     return max(0, min(100, int(round(months * 100 / duration))))
 
 
-def _commitment_bar_value(progress: Dict[str, int]) -> Optional[int]:
+def _commitment_bar_value(progress: Dict[str, object]) -> Optional[int]:
     if "remaining_arrears" not in progress:
         return None
     paid = max(0, int(progress.get("paid_total") or 0))
-    remaining = max(0, int(progress.get("remaining_arrears") or 0))
+    try:
+        remaining = max(0.0, float(progress.get("remaining_arrears") or 0))
+    except (TypeError, ValueError):
+        remaining = 0.0
     total = paid + remaining
     if total <= 0:
         return 100
@@ -384,9 +394,24 @@ def _commitment_gate_references_arrears(row: sqlite3.Row) -> bool:
     return any(".arrears" in str(key) for key in _commitment_stop_gate(row))
 
 
+def _commitment_arrears_gate_army_ids(row: sqlite3.Row) -> List[str]:
+    ids: List[str] = []
+    for key in _commitment_stop_gate(row):
+        text = str(key)
+        match = re.fullmatch(r"army\.([^.]+)\.arrears(?:\.sum)?", text)
+        if not match:
+            continue
+        for army_id in match.group(1).split("|"):
+            army_id = army_id.strip()
+            if army_id and army_id not in ids:
+                ids.append(army_id)
+    return ids
+
+
 def _commitment_ongoing_effects_for_settlement(row: sqlite3.Row, ongoing: Dict[str, object]) -> Dict[str, object]:
     if not _commitment_gate_references_arrears(row):
         return ongoing
+    gate_army_ids = _commitment_arrears_gate_army_ids(row)
     normalized = dict(ongoing)
     for key in ("economy", "economy_moves"):
         economy = ongoing.get(key)
@@ -404,6 +429,14 @@ def _commitment_ongoing_effects_for_settlement(row: sqlite3.Row, ongoing: Dict[s
                 delta = 0
             if delta < 0:
                 item["purpose"] = "补饷"
+                if (
+                    len(gate_army_ids) == 1
+                    and not str(item.get("target_id") or "").strip()
+                    and not str(item.get("目标编号") or "").strip()
+                    and not str(item.get("target_kind") or item.get("目标类型") or "").strip()
+                ):
+                    item["target_kind"] = "army"
+                    item["target_id"] = gate_army_ids[0]
             normalized_economy.append(item)
         normalized[key] = normalized_economy
     return normalized
@@ -1278,7 +1311,7 @@ _GATE_AGG_FUNCS = {
     "max": max,
     "min": min,
     "sum": sum,
-    "avg": lambda xs: sum(xs) // max(1, len(xs)),
+    "avg": lambda xs: sum(xs) / max(1, len(xs)),
 }
 
 
@@ -1330,8 +1363,8 @@ def _gate_sql_field(table: str, field: str, key: str, *, kind: str) -> str:
     return field
 
 
-def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[int]:
-    """把 gate key 解析成一个 int 值。形式：
+def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[float]:
+    """把 gate key 解析成一个数值。形式：
       - 'metric_name'                           → metrics[key]
       - 'region.<id>.<field>'                   → regions 表
       - 'region.<id1>|<id2>|.<field>.<agg>'     → 多省聚合 (max/min/avg/sum)
@@ -1377,7 +1410,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
     if not ids:
         return None
     # class 表的 id 是 name 或 name@region；其它表 id 就是行 id
-    values: List[int] = []
+    values: List[float] = []
     for cid in ids:
         row = None
         if table == "event":
@@ -1410,9 +1443,9 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
         if row is None:
             return None
         try:
-            values.append(int(row[0]))
+            values.append(float(row[0]))
         except ValueError as exc:
-            # 非数值字符串 = 数值 cond 配了文本字段（如 region.x.controlled_by >=1）→ str 列 int 不动。
+            # 非数值字符串 = 数值 cond 配了文本字段（如 region.x.controlled_by >=1）→ 数值转换不动。
             # fail-loud 成清晰 content 错误（#159；Q3：trigger_gate 字段类型错属静态 content schema 错，
             # 不静默回 None 当条件不满足）。NULL/None 走 TypeError 分支视同不达标（合法数据，非内容错）。
             raise ValueError(
@@ -6764,7 +6797,25 @@ def apply_issue_inertia_and_ongoing(
 
             # economy
             issue_monthly_rejections: List[Dict[str, object]] = []
-            _eco_out = _apply_economy_list(db, state, _monthly_economy_items(ongoing))
+            pay_arrears_pool_army_ids = (
+                _commitment_arrears_gate_army_ids(row)
+                if is_commitment and _commitment_gate_references_arrears(row)
+                else None
+            )
+            allow_pay_arrears_pool = (
+                is_commitment
+                and (
+                    not commitment_stop_gate
+                    or bool(pay_arrears_pool_army_ids)
+                )
+            )
+            _eco_out = _apply_economy_list(
+                db,
+                state,
+                _monthly_economy_items(ongoing),
+                allow_pay_arrears_pool=allow_pay_arrears_pool,
+                pay_arrears_pool_army_ids=pay_arrears_pool_army_ids,
+            )
             economy_rejections = [r for r in _eco_out if r.get("rejected")]
             issue_monthly_rejections.extend(economy_rejections)
             inertia_rejections.extend(economy_rejections)  # economy 拒收不蒸发（#14）
