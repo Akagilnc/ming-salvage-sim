@@ -550,6 +550,7 @@ class Army:
     central_pay_arrears: float = 0.0
     is_tusi: int = 0
     self_funded_pay: int = 0
+    mutiny_status: str = ""
 
 
 @dataclass

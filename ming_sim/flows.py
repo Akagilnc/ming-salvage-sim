@@ -291,6 +291,18 @@ def army_needed(row) -> int:
     return math.ceil(manpower * rate / 10000)
 
 
+def army_pay_morale_delta(total_due: float, current_shortfall: float, opening_arrears: float) -> int:
+    """欠饷→士气底料：只看本月流量缺口；旧欠只阻止足额无欠奖励。"""
+    if total_due <= 0:
+        return 0
+    shortfall = max(0.0, min(float(current_shortfall), float(total_due)))
+    if shortfall > 0:
+        return -max(1, round(8 * shortfall / total_due))
+    if opening_arrears <= 1e-9:
+        return 2
+    return 0
+
+
 def _apply_metric_dict(
     state: GameState, metric_delta: Dict[str, object], caps: Optional[Dict[str, int]] = None,
     db: Optional[GameDB] = None,
@@ -747,12 +759,8 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         defer_morale_to_province_tick = pay_source_cutover and province_pay_share > 0
         if defer_morale_to_province_tick:
             morale_delta = 0
-        elif shortfall > 0:
-            morale_delta = -max(1, round(8 * shortfall / full_needed))
-        elif old_arrears == 0:
-            morale_delta = +2     # 长期足额且无旧欠：缓慢恢复
         else:
-            morale_delta = 0      # 当月发足但仍有旧欠：不奖励也不惩罚
+            morale_delta = army_pay_morale_delta(full_needed, shortfall, old_arrears)
         new_morale = max(0, min(100, old_morale + morale_delta))
 
         if pay_source_cutover:
