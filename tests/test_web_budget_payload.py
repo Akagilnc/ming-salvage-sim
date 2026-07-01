@@ -80,5 +80,5 @@ def test_budget_payload_filters_real_substrate_hub_fixed_flow(game):
     ]
     categories = [row["category"] for row in payload["国库"]["movements"]]
     assert "边饷hub" in ledger_categories
-    assert "边饷hub" in categories
-    assert payload["国库"]["movements_total"] == -5
+    assert "边饷hub" not in categories
+    assert payload["国库"]["movements_total"] == 0
