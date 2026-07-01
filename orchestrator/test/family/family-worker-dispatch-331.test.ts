@@ -464,6 +464,29 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     }
   }
 
+  class NoShipCapabilityAfterCmrBackend implements FamilyBackend {
+    readonly ledger: FamilyLedgerEntry[] = [];
+    readonly aborted: FamilyLedgerEntry[] = [];
+    async mergeChildIntoFamilyBase(): Promise<never> {
+      throw new Error("not used");
+    }
+    async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+      this.ledger.push(entry);
+    }
+    async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+      return this.ledger;
+    }
+    async readFamilyHead(): Promise<string> {
+      return "head-after-cmr";
+    }
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async runIntegratedCmr(): Promise<IntegratedCmrResult> {
+      return { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
+    }
+  }
+
   it("a malformed cmr worker (completed but NOT a cmr payload) ⇒ INCOMPLETE_GATE + durable aborted(final)", async () => {
     const backend = new RecordingFamilyBackend(
       { kind: "completed", output: { kind: "ship", branch: "feat/330", status: "pushed" } },
@@ -534,6 +557,26 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
         verifiedCmrHead: "latest cmr_passed ledger row",
       },
     });
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+  });
+
+  it("no ship capability after converged cmr writes durable aborted(final) over stale success", async () => {
+    const backend = new NoShipCapabilityAfterCmrBackend();
+
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/445",
+      familyBackend: backend,
+    });
+
+    expect(res).toEqual({ ok: false, ran: true });
+    expect(backend.ledger.filter((e) => e.status === "cmr_passed")).toHaveLength(2);
+    const latest = backend.ledger.at(-1);
+    expect(latest?.status).toBe("aborted");
+    expect(latest?.phase).toBe("final");
+    expect(latest?.reason).toMatch(/family ship worker unavailable/i);
+    expect(latest?.stopSummary?.reason).toBe("infra_failure");
+    expect(latest?.stopSummary?.summary).toMatch(/PR/i);
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
 });
