@@ -619,6 +619,7 @@ def _apply_economy_list(
     economy: List[Dict[str, object]],
     *,
     commit: bool = True,
+    allow_pay_arrears_pool: bool = False,
 ) -> List[Dict[str, object]]:
     """落 extractor 抽出的 economy_moves 到 economy_ledger。
 
@@ -630,6 +631,8 @@ def _apply_economy_list(
 
     LLM 写非法 purpose → 退化为'其它'常规扣账。
     purpose='补饷' 但目标缺失/不存在 → 逐项拒收，不得改付其它军队。
+    allow_pay_arrears_pool=True 仅供承诺结算内部使用，表示该承诺的 arrears
+    stop gate 已经给出范围，可按优先级池偿还。
     """
     from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS, TURN_UNIT as _TU
     applied: List[Dict[str, object]] = []
@@ -675,6 +678,13 @@ def _apply_economy_list(
         # purpose=补饷 必须定向到具体 army_id；非定向补饷需要另立显式契约，
         # 不能把缺失/错拼目标 fallback 成改付其它军队。
         if purpose == "补饷" and delta < 0 and (target_kind != "army" or not raw_target_id):
+            if allow_pay_arrears_pool:
+                budget = abs(delta)
+                spent = _auto_pay_arrears_by_priority(
+                    db, state, account, budget, category, reason, commit=commit
+                )
+                applied.append({"account": account, "delta": -spent, "reason": reason})
+                continue
             applied.append({
                 "account": account,
                 "rejected": True,

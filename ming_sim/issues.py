@@ -394,9 +394,24 @@ def _commitment_gate_references_arrears(row: sqlite3.Row) -> bool:
     return any(".arrears" in str(key) for key in _commitment_stop_gate(row))
 
 
+def _commitment_arrears_gate_army_ids(row: sqlite3.Row) -> List[str]:
+    ids: List[str] = []
+    for key in _commitment_stop_gate(row):
+        text = str(key)
+        match = re.fullmatch(r"army\.([^.]+)\.arrears(?:\.sum)?", text)
+        if not match:
+            continue
+        for army_id in match.group(1).split("|"):
+            army_id = army_id.strip()
+            if army_id and army_id not in ids:
+                ids.append(army_id)
+    return ids
+
+
 def _commitment_ongoing_effects_for_settlement(row: sqlite3.Row, ongoing: Dict[str, object]) -> Dict[str, object]:
     if not _commitment_gate_references_arrears(row):
         return ongoing
+    gate_army_ids = _commitment_arrears_gate_army_ids(row)
     normalized = dict(ongoing)
     for key in ("economy", "economy_moves"):
         economy = ongoing.get(key)
@@ -414,6 +429,14 @@ def _commitment_ongoing_effects_for_settlement(row: sqlite3.Row, ongoing: Dict[s
                 delta = 0
             if delta < 0:
                 item["purpose"] = "补饷"
+                if (
+                    len(gate_army_ids) == 1
+                    and not str(item.get("target_id") or "").strip()
+                    and not str(item.get("目标编号") or "").strip()
+                    and not str(item.get("target_kind") or item.get("目标类型") or "").strip()
+                ):
+                    item["target_kind"] = "army"
+                    item["target_id"] = gate_army_ids[0]
             normalized_economy.append(item)
         normalized[key] = normalized_economy
     return normalized
@@ -6774,7 +6797,12 @@ def apply_issue_inertia_and_ongoing(
 
             # economy
             issue_monthly_rejections: List[Dict[str, object]] = []
-            _eco_out = _apply_economy_list(db, state, _monthly_economy_items(ongoing))
+            _eco_out = _apply_economy_list(
+                db,
+                state,
+                _monthly_economy_items(ongoing),
+                allow_pay_arrears_pool=is_commitment,
+            )
             economy_rejections = [r for r in _eco_out if r.get("rejected")]
             issue_monthly_rejections.extend(economy_rejections)
             inertia_rejections.extend(economy_rejections)  # economy 拒收不蒸发（#14）
