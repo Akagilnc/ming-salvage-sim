@@ -212,19 +212,12 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
     expect(result.children.map((c) => c.status)).toEqual(["merged", "merged"]);
   });
 
-  it("a child that FAILS its own S0 rfa gate makes the whole family run REJECT (gate throw propagates), not a fabricated merge", async () => {
-    // One child is not ready-for-agent → its single-slice S0 gate THROWS (a caller
-    // input fault, same as the single-slice contract — not converted to a returned
-    // "failed" RunResult). #293 thinnest: the spine does not catch that throw, so it
-    // propagates out and the whole runFamily rejects. The spine never fabricates a
-    // partial merge for the bad child. (A child that fails LATER — e.g. review never
-    // approves — returns a non-success RunResult and IS recorded "failed"; only S0
-    // gate violations throw. Catching gate throws into a per-child "failed" is a
-    // downstream choice, not #293.)
+  it("a child that FAILS its own S0 rfa gate makes the family run incomplete, not a fabricated merge", async () => {
+    // One child is not ready-for-agent → its single-slice S0 gate returns a
+    // structured terminal error. The family spine records that child as failed and
+    // returns an incomplete family result; it never fabricates a merge for it.
     class GateRejectChildBackend extends ChildBackend {
       override async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
-        // Child 11 is NOT ready-for-agent (isReadyForAgent:false) → its S0 gate
-        // throws on the rfa check (the assertion below matches /ready-for-agent/i).
         return {
           number: issueNumber,
           isReadyForAgent: issueNumber !== 11,
@@ -237,17 +230,19 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
     const singleSliceBackend = new GateRejectChildBackend();
     const familyBackend = new FakeFamilyBackend();
 
-    // Child 11's gate throws inside runOrchestrator. #293 thinnest: the spine
-    // lets that S0-gate throw propagate (it is a caller input fault, same as the
-    // single-slice contract — a malformed wave is not silently swallowed). The
-    // family run rejects rather than fabricating a partial merge.
-    await expect(
-      runFamily({
-        epic: epicWith(10, 11),
-        familyBackend,
-        singleSliceBackend,
-        familyBase: "family/293-base",
-      }),
-    ).rejects.toThrow(/ready-for-agent/i);
+    const result = await runFamily({
+      epic: epicWith(10, 11),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("incomplete");
+    expect(result.children).toEqual([
+      { issue: 10, status: "merged", branch: "feat/child-10" },
+      { issue: 11, status: "failed", branch: undefined },
+    ]);
+    expect(result.stopSummary.reason).toBe("owning_issue_still_red");
+    expect(result.stopSummary.summary).toContain("#11:failed");
   });
 });
