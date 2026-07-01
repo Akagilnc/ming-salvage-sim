@@ -1856,17 +1856,33 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     source: "family_issue" as const,
     issue: 287,
   };
-  const moduleContext = buildFamilyModuleContext({
-    childModules: [
+  const moduleContext = {
+    ...buildFamilyModuleContext({
+      childModules: [
+        {
+          module: "orchestrator-runner",
+          moduleScope: ["orchestrator/src/runner.ts"],
+          source: "child_issue",
+          issue: 307,
+        },
+      ],
+      familyModule,
+    }),
+    undevelopedModules: [
       {
-        module: "orchestrator-runner",
-        moduleScope: ["orchestrator/src/runner.ts"],
-        source: "child_issue",
-        issue: 307,
+        module: "military-state-machine",
+        moduleScope: ["docs/military-state-machine.md"],
+        source: "family_issue" as const,
+        issue: 287,
+      },
+      {
+        module: "hub",
+        moduleScope: ["docs/adr/0021.md"],
+        source: "family_issue" as const,
+        issue: 261,
       },
     ],
-    familyModule,
-  });
+  };
   const familyAttributionSource = familyAttributionReplay(moduleContext);
   const sameModuleFinding = finding({
     claim_quote: "same-module CMR gap was incorrectly treated as defer",
@@ -1900,6 +1916,21 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       reason: "the hub implementation is outside #287",
     },
   });
+  const hubLossModuleContext: FamilyModuleContext = {
+    ...moduleContext,
+    acceptedSuppressionSources: [
+      {
+        source: "#303",
+        scope:
+          "#287 hub-loss / central C_ accounts finding only; not #287 local integration or stub-contract failures",
+        reason:
+          "#287 ADR0023 D9 central transport-loss C_ accounts are accepted as #261/ADR0021 hub implementation scope",
+        findingIdentity: findingIdentityKey(hubLossFinding),
+        boundedReopen:
+          "reopen if severity escalates, new evidence changes the scope, or the finding targets #287-owned local integration/stub contract behavior",
+      },
+    ],
+  };
   const specConflictFinding = finding({
     claim_quote: "Agent Brief contradicts the owner-authored acceptance criteria",
     location: "orchestrator/prompts/coder_implement.md:1",
@@ -1963,6 +1994,15 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         moduleScope: ["orchestrator/src/modelRoutes.ts"],
         source: "child_issue",
         issue: 376,
+      },
+    ],
+    acceptedSuppressionSources: [
+      {
+        source: "#376 owner answer",
+        scope: "orchestrator route accounting / orchestrator/src/modelRoutes.ts",
+        reason: "accepted as bounded out of scope",
+        findingIdentity: findingIdentityKey(acceptedSuppressionBase),
+        boundedReopen: "reopen on scope mismatch, severity escalation, or new evidence",
       },
     ],
   };
@@ -2124,7 +2164,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       title: "ADR0023 hub-loss finding is accepted suppressed with bounded reopen",
       familyIssue: 287,
       finding: hubLossFinding,
-      moduleContext,
+      moduleContext: hubLossModuleContext,
     }),
     replayScenario({
       id: "376-route-accounting-non-default",

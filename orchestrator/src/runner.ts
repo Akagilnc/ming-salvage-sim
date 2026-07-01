@@ -34,6 +34,8 @@
  *   reaching for `runStep` / `resumeSession` / `push` directly.
  */
 
+import { execFileSync } from "node:child_process";
+
 import { route } from "./route.js";
 import {
   adjudicatePriorClaimedFixedFindings,
@@ -535,23 +537,77 @@ function matchingContinueFixingKeys(
   return broadMatches.length === 1 ? broadMatches : [];
 }
 
-function hasConcreteRepairMovement(evidence: RepairEvidence | undefined): boolean {
-  if (evidence === undefined) return false;
-  return (
-    (evidence.changedFiles?.some((value) => value.trim().length > 0) ?? false) ||
-    (evidence.tests?.some((value) => value.trim().length > 0) ?? false) ||
-    (evidence.fixtures?.some((value) => value.trim().length > 0) ?? false)
-  );
+function normalizeGitPath(path: string): string | undefined {
+  const trimmed = path.trim();
+  if (trimmed.length === 0) return undefined;
+  const renameTarget = trimmed.includes(" -> ")
+    ? trimmed.slice(trimmed.lastIndexOf(" -> ") + 4)
+    : trimmed;
+  const unquoted =
+    renameTarget.startsWith('"') && renameTarget.endsWith('"')
+      ? renameTarget.slice(1, -1)
+      : renameTarget;
+  const normalized = unquoted.trim().replace(/\\/g, "/");
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function gitOutputLines(
+  worktree: WorktreeHandle | undefined,
+  args: ReadonlyArray<string>,
+): string[] {
+  if (worktree === undefined) return [];
+  try {
+    return execFileSync("git", ["-C", worktree.path, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function actualRepairMovementPaths(
+  worktree: WorktreeHandle | undefined,
+): ReadonlyArray<string> {
+  if (worktree === undefined) return [];
+  const paths = new Set<string>();
+  const add = (path: string | undefined): void => {
+    if (path !== undefined) paths.add(path);
+  };
+
+  for (const line of gitOutputLines(worktree, [
+    "diff",
+    "--name-only",
+    `${worktree.base}...HEAD`,
+  ])) {
+    add(normalizeGitPath(line));
+  }
+  for (const line of gitOutputLines(worktree, [
+    "diff",
+    "--name-only",
+    `${worktree.base}..HEAD`,
+  ])) {
+    add(normalizeGitPath(line));
+  }
+  for (const line of gitOutputLines(worktree, ["status", "--porcelain"])) {
+    add(normalizeGitPath(line.length > 3 ? line.slice(3) : line));
+  }
+
+  return [...paths];
 }
 
 function repairEvidenceMatchesKey(
   evidence: RepairEvidence | undefined,
+  actualChangedPaths: ReadonlyArray<string>,
   finding: Finding,
   identityKey: string,
   activeFindings: ReadonlyArray<Finding>,
   activeIdentityKeys: ReadonlyArray<string>,
 ): boolean {
-  if (evidence === undefined || !hasConcreteRepairMovement(evidence)) {
+  if (evidence === undefined || actualChangedPaths.length === 0) {
     return false;
   }
   const matchingKeys = matchingContinueFixingKeys(
@@ -566,13 +622,23 @@ function repairEvidenceMatchesKey(
     activeIdentityKeys,
   );
   if (!matchingKeys.includes(identityKey)) return false;
-  const changedPaths = [
+  const scopedActualMovement = actualChangedPaths.some((path) =>
+    locationScopeMatches(path, finding.location),
+  );
+  if (!scopedActualMovement) return false;
+  const declaredChangedPaths = [
     ...(evidence.changedFiles ?? []),
     ...(evidence.fixtures ?? []),
-  ];
+  ]
+    .map(normalizeGitPath)
+    .filter((path): path is string => path !== undefined);
   return (
-    changedPaths.length === 0 ||
-    changedPaths.some((path) => locationScopeMatches(path, finding.location))
+    declaredChangedPaths.length === 0 ||
+    declaredChangedPaths.some(
+      (path) =>
+        actualChangedPaths.includes(path) ||
+        locationScopeMatches(path, finding.location),
+    )
   );
 }
 
@@ -729,6 +795,7 @@ function replayS4AdjudicationState(
   let lastReviewerOutputForS4: StepOutput | undefined;
   let lastReviewerStepForS4: StepId | undefined;
   let lastCoderRepairEvidenceForS4: RepairEvidence | undefined;
+  let lastCoderActualRepairPathsForS4: ReadonlyArray<string> = [];
 
   for (const entry of ledger) {
     if (isBookkeepingEntry(entry)) {
@@ -736,6 +803,7 @@ function replayS4AdjudicationState(
     }
     if (entry.output?.kind === "coder") {
       lastCoderRepairEvidenceForS4 = entry.output.repairEvidence;
+      lastCoderActualRepairPathsForS4 = [];
     }
     if (entry.output?.kind === "reviewer") {
       lastReviewerOutputForS4 = entry.output;
@@ -779,6 +847,7 @@ function replayS4AdjudicationState(
         if (
           repairEvidenceMatchesKey(
             lastCoderRepairEvidenceForS4,
+            lastCoderActualRepairPathsForS4,
             finding,
             key,
             pendingBlockingFindings,
@@ -1494,6 +1563,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerStepId: StepId | undefined;
   let lastCoderRepairEvidence: RepairEvidence | undefined;
+  let lastCoderActualRepairPaths: ReadonlyArray<string> = [];
   const noProgressByFindingIdentityKey = new Map<string, number>();
 
   function seedClassificationFromReviewerOutput(
@@ -1530,6 +1600,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         if (
           repairEvidenceMatchesKey(
             lastCoderRepairEvidence,
+            lastCoderActualRepairPaths,
             finding,
             key,
             pendingBlockingFindings,
@@ -2324,6 +2395,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         lastOutput = output;
         if (output.kind === "coder") {
           lastCoderRepairEvidence = output.repairEvidence;
+          lastCoderActualRepairPaths = actualRepairMovementPaths(worktree);
         }
         if (step === "S3" || step === "S6") lastReviewerStepId = step;
         break;

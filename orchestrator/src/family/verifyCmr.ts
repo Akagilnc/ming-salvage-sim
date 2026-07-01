@@ -321,6 +321,10 @@ function familyCmrBlockingStopSummary(
       reason: "owning_issue_still_red",
       summary: result.reason || fallbackReason,
       ...(result.owningIssue !== undefined ? { owningIssue: result.owningIssue } : {}),
+      ...(result.missingSurface !== undefined
+        ? { missingSurface: result.missingSurface }
+        : {}),
+      ...(result.nextStep !== undefined ? { nextStep: result.nextStep } : {}),
       repairHint: "close the owning issue surface before rerun",
     };
   }
@@ -449,6 +453,21 @@ function legAccountingFailureStopSummary(input: {
       successfulLegs: input.successfulLegs,
       skippedLegs: input.skippedLegs ?? [],
       routeFingerprint: input.routeFingerprint,
+      routeArtifact: {
+        path: ".cmr-route.json",
+        content: {
+          legCollections: {
+            cmrReview: input.resolvedRoute.legCollections.cmrReview.map((leg) => ({
+              slug: leg.slug,
+              family: leg.family,
+            })),
+          },
+        },
+      },
+      actualPayload: {
+        successfulLegs: input.successfulLegs,
+        ...(input.skippedLegs !== undefined ? { skippedLegs: input.skippedLegs } : {}),
+      },
       repairHint:
         "every active-route CMR leg must appear exactly once as successful or skipped; undeclared legs must be removed from the worker verdict",
     },
@@ -483,6 +502,16 @@ function cmrClosureFailureReason(input: {
       return (
         `integrated cmr ${input.pass} closure failed: claimed-fixed keys outside ` +
         `the runner-supplied prior finding set: ${staleClaims.join(", ")}`
+      );
+    }
+    const claimedSet = new Set(claimed);
+    const unclaimedPriorKeys = input.protectedPriorFindingIdentityKeys.filter(
+      (key) => !claimedSet.has(key),
+    );
+    if (unclaimedPriorKeys.length > 0) {
+      return (
+        `integrated cmr ${input.pass} closure failed: runner-supplied prior ` +
+        `findings were not explicitly claimed fixed: ${unclaimedPriorKeys.join(", ")}`
       );
     }
   }
@@ -750,10 +779,6 @@ async function runIntegratedCmrPass(input: {
           reason,
         ),
       });
-      await familyBackend.escalateFamily?.({
-        reason,
-        familyHeadAfter: postWorkerFamilyHead,
-      });
       return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
     }
   }
@@ -785,10 +810,6 @@ async function runIntegratedCmrPass(input: {
       },
       stopSummary: notConvergedStopSummary(reason),
     });
-    await familyBackend.escalateFamily?.({
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-    });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   const legAccountingFailure = cmrLegAccountingFailure(
@@ -813,10 +834,6 @@ async function runIntegratedCmrPass(input: {
         skippedLegs: cmrResult.output.skippedLegs,
       }),
     });
-    await familyBackend.escalateFamily?.({
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-    });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   const floorFailure = cmrFloorFailureReason({
@@ -834,10 +851,6 @@ async function runIntegratedCmrPass(input: {
         reason: floorFailure,
         skippedLegs: cmrResult.output.skippedLegs,
       }),
-    });
-    await familyBackend.escalateFamily?.({
-      reason: floorFailure,
-      familyHeadAfter: postWorkerFamilyHead,
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
@@ -859,10 +872,6 @@ async function runIntegratedCmrPass(input: {
         repairHint:
           "repair the integrated CMR claimed-fixed closure payload and rerun the family barrier",
       }),
-    });
-    await familyBackend.escalateFamily?.({
-      reason: closureFailure,
-      familyHeadAfter: postWorkerFamilyHead,
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }

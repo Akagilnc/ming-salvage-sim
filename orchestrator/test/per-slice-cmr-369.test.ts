@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { legacyDispatchWorker } from "../src/dispatchWorker.js";
@@ -32,6 +33,34 @@ const WORKTREE: WorktreeHandle = {
   path: "/resident/worktrees/issue-369",
 };
 
+function makeGitWorktree(): WorktreeHandle {
+  const path = mkdtempSync(join(tmpdir(), "runner-progress-"));
+  execFileSync("git", ["init", "-b", "main"], {
+    cwd: path,
+    stdio: "ignore",
+  });
+  writeFileSync(join(path, "README.md"), "base\n", "utf8");
+  execFileSync("git", ["add", "."], { cwd: path, stdio: "ignore" });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "-m",
+      "base",
+    ],
+    { cwd: path, stdio: "ignore" },
+  );
+  execFileSync("git", ["checkout", "-b", WORKTREE.branch], {
+    cwd: path,
+    stdio: "ignore",
+  });
+  return { ...WORKTREE, path };
+}
+
 class RetryReviewBackend implements Backend {
   readonly dispatched: string[] = [];
   readonly specs: WorkerSpec[] = [];
@@ -44,6 +73,11 @@ class RetryReviewBackend implements Backend {
     private readonly reviewerResults: ReadonlyArray<WorkerResult>,
     private readonly resumeState?: ResumeState,
     private readonly coderOutputs: ReadonlyArray<StepOutput> = [],
+    private readonly worktree: WorktreeHandle = WORKTREE,
+    private readonly onCoderDispatch?: (
+      attempt: number,
+      worktree: WorktreeHandle,
+    ) => void,
   ) {}
 
   async findResumeState(): Promise<ResumeState | undefined> {
@@ -66,7 +100,7 @@ class RetryReviewBackend implements Backend {
     return { number: issueNumber, body: "body", comments: [], agentBrief: "" };
   }
   async prepareWorktree(): Promise<WorktreeHandle> {
-    return WORKTREE;
+    return this.worktree;
   }
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
@@ -83,8 +117,10 @@ class RetryReviewBackend implements Backend {
     this.specs.push(spec);
     this.ctxs.push(ctx);
     if (spec.kind === "coder" && spec.id === "S5") {
+      const attempt = this.coderAttempts;
       const scripted = this.coderOutputs[this.coderAttempts];
       this.coderAttempts += 1;
+      this.onCoderDispatch?.(attempt, this.worktree);
       if (scripted !== undefined) {
         return { kind: "completed", output: scripted };
       }
@@ -102,7 +138,7 @@ class RetryReviewBackend implements Backend {
     }
     return {
       kind: "completed",
-      output: { kind: "ship", branch: WORKTREE.branch, status: "pushed" },
+      output: { kind: "ship", branch: this.worktree.branch, status: "pushed" },
     };
   }
 }
@@ -483,6 +519,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
       },
     };
+    const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
       [
         { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
@@ -519,6 +556,33 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       ],
       undefined,
       [scopedEvidence, scopedEvidence, scopedEvidence],
+      worktree,
+      (attempt, wt) => {
+        const srcDir = join(wt.path, "src");
+        mkdirSync(srcDir, { recursive: true });
+        writeFileSync(
+          join(srcDir, "runner.ts"),
+          `export const attempt = ${attempt};\n`,
+          "utf8",
+        );
+        execFileSync("git", ["add", "src/runner.ts"], {
+          cwd: wt.path,
+          stdio: "ignore",
+        });
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            `fix attempt ${attempt}`,
+          ],
+          { cwd: wt.path, stdio: "ignore" },
+        );
+      },
     );
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
