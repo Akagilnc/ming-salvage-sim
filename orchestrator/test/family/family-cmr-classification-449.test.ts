@@ -97,12 +97,13 @@ module_scope:
 module: "#fiscal"
 module_scope:
   - "foo#bar"
+  - "foo #bar"
   - orchestrator/src/family # real comment
 \`\`\`
 `),
     ).toEqual({
       module: "#fiscal",
-      moduleScope: ["foo#bar", "orchestrator/src/family"],
+      moduleScope: ["foo#bar", "foo #bar", "orchestrator/src/family"],
     });
   });
 
