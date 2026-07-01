@@ -30,6 +30,13 @@ Converged:
 CMR_STEP_COMPLETE
 ```
 
+Not converged:
+
+```text
+<cmr>{"converged": false, "reason": "<short>", "successfulLegs": ["opus", "gpt-5.5"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "findings": [{"severity": "medium", "category": "correctness", "claim_quote": "<stable claim>", "location": "<file-or-scope>", "suggested_fix": "<next step>", "action": "defer", "disposition": {"kind": "same_module", "reason": "<why this is still in the family module>"}}]}</cmr>
+CMR_STEP_COMPLETE
+```
+
 Escalation:
 
 ```text
@@ -52,6 +59,16 @@ Rules:
   claimed-fixed findings occurred in the CMR loop. If a prior claimed-fixed
   finding exists, include its stable identity key and an explicit disposition:
   `still-active`, `verified-closed`, or `unable-to-assess`.
-- Do not emit `{"converged": false}` as a normal outcome.
+- On any not-converged verdict, `reason`, `successfulLegs`,
+  `claimedFixedFindingIdentityKeys`, and `priorFindingDispositions` are REQUIRED;
+  `findings` is optional but must use reviewer finding shape when present.
+- For `findings[].disposition.kind`, use exactly one of `same_module`,
+  `cross_module`, `spec_conflict`, `infra_failure`,
+  `owning_issue_still_red`, or `accepted_suppressed`. Only `cross_module`
+  defer may pass without a fix, and only when `.cmr-focus.md` /
+  `.cmr-route.json` contain parsed module context supporting it. Do not infer
+  module boundaries from titles, prose, or logs.
+- `accepted_suppressed` requires an explicit user/ADR/issue source, matching
+  scope, reason, finding identity, and bounded reopen condition.
 - Emit the `<cmr>` tag LAST; if you iterate, the LAST tag is the one that counts.
 - Always print `CMR_STEP_COMPLETE` on its own line at the very end.

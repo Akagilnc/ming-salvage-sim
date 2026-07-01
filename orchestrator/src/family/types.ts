@@ -18,10 +18,16 @@ import type {
   DispatchContext,
   Escalation,
   EscalationAnswerPayload,
+  Finding,
   PriorFindingDisposition,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
+import type {
+  FamilyCmrClassification,
+  FamilyModuleContext,
+  SourcedModuleDeclaration,
+} from "./cmrClassification.js";
 import type {
   VerifyCmrInput,
   VerifyCmrPhase,
@@ -51,6 +57,8 @@ export interface ChildSlice {
    * base. #293 reads these as the single source of truth — no LLM inference.
    */
   readonly blockedBy: ReadonlyArray<number>;
+  /** Structured module declaration parsed from the child issue body (#449). */
+  readonly moduleDeclaration?: SourcedModuleDeclaration;
 }
 
 /**
@@ -65,6 +73,8 @@ export interface FamilyEpic {
   readonly issue: number;
   /** The already-cut child slices (native sub-issues + explicit blocked_by). */
   readonly children: ReadonlyArray<ChildSlice>;
+  /** Structured module declaration parsed from the parent/family issue body (#449). */
+  readonly moduleDeclaration?: SourcedModuleDeclaration;
 }
 
 // ─────────────────────────── family ledger ───────────────────────────
@@ -184,6 +194,8 @@ export interface FamilyLedgerEntry {
    * active worker/reviewer route match; old rows without this fail closed.
    */
   readonly routeFingerprint?: string;
+  /** Family CMR finding classification audit trail (#449). */
+  readonly cmrFindingClassification?: FamilyCmrClassification;
   /**
    * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
    * ran, #295) rather than land as a clean deterministic merge? Forwarded by the
@@ -497,6 +509,8 @@ export interface IntegratedCmrRequest {
   readonly llmResolvedChildren?: readonly number[];
   /** Human answer that reopened a prior family decision escalation (#439). */
   readonly escalationAnswer?: EscalationAnswerPayload;
+  /** Parsed module context supplied by the runner; the worker must not invent it. */
+  readonly moduleContext?: FamilyModuleContext;
 }
 
 /** The integrated-cmr outcome (the load-bearing cross-slice-seam gate). */
@@ -513,6 +527,8 @@ export interface IntegratedCmrResult {
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   /** Explicit disposition for claimed-fixed integrated CMR findings. */
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
+  /** Structured findings to classify at the family gate (#449). */
+  readonly findings?: readonly Finding[];
 }
 
 /** What opening the family PR needs (decision 4, 止于 PR). */
@@ -664,6 +680,11 @@ export interface FamilyRunInput {
    * from (ADR 0022 decision 7). Children are cut from THIS, not `origin/<base>`.
    */
   readonly familyBase: string;
+  /**
+   * Explicit family-run module boundary override (#449), lowest-priority after
+   * child issue and parent/family issue declarations.
+   */
+  readonly moduleDeclaration?: SourcedModuleDeclaration;
   /**
    * The verify-cmr hook (ADR 0022 decision 3④/⑤/⑥) — the family verify (per-wave
    * fail-fast) + end-of-run integrated cmr. Optional: defaults to the #293 no-op

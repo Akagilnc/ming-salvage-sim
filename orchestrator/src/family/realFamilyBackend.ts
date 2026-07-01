@@ -96,6 +96,7 @@ import {
 
 import type {
   DispatchContext,
+  Finding,
   PriorFindingDisposition,
   StepSoul,
   WorkerResult,
@@ -1009,6 +1010,7 @@ export class RealFamilyBackend implements FamilyBackend {
         ...(outcome.priorFindingDispositions !== undefined
           ? { priorFindingDispositions: outcome.priorFindingDispositions }
           : {}),
+        ...(outcome.findings !== undefined ? { findings: outcome.findings } : {}),
       },
     };
   }
@@ -1120,7 +1122,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // exact `git diff <familyBaseStartHead>...<familyBase>` scope command + the
       // baseline SHA + the machine-resolved children.
       this.writeCmrFocusFile(ctx);
-      this.writeCmrRouteFile(ctx.cmrPass);
+      this.writeCmrRouteFile(ctx);
       const result = await sc.run({
         name: "family-cmr",
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1195,13 +1197,21 @@ export class RealFamilyBackend implements FamilyBackend {
             2,
           )}\n\`\`\`\n\nRetry the previously paused family gate with this answer in force. Do not repeat the same HITL escalation unless this answer leaves a concrete blocker unresolved.`
         : "";
+    const moduleBlock =
+      ctx.moduleContext !== undefined
+        ? `\n\nParsed module context (#449; runner-derived, do not infer from prose):\n\n\`\`\`json\n${JSON.stringify(
+            ctx.moduleContext,
+            null,
+            2,
+          )}\n\`\`\``
+        : "\n\nParsed module context (#449): none declared; do not approve cross_module defer from inferred prose/logs.";
     // The focus file is pass-scoped: it pins only the exact review scope and the
     // machine-resolved-child focus. Cross-pass accounting lives in the durable
     // ledger / worker verdict fields, not in this transient prompt file.
     const body =
       `# Integrated cmr — review scope + focus (machine-generated; #335)\n\n` +
       `Review THIS exact family-base diff (the commits the family base added since it\n` +
-      `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}${answerBlock}\n`;
+      `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}${moduleBlock}${answerBlock}\n`;
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
     this.excludeFromGit(CMR_FOCUS_FILENAME);
@@ -1209,11 +1219,18 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /** Write the route-selected CMR review legs for the in-container worker. */
-  protected writeCmrRouteFile(pass: DispatchContext["cmrPass"]): void {
+  protected writeCmrRouteFile(ctxOrPass: DispatchContext | DispatchContext["cmrPass"]): void {
+    const ctx =
+      typeof ctxOrPass === "string" || ctxOrPass === undefined
+        ? { cmrPass: ctxOrPass }
+        : ctxOrPass;
     const body = JSON.stringify(
       {
-        pass: pass ?? "legacy",
+        pass: ctx.cmrPass ?? "legacy",
         reviewLegs: cmrReviewLegs(),
+        ...(ctx.moduleContext !== undefined
+          ? { moduleContext: ctx.moduleContext }
+          : {}),
       },
       null,
       2,
@@ -1972,6 +1989,7 @@ export type CmrWorkerOutcome =
       readonly skippedLegs?: readonly CmrSkippedLeg[];
       readonly claimedFixedFindingIdentityKeys?: readonly string[];
       readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
+      readonly findings?: readonly Finding[];
     }
   | { readonly kind: "escalate"; readonly reason: string; readonly diagnosis: string }
   | { readonly kind: "malformed"; readonly reason: string };
@@ -2106,8 +2124,106 @@ const cmrClosureSchema = {
   claimedFixedFindingIdentityKeys: z.array(nonEmpty),
   priorFindingDispositions: z.array(cmrFindingDispositionSchema),
 } as const;
+const cmrDispositionEvidenceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("same_module"), reason: nonEmpty }).strict(),
+  z
+    .object({
+      kind: z.literal("cross_module"),
+      targetModule: nonEmpty,
+      reason: nonEmpty,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("spec_conflict"),
+      source: nonEmpty,
+      reason: nonEmpty,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("infra_failure"),
+      source: nonEmpty,
+      reason: nonEmpty,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("owning_issue_still_red"),
+      owningIssue: nonEmpty,
+      missingSurface: nonEmpty,
+      nextStep: nonEmpty,
+      reason: nonEmpty,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("accepted_suppressed"),
+      source: nonEmpty,
+      scope: nonEmpty,
+      reason: nonEmpty,
+      findingIdentity: nonEmpty,
+      targetModule: nonEmpty.optional(),
+      boundedReopen: nonEmpty,
+    })
+    .strict(),
+]);
+const cmrReviewerFindingSchema = z
+  .object({
+    severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
+    category: z.string(),
+    claim_quote: z.string(),
+    location: z.string(),
+    suggested_fix: z.string(),
+    action: z.enum(["fix_now", "defer", "wont_fix", "rejected"]),
+    disposition_reason: z.string().optional(),
+    disposition: cmrDispositionEvidenceSchema.optional(),
+  })
+  .strict()
+  .superRefine((finding, ctx) => {
+    if (
+      (finding.severity === "critical" || finding.severity === "high") &&
+      finding.action !== "fix_now"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["action"],
+        message: "critical/high findings must be fix_now",
+      });
+    }
+    if (
+      finding.action === "defer" &&
+      (finding.disposition === undefined ||
+        finding.disposition.kind === "accepted_suppressed")
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["disposition"],
+        message: "deferred findings require a non-suppression disposition",
+      });
+    }
+    if (
+      (finding.action === "wont_fix" || finding.action === "rejected") &&
+      (!finding.disposition_reason ||
+        finding.disposition?.kind !== "accepted_suppressed")
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["disposition"],
+        message: "suppressed findings require accepted_suppressed disposition",
+      });
+    }
+  });
+const cmrFindingsSchema = {
+  findings: z.array(cmrReviewerFindingSchema).optional(),
+} as const;
 const cmrConvergedSchema = z
-  .object({ converged: z.literal(true), ...cmrVerdictLegsSchema, ...cmrClosureSchema })
+  .object({
+    converged: z.literal(true),
+    ...cmrVerdictLegsSchema,
+    ...cmrClosureSchema,
+    ...cmrFindingsSchema,
+  })
   .strict();
 const cmrRedSchema = z
   .object({
@@ -2115,6 +2231,7 @@ const cmrRedSchema = z
     reason: nonEmpty,
     ...cmrVerdictLegsSchema,
     ...cmrClosureSchema,
+    ...cmrFindingsSchema,
   })
   .strict();
 const cmrEscalateSchema = z
@@ -2198,6 +2315,7 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
       claimedFixedFindingIdentityKeys:
         converged.claimedFixedFindingIdentityKeys,
       priorFindingDispositions: converged.priorFindingDispositions,
+      ...(converged.findings !== undefined ? { findings: converged.findings } : {}),
     };
   }
   const red = cmrRedSchema.safeParse(normalizedParsed);
@@ -2214,6 +2332,7 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
       ...(red.data.skippedLegs !== undefined ? { skippedLegs: red.data.skippedLegs } : {}),
       claimedFixedFindingIdentityKeys: red.data.claimedFixedFindingIdentityKeys,
       priorFindingDispositions: red.data.priorFindingDispositions,
+      ...(red.data.findings !== undefined ? { findings: red.data.findings } : {}),
     };
   }
   return {
