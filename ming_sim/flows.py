@@ -1008,7 +1008,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             pay_current = min(needed, available)
             shortfall = max(0.0, needed - pay_current)
 
-            old_arrears = int(row["arrears"])
+            old_arrears = float(row["arrears"] or 0)
             old_morale = int(row["morale"])
 
             # 月固定军饷只发当月，不主动还旧欠。旧欠累积拖着，等玩家下旨拨饷才清。
@@ -1016,7 +1016,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 db.record_issue_economy_move(
                     state, "国库", -int(pay_current), "各军军饷", f"{name}{TURN_UNIT}军饷"
                 )
-            new_arrears = max(0, old_arrears + shortfall)
+            new_arrears = max(0.0, old_arrears + shortfall)
             morale_delta = army_pay_morale_delta(needed, shortfall, old_arrears)
             new_morale = max(0, min(100, old_morale + morale_delta))
 
