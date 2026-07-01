@@ -19,6 +19,7 @@ import type {
   Finding,
   FindingDispositionEvidence,
   PriorFindingDisposition,
+  RepairEvidence,
   ReviewerOutput,
   StepOutput,
 } from "./types.js";
@@ -81,6 +82,51 @@ function isFilledString(v: unknown): v is string {
 
 function optionalString(v: unknown): boolean {
   return v === undefined || isString(v);
+}
+
+function isStringArray(v: unknown): v is ReadonlyArray<string> {
+  return Array.isArray(v) && v.every(isString);
+}
+
+function isNonEmptyStringArray(v: unknown): v is ReadonlyArray<string> {
+  return Array.isArray(v) && v.length > 0 && v.every(isFilledString);
+}
+
+function isValidFindingRepairScope(v: unknown): boolean {
+  if (v == null || typeof v !== "object" || Array.isArray(v)) return false;
+  const obj = v as Record<string, unknown>;
+  return (
+    (obj.identityKeys === undefined || isStringArray(obj.identityKeys)) &&
+    (obj.locations === undefined || isStringArray(obj.locations)) &&
+    (obj.categories === undefined || isStringArray(obj.categories)) &&
+    (obj.findingGroup === undefined || isString(obj.findingGroup)) &&
+    (obj.reviewContext === undefined || isString(obj.reviewContext)) &&
+    (obj.featureArea === undefined || isString(obj.featureArea))
+  );
+}
+
+function isValidRepairEvidence(v: unknown): v is RepairEvidence {
+  if (v == null || typeof v !== "object" || Array.isArray(v)) return false;
+  const obj = v as Record<string, unknown>;
+  if (!isValidFindingRepairScope(obj.findingScope)) return false;
+  if (
+    obj.changedFiles !== undefined &&
+    !isNonEmptyStringArray(obj.changedFiles)
+  ) {
+    return false;
+  }
+  if (obj.tests !== undefined && !isNonEmptyStringArray(obj.tests)) return false;
+  if (obj.fixtures !== undefined && !isNonEmptyStringArray(obj.fixtures)) {
+    return false;
+  }
+  if (obj.patchSummary !== undefined && !isFilledString(obj.patchSummary)) {
+    return false;
+  }
+  return (
+    obj.changedFiles !== undefined ||
+    obj.tests !== undefined ||
+    obj.fixtures !== undefined
+  );
 }
 
 function isValidDispositionEvidence(
@@ -301,6 +347,12 @@ export function isValidCoderOutput(o: StepOutput | undefined): o is CoderOutput 
     typeof c.commitsAdded !== "number" ||
     !Number.isInteger(c.commitsAdded) ||
     c.commitsAdded < 0
+  ) {
+    return false;
+  }
+  if (
+    c.repairEvidence !== undefined &&
+    !isValidRepairEvidence(c.repairEvidence)
   ) {
     return false;
   }

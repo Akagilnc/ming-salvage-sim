@@ -38,6 +38,7 @@ import {
   hasUnboundLegacyShippedMarker,
   isMergedAccountingEntry,
   mergedSet,
+  recordAdmissionSkipped,
   recordFamilyEscalated,
   recordMerged,
 } from "./ledger.js";
@@ -351,7 +352,22 @@ export async function runFamily(
     `[orchestrator:family] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
   );
   const { familyBackend, singleSliceBackend, familyBase } = input;
-  const initialFamilyLedger = await familyBackend.readFamilyLedger();
+  let initialFamilyLedger = await familyBackend.readFamilyLedger();
+  for (const skipped of input.epic.admissionSkipped ?? []) {
+    const alreadyRecorded = initialFamilyLedger.some(
+      (entry) =>
+        entry.status === "admission_skipped" &&
+        entry.event === "admission_skipped" &&
+        entry.childIssue === skipped.issue &&
+        entry.reason === skipped.reason,
+    );
+    if (!alreadyRecorded) {
+      await recordAdmissionSkipped(familyBackend, skipped);
+    }
+  }
+  if ((input.epic.admissionSkipped?.length ?? 0) > 0) {
+    initialFamilyLedger = await familyBackend.readFamilyLedger();
+  }
   const priorEscalation = familyEscalationState(initialFamilyLedger);
   if (priorEscalation !== undefined) {
     const { escalation, answer } = priorEscalation;

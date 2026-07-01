@@ -125,6 +125,13 @@ export interface FamilyEscalationAnswerRecord {
   readonly note?: string;
 }
 
+/** A production-admission child skip audit row (#450/#451). */
+export interface AdmissionSkippedRecord {
+  readonly issue: number;
+  readonly reason: string;
+  readonly message: string;
+}
+
 /**
  * Drop `undefined`-valued optional fields so the appended entry is clean
  * (`{childIssue, status}` with only the supplied extras — no `field: undefined`
@@ -294,6 +301,26 @@ export async function recordFamilyEscalationAnswered(
       answer,
       source: record.source,
       note: record.note,
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/** Append one production-admission skip audit row. */
+export async function recordAdmissionSkipped(
+  backend: FamilyBackend,
+  record: AdmissionSkippedRecord,
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      childIssue: record.issue,
+      status: "admission_skipped",
+      event: "admission_skipped",
+      phase: "wave",
+      reason: record.reason,
+      message: record.message,
+      stopSummary: successStopSummary({
+        admissionSkipped: [record],
+      }),
     }) as FamilyLedgerEntry,
   );
 }

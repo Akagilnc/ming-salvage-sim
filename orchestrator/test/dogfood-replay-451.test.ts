@@ -84,12 +84,12 @@ describe("#451 dogfood replay fixture", () => {
           stopReason: "contract_drift",
           metadata: {
             ship: expect.objectContaining({
-              latestVerifiedCmrHead: "verified-head",
+              latestVerifiedCmrHead: "family-head",
               currentFamilyHead: "family-head",
               shipPrState: "not-written",
             }),
             heads: expect.objectContaining({
-              verifiedCmrHead: "verified-head",
+              verifiedCmrHead: "family-head",
               actualFamilyHead: "family-head",
             }),
           },

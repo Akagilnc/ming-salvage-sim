@@ -331,6 +331,21 @@ function familyCmrBlockingStopSummary(
   };
 }
 
+function familyVerifyFailureStopSummary(reason: string): StopSummary {
+  if (/MODULE_NOT_FOUND|Cannot find module/i.test(reason)) {
+    return infraFailureStopSummary({
+      summary: reason,
+      repairHint:
+        "install or restore the missing verification dependency, rebuild if needed, then rerun family verify",
+    });
+  }
+  return infraFailureStopSummary({
+    summary: reason,
+    repairHint:
+      "inspect the family verify failure, repair the failing toolchain command, and rerun",
+  });
+}
+
 function notConvergedStopSummary(reason: string): StopSummary {
   return {
     reason: "contract_drift",
@@ -771,7 +786,12 @@ export async function runVerifyCmr(
     });
     // (b) PHASE-LEVEL DURABLE ledger entry (#291 缺口 2): so the abort reaches the
     //     ledger reconcile reads末条 familyHeadAfter from, not only the seam array.
-    await recordDurableAbort(familyBackend, { phase, reason, familyHeadAfter });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter,
+      stopSummary: familyVerifyFailureStopSummary(reason),
+    });
     return { ok: false, ran: true };
   }
 
@@ -1048,12 +1068,33 @@ export async function runVerifyCmr(
       ship.degradedReviews !== undefined && ship.degradedReviews.length > 0
         ? successStopSummary({
             heads: {
+              reportedFamilyHead: ship.prHead,
               actualFamilyHead: exactPostShipFamilyHead,
-              sources: { actualFamilyHead: "shipped ledger row" },
+              ...(cmrPassedFamilyHeadAfter !== undefined
+                ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+                : {}),
+              sources: {
+                reportedFamilyHead: "ship worker reported prHead",
+                actualFamilyHead: "family head after ship worker",
+                verifiedCmrHead: "latest cmr_passed ledger row",
+              },
             },
             providerDegraded: ship.degradedReviews,
           })
-        : undefined,
+        : successStopSummary({
+            heads: {
+              reportedFamilyHead: ship.prHead,
+              actualFamilyHead: exactPostShipFamilyHead,
+              ...(cmrPassedFamilyHeadAfter !== undefined
+                ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+                : {}),
+              sources: {
+                reportedFamilyHead: "ship worker reported prHead",
+                actualFamilyHead: "family head after ship worker",
+                verifiedCmrHead: "latest cmr_passed ledger row",
+              },
+            },
+          }),
   });
   return { ok: true, ran: true };
 }

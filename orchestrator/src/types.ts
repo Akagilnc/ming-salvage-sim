@@ -234,6 +234,11 @@ export interface CoderOutput {
   readonly kind: "coder";
   readonly committed: boolean;
   readonly commitsAdded: number;
+  /**
+   * Optional scoped proof that the fix worker changed implementation, tests, or
+   * fixtures for an active finding. Generic "I tried" is not progress.
+   */
+  readonly repairEvidence?: RepairEvidence;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
 }
@@ -295,6 +300,20 @@ export interface FindingRepairScope {
   readonly reviewContext?: string;
   /** Optional feature/module area label from the coordinator. */
   readonly featureArea?: string;
+}
+
+/** Observable implementation/test movement a coder claims for a specific finding scope. */
+export interface RepairEvidence {
+  /** The active finding scope this movement is meant to close. */
+  readonly findingScope: FindingRepairScope;
+  /** Files whose implementation diff changed for this finding. */
+  readonly changedFiles?: ReadonlyArray<string>;
+  /** Test commands or test files added/changed for this finding. */
+  readonly tests?: ReadonlyArray<string>;
+  /** Fixtures/transcripts added or changed for this finding. */
+  readonly fixtures?: ReadonlyArray<string>;
+  /** Human-readable patch summary; accepted only with another concrete signal. */
+  readonly patchSummary?: string;
 }
 
 /**

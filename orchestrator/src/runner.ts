@@ -75,6 +75,7 @@ import {
 } from "./stopSummary.js";
 import type {
   Backend,
+  CoderOutput,
   ContinueFixingEvent,
   ErrorPackage,
   Escalation,
@@ -87,6 +88,7 @@ import type {
   IssueSnapshot,
   LedgerEntry,
   PersistentLedgerEntry,
+  RepairEvidence,
   ResumeState,
   RunInput,
   RunResult,
@@ -532,6 +534,57 @@ function matchingContinueFixingKeys(
   return broadMatches.length === 1 ? broadMatches : [];
 }
 
+function hasConcreteRepairMovement(evidence: RepairEvidence | undefined): boolean {
+  if (evidence === undefined) return false;
+  return (
+    (evidence.changedFiles?.some((value) => value.trim().length > 0) ?? false) ||
+    (evidence.tests?.some((value) => value.trim().length > 0) ?? false) ||
+    (evidence.fixtures?.some((value) => value.trim().length > 0) ?? false)
+  );
+}
+
+function repairEvidenceMatchesKey(
+  evidence: RepairEvidence | undefined,
+  finding: Finding,
+  identityKey: string,
+  activeFindings: ReadonlyArray<Finding>,
+  activeIdentityKeys: ReadonlyArray<string>,
+): boolean {
+  if (evidence === undefined || !hasConcreteRepairMovement(evidence)) {
+    return false;
+  }
+  const matchingKeys = matchingContinueFixingKeys(
+    {
+      event: "runner_bookkeeping",
+      intent: "continue_fixing",
+      source: "resume_input",
+      ts: "repair-evidence",
+      findingScope: evidence.findingScope,
+    },
+    activeFindings,
+    activeIdentityKeys,
+  );
+  if (!matchingKeys.includes(identityKey)) return false;
+  const changedPaths = [
+    ...(evidence.changedFiles ?? []),
+    ...(evidence.fixtures ?? []),
+  ];
+  return (
+    changedPaths.length === 0 ||
+    changedPaths.some((path) => locationScopeMatches(path, finding.location))
+  );
+}
+
+function latestCoderRepairEvidence(
+  ledger: ReadonlyArray<LedgerEntry>,
+): RepairEvidence | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const output = ledger[i]!.output;
+    if (output?.kind === "coder") return output.repairEvidence;
+  }
+  return undefined;
+}
+
 interface ContinueFixingRepair {
   readonly event: ContinueFixingEvent | EscalationAnswerEvent;
   readonly matchingIdentityKeys: ReadonlyArray<string>;
@@ -674,10 +727,14 @@ function replayS4AdjudicationState(
   const noProgressCounts = new Map<string, number>();
   let lastReviewerOutputForS4: StepOutput | undefined;
   let lastReviewerStepForS4: StepId | undefined;
+  let lastCoderRepairEvidenceForS4: RepairEvidence | undefined;
 
   for (const entry of ledger) {
     if (isBookkeepingEntry(entry)) {
       continue;
+    }
+    if (entry.output?.kind === "coder") {
+      lastCoderRepairEvidenceForS4 = entry.output.repairEvidence;
     }
     if (entry.output?.kind === "reviewer") {
       lastReviewerOutputForS4 = entry.output;
@@ -718,7 +775,19 @@ function replayS4AdjudicationState(
           blockingIdentityKeys.push(key);
           seenBlocking.add(key);
         }
-        noProgressCounts.set(key, (noProgressCounts.get(key) ?? 0) + 1);
+        if (
+          repairEvidenceMatchesKey(
+            lastCoderRepairEvidenceForS4,
+            finding,
+            key,
+            pendingBlockingFindings,
+            pendingBlockingFindingIdentityKeys,
+          )
+        ) {
+          noProgressCounts.set(key, 0);
+        } else {
+          noProgressCounts.set(key, (noProgressCounts.get(key) ?? 0) + 1);
+        }
       }
     }
 
@@ -1373,6 +1442,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let pendingBlockingFindingIdentityKeys: string[] = [];
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerStepId: StepId | undefined;
+  let lastCoderRepairEvidence: RepairEvidence | undefined;
   const noProgressByFindingIdentityKey = new Map<string, number>();
 
   function seedClassificationFromReviewerOutput(
@@ -1406,9 +1476,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           blockingIdentityKeys.push(key);
           seenBlocking.add(key);
         }
-        const count = (noProgressByFindingIdentityKey.get(key) ?? 0) + 1;
-        noProgressByFindingIdentityKey.set(key, count);
-        if (count >= 2) noProgressIdentityKeys.push(key);
+        if (
+          repairEvidenceMatchesKey(
+            lastCoderRepairEvidence,
+            finding,
+            key,
+            pendingBlockingFindings,
+            pendingBlockingFindingIdentityKeys,
+          )
+        ) {
+          noProgressByFindingIdentityKey.set(key, 0);
+        } else {
+          const count = (noProgressByFindingIdentityKey.get(key) ?? 0) + 1;
+          noProgressByFindingIdentityKey.set(key, count);
+          if (count >= 2) noProgressIdentityKeys.push(key);
+        }
       }
     }
 
@@ -1826,6 +1908,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       noProgressByFindingIdentityKey.delete(key);
     }
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
+    lastCoderRepairEvidence = latestCoderRepairEvidence(plan.priorLedger);
 
     if (plan.terminalStatus !== undefined) {
       // The prior run already reached a terminal handoff that is NOT being
@@ -2181,6 +2264,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           break;
         }
         lastOutput = output;
+        if (output.kind === "coder") {
+          lastCoderRepairEvidence = output.repairEvidence;
+        }
         if (step === "S3" || step === "S6") lastReviewerStepId = step;
         break;
       }
