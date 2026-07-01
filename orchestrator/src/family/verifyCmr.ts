@@ -745,6 +745,7 @@ async function runIntegratedCmrPass(input: {
     await familyBackend.escalateFamily?.({
       reason,
       familyHeadAfter: postWorkerFamilyHead,
+      stopSummary,
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }

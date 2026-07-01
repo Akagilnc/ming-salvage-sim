@@ -148,6 +148,7 @@ class CapableFamilyBackend implements FamilyBackend {
       phase: "final",
       reason: esc.reason,
       familyHeadAfter: esc.familyHeadAfter,
+      stopSummary: esc.stopSummary,
     });
   }
 }

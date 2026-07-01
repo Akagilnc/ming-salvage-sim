@@ -6,10 +6,12 @@ import {
   parseModuleDeclaration,
 } from "../../src/family/cmrClassification.js";
 import { findingIdentityKey } from "../../src/findings.js";
+import { recordFamilyEscalated } from "../../src/family/ledger.js";
 import { parseCmrOutcome } from "../../src/family/realFamilyBackend.js";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
 import type {
   FamilyBackend,
+  FamilyEscalation,
   FamilyLedgerEntry,
   FamilyVerifyRequest,
   FamilyVerifyResult,
@@ -594,6 +596,7 @@ describe("#449 CMR worker output parsing", () => {
 class CmrFindingBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatched: WorkerSpec["kind"][] = [];
+  readonly escalations: FamilyEscalation[] = [];
   currentFamilyHead = "head-449";
 
   constructor(private readonly cmrResult: WorkerResult) {}
@@ -609,6 +612,16 @@ class CmrFindingBackend implements FamilyBackend {
   }
   async readFamilyHead(): Promise<string> {
     return this.currentFamilyHead;
+  }
+  async escalateFamily(escalation: FamilyEscalation): Promise<void> {
+    this.escalations.push(escalation);
+    await recordFamilyEscalated(this, {
+      escalationKind: "decision",
+      phase: "final",
+      reason: escalation.reason,
+      familyHeadAfter: escalation.familyHeadAfter,
+      stopSummary: escalation.stopSummary,
+    });
   }
   async runFamilyVerify(_req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
     return { ok: true };
@@ -847,6 +860,16 @@ undeveloped_modules:
         reason: "spec_conflict",
         summary: expect.stringContaining("accepted designs conflict"),
         repairHint: expect.stringContaining("design/specification conflict"),
+      },
+    });
+    expect(backend.escalations[0]).toMatchObject({
+      stopSummary: { reason: "spec_conflict" },
+    });
+    expect(backend.ledger[1]).toMatchObject({
+      status: "escalated",
+      stopSummary: {
+        reason: "spec_conflict",
+        summary: expect.stringContaining("accepted designs conflict"),
       },
     });
   });
