@@ -41,7 +41,8 @@ def test_budget_payload_filters_real_substrate_hub_fixed_flow(game):
         SET tax_per_turn = 0,
             fiscal = json_set(
                 fiscal, '$.huang_tian', 0, '$.liao_xiang', 0,
-                '$.salt_tax', 0, '$.commerce_tax', 0
+                '$.salt_tax', 0, '$.commerce_tax', 0,
+                '$.settle.p.拨付gross', 0
             )
         """
     )
@@ -65,6 +66,13 @@ def test_budget_payload_filters_real_substrate_hub_fixed_flow(game):
         """
     )
     db.conn.commit()
+
+    pre_payload = runtime.budget_payload()
+    army_pay = next(
+        row["amount"] for row in pre_payload["国库"]["expense"]
+        if row["name"] == "各军军饷"
+    )
+    assert army_pay == 5
 
     apply_fixed_period_flows(db, state)
     state.turn += 1

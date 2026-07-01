@@ -191,7 +191,8 @@ def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, li
     cfg = db.get_fiscal_config()
     gk_tax, nk_huang, _ = calc_province_fiscal(state, db)
     # #44 军饷=SUM(应发)，应发挂钩兵力(army_needed=ceil(manpower×salary_rate/10000))，非旧 maintenance 定额。
-    # #307 substrate_hub 下旧「户部直扣国库发饷」全局路径退役，预算同源显示为 0，避免双付。
+    # #307 substrate_hub 下旧「户部直扣国库发饷」全局路径退役；预算行改读 hub 预计实拨，
+    # 与 apply_fixed_period_flows 的 边饷hub 扣款同源，避免预算净额虚高。
     if db.fiscal_engine() == "legacy":
         army_total = sum(
             army_needed(r) for r in db.conn.execute(
@@ -199,7 +200,7 @@ def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, li
             ).fetchall()
         )
     else:
-        army_total = 0
+        army_total = _substrate_hub_budget_army_pay(db, state)
 
     budget: Dict[str, Dict[str, list]] = {
         "国库": {"income": [], "expense": []},
@@ -243,6 +244,32 @@ def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, li
         if bld_out[acc] > 0:
             budget[acc]["expense"].append({"name": "建筑维护", "amount": bld_out[acc], "note": "建筑月维护"})
     return budget
+
+
+def _substrate_hub_budget_army_pay(db: GameDB, state: GameState) -> int:
+    """Return the fixed-budget army-pay outflow for substrate_hub saves."""
+    rows = db.conn.execute(
+        """
+        SELECT id, manpower, salary_rate, owner_power, central_pay_share
+        FROM armies
+        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+          AND central_pay_share > 0
+        """
+    ).fetchall()
+    central_due_by_army = {
+        str(row["id"]): army_needed(row) * float(row["central_pay_share"] or 0)
+        for row in rows
+    }
+    hub_outbound = _compute_substrate_hub_outbound(
+        db,
+        max(0.0, float(state.metrics.get("国库", 0) or 0)),
+        central_due_by_army,
+    )
+    return int(
+        hub_outbound.jingyun_paid_total
+        + hub_outbound.central_paid_total
+        + hub_outbound.central_transport_loss
+    )
 
 
 ISSUE_METRIC_KEYS = {"民心", "皇威"}
@@ -938,7 +965,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 "morale_delta": new_morale - old_morale,
             })
         db._reconcile_central_army_pay_arrears_container()
-        db.conn.commit()
 
     # ── 固定收支落账（税/皇庄/宗室/官俸/织造…全走唯一定额源 compute_budget_lines）──
     # 军饷与建筑另有逐项落账逻辑（arrears/condition），故下面跳过这两类，仅落其余定额项。
@@ -1009,8 +1035,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                      reason_tag),
                 ],
             )
-            db.conn.commit()
-
             flows.append({
                 "dir": "expense", "account": "国库", "category": "各军军饷",
                 "army": name, "needed": needed, "paid": pay_current,
