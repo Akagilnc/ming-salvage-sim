@@ -2492,6 +2492,17 @@ class GameDB:
             province_arrears = float(row["province_pay_arrears"] or 0)
             central_arrears = float(row["central_pay_arrears"] or 0)
             exempt = owner_power != "ming" or is_tusi or self_funded
+            exempt_by_ming_flag = (
+                str(row["owner_power"] or "") == "ming"
+                and owner_power == "ming"
+                and not bool(row["is_tusi"])
+                and not bool(row["self_funded_pay"])
+                and (is_tusi or self_funded)
+            )
+            if exempt_by_ming_flag and (province_arrears + central_arrears) > 1e-9:
+                raise ValueError(
+                    "明军有欠饷时不得仅以自养/土司改隶清空饷源；须先走补饷或显式核销"
+                )
             if exempt:
                 pay_source_region = ""
                 province_share = central_share = 0.0
