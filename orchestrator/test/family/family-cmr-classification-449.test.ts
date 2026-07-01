@@ -666,6 +666,60 @@ describe("#449 verifyCmr family gate classification", () => {
     });
   });
 
+  it("blocks a cross-module defer when the target is outside current modules but not declared undeveloped", async () => {
+    const undeclaredTargetFinding: Finding = {
+      ...finding,
+      claim_quote: "unregistered target should not pass as cross-module work",
+      location: "docs/unregistered-new-module.md:1",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "unregistered-new-module",
+        reason: "outside current module but not declared as an undeveloped target",
+      },
+    };
+    const backend = new CmrFindingBackend({
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: false,
+        reason: "undeclared target should block",
+        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        findings: [undeclaredTargetFinding],
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/445-base",
+      familyBackend: backend,
+      familyIssue: 445,
+      moduleContext: {
+        currentModules: [
+          {
+            module: "fiscal",
+            moduleScope: ["orchestrator/src/family"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
+        childModules: [],
+      },
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatched).toEqual(["cmr"]);
+    expect(backend.ledger[0]).toMatchObject({
+      status: "aborted",
+      cmrPass: "completeness",
+      cmrFindingClassification: {
+        blocking: [expect.objectContaining({ claim_quote: undeclaredTargetFinding.claim_quote })],
+        results: [{ classification: "same_module_still_red" }],
+      },
+    });
+  });
+
   it("lets a declared cross-module CMR defer pass and records the classification in the ledger", async () => {
     const crossModuleFinding: Finding = {
       ...finding,
