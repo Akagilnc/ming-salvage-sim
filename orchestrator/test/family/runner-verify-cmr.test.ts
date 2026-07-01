@@ -254,7 +254,10 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       verifyCmr,
     });
 
-    expect(calls.at(-1)?.priorCmrFindingIdentityKeys).toEqual([priorKey]);
+    expect((calls.at(-1) as VerifyCmrInput & {
+      priorCmrFindingIdentityKeysByPass?: { correctness?: readonly string[] };
+    })?.priorCmrFindingIdentityKeysByPass?.correctness).toEqual([priorKey]);
+    expect(calls.at(-1)?.priorCmrFindingIdentityKeys).toBeUndefined();
   });
 
   it("passes the known #287 hub-loss accepted suppression through production CMR context", async () => {

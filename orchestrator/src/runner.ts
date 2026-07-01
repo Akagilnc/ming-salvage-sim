@@ -677,15 +677,6 @@ function reviewerObservedProgress(input: {
   readonly previousIdentityKey: string;
   readonly previousNoProgressCount: number;
 }): boolean {
-  if (
-    input.previousNoProgressCount === 0 &&
-    input.currentBlockingFindings.length > 0 &&
-    input.currentBlockingIdentityKeys.length <
-    input.previousBlockingIdentityKeys.length
-  ) {
-    return true;
-  }
-
   const currentBySameKey = input.currentBlockingFindings.find(
     (finding) => findingIdentityKey(finding) === input.previousIdentityKey,
   );

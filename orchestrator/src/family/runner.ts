@@ -60,6 +60,7 @@ import type {
   FamilyRunInput,
   FamilyRunResult,
   FamilyRunStatus,
+  IntegratedCmrPass,
 } from "./types.js";
 import type { VerifyCmrPhase } from "./verifyCmr.js";
 
@@ -278,8 +279,14 @@ function latestVerifiedCmrHead(
 function pendingPriorCmrFindingIdentityKeys(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
 ): ReadonlyArray<string> {
-  const keys: string[] = [];
-  const seen = new Set<string>();
+  const byPass = pendingPriorCmrFindingIdentityKeysByPass(ledger);
+  return [...(byPass.completeness ?? []), ...(byPass.correctness ?? [])];
+}
+
+function pendingPriorCmrFindingIdentityKeysByPass(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+): Partial<Record<IntegratedCmrPass, ReadonlyArray<string>>> {
+  const keysByPass: Partial<Record<IntegratedCmrPass, string[]>> = {};
   const closedPasses = new Set<string>();
   for (let index = ledger.length - 1; index >= 0; index--) {
     const entry = ledger[index]!;
@@ -295,6 +302,10 @@ function pendingPriorCmrFindingIdentityKeys(
     if (entry.cmrPass !== undefined && closedPasses.has(entry.cmrPass)) {
       continue;
     }
+    const pass = entry.cmrPass;
+    if (pass === undefined) continue;
+    const keys = keysByPass[pass] ?? [];
+    const seen = new Set(keys);
     for (const result of entry.cmrFindingClassification.results) {
       if (
         result.classification === "cross_module_defer" ||
@@ -308,8 +319,11 @@ function pendingPriorCmrFindingIdentityKeys(
         keys.push(result.identityKey);
       }
     }
+    keysByPass[pass] = keys;
   }
-  return keys.reverse();
+  return Object.fromEntries(
+    Object.entries(keysByPass).map(([pass, values]) => [pass, [...values].reverse()]),
+  ) as Partial<Record<IntegratedCmrPass, ReadonlyArray<string>>>;
 }
 
 function latestAbortedStopSummary(
@@ -993,9 +1007,9 @@ export async function runFamily(
     // needs it; an empty list ⇒ the cmr request omits the field.
     llmResolvedChildren: await llmResolvedChildren(familyBackend),
     ...(() => {
-      const priorKeys = pendingPriorCmrFindingIdentityKeys(preFinalLedger);
-      return priorKeys.length > 0
-        ? { priorCmrFindingIdentityKeys: priorKeys }
+      const priorKeysByPass = pendingPriorCmrFindingIdentityKeysByPass(preFinalLedger);
+      return Object.keys(priorKeysByPass).length > 0
+        ? { priorCmrFindingIdentityKeysByPass: priorKeysByPass }
         : {};
     })(),
     ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),

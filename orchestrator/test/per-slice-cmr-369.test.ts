@@ -776,36 +776,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
   it.each([
     {
-      name: "blocking count decreases",
-      initial: [
-        blocking,
-        {
-          ...blocking,
-          claim_quote: "secondary blocker should close",
-          location: "src/secondary.ts:1",
-        },
-      ],
-      firstAfterFix: [blocking],
-      firstDispositions: [
-        { identityKey: blockingKey, status: "still-active" as const },
-        {
-          identityKey: findingIdentityKey({
-            ...blocking,
-            claim_quote: "secondary blocker should close",
-            location: "src/secondary.ts:1",
-          }),
-          status: "verified-closed" as const,
-        },
-      ],
-      secondAfterFix: [blocking],
-      secondDispositions: [
-        { identityKey: blockingKey, status: "still-active" as const },
-      ],
-      finalDispositions: [
-        { identityKey: blockingKey, status: "verified-closed" as const },
-      ],
-    },
-    {
       name: "severity decreases",
       initial: [{ ...blocking, severity: "high" as const }],
       firstAfterFix: [{ ...blocking, severity: "medium" as const }],
@@ -902,6 +872,73 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           priorFindingDispositions: [
             { identityKey: originalKey, status: "still-active" },
             { identityKey: firstNarrowedKey, status: "still-active" },
+          ],
+        },
+      },
+    ]);
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary.reason).toBe("same_module_still_red");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+    ]);
+  });
+
+  it("does not count omitted still-active prior findings as blocking-count progress", async () => {
+    const primaryFinding = {
+      ...blocking,
+      claim_quote: "primary blocker stays active through dispositions",
+    };
+    const secondaryFinding = {
+      ...blocking,
+      claim_quote: "secondary blocker remains in reviewer findings",
+      location: "src/secondary.ts:1",
+    };
+    const primaryKey = findingIdentityKey(primaryFinding);
+    const secondaryKey = findingIdentityKey(secondaryFinding);
+
+    const backend = new RetryReviewBackend([
+      {
+        kind: "completed",
+        output: { kind: "reviewer", findings: [primaryFinding, secondaryFinding] },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [{ ...secondaryFinding, severity: "medium" }],
+          priorFindingDispositions: [
+            { identityKey: primaryKey, status: "still-active" },
+            { identityKey: secondaryKey, status: "still-active" },
+          ],
+        },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [{ ...secondaryFinding, severity: "low" }],
+          priorFindingDispositions: [
+            { identityKey: primaryKey, status: "still-active" },
+            { identityKey: secondaryKey, status: "still-active" },
+          ],
+        },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: primaryKey, status: "verified-closed" },
+            { identityKey: secondaryKey, status: "verified-closed" },
           ],
         },
       },
