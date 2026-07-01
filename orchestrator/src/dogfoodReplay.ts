@@ -1695,31 +1695,41 @@ async function familyAcceptedSuppressionSummaryReplay(input: {
   };
 }
 
-function routeEnvMismatchReplay(): SeamReplay {
-  let failure = "";
-  try {
-    cmrLegAccountingFailure(
-      { successfulLegs: ["gpt-5.5"], skippedLegs: [{ slug: "agy", reason: "quota" }] },
-      {
-        ORCHESTRATOR_ROUTE: "claude-tight",
-        ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: '["gpt-5.5","agy"]',
-      },
+async function routeEnvMismatchReplay(): Promise<SeamReplay> {
+  const backend = new DogfoodCmrFamilyBackend("route-env-mismatch-head");
+  const result = await withRouteEnv(
+    {
+      ORCHESTRATOR_ROUTE: "claude-tight",
+      ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: '["gpt-5.5","agy"]',
+    },
+    () =>
+      runVerifyCmr({
+        phase: "final",
+        familyBase: "family/376-route-env-mismatch",
+        familyBackend: backend,
+      }),
+  );
+  const abort = backend.ledger.find((entry) => entry.status === "aborted");
+  const failure = abort?.reason ?? "";
+  if (
+    result.ok ||
+    abort?.stopSummary?.reason !== "infra_failure" ||
+    !failure.includes("must be comma-separated CMR leg slugs") ||
+    !abort.stopSummary.repairHint?.includes("route environment")
+  ) {
+    throw new Error(
+      "dogfood route env mismatch replay did not fail through runVerifyCmr",
     );
-  } catch (err) {
-    failure = err instanceof Error ? err.message : String(err);
-  }
-  if (!failure.includes("must be comma-separated CMR leg slugs")) {
-    throw new Error("dogfood route env mismatch replay did not fail closed");
   }
   return {
-    stopSummary: contractDriftStopSummary({
-      summary: "CMR route env format mismatch",
-      repairHint: "repair JSON-vs-CSV route env serialization before rerun",
-    }),
+    stopSummary: abort.stopSummary,
     sourceEvidence: {
-      seam: "model_route_cmr_leg_accounting",
+      seam: "family_verify_cmr_route_env",
+      helperSeam: "model_route_cmr_leg_env",
       envShape: "json-written-csv-read",
       failure,
+      status: "aborted",
+      dispatches: backend.dispatches,
     },
   };
 }
@@ -2081,7 +2091,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   const legacyDispositionSource = await legacyDispositionParserReplay();
   const finalLegacyDispositionSource = await finalLegacyDispositionReplay();
   const routeAccountingSource = await routeAccountingReplay();
-  const routeEnvMismatchSource = routeEnvMismatchReplay();
+  const routeEnvMismatchSource = await routeEnvMismatchReplay();
   const routeFreezeSource = await routeFreezeReplay();
   const startupRouteViolationSource = await startupRouteViolationReplay();
   const closureNegativeSource = await closureNegativeReplay();
@@ -2418,7 +2428,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       id: "376-route-env-format-mismatch",
       issue: 376,
       title: "CMR leg env writer/reader mismatch fails closed",
-      classification: "contract_drift",
+      classification: "infra_failure",
       stopSummary: routeEnvMismatchSource.stopSummary,
       source: "family",
       sourceStopSummary: routeEnvMismatchSource.stopSummary,
