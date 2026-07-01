@@ -344,6 +344,34 @@ function latestAbortedStopSummary(
   return undefined;
 }
 
+function isMaterialCmrStopSummary(stopSummary: StopSummary): boolean {
+  if (stopSummary.reason !== "success") return true;
+  const metadata = stopSummary.metadata;
+  return (
+    (metadata?.acceptedSuppressions?.length ?? 0) > 0 ||
+    (metadata?.providerDegraded?.length ?? 0) > 0
+  );
+}
+
+function latestSuccessfulFinalCmrStopSummary(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  minIndex = 0,
+): StopSummary | undefined {
+  for (let i = ledger.length - 1; i >= minIndex; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.status === "cmr_passed" &&
+      entry.event === "cmr_passed" &&
+      entry.phase === "final" &&
+      entry.stopSummary !== undefined &&
+      isMaterialCmrStopSummary(entry.stopSummary)
+    ) {
+      return entry.stopSummary;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Derive the child issue numbers whose merge into the family base was LLM-resolved
  * (#291 缺口 1), read from the DURABLE family ledger — the only truth that survives
@@ -626,6 +654,20 @@ export async function runFamily(
       admissionSkipped: epic.admissionSkipped,
       alreadyDone,
     });
+    const materialSuccessStopSummary =
+      status === "success"
+        ? latestSuccessfulFinalCmrStopSummary(familyLedger, barrierLedgerStartIndex)
+        : undefined;
+    const resultStopSummary =
+      materialSuccessStopSummary !== undefined
+        ? {
+            ...materialSuccessStopSummary,
+            metadata: {
+              ...(materialSuccessStopSummary.metadata ?? {}),
+              ...(computedStopSummary.metadata ?? {}),
+            },
+          }
+        : computedStopSummary;
     return {
       status,
       ...(verifyFailedPhase !== undefined ? { failedPhase: verifyFailedPhase } : {}),
@@ -633,11 +675,11 @@ export async function runFamily(
       familyHead,
       stopSummary: allChildrenAlreadyDone
         ? {
-            ...computedStopSummary,
+            ...resultStopSummary,
             reason: "already_done",
             summary: "family resume found every child already merged and skipped rerun",
           }
-        : computedStopSummary,
+        : resultStopSummary,
       children,
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
@@ -871,6 +913,7 @@ export async function runFamily(
   // / PR attempt. But an older shipped marker for a different head must NOT hide a
   // later live-base advance; that new head needs a fresh final barrier / ship.
   const preFinalLedger = await familyBackend.readFamilyLedger();
+  const preFinalLedgerLength = preFinalLedger.length;
   const preFinalFamilyHead =
     familyHead ?? (await readCurrentFamilyHead(familyBackend, familyBase));
   const shippedRecord = familyShippedRecordForHead(
@@ -1032,10 +1075,10 @@ export async function runFamily(
     // "final"` so a red final verify is OBSERVABLY distinct from success — the
     // caller / PR step must NOT ship it (decision 3⑤ "不静默吞"); the family base +
     // ledger are left for triage.
-    return await finalize("final", preFinalLedger.length);
+    return await finalize("final", preFinalLedgerLength);
   }
 
   // Every barrier passed. finalize() derives "success" only if EVERY child
   // merged, else "incomplete" (a child failed / stayed blocked — not shippable).
-  return await finalize();
+  return await finalize(undefined, preFinalLedgerLength);
 }
