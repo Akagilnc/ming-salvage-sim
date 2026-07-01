@@ -14,7 +14,7 @@
  */
 
 import type { FamilyModuleContext } from "./family/cmrClassification.js";
-import type { StopSummary } from "./stopSummary.js";
+import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
 
 // ───────────────────────────── step identifiers ─────────────────────────────
 
@@ -605,6 +605,8 @@ export interface ShipResult {
   readonly prHead?: string;
   /** A short status string (e.g. "pushed" | "pr_opened"). Values: #336. */
   readonly status: string;
+  /** Nonblocking ship-side review degradation metadata, if gstack-ship reports it. */
+  readonly degradedReviews?: ReadonlyArray<ProviderDegradationSummary>;
   // NOTE: a ship worker that STOPS for a human (gstack-ship STOP/HITL) is the
   // WorkerResult-level `{kind:"escalated"}` case (PRD #330 R2), NOT an `escalate`
   // field on this `completed` payload — a `completed ShipResult` means a PR opened

@@ -823,13 +823,10 @@ function planResume(
         : undefined;
     const continueFixingRepair =
       decisionStep === "S4"
-        ? (
-            repairIntent !== undefined
-              ? continueRepairFromEvent(repairIntent, replayedS4)
-              : undefined
-          ) ??
-          latestContinueFixingAfter(ledger, lastEntryIndex, replayedS4) ??
-          continueRepairFromAnswer(answer, replayedS4)
+        ? repairIntent !== undefined
+          ? continueRepairFromEvent(repairIntent, replayedS4)
+          : latestContinueFixingAfter(ledger, lastEntryIndex, replayedS4) ??
+            continueRepairFromAnswer(answer, replayedS4)
         : undefined;
     if (
       decisionStep === undefined ||
@@ -1271,6 +1268,13 @@ function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
 
 function stopSummaryForEscalation(escalation: Escalation): StopSummary {
   const reason = `${escalation.reason}: ${escalation.diagnosis}`;
+  if (/review\/fix loop made no progress/i.test(escalation.reason)) {
+    return {
+      reason: "same_module_still_red",
+      summary: reason,
+      repairHint: "repair the same-module finding or change the implementation strategy before rerun",
+    };
+  }
   return {
     reason: "spec_conflict",
     summary: reason,

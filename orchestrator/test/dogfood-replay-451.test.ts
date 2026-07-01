@@ -21,8 +21,8 @@ describe("#451 dogfood replay fixture", () => {
         expect.objectContaining({
           id: "307-no-observable-progress",
           issue: 307,
-          classification: "spec_conflict",
-          stopReason: "spec_conflict",
+          classification: "same_module_still_red",
+          stopReason: "same_module_still_red",
         }),
         expect.objectContaining({
           id: "287-same-module-cmr-gap",
@@ -166,9 +166,9 @@ describe("#451 dogfood replay fixture", () => {
     }
     expect(rowsById.get("307-continue-fixing-targeted-reset")).toMatchObject({
       source: "runner",
-      classification: "spec_conflict",
-      stopReason: "spec_conflict",
-      sourceStopSummary: expect.objectContaining({ reason: "spec_conflict" }),
+      classification: "same_module_still_red",
+      stopReason: "same_module_still_red",
+      sourceStopSummary: expect.objectContaining({ reason: "same_module_still_red" }),
       sourceEvidence: expect.objectContaining({
         seam: "runner",
         status: "escalate",
@@ -274,9 +274,9 @@ describe("#451 dogfood replay fixture", () => {
     });
     expect(rowsById.get("307-reviewer-text-only-change")).toMatchObject({
       source: "runner",
-      classification: "spec_conflict",
-      stopReason: "spec_conflict",
-      sourceStopSummary: expect.objectContaining({ reason: "spec_conflict" }),
+      classification: "same_module_still_red",
+      stopReason: "same_module_still_red",
+      sourceStopSummary: expect.objectContaining({ reason: "same_module_still_red" }),
       sourceEvidence: expect.objectContaining({
         seam: "runner",
         mechanism: "reviewer_text_only_no_progress",
@@ -286,9 +286,9 @@ describe("#451 dogfood replay fixture", () => {
     });
     expect(rowsById.get("307-no-observable-progress")).toMatchObject({
       source: "runner",
-      classification: "spec_conflict",
-      stopReason: "spec_conflict",
-      sourceStopSummary: expect.objectContaining({ reason: "spec_conflict" }),
+      classification: "same_module_still_red",
+      stopReason: "same_module_still_red",
+      sourceStopSummary: expect.objectContaining({ reason: "same_module_still_red" }),
       sourceEvidence: expect.objectContaining({
         seam: "runner",
         mechanism: "claimed_attempt_without_observable_progress",
