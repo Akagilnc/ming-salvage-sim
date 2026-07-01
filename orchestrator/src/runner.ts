@@ -323,7 +323,11 @@ function latestAnswerAfter(
 ): EscalationAnswerEvent | undefined {
   for (let i = ledger.length - 1; i > index; i--) {
     const entry = ledger[i]!;
-    if (isEscalationAnswerEntry(entry) && entry.forStep === forStep) {
+    if (
+      isEscalationAnswerEntry(entry) &&
+      entry.forStep === forStep &&
+      isExecutableEscalationAnswerSource(entry.source)
+    ) {
       return answerPayload(entry);
     }
   }
@@ -347,8 +351,10 @@ function isBookkeepingSource(
 
 function isExecutableEscalationAnswerSource(
   value: unknown,
-): value is Extract<ContinueFixingEvent["source"], "human" | "resume_input"> {
-  return value === "human" || value === "resume_input";
+): value is
+  | undefined
+  | Extract<ContinueFixingEvent["source"], "human" | "resume_input"> {
+  return value === undefined || value === "human" || value === "resume_input";
 }
 
 function isStringArray(value: unknown): value is ReadonlyArray<string> {
@@ -535,11 +541,12 @@ function continueRepairFromAnswer(
   }
   const source = answer.source;
   if (!isExecutableEscalationAnswerSource(source)) return undefined;
+  const repairSource = source ?? "human";
   const matchingIdentityKeys = matchingContinueFixingKeys(
     {
       event: "runner_bookkeeping",
       intent: "continue_fixing",
-      source,
+      source: repairSource,
       ts: "answer-scope-only",
       ...(answer.findingIdentityKey !== undefined
         ? { findingIdentityKey: answer.findingIdentityKey }
