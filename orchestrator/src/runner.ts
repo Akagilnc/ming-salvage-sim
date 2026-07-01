@@ -345,6 +345,12 @@ function isBookkeepingSource(
   );
 }
 
+function isExecutableEscalationAnswerSource(
+  value: unknown,
+): value is Extract<ContinueFixingEvent["source"], "human" | "resume_input"> {
+  return value === "human" || value === "resume_input";
+}
+
 function isStringArray(value: unknown): value is ReadonlyArray<string> {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
@@ -528,7 +534,7 @@ function continueRepairFromAnswer(
     return undefined;
   }
   const source = answer.source;
-  if (!isBookkeepingSource(source)) return undefined;
+  if (!isExecutableEscalationAnswerSource(source)) return undefined;
   const matchingIdentityKeys = matchingContinueFixingKeys(
     {
       event: "runner_bookkeeping",
