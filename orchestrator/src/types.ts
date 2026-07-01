@@ -441,6 +441,11 @@ export type WorkerSessionMode = "fresh" | "resume";
  */
 export type WorkerContextRetention = "retain" | "clean";
 
+export interface WorkerCmrReviewLeg {
+  readonly family: string;
+  readonly slug: string;
+}
+
 /**
  * The declarative spec of one worker step — what the runner hands the dispatch
  * seam so the dispatch decision is EXPLICIT and ASSERTABLE (US#16/#18/#19).
@@ -489,6 +494,8 @@ export interface WorkerSpec {
   readonly maxIter: number;
   /** Short model slug the runtime maps to a baked-in CLI (PRD #244). */
   readonly model: string;
+  /** Frozen route-selected CMR review legs for this worker invocation. */
+  readonly cmrReviewLegs?: ReadonlyArray<WorkerCmrReviewLeg>;
   /** Soul to inject (`coder` full discipline / `READ-ONLY` reviewer). */
   readonly soul: StepSoul;
   /** Project tool-chain the image declares (US #29). */

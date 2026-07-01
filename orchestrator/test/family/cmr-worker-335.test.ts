@@ -703,12 +703,15 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable dir)", () => {
   /** Expose the protected pure config seam + a canned-auth path. */
   class ConfigBackend extends RealFamilyBackend {
-    public config(auth: CmrAuth): {
+    public config(
+      auth: CmrAuth,
+      spec: ReturnType<typeof cmrWorkerSpec> = cmrWorkerSpec(),
+    ): {
       imageName: string;
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
-      return this.cmrSandboxConfig(auth);
+      return this.cmrSandboxConfig(auth, spec.cmrReviewLegs!);
     }
   }
 
@@ -804,6 +807,20 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
   it("exports the route-selected CMR leg collection to the worker", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const cfg = cfgBackend().config(auth);
+    const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
+
+    expect(legs).toEqual([
+      { family: "codex", slug: "gpt-5.5" },
+      { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy" },
+    ]);
+  });
+
+  it("exports frozen CMR legs from the worker spec, not later route env", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const spec = cmrWorkerSpec("fresh", "correctness");
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const cfg = cfgBackend().config(auth, spec);
     const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
 
     expect(legs).toEqual([
@@ -989,7 +1006,14 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       this.writeCmrFocusFile(ctx as never);
     }
     public routeFile(pass: "completeness" | "correctness" | undefined): void {
-      this.writeCmrRouteFile(pass);
+      const spec = cmrWorkerSpec("fresh", pass ?? "correctness");
+      this.writeCmrRouteFile(pass, spec.cmrReviewLegs!);
+    }
+    public routeFileFromSpec(
+      pass: "completeness" | "correctness",
+      spec: ReturnType<typeof cmrWorkerSpec>,
+    ): void {
+      this.writeCmrRouteFile(pass, spec.cmrReviewLegs!);
     }
   }
 
@@ -1119,6 +1143,34 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     });
     const exclude = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
     expect(exclude.split("\n")).toContain(CMR_ROUTE_FILENAME);
+  });
+
+  it("freezes CMR review legs from the worker spec, not later route env", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const spec = cmrWorkerSpec("fresh", "correctness");
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    be.routeFileFromSpec("correctness", spec);
+
+    const route = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as {
+      reviewLegs: unknown;
+    };
+    expect(route.reviewLegs).toEqual([
+      { family: "codex", slug: "gpt-5.5" },
+      { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy" },
+    ]);
   });
 
   it("threads a human escalation answer into the CMR focus file", () => {
