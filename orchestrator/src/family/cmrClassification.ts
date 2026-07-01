@@ -208,8 +208,7 @@ function fallbackModule(
 ): SourcedModuleDeclaration | undefined {
   return (
     context.fallbackModule ??
-    context.currentModules.find((decl) => decl.source !== "child_issue") ??
-    context.currentModules[0]
+    context.currentModules.find((decl) => decl.source !== "child_issue")
   );
 }
 
@@ -447,8 +446,13 @@ export function classifyFamilyCmrFindings(input: {
       finding.disposition?.kind === "cross_module"
     ) {
       findingsForFinalClassification.push(finding);
+      const attribution = attributionFor(finding, input.moduleContext);
       const targetModule = normalizedModule(finding.disposition.targetModule ?? "");
-      if (currentModules.size > 0 && !currentModules.has(targetModule)) {
+      if (
+        attribution.method !== "missing_module_context" &&
+        currentModules.size > 0 &&
+        !currentModules.has(targetModule)
+      ) {
         deferred.push(finding);
         results.push(resultForDeferred(finding, input.moduleContext));
       } else {
