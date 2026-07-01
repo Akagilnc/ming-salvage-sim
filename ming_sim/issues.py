@@ -21,7 +21,7 @@ from ming_sim.constants import (
 )
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
-from ming_sim.db import GameDB, infer_office_type_from_office, normalize_office
+from ming_sim.db import GameDB, _approx_wanliang, infer_office_type_from_office, normalize_office
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
@@ -223,8 +223,8 @@ def _commitment_remaining_from_gate(
     gate: Dict[str, str],
     state: GameState,
     db: GameDB,
-) -> Optional[int]:
-    remaining = 0
+) -> Optional[float]:
+    remaining = 0.0
     found = False
     for key, cond in gate.items():
         cond_text = str(cond or "").strip()
@@ -235,20 +235,20 @@ def _commitment_remaining_from_gate(
         if val is None:
             continue
         try:
-            val_int = int(val)
+            val_num = float(val)
         except (TypeError, ValueError):
             continue
         op, target = m.group(1), int(m.group(2))
         if op == "<=":
-            need = max(0, val_int - target)
+            need = max(0.0, val_num - target)
         elif op == "<":
-            need = max(0, val_int - target + 1)
+            need = max(0.0, val_num - target + 1)
         elif op == ">=":
-            need = max(0, target - val_int)
+            need = max(0.0, target - val_num)
         elif op == ">":
-            need = max(0, target - val_int + 1)
+            need = max(0.0, target - val_num + 1)
         else:
-            need = abs(val_int - target)
+            need = abs(val_num - target)
         remaining += need
         found = True
     return remaining if found else None
@@ -280,7 +280,7 @@ def commitment_progress_payload(
     *,
     paid_this_month: int = 0,
     include_current_month: bool = False,
-) -> Optional[Dict[str, int]]:
+) -> Optional[Dict[str, object]]:
     keys = row.keys() if hasattr(row, "keys") else []
     if not str(row["commitment_kind"] if "commitment_kind" in keys else "").strip():
         return None
@@ -301,19 +301,26 @@ def commitment_progress_payload(
     months_elapsed = max(0, int(state.turn) - origin_turn)
     if include_current_month:
         months_elapsed = int(months_elapsed) + 1
-    payload: Dict[str, int] = {
+    payload: Dict[str, object] = {
         "months_elapsed": int(months_elapsed),
         "paid_total": int(paid_total),
     }
     if remaining is not None:
         if _commitment_gate_references_arrears(row):
-            payload["remaining_arrears"] = int(remaining)
+            payload["remaining_arrears"] = float(remaining)
         else:
             payload["remaining_to_goal"] = int(remaining)
     return payload
 
 
-def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
+def _commitment_arrears_remaining_text(amount: object) -> str:
+    text = _approx_wanliang(amount)
+    if text.startswith("欠饷"):
+        return "尚欠" + text[len("欠饷"):]
+    return text
+
+
+def commitment_display_text(progress: Dict[str, object], row: sqlite3.Row) -> str:
     keys = row.keys() if hasattr(row, "keys") else []
     ongoing = loads_effect_dict(row["ongoing_effects"] if "ongoing_effects" in keys else {})
     end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
@@ -328,7 +335,7 @@ def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
     if stop_gate and _commitment_gate_references_arrears(row):
         parts = [f"已第{months}月"]
         if "remaining_arrears" in progress:
-            parts.append(f"尚欠{int(progress['remaining_arrears'])}万两")
+            parts.append(_commitment_arrears_remaining_text(progress["remaining_arrears"]))
         parts.append("直到补齐")
         return "·".join(parts)
 
@@ -346,7 +353,7 @@ def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
     return f"已履行{months}月·开放承诺"
 
 
-def commitment_timed_bar_value(progress: Dict[str, int], row: sqlite3.Row) -> Optional[int]:
+def commitment_timed_bar_value(progress: Dict[str, object], row: sqlite3.Row) -> Optional[int]:
     """Time-based bar for auto-expiring timed commitments (ongoing effects + end_turn + no gate).
 
     Returns None for bar-driven (stop_gate), arrears, or passive (no ongoing effects) commitments.
@@ -369,11 +376,14 @@ def commitment_timed_bar_value(progress: Dict[str, int], row: sqlite3.Row) -> Op
     return max(0, min(100, int(round(months * 100 / duration))))
 
 
-def _commitment_bar_value(progress: Dict[str, int]) -> Optional[int]:
+def _commitment_bar_value(progress: Dict[str, object]) -> Optional[int]:
     if "remaining_arrears" not in progress:
         return None
     paid = max(0, int(progress.get("paid_total") or 0))
-    remaining = max(0, int(progress.get("remaining_arrears") or 0))
+    try:
+        remaining = max(0.0, float(progress.get("remaining_arrears") or 0))
+    except (TypeError, ValueError):
+        remaining = 0.0
     total = paid + remaining
     if total <= 0:
         return 100
