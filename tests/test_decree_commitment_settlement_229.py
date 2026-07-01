@@ -16,6 +16,18 @@ def _army_arrears(db, army_id: str) -> int:
     return int(row["arrears"])
 
 
+def _seed_central_army_arrears(db, arrears_by_army_id: dict[str, int]) -> None:
+    for army_id, arrears in arrears_by_army_id.items():
+        db.conn.execute(
+            """
+            UPDATE armies
+            SET arrears = ?, province_pay_arrears = 0, central_pay_arrears = ?
+            WHERE id = ?
+            """,
+            (arrears, arrears, army_id),
+        )
+
+
 def _character_loyalty(db, name: str) -> int:
     row = db.conn.execute("SELECT loyalty FROM characters WHERE name=?", (name,)).fetchone()
     assert row is not None
@@ -429,8 +441,7 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
     db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=70 WHERE id='guanning'")
-    db.conn.execute("UPDATE armies SET arrears=40 WHERE id='xuan_da'")
+    _seed_central_army_arrears(db, {"guanning": 70, "xuan_da": 40})
     state.metrics["国库"] = 500
     db.save_state(state)
 
@@ -690,8 +701,7 @@ def test_arrears_commitment_preserves_explicit_monthly_payment_target(game):
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
     db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=70 WHERE id='guanning'")
-    db.conn.execute("UPDATE armies SET arrears=40 WHERE id='xuan_da'")
+    _seed_central_army_arrears(db, {"guanning": 70, "xuan_da": 40})
     state.metrics["国库"] = 500
     db.save_state(state)
 
@@ -1037,8 +1047,7 @@ def test_commitment_targeted_pay_uses_explicit_arrears_target(game):
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
     db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=100 WHERE id='guanning'")
-    db.conn.execute("UPDATE armies SET arrears=100 WHERE id='xuan_da'")
+    _seed_central_army_arrears(db, {"guanning": 100, "xuan_da": 100})
     state.metrics["国库"] = 500
     db.save_state(state)
 
