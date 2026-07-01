@@ -551,10 +551,13 @@ export function classifyFamilyCmrFindings(input: {
           boundedReopen: disposition.boundedReopen,
         },
       };
-      if (!acceptedSuppressionFindingMatchesContext(
-        suppressionFinding,
-        input.moduleContext,
-      )) {
+      if (
+        !suppressionScopeMatchesContext({
+          finding: suppressionFinding,
+          context: input.moduleContext,
+          scope: disposition.scope,
+        })
+      ) {
         blocking.push(finding);
         results.push(resultForBlocking(finding, input.moduleContext));
         continue;
