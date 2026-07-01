@@ -488,8 +488,13 @@ describe("#439 decision-escalate answer channel", () => {
       "continue-same-class",
       "Human says keep fixing this same no-progress class.",
     );
+    const scopedAnswer = {
+      ...answer,
+      source: "human",
+      findingScope: { identityKeys: [CLAIMED_FIXED_KEY] },
+    } as const;
     const backend = new DispatchRecordingResumeBackend(
-      decisionEscalatedAtS4({ answer }),
+      decisionEscalatedAtS4({ answer: scopedAnswer }),
     );
 
     const result = await runOrchestrator({ issueNumber: 439, backend });
@@ -501,6 +506,8 @@ describe("#439 decision-escalate answer channel", () => {
       forStep: "S4",
       answer: "continue-same-class",
       note: "Human says keep fixing this same no-progress class.",
+      source: "human",
+      findingScope: { identityKeys: [CLAIMED_FIXED_KEY] },
     });
     expect(result.stepLedger).toEqual(
       expect.arrayContaining([

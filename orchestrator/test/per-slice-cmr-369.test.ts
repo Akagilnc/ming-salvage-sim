@@ -658,6 +658,299 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     expect(result.status).toBe("escalate");
     expect(backend.dispatched).toEqual([]);
   });
+
+  it("does not map unscoped escalation answers to continue-fixing repair intent", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "escalation_answered",
+          forStep: "S4",
+          answer: "继续修",
+          source: "human",
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend([], resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatched).toEqual([]);
+  });
+
+  it("maps scoped escalation answers to the matching active S4 finding only", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "escalation_answered",
+          forStep: "S4",
+          answer: "继续修",
+          source: "human",
+          findingScope: { identityKeys: [blockingKey] },
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship"]);
+  });
+
+  it("matches broad file scope against path-line findings without resetting sibling findings", async () => {
+    const runnerFinding: Finding = {
+      severity: "high",
+      category: "correctness",
+      claim_quote: "locations.has(normaliseScopePart(finding.location))",
+      location: "orchestrator/src/runner.ts:380",
+      suggested_fix: "match file scope against path:line findings",
+      action: "fix_now",
+    };
+    const runnerFindingKey =
+      "correctness|orchestrator/src/runner.ts:380|locations.has(normalisescopepart(finding.location))";
+    const siblingFinding: Finding = {
+      severity: "high",
+      category: "correctness",
+      claim_quote: "matchingIdentityKeys: replay.blockingIdentityKeys",
+      location: "orchestrator/src/runner.ts:421",
+      suggested_fix: "require scoped answers",
+      action: "fix_now",
+    };
+    const siblingFindingKey =
+      "correctness|orchestrator/src/runner.ts:421|matchingidentitykeys: replay.blockingidentitykeys";
+
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        {
+          step: "S2",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S3",
+          output: { kind: "reviewer", findings: [runnerFinding, siblingFinding] },
+        },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [runnerFinding, siblingFinding],
+            priorFindingDispositions: [
+              { identityKey: runnerFindingKey, status: "still-active" },
+              { identityKey: siblingFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [runnerFinding, siblingFinding],
+            priorFindingDispositions: [
+              { identityKey: runnerFindingKey, status: "still-active" },
+              { identityKey: siblingFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "runner_bookkeeping",
+          intent: "continue_fixing",
+          findingScope: { locations: ["orchestrator/src/runner.ts"] },
+          source: "resume_input",
+          ts: "2026-07-01T00:00:03.000Z",
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend([], resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatched).toEqual([]);
+  });
+
+  it("uses broad file scope when it maps to one active finding lineage", async () => {
+    const fileScopedFinding: Finding = {
+      severity: "high",
+      category: "correctness",
+      claim_quote: "locations.has(normaliseScopePart(finding.location))",
+      location: "orchestrator/src/runner.ts:380",
+      suggested_fix: "match file scope against path:line findings",
+      action: "fix_now",
+    };
+    const fileScopedFindingKey =
+      "correctness|orchestrator/src/runner.ts:380|locations.has(normalisescopepart(finding.location))";
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        {
+          step: "S2",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding] } },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [fileScopedFinding],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [fileScopedFinding],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "runner_bookkeeping",
+          intent: "continue_fixing",
+          findingScope: { locations: ["orchestrator/src/runner.ts"] },
+          source: "resume_input",
+          ts: "2026-07-01T00:00:04.000Z",
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship"]);
+  });
 });
 
 describe("#369 runner resume/retry review fixes", () => {

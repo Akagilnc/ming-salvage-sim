@@ -220,6 +220,10 @@ export interface EscalationAnswerPayload {
   readonly note?: string;
   /** Source of the answer row when known; omitted on legacy rows. */
   readonly source?: "human" | "coordinator" | "peripheral" | "resume_input";
+  /** Optional exact finding identity targeted by a run-state repair answer. */
+  readonly findingIdentityKey?: string;
+  /** Optional finding scope targeted by a run-state repair answer. */
+  readonly findingScope?: FindingRepairScope;
 }
 
 export interface EscalationAnswerEvent extends EscalationAnswerPayload {
