@@ -619,6 +619,8 @@ export interface FamilyEscalation {
   readonly reason: string;
   /** Family base HEAD at the pause point, when known. */
   readonly familyHeadAfter?: string;
+  /** Unified stop reason summary for this pause, when the caller can classify it. */
+  readonly stopSummary?: StopSummary;
 }
 
 /** What the merger needs to merge one child branch into the family base. */

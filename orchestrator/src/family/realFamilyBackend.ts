@@ -1888,6 +1888,7 @@ export class RealFamilyBackend implements FamilyBackend {
       phase: "final",
       reason: escalation.reason,
       familyHeadAfter: escalation.familyHeadAfter,
+      stopSummary: escalation.stopSummary,
     });
   }
 
