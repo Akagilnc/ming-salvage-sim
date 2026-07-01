@@ -678,7 +678,8 @@ def _apply_economy_list(
         # purpose=补饷 必须定向到具体 army_id；非定向补饷需要另立显式契约，
         # 不能把缺失/错拼目标 fallback 成改付其它军队。
         if purpose == "补饷" and delta < 0 and (target_kind != "army" or not raw_target_id):
-            if allow_pay_arrears_pool:
+            explicit_target = bool(raw_target_kind or raw_target_id)
+            if allow_pay_arrears_pool and not explicit_target:
                 budget = abs(delta)
                 spent = _auto_pay_arrears_by_priority(
                     db, state, account, budget, category, reason, commit=commit
