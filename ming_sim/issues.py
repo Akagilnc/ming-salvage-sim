@@ -242,11 +242,11 @@ def _commitment_remaining_from_gate(
         if op == "<=":
             need = max(0.0, val_num - target)
         elif op == "<":
-            need = max(0.0, val_num - target + 1)
+            need = max(0.0, val_num - target + (1 if val_num.is_integer() else 0))
         elif op == ">=":
             need = max(0.0, target - val_num)
         elif op == ">":
-            need = max(0.0, target - val_num + 1)
+            need = max(0.0, target - val_num + (1 if val_num.is_integer() else 0))
         else:
             need = abs(val_num - target)
         remaining += need

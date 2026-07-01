@@ -2758,6 +2758,7 @@ class GameDB:
                 (province_arrears, province_arrears + central_arrears, new_morale, army_id),
             )
             province_delta = province_arrears - old_province_arrears
+            reason = f"{TURN_UNIT}省源军饷分账"
             if abs(province_delta) > 1e-9:
                 reason_parts = []
                 if new_debt_by_army[army_id] > 1e-9:
@@ -2769,7 +2770,6 @@ class GameDB:
                     reason_parts.append(
                         f"按省份额欠余额占比偿还{repaid_total:g}万两"
                     )
-                reason = f"{TURN_UNIT}省源军饷分账"
                 if reason_parts:
                     reason += "（" + "；".join(reason_parts) + "）"
                 self.conn.execute(
@@ -2783,6 +2783,20 @@ class GameDB:
                         log_turn, log_year, log_period, army_id,
                         str(old_province_arrears), str(province_arrears),
                         province_delta, reason,
+                    ),
+                )
+            morale_actual_delta = new_morale - old_morale
+            if morale_actual_delta != 0:
+                self.conn.execute(
+                    """
+                    INSERT INTO army_logs
+                    (turn, year, period, army_id, field, old_value, new_value, delta,
+                     reason, event_id, edict_id, actor)
+                    VALUES (?, ?, ?, ?, 'morale', ?, ?, ?, ?, NULL, NULL, '户部')
+                    """,
+                    (
+                        log_turn, log_year, log_period, army_id,
+                        str(old_morale), str(new_morale), morale_actual_delta, reason,
                     ),
                 )
 
@@ -4995,6 +5009,19 @@ class GameDB:
                             })
                             continue
                         if delta == 0:
+                            continue
+                        if (
+                            str(row["owner_power"]) != "ming"
+                            or bool(row["is_tusi"])
+                            or bool(row["self_funded_pay"])
+                        ):
+                            changes.append({
+                                "army": row["name"], "field": field,
+                                "rejected": True, "category": "invalid_enum",
+                                "reason": "army_delta.arrears 不接受自养/非明军加欠；双累加器恒为 0",
+                                "item": {"army_id": army_id, "field": field, "value": value},
+                                "issue_strict": False,
+                            })
                             continue
                         self._validate_pay_source_values(
                             army_id, str(row["owner_power"]), str(row["pay_source_region"]),
