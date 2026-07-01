@@ -67,6 +67,26 @@ function isAcceptedSuppression(
   return disposition?.kind === "accepted_suppressed";
 }
 
+function isFilledString(value: string | undefined): value is string {
+  return value !== undefined && value.trim().length > 0;
+}
+
+function isSourcedAcceptedSuppression(
+  disposition: FindingDisposition | undefined,
+): disposition is FindingDisposition & {
+  readonly status: "accepted_suppressed";
+  readonly source: string;
+  readonly scope: string;
+  readonly boundedReopen: string;
+} {
+  return (
+    disposition?.status === "accepted_suppressed" &&
+    isFilledString(disposition.source) &&
+    isFilledString(disposition.scope) &&
+    isFilledString(disposition.boundedReopen)
+  );
+}
+
 function dispositionFromFinding(finding: Finding): FindingDisposition {
   const acceptedSuppression = isAcceptedSuppression(finding.disposition)
     ? finding.disposition
@@ -162,20 +182,23 @@ export function classifyFindings(
   for (const finding of findings) {
     const key = findingIdentityKey(finding);
     const priorDisposition = dispositionByKey.get(key);
+    const priorSuppression = isSourcedAcceptedSuppression(priorDisposition)
+      ? priorDisposition
+      : undefined;
     if (isDispositionAction(finding.action) && !isBlockingFinding(finding)) {
       dispositionByKey.set(key, dispositionFromFinding(finding));
       continue;
     }
-    if (priorDisposition !== undefined) {
-      if (upgradedSeverity(finding, priorDisposition)) {
-        if (priorDisposition.reopenAttempts < MAX_REOPEN_ATTEMPTS) {
-          dispositionByKey.set(key, reopenedDisposition(finding, priorDisposition));
+    if (priorSuppression !== undefined) {
+      if (upgradedSeverity(finding, priorSuppression)) {
+        if (priorSuppression.reopenAttempts < MAX_REOPEN_ATTEMPTS) {
+          dispositionByKey.set(key, reopenedDisposition(finding, priorSuppression));
         }
       } else if (
-        sameSeverity(finding, priorDisposition) &&
-        (priorDisposition.disputeAttempts ?? 0) < 1
+        sameSeverity(finding, priorSuppression) &&
+        (priorSuppression.disputeAttempts ?? 0) < 1
       ) {
-        dispositionByKey.set(key, disputedDisposition(priorDisposition));
+        dispositionByKey.set(key, disputedDisposition(priorSuppression));
       } else {
         continue;
       }
