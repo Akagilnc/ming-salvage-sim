@@ -866,6 +866,36 @@ class CmrFindingBackend implements FamilyBackend {
   }
 }
 
+class SequencedCmrBackend extends CmrFindingBackend {
+  private cmrIndex = 0;
+
+  constructor(private readonly cmrResults: ReadonlyArray<WorkerResult>) {
+    super(cmrResults[0]!);
+  }
+
+  override async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    this.dispatched.push(spec.kind);
+    if (spec.kind === "cmr") {
+      const result = this.cmrResults[this.cmrIndex] ?? this.cmrResults.at(-1);
+      this.cmrIndex += 1;
+      return result!;
+    }
+    if (spec.kind === "ship") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx.familyBase!,
+          status: "pr_opened",
+          pr: "https://example.test/pr/449",
+          prHead: this.currentFamilyHead,
+        },
+      };
+    }
+    throw new Error(`unexpected ${spec.kind}`);
+  }
+}
+
 describe("#449 verifyCmr family gate classification", () => {
   it("blocks a defer when the CMR finding lacks a declared family module context", async () => {
     const backend = new CmrFindingBackend({
@@ -1279,6 +1309,80 @@ module_scope:
             }),
           ],
         },
+      },
+    });
+  });
+
+  it("shipped summary preserves material CMR disposition over later head-only success", async () => {
+    const crossModuleFinding: Finding = {
+      ...finding,
+      severity: "medium",
+      claim_quote: "military state machine follow-up belongs to another module",
+      location: "docs/military-state-machine.md:1",
+      action: "defer",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "military-state-machine",
+        reason: "outside the declared fiscal family module",
+      },
+    };
+    const backend = new SequencedCmrBackend([
+      {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: false,
+          reason: "only cross-module follow-up findings remain",
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+          findings: [crossModuleFinding],
+        },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+        },
+      },
+    ]);
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/445-base",
+      familyBackend: backend,
+      familyIssue: 445,
+      moduleContext: buildFamilyModuleContext({
+        childModules: [],
+        familyModule: {
+          module: "fiscal",
+          moduleScope: ["orchestrator/src/family"],
+          source: "family_issue",
+          issue: 445,
+        },
+        undevelopedModules: [
+          {
+            module: "military-state-machine",
+            moduleScope: ["docs/military-state-machine.md"],
+            source: "run_option",
+          },
+        ],
+      }),
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    const shipped = backend.ledger.find((entry) => entry.status === "shipped");
+    expect(shipped?.stopSummary).toMatchObject({
+      reason: "cross_module_defer",
+      targetModule: "military-state-machine",
+      metadata: {
+        heads: expect.objectContaining({
+          verifiedCmrHead: "head-449",
+        }),
       },
     });
   });

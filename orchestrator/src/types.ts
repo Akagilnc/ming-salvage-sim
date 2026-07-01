@@ -264,8 +264,12 @@ export type EscalationKind = "decision" | "failure";
 /**
  * Append-only human answer event for a paused decision escalation (#439).
  *
- * Minimal JSONL shape:
+ * Minimal JSONL shape for recording the answer:
  * `{ "step":"S4", "event":"escalation_answered", "forStep":"S4", "answer":"..." }`
+ * If the answer means "continue fixing" after an S4 no-progress decision, it is
+ * executable only when it also carries `findingIdentityKey` or a `findingScope`
+ * that matches the active finding; unscoped continue answers stay paused rather
+ * than guessing which finding to reopen.
  *
  * It intentionally remains a ledger row, not an edit to the prior S8 boundary.
  */

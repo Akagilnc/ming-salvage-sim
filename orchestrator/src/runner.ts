@@ -484,7 +484,7 @@ function isContinueFixingEntry(
     entry.output === undefined &&
     raw.verdict === undefined &&
     entry.intent === "continue_fixing" &&
-    isBookkeepingSource(entry.source) &&
+    isExecutableEscalationAnswerSource(entry.source) &&
     typeof entry.ts === "string" &&
     entry.ts.trim().length > 0 &&
     (entry.reason === undefined || typeof entry.reason === "string") &&

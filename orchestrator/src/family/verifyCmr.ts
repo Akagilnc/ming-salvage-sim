@@ -580,6 +580,15 @@ function familyCmrPassStopSummary(input: {
   });
 }
 
+function isMaterialCmrStopSummary(stopSummary: StopSummary): boolean {
+  if (stopSummary.reason !== "success") return true;
+  const metadata = stopSummary.metadata;
+  return (
+    (metadata?.acceptedSuppressions?.length ?? 0) > 0 ||
+    (metadata?.providerDegraded?.length ?? 0) > 0
+  );
+}
+
 function familyVerifyFailureStopSummary(reason: string): StopSummary {
   if (/MODULE_NOT_FOUND|Cannot find module/i.test(reason)) {
     return infraFailureStopSummary({
@@ -1518,8 +1527,7 @@ export async function runVerifyCmr(
       (entry) =>
         entry.status === "cmr_passed" &&
         entry.stopSummary !== undefined &&
-        (entry.stopSummary.reason !== "success" ||
-          entry.stopSummary.metadata !== undefined),
+        isMaterialCmrStopSummary(entry.stopSummary),
     )?.stopSummary;
   const shippedStopSummary =
     materialCmrSummary !== undefined

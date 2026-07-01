@@ -291,6 +291,31 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     );
   });
 
+  it("verify_failed ignores earlier success summaries when no aborted barrier row exists", async () => {
+    const familyBackend = new FakeFamilyBackend();
+    const result = await runFamily({
+      epic: {
+        ...epicWith(10),
+        admissionSkipped: [
+          {
+            issue: 12,
+            reason: "not_ready_for_agent",
+            message: "family admission skipped child #12: missing ready-for-agent label",
+          },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr: async (input) =>
+        input.phase === "final" ? { ok: false, ran: true } : { ok: true, ran: true },
+    });
+
+    expect(result.status).toBe("verify_failed");
+    expect(result.stopSummary.reason).toBe("infra_failure");
+    expect(result.stopSummary.summary).toMatch(/final verify\/cmr barrier failed/);
+  });
+
   it("FAIL-FAST: a red wave verify aborts the loop (no end-of-run call, no further waves)", async () => {
     const phases: string[] = [];
     // Two waves (11 blocked_by 10). The wave verify returns ok:false on the FIRST
