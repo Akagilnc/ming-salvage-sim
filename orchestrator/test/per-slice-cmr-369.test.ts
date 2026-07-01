@@ -1823,6 +1823,60 @@ describe("#369 finding identity and classification", () => {
     });
   });
 
+  it("fails closed when prior dispositions lack sourced accepted-suppression evidence", () => {
+    const priorDispositions = [
+      {
+        identityKey: findingIdentityKey(finding),
+        status: "wont_fix" as const,
+        reason: "legacy unsourced acceptance",
+        severity: "medium" as const,
+        reopenAttempts: 0,
+        disputeAttempts: 1,
+      },
+      {
+        identityKey: findingIdentityKey({
+          ...finding,
+          claim_quote: "legacy rejected finding",
+        }),
+        status: "rejected" as const,
+        reason: "legacy unsourced rejection",
+        severity: "medium" as const,
+        reopenAttempts: 0,
+        disputeAttempts: 1,
+      },
+      {
+        identityKey: findingIdentityKey({
+          ...finding,
+          claim_quote: "incomplete accepted suppression",
+        }),
+        status: "accepted_suppressed" as const,
+        reason: "missing source/scope/bounded reopen",
+        severity: "medium" as const,
+        reopenAttempts: 0,
+        disputeAttempts: 1,
+        source: "issue #448",
+      },
+    ];
+    const findings = [
+      { ...finding, action: "fix_now" as const },
+      {
+        ...finding,
+        claim_quote: "legacy rejected finding",
+        action: "fix_now" as const,
+      },
+      {
+        ...finding,
+        claim_quote: "incomplete accepted suppression",
+        action: "fix_now" as const,
+      },
+    ];
+
+    const classification = classifyFindings(findings, priorDispositions);
+
+    expect(classification.blocking).toEqual(findings);
+    expect(classification.deferred).toEqual([]);
+  });
+
   it("reopens a suppressed finding on severity upgrade but caps reopen attempts at four", () => {
     const classification = classifyFindings(
       [
@@ -1835,10 +1889,13 @@ describe("#369 finding identity and classification", () => {
       [
         {
           identityKey: findingIdentityKey(finding),
-          status: "wont_fix",
+          status: "accepted_suppressed",
           reason: "previously accepted risk",
           severity: "medium",
           reopenAttempts: 3,
+          source: "issue #448 acceptance criteria",
+          scope: "same finding identity",
+          boundedReopen: "reopen on severity upgrade",
         },
       ],
     );
@@ -1847,10 +1904,13 @@ describe("#369 finding identity and classification", () => {
     expect(classification.dispositions).toEqual([
       {
         identityKey: findingIdentityKey(finding),
-        status: "wont_fix",
+        status: "accepted_suppressed",
         reason: "previously accepted risk",
         severity: "high",
         reopenAttempts: 4,
+        source: "issue #448 acceptance criteria",
+        scope: "same finding identity",
+        boundedReopen: "reopen on severity upgrade",
       },
     ]);
 
@@ -1888,10 +1948,13 @@ describe("#369 finding identity and classification", () => {
       [
         {
           identityKey: findingIdentityKey(finding),
-          status: "wont_fix",
+          status: "accepted_suppressed",
           reason: "previously accepted risk",
           severity: "medium",
           reopenAttempts: 0,
+          source: "issue #448 acceptance criteria",
+          scope: "same finding identity",
+          boundedReopen: "reopen on same-severity dispute once",
         },
       ],
     );
@@ -1906,10 +1969,13 @@ describe("#369 finding identity and classification", () => {
     expect(disputed.dispositions).toEqual([
       {
         identityKey: findingIdentityKey(finding),
-        status: "wont_fix",
+        status: "accepted_suppressed",
         reason: "previously accepted risk",
         severity: "medium",
         reopenAttempts: 0,
+        source: "issue #448 acceptance criteria",
+        scope: "same finding identity",
+        boundedReopen: "reopen on same-severity dispute once",
         disputeAttempts: 1,
       },
     ]);
