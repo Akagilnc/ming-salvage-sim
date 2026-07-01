@@ -874,6 +874,45 @@ undeveloped_modules:
     });
   });
 
+  it("records a provider/auth CMR worker failure as provider_degraded, not infra_failure", async () => {
+    const backend = new CmrFindingBackend({
+      kind: "failed",
+      reason: "provider authentication failed for agy reviewer",
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/445-base",
+      familyBackend: backend,
+      familyIssue: 445,
+      moduleContext: {
+        currentModules: [],
+        childModules: [],
+      },
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatched).toEqual(["cmr"]);
+    expect(backend.ledger[0]).toMatchObject({
+      status: "aborted",
+      cmrPass: "completeness",
+      stopSummary: {
+        reason: "provider_degraded",
+        metadata: {
+          providerDegraded: [
+            expect.objectContaining({
+              provider: "agy",
+              leg: "agy",
+              reason: expect.stringContaining("provider authentication failed"),
+              blocking: true,
+              repairHint: expect.stringContaining("agy"),
+            }),
+          ],
+        },
+      },
+    });
+  });
+
   it("lets a declared cross-module CMR defer pass and records the classification in the ledger", async () => {
     const crossModuleFinding: Finding = {
       ...finding,

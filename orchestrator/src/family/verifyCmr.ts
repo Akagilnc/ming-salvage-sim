@@ -234,6 +234,49 @@ function providerDegradedFloorStopSummary(input: {
   };
 }
 
+function providerDegradedWorkerFailureStopSummary(input: {
+  readonly reason: string;
+  readonly resolvedRoute: ResolvedModelRoute;
+}): StopSummary | undefined {
+  if (
+    !/\b(provider|auth|authentication|quota|rate limit|transport)\b/i.test(
+      input.reason,
+    )
+  ) {
+    return undefined;
+  }
+  const normalizedReason = input.reason.toLowerCase();
+  const matchedLegs = input.resolvedRoute.legCollections.cmrReview.filter(
+    (leg) =>
+      normalizedReason.includes(leg.slug.toLowerCase()) ||
+      normalizedReason.includes(leg.family.toLowerCase()),
+  );
+  const providerDegraded =
+    matchedLegs.length > 0
+      ? matchedLegs.map((leg) => ({
+          provider: modelFamilyForCmrReviewLeg(leg.slug),
+          leg: leg.slug,
+          reason: input.reason,
+          blocking: true,
+          repairHint: `restore provider availability for ${leg.slug} and rerun the CMR gate`,
+        }))
+      : [
+          {
+            reason: input.reason,
+            blocking: true,
+            repairHint:
+              "restore the failing CMR provider transport/auth/quota path and rerun the gate",
+          },
+        ];
+  return {
+    reason: "provider_degraded",
+    summary: input.reason,
+    repairHint:
+      "restore provider authentication/quota/transport for the CMR worker and rerun",
+    metadata: { providerDegraded },
+  };
+}
+
 function providerDegradedPassStopSummary(input: {
   readonly familyHeadAfter?: string;
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
@@ -757,8 +800,13 @@ async function runIntegratedCmrPass(input: {
           ? `family integrated cmr ${pass} worker malformed: ${cmrResult.reason}`
           : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
     const stopSummary =
-      cmrResult.kind === "malformed" &&
-      cmrResult.cmrLegAccountingPayload !== undefined
+      cmrResult.kind === "failed"
+        ? providerDegradedWorkerFailureStopSummary({
+            reason,
+            resolvedRoute,
+          })
+        : cmrResult.kind === "malformed" &&
+            cmrResult.cmrLegAccountingPayload !== undefined
         ? legAccountingFailureStopSummary({
             reason,
             resolvedRoute,

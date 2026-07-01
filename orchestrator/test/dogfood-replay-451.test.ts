@@ -455,6 +455,29 @@ describe("#451 dogfood replay fixture", () => {
         mechanism: "accepted_suppressed_success_metadata",
       }),
     });
+    expect(rowsById.get("376-provider-degraded-blocking")).toMatchObject({
+      source: "family",
+      classification: "provider_degraded",
+      stopReason: "provider_degraded",
+      sourceStopSummary: expect.objectContaining({
+        reason: "provider_degraded",
+        metadata: expect.objectContaining({
+          providerDegraded: [
+            expect.objectContaining({
+              provider: "agy",
+              leg: "agy",
+              blocking: true,
+            }),
+          ],
+        }),
+      }),
+      sourceEvidence: expect.objectContaining({
+        seam: "family_verify_cmr_provider_worker_failure",
+        failedLeg: "agy",
+        status: "aborted",
+        dispatches: ["cmr:completeness"],
+      }),
+    });
     expect(rowsById.get("376-closure-context-missing")).toMatchObject({
       source: "runner",
       classification: "contract_drift",
