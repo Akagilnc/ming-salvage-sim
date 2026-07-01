@@ -733,25 +733,17 @@ describe("#449 verifyCmr family gate classification", () => {
     });
   });
 
-  it("populates declared undeveloped modules from fenced module YAML into the family gate context", async () => {
+  it("populates run-option undeveloped modules into the family gate context", async () => {
     const parsed = parseModuleDeclaration(`## Module Declaration
 \`\`\`yaml
 module: fiscal
 module_scope:
   - orchestrator/src/family
-undeveloped_modules:
-  - military-state-machine
 \`\`\`
 `);
     expect(parsed).toEqual({
       module: "fiscal",
       moduleScope: ["orchestrator/src/family"],
-      undevelopedModules: [
-        {
-          module: "military-state-machine",
-          moduleScope: ["military-state-machine"],
-        },
-      ],
     });
     const crossModuleFinding: Finding = {
       ...finding,
@@ -788,6 +780,13 @@ undeveloped_modules:
           source: "family_issue",
           issue: 445,
         },
+        undevelopedModules: [
+          {
+            module: "military-state-machine",
+            moduleScope: ["docs/military-state-machine.md"],
+            source: "run_option",
+          },
+        ],
       }),
     });
 
@@ -821,9 +820,8 @@ undeveloped_modules:
           undevelopedModules: [
             expect.objectContaining({
               module: "military-state-machine",
-              moduleScope: ["military-state-machine"],
-              source: "family_issue",
-              issue: 445,
+              moduleScope: ["docs/military-state-machine.md"],
+              source: "run_option",
             }),
           ],
         },

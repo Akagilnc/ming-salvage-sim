@@ -347,12 +347,13 @@ describe("#451 dogfood replay fixture", () => {
       proseIgnored: true,
     });
     expect(rowsById.get("287-family-attribution-child-before-parent")?.sourceEvidence).toMatchObject({
-      seam: "family_cmr_classification",
+      seam: "family_verify_cmr",
       attribution: {
         method: "child_module_scope",
         issue: 307,
         module: "orchestrator-runner",
       },
+      dispatches: ["cmr:completeness"],
     });
     expect(rowsById.get("287-correctness-r3-legacy-disposition")?.sourceEvidence).toMatchObject({
       seam: "family_verify_cmr",

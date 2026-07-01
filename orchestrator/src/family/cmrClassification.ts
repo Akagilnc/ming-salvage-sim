@@ -5,7 +5,6 @@ import type { Finding, FindingDisposition } from "../types.js";
 export interface ModuleDeclaration {
   readonly module: string;
   readonly moduleScope: ReadonlyArray<string>;
-  readonly undevelopedModules?: ReadonlyArray<ModuleDeclaration>;
 }
 
 export interface SourcedModuleDeclaration extends ModuleDeclaration {
@@ -46,23 +45,15 @@ export function buildFamilyModuleContext(input: {
   readonly childModules: ReadonlyArray<SourcedModuleDeclaration | undefined>;
   readonly familyModule?: SourcedModuleDeclaration;
   readonly runOptionModule?: SourcedModuleDeclaration;
+  readonly undevelopedModules?: ReadonlyArray<SourcedModuleDeclaration | undefined>;
 }): FamilyModuleContext {
   const childModules = input.childModules.filter(
     (decl): decl is SourcedModuleDeclaration => decl !== undefined,
   );
   const fallbackModule = input.familyModule ?? input.runOptionModule;
-  const undevelopedModules: SourcedModuleDeclaration[] = [];
-  for (const decl of [
-    ...childModules,
-    input.familyModule,
-    input.runOptionModule,
-  ]) {
-    if (decl === undefined) continue;
-    for (const module of decl.undevelopedModules ?? []) {
-      const sourced = sourcedModuleDeclaration(module, decl.source, decl.issue);
-      if (sourced !== undefined) undevelopedModules.push(sourced);
-    }
-  }
+  const undevelopedModules = (input.undevelopedModules ?? []).filter(
+    (decl): decl is SourcedModuleDeclaration => decl !== undefined,
+  );
   const currentModules =
     childModules.length > 0
       ? [
@@ -158,8 +149,7 @@ function unquoteScalar(value: string): string | undefined {
 function parseModuleDeclarationYaml(yaml: string): ModuleDeclaration | undefined {
   let moduleName: string | undefined;
   const moduleScope: string[] = [];
-  const undevelopedModules: ModuleDeclaration[] = [];
-  let listKey: "module_scope" | "undeveloped_modules" | undefined;
+  let inScope = false;
 
   for (const rawLine of yaml.split(/\r?\n/)) {
     const line = trimComment(rawLine);
@@ -168,41 +158,29 @@ function parseModuleDeclarationYaml(yaml: string): ModuleDeclaration | undefined
     const topLevel = /^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/.exec(line);
     if (topLevel !== null && !/^\s/.test(line)) {
       const [, key, rawValue] = topLevel;
-      if (
-        key !== "module" &&
-        key !== "module_scope" &&
-        key !== "undeveloped_modules"
-      ) return undefined;
+      if (key !== "module" && key !== "module_scope") return undefined;
       if (key === "module") {
         if (moduleName !== undefined) return undefined;
         moduleName = unquoteScalar(rawValue ?? "");
         if (moduleName === undefined || moduleName.length === 0) return undefined;
-        listKey = undefined;
+        inScope = false;
         continue;
       }
       if ((rawValue ?? "").trim().length > 0) return undefined;
-      listKey = key;
+      inScope = true;
       continue;
     }
 
-    if (listKey === undefined) return undefined;
+    if (!inScope) return undefined;
     const item = /^\s*-\s*(.+?)\s*$/.exec(line);
     if (item === null) return undefined;
-    const value = unquoteScalar(item[1] ?? "");
-    if (value === undefined || value.length === 0) return undefined;
-    if (listKey === "module_scope") {
-      moduleScope.push(value);
-    } else {
-      undevelopedModules.push({ module: value, moduleScope: [value] });
-    }
+    const scope = unquoteScalar(item[1] ?? "");
+    if (scope === undefined || scope.length === 0) return undefined;
+    moduleScope.push(scope);
   }
 
   if (moduleName === undefined) return undefined;
-  return {
-    module: moduleName,
-    moduleScope,
-    ...(undevelopedModules.length > 0 ? { undevelopedModules } : {}),
-  };
+  return { module: moduleName, moduleScope };
 }
 
 /**

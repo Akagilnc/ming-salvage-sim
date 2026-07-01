@@ -883,8 +883,6 @@ async function moduleDeclarationReplay(): Promise<SeamReplay> {
 module: orchestrator-family
 module_scope:
   - orchestrator/src/family
-undeveloped_modules:
-  - military-state-machine
 \`\`\`
 `);
   const prose = parseModuleDeclaration(
@@ -892,7 +890,6 @@ undeveloped_modules:
   );
   if (
     parsed === undefined ||
-    parsed.undevelopedModules?.[0]?.module !== "military-state-machine" ||
     prose !== undefined
   ) {
     throw new Error("dogfood module declaration replay did not exercise parser contract");
@@ -945,6 +942,13 @@ undeveloped_modules:
         source: "family_issue",
         issue: 287,
       },
+      undevelopedModules: [
+        {
+          module: "military-state-machine",
+          moduleScope: ["docs/military-state-machine.md"],
+          source: "run_option",
+        },
+      ],
     }),
   });
   const pass = backend.ledger.find(
@@ -962,36 +966,57 @@ undeveloped_modules:
       parserSeam: "module_declaration_parser",
       parsedModule: parsed.module,
       parsedScope: parsed.moduleScope,
-      undevelopedTargets: parsed.undevelopedModules.map((module) => module.module),
+      undevelopedTargets: ["military-state-machine"],
       proseIgnored: prose === undefined,
       dispatches: backend.dispatches,
     },
   };
 }
 
-function familyAttributionReplay(
+async function familyAttributionReplay(
   moduleContext: FamilyModuleContext,
-): SeamReplay {
+): Promise<SeamReplay> {
   const attributedFinding = finding({
     claim_quote: "child module finding must not fall back to the parent family module",
     location: "orchestrator/src/runner.ts:307",
     action: "fix_now",
   });
-  const classified = classifyFamilyCmrFindings({
+  const backend = new DogfoodCmrFamilyBackend("attribution-head", [], [
+    {
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: false,
+        reason: "child attribution must stay local",
+        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        findings: [attributedFinding],
+      },
+    },
+  ]);
+  const run = await runVerifyCmr({
+    phase: "final",
+    familyBase: "family/287-attribution",
+    familyBackend: backend,
     familyIssue: 287,
-    findings: [attributedFinding],
     moduleContext,
   });
-  const result = classified.results[0];
+  const abort = backend.ledger.find((entry) => entry.status === "aborted");
+  const result = abort?.cmrFindingClassification?.results[0];
   if (result?.attribution.method !== "child_module_scope") {
     throw new Error("dogfood family attribution replay did not hit child scope");
   }
+  if (run.ok || abort?.stopSummary === undefined) {
+    throw new Error("dogfood family attribution replay did not hit family gate");
+  }
   return {
-    stopSummary: successStopSummary(),
+    stopSummary: abort.stopSummary,
     sourceEvidence: {
-      seam: "family_cmr_classification",
+      seam: "family_verify_cmr",
       attribution: result.attribution,
       classification: result.classification,
+      dispatches: backend.dispatches,
     },
   };
 }
@@ -2132,7 +2157,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       },
     ],
   };
-  const familyAttributionSource = familyAttributionReplay(moduleContext);
+  const familyAttributionSource = await familyAttributionReplay(moduleContext);
   const sameModuleFinding = finding({
     claim_quote: "same-module CMR gap was incorrectly treated as defer",
     location: "orchestrator/src/family/verifyCmr.ts:42",
@@ -2334,7 +2359,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       title: "module declaration is accepted only from fenced YAML or run options",
       classification: "success",
       stopSummary: moduleDeclarationSource.stopSummary,
-      source: "family_cmr_classification",
+      source: "family",
       sourceStopSummary: moduleDeclarationSource.stopSummary,
       sourceEvidence: moduleDeclarationSource.sourceEvidence,
     }),
@@ -2342,9 +2367,9 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       id: "287-family-attribution-child-before-parent",
       issue: 287,
       title: "finding attribution uses child module before parent fallback",
-      classification: "success",
+      classification: "same_module_still_red",
       stopSummary: familyAttributionSource.stopSummary,
-      source: "family_cmr_classification",
+      source: "family",
       sourceStopSummary: familyAttributionSource.stopSummary,
       sourceEvidence: familyAttributionSource.sourceEvidence,
     }),
