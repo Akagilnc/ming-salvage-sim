@@ -796,6 +796,11 @@ def _apply_economy_list(
 
 def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, object]]:
     """月度财政 tick：固定收支（compute_budget_lines 定额）+ 军饷逐军 + 建筑逐项落账，LLM 推演前完成。"""
+    if not getattr(db.conn, "_commit_suspended", False):
+        from ming_sim.applier import atomic
+        with atomic(db):
+            return apply_fixed_period_flows(db, state)
+
     flows: List[Dict[str, object]] = []
 
     def _income(account: str, amount: int, category: str, reason: str) -> None:

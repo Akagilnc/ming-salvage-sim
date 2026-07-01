@@ -12,6 +12,7 @@
 """
 import json
 import sqlite3
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -277,6 +278,32 @@ def test_army_pay_source_spine_seed_splits_arrears_and_reconciles_tusi(fresh_db)
     assert log["actor"] == "system"
 
 
+def test_fresh_save_pay_source_prefers_content_army_fields(tmp_path):
+    content = GameContent.load()
+    content.armies["xuan_da"] = replace(
+        content.armies["xuan_da"],
+        pay_source_region="shandong",
+        province_pay_share=0.25,
+        central_pay_share=0.75,
+        is_tusi=0,
+        self_funded_pay=0,
+    )
+    db = GameDB(str(tmp_path / "pay-source-content.db"), content)
+    try:
+        db.seed_static_data()
+        row = db.conn.execute(
+            """
+            SELECT pay_source_region, province_pay_share, central_pay_share
+            FROM armies WHERE id = 'xuan_da'
+            """
+        ).fetchone()
+        assert row["pay_source_region"] == "shandong"
+        assert row["province_pay_share"] == pytest.approx(0.25)
+        assert row["central_pay_share"] == pytest.approx(0.75)
+    finally:
+        db.close()
+
+
 def test_province_tick_derives_due_and_allocates_province_arrears_by_pay_source(fresh_db):
     fresh_db.conn.execute(
         """
@@ -488,7 +515,7 @@ def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
         row["province_pay_arrears"] + row["central_pay_arrears"]
     )
     assert db.get_central_army_pay_arrears_container() == pytest.approx(3.5)
-    province_total, central_total, army_total = _non_self_funded_pay_arrears(db)
+    _province_total, central_total, army_total = _non_self_funded_pay_arrears(db)
     assert db.get_central_army_pay_arrears_container() == pytest.approx(central_total)
     assert _province_container_total(db) + db.get_central_army_pay_arrears_container() == pytest.approx(
         army_total
@@ -1183,6 +1210,82 @@ def test_region_army_pay_tick_treats_missing_breakdown_as_no_delta(fresh_db):
     assert after["province_pay_arrears"] == pytest.approx(before["province_pay_arrears"])
     assert after["arrears"] == pytest.approx(before["arrears"])
     assert after["morale"] == before["morale"]
+
+
+def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game, monkeypatch):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 2
+    db.save_state(state)
+    _set_all_settle_grants(db, 0)
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.execute(
+        """
+        UPDATE fiscal_config
+        SET value = 0
+        WHERE kind != 'meta'
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET tax_per_turn = 0,
+            fiscal = json_set(
+                fiscal, '$.huang_tian', 0, '$.liao_xiang', 0,
+                '$.salt_tax', 0, '$.commerce_tax', 0
+            )
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'shaanxi', province_pay_share = 0,
+            central_pay_share = 1, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0,
+            manpower = 5000, salary_rate = 10
+        WHERE id = 'guanning'
+        """
+    )
+    db.conn.commit()
+    before_balance = db.conn.execute(
+        "SELECT balance FROM economy_accounts WHERE account = '国库'"
+    ).fetchone()["balance"]
+
+    def fail_after_hub(*_args, **_kwargs):
+        raise RuntimeError("boom after hub")
+
+    monkeypatch.setattr(flows_mod, "_advance_province_fiscal_substrate", fail_after_hub)
+
+    with pytest.raises(RuntimeError, match="boom after hub"):
+        flows_mod.apply_fixed_period_flows(db, state)
+
+    ledger = db.conn.execute(
+        """
+        SELECT COALESCE(SUM(delta), 0) AS delta
+        FROM economy_ledger
+        WHERE category = '边饷hub'
+        """
+    ).fetchone()
+    army = db.conn.execute(
+        "SELECT central_pay_arrears, arrears FROM armies WHERE id = 'guanning'"
+    ).fetchone()
+    after_balance = db.conn.execute(
+        "SELECT balance FROM economy_accounts WHERE account = '国库'"
+    ).fetchone()["balance"]
+    assert ledger["delta"] == 0
+    assert army["central_pay_arrears"] == pytest.approx(0)
+    assert army["arrears"] == pytest.approx(0)
+    assert after_balance == before_balance
 
 
 def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
