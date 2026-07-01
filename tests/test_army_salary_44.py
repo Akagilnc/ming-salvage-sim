@@ -236,6 +236,23 @@ def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
     assert row["arrears"] == pytest.approx(10)
 
 
+def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
+    from ming_sim.flows import _auto_pay_arrears_by_priority
+    db, state, _ = game
+    aid = str(db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (aid,))
+    db.conn.commit()
+
+    spent = _auto_pay_arrears_by_priority(
+        db, state, "国库", 5, "补饷", "空白范围补饷", allowed_army_ids=[f" {aid} "]
+    )
+    row = _army_row(db, aid)
+    assert spent > 0
+    assert row["arrears"] < 10
+
+
 def test_coerce_new_salary_rate_blocks_freeload():
     # cmr r3 codex medium: 新军 salary_rate 健壮解析——负/非数/bool/0/None → 锚点 1.5（防免费军白嫖）。
     # 原 `or 1.5` 漏负值：-1 经 army_needed(rate<=0→0) 成免费军，绕过 #44 防白嫖。
