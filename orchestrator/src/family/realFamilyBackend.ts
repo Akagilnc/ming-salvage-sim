@@ -74,9 +74,6 @@ import { runExclusive } from "../gitMutex.js";
 import {
   agentForSlug,
   branchForIssue,
-  extractCoderTag,
-  realCommitCount,
-  reconcileCoderCommits,
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_REPO_ENV,
@@ -87,11 +84,7 @@ import {
   modelFamilyForSlug,
 } from "../realBackend.js";
 import { cmrLegAccountingFailure, cmrReviewLegs, modelForSlot } from "../modelRoutes.js";
-import {
-  cmrWorkerSpec,
-  familyShipWorkerSpec,
-  legacyDispatchFamilyWorker,
-} from "./dispatchFamilyWorker.js";
+import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import { recordFamilyEscalated } from "./ledger.js";
 import {
   isFilledString,

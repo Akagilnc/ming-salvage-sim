@@ -496,10 +496,6 @@ function readSubIssueAdmission(epicIssue: number, repo: string, sh: Sh): SubIssu
   return admission;
 }
 
-function readChildNumbers(epicIssue: number, repo: string, sh: Sh): number[] {
-  return [...readSubIssueAdmission(epicIssue, repo, sh).admitted];
-}
-
 function admissionSkippedChildren(
   admission: SubIssueAdmission,
 ): ReadonlyArray<FamilyAdmissionSkippedChild> {

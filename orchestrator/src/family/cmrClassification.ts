@@ -129,7 +129,7 @@ export interface FamilyCmrClassification {
   readonly moduleContext: FamilyModuleContextSnapshot;
 }
 
-const MODULE_DECLARATION_HEADING = /^##\s+Module Declaration\s*$/im;
+const MODULE_DECLARATION_HEADING = /^##\s+Module Declaration\s*$/gim;
 
 function trimComment(line: string): string {
   const hash = line.indexOf("#");
@@ -195,7 +195,7 @@ function parseModuleDeclarationYaml(yaml: string): ModuleDeclaration | undefined
  * outside the exact `## Module Declaration` section.
  */
 export function parseModuleDeclaration(body: string): ModuleDeclaration | undefined {
-  const headings = [...body.matchAll(/^##\s+Module Declaration\s*$/gim)];
+  const headings = [...body.matchAll(MODULE_DECLARATION_HEADING)];
   if (headings.length !== 1) return undefined;
   const heading = headings[0];
   if (heading.index === undefined) return undefined;
