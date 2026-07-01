@@ -1266,40 +1266,47 @@ export async function runVerifyCmr(
   // bump / PR attempt). Writing a `shipped` ledger entry makes the delivery durable
   // resume truth: the spine's `familyAlreadyShipped` guard short-circuits the barrier
   // only when the current family HEAD still equals this shipped head.
+  const shippedHeadsSummary = {
+    reportedFamilyHead: ship.prHead,
+    actualFamilyHead: exactPostShipFamilyHead,
+    ...(cmrPassedFamilyHeadAfter !== undefined
+      ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+      : {}),
+    sources: {
+      reportedFamilyHead: "ship worker reported prHead",
+      actualFamilyHead: "family head after ship worker",
+      verifiedCmrHead: "latest cmr_passed ledger row",
+    },
+  };
+  const shippedSuccessSummary = successStopSummary({
+    heads: shippedHeadsSummary,
+    ...(ship.degradedReviews !== undefined && ship.degradedReviews.length > 0
+      ? { providerDegraded: ship.degradedReviews }
+      : {}),
+  });
+  const materialCmrSummary = [...(await familyBackend.readFamilyLedger())]
+    .reverse()
+    .find(
+      (entry) =>
+        entry.status === "cmr_passed" &&
+        entry.stopSummary !== undefined &&
+        (entry.stopSummary.reason !== "success" ||
+          entry.stopSummary.metadata !== undefined),
+    )?.stopSummary;
+  const shippedStopSummary =
+    materialCmrSummary !== undefined
+      ? {
+          ...materialCmrSummary,
+          metadata: {
+            ...(materialCmrSummary.metadata ?? {}),
+            ...(shippedSuccessSummary.metadata ?? {}),
+          },
+        }
+      : shippedSuccessSummary;
   await recordShipped(familyBackend, {
     pr: ship.pr,
     familyHeadAfter: exactPostShipFamilyHead,
-    stopSummary:
-      ship.degradedReviews !== undefined && ship.degradedReviews.length > 0
-        ? successStopSummary({
-            heads: {
-              reportedFamilyHead: ship.prHead,
-              actualFamilyHead: exactPostShipFamilyHead,
-              ...(cmrPassedFamilyHeadAfter !== undefined
-                ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
-                : {}),
-              sources: {
-                reportedFamilyHead: "ship worker reported prHead",
-                actualFamilyHead: "family head after ship worker",
-                verifiedCmrHead: "latest cmr_passed ledger row",
-              },
-            },
-            providerDegraded: ship.degradedReviews,
-          })
-        : successStopSummary({
-            heads: {
-              reportedFamilyHead: ship.prHead,
-              actualFamilyHead: exactPostShipFamilyHead,
-              ...(cmrPassedFamilyHeadAfter !== undefined
-                ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
-                : {}),
-              sources: {
-                reportedFamilyHead: "ship worker reported prHead",
-                actualFamilyHead: "family head after ship worker",
-                verifiedCmrHead: "latest cmr_passed ledger row",
-              },
-            },
-          }),
+    stopSummary: shippedStopSummary,
   });
   return { ok: true, ran: true };
 }

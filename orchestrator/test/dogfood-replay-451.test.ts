@@ -97,8 +97,16 @@ describe("#451 dogfood replay fixture", () => {
         expect.objectContaining({
           id: "family-admission-non-runnable-child",
           issue: 451,
-          classification: "owning_issue_still_red",
-          stopReason: "owning_issue_still_red",
+          classification: "success",
+          stopReason: "success",
+          metadata: expect.objectContaining({
+            admissionSkipped: [
+              expect.objectContaining({
+                issue: 451,
+                reason: "missing-ready-for-agent",
+              }),
+            ],
+          }),
           sourceStopSummary: expect.objectContaining({
             reason: "success",
             metadata: expect.objectContaining({
