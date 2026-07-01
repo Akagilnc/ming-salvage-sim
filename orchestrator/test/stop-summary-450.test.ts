@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  providerDegradedStopSummary,
   stopReasonForFindingDisposition,
   successStopSummary,
 } from "../src/stopSummary.js";
@@ -78,6 +79,52 @@ describe("stop summary vocabulary (#450)", () => {
             scope: "issue #450",
             findingIdentity: "correctness:src/x.ts:1",
             boundedReopen: "reopen if it appears in the same module again",
+          },
+        ],
+      },
+    });
+  });
+
+  it("maps provider degradation to success metadata or a blocking stop reason", () => {
+    expect(
+      providerDegradedStopSummary({
+        provider: "agy",
+        leg: "agy",
+        reason: "quota unavailable",
+        blocking: false,
+      }),
+    ).toMatchObject({
+      reason: "success",
+      metadata: {
+        providerDegraded: [
+          {
+            provider: "agy",
+            leg: "agy",
+            reason: "quota unavailable",
+            blocking: false,
+          },
+        ],
+      },
+    });
+
+    expect(
+      providerDegradedStopSummary({
+        provider: "agy",
+        leg: "agy",
+        reason: "quota unavailable",
+        blocking: true,
+      }),
+    ).toMatchObject({
+      reason: "provider_degraded",
+      summary: "quota unavailable",
+      repairHint: "restore the required provider leg and rerun",
+      metadata: {
+        providerDegraded: [
+          {
+            provider: "agy",
+            leg: "agy",
+            reason: "quota unavailable",
+            blocking: true,
           },
         ],
       },

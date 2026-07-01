@@ -47,7 +47,6 @@ import { reconcileFamilyLedger } from "./reconcile.js";
 import { runVerifyCmr } from "./verifyCmr.js";
 import { buildFamilyModuleContext } from "./cmrClassification.js";
 import {
-  contractDriftStopSummary,
   infraFailureStopSummary,
   successStopSummary,
   type StopSummary,
@@ -274,13 +273,6 @@ function latestVerifiedCmrHead(
     }
   }
   return undefined;
-}
-
-function pendingPriorCmrFindingIdentityKeys(
-  ledger: ReadonlyArray<FamilyLedgerEntry>,
-): ReadonlyArray<string> {
-  const byPass = pendingPriorCmrFindingIdentityKeysByPass(ledger);
-  return [...(byPass.completeness ?? []), ...(byPass.correctness ?? [])];
 }
 
 function pendingPriorCmrFindingIdentityKeysByPass(

@@ -101,14 +101,9 @@ export {
   type ModelProviderFactory,
   type ModelSlugRegistryEntry,
 };
-import {
-  legacyDispatchWorker,
-  SHIP_PROMPT_FILE,
-  shipWorkerSpec,
-} from "./dispatchWorker.js";
+import { legacyDispatchWorker, SHIP_PROMPT_FILE } from "./dispatchWorker.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
-  SHIP_COMPLETION_SIGNAL,
   shipOutcomeFromResult,
   type ShipWorkerOutcome,
 } from "./shipOutcome.js";

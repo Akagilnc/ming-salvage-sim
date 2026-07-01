@@ -1,6 +1,5 @@
 import {
   buildFamilyModuleContext,
-  classifyFamilyCmrFindings,
   parseModuleDeclaration,
   type FamilyCmrFindingClassification,
   type FamilyModuleContext,
@@ -28,10 +27,6 @@ import {
 } from "./modelRoutes.js";
 import { runOrchestrator } from "./runner.js";
 import {
-  contractDriftStopSummary,
-  infraFailureStopSummary,
-  stopReasonForFindingDisposition,
-  successStopSummary,
   type StopReason,
   type StopSummary,
 } from "./stopSummary.js";
@@ -91,6 +86,8 @@ const BASE_FINDING: Finding = {
   suggested_fix: "classify the replay through the runner/family seam",
   action: "fix_now",
 };
+
+const DEFAULT_SUCCESSFUL_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
 
 function scenario(input: {
   readonly id: string;
@@ -165,7 +162,7 @@ async function familyClassificationScenario(input: {
       kind: "cmr",
       converged: false,
       reason: "dogfood family CMR classification replay",
-      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
       findings: [input.finding],
@@ -493,7 +490,7 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
         },
@@ -906,7 +903,7 @@ module_scope:
       kind: "cmr",
       converged: false,
       reason: "only declared cross-module follow-up remains",
-      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
       findings: [crossModuleFinding],
@@ -985,7 +982,7 @@ async function familyAttributionReplay(
         kind: "cmr",
         converged: false,
         reason: "child attribution must stay local",
-        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         findings: [attributedFinding],
@@ -1020,7 +1017,7 @@ async function familyAttributionReplay(
           kind: "cmr",
           converged: false,
           reason: "child attribution must stay local",
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           findings: [attributedFinding],
@@ -1036,7 +1033,7 @@ async function legacyDispositionParserReplay(): Promise<SeamReplay> {
   const outcomeText =
     `<cmr>${JSON.stringify({
       converged: true,
-      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [identityKey],
       priorFindingDispositions: [
         { identityKey, disposition: "verified-closed" },
@@ -1067,7 +1064,7 @@ async function legacyDispositionParserReplay(): Promise<SeamReplay> {
       output: {
         kind: "cmr",
         converged: true,
-        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
         claimedFixedFindingIdentityKeys: [identityKey],
         priorFindingDispositions: [
           { identityKey, status: "verified-closed" },
@@ -1116,7 +1113,7 @@ async function finalLegacyDispositionReplay(): Promise<SeamReplay> {
     "correctness|orchestrator/src/family/verifyCmr.ts:1|final legacy disposition";
   const rawFinalCmr = `<cmr>${JSON.stringify({
     converged: true,
-    successfulLegs: ["opus", "gpt-5.5", "agy"],
+    successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
     claimedFixedFindingIdentityKeys: [identityKey],
     priorFindingDispositions: [
       { identityKey, disposition: "verified-closed" },
@@ -1136,7 +1133,7 @@ async function finalLegacyDispositionReplay(): Promise<SeamReplay> {
       output: {
         kind: "cmr",
         converged: true,
-        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
         claimedFixedFindingIdentityKeys: [identityKey],
         priorFindingDispositions: [
           { identityKey, status: "verified-closed" },
@@ -1501,7 +1498,7 @@ function cmrClosureWorkerResult(input: {
     output: {
       kind: "cmr",
       converged: true,
-      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: input.claimedFixedFindingIdentityKeys,
       priorFindingDispositions: input.priorFindingDispositions,
     },
@@ -1711,7 +1708,7 @@ async function familyAcceptedSuppressionSummaryReplay(input: {
       kind: "cmr",
       converged: false,
       reason: "only accepted suppressions remain",
-      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
       findings: [input.finding],
@@ -1946,7 +1943,7 @@ async function familyShipMalformedAfterCmrReplay(): Promise<SeamReplay> {
     output: {
       kind: "cmr",
       converged: true,
-      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
     },
@@ -2019,7 +2016,7 @@ async function familyShipReviewDegradedReplay(): Promise<SeamReplay> {
     output: {
       kind: "cmr",
       converged: true,
-      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
     },

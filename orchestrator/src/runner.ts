@@ -79,7 +79,6 @@ import {
 } from "./stopSummary.js";
 import type {
   Backend,
-  CoderOutput,
   ContinueFixingEvent,
   ErrorPackage,
   Escalation,

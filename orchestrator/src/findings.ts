@@ -68,10 +68,6 @@ function isAcceptedSuppression(
   return disposition?.kind === "accepted_suppressed";
 }
 
-function isFilledString(value: string | undefined): value is string {
-  return value !== undefined && value.trim().length > 0;
-}
-
 function isSourcedAcceptedSuppression(
   disposition: FindingDisposition | undefined,
 ): disposition is FindingDisposition & {

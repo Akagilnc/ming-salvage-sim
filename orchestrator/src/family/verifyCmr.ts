@@ -535,14 +535,7 @@ function familyCmrPassStopSummary(input: {
     });
   }
   const acceptedSuppressions = input.classification?.dispositions
-    .filter(
-      (disposition) =>
-        disposition.status === "accepted_suppressed" &&
-        isFilledString(disposition.source) &&
-        isFilledString(disposition.scope) &&
-        isFilledString(disposition.reason) &&
-        isFilledString(disposition.boundedReopen),
-    )
+    .filter(hasAcceptedSuppressionAuthority)
     .map((disposition) => ({
       source: disposition.source!,
       scope: disposition.scope!,
