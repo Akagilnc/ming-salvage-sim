@@ -5037,6 +5037,11 @@ class GameDB:
                             "issue_strict": not isinstance(value, (bool, float)),
                         })
                         continue
+                current_row = self.conn.execute(
+                    "SELECT * FROM armies WHERE id = ?", (army_id,)
+                ).fetchone()
+                if current_row is not None:
+                    row = current_row
                 old_value = row[field]
                 if field == "arrears":
                     if self.is_army_pay_source_cutover_enabled():
@@ -5061,6 +5066,15 @@ class GameDB:
                                 "army": row["name"], "field": field,
                                 "rejected": True, "category": "invalid_enum",
                                 "reason": "army_delta.arrears 不接受自养/非明军加欠；双累加器恒为 0",
+                                "item": {"army_id": army_id, "field": field, "value": value},
+                                "issue_strict": False,
+                            })
+                            continue
+                        if int(row["manpower"] or 0) <= 0:
+                            changes.append({
+                                "army": row["name"], "field": field,
+                                "rejected": True, "category": "invalid_enum",
+                                "reason": "army_delta.arrears 不接受零兵军队加欠；兵力归零欠饷已核销",
                                 "item": {"army_id": army_id, "field": field, "value": value},
                                 "issue_strict": False,
                             })

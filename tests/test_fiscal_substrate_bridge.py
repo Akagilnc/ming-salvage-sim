@@ -2446,6 +2446,49 @@ def test_manpower_zero_writeoffs_pay_source_arrears_before_retiring_army(fresh_d
     )
 
 
+def test_manpower_zero_then_arrears_delta_does_not_resurrect_writeoff_debt(fresh_db):
+    state = fresh_db.load_state()
+    event = SimpleNamespace(id="test", title="陕西边军覆没")
+    fresh_db.conn.execute(
+        """
+        UPDATE armies
+        SET manpower = 1000,
+            province_pay_arrears = 6,
+            central_pay_arrears = 4,
+            arrears = 10
+        WHERE id = 'shaanxi_army'
+        """
+    )
+    fresh_db._reconcile_army_pay_source_region_container("shaanxi")
+    fresh_db._reconcile_central_army_pay_arrears_container()
+
+    changes = fresh_db.apply_army_deltas(
+        state,
+        event,
+        None,
+        "测试",
+        {"shaanxi_army": {"manpower": -9999, "arrears": 10, "reason": "全军覆没后误加欠饷"}},
+        commit=False,
+    )
+
+    row = fresh_db.conn.execute(
+        """
+        SELECT manpower, arrears, province_pay_arrears, central_pay_arrears
+        FROM armies
+        WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    assert row["manpower"] == 0
+    assert row["province_pay_arrears"] == pytest.approx(0)
+    assert row["central_pay_arrears"] == pytest.approx(0)
+    assert row["arrears"] == pytest.approx(0)
+    assert not any(change["field"] == "arrears" and not change.get("rejected") for change in changes)
+    assert _province_pay_arrears(fresh_db, "shaanxi") == pytest.approx(0)
+    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+        _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
+    )
+
+
 def test_new_ming_army_requires_valid_pay_source_under_cutover(fresh_db):
     state = fresh_db.load_state()
 
