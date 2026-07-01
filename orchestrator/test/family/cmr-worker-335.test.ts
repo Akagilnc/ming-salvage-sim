@@ -59,6 +59,7 @@ import {
   SPAWNED_WORKER_ENV,
 } from "../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
+import { cmrLegAccountingFailure } from "../../src/modelRoutes.js";
 import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
 import type { DispatchContext, WorkerSpec } from "../../src/types.js";
 
@@ -476,6 +477,21 @@ describe("integrated CMR pass prompt closure contract", () => {
       expect(prompt).toContain("claimedFixedFindingIdentityKeys");
       expect(prompt).toContain("priorFindingDispositions");
       expect(prompt).toMatch(/empty arrays/i);
+    });
+
+    it(`${promptName} not-converged example accounts for every declared leg`, () => {
+      const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
+      const examples = [...prompt.matchAll(/<cmr>(\{[^\n]*"converged": false[^\n]*\})<\/cmr>/g)];
+
+      expect(examples.length).toBeGreaterThan(0);
+      for (const [, rawJson] of examples) {
+        const output = JSON.parse(rawJson) as {
+          readonly successfulLegs: readonly string[];
+          readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+        };
+
+        expect(cmrLegAccountingFailure(output)).toBeUndefined();
+      }
     });
   }
 });

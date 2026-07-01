@@ -44,6 +44,7 @@ import {
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import { runVerifyCmr } from "./verifyCmr.js";
+import { buildFamilyModuleContext } from "./cmrClassification.js";
 import type {
   ChildSlice,
   FamilyBackend,
@@ -250,6 +251,15 @@ export async function runFamily(
   // admission per `assertExternalBlockersCleared`, online R1 #1 — NOT relied upon at
   // S0). Invariant for the run (epic.children is fixed), so computed once.
   const familyChildIssues = new Set(epic.children.map((c) => c.issue));
+  const moduleContext = buildFamilyModuleContext({
+    childModules: epic.children.map((child) => child.moduleDeclaration),
+    familyModule: epic.moduleDeclaration,
+    runOptionModule: input.moduleDeclaration,
+  });
+  const declaredModuleContext =
+    moduleContext.currentModules.length > 0 || moduleContext.childModules.length > 0
+      ? moduleContext
+      : undefined;
   // The verify-cmr hook: the injected impl (#296 / tests) or the #293 no-op module
   // default. The spine's call sites + fail-fast on `ok===false` are identical
   // either way (ADR 0022 decision 3④/⑤/⑥; acceptance-4 seam boundary).
@@ -480,6 +490,10 @@ export async function runFamily(
       // (reconcile's baseline read covers the abort). `familyHead` is the head after
       // this wave's last merge — undefined only if nothing merged this run.
       familyHeadAfter: familyHead,
+      familyIssue: epic.issue,
+      ...(declaredModuleContext !== undefined
+        ? { moduleContext: declaredModuleContext }
+        : {}),
     });
     if (!waveVerify.ok) {
       // Fail-fast (decision 3④): do not排下一波. #296's red wave lands here; the
@@ -592,6 +606,10 @@ export async function runFamily(
     ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     // #291 缺口 2: the abort-time head for a RED final verify's durable aborted entry.
     familyHeadAfter: familyHead,
+    familyIssue: epic.issue,
+    ...(declaredModuleContext !== undefined
+      ? { moduleContext: declaredModuleContext }
+      : {}),
   });
   if (!finalVerify.ok) {
     // #296's failing integrated cmr lands here. #293 no-op never trips it. The

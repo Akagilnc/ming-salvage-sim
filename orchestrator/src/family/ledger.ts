@@ -19,6 +19,7 @@
  */
 
 import type { EscalationAnswerPayload, EscalationKind } from "../types.js";
+import type { FamilyCmrClassification } from "./cmrClassification.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -67,6 +68,8 @@ export interface AbortedRecord {
   readonly reason?: string;
   /** The family base HEAD at the time the barrier failed (for triage + baseline). */
   readonly familyHeadAfter?: string;
+  /** Family CMR finding classification audit trail (#449). */
+  readonly cmrFindingClassification?: FamilyCmrClassification;
 }
 
 /**
@@ -90,6 +93,8 @@ export interface CmrPassedRecord {
   readonly familyHeadAfter?: string;
   /** Resolved route fingerprint for the CMR worker and declared review legs. */
   readonly routeFingerprint?: string;
+  /** Family CMR finding classification audit trail (#449). */
+  readonly cmrFindingClassification?: FamilyCmrClassification;
 }
 
 /** A PHASE-LEVEL family escalation marker (#439). */
@@ -178,6 +183,7 @@ export async function recordAborted(
       cmrPass: record.cmrPass,
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
+      cmrFindingClassification: record.cmrFindingClassification,
     }) as FamilyLedgerEntry,
   );
 }
@@ -195,6 +201,7 @@ export async function recordCmrPassed(
       cmrPass: record.cmrPass,
       familyHeadAfter: record.familyHeadAfter,
       routeFingerprint: record.routeFingerprint,
+      cmrFindingClassification: record.cmrFindingClassification,
     }) as FamilyLedgerEntry,
   );
 }
