@@ -145,6 +145,10 @@ export interface VerifyCmrInput {
    * claims keys outside it, the family gate fails closed.
    */
   readonly priorCmrFindingIdentityKeys?: readonly string[];
+  /** Pass-scoped prior finding identity keys; preferred over the legacy flat set. */
+  readonly priorCmrFindingIdentityKeysByPass?: Partial<
+    Record<IntegratedCmrPass, readonly string[]>
+  >;
 }
 
 /** The verify-cmr hook result. */
@@ -659,8 +663,36 @@ function legAccountingFailureStopSummary(input: {
   });
 }
 
+function trustedAcceptedSuppressionDisposition(
+  disposition: {
+    readonly identityKey: string;
+    readonly status: string;
+    readonly reason?: string;
+    readonly source?: string;
+    readonly scope?: string;
+    readonly boundedReopen?: string;
+  },
+  moduleContext: FamilyModuleContext | undefined,
+): boolean {
+  if (
+    disposition.status !== "accepted_suppressed" ||
+    !hasAcceptedSuppressionAuthority(disposition)
+  ) {
+    return false;
+  }
+  return (moduleContext?.acceptedSuppressionSources ?? []).some(
+    (source) =>
+      source.source === disposition.source &&
+      source.scope === disposition.scope &&
+      source.reason === disposition.reason &&
+      source.boundedReopen === disposition.boundedReopen &&
+      source.findingIdentity === disposition.identityKey,
+  );
+}
+
 function cmrClosureFailureReason(input: {
   readonly pass: IntegratedCmrPass;
+  readonly moduleContext?: FamilyModuleContext;
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   readonly protectedPriorFindingIdentityKeys?: readonly string[];
   readonly priorFindingDispositions?: readonly {
@@ -714,7 +746,7 @@ function cmrClosureFailureReason(input: {
     .filter(
       (disposition) =>
         disposition.status === "accepted_suppressed" &&
-        !hasAcceptedSuppressionAuthority(disposition),
+        !trustedAcceptedSuppressionDisposition(disposition, input.moduleContext),
     )
     .map((disposition) => disposition.identityKey);
   if (malformedAcceptedSuppressions.length > 0) {
@@ -727,7 +759,10 @@ function cmrClosureFailureReason(input: {
     .filter(
       (disposition) =>
         disposition.status !== "verified-closed" &&
-        disposition.status !== "accepted_suppressed",
+        !(
+          disposition.status === "accepted_suppressed" &&
+          trustedAcceptedSuppressionDisposition(disposition, input.moduleContext)
+        ),
     )
     .map((disposition) => disposition.identityKey);
   if (stillOpen.length > 0) {
@@ -1062,6 +1097,7 @@ async function runIntegratedCmrPass(input: {
   }
   const closureFailure = cmrClosureFailureReason({
     pass,
+    moduleContext,
     claimedFixedFindingIdentityKeys:
       cmrResult.output.claimedFixedFindingIdentityKeys,
     protectedPriorFindingIdentityKeys: priorCmrFindingIdentityKeys,
@@ -1119,6 +1155,7 @@ export async function runVerifyCmr(
     familyIssue,
     moduleContext,
     priorCmrFindingIdentityKeys,
+    priorCmrFindingIdentityKeysByPass,
   } = input;
 
   // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
@@ -1199,6 +1236,10 @@ export async function runVerifyCmr(
   // #419: Step5 completeness and Step6 correctness are two runner-dispatched
   // CMR worker passes. Correctness is structurally unreachable unless the
   // completeness worker returns a green terminal verdict.
+  const priorKeysForPass = (
+    pass: IntegratedCmrPass,
+  ): readonly string[] | undefined =>
+    priorCmrFindingIdentityKeysByPass?.[pass] ?? priorCmrFindingIdentityKeys;
   const completeness = await runIntegratedCmrPass({
     pass: "completeness",
     familyBackend,
@@ -1208,7 +1249,7 @@ export async function runVerifyCmr(
     familyHeadAfter,
     familyIssue,
     moduleContext,
-    priorCmrFindingIdentityKeys,
+    priorCmrFindingIdentityKeys: priorKeysForPass("completeness"),
     resolvedRoute,
   });
   if (!completeness.result.ok) return completeness.result;
@@ -1222,7 +1263,7 @@ export async function runVerifyCmr(
     familyHeadAfter: completeness.familyHeadAfter,
     familyIssue,
     moduleContext,
-    priorCmrFindingIdentityKeys,
+    priorCmrFindingIdentityKeys: priorKeysForPass("correctness"),
     resolvedRoute,
   });
   if (!correctness.result.ok) return correctness.result;
