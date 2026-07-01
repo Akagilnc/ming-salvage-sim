@@ -55,7 +55,7 @@ describe("#451 dogfood replay fixture", () => {
           issue: 376,
           classification: "provider_degraded",
           stopReason: "success",
-          metadata: {
+          metadata: expect.objectContaining({
             providerDegraded: [
               expect.objectContaining({
                 provider: "agy",
@@ -63,7 +63,7 @@ describe("#451 dogfood replay fixture", () => {
                 blocking: false,
               }),
             ],
-          },
+          }),
         }),
         expect.objectContaining({
           id: "440-agent-brief-spec-conflict",

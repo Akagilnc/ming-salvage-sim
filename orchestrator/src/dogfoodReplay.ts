@@ -1879,18 +1879,15 @@ async function providerStrongLegPassReplay(): Promise<SeamReplay> {
   if (!result.ok) {
     throw new Error("dogfood provider strong-leg replay did not pass");
   }
+  const pass = backend.ledger.find(
+    (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
+  );
+  const providerDegraded = pass?.stopSummary?.metadata?.providerDegraded?.[0];
+  if (pass?.stopSummary?.reason !== "success" || providerDegraded === undefined) {
+    throw new Error("dogfood provider strong-leg replay lost ledger metadata");
+  }
   return {
-    stopSummary: successStopSummary({
-      providerDegraded: [
-        {
-          provider: "agy",
-          leg: "agy",
-          reason: "provider quota unavailable",
-          blocking: false,
-          repairHint: "restore provider quota before selecting this route as required",
-        },
-      ],
-    }),
+    stopSummary: pass.stopSummary,
     sourceEvidence: {
       seam: "family_verify_cmr_provider_metadata",
       status: "success",
@@ -1898,6 +1895,7 @@ async function providerStrongLegPassReplay(): Promise<SeamReplay> {
       dispatches: backend.dispatches,
       successfulLegs: ["gpt-5.5"],
       skippedLegs: ["agy"],
+      providerDegraded,
     },
   };
 }

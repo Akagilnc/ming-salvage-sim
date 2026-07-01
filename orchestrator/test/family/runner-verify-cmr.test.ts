@@ -116,6 +116,48 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(result.failedPhase).toBeUndefined();
   });
 
+  it("passes run-option undeveloped modules into the final CMR module context", async () => {
+    const calls: VerifyCmrInput[] = [];
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      calls.push(input);
+      return { ok: true, ran: false };
+    };
+
+    await runFamily({
+      epic: {
+        issue: 293,
+        moduleDeclaration: {
+          module: "orchestrator-family",
+          moduleScope: ["orchestrator/src/family"],
+          source: "family_issue",
+          issue: 293,
+        },
+        children: [{ issue: 10, blockedBy: [] }],
+      },
+      familyBackend: new FakeFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      undevelopedModules: [
+        {
+          module: "military-state-machine",
+          moduleScope: ["docs/military-state-machine.md"],
+          source: "run_option",
+        },
+      ],
+      verifyCmr,
+    });
+
+    expect(calls.at(-1)?.moduleContext).toMatchObject({
+      undevelopedModules: [
+        {
+          module: "military-state-machine",
+          moduleScope: ["docs/military-state-machine.md"],
+          source: "run_option",
+        },
+      ],
+    });
+  });
+
   it("keeps production admission skips visible in the success stop summary", async () => {
     const familyBackend = new FakeFamilyBackend();
     const result = await runFamily({

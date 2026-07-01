@@ -499,6 +499,7 @@ export async function runFamily(
     childModules: epic.children.map((child) => child.moduleDeclaration),
     familyModule: epic.moduleDeclaration,
     runOptionModule: input.moduleDeclaration,
+    undevelopedModules: input.undevelopedModules,
   });
   const declaredModuleContext =
     moduleContext.currentModules.length > 0 || moduleContext.childModules.length > 0
