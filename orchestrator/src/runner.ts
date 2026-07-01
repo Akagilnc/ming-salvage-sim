@@ -279,7 +279,12 @@ function isEscalationAnswerEntry(
     isValidStepId(entry.forStep) &&
     typeof entry.answer === "string" &&
     entry.answer.trim().length > 0 &&
-    (entry.note === undefined || typeof entry.note === "string")
+    (entry.note === undefined || typeof entry.note === "string") &&
+    (entry.source === undefined || isBookkeepingSource(entry.source)) &&
+    (entry.findingIdentityKey === undefined ||
+      typeof entry.findingIdentityKey === "string") &&
+    (entry.findingScope === undefined ||
+      typeof entry.findingScope === "object")
   );
 }
 
@@ -292,6 +297,12 @@ function answerPayload(
     answer: entry.answer,
     ...(entry.note !== undefined ? { note: entry.note } : {}),
     ...(entry.source !== undefined ? { source: entry.source } : {}),
+    ...(entry.findingIdentityKey !== undefined
+      ? { findingIdentityKey: entry.findingIdentityKey }
+      : {}),
+    ...(entry.findingScope !== undefined
+      ? { findingScope: entry.findingScope }
+      : {}),
   };
 }
 
@@ -323,13 +334,93 @@ function normaliseScopePart(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function isBookkeepingSource(
+  value: unknown,
+): value is ContinueFixingEvent["source"] {
+  return (
+    value === "human" ||
+    value === "coordinator" ||
+    value === "peripheral" ||
+    value === "resume_input"
+  );
+}
+
+function stripLocationLine(value: string): string {
+  return value.replace(/:\d+(?::\d+)?$/, "");
+}
+
+function locationScopeMatches(scope: string, location: string): boolean {
+  const normalisedScope = normaliseScopePart(stripLocationLine(scope));
+  const normalisedLocation = normaliseScopePart(location);
+  const normalisedLocationPath = normaliseScopePart(stripLocationLine(location));
+  if (
+    normalisedScope === normalisedLocation ||
+    normalisedScope === normalisedLocationPath
+  ) {
+    return true;
+  }
+  return (
+    normalisedLocationPath.startsWith(`${normalisedScope}/`) ||
+    normalisedLocationPath.endsWith(`/${normalisedScope}`)
+  );
+}
+
+function textScopeMatches(scope: string, values: ReadonlyArray<string>): boolean {
+  const normalisedScope = normaliseScopePart(scope);
+  return values.some((value) => normaliseScopePart(value) === normalisedScope);
+}
+
+function findingMatchesBroadScope(
+  finding: Finding,
+  key: string,
+  scope: NonNullable<ContinueFixingEvent["findingScope"]>,
+): boolean {
+  const locationScopes = scope.locations ?? [];
+  const categoryScopes = scope.categories ?? [];
+  const groupScope = scope.findingGroup;
+  const contextScope = scope.reviewContext;
+  const featureScope = scope.featureArea;
+  const textualValues = [finding.category, finding.claim_quote, key];
+
+  const locationMatches =
+    locationScopes.length === 0 ||
+    locationScopes.some((location) =>
+      locationScopeMatches(location, finding.location),
+    );
+  const categoryMatches =
+    categoryScopes.length === 0 ||
+    categoryScopes.some((category) =>
+      textScopeMatches(category, [finding.category]),
+    );
+  const groupMatches =
+    groupScope === undefined ||
+    locationScopeMatches(groupScope, finding.location) ||
+    textScopeMatches(groupScope, textualValues);
+  const contextMatches =
+    contextScope === undefined ||
+    locationScopeMatches(contextScope, finding.location) ||
+    textScopeMatches(contextScope, textualValues);
+  const featureMatches =
+    featureScope === undefined ||
+    locationScopeMatches(featureScope, finding.location) ||
+    textScopeMatches(featureScope, textualValues);
+
+  return (
+    locationMatches &&
+    categoryMatches &&
+    groupMatches &&
+    contextMatches &&
+    featureMatches
+  );
+}
+
 function isContinueFixingEntry(
   entry: LedgerEntry,
 ): entry is LedgerEntry & ContinueFixingEvent {
   return (
     entry.event === "runner_bookkeeping" &&
     entry.intent === "continue_fixing" &&
-    typeof entry.source === "string" &&
+    isBookkeepingSource(entry.source) &&
     typeof entry.ts === "string" &&
     entry.ts.trim().length > 0 &&
     (entry.reason === undefined || typeof entry.reason === "string") &&
@@ -365,25 +456,21 @@ function matchingContinueFixingKeys(
   const exactMatches = activeIdentityKeys.filter((key) => exactKeys.has(key));
   if (exactMatches.length > 0) return exactMatches;
 
-  const locations = new Set(
-    (event.findingScope?.locations ?? []).map(normaliseScopePart),
-  );
-  const categories = new Set(
-    (event.findingScope?.categories ?? []).map(normaliseScopePart),
-  );
-  if (locations.size === 0 && categories.size === 0) return [];
+  const scope = event.findingScope;
+  if (scope === undefined) return [];
+  const hasBroadScope =
+    (scope.locations?.length ?? 0) > 0 ||
+    (scope.categories?.length ?? 0) > 0 ||
+    (scope.findingGroup?.trim().length ?? 0) > 0 ||
+    (scope.reviewContext?.trim().length ?? 0) > 0 ||
+    (scope.featureArea?.trim().length ?? 0) > 0;
+  if (!hasBroadScope) return [];
 
   const broadMatches = activeFindings
     .map((finding, index) => ({ finding, key: activeIdentityKeys[index] }))
     .filter(({ finding, key }) => {
       if (key === undefined) return false;
-      const locationMatches =
-        locations.size === 0 ||
-        locations.has(normaliseScopePart(finding.location));
-      const categoryMatches =
-        categories.size === 0 ||
-        categories.has(normaliseScopePart(finding.category));
-      return locationMatches && categoryMatches;
+      return findingMatchesBroadScope(finding, key, scope);
     })
     .map(({ key }) => key!);
 
@@ -412,13 +499,31 @@ function continueRepairFromEvent(
 
 function continueRepairFromAnswer(
   answer: EscalationAnswerEvent | undefined,
-  replay: Pick<S4AdjudicationReplay, "blockingIdentityKeys">,
+  replay: Pick<S4AdjudicationReplay, "blocking" | "blockingIdentityKeys">,
 ): ContinueFixingRepair | undefined {
   if (answer === undefined || !answerMapsToContinueFixing(answer)) {
     return undefined;
   }
-  if (replay.blockingIdentityKeys.length === 0) return undefined;
-  return { event: answer, matchingIdentityKeys: replay.blockingIdentityKeys };
+  const source = answer.source;
+  if (!isBookkeepingSource(source)) return undefined;
+  const matchingIdentityKeys = matchingContinueFixingKeys(
+    {
+      event: "runner_bookkeeping",
+      intent: "continue_fixing",
+      source,
+      ts: "answer-scope-only",
+      ...(answer.findingIdentityKey !== undefined
+        ? { findingIdentityKey: answer.findingIdentityKey }
+        : {}),
+      ...(answer.findingScope !== undefined
+        ? { findingScope: answer.findingScope }
+        : {}),
+    },
+    replay.blocking,
+    replay.blockingIdentityKeys,
+  );
+  if (matchingIdentityKeys.length === 0) return undefined;
+  return { event: answer, matchingIdentityKeys };
 }
 
 function latestContinueFixingAfter(
