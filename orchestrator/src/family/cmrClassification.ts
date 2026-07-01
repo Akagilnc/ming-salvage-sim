@@ -162,6 +162,15 @@ function normalizedModule(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function normalizedEvidenceText(value: string | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function containsNormalized(haystack: string, needle: string | undefined): boolean {
+  const normalizedNeedle = normalizedEvidenceText(needle);
+  return normalizedNeedle.length > 0 && haystack.includes(normalizedNeedle);
+}
+
 function locationPath(location: string): string {
   return location.split(":", 1)[0]?.trim() ?? location.trim();
 }
@@ -220,6 +229,87 @@ function attributionFor(
 
 function currentModuleNames(context: FamilyModuleContext): ReadonlySet<string> {
   return new Set(context.currentModules.map((decl) => normalizedModule(decl.module)));
+}
+
+function hasExplicitSuppressionSource(source: string | undefined): boolean {
+  const normalized = normalizedEvidenceText(source);
+  return /(^|\s)#\d+\b|\bissue\s+#?\d+\b|\badr\s*0*\d+\b|\buser\b/.test(
+    normalized,
+  );
+}
+
+function suppressionScopeMatchesContext(input: {
+  readonly finding: Finding;
+  readonly context: FamilyModuleContext;
+  readonly scope?: string;
+  readonly targetModule?: string;
+}): boolean {
+  const attribution = attributionFor(input.finding, input.context);
+  if (attribution.method === "missing_module_context") return false;
+
+  const scope = normalizedEvidenceText(input.scope);
+  const targetModule = normalizedModule(input.targetModule ?? "");
+  const currentModules = currentModuleNames(input.context);
+  if (targetModule.length > 0 && currentModules.has(targetModule)) {
+    return true;
+  }
+
+  if (containsNormalized(scope, attribution.module)) return true;
+  if (
+    attribution.issue !== undefined &&
+    scope.includes(`#${attribution.issue}`)
+  ) {
+    return true;
+  }
+
+  return input.context.currentModules.some((decl) => {
+    if (containsNormalized(scope, decl.module)) return true;
+    if (decl.issue !== undefined && scope.includes(`#${decl.issue}`)) return true;
+    return decl.moduleScope.some((moduleScope) =>
+      containsNormalized(scope, moduleScope),
+    );
+  });
+}
+
+function acceptedSuppressionFindingMatchesContext(
+  finding: Finding,
+  context: FamilyModuleContext,
+): boolean {
+  if (
+    finding.disposition?.kind !== "accepted_suppressed" ||
+    (finding.action !== "wont_fix" && finding.action !== "rejected")
+  ) {
+    return true;
+  }
+  const disposition = finding.disposition;
+  return (
+    disposition.findingIdentity === findingIdentityKey(finding) &&
+    hasExplicitSuppressionSource(disposition.source) &&
+    suppressionScopeMatchesContext({
+      finding,
+      context,
+      scope: disposition.scope,
+      targetModule: disposition.targetModule,
+    })
+  );
+}
+
+function priorDispositionMatchesContext(
+  finding: Finding,
+  disposition: FindingDisposition,
+  context: FamilyModuleContext,
+): boolean {
+  if (disposition.status !== "accepted_suppressed") return true;
+  return (
+    disposition.identityKey === findingIdentityKey(finding) &&
+    hasExplicitSuppressionSource(disposition.source) &&
+    suppressionScopeMatchesContext({
+      finding,
+      context,
+      scope: disposition.scope,
+      targetModule: disposition.targetModule,
+    })
+  );
 }
 
 const SEVERITY_RANK: Readonly<Record<Finding["severity"], number>> = {
@@ -321,6 +411,7 @@ export function classifyFamilyCmrFindings(input: {
   const deferred: Finding[] = [];
   const results: FamilyCmrFindingResult[] = [];
   const seededDispositions: FindingDisposition[] = [];
+  const findingsForFinalClassification: Finding[] = [];
   const currentModules = currentModuleNames(input.moduleContext);
 
   for (const finding of input.findings) {
@@ -345,9 +436,18 @@ export function classifyFamilyCmrFindings(input: {
     }
 
     if (
+      !acceptedSuppressionFindingMatchesContext(finding, input.moduleContext)
+    ) {
+      blocking.push(finding);
+      results.push(resultForBlocking(finding, input.moduleContext));
+      continue;
+    }
+
+    if (
       finding.action === "defer" &&
       finding.disposition?.kind === "cross_module"
     ) {
+      findingsForFinalClassification.push(finding);
       const targetModule = normalizedModule(finding.disposition.targetModule ?? "");
       if (currentModules.size > 0 && !currentModules.has(targetModule)) {
         deferred.push(finding);
@@ -359,7 +459,12 @@ export function classifyFamilyCmrFindings(input: {
       continue;
     }
 
-    const single = classifyFindings([finding], input.priorDispositions);
+    const scopedPriorDispositions = (input.priorDispositions ?? []).filter(
+      (disposition) =>
+        priorDispositionMatchesContext(finding, disposition, input.moduleContext),
+    );
+    const single = classifyFindings([finding], scopedPriorDispositions);
+    findingsForFinalClassification.push(finding);
     if (single.blocking.length > 0) {
       blocking.push(finding);
       results.push(resultForBlocking(finding, input.moduleContext));
@@ -383,8 +488,14 @@ export function classifyFamilyCmrFindings(input: {
     seededDispositions.push(...single.dispositions);
   }
 
-  const finalClassification = classifyFindings(input.findings, [
-    ...(input.priorDispositions ?? []),
+  const scopedPriorDispositions = (input.priorDispositions ?? []).filter(
+    (disposition) =>
+      input.findings.some((finding) =>
+        priorDispositionMatchesContext(finding, disposition, input.moduleContext),
+      ),
+  );
+  const finalClassification = classifyFindings(findingsForFinalClassification, [
+    ...scopedPriorDispositions,
     ...seededDispositions,
   ]);
   return {
