@@ -186,6 +186,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
       phase: "final",
       familyBase: "family/291-base",
       familyBackend: backend,
+      priorCmrFindingIdentityKeys: ["correctness|src/x.ts:1|fake closure"],
     });
 
     expect(result).toEqual({ ok: false, ran: true });
@@ -198,6 +199,67 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
         repairHint: expect.stringContaining("claimed-fixed closure payload"),
       }),
     }));
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
+  });
+
+  it("converged cmr cannot self-claim stale prior keys without runner closure context", async () => {
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: ["correctness|stale.ts:1|not supplied by runner"],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|stale.ts:1|not supplied by runner",
+              status: "verified-closed",
+            },
+          ],
+        },
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.escalations[0]?.reason).toMatch(/closure_context_missing/i);
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
+  });
+
+  it("converged cmr rejects claimed-fixed keys outside the runner closure context", async () => {
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: ["correctness|stale.ts:1|not supplied by runner"],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|stale.ts:1|not supplied by runner",
+              status: "verified-closed",
+            },
+          ],
+        },
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      priorCmrFindingIdentityKeys: ["correctness|src/x.ts:1|real closure"],
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.escalations[0]?.reason).toMatch(/outside the runner-supplied/i);
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
@@ -254,6 +316,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
       phase: "final",
       familyBase: "family/291-base",
       familyBackend: backend,
+      priorCmrFindingIdentityKeys: ["correctness|src/x.ts:1|real closure"],
     });
 
     expect(result).toEqual({ ok: true, ran: true });

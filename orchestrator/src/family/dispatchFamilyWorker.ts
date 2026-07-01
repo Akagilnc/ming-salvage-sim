@@ -172,6 +172,9 @@ export async function legacyDispatchFamilyWorker(
         ? { escalationAnswer: ctx.escalationAnswer }
         : {}),
       ...(ctx.moduleContext !== undefined ? { moduleContext: ctx.moduleContext } : {}),
+      ...(ctx.priorCmrFindingIdentityKeys !== undefined
+        ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
+        : {}),
     });
     // A `red` (non-converged) verdict is `completed` with payload — NOT `failed`
     // (PRD #330 R2). The verify-cmr hook reads `converged` off the payload.

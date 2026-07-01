@@ -384,9 +384,31 @@ describe("#451 dogfood replay fixture", () => {
         rejectedStatuses: ["still-active", "unable-to-assess"],
         rejectedShapes: expect.arrayContaining([
           "missing-disposition",
+          "stale-self-claimed",
           "duplicate-disposition",
           "extra-stale-disposition",
         ]),
+      }),
+    });
+    expect(rowsById.get("376-accepted-suppression-with-source")).toMatchObject({
+      source: "family",
+      classification: "accepted_suppressed",
+      stopReason: "success",
+      sourceStopSummary: expect.objectContaining({
+        reason: "success",
+        metadata: expect.objectContaining({
+          acceptedSuppressions: [
+            expect.objectContaining({
+              source: "#376 owner answer",
+              scope: expect.stringContaining("orchestrator route accounting"),
+              boundedReopen: expect.stringContaining("scope mismatch"),
+            }),
+          ],
+        }),
+      }),
+      sourceEvidence: expect.objectContaining({
+        seam: "family_verify_cmr_pass_summary",
+        mechanism: "accepted_suppressed_success_metadata",
       }),
     });
     expect(rowsById.get("376-closure-context-missing")).toMatchObject({
