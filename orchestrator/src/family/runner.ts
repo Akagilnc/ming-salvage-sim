@@ -329,8 +329,9 @@ function pendingPriorCmrFindingIdentityKeysByPass(
 function latestAbortedStopSummary(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
   phase: VerifyCmrPhase | undefined,
+  minIndex = 0,
 ): StopSummary | undefined {
-  for (let i = ledger.length - 1; i >= 0; i--) {
+  for (let i = ledger.length - 1; i >= minIndex; i--) {
     const entry = ledger[i]!;
     if (
       entry.status === "aborted" &&
@@ -564,6 +565,7 @@ export async function runFamily(
   // guard honesty for the failure + #294/#298 paths.
   const finalize = async (
     verifyFailedPhase?: VerifyCmrPhase,
+    barrierLedgerStartIndex = 0,
   ): Promise<FamilyRunResult> => {
     const recorded = new Set(childResults.map((c) => c.issue));
     const ledgerMerged = await currentMerged(familyBackend);
@@ -594,8 +596,12 @@ export async function runFamily(
     });
     const barrierStopSummary =
       status === "verify_failed"
-        ? (latestAbortedStopSummary(familyLedger, verifyFailedPhase) ??
-          latestAbortedStopSummary(familyLedger, undefined))
+        ? (latestAbortedStopSummary(
+            familyLedger,
+            verifyFailedPhase,
+            barrierLedgerStartIndex,
+          ) ??
+          latestAbortedStopSummary(familyLedger, undefined, barrierLedgerStartIndex))
         : undefined;
     const alreadyDone = extra
       .filter((child) => child.status === "already_done")
@@ -1026,7 +1032,7 @@ export async function runFamily(
     // "final"` so a red final verify is OBSERVABLY distinct from success — the
     // caller / PR step must NOT ship it (decision 3⑤ "不静默吞"); the family base +
     // ledger are left for triage.
-    return await finalize("final");
+    return await finalize("final", preFinalLedger.length);
   }
 
   // Every barrier passed. finalize() derives "success" only if EVERY child

@@ -378,6 +378,41 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(result.stopSummary.summary).toMatch(/final verify\/cmr barrier failed/);
   });
 
+  it("verify_failed does not reuse stale aborted rows from before the current final barrier", async () => {
+    class PreSeededFamilyBackend extends FakeFamilyBackend {
+      constructor() {
+        super();
+        this.ledger.push(
+          { childIssue: 10, status: "merged" },
+          {
+            status: "aborted",
+            event: "aborted",
+            phase: "final",
+            stopSummary: {
+              reason: "same_module_still_red",
+              summary: "old CMR blocker",
+              repairHint: "old repair hint",
+            },
+          },
+        );
+      }
+    }
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend: new PreSeededFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr: async (input) =>
+        input.phase === "final" ? { ok: false, ran: true } : { ok: true, ran: true },
+    });
+
+    expect(result.status).toBe("verify_failed");
+    expect(result.stopSummary.reason).toBe("infra_failure");
+    expect(result.stopSummary.summary).toMatch(/final verify\/cmr barrier failed/);
+    expect(result.stopSummary.summary).not.toContain("old CMR blocker");
+  });
+
   it("FAIL-FAST: a red wave verify aborts the loop (no end-of-run call, no further waves)", async () => {
     const phases: string[] = [];
     // Two waves (11 blocked_by 10). The wave verify returns ok:false on the FIRST

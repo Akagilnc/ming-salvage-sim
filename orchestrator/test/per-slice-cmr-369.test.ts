@@ -611,7 +611,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       commitsAdded: 1,
       repairEvidence: {
         findingScope: { identityKeys: [blockingKey] },
-        tests: ["test/per-slice-cmr-369.test.ts"],
+        changedFiles: ["test/per-slice-cmr-369.test.ts"],
+        tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
       },
     };
     const worktree = makeGitWorktree();
@@ -674,6 +675,98 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
             "commit",
             "-m",
             `test evidence ${attempt}`,
+          ],
+          { cwd: wt.path, stdio: "ignore" },
+        );
+      },
+    );
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
+  it("does not treat command-valued tests repair evidence as declared changed paths", async () => {
+    const commandOnlyTestEvidence = {
+      kind: "coder" as const,
+      committed: true,
+      commitsAdded: 1,
+      repairEvidence: {
+        findingScope: { identityKeys: [blockingKey] },
+        tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+      },
+    };
+    const worktree = makeGitWorktree();
+    const backend = new RetryReviewBackend(
+      [
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      undefined,
+      [commandOnlyTestEvidence, commandOnlyTestEvidence, commandOnlyTestEvidence],
+      worktree,
+      (attempt, wt) => {
+        const srcDir = join(wt.path, "src");
+        mkdirSync(srcDir, { recursive: true });
+        writeFileSync(
+          join(srcDir, "runner.ts"),
+          `export const attempt = ${attempt};\n`,
+          "utf8",
+        );
+        execFileSync("git", ["add", "src/runner.ts"], {
+          cwd: wt.path,
+          stdio: "ignore",
+        });
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            `source movement ${attempt}`,
           ],
           { cwd: wt.path, stdio: "ignore" },
         );
@@ -2405,6 +2498,37 @@ describe("#369 finding identity and classification", () => {
 
     expect(adjudication.stillOpen).toEqual([]);
     expect(adjudication.verifiedClosedIdentityKeys).toEqual([key]);
+  });
+
+  it("keeps high prior claimed-fixed findings open even with accepted_suppressed disposition", () => {
+    const highFinding: Finding = {
+      ...finding,
+      severity: "high",
+      action: "fix_now",
+    };
+    const key = findingIdentityKey(highFinding);
+
+    const adjudication = adjudicatePriorClaimedFixedFindings({
+      priorFindings: [highFinding],
+      priorIdentityKeys: [key],
+      review: {
+        kind: "reviewer",
+        findings: [],
+        priorFindingDispositions: [
+          {
+            identityKey: key,
+            status: "accepted_suppressed",
+            source: "issue #448 acceptance criteria",
+            scope: "same claimed-fixed finding",
+            reason: "accepted by the owner for this bounded scope",
+            boundedReopen: "reopen on higher severity or different scope",
+          },
+        ],
+      },
+    });
+
+    expect(adjudication.stillOpen).toEqual([highFinding]);
+    expect(adjudication.verifiedClosedIdentityKeys).toEqual([]);
   });
 
   it("does not treat reviewer-created accepted_suppressed prior dispositions as terminal closure", () => {

@@ -631,7 +631,6 @@ function repairEvidenceMatchesKey(
   const declaredChangedPaths = [
     ...(evidence.changedFiles ?? []),
     ...(evidence.fixtures ?? []),
-    ...(evidence.tests ?? []),
   ]
     .map(normalizeGitPath)
     .filter((path): path is string => path !== undefined);
