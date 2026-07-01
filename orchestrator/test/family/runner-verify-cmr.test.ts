@@ -327,6 +327,86 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(calls.at(-1)?.priorCmrFindingIdentityKeys).toBeUndefined();
   });
 
+  it("keeps only the newest aborted finding set for a CMR pass", async () => {
+    const oldKey =
+      "correctness|orchestrator/src/family/verifycmr.ts:41|old blocker";
+    const newKey =
+      "correctness|orchestrator/src/family/verifycmr.ts:42|new blocker";
+    const calls: VerifyCmrInput[] = [];
+    class PreSeededFamilyBackend extends FakeFamilyBackend {
+      constructor() {
+        super();
+        this.ledger.push(
+          { childIssue: 10, status: "merged" },
+          {
+            status: "aborted",
+            event: "aborted",
+            phase: "final",
+            cmrPass: "correctness",
+            cmrFindingClassification: {
+              blocking: [],
+              deferred: [],
+              dispositions: [],
+              moduleContext: {
+                currentModules: [],
+                childModules: [],
+                undevelopedModules: [],
+              },
+              results: [
+                {
+                  identityKey: oldKey,
+                  classification: "same_module_still_red",
+                  attribution: { method: "family_module", issue: 293 },
+                  reason: "old blocker from an earlier aborted attempt",
+                },
+              ],
+            },
+          },
+          {
+            status: "aborted",
+            event: "aborted",
+            phase: "final",
+            cmrPass: "correctness",
+            cmrFindingClassification: {
+              blocking: [],
+              deferred: [],
+              dispositions: [],
+              moduleContext: {
+                currentModules: [],
+                childModules: [],
+                undevelopedModules: [],
+              },
+              results: [
+                {
+                  identityKey: newKey,
+                  classification: "same_module_still_red",
+                  attribution: { method: "family_module", issue: 293 },
+                  reason: "new blocker remains open",
+                },
+              ],
+            },
+          },
+        );
+      }
+    }
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      calls.push(input);
+      return { ok: true, ran: true };
+    };
+
+    await runFamily({
+      epic: epicWith(10),
+      familyBackend: new PreSeededFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr,
+    });
+
+    expect((calls.at(-1) as VerifyCmrInput & {
+      priorCmrFindingIdentityKeysByPass?: { correctness?: readonly string[] };
+    })?.priorCmrFindingIdentityKeysByPass?.correctness).toEqual([newKey]);
+  });
+
   it("passes the known #287 hub-loss accepted suppression through production CMR context", async () => {
     const classified: ReturnType<typeof classifyFamilyCmrFindings>[] = [];
     const acceptedScope =

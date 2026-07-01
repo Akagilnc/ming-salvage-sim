@@ -160,8 +160,9 @@ function unquoteScalar(value: string): string | undefined {
   const trimmed = value.trim();
   if (trimmed.length === 0) return undefined;
   if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'")))
   ) {
     return trimmed.slice(1, -1).trim();
   }
@@ -269,7 +270,9 @@ function containsNormalized(haystack: string, needle: string | undefined): boole
 }
 
 function locationPath(location: string): string {
-  return location.split(":", 1)[0]?.trim() ?? location.trim();
+  const withoutLineColumn = location.trim().replace(/:\d+(?::\d+)?$/, "");
+  if (/^[A-Za-z]:[\\/]/.test(withoutLineColumn)) return withoutLineColumn;
+  return withoutLineColumn.replace(/:[^:/\\]+$/, "").trim();
 }
 
 function pathMatchesScope(path: string, scope: string): boolean {

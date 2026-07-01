@@ -280,6 +280,7 @@ function pendingPriorCmrFindingIdentityKeysByPass(
 ): Partial<Record<IntegratedCmrPass, ReadonlyArray<string>>> {
   const keysByPass: Partial<Record<IntegratedCmrPass, string[]>> = {};
   const closedPasses = new Set<string>();
+  const processedPasses = new Set<string>();
   for (let index = ledger.length - 1; index >= 0; index--) {
     const entry = ledger[index]!;
     if (entry.status === "shipped") break;
@@ -291,11 +292,15 @@ function pendingPriorCmrFindingIdentityKeysByPass(
     if (entry.status !== "aborted" || entry.cmrFindingClassification === undefined) {
       continue;
     }
-    if (entry.cmrPass !== undefined && closedPasses.has(entry.cmrPass)) {
+    if (
+      entry.cmrPass !== undefined &&
+      (closedPasses.has(entry.cmrPass) || processedPasses.has(entry.cmrPass))
+    ) {
       continue;
     }
     const pass = entry.cmrPass;
     if (pass === undefined) continue;
+    processedPasses.add(pass);
     const keys = keysByPass[pass] ?? [];
     const seen = new Set(keys);
     for (const result of entry.cmrFindingClassification.results) {

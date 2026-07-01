@@ -190,6 +190,35 @@ describe("#449 family CMR finding classification", () => {
     );
   });
 
+  it("matches Windows drive-letter finding locations without truncating the path", () => {
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [
+        {
+          ...finding,
+          location: "C:\\project\\orchestrator\\src\\family\\runner.ts:42",
+        },
+      ],
+      moduleContext: buildFamilyModuleContext({
+        childModules: [
+          {
+            module: "windows-runner",
+            moduleScope: ["C:\\project\\orchestrator\\src\\family"],
+            source: "child_issue",
+            issue: 449,
+          },
+        ],
+      }),
+    });
+
+    expect(classified.results[0]?.attribution).toEqual({
+      method: "child_module_scope",
+      issue: 449,
+      module: "windows-runner",
+      source: "child_issue",
+    });
+  });
+
   it("keeps the parent module as fallback when child attribution is unavailable", () => {
     const parentScopedFinding: Finding = {
       ...finding,
