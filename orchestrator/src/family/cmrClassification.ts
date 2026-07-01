@@ -15,6 +15,7 @@ export interface SourcedModuleDeclaration extends ModuleDeclaration {
 export interface FamilyModuleContext {
   readonly currentModules: ReadonlyArray<SourcedModuleDeclaration>;
   readonly childModules: ReadonlyArray<SourcedModuleDeclaration>;
+  readonly fallbackModule?: SourcedModuleDeclaration;
 }
 
 export function sourcedModuleDeclaration(
@@ -38,15 +39,21 @@ export function buildFamilyModuleContext(input: {
   const childModules = input.childModules.filter(
     (decl): decl is SourcedModuleDeclaration => decl !== undefined,
   );
+  const fallbackModule = input.familyModule ?? input.runOptionModule;
   const currentModules =
     childModules.length > 0
-      ? childModules
-      : input.familyModule !== undefined
-        ? [input.familyModule]
-        : input.runOptionModule !== undefined
-          ? [input.runOptionModule]
-          : [];
-  return { currentModules, childModules };
+      ? [
+          ...childModules,
+          ...(fallbackModule !== undefined ? [fallbackModule] : []),
+        ]
+      : fallbackModule !== undefined
+        ? [fallbackModule]
+        : [];
+  return {
+    currentModules,
+    childModules,
+    ...(fallbackModule !== undefined ? { fallbackModule } : {}),
+  };
 }
 
 export type FamilyCmrFindingClassification =
@@ -199,7 +206,11 @@ function childAttribution(
 function fallbackModule(
   context: FamilyModuleContext,
 ): SourcedModuleDeclaration | undefined {
-  return context.currentModules[0];
+  return (
+    context.fallbackModule ??
+    context.currentModules.find((decl) => decl.source !== "child_issue") ??
+    context.currentModules[0]
+  );
 }
 
 function attributionFor(
