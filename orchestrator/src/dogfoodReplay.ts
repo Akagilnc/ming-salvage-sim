@@ -1781,18 +1781,8 @@ async function startupRouteViolationReplay(): Promise<SeamReplay> {
 async function providerBlockingReplay(): Promise<SeamReplay> {
   const backend = new DogfoodCmrFamilyBackend("provider-blocking-head", [], [
     {
-      kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: true,
-        successfulLegs: ["agy"],
-        skippedLegs: [
-          { slug: "opus", reason: "auth unavailable" },
-          { slug: "gpt-5.5", reason: "auth unavailable" },
-        ],
-        claimedFixedFindingIdentityKeys: [],
-        priorFindingDispositions: [],
-      },
+      kind: "failed",
+      reason: "provider authentication failed for agy reviewer",
     },
   ]);
   const result = await runVerifyCmr({
@@ -1807,11 +1797,12 @@ async function providerBlockingReplay(): Promise<SeamReplay> {
   return {
     stopSummary: abort.stopSummary,
     sourceEvidence: {
-      seam: "family_verify_cmr_provider_floor",
+      seam: "family_verify_cmr_provider_worker_failure",
       status: "aborted",
       dispatches: backend.dispatches,
-      successfulLegs: ["agy"],
-      skippedLegs: ["opus", "gpt-5.5"],
+      failedLeg: "agy",
+      failureReason: "provider authentication failed for agy reviewer",
+      providerDegraded: abort.stopSummary.metadata?.providerDegraded,
     },
   };
 }
