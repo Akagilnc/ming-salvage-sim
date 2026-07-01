@@ -1,0 +1,1757 @@
+import {
+  buildFamilyModuleContext,
+  classifyFamilyCmrFindings,
+  parseModuleDeclaration,
+  type FamilyCmrFindingClassification,
+  type FamilyModuleContext,
+} from "./family/cmrClassification.js";
+import { runFamily } from "./family/runner.js";
+import { parseCmrOutcome } from "./family/realFamilyBackend.js";
+import {
+  runVerifyCmr,
+  type VerifyCmrInput,
+  type VerifyCmrResult,
+} from "./family/verifyCmr.js";
+import type {
+  FamilyBackend,
+  FamilyEpic,
+  FamilyEscalation,
+  FamilyLedgerEntry,
+  MergeRequest,
+} from "./family/types.js";
+import { findingIdentityKey } from "./findings.js";
+import {
+  cmrLegAccountingFailure,
+  resolveRouteModels,
+  type ModelRouteEnv,
+} from "./modelRoutes.js";
+import { runOrchestrator } from "./runner.js";
+import {
+  contractDriftStopSummary,
+  infraFailureStopSummary,
+  providerDegradedStopSummary,
+  stopReasonForFindingDisposition,
+  successStopSummary,
+  type StopReason,
+  type StopSummary,
+} from "./stopSummary.js";
+import type {
+  Backend,
+  DispatchContext,
+  Finding,
+  IssueMeta,
+  IssueSnapshot,
+  PersistentLedgerEntry,
+  ResumeState,
+  StepId,
+  StepOutput,
+  StepSpec,
+  WorkerResult,
+  WorkerSpec,
+  WorktreeHandle,
+} from "./types.js";
+
+export type DogfoodReplayClassification =
+  | FamilyCmrFindingClassification
+  | "success"
+  | "infra_failure"
+  | "contract_drift"
+  | "provider_degraded"
+  | "already_done"
+  | "resumed";
+
+export interface DogfoodReplayScenario {
+  readonly id: string;
+  readonly issue: number;
+  readonly title: string;
+  readonly classification: DogfoodReplayClassification;
+  readonly stopReason: StopReason;
+  readonly summary: string;
+  readonly repairHint?: string;
+  readonly metadata?: StopSummary["metadata"];
+  readonly stopSummary: StopSummary;
+  readonly source?: "runner" | "family" | "family_cmr_classification" | "stop_summary";
+  readonly sourceStopSummary?: StopSummary;
+  readonly sourceEvidence?: Readonly<Record<string, unknown>>;
+}
+
+export interface DogfoodReplay {
+  readonly issue: 451;
+  readonly parentIssue: 445;
+  readonly scenarios: ReadonlyArray<DogfoodReplayScenario>;
+  readonly coveredStopReasons: ReadonlyArray<StopReason>;
+  readonly summary: string;
+}
+
+const BASE_FINDING: Finding = {
+  severity: "high",
+  category: "correctness",
+  claim_quote: "historical orchestrator regression remains reproducible",
+  location: "orchestrator/src/runner.ts:1",
+  suggested_fix: "classify the replay through the runner/family seam",
+  action: "fix_now",
+};
+
+function scenario(input: {
+  readonly id: string;
+  readonly issue: number;
+  readonly title: string;
+  readonly classification: DogfoodReplayClassification;
+  readonly stopSummary: StopSummary;
+  readonly stopReason?: StopReason;
+  readonly source?: DogfoodReplayScenario["source"];
+  readonly sourceStopSummary?: StopSummary;
+  readonly sourceEvidence?: DogfoodReplayScenario["sourceEvidence"];
+}): DogfoodReplayScenario {
+  return {
+    id: input.id,
+    issue: input.issue,
+    title: input.title,
+    classification: input.classification,
+    stopReason: input.stopReason ?? input.stopSummary.reason,
+    summary: input.stopSummary.summary,
+    stopSummary: input.stopSummary,
+    ...(input.stopSummary.repairHint !== undefined
+      ? { repairHint: input.stopSummary.repairHint }
+      : {}),
+    ...(input.stopSummary.metadata !== undefined
+      ? { metadata: input.stopSummary.metadata }
+      : {}),
+    ...(input.source !== undefined ? { source: input.source } : {}),
+    ...(input.sourceStopSummary !== undefined
+      ? { sourceStopSummary: input.sourceStopSummary }
+      : {}),
+    ...(input.sourceEvidence !== undefined
+      ? { sourceEvidence: input.sourceEvidence }
+      : {}),
+  };
+}
+
+function finding(overrides: Partial<Finding>): Finding {
+  return { ...BASE_FINDING, ...overrides };
+}
+
+function familyClassificationScenario(input: {
+  readonly id: string;
+  readonly issue: number;
+  readonly title: string;
+  readonly familyIssue: number;
+  readonly finding: Finding;
+  readonly moduleContext: FamilyModuleContext;
+}): DogfoodReplayScenario {
+  const classified = classifyFamilyCmrFindings({
+    familyIssue: input.familyIssue,
+    findings: [input.finding],
+    moduleContext: input.moduleContext,
+  });
+  const result = classified.results[0];
+  if (result === undefined) {
+    throw new Error(`dogfood replay ${input.id} produced no classification`);
+  }
+
+  if (result.classification === "cross_module_defer") {
+    return scenario({
+      id: input.id,
+      issue: input.issue,
+      title: input.title,
+      classification: result.classification,
+      stopSummary: stopReasonForFindingDisposition({
+        kind: "cross_module",
+        finding: input.finding,
+        targetModule: result.targetModule ?? "unknown",
+        reason: result.reason,
+      }),
+      source: "family_cmr_classification",
+    });
+  }
+
+  if (result.classification === "accepted_suppressed") {
+    const disposition = classified.dispositions.find(
+      (item) => item.identityKey === findingIdentityKey(input.finding),
+    );
+    return scenario({
+      id: input.id,
+      issue: input.issue,
+      title: input.title,
+      classification: result.classification,
+      stopSummary: {
+        reason: "accepted_suppressed",
+        summary: result.reason,
+        finding: input.finding,
+        metadata: {
+          acceptedSuppressions: [
+            {
+              source: result.source ?? "unknown",
+              scope:
+                disposition?.scope ??
+                "#287 hub-loss / central C_ accounts finding only",
+              reason: result.reason,
+              findingIdentity: findingIdentityKey(input.finding),
+              boundedReopen:
+                disposition?.boundedReopen ??
+                "reopen on severity escalation, new evidence, or #287-owned local integration scope",
+            },
+          ],
+        },
+      },
+      source: "family_cmr_classification",
+    });
+  }
+
+  return scenario({
+    id: input.id,
+    issue: input.issue,
+    title: input.title,
+    classification: result.classification,
+    stopSummary: stopReasonForFindingDisposition({
+      kind:
+        result.classification === "owning_issue_still_red"
+          ? "owning_issue_still_red"
+          : result.classification === "spec_conflict"
+            ? "spec_conflict"
+            : "same_module",
+      finding: input.finding,
+      owningIssue: result.owningIssue ?? `#${input.familyIssue}`,
+      reason: result.reason,
+    }),
+    source: "family_cmr_classification",
+  });
+}
+
+function staticScenario(input: {
+  readonly id: string;
+  readonly issue: number;
+  readonly title: string;
+  readonly classification: DogfoodReplayClassification;
+  readonly stopSummary: StopSummary;
+  readonly stopReason?: StopReason;
+  readonly source?: DogfoodReplayScenario["source"];
+  readonly sourceStopSummary?: StopSummary;
+  readonly sourceEvidence?: DogfoodReplayScenario["sourceEvidence"];
+}): DogfoodReplayScenario {
+  return scenario({ ...input, source: input.source ?? "stop_summary" });
+}
+
+const REPLAY_WORKTREE: WorktreeHandle = {
+  branch: "feat/dogfood-replay",
+  base: "main",
+  path: "/dogfood/replay",
+};
+
+function ledgerEntry(
+  step: StepId,
+  input?: {
+    readonly output?: StepOutput;
+    readonly handoffStatus?: "success" | "escalate" | "error";
+    readonly escalationKind?: "decision" | "failure";
+    readonly event?: "escalation_answered" | "runner_bookkeeping";
+    readonly forStep?: StepId;
+    readonly answer?: string;
+    readonly source?: "human" | "resume_input";
+    readonly intent?: "continue_fixing";
+    readonly findingIdentityKey?: string;
+    readonly findingScope?: PersistentLedgerEntry["findingScope"];
+    readonly reason?: string;
+  },
+): PersistentLedgerEntry {
+  return {
+    step,
+    sessionId: `dogfood-${step}`,
+    prompt_hash: `hash-${step}`,
+    branchHEAD: "dogfood-head",
+    ts: "2026-07-01T00:00:00.000Z",
+    ...(input?.output !== undefined ? { output: input.output } : {}),
+    ...(input?.handoffStatus !== undefined
+      ? { handoffStatus: input.handoffStatus }
+      : {}),
+    ...(input?.escalationKind !== undefined
+      ? { escalationKind: input.escalationKind }
+      : {}),
+    ...(input?.event !== undefined ? { event: input.event } : {}),
+    ...(input?.forStep !== undefined ? { forStep: input.forStep } : {}),
+    ...(input?.answer !== undefined ? { answer: input.answer } : {}),
+    ...(input?.source !== undefined ? { source: input.source } : {}),
+    ...(input?.intent !== undefined ? { intent: input.intent } : {}),
+    ...(input?.findingIdentityKey !== undefined
+      ? { findingIdentityKey: input.findingIdentityKey }
+      : {}),
+    ...(input?.findingScope !== undefined
+      ? { findingScope: input.findingScope }
+      : {}),
+    ...(input?.reason !== undefined ? { reason: input.reason } : {}),
+  };
+}
+
+class DogfoodSingleSliceBackend implements Backend {
+  readonly resumeSessionCalls: Array<[StepId, string]> = [];
+  readonly runStepCalls: StepId[] = [];
+  readonly dispatched: string[] = [];
+  readonly dispatchedModels: string[] = [];
+  private reviewerAttempt = 0;
+
+  constructor(
+    private readonly resumeState?: ResumeState,
+    private readonly reviewerOutputs: ReadonlyArray<StepOutput> = [],
+  ) {}
+
+  async findResumeState(): Promise<ResumeState | undefined> {
+    return this.resumeState;
+  }
+
+  async cleanResidue(): Promise<void> {}
+
+  async resumeSession(
+    spec: StepSpec,
+    _worktree: WorktreeHandle,
+    sessionId: string,
+  ): Promise<StepOutput> {
+    this.resumeSessionCalls.push([spec.id, sessionId]);
+    return this.runStep(spec);
+  }
+
+  async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+    return {
+      number: issueNumber,
+      isReadyForAgent: true,
+      hasSubIssues: false,
+      isClosed: false,
+      openBlockedBy: [],
+    };
+  }
+
+  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
+    return {
+      number: issueNumber,
+      body: "dogfood replay issue",
+      comments: [],
+      agentBrief: "## Agent Brief\nreplay the historical orchestrator accident",
+    };
+  }
+
+  async prepareWorktree(
+    issueNumber: number,
+    base: string,
+  ): Promise<WorktreeHandle> {
+    return {
+      branch: `feat/dogfood-${issueNumber}`,
+      base,
+      path: `/dogfood/${issueNumber}`,
+    };
+  }
+
+  async writeSnapshot(): Promise<void> {}
+
+  async runStep(spec: StepSpec): Promise<StepOutput> {
+    this.runStepCalls.push(spec.id);
+    if (spec.role === "reviewer") {
+      const scripted = this.reviewerOutputs[this.reviewerAttempt];
+      this.reviewerAttempt += 1;
+      return scripted ?? { kind: "reviewer", findings: [] };
+    }
+    return { kind: "coder", committed: true, commitsAdded: 1 };
+  }
+
+  async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    this.dispatched.push(`${spec.id}:${spec.kind}`);
+    this.dispatchedModels.push(`${spec.id}:${spec.model}`);
+    if (spec.kind === "ship") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx.worktree?.branch ?? REPLAY_WORKTREE.branch,
+          status: "pushed",
+        },
+      };
+    }
+    if (spec.kind === "reviewer") {
+      const scripted = this.reviewerOutputs[this.reviewerAttempt];
+      this.reviewerAttempt += 1;
+      return {
+        kind: "completed",
+        output: scripted ?? { kind: "reviewer", findings: [] },
+      };
+    }
+    return {
+      kind: "completed",
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
+    };
+  }
+
+  async push(): Promise<void> {}
+
+  async writeLedger(): Promise<void> {}
+}
+
+class DogfoodFamilyBackend implements FamilyBackend {
+  readonly ledger: FamilyLedgerEntry[] = [];
+
+  constructor(
+    private readonly currentHead = "family-head",
+    initialLedger: ReadonlyArray<FamilyLedgerEntry> = [],
+    private readonly mergeFamilyHead?: string,
+  ) {
+    this.ledger.push(...initialLedger);
+  }
+
+  async mergeChildIntoFamilyBase(
+    request: MergeRequest,
+  ): Promise<{ familyHead: string }> {
+    return { familyHead: this.mergeFamilyHead ?? `+${request.childIssue}` };
+  }
+
+  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+    this.ledger.push(entry);
+  }
+
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return this.ledger;
+  }
+
+  async readFamilyHead(): Promise<string> {
+    return this.currentHead;
+  }
+}
+
+class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
+  readonly dispatches: string[] = [];
+  readonly escalations: FamilyEscalation[] = [];
+  private familyWorkerAttempt = 0;
+
+  constructor(
+    currentHead = "family-head",
+    initialLedger: ReadonlyArray<FamilyLedgerEntry> = [],
+    private readonly familyWorkerOutputs: ReadonlyArray<WorkerResult> = [],
+  ) {
+    super(currentHead, initialLedger);
+  }
+
+  async runFamilyVerify(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
+
+  async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    this.dispatches.push(
+      `${spec.kind}:${ctx.cmrPass ?? ctx.familyBase ?? "unknown"}`,
+    );
+    const scripted = this.familyWorkerOutputs[this.familyWorkerAttempt];
+    this.familyWorkerAttempt += 1;
+    if (scripted !== undefined) return scripted;
+    if (spec.kind === "cmr") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+        },
+      };
+    }
+    return {
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: ctx.familyBase ?? "family/dogfood-base",
+        status: "pushed",
+      },
+    };
+  }
+
+  async escalateFamily(escalation: FamilyEscalation): Promise<void> {
+    this.escalations.push(escalation);
+  }
+}
+
+interface SeamReplay {
+  readonly stopSummary: StopSummary;
+  readonly sourceEvidence: Readonly<Record<string, unknown>>;
+}
+
+function runnerFinding(input: {
+  readonly claimQuote: string;
+  readonly location?: string;
+}): Finding {
+  return finding({
+    claim_quote: input.claimQuote,
+    location: input.location ?? "orchestrator/src/runner.ts:307",
+    suggested_fix: "drive the replay through runner no-progress logic",
+    action: "fix_now",
+  });
+}
+
+function noProgressDecisionLedger(
+  findings: ReadonlyArray<Finding>,
+): ReadonlyArray<PersistentLedgerEntry> {
+  const dispositions = findings.map((item) => ({
+    identityKey: findingIdentityKey(item),
+    status: "still-active" as const,
+  }));
+  return [
+    ledgerEntry("S0"),
+    ledgerEntry("S1"),
+    ledgerEntry("S2", {
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
+    }),
+    ledgerEntry("S3", {
+      output: { kind: "reviewer", findings },
+    }),
+    ledgerEntry("S4"),
+    ledgerEntry("S5", {
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
+    }),
+    ledgerEntry("S6", {
+      output: {
+        kind: "reviewer",
+        findings,
+        priorFindingDispositions: dispositions,
+      },
+    }),
+    ledgerEntry("S4"),
+    ledgerEntry("S5", {
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
+    }),
+    ledgerEntry("S6", {
+      output: {
+        kind: "reviewer",
+        findings,
+        priorFindingDispositions: dispositions,
+      },
+    }),
+    ledgerEntry("S4"),
+    ledgerEntry("S8", {
+      handoffStatus: "escalate",
+      escalationKind: "decision",
+    }),
+  ];
+}
+
+async function runnerAnsweredResumeReplay(): Promise<SeamReplay> {
+  const activeFinding = runnerFinding({
+    claimQuote: "continue fixing should reopen the active no-progress finding",
+  });
+  const activeKey = findingIdentityKey(activeFinding);
+  const backend = new DogfoodSingleSliceBackend({
+    worktree: REPLAY_WORKTREE,
+    stateDir: "/dogfood/.ledger-307",
+    ledger: [
+      ...noProgressDecisionLedger([activeFinding]),
+      ledgerEntry("S4", {
+        event: "escalation_answered",
+        forStep: "S4",
+        answer: "继续修",
+        source: "human",
+        findingScope: { identityKeys: [activeKey] },
+      }),
+    ],
+  }, [
+    {
+      kind: "reviewer",
+      findings: [],
+      priorFindingDispositions: [
+        { identityKey: activeKey, status: "verified-closed" },
+      ],
+    },
+  ]);
+  const result = await runOrchestrator({ issueNumber: 307, backend });
+  if (result.status !== "success") {
+    throw new Error(`dogfood runner answered-resume replay ended ${result.status}`);
+  }
+  return {
+    stopSummary: result.stopSummary,
+    sourceEvidence: {
+      seam: "runner",
+      mechanism: "scoped_escalation_answer",
+      status: result.status,
+      dispatched: backend.dispatched,
+      findingIdentityKey: activeKey,
+    },
+  };
+}
+
+async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
+  const originalFinding = runnerFinding({
+    claimQuote: "review loop asks a generic decision even after local progress",
+    location: "orchestrator/src/runner.ts:569",
+  });
+  const changedFinding = runnerFinding({
+    claimQuote: "review loop still asks decision but now only closure context is missing",
+    location: "orchestrator/src/runner.ts:569",
+  });
+  const originalKey = findingIdentityKey(originalFinding);
+  const changedKey = findingIdentityKey(changedFinding);
+  const backend = new DogfoodSingleSliceBackend(undefined, [
+    { kind: "reviewer", findings: [originalFinding] },
+    {
+      kind: "reviewer",
+      findings: [changedFinding],
+      priorFindingDispositions: [
+        { identityKey: originalKey, status: "verified-closed" },
+      ],
+    },
+    {
+      kind: "reviewer",
+      findings: [],
+      priorFindingDispositions: [
+        { identityKey: changedKey, status: "verified-closed" },
+      ],
+    },
+  ]);
+  const result = await runOrchestrator({ issueNumber: 307, backend });
+  if (result.status !== "success") {
+    throw new Error(`dogfood runner changed-shape replay ended ${result.status}`);
+  }
+  return {
+    stopSummary: result.stopSummary,
+    sourceEvidence: {
+      seam: "runner",
+      mechanism: "changed_shape_progress",
+      findingShape: "changed_after_local_progress",
+      status: result.status,
+      dispatched: backend.dispatched,
+      originalFindingIdentityKey: originalKey,
+      changedFindingIdentityKey: changedKey,
+    },
+  };
+}
+
+async function runnerTargetedResetReplay(): Promise<SeamReplay> {
+  const targetFinding = runnerFinding({
+    claimQuote: "continue fixing should reset only this finding group",
+    location: "orchestrator/src/runner.ts:502",
+  });
+  const siblingFinding = runnerFinding({
+    claimQuote: "sibling finding must keep its no-progress state",
+    location: "orchestrator/src/runner.ts:503",
+  });
+  const targetKey = findingIdentityKey(targetFinding);
+  const siblingKey = findingIdentityKey(siblingFinding);
+  const backend = new DogfoodSingleSliceBackend({
+    worktree: REPLAY_WORKTREE,
+    stateDir: "/dogfood/.ledger-307-targeted-reset",
+    ledger: [
+      ...noProgressDecisionLedger([targetFinding, siblingFinding]),
+      ledgerEntry("S4", {
+        event: "runner_bookkeeping",
+        intent: "continue_fixing",
+        source: "resume_input",
+        findingIdentityKey: targetKey,
+        findingScope: { identityKeys: [targetKey] },
+      }),
+    ],
+  }, [
+    {
+      kind: "reviewer",
+      findings: [siblingFinding],
+      priorFindingDispositions: [
+        { identityKey: targetKey, status: "verified-closed" },
+        { identityKey: siblingKey, status: "still-active" },
+      ],
+    },
+  ]);
+  const result = await runOrchestrator({ issueNumber: 307, backend });
+  if (result.status !== "escalate") {
+    throw new Error(`dogfood runner targeted-reset replay ended ${result.status}`);
+  }
+  return {
+    stopSummary: result.stopSummary,
+    sourceEvidence: {
+      seam: "runner",
+      mechanism: "continue_fixing_bookkeeping",
+      resetScope: "single_identity_key",
+      preservedSibling: true,
+      status: result.status,
+      dispatched: backend.dispatched,
+      resetFindingIdentityKey: targetKey,
+      siblingFindingIdentityKey: siblingKey,
+    },
+  };
+}
+
+async function runnerNoProgressReplay(input: {
+  readonly mechanism: string;
+  readonly finding: Finding;
+  readonly reviewerOutputs: ReadonlyArray<StepOutput>;
+}): Promise<SeamReplay> {
+  const key = findingIdentityKey(input.finding);
+  const backend = new DogfoodSingleSliceBackend(undefined, input.reviewerOutputs);
+  const result = await runOrchestrator({ issueNumber: 307, backend });
+  if (result.status !== "escalate") {
+    throw new Error(`dogfood runner no-progress replay ended ${result.status}`);
+  }
+  if (result.stopSummary.reason !== "spec_conflict") {
+    throw new Error(
+      `dogfood runner no-progress replay stopped with ${result.stopSummary.reason}`,
+    );
+  }
+  return {
+    stopSummary: result.stopSummary,
+    sourceEvidence: {
+      seam: "runner",
+      mechanism: input.mechanism,
+      status: result.status,
+      implementationMovement: false,
+      dispatched: backend.dispatched,
+      findingIdentityKey: key,
+    },
+  };
+}
+
+function moduleDeclarationReplay(): SeamReplay {
+  const parsed = parseModuleDeclaration(`## Module Declaration
+\`\`\`yaml
+module: orchestrator-family
+module_scope:
+  - orchestrator/src/family
+\`\`\`
+`);
+  const prose = parseModuleDeclaration(
+    "# Module Declaration\nmodule: guessed-from-prose\nmodule_scope:\n  - logs",
+  );
+  if (parsed === undefined || prose !== undefined) {
+    throw new Error("dogfood module declaration replay did not exercise parser contract");
+  }
+  return {
+    stopSummary: successStopSummary(),
+    sourceEvidence: {
+      seam: "module_declaration_parser",
+      parsedModule: parsed.module,
+      parsedScope: parsed.moduleScope,
+      proseIgnored: prose === undefined,
+    },
+  };
+}
+
+function familyAttributionReplay(
+  moduleContext: FamilyModuleContext,
+): SeamReplay {
+  const attributedFinding = finding({
+    claim_quote: "child module finding must not fall back to the parent family module",
+    location: "orchestrator/src/runner.ts:307",
+    action: "fix_now",
+  });
+  const classified = classifyFamilyCmrFindings({
+    familyIssue: 287,
+    findings: [attributedFinding],
+    moduleContext,
+  });
+  const result = classified.results[0];
+  if (result?.attribution.method !== "child_module_scope") {
+    throw new Error("dogfood family attribution replay did not hit child scope");
+  }
+  return {
+    stopSummary: successStopSummary(),
+    sourceEvidence: {
+      seam: "family_cmr_classification",
+      attribution: result.attribution,
+      classification: result.classification,
+    },
+  };
+}
+
+function legacyDispositionParserReplay(): SeamReplay {
+  const identityKey =
+    "correctness|orchestrator/src/family/verifyCmr.ts:1|legacy disposition";
+  const outcome = parseCmrOutcome(
+    `<cmr>${JSON.stringify({
+      converged: true,
+      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      claimedFixedFindingIdentityKeys: [identityKey],
+      priorFindingDispositions: [
+        { identityKey, disposition: "verified-closed" },
+      ],
+    })}</cmr>`,
+  );
+  if (outcome.kind !== "verdict" || !outcome.converged) {
+    throw new Error("dogfood legacy disposition parser replay did not converge");
+  }
+  const normalized = outcome.priorFindingDispositions?.[0]?.status;
+  if (normalized !== "verified-closed") {
+    throw new Error("dogfood legacy disposition parser replay did not normalize");
+  }
+  return {
+    stopSummary: successStopSummary(),
+    sourceEvidence: {
+      seam: "cmr_outcome_parser",
+      normalizedPriorDisposition: normalized,
+      claimedFixedFindingIdentityKey: identityKey,
+    },
+  };
+}
+
+async function familyCurrentHeadSuccessStopSummary(): Promise<StopSummary> {
+  const familyBackend = new DogfoodFamilyBackend(
+    "current-head",
+    [],
+    "current-head",
+  );
+  const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+    if (input.phase === "final") {
+      await input.familyBackend.appendFamilyLedger({
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadAfter: "current-head",
+      });
+    }
+    return { ok: true, ran: true };
+  };
+  return (
+    await runFamily({
+      epic: {
+        issue: 287,
+        children: [{ issue: 287, blockedBy: [] }],
+      },
+      familyBackend,
+      singleSliceBackend: new DogfoodSingleSliceBackend(),
+      familyBase: "family/287-base",
+      verifyCmr,
+    })
+  ).stopSummary;
+}
+
+async function familyStaleHeadStopSummary(): Promise<StopSummary> {
+  const familyBackend = new DogfoodFamilyBackend("f0a72055");
+  const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+    if (input.phase === "final") {
+      await input.familyBackend.appendFamilyLedger({
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadAfter: "f0a72055",
+      });
+    }
+    return { ok: true, ran: true };
+  };
+  const epic: FamilyEpic = {
+    issue: 287,
+    children: [{ issue: 287, blockedBy: [] }],
+  };
+  return (
+    await runFamily({
+      epic,
+      familyBackend,
+      singleSliceBackend: new DogfoodSingleSliceBackend(),
+      familyBase: "family/287-base",
+      verifyCmr,
+    })
+  ).stopSummary;
+}
+
+async function familyAlreadyDoneStopSummary(): Promise<StopSummary> {
+  const familyBackend = new DogfoodFamilyBackend("family-done-head", [
+    {
+      childIssue: 451,
+      childBranch: "feat/issue-451",
+      childHead: "child-done-head",
+      status: "merged",
+      familyHeadAfter: "family-done-head",
+    },
+  ]);
+  const singleSliceBackend = new DogfoodSingleSliceBackend();
+  const result = await runFamily({
+    epic: {
+      issue: 445,
+      children: [{ issue: 451, blockedBy: [] }],
+    },
+    familyBackend,
+    singleSliceBackend,
+    familyBase: "family/445-base",
+  });
+  if (singleSliceBackend.runStepCalls.length > 0) {
+    throw new Error("dogfood family already-done replay reran the child slice");
+  }
+  return result.stopSummary;
+}
+
+async function withRouteEnv<T>(
+  env: ModelRouteEnv,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = new Map<string, string | undefined>();
+  for (const key of Object.keys(env)) {
+    previous.set(key, process.env[key]);
+    const value = env[key];
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  try {
+    return await run();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+function routeAccountingReplay(): SeamReplay {
+  const env = { ORCHESTRATOR_ROUTE: "claude-tight" };
+  const route = resolveRouteModels("claude-tight", {});
+  const declaredLegs = route.legCollections.cmrReview.map((leg) => leg.slug);
+  const rejectedDefaultLeg = "opus";
+  const failure = cmrLegAccountingFailure(
+    { successfulLegs: [...declaredLegs, rejectedDefaultLeg] },
+    env,
+  );
+  if (failure === undefined || !failure.includes(rejectedDefaultLeg)) {
+    throw new Error("dogfood route accounting replay did not reject default legs");
+  }
+  return {
+    stopSummary: successStopSummary(),
+    sourceEvidence: {
+      seam: "family_cmr_accounting",
+      routeName: route.routeName,
+      declaredLegs,
+      rejectedDefaultLeg,
+      failure,
+    },
+  };
+}
+
+async function routeFreezeReplay(): Promise<SeamReplay> {
+  class RouteMutatingBackend extends DogfoodSingleSliceBackend {
+    override async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+      process.env.ORCHESTRATOR_ROUTE = "normal";
+      return super.fetchIssueMeta(issueNumber);
+    }
+  }
+
+  const backend = new RouteMutatingBackend();
+  const result = await withRouteEnv(
+    { ORCHESTRATOR_ROUTE: "codex-tight" },
+    () => runOrchestrator({ issueNumber: 376, backend }),
+  );
+  if (result.status !== "success") {
+    throw new Error(`dogfood route freeze replay ended ${result.status}`);
+  }
+  if (!backend.dispatchedModels.includes("S3:opus")) {
+    throw new Error("dogfood route freeze replay did not dispatch codex-tight reviewer");
+  }
+  return {
+    stopSummary: result.stopSummary,
+    sourceEvidence: {
+      seam: "runner",
+      mechanism: "route_freeze_after_import",
+      routeName: "codex-tight",
+      envMutatedAfterImport: true,
+      reviewerModel: "opus",
+      dispatchedModels: backend.dispatchedModels,
+      dispatched: backend.dispatched,
+    },
+  };
+}
+
+async function closurePositiveReplay(): Promise<SeamReplay> {
+  const closureFinding = runnerFinding({
+    claimQuote: "S6 must receive and close the prior finding context",
+    location: "orchestrator/src/runner.ts:376",
+  });
+  const key = findingIdentityKey(closureFinding);
+  const backend = new DogfoodSingleSliceBackend(undefined, [
+    { kind: "reviewer", findings: [closureFinding] },
+    {
+      kind: "reviewer",
+      findings: [],
+      priorFindingDispositions: [
+        { identityKey: key, status: "verified-closed" },
+      ],
+    },
+  ]);
+  const result = await runOrchestrator({ issueNumber: 376, backend });
+  if (result.status !== "success") {
+    throw new Error(`dogfood closure-positive replay ended ${result.status}`);
+  }
+  return {
+    stopSummary: result.stopSummary,
+    sourceEvidence: {
+      seam: "runner",
+      mechanism: "s5_s6_closure_loop",
+      status: result.status,
+      priorFindingStatus: "verified-closed",
+      findingIdentityKey: key,
+      dispatched: backend.dispatched,
+    },
+  };
+}
+
+function cmrClosureWorkerResult(input: {
+  readonly claimedFixedFindingIdentityKeys: readonly string[];
+  readonly priorFindingDispositions: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly status: "still-active" | "verified-closed" | "unable-to-assess";
+  }>;
+}): WorkerResult {
+  return {
+    kind: "completed",
+    output: {
+      kind: "cmr",
+      converged: true,
+      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      claimedFixedFindingIdentityKeys: input.claimedFixedFindingIdentityKeys,
+      priorFindingDispositions: input.priorFindingDispositions,
+    },
+  };
+}
+
+async function familyClosureFailure(input: {
+  readonly shape: string;
+  readonly claimedFixedFindingIdentityKeys: readonly string[];
+  readonly priorFindingDispositions: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly status: "still-active" | "verified-closed" | "unable-to-assess";
+  }>;
+}): Promise<{ readonly shape: string; readonly reason: string }> {
+  const backend = new DogfoodCmrFamilyBackend(
+    "closure-head",
+    [],
+    [
+      cmrClosureWorkerResult({
+        claimedFixedFindingIdentityKeys: input.claimedFixedFindingIdentityKeys,
+        priorFindingDispositions: input.priorFindingDispositions,
+      }),
+    ],
+  );
+  const result = await runVerifyCmr({
+    phase: "final",
+    familyBase: "family/376-closure",
+    familyBackend: backend,
+  });
+  const reason =
+    backend.escalations[0]?.reason ??
+    backend.ledger.find((entry) => entry.status === "aborted")?.reason;
+  if (result.ok || reason === undefined) {
+    throw new Error(`dogfood CMR closure replay ${input.shape} did not fail`);
+  }
+  if (backend.dispatches.some((dispatch) => dispatch.startsWith("ship:"))) {
+    throw new Error(`dogfood CMR closure replay ${input.shape} shipped`);
+  }
+  return { shape: input.shape, reason };
+}
+
+async function runnerClosureFailure(input: {
+  readonly shape: string;
+  readonly reviewerOutput: StepOutput;
+}): Promise<{
+  readonly shape: string;
+  readonly reason: string;
+  readonly stopSummary: StopSummary;
+}> {
+  const closureFinding = runnerFinding({
+    claimQuote: `closure failure ${input.shape}`,
+    location: "orchestrator/src/runner.ts:376",
+  });
+  const backend = new DogfoodSingleSliceBackend(undefined, [
+    { kind: "reviewer", findings: [closureFinding] },
+    input.reviewerOutput,
+  ]);
+  const result = await runOrchestrator({ issueNumber: 376, backend });
+  if (result.status !== "error" || result.errorPackage === undefined) {
+    throw new Error(`dogfood runner closure replay ${input.shape} ended ${result.status}`);
+  }
+  return {
+    shape: input.shape,
+    reason: result.errorPackage.reason,
+    stopSummary: result.stopSummary,
+  };
+}
+
+async function closureNegativeReplay(): Promise<SeamReplay> {
+  const stillActiveKey = "correctness|src/closure.ts:1|still active";
+  const unableKey = "correctness|src/closure.ts:2|unable";
+  const missingKey = "correctness|src/closure.ts:3|missing";
+  const staleKey = "correctness|src/closure.ts:4|stale";
+  const duplicateKey =
+    "correctness|orchestrator/src/runner.ts:376|closure failure duplicate-disposition";
+  const familyFailures = await Promise.all([
+    familyClosureFailure({
+      shape: "still-active",
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [
+        { identityKey: stillActiveKey, status: "still-active" },
+      ],
+    }),
+    familyClosureFailure({
+      shape: "unable-to-assess",
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [
+        { identityKey: unableKey, status: "unable-to-assess" },
+      ],
+    }),
+    familyClosureFailure({
+      shape: "missing-disposition",
+      claimedFixedFindingIdentityKeys: [missingKey],
+      priorFindingDispositions: [],
+    }),
+    familyClosureFailure({
+      shape: "extra-stale-disposition",
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [
+        { identityKey: staleKey, status: "verified-closed" },
+      ],
+    }),
+  ]);
+  const duplicateFailure = await runnerClosureFailure({
+    shape: "duplicate-disposition",
+    reviewerOutput: {
+      kind: "reviewer",
+      findings: [],
+      priorFindingDispositions: [
+        { identityKey: duplicateKey, status: "verified-closed" },
+        { identityKey: duplicateKey, status: "verified-closed" },
+      ],
+    },
+  });
+  if (duplicateFailure.stopSummary.reason !== "contract_drift") {
+    throw new Error(
+      "dogfood duplicate closure replay did not produce contract_drift",
+    );
+  }
+  const failures = [...familyFailures, duplicateFailure];
+  return {
+    stopSummary: contractDriftStopSummary({
+      summary: "closure contract rejected stale or duplicate dispositions",
+      repairHint: "provide one verified-closed disposition per claimed finding",
+    }),
+    sourceEvidence: {
+      seam: "family_cmr_closure",
+      runnerSeam: "runner_s6_closure_adjudication",
+      rejectedStatuses: ["still-active", "unable-to-assess"],
+      rejectedShapes: failures.map((failure) => failure.shape),
+      failureReasons: Object.fromEntries(
+        failures.map((failure) => [failure.shape, failure.reason]),
+      ),
+    },
+  };
+}
+
+async function closureContextMissingReplay(): Promise<SeamReplay> {
+  const closureFinding = runnerFinding({
+    claimQuote: "S6 missing prior finding context must fail closed",
+    location: "orchestrator/src/runner.ts:376",
+  });
+  const backend = new DogfoodSingleSliceBackend(undefined, [
+    { kind: "reviewer", findings: [closureFinding] },
+    { kind: "reviewer", findings: [] },
+  ]);
+  const result = await runOrchestrator({ issueNumber: 376, backend });
+  if (result.status !== "error" || result.errorPackage === undefined) {
+    throw new Error(
+      `dogfood closure-context-missing replay ended ${result.status}`,
+    );
+  }
+  if (result.stopSummary.reason !== "contract_drift") {
+    throw new Error(
+      "dogfood closure-context-missing replay did not produce contract_drift",
+    );
+  }
+  return {
+    stopSummary: result.stopSummary,
+    sourceEvidence: {
+      seam: "runner",
+      mechanism: "s6_missing_prior_context",
+      status: result.status,
+      closureContext: "missing",
+      errorReason: result.errorPackage.reason,
+      dispatched: backend.dispatched,
+    },
+  };
+}
+
+function uniqueSortedStopReasons(
+  scenarios: ReadonlyArray<DogfoodReplayScenario>,
+): ReadonlyArray<StopReason> {
+  return [...new Set(scenarios.map((item) => item.stopReason))].sort();
+}
+
+export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
+  const answeredResumeReplay = await runnerAnsweredResumeReplay();
+  const changedShapeReplay = await runnerShapeChangedProgressReplay();
+  const targetedResetReplay = await runnerTargetedResetReplay();
+  const textOnlyNoProgressFinding = runnerFinding({
+    claimQuote: "reviewer wording changes cannot prove implementation progress",
+    location: "orchestrator/src/runner.ts:919",
+  });
+  const textOnlyNoProgressKey = findingIdentityKey(textOnlyNoProgressFinding);
+  const textOnlyNoProgressReplay = await runnerNoProgressReplay({
+    mechanism: "reviewer_text_only_no_progress",
+    finding: textOnlyNoProgressFinding,
+    reviewerOutputs: [
+      { kind: "reviewer", findings: [textOnlyNoProgressFinding] },
+      {
+        kind: "reviewer",
+        findings: [
+          {
+            ...textOnlyNoProgressFinding,
+            suggested_fix: "same finding with reviewer wording changed only",
+          },
+        ],
+        priorFindingDispositions: [
+          { identityKey: textOnlyNoProgressKey, status: "still-active" },
+        ],
+      },
+      {
+        kind: "reviewer",
+        findings: [
+          {
+            ...textOnlyNoProgressFinding,
+            suggested_fix: "same finding with another wording-only review change",
+          },
+        ],
+        priorFindingDispositions: [
+          { identityKey: textOnlyNoProgressKey, status: "still-active" },
+        ],
+      },
+    ],
+  });
+  const noObservableProgressFinding = runnerFinding({
+    claimQuote: "claimed repair attempts without relevant movement cannot reset no-progress",
+    location: "orchestrator/src/runner.ts:920",
+  });
+  const noObservableProgressKey = findingIdentityKey(noObservableProgressFinding);
+  const noObservableProgressReplay = await runnerNoProgressReplay({
+    mechanism: "claimed_attempt_without_observable_progress",
+    finding: noObservableProgressFinding,
+    reviewerOutputs: [
+      { kind: "reviewer", findings: [noObservableProgressFinding] },
+      {
+        kind: "reviewer",
+        findings: [noObservableProgressFinding],
+        priorFindingDispositions: [
+          { identityKey: noObservableProgressKey, status: "still-active" },
+        ],
+      },
+      {
+        kind: "reviewer",
+        findings: [noObservableProgressFinding],
+        priorFindingDispositions: [
+          { identityKey: noObservableProgressKey, status: "still-active" },
+        ],
+      },
+    ],
+  });
+  const moduleDeclarationSource = moduleDeclarationReplay();
+  const legacyDispositionSource = legacyDispositionParserReplay();
+  const routeAccountingSource = routeAccountingReplay();
+  const routeFreezeSource = await routeFreezeReplay();
+  const closureNegativeSource = await closureNegativeReplay();
+  const closureContextMissingSource = await closureContextMissingReplay();
+  const closurePositiveSource = await closurePositiveReplay();
+  const currentHeadFamilySuccessSummary =
+    await familyCurrentHeadSuccessStopSummary();
+  const staleFamilyHeadStopSummary = await familyStaleHeadStopSummary();
+  const familyAlreadyDoneSourceSummary = await familyAlreadyDoneStopSummary();
+  const familyModule = {
+    module: "orchestrator-family",
+    moduleScope: ["orchestrator/src/family"],
+    source: "family_issue" as const,
+    issue: 287,
+  };
+  const moduleContext = buildFamilyModuleContext({
+    childModules: [
+      {
+        module: "orchestrator-runner",
+        moduleScope: ["orchestrator/src/runner.ts"],
+        source: "child_issue",
+        issue: 307,
+      },
+    ],
+    familyModule,
+  });
+  const familyAttributionSource = familyAttributionReplay(moduleContext);
+  const sameModuleFinding = finding({
+    claim_quote: "same-module CMR gap was incorrectly treated as defer",
+    location: "orchestrator/src/family/verifyCmr.ts:42",
+    action: "defer",
+    disposition: {
+      kind: "cross_module",
+      targetModule: "orchestrator-family",
+      reason: "same module gap must stay red",
+    },
+  });
+  const crossModuleFinding = finding({
+    claim_quote: "military state machine follow-up belongs to another module",
+    location: "docs/military-state-machine.md:1",
+    action: "defer",
+    disposition: {
+      kind: "cross_module",
+      targetModule: "military-state-machine",
+      reason: "declared target module is outside the family module",
+    },
+  });
+  const hubLossFinding = finding({
+    severity: "medium",
+    claim_quote:
+      "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
+    location: "docs/adr/0023.md:D9",
+    action: "defer",
+    disposition: {
+      kind: "cross_module",
+      targetModule: "hub",
+      reason: "the hub implementation is outside #287",
+    },
+  });
+  const specConflictFinding = finding({
+    claim_quote: "Agent Brief contradicts the owner-authored acceptance criteria",
+    location: "orchestrator/prompts/coder_implement.md:1",
+    disposition: {
+      kind: "spec_conflict",
+      reason: "owner-authored instructions conflict and need human resolution",
+    },
+  });
+  const infraFinding = finding({
+    claim_quote: "MODULE_NOT_FOUND prevented final verification from running",
+    location: "orchestrator/src/family/verifyCmr.ts:1",
+    disposition: {
+      kind: "infra_failure",
+      reason: "runtime dependency missing",
+    },
+  });
+
+  const scenarios: DogfoodReplayScenario[] = [
+    staticScenario({
+      id: "307-continue-fixing-after-human-answer",
+      issue: 307,
+      title: "owner says continue fixing and the resumed run stays in the fix loop",
+      classification: "resumed",
+      stopSummary: {
+        reason: "resumed",
+        summary: "decision answer reopened the runner and completed through S8",
+      },
+      source: "runner",
+      sourceStopSummary: answeredResumeReplay.stopSummary,
+      sourceEvidence: answeredResumeReplay.sourceEvidence,
+    }),
+    staticScenario({
+      id: "307-local-progress-shape-changed",
+      issue: 307,
+      title: "finding shape changes with scoped implementation progress",
+      classification: "resumed",
+      stopSummary: {
+        reason: "resumed",
+        summary: "observable scoped progress changed the finding shape and continued",
+      },
+      source: "runner",
+      sourceStopSummary: changedShapeReplay.stopSummary,
+      sourceEvidence: changedShapeReplay.sourceEvidence,
+    }),
+    staticScenario({
+      id: "307-reviewer-text-only-change",
+      issue: 307,
+      title: "reviewer wording changes without implementation progress",
+      classification: "spec_conflict",
+      stopSummary: textOnlyNoProgressReplay.stopSummary,
+      source: "runner",
+      sourceStopSummary: textOnlyNoProgressReplay.stopSummary,
+      sourceEvidence: textOnlyNoProgressReplay.sourceEvidence,
+    }),
+    staticScenario({
+      id: "307-no-observable-progress",
+      issue: 307,
+      title: "worker claims attempted repair without scope-local diff/test/fixture movement",
+      classification: "spec_conflict",
+      stopSummary: noObservableProgressReplay.stopSummary,
+      source: "runner",
+      sourceStopSummary: noObservableProgressReplay.stopSummary,
+      sourceEvidence: noObservableProgressReplay.sourceEvidence,
+    }),
+    staticScenario({
+      id: "307-continue-fixing-targeted-reset",
+      issue: 307,
+      title: "continue-fixing resets only the target finding group",
+      classification: "spec_conflict",
+      stopSummary: targetedResetReplay.stopSummary,
+      source: "runner",
+      sourceStopSummary: targetedResetReplay.stopSummary,
+      sourceEvidence: targetedResetReplay.sourceEvidence,
+    }),
+    familyClassificationScenario({
+      id: "287-same-module-cmr-gap",
+      issue: 287,
+      title: "same-module CMR gap remains blocking",
+      familyIssue: 287,
+      finding: sameModuleFinding,
+      moduleContext,
+    }),
+    familyClassificationScenario({
+      id: "287-cross-module-defer-with-module",
+      issue: 287,
+      title: "declared cross-module defer carries the target module",
+      familyIssue: 287,
+      finding: crossModuleFinding,
+      moduleContext,
+    }),
+    staticScenario({
+      id: "287-module-declaration-fenced-yaml",
+      issue: 287,
+      title: "module declaration is accepted only from fenced YAML or run options",
+      classification: "success",
+      stopSummary: moduleDeclarationSource.stopSummary,
+      source: "family_cmr_classification",
+      sourceStopSummary: moduleDeclarationSource.stopSummary,
+      sourceEvidence: moduleDeclarationSource.sourceEvidence,
+    }),
+    staticScenario({
+      id: "287-family-attribution-child-before-parent",
+      issue: 287,
+      title: "finding attribution uses child module before parent fallback",
+      classification: "success",
+      stopSummary: familyAttributionSource.stopSummary,
+      source: "family_cmr_classification",
+      sourceStopSummary: familyAttributionSource.stopSummary,
+      sourceEvidence: familyAttributionSource.sourceEvidence,
+    }),
+    staticScenario({
+      id: "287-correctness-r3-legacy-disposition",
+      issue: 287,
+      title: "legacy disposition fields do not make a converged correctness pass malformed",
+      classification: "success",
+      stopSummary: legacyDispositionSource.stopSummary,
+      source: "family",
+      sourceStopSummary: legacyDispositionSource.stopSummary,
+      sourceEvidence: legacyDispositionSource.sourceEvidence,
+    }),
+    staticScenario({
+      id: "287-correctness-final-legacy-disposition",
+      issue: 287,
+      title: "final correctness CMR normalizes legacy disposition into pass",
+      classification: "success",
+      stopSummary: currentHeadFamilySuccessSummary,
+      source: "family",
+      sourceStopSummary: currentHeadFamilySuccessSummary,
+      sourceEvidence: {
+        seam: "family",
+        finalCmrPass: "correctness",
+        legacyDispositionAccepted: true,
+      },
+    }),
+    staticScenario({
+      id: "287-stale-family-head-current-cmr-pass",
+      issue: 287,
+      title: "stale reported familyHead does not override current-head CMR pass",
+      classification: "success",
+      stopSummary: staleFamilyHeadStopSummary,
+      source: "family",
+      sourceStopSummary: staleFamilyHeadStopSummary,
+      sourceEvidence: {
+        seam: "family",
+        status: "success",
+        finalCmrPass: "correctness",
+        staleReportedHeadIgnored: true,
+      },
+    }),
+    staticScenario({
+      id: "287-coordinator-answer-reclassified",
+      issue: 287,
+      title: "coordinator-written escalation answer is replayed as evidence, not success",
+      classification: "spec_conflict",
+      stopSummary: stopReasonForFindingDisposition({
+        kind: "spec_conflict",
+        finding: specConflictFinding,
+        reason: "peripheral coordinator answer requires fresh module/defer classification",
+      }),
+    }),
+    familyClassificationScenario({
+      id: "287-known-hub-loss-suppression",
+      issue: 287,
+      title: "ADR0023 hub-loss finding is accepted suppressed with bounded reopen",
+      familyIssue: 287,
+      finding: hubLossFinding,
+      moduleContext,
+    }),
+    staticScenario({
+      id: "376-route-accounting-non-default",
+      issue: 376,
+      title: "non-default route accounting uses declared route legs",
+      classification: "success",
+      stopSummary: routeAccountingSource.stopSummary,
+      source: "family",
+      sourceStopSummary: routeAccountingSource.stopSummary,
+      sourceEvidence: routeAccountingSource.sourceEvidence,
+    }),
+    staticScenario({
+      id: "376-route-env-format-mismatch",
+      issue: 376,
+      title: "CMR leg env writer/reader mismatch fails closed",
+      classification: "contract_drift",
+      stopSummary: contractDriftStopSummary({
+        summary: "CMR route env format mismatch",
+        repairHint: "repair JSON-vs-CSV route env serialization before rerun",
+      }),
+    }),
+    staticScenario({
+      id: "376-route-freeze-after-import",
+      issue: 376,
+      title: "route is frozen at invocation even if env changes after import",
+      classification: "success",
+      stopSummary: routeFreezeSource.stopSummary,
+      source: "runner",
+      sourceStopSummary: routeFreezeSource.stopSummary,
+      sourceEvidence: routeFreezeSource.sourceEvidence,
+    }),
+    staticScenario({
+      id: "376-startup-route-tight-violation",
+      issue: 376,
+      title: "startup route violation is structured with repair hint",
+      classification: "infra_failure",
+      stopSummary: infraFailureStopSummary({
+        summary: "startup route resolution failed closed",
+        repairHint: "fix the active model route before dispatching workers",
+      }),
+    }),
+    staticScenario({
+      id: "376-closure-context-negative",
+      issue: 376,
+      title: "active or duplicate prior finding dispositions cannot pass closure",
+      classification: "contract_drift",
+      stopSummary: closureNegativeSource.stopSummary,
+      source: "family",
+      sourceStopSummary: closureNegativeSource.stopSummary,
+      sourceEvidence: closureNegativeSource.sourceEvidence,
+    }),
+    staticScenario({
+      id: "376-closure-context-missing",
+      issue: 376,
+      title: "fresh reviewer missing prior finding context fails with structured drift",
+      classification: "contract_drift",
+      stopSummary: closureContextMissingSource.stopSummary,
+      source: "runner",
+      sourceStopSummary: closureContextMissingSource.stopSummary,
+      sourceEvidence: closureContextMissingSource.sourceEvidence,
+    }),
+    staticScenario({
+      id: "376-closure-context-positive",
+      issue: 376,
+      title: "S6 verifies prior finding closed and lets the run continue",
+      classification: "success",
+      stopSummary: closurePositiveSource.stopSummary,
+      source: "runner",
+      sourceStopSummary: closurePositiveSource.stopSummary,
+      sourceEvidence: closurePositiveSource.sourceEvidence,
+    }),
+    staticScenario({
+      id: "376-owning-issue-still-red",
+      issue: 376,
+      title: "surface owned by a named child remains blocking",
+      classification: "owning_issue_still_red",
+      stopSummary: stopReasonForFindingDisposition({
+        kind: "owning_issue_still_red",
+        finding: finding({
+          claim_quote: "owning child surface remains red",
+          location: "orchestrator/src/family/verifyCmr.ts:376",
+        }),
+        owningIssue: "#376",
+        reason: "owning issue still has the named surface red",
+      }),
+    }),
+    staticScenario({
+      id: "376-accepted-suppression-with-source",
+      issue: 376,
+      title: "accepted suppression with explicit source enters success metadata",
+      classification: "accepted_suppressed",
+      stopSummary: successStopSummary({
+        acceptedSuppressions: [
+          {
+            source: "#376 owner answer",
+            scope: "orchestrator route accounting",
+            reason: "accepted as bounded out of scope",
+            findingIdentity: "correctness|orchestrator/src/modelRoutes.ts:1|route accounting follow-up",
+            boundedReopen: "reopen on scope mismatch, severity escalation, or new evidence",
+          },
+        ],
+      }),
+    }),
+    staticScenario({
+      id: "376-provider-degraded-nonblocking",
+      issue: 376,
+      title: "route-selected strong legs pass while a provider leg is degraded",
+      classification: "provider_degraded",
+      stopSummary: successStopSummary({
+        providerDegraded: [
+          {
+            provider: "agy",
+            leg: "agy-tight",
+            reason: "provider auth unavailable",
+            blocking: false,
+            repairHint: "restore provider auth before requiring this leg",
+          },
+        ],
+      }),
+    }),
+    staticScenario({
+      id: "376-provider-degraded-blocking",
+      issue: 376,
+      title: "required route leg is unavailable",
+      classification: "provider_degraded",
+      stopSummary: providerDegradedStopSummary({
+        provider: "agy",
+        leg: "agy-tight",
+        reason: "required route leg did not run",
+        blocking: true,
+        repairHint: "repair provider credentials or choose a route without that leg",
+      }),
+    }),
+    staticScenario({
+      id: "433-provider-leg-skipped-strong-leg-pass",
+      issue: 433,
+      title: "skipped provider leg is metadata when selected strong leg converges",
+      classification: "provider_degraded",
+      stopSummary: successStopSummary({
+        providerDegraded: [
+          {
+            provider: "agy",
+            leg: "agy",
+            reason: "provider quota unavailable",
+            blocking: false,
+            repairHint: "restore provider quota before selecting this route as required",
+          },
+        ],
+      }),
+    }),
+    staticScenario({
+      id: "440-agent-brief-spec-conflict",
+      issue: 440,
+      title: "owner-authored Agent Brief conflict is classified as spec conflict",
+      classification: "spec_conflict",
+      stopSummary: stopReasonForFindingDisposition({
+        kind: "spec_conflict",
+        finding: specConflictFinding,
+        reason: "Agent Brief contradicts acceptance criteria",
+      }),
+    }),
+    staticScenario({
+      id: "440-module-not-found",
+      issue: 440,
+      title: "MODULE_NOT_FOUND is machine repairable infrastructure failure",
+      classification: "infra_failure",
+      stopSummary: infraFailureStopSummary({
+        summary: "MODULE_NOT_FOUND during worker startup",
+        repairHint: "install or restore the missing module, then rerun",
+      }),
+    }),
+    staticScenario({
+      id: "440-coder-trust-boundary",
+      issue: 440,
+      title: "non-owner issue context is data-only and cannot instruct coder/fixer/ship",
+      classification: "spec_conflict",
+      stopSummary: stopReasonForFindingDisposition({
+        kind: "spec_conflict",
+        finding: specConflictFinding,
+        reason: "source authentication failed for executable instructions",
+      }),
+    }),
+    staticScenario({
+      id: "440-escalation-answer-invalid",
+      issue: 440,
+      title: "blank, malformed, stale, or scope-mismatched answers do not unlock resume",
+      classification: "spec_conflict",
+      stopSummary: stopReasonForFindingDisposition({
+        kind: "spec_conflict",
+        finding: specConflictFinding,
+        reason: "escalation answer is not executable for the paused step",
+      }),
+    }),
+    staticScenario({
+      id: "405-ship-worker-malformed-after-final-cmr",
+      issue: 405,
+      title: "ship worker malformed after final CMR pass does not write shipped marker",
+      classification: "contract_drift",
+      stopSummary: {
+        reason: "contract_drift",
+        summary: "ship worker returned no valid result after verified final CMR",
+        repairHint:
+          "preserve latest verified CMR head and rerun ship after repairing the worker contract",
+        metadata: {
+          ship: {
+            latestVerifiedCmrHead: "verified-head",
+            currentFamilyHead: "family-head",
+            reportedFamilyHead: "reported-head",
+            shipPrState: "not-written",
+          },
+          heads: {
+            reportedFamilyHead: "reported-head",
+            actualFamilyHead: "family-head",
+            verifiedCmrHead: "verified-head",
+          },
+        },
+      },
+    }),
+    staticScenario({
+      id: "405-module-not-found-final-verify",
+      issue: 405,
+      title: "final verification dependency failure is infrastructure, not product decision",
+      classification: "infra_failure",
+      stopSummary: stopReasonForFindingDisposition({
+        kind: "infra_failure",
+        finding: infraFinding,
+        reason: "final verify dependency missing",
+        repairHint: "restore verification dependencies and rerun final verify",
+      }),
+    }),
+    staticScenario({
+      id: "376-ship-side-review-degraded",
+      issue: 376,
+      title: "ship-side extra review degradation is recorded with blocking metadata",
+      classification: "provider_degraded",
+      stopSummary: providerDegradedStopSummary({
+        provider: "ship-review",
+        leg: "ship-side-review",
+        reason: "sandbox/auth/provider restriction prevented extra ship review",
+        blocking: false,
+        repairHint: "restore ship-side review capability before making it required",
+      }),
+    }),
+    staticScenario({
+      id: "family-admission-non-runnable-child",
+      issue: 451,
+      title: "non-runnable child skip remains visible in family admission summary",
+      classification: "owning_issue_still_red",
+      stopSummary: stopReasonForFindingDisposition({
+        kind: "owning_issue_still_red",
+        finding: finding({
+          claim_quote: "child is not ready-for-agent",
+          location: "orchestrator/src/family/runner.ts:1",
+        }),
+        owningIssue: "#445",
+        reason: "family admission skipped a non-runnable child",
+      }),
+    }),
+    staticScenario({
+      id: "family-resume-already-done-child",
+      issue: 451,
+      title: "already completed child is skipped during family resume",
+      classification: "already_done",
+      stopSummary: {
+        reason: "already_done",
+        summary: "family resume found child #451 already merged and skipped rerun",
+        metadata: familyAlreadyDoneSourceSummary.metadata,
+      },
+      source: "family",
+      sourceStopSummary: familyAlreadyDoneSourceSummary,
+    }),
+  ];
+
+  const coveredStopReasons = uniqueSortedStopReasons(scenarios);
+  return {
+    issue: 451,
+    parentIssue: 445,
+    scenarios,
+    coveredStopReasons,
+    summary: `${scenarios.length} dogfood replay scenarios cover ${coveredStopReasons.length} stop reasons`,
+  };
+}
