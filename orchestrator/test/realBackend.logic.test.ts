@@ -26,6 +26,7 @@ import {
   buildAuthPaths,
   buildIssueMeta,
   buildIssueSnapshot,
+  checkExecutableInstructionSource,
   checkBranchHeadConsistency,
   classifyResumeError,
   cutRefFor,
@@ -212,6 +213,36 @@ describe("realBackend gh parsing", () => {
         "Akagilnc",
       ),
     ).toBe("");
+  });
+
+  it("checkExecutableInstructionSource rejects non-owner executable issue instructions with a structured summary", () => {
+    const rejected = checkExecutableInstructionSource({
+      sourceKind: "issue comment",
+      instructionKind: "Agent Brief",
+      trustedAuthor: "Akagilnc",
+      candidateAuthor: "drive-by",
+    });
+
+    expect(rejected.accepted).toBe(false);
+    expect(rejected.stopSummary).toMatchObject({
+      reason: "spec_conflict",
+      repairHint: expect.stringContaining("repo-owner-authored Agent Brief"),
+    });
+    expect(rejected.evidence).toMatchObject({
+      seam: "source_auth",
+      trustedAuthor: "Akagilnc",
+      rejectedAuthor: "drive-by",
+      executableInstructionSourceAccepted: false,
+    });
+
+    expect(
+      checkExecutableInstructionSource({
+        sourceKind: "issue body",
+        instructionKind: "Agent Brief",
+        trustedAuthor: "Akagilnc",
+        candidateAuthor: "akagilnc",
+      }).accepted,
+    ).toBe(true);
   });
 
   it("extractAgentBrief also accepts API-style user.login author carriers", () => {

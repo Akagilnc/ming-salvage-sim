@@ -29,6 +29,7 @@ export interface StopSummaryMetadata {
   readonly heads?: HeadFreshnessSummary;
   readonly ship?: ShipFailureSummary;
   readonly admissionSkipped?: ReadonlyArray<AdmissionSkippedSummary>;
+  readonly alreadyDone?: ReadonlyArray<AlreadyDoneSummary>;
 }
 
 export interface AcceptedSuppressionSummary {
@@ -65,6 +66,12 @@ export interface AdmissionSkippedSummary {
   readonly issue: number;
   readonly reason: string;
   readonly message: string;
+}
+
+export interface AlreadyDoneSummary {
+  readonly issue: number;
+  readonly status: "merged" | "shipped" | "completed";
+  readonly source: string;
 }
 
 export type FindingDispositionStopInput =
@@ -144,6 +151,7 @@ export function successStopSummary(input?: {
   readonly providerDegraded?: ReadonlyArray<ProviderDegradationSummary>;
   readonly heads?: HeadFreshnessSummary;
   readonly admissionSkipped?: ReadonlyArray<AdmissionSkippedSummary>;
+  readonly alreadyDone?: ReadonlyArray<AlreadyDoneSummary>;
 }): StopSummary {
   return {
     reason: "success",
@@ -161,9 +169,26 @@ export function successStopSummary(input?: {
             ...(input.admissionSkipped !== undefined
               ? { admissionSkipped: input.admissionSkipped }
               : {}),
+            ...(input.alreadyDone !== undefined
+              ? { alreadyDone: input.alreadyDone }
+              : {}),
           },
         }
       : {}),
+  };
+}
+
+export function sourceAuthFailureStopSummary(input: {
+  readonly instructionKind: string;
+  readonly rejectedAuthor: string;
+  readonly trustedAuthor: string;
+  readonly sourceKind: string;
+}): StopSummary {
+  return {
+    reason: "spec_conflict",
+    summary: `${input.sourceKind} by ${input.rejectedAuthor} is not an authenticated executable ${input.instructionKind} source`,
+    repairHint:
+      "move executable instructions into a repo-owner-authored Agent Brief, accepted issue body, ADR, or runner Agent Brief, then rerun",
   };
 }
 
