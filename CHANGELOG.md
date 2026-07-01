@@ -22,7 +22,7 @@
 - **resume / escalation 信任边界加固**：继续修复、human answer、ship worker contract drift、module startup failure 与 source-auth 场景按实际 ledger/git 状态分类，不再误当成普通成功。
 
 ### 测试
-- 新增 family CMR 分类、verify-cmr fix loop、runner progress evidence、stop summary、provider degraded、real backend parser、worker prompt contract 与 dogfood replay 覆盖；ship 验证为 orchestrator typecheck 通过，Vitest `1034 passed, 1 skipped`，严格未使用符号检查通过。
+- 新增 family CMR 分类、verify-cmr fix loop、runner progress evidence、stop summary、provider degraded、real backend parser、worker prompt contract 与 dogfood replay 覆盖；ship 验证为 orchestrator typecheck 通过，Vitest `1033 passed, 1 skipped (1034 total)`，严格未使用符号检查通过。
 
 ## [0.20.0.0] - 2026-07-01
 
