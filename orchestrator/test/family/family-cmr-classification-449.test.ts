@@ -720,6 +720,80 @@ describe("#449 verifyCmr family gate classification", () => {
     });
   });
 
+  it("populates declared undeveloped modules from fenced module YAML into the family gate context", async () => {
+    const parsed = parseModuleDeclaration(`## Module Declaration
+\`\`\`yaml
+module: fiscal
+module_scope:
+  - orchestrator/src/family
+undeveloped_modules:
+  - military-state-machine
+\`\`\`
+`);
+    expect(parsed).toEqual({
+      module: "fiscal",
+      moduleScope: ["orchestrator/src/family"],
+      undevelopedModules: [
+        {
+          module: "military-state-machine",
+          moduleScope: ["military-state-machine"],
+        },
+      ],
+    });
+    const crossModuleFinding: Finding = {
+      ...finding,
+      claim_quote: "production parsed undeveloped module should unlock defer",
+      location: "docs/military-state-machine.md:1",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "military-state-machine",
+        reason: "outside current module and declared undeveloped in the family issue",
+      },
+    };
+    const backend = new CmrFindingBackend({
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: false,
+        reason: "only parsed cross-module follow-up findings remain",
+        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        findings: [crossModuleFinding],
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/445-base",
+      familyBackend: backend,
+      familyIssue: 445,
+      moduleContext: buildFamilyModuleContext({
+        childModules: [],
+        familyModule: {
+          ...parsed!,
+          source: "family_issue",
+          issue: 445,
+        },
+      }),
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatched).toEqual(["cmr", "cmr", "ship"]);
+    expect(backend.ledger[0]).toMatchObject({
+      status: "cmr_passed",
+      cmrPass: "completeness",
+      stopSummary: {
+        reason: "cross_module_defer",
+        targetModule: "military-state-machine",
+      },
+      cmrFindingClassification: {
+        deferred: [expect.objectContaining({ claim_quote: crossModuleFinding.claim_quote })],
+        results: [{ classification: "cross_module_defer", targetModule: "military-state-machine" }],
+      },
+    });
+  });
+
   it("lets a declared cross-module CMR defer pass and records the classification in the ledger", async () => {
     const crossModuleFinding: Finding = {
       ...finding,

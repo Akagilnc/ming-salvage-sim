@@ -340,8 +340,10 @@ describe("#451 dogfood replay fixture", () => {
       }),
     });
     expect(rowsById.get("287-module-declaration-fenced-yaml")?.sourceEvidence).toMatchObject({
-      seam: "module_declaration_parser",
+      seam: "family_verify_cmr",
+      parserSeam: "module_declaration_parser",
       parsedModule: "orchestrator-family",
+      undevelopedTargets: ["military-state-machine"],
       proseIgnored: true,
     });
     expect(rowsById.get("287-family-attribution-child-before-parent")?.sourceEvidence).toMatchObject({
@@ -353,8 +355,10 @@ describe("#451 dogfood replay fixture", () => {
       },
     });
     expect(rowsById.get("287-correctness-r3-legacy-disposition")?.sourceEvidence).toMatchObject({
-      seam: "cmr_outcome_parser",
+      seam: "family_verify_cmr",
+      parserSeam: "cmr_outcome_parser",
       normalizedPriorDisposition: "verified-closed",
+      dispatches: expect.arrayContaining(["cmr:completeness", "cmr:correctness", "ship:family/287-legacy-disposition"]),
     });
     expect(rowsById.get("287-correctness-final-legacy-disposition")?.sourceEvidence).toMatchObject({
       seam: "family",
@@ -362,10 +366,12 @@ describe("#451 dogfood replay fixture", () => {
       legacyDispositionAccepted: true,
     });
     expect(rowsById.get("376-route-accounting-non-default")?.sourceEvidence).toMatchObject({
-      seam: "family_cmr_accounting",
+      seam: "family_verify_cmr",
+      helperSeam: "family_cmr_accounting",
       routeName: "claude-tight",
       declaredLegs: ["gpt-5.5", "agy"],
       rejectedDefaultLeg: "opus",
+      dispatches: ["cmr:completeness"],
     });
     expect(rowsById.get("376-route-freeze-after-import")?.sourceEvidence).toMatchObject({
       seam: "runner",
@@ -373,6 +379,14 @@ describe("#451 dogfood replay fixture", () => {
       routeName: "codex-tight",
       reviewerModel: "opus",
       envMutatedAfterImport: true,
+    });
+    expect(rowsById.get("376-startup-route-tight-violation")?.sourceEvidence).toMatchObject({
+      seam: "runner_startup_route",
+      helperSeam: "model_route_startup_policy",
+      routeName: "claude-tight",
+      violationReason: "tight route violation",
+      status: "escalate",
+      dispatchedBeforeAbort: [],
     });
     expect(rowsById.get("376-closure-context-positive")?.sourceEvidence).toMatchObject({
       seam: "runner",

@@ -877,27 +877,94 @@ async function runnerInvalidEscalationAnswerReplay(): Promise<SeamReplay> {
   };
 }
 
-function moduleDeclarationReplay(): SeamReplay {
+async function moduleDeclarationReplay(): Promise<SeamReplay> {
   const parsed = parseModuleDeclaration(`## Module Declaration
 \`\`\`yaml
 module: orchestrator-family
 module_scope:
   - orchestrator/src/family
+undeveloped_modules:
+  - military-state-machine
 \`\`\`
 `);
   const prose = parseModuleDeclaration(
     "# Module Declaration\nmodule: guessed-from-prose\nmodule_scope:\n  - logs",
   );
-  if (parsed === undefined || prose !== undefined) {
+  if (
+    parsed === undefined ||
+    parsed.undevelopedModules?.[0]?.module !== "military-state-machine" ||
+    prose !== undefined
+  ) {
     throw new Error("dogfood module declaration replay did not exercise parser contract");
   }
+  const crossModuleFinding = finding({
+    claim_quote: "module declaration undeveloped target unlocks cross-module defer",
+    location: "docs/military-state-machine.md:1",
+    action: "defer",
+    disposition: {
+      kind: "cross_module",
+      targetModule: "military-state-machine",
+      reason: "declared as an undeveloped family target",
+    },
+  });
+  const cmrOutput: WorkerResult = {
+    kind: "completed",
+    output: {
+      kind: "cmr",
+      converged: false,
+      reason: "only declared cross-module follow-up remains",
+      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      findings: [crossModuleFinding],
+    },
+  };
+  const backend = new DogfoodCmrFamilyBackend("module-declaration-head", [], [
+    cmrOutput,
+    cmrOutput,
+    {
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: "family/287-module-declaration",
+        status: "pr_opened",
+        pr: "pr://family/287-module-declaration",
+        prHead: "module-declaration-head",
+      },
+    },
+  ]);
+  const result = await runVerifyCmr({
+    phase: "final",
+    familyBase: "family/287-module-declaration",
+    familyBackend: backend,
+    familyIssue: 287,
+    moduleContext: buildFamilyModuleContext({
+      childModules: [],
+      familyModule: {
+        ...parsed,
+        source: "family_issue",
+        issue: 287,
+      },
+    }),
+  });
+  const pass = backend.ledger.find(
+    (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
+  );
+  if (!result.ok || pass?.stopSummary?.reason !== "cross_module_defer") {
+    throw new Error(
+      "dogfood module declaration replay did not pass through runVerifyCmr",
+    );
+  }
   return {
-    stopSummary: successStopSummary(),
+    stopSummary: pass.stopSummary,
     sourceEvidence: {
-      seam: "module_declaration_parser",
+      seam: "family_verify_cmr",
+      parserSeam: "module_declaration_parser",
       parsedModule: parsed.module,
       parsedScope: parsed.moduleScope,
+      undevelopedTargets: parsed.undevelopedModules.map((module) => module.module),
       proseIgnored: prose === undefined,
+      dispatches: backend.dispatches,
     },
   };
 }
@@ -929,10 +996,10 @@ function familyAttributionReplay(
   };
 }
 
-function legacyDispositionParserReplay(): SeamReplay {
+async function legacyDispositionParserReplay(): Promise<SeamReplay> {
   const identityKey =
     "correctness|orchestrator/src/family/verifyCmr.ts:1|legacy disposition";
-  const outcome = parseCmrOutcome(
+  const outcomeText =
     `<cmr>${JSON.stringify({
       converged: true,
       successfulLegs: ["opus", "gpt-5.5", "agy"],
@@ -940,8 +1007,8 @@ function legacyDispositionParserReplay(): SeamReplay {
       priorFindingDispositions: [
         { identityKey, disposition: "verified-closed" },
       ],
-    })}</cmr>`,
-  );
+    })}</cmr>`;
+  const outcome = parseCmrOutcome(outcomeText);
   if (outcome.kind !== "verdict" || !outcome.converged) {
     throw new Error("dogfood legacy disposition parser replay did not converge");
   }
@@ -949,12 +1016,63 @@ function legacyDispositionParserReplay(): SeamReplay {
   if (normalized !== "verified-closed") {
     throw new Error("dogfood legacy disposition parser replay did not normalize");
   }
+  const backend = new DogfoodCmrFamilyBackend("legacy-disposition-head", [], [
+    {
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: outcome.converged,
+        successfulLegs: outcome.successfulLegs,
+        skippedLegs: outcome.skippedLegs,
+        claimedFixedFindingIdentityKeys: outcome.claimedFixedFindingIdentityKeys,
+        priorFindingDispositions: outcome.priorFindingDispositions,
+      },
+    },
+    {
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: true,
+        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        claimedFixedFindingIdentityKeys: [identityKey],
+        priorFindingDispositions: [
+          { identityKey, status: "verified-closed" },
+        ],
+      },
+    },
+    {
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: "family/287-legacy-disposition",
+        status: "pr_opened",
+        pr: "pr://family/287-legacy-disposition",
+        prHead: "legacy-disposition-head",
+      },
+    },
+  ]);
+  const result = await runVerifyCmr({
+    phase: "final",
+    familyBase: "family/287-legacy-disposition",
+    familyBackend: backend,
+    priorCmrFindingIdentityKeys: [identityKey],
+  });
+  const pass = backend.ledger.find(
+    (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
+  );
+  if (!result.ok || pass?.stopSummary?.reason !== "success") {
+    throw new Error(
+      "dogfood legacy disposition parser replay did not pass through runVerifyCmr",
+    );
+  }
   return {
-    stopSummary: successStopSummary(),
+    stopSummary: pass.stopSummary,
     sourceEvidence: {
-      seam: "cmr_outcome_parser",
+      seam: "family_verify_cmr",
+      parserSeam: "cmr_outcome_parser",
       normalizedPriorDisposition: normalized,
       claimedFixedFindingIdentityKey: identityKey,
+      dispatches: backend.dispatches,
     },
   };
 }
@@ -1147,7 +1265,7 @@ async function withRouteEnv<T>(
   }
 }
 
-function routeAccountingReplay(): SeamReplay {
+async function routeAccountingReplay(): Promise<SeamReplay> {
   const env = { ORCHESTRATOR_ROUTE: "claude-tight" };
   const route = resolveRouteModels("claude-tight", {});
   const declaredLegs = route.legCollections.cmrReview.map((leg) => leg.slug);
@@ -1159,14 +1277,47 @@ function routeAccountingReplay(): SeamReplay {
   if (failure === undefined || !failure.includes(rejectedDefaultLeg)) {
     throw new Error("dogfood route accounting replay did not reject default legs");
   }
+  const backend = new DogfoodCmrFamilyBackend("route-accounting-head", [], [
+    {
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: true,
+        successfulLegs: [...declaredLegs, rejectedDefaultLeg],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+      },
+    },
+  ]);
+  const result = await withRouteEnv(env, () =>
+    runVerifyCmr({
+      phase: "final",
+      familyBase: "family/376-route-accounting",
+      familyBackend: backend,
+    }),
+  );
+  const abort = backend.ledger.find((entry) => entry.status === "aborted");
+  if (
+    result.ok ||
+    abort?.stopSummary?.reason !== "infra_failure" ||
+    abort.stopSummary.metadata?.routeAccounting?.successfulLegs.includes(
+      rejectedDefaultLeg,
+    ) !== true
+  ) {
+    throw new Error(
+      "dogfood route accounting replay did not fail through runVerifyCmr",
+    );
+  }
   return {
-    stopSummary: successStopSummary(),
+    stopSummary: abort.stopSummary,
     sourceEvidence: {
-      seam: "family_cmr_accounting",
+      seam: "family_verify_cmr",
+      helperSeam: "family_cmr_accounting",
       routeName: route.routeName,
       declaredLegs,
       rejectedDefaultLeg,
       failure,
+      dispatches: backend.dispatches,
     },
   };
 }
@@ -1522,7 +1673,7 @@ function routeEnvMismatchReplay(): SeamReplay {
   };
 }
 
-function startupRouteViolationReplay(): SeamReplay {
+async function startupRouteViolationReplay(): Promise<SeamReplay> {
   const route = resolveRouteModels("claude-tight", {
     coder: "sonnet",
   });
@@ -1530,16 +1681,38 @@ function startupRouteViolationReplay(): SeamReplay {
   if (decision.kind !== "stop") {
     throw new Error("dogfood startup route replay did not stop on tight violation");
   }
+  const backend = new DogfoodSingleSliceBackend();
+  const result = await withRouteEnv(
+    {
+      ORCHESTRATOR_ROUTE: "claude-tight",
+      ORCHESTRATOR_CODER_MODEL: "sonnet",
+    },
+    () =>
+      runOrchestrator({
+        issueNumber: 376,
+        backend,
+      }),
+  );
+  if (
+    result.status !== "escalate" ||
+    result.stopSummary.reason !== "infra_failure" ||
+    !result.stopSummary.summary.includes("tight route violation") ||
+    backend.dispatched.length > 0
+  ) {
+    throw new Error(
+      "dogfood startup route replay did not fail through runOrchestrator",
+    );
+  }
   return {
-    stopSummary: infraFailureStopSummary({
-      summary: "startup route resolution failed closed",
-      repairHint: "fix the active model route before dispatching workers",
-    }),
+    stopSummary: result.stopSummary,
     sourceEvidence: {
-      seam: "model_route_startup_policy",
+      seam: "runner_startup_route",
+      helperSeam: "model_route_startup_policy",
       routeName: route.routeName,
       violationReason: decision.escalation.reason,
       diagnosis: decision.escalation.diagnosis,
+      status: result.status,
+      dispatchedBeforeAbort: backend.dispatched,
     },
   };
 }
@@ -1853,12 +2026,12 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       },
     ],
   });
-  const moduleDeclarationSource = moduleDeclarationReplay();
-  const legacyDispositionSource = legacyDispositionParserReplay();
-  const routeAccountingSource = routeAccountingReplay();
+  const moduleDeclarationSource = await moduleDeclarationReplay();
+  const legacyDispositionSource = await legacyDispositionParserReplay();
+  const routeAccountingSource = await routeAccountingReplay();
   const routeEnvMismatchSource = routeEnvMismatchReplay();
   const routeFreezeSource = await routeFreezeReplay();
-  const startupRouteViolationSource = startupRouteViolationReplay();
+  const startupRouteViolationSource = await startupRouteViolationReplay();
   const closureNegativeSource = await closureNegativeReplay();
   const closureContextMissingSource = await closureContextMissingReplay();
   const closurePositiveSource = await closurePositiveReplay();
@@ -2189,7 +2362,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       id: "376-route-accounting-non-default",
       issue: 376,
       title: "non-default route accounting uses declared route legs",
-      classification: "success",
+      classification: "infra_failure",
       stopSummary: routeAccountingSource.stopSummary,
       source: "family",
       sourceStopSummary: routeAccountingSource.stopSummary,
