@@ -4,6 +4,26 @@
 
 ## [未发布]
 
+## [0.21.0.0] - 2026-07-01
+
+### 新增
+- **family CMR 结论分类**：integrated CMR 现在能把同模块仍红、跨模块 defer、owning issue、spec conflict、infra failure 与受信 accepted suppression 分开记录，ship 前的 family gate 可以给出可执行的停止原因。
+- **family stop summary 与 dogfood replay**：runner、family verify、ship worker 与 replay fixture 统一输出结构化 stop summary，历史 orchestration 回归可通过同一套 seam 重放和审计。
+- **provider degraded 可观测性**：CMR/ship 路线会把 provider/auth/quota 降级记录到 metadata，并在强 leg 下限不满足时 fail closed。
+
+### 变更
+- **CMR 修复闭环更严格**：review/fix 进展必须有 scope-local diff、测试、fixture 或可信 ledger 证据；仅靠评审文字变化、旧 head、legacy disposition 或未授权 coordinator 答案不再让闭环继续前进。
+- **family 模块边界更显式**：CMR 分类只信结构化 Module Declaration、runner 注入的 undeveloped module 与受信 suppression source，模块别名、fallback 文本和未声明目标会按安全路径阻塞。
+- **worker/prompt 契约收紧**：coder、reviewer、integrated CMR 与 worker parser 文案同步 accepted_suppressed、prior disposition、provider degraded 与 source-auth 语义。
+
+### 修复
+- **accepted suppression 不能由 reviewer 自签**：`accepted_suppressed` 必须精确匹配 runner/family 注入的 source、scope、reason、finding identity 与 bounded reopen；#287 hub-loss 也不再从评审 prose 自动合成可信豁免。
+- **CMR 成功摘要不再丢失材料结论**：跨模块 defer、accepted suppression、provider degraded、contract drift 与 final CMR head 会保留在 ledger / stop summary 中，后续 ship 和 resume 能读到真实状态。
+- **resume / escalation 信任边界加固**：继续修复、human answer、ship worker contract drift、module startup failure 与 source-auth 场景按实际 ledger/git 状态分类，不再误当成普通成功。
+
+### 测试
+- 新增 family CMR 分类、verify-cmr fix loop、runner progress evidence、stop summary、provider degraded、real backend parser、worker prompt contract 与 dogfood replay 覆盖；ship 验证为 orchestrator typecheck 通过，Vitest `1034 passed, 1 skipped`，严格未使用符号检查通过。
+
 ## [0.20.0.0] - 2026-07-01
 
 ### 新增
