@@ -55,11 +55,38 @@ def _write_settle(db, region_id, settle):
     db.conn.commit()
 
 
+def _set_all_settle_grants(db, amount):
+    for row in db.conn.execute("SELECT id, fiscal FROM regions").fetchall():
+        try:
+            fiscal = json.loads(str(row["fiscal"] or "{}"))
+        except (TypeError, ValueError):
+            continue
+        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        if not isinstance(settle, dict):
+            continue
+        p = settle.get("p")
+        if not isinstance(p, dict):
+            continue
+        p["拨付gross"] = amount
+        db.conn.execute(
+            "UPDATE regions SET fiscal = ? WHERE id = ?",
+            (json.dumps(fiscal, ensure_ascii=False), str(row["id"])),
+        )
+    db.conn.commit()
+
+
 def _disable_army_pay_source_cutover(db):
     db.conn.execute(
         """
         INSERT INTO fiscal_config (key, value, kind, note)
         VALUES ('__army_pay_source_cutover', 0, 'meta', 'test legacy shadow mode')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
+        """
+    )
+    db.conn.execute(
+        """
+        INSERT INTO fiscal_config (key, value, kind, note)
+        VALUES ('__fiscal_engine', 0, 'meta', 'test legacy engine')
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
         """
     )
@@ -341,7 +368,7 @@ def test_province_tick_derives_due_and_allocates_province_arrears_by_pay_source(
     )
 
 
-def test_fixed_flows_cutover_accrues_unpaid_central_pay_share(fresh_game):
+def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -386,7 +413,7 @@ def test_fixed_flows_cutover_accrues_unpaid_central_pay_share(fresh_game):
     )
     db.conn.commit()
 
-    flows_mod.apply_fixed_period_flows(db, state)
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
 
     row = db.conn.execute(
         """
@@ -394,6 +421,10 @@ def test_fixed_flows_cutover_accrues_unpaid_central_pay_share(fresh_game):
         FROM armies WHERE id = 'shaanxi_army'
         """
     ).fetchone()
+    assert not any(
+        flow.get("account") == "国库" and flow.get("category") == "各军军饷"
+        for flow in flow_rows
+    )
     assert row["central_pay_arrears"] == pytest.approx(3.5)
     assert row["arrears"] == pytest.approx(
         row["province_pay_arrears"] + row["central_pay_arrears"]
@@ -406,11 +437,12 @@ def test_fixed_flows_cutover_accrues_unpaid_central_pay_share(fresh_game):
     )
 
 
-def test_fixed_flows_cutover_carries_fractional_central_pay_due(fresh_game):
+def test_fixed_flows_legacy_engine_keeps_global_army_pay_route(fresh_game):
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
-    state.metrics["国库"] = 1
+    _disable_army_pay_source_cutover(db)
+    state.metrics["国库"] = 0
     db.save_state(state)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
     db.conn.execute(
@@ -433,7 +465,7 @@ def test_fixed_flows_cutover_carries_fractional_central_pay_due(fresh_game):
     db.conn.execute(
         """
         UPDATE armies
-        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+        SET owner_power = 'other', self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
             central_pay_share = 0, pay_source_region = '',
             province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
         """
@@ -445,7 +477,7 @@ def test_fixed_flows_cutover_carries_fractional_central_pay_due(fresh_game):
             pay_source_region = 'shaanxi', province_pay_share = 0.65,
             central_pay_share = 0.35, province_pay_arrears = 0,
             central_pay_arrears = 0, arrears = 0,
-            manpower = 10000, salary_rate = 1
+            manpower = 10000, salary_rate = 10
         WHERE id = 'shaanxi_army'
         """
     )
@@ -459,29 +491,19 @@ def test_fixed_flows_cutover_carries_fractional_central_pay_due(fresh_game):
         FROM armies WHERE id = 'shaanxi_army'
         """
     ).fetchone()
-    ledger_row = db.conn.execute(
-        """
-        SELECT delta
-        FROM economy_ledger
-        WHERE category = '各军军饷' AND reason LIKE '陕西军%'
-        ORDER BY id DESC
-        LIMIT 1
-        """
-    ).fetchone()
-    assert ledger_row is None
-    assert row["central_pay_arrears"] == pytest.approx(0.35)
-    assert row["arrears"] == pytest.approx(
-        row["province_pay_arrears"] + row["central_pay_arrears"]
-    )
-    assert db.get_central_army_pay_arrears_container() == pytest.approx(0.35)
+    assert row["arrears"] == pytest.approx(10)
+    assert row["province_pay_arrears"] == pytest.approx(0)
+    assert row["central_pay_arrears"] == pytest.approx(0)
 
 
-def test_fixed_flows_cutover_allocates_central_pool_by_due_not_priority(fresh_game):
+def test_fixed_flows_substrate_hub_does_not_allocate_legacy_central_pool(fresh_game):
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
-    state.metrics["国库"] = 10
+    opening_treasury = 10
+    state.metrics["国库"] = opening_treasury
     db.save_state(state)
+    _set_all_settle_grants(db, 0)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
     db.conn.execute(
         """
@@ -523,7 +545,7 @@ def test_fixed_flows_cutover_allocates_central_pool_by_due_not_priority(fresh_ga
         )
     db.conn.commit()
 
-    flows_mod.apply_fixed_period_flows(db, state)
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
 
     rows = {
         row["id"]: row
@@ -535,13 +557,407 @@ def test_fixed_flows_cutover_allocates_central_pool_by_due_not_priority(fresh_ga
             """
         ).fetchall()
     }
+    assert not any(
+        flow.get("account") == "国库" and flow.get("category") == "各军军饷"
+        for flow in flow_rows
+    )
     assert rows["guanning"]["central_pay_arrears"] == pytest.approx(5)
     assert rows["shaanxi_army"]["central_pay_arrears"] == pytest.approx(5)
     assert rows["guanning"]["arrears"] == pytest.approx(5)
     assert rows["shaanxi_army"]["arrears"] == pytest.approx(5)
 
 
-def test_budget_lines_cutover_counts_only_central_pay_share(fresh_game):
+def test_fixed_flows_substrate_hub_central_capacity_reduces_current_central_arrears(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 10
+    db.save_state(state)
+    _set_all_settle_grants(db, 0)
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.execute(
+        """
+        UPDATE fiscal_config
+        SET value = 0
+        WHERE kind != 'meta'
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET tax_per_turn = 0,
+            fiscal = json_set(
+                fiscal, '$.huang_tian', 0, '$.liao_xiang', 0,
+                '$.salt_tax', 0, '$.commerce_tax', 0
+            )
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    for army_id in ("guanning", "shaanxi_army"):
+        db.conn.execute(
+            """
+            UPDATE armies
+            SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+                pay_source_region = 'shaanxi', province_pay_share = 0,
+                central_pay_share = 1, province_pay_arrears = 0,
+                central_pay_arrears = 0, arrears = 0,
+                manpower = 10000, salary_rate = 10
+            WHERE id = ?
+            """,
+            (army_id,),
+        )
+    db.conn.commit()
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    rows = {
+        row["id"]: row
+        for row in db.conn.execute(
+            """
+            SELECT id, central_pay_arrears, arrears
+            FROM armies
+            WHERE id IN ('guanning', 'shaanxi_army')
+            """
+        ).fetchall()
+    }
+    assert not any(
+        flow.get("account") == "国库" and flow.get("category") == "各军军饷"
+        for flow in flow_rows
+    )
+    assert rows["guanning"]["central_pay_arrears"] == pytest.approx(5)
+    assert rows["shaanxi_army"]["central_pay_arrears"] == pytest.approx(5)
+    assert rows["guanning"]["arrears"] == pytest.approx(5)
+    assert rows["shaanxi_army"]["arrears"] == pytest.approx(5)
+    assert db.get_central_army_pay_arrears_container() == pytest.approx(10)
+
+
+def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_grants(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 15
+    db.save_state(state)
+    _set_all_settle_grants(db, 0)
+    _write_settle(
+        db,
+        "shaanxi",
+        {
+            "st": {
+                "省库库银": 0,
+                "C_地方截留": 0,
+                "C_中饱": 0,
+                "C_漂没": 0,
+                "C_eff损耗": 0,
+                "民欠旧赋": 0,
+                "军饷欠": 0,
+                "官俸欠": 0,
+                "宗禄欠": 0,
+                "官民田": 0,
+                "隐田": 0,
+            },
+            "p": {
+                "正赋应征": 0,
+                "三饷应征": 0,
+                "火耗率": 0,
+                "逋赋率": 0,
+                "起运定额": 0,
+                "拨付gross": 10,
+                "中饱率": 0,
+                "漂没率": 0,
+                "Due": {"军饷": 0, "官俸": 0, "宗禄": 0, "赈济": 0},
+            },
+        },
+    )
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.execute(
+        """
+        UPDATE fiscal_config
+        SET value = 0
+        WHERE kind != 'meta'
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET tax_per_turn = 0,
+            fiscal = json_set(
+                fiscal, '$.huang_tian', 0, '$.liao_xiang', 0,
+                '$.salt_tax', 0, '$.commerce_tax', 0
+            )
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    for army_id in ("guanning", "shaanxi_army"):
+        db.conn.execute(
+            """
+            UPDATE armies
+            SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+                pay_source_region = 'shaanxi', province_pay_share = 0,
+                central_pay_share = 1, province_pay_arrears = 0,
+                central_pay_arrears = 0, arrears = 0,
+                manpower = 10000, salary_rate = 10
+            WHERE id = ?
+            """,
+            (army_id,),
+        )
+    db.conn.commit()
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    rows = {
+        row["id"]: row
+        for row in db.conn.execute(
+            """
+            SELECT id, central_pay_arrears, arrears
+            FROM armies
+            WHERE id IN ('guanning', 'shaanxi_army')
+            """
+        ).fetchall()
+    }
+    hub_row = next(flow for flow in flow_rows if flow.get("category") == "中央军饷")
+    assert hub_row["jingyun_due"] == pytest.approx(10)
+    assert hub_row["needed"] == pytest.approx(20)
+    assert hub_row["k"] == pytest.approx(0.5)
+    assert hub_row["paid"] == pytest.approx(10)
+    assert state.metrics["国库"] == pytest.approx(0)
+    ledger = db.conn.execute(
+        """
+        SELECT COALESCE(SUM(delta), 0) AS delta
+        FROM economy_ledger
+        WHERE account = '国库' AND category = '边饷hub'
+        """
+    ).fetchone()
+    assert ledger["delta"] == pytest.approx(-15)
+    settle = _read_settle(db, "shaanxi")
+    assert settle["p"]["拨付gross"] == pytest.approx(10)
+    assert rows["guanning"]["central_pay_arrears"] == pytest.approx(5)
+    assert rows["shaanxi_army"]["central_pay_arrears"] == pytest.approx(5)
+    assert rows["guanning"]["arrears"] == pytest.approx(5)
+    assert rows["shaanxi_army"]["arrears"] == pytest.approx(5)
+    assert db.get_central_army_pay_arrears_container() == pytest.approx(10)
+
+
+def test_fixed_flows_substrate_hub_integer_allocation_drives_all_consumers(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 5
+    db.save_state(state)
+    _set_all_settle_grants(db, 0)
+    _write_settle(
+        db,
+        "shaanxi",
+        {
+            "st": {
+                "省库库银": 0,
+                "C_地方截留": 0,
+                "C_中饱": 0,
+                "C_漂没": 0,
+                "C_eff损耗": 0,
+                "民欠旧赋": 0,
+                "军饷欠": 0,
+                "官俸欠": 0,
+                "宗禄欠": 0,
+                "官民田": 0,
+                "隐田": 0,
+            },
+            "p": {
+                "正赋应征": 0,
+                "三饷应征": 0,
+                "火耗率": 0,
+                "逋赋率": 0,
+                "起运定额": 0,
+                "拨付gross": 3,
+                "中饱率": 0,
+                "漂没率": 0,
+                "Due": {"军饷": 3, "官俸": 0, "宗禄": 0, "赈济": 0},
+            },
+        },
+    )
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.execute(
+        """
+        UPDATE fiscal_config
+        SET value = 0
+        WHERE kind != 'meta'
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET tax_per_turn = 0,
+            fiscal = json_set(
+                fiscal, '$.huang_tian', 0, '$.liao_xiang', 0,
+                '$.salt_tax', 0, '$.commerce_tax', 0
+            )
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'shaanxi', province_pay_share = 0.5,
+            central_pay_share = 0.5, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0,
+            manpower = 6000, salary_rate = 10
+        WHERE id = 'guanning'
+        """
+    )
+    db.conn.commit()
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    ledger = db.conn.execute(
+        """
+        SELECT COALESCE(SUM(delta), 0) AS delta
+        FROM economy_ledger
+        WHERE account = '国库' AND category = '边饷hub'
+        """
+    ).fetchone()
+    hub_row = next(flow for flow in flow_rows if flow.get("category") == "边饷hub")
+    central_row = next(flow for flow in flow_rows if flow.get("category") == "中央军饷")
+    army = db.conn.execute(
+        "SELECT central_pay_arrears FROM armies WHERE id = 'guanning'"
+    ).fetchone()
+    settle = _read_settle(db, "shaanxi")
+
+    assert ledger["delta"] == -5
+    assert hub_row["paid"] == 5
+    assert hub_row["jingyun_paid"] + hub_row["central_paid"] == 5
+    assert central_row["paid"] == pytest.approx(hub_row["central_paid"])
+    assert settle["p"]["拨付gross"] == pytest.approx(3)
+    province_paid = 3 - settle["st"]["军饷欠"]
+    central_paid = 3 - army["central_pay_arrears"]
+    assert province_paid + central_paid == pytest.approx(5)
+
+
+def test_fixed_flows_substrate_hub_fractional_due_caps_integer_debit(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 10
+    db.save_state(state)
+    _set_all_settle_grants(db, 0)
+    _write_settle(
+        db,
+        "shaanxi",
+        {
+            "st": {
+                "省库库银": 0,
+                "C_地方截留": 0,
+                "C_中饱": 0,
+                "C_漂没": 0,
+                "C_eff损耗": 0,
+                "民欠旧赋": 0,
+                "军饷欠": 0,
+                "官俸欠": 0,
+                "宗禄欠": 0,
+                "官民田": 0,
+                "隐田": 0,
+            },
+            "p": {
+                "正赋应征": 0,
+                "三饷应征": 0,
+                "火耗率": 0,
+                "逋赋率": 0,
+                "起运定额": 0,
+                "拨付gross": 3.5,
+                "中饱率": 0,
+                "漂没率": 0,
+                "Due": {"军饷": 0.4, "官俸": 0, "宗禄": 0, "赈济": 0},
+            },
+        },
+    )
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.execute(
+        """
+        UPDATE fiscal_config
+        SET value = 0
+        WHERE kind != 'meta'
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET tax_per_turn = 0,
+            fiscal = json_set(
+                fiscal, '$.huang_tian', 0, '$.liao_xiang', 0,
+                '$.salt_tax', 0, '$.commerce_tax', 0
+            )
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'shaanxi', province_pay_share = 0.4,
+            central_pay_share = 0.6, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0,
+            manpower = 1000, salary_rate = 10
+        WHERE id = 'guanning'
+        """
+    )
+    db.conn.commit()
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    ledger = db.conn.execute(
+        """
+        SELECT COALESCE(SUM(delta), 0) AS delta
+        FROM economy_ledger
+        WHERE account = '国库' AND category = '边饷hub'
+        """
+    ).fetchone()
+    hub_row = next(flow for flow in flow_rows if flow.get("category") == "边饷hub")
+    central_row = next(flow for flow in flow_rows if flow.get("category") == "中央军饷")
+    army = db.conn.execute(
+        "SELECT arrears, central_pay_arrears FROM armies WHERE id = 'guanning'"
+    ).fetchone()
+    settle = _read_settle(db, "shaanxi")
+
+    assert ledger["delta"] == -3
+    assert hub_row["paid"] == 3
+    assert hub_row["jingyun_paid"] == 3
+    assert hub_row["central_paid"] == 0
+    assert central_row["paid"] == 0
+    assert central_row["shortfall"] == pytest.approx(0.6)
+    assert army["central_pay_arrears"] == pytest.approx(0.6)
+    assert army["arrears"] == pytest.approx(0.6)
+    assert settle["p"]["拨付gross"] == pytest.approx(3.5)
+    assert settle["st"]["军饷欠"] == pytest.approx(0)
+
+
+def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -572,12 +988,12 @@ def test_budget_lines_cutover_counts_only_central_pay_share(fresh_game):
     )
     db.conn.commit()
 
-    cutover_budget = flows_mod.compute_budget_lines(db, state)
-    cutover_pay = next(
-        row["amount"] for row in cutover_budget["国库"]["expense"]
+    substrate_budget = flows_mod.compute_budget_lines(db, state)
+    substrate_pay = next(
+        row["amount"] for row in substrate_budget["国库"]["expense"]
         if row["name"] == "各军军饷"
     )
-    assert cutover_pay == 3
+    assert substrate_pay == 0
 
     _disable_army_pay_source_cutover(db)
 
@@ -592,6 +1008,50 @@ def test_budget_lines_cutover_counts_only_central_pay_share(fresh_game):
         ).fetchall()
     )
     assert legacy_pay == legacy_expected
+
+
+def test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub(fresh_db):
+    import ming_sim.flows as flows_mod
+
+    path = fresh_db.path
+    content = fresh_db.content
+    fresh_db.conn.execute(
+        "DELETE FROM fiscal_config WHERE key = '__fiscal_engine'"
+    )
+    fresh_db.conn.execute(
+        """
+        INSERT INTO fiscal_config (key, value, kind, note)
+        VALUES ('__army_pay_source_cutover', 1, 'meta', 'pre-S6 cutover save')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
+        """
+    )
+    fresh_db.conn.commit()
+
+    reopened = GameDB(path, content)
+    try:
+        state = reopened.load_state()
+        assert reopened.fiscal_engine() == "substrate_hub"
+        row = reopened.conn.execute(
+            "SELECT value FROM fiscal_config WHERE key = '__fiscal_engine'"
+        ).fetchone()
+        assert row is not None
+        assert int(row["value"]) == 1
+
+        budget = flows_mod.compute_budget_lines(reopened, state)
+        army_pay = next(
+            row["amount"] for row in budget["国库"]["expense"]
+            if row["name"] == "各军军饷"
+        )
+        assert army_pay == 0
+
+        flow_rows = flows_mod.apply_fixed_period_flows(reopened, state)
+        assert not any(
+            row.get("account") == "国库" and row.get("category") == "各军军饷"
+            for row in flow_rows
+        )
+        assert any(row.get("category") == "中央军饷" for row in flow_rows)
+    finally:
+        reopened.conn.close()
 
 
 def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
