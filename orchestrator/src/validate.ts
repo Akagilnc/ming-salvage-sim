@@ -101,8 +101,8 @@ function isStringArray(v: unknown): v is ReadonlyArray<string> {
   return Array.isArray(v) && v.every(isString);
 }
 
-function isNonEmptyStringArray(v: unknown): v is ReadonlyArray<string> {
-  return Array.isArray(v) && v.length > 0 && v.every(isFilledString);
+function isFilledStringArray(v: unknown): v is ReadonlyArray<string> {
+  return Array.isArray(v) && v.every(isFilledString);
 }
 
 function isValidFindingRepairScope(v: unknown): boolean {
@@ -124,21 +124,21 @@ function isValidRepairEvidence(v: unknown): v is RepairEvidence {
   if (!isValidFindingRepairScope(obj.findingScope)) return false;
   if (
     obj.changedFiles !== undefined &&
-    !isNonEmptyStringArray(obj.changedFiles)
+    !isFilledStringArray(obj.changedFiles)
   ) {
     return false;
   }
-  if (obj.tests !== undefined && !isNonEmptyStringArray(obj.tests)) return false;
-  if (obj.fixtures !== undefined && !isNonEmptyStringArray(obj.fixtures)) {
+  if (obj.tests !== undefined && !isFilledStringArray(obj.tests)) return false;
+  if (obj.fixtures !== undefined && !isFilledStringArray(obj.fixtures)) {
     return false;
   }
   if (obj.patchSummary !== undefined && !isFilledString(obj.patchSummary)) {
     return false;
   }
   return (
-    obj.changedFiles !== undefined ||
-    obj.tests !== undefined ||
-    obj.fixtures !== undefined
+    (Array.isArray(obj.changedFiles) && obj.changedFiles.length > 0) ||
+    (Array.isArray(obj.tests) && obj.tests.length > 0) ||
+    (Array.isArray(obj.fixtures) && obj.fixtures.length > 0)
   );
 }
 
