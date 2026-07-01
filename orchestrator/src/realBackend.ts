@@ -1592,7 +1592,7 @@ function normalizeReviewerFinding(finding: Finding): Finding {
   }
   return {
     ...finding,
-    disposition_reason: finding.disposition_reason ?? finding.disposition.reason,
+    disposition_reason: finding.disposition.reason ?? finding.disposition_reason,
     disposition: {
       ...finding.disposition,
       findingIdentity:

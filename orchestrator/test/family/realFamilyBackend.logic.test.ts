@@ -909,6 +909,42 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
+  it("normalizes accepted_suppressed findings with canonical disposition reason first", () => {
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: false,
+      reason: "accepted suppression remains",
+      successfulLegs: ["gpt-5.5"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      findings: [
+        {
+          severity: "medium",
+          category: "correctness",
+          claim_quote: "Known accepted gap",
+          location: "orchestrator/src/family/verifyCmr.ts:42",
+          suggested_fix: "keep the bounded suppression",
+          action: "wont_fix",
+          disposition_reason: "legacy fallback should not win",
+          disposition: {
+            kind: "accepted_suppressed",
+            source: "#445 owner answer",
+            scope: "orchestrator family CMR",
+            reason: "Owner accepted this bounded risk.",
+            boundedReopen: "reopen if the same scope regresses",
+          },
+        },
+      ],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome.findings?.[0]?.disposition_reason).toBe(
+      "Owner accepted this bounded risk.",
+    );
+  });
+
   it("rejects accepted_suppressed prior dispositions that omit reason", () => {
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: true,

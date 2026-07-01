@@ -1101,6 +1101,54 @@ describe("RealBackend reviewer output contract", () => {
       ),
     ).toThrow(/accepted_suppressed prior finding disposition requires reason/);
   });
+
+  it("normalizes accepted_suppressed findings with canonical disposition reason first", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 445,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "prompts"),
+    });
+
+    const decoded = (
+      backend as unknown as {
+        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): {
+          findings?: ReadonlyArray<{ disposition_reason?: string }>;
+        };
+      }
+    ).decodeOutput(
+      reviewerSpec,
+      {
+        findings: [
+          {
+            severity: "medium",
+            category: "correctness",
+            claim_quote: "Known accepted gap",
+            location: "orchestrator/src/runner.ts:42",
+            suggested_fix: "keep the bounded suppression",
+            action: "wont_fix",
+            disposition_reason: "legacy fallback should not win",
+            disposition: {
+              kind: "accepted_suppressed",
+              source: "#445 owner answer",
+              scope: "runner review/fix loop",
+              reason: "Owner accepted this bounded risk.",
+              boundedReopen: "reopen if the same finding recurs in this scope",
+            },
+          },
+        ],
+        priorFindingDispositions: [],
+      },
+      undefined,
+    );
+
+    expect(decoded.findings?.[0]?.disposition_reason).toBe(
+      "Owner accepted this bounded risk.",
+    );
+  });
 });
 
 // ─── #286 toolchain preflight before agent dispatch ─────────────────────────

@@ -131,8 +131,8 @@ export interface FamilyCmrClassification {
 const MODULE_DECLARATION_HEADING = /^##\s+Module Declaration\s*$/gim;
 
 function trimComment(line: string): string {
-  const hash = line.indexOf("#");
-  return (hash >= 0 ? line.slice(0, hash) : line).trimEnd();
+  const comment = /(?:^|\s)#/.exec(line);
+  return (comment !== null ? line.slice(0, comment.index) : line).trimEnd();
 }
 
 function unquoteScalar(value: string): string | undefined {
@@ -224,7 +224,7 @@ function targetModuleIsOutsideCurrentModules(
   for (const currentModule of currentModules) {
     const currentSlug = normalizedModuleSlug(currentModule);
     if (currentSlug.length === 0) return false;
-    if (targetSlug.includes(currentSlug)) {
+    if (targetSlug === currentSlug) {
       return false;
     }
   }

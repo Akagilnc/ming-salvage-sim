@@ -421,7 +421,8 @@ function locationScopeMatches(scope: string, location: string): boolean {
   }
   return (
     normalisedLocationPath.startsWith(`${normalisedScope}/`) ||
-    normalisedLocationPath.endsWith(`/${normalisedScope}`)
+    normalisedLocationPath.endsWith(`/${normalisedScope}`) ||
+    normalisedLocationPath.includes(`/${normalisedScope}/`)
   );
 }
 

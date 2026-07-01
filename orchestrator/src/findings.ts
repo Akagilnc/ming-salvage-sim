@@ -143,7 +143,7 @@ function dispositionFromFinding(
         : finding.action === "rejected"
           ? "rejected"
           : "wont_fix",
-    reason: finding.disposition_reason ?? acceptedSuppression?.reason ?? "",
+    reason: acceptedSuppression?.reason ?? finding.disposition_reason ?? "",
     severity: finding.severity,
     reopenAttempts: 0,
     ...(acceptedSuppression !== undefined
