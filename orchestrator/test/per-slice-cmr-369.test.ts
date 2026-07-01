@@ -601,6 +601,142 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     ]);
   });
 
+  it.each([
+    {
+      name: "blocking count decreases",
+      initial: [
+        blocking,
+        {
+          ...blocking,
+          claim_quote: "secondary blocker should close",
+          location: "src/secondary.ts:1",
+        },
+      ],
+      firstAfterFix: [blocking],
+      firstDispositions: [
+        { identityKey: blockingKey, status: "still-active" as const },
+        {
+          identityKey: findingIdentityKey({
+            ...blocking,
+            claim_quote: "secondary blocker should close",
+            location: "src/secondary.ts:1",
+          }),
+          status: "verified-closed" as const,
+        },
+      ],
+      secondAfterFix: [blocking],
+      secondDispositions: [
+        { identityKey: blockingKey, status: "still-active" as const },
+      ],
+      finalDispositions: [
+        { identityKey: blockingKey, status: "verified-closed" as const },
+      ],
+    },
+    {
+      name: "severity decreases",
+      initial: [{ ...blocking, severity: "high" as const }],
+      firstAfterFix: [{ ...blocking, severity: "medium" as const }],
+      firstDispositions: [
+        { identityKey: blockingKey, status: "still-active" as const },
+      ],
+      secondAfterFix: [{ ...blocking, severity: "medium" as const }],
+      secondDispositions: [
+        { identityKey: blockingKey, status: "still-active" as const },
+      ],
+      finalDispositions: [
+        { identityKey: blockingKey, status: "verified-closed" as const },
+      ],
+    },
+    {
+      name: "reviewer narrows the old finding into a smaller remaining gap",
+      initial: [
+        {
+          ...blocking,
+          claim_quote:
+            "module parser leaves inline yaml accepted in invalid declarations",
+        },
+      ],
+      firstAfterFix: [
+        { ...blocking, claim_quote: "inline yaml accepted" },
+      ],
+      firstDispositions: [
+        {
+          identityKey: findingIdentityKey({
+            ...blocking,
+            claim_quote:
+              "module parser leaves inline yaml accepted in invalid declarations",
+          }),
+          status: "still-active" as const,
+        },
+      ],
+      secondAfterFix: [
+        { ...blocking, claim_quote: "inline yaml accepted" },
+      ],
+      secondDispositions: [
+        {
+          identityKey: findingIdentityKey({
+            ...blocking,
+            claim_quote: "inline yaml accepted",
+          }),
+          status: "still-active" as const,
+        },
+      ],
+      finalDispositions: [
+        {
+          identityKey: findingIdentityKey({
+            ...blocking,
+            claim_quote: "inline yaml accepted",
+          }),
+          status: "verified-closed" as const,
+        },
+      ],
+    },
+  ])("counts reviewer-observed progress when $name", async (sample) => {
+    const backend = new RetryReviewBackend([
+      { kind: "completed", output: { kind: "reviewer", findings: sample.initial } },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: sample.firstAfterFix,
+          priorFindingDispositions: sample.firstDispositions,
+        },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: sample.secondAfterFix,
+          priorFindingDispositions: sample.secondDispositions,
+        },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: sample.finalDispositions,
+        },
+      },
+    ]);
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("success");
+    expect(result.errorPackage).toBeUndefined();
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
   it("continues fixing after a scoped continue-fixing bookkeeping event resets no-progress state", async () => {
     const continueFixingEvent = {
       step: "S4",
