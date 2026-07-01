@@ -335,6 +335,12 @@ function familyCmrBlockingStopSummary(
       repairHint: "resolve the specification conflict and rerun",
     };
   }
+  if (result?.classification === "infra_failure") {
+    return infraFailureStopSummary({
+      summary: result.reason || fallbackReason,
+      repairHint: "repair the infrastructure failure and rerun the family CMR gate",
+    });
+  }
   return {
     reason: "same_module_still_red",
     summary: fallbackReason,

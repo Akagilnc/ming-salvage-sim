@@ -72,7 +72,8 @@ export type FamilyCmrFindingClassification =
   | "owning_issue_still_red"
   | "accepted_suppressed"
   | "cross_module_defer"
-  | "spec_conflict";
+  | "spec_conflict"
+  | "infra_failure";
 
 export interface FamilyCmrFindingResult {
   readonly identityKey: string;
@@ -428,7 +429,9 @@ function resultForBlocking(
       ? "owning_issue_still_red"
       : disposition?.kind === "spec_conflict"
         ? "spec_conflict"
-        : "same_module_still_red";
+        : disposition?.kind === "infra_failure"
+          ? "infra_failure"
+          : "same_module_still_red";
   return {
     identityKey: findingIdentityKey(finding),
     classification,
@@ -537,13 +540,8 @@ export function classifyFamilyCmrFindings(input: {
       findingsForFinalClassification.push(finding);
       const attribution = attributionFor(finding, input.moduleContext);
       const targetModule = normalizedModule(finding.disposition.targetModule ?? "");
-      const undevelopedTarget = declaredUndevelopedTarget(
-        finding.disposition.targetModule,
-        input.moduleContext,
-      );
       if (
         attribution.method !== "missing_module_context" &&
-        undevelopedTarget !== undefined &&
         currentModules.size > 0 &&
         !currentModules.has(targetModule) &&
         targetModuleIsOutsideCurrentModules(targetModule, currentModules)
