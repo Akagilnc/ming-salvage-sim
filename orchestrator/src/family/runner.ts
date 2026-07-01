@@ -370,6 +370,25 @@ function latestSuccessfulFinalCmrStopSummary(
   return undefined;
 }
 
+function latestSuccessfulFinalShippedStopSummary(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  minIndex = 0,
+): StopSummary | undefined {
+  for (let i = ledger.length - 1; i >= minIndex; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.status === "shipped" &&
+      entry.event === "shipped" &&
+      entry.phase === "final" &&
+      entry.stopSummary !== undefined &&
+      isMaterialCmrStopSummary(entry.stopSummary)
+    ) {
+      return entry.stopSummary;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Derive the child issue numbers whose merge into the family base was LLM-resolved
  * (#291 缺口 1), read from the DURABLE family ledger — the only truth that survives
@@ -657,7 +676,11 @@ export async function runFamily(
     });
     const materialSuccessStopSummary =
       status === "success"
-        ? latestSuccessfulFinalCmrStopSummary(familyLedger, barrierLedgerStartIndex)
+        ? (latestSuccessfulFinalShippedStopSummary(
+            familyLedger,
+            barrierLedgerStartIndex,
+          ) ??
+          latestSuccessfulFinalCmrStopSummary(familyLedger, barrierLedgerStartIndex))
         : undefined;
     const resultStopSummary =
       materialSuccessStopSummary !== undefined

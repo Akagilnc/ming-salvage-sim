@@ -740,6 +740,59 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(result.stopSummary.metadata?.heads?.verifiedCmrHead).toBe("current-head");
   });
 
+  it("success stop summary preserves material shipped metadata from the ledger", async () => {
+    class FreshHeadFamilyBackend extends FakeFamilyBackend {
+      async readFamilyHead(): Promise<string> {
+        return "current-head";
+      }
+    }
+    const familyBackend = new FreshHeadFamilyBackend();
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      if (input.phase === "final") {
+        await input.familyBackend.appendFamilyLedger({
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr: "https://github.com/Akagilnc/ming-salvage-sim/pull/999",
+          familyHeadAfter: "current-head",
+          stopSummary: {
+            reason: "success",
+            summary: "run completed successfully",
+            metadata: {
+              providerDegraded: [
+                {
+                  provider: "sourcery",
+                  leg: "sourcery",
+                  reason: "diff larger than review limit",
+                  blocking: false,
+                },
+              ],
+            },
+          },
+        });
+      }
+      return { ok: true, ran: true };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr,
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.stopSummary.metadata?.providerDegraded).toEqual([
+      {
+        provider: "sourcery",
+        leg: "sourcery",
+        reason: "diff larger than review limit",
+        blocking: false,
+      },
+    ]);
+  });
+
   it("defaults to the #293 no-op hook when none is injected (ok, ran:false)", async () => {
     // No verifyCmr in the input → the spine uses the module no-op, which is ok, so
     // the run completes normally (covered by spine.test.ts; here we assert the
