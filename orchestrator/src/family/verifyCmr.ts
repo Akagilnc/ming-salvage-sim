@@ -345,6 +345,51 @@ function shipWorkerContractDriftStopSummary(input: {
   });
 }
 
+function shipWorkerFailedStopSummary(input: {
+  readonly reason: string;
+  readonly latestVerifiedCmrHead?: string;
+  readonly currentFamilyHead?: string;
+  readonly reportedFamilyHead?: string;
+  readonly shipPrState: string;
+}): StopSummary {
+  if (
+    /\b(auth|permission|push|transport|network|MODULE_NOT_FOUND|Cannot find module|dependency|build|test|toolchain|git)\b/i.test(
+      input.reason,
+    )
+  ) {
+    return infraFailureStopSummary({
+      summary: input.reason,
+      repairHint:
+        "repair the family ship worker infrastructure/auth/toolchain failure and rerun the final family barrier",
+      ship: {
+        ...(input.latestVerifiedCmrHead !== undefined
+          ? { latestVerifiedCmrHead: input.latestVerifiedCmrHead }
+          : {}),
+        ...(input.currentFamilyHead !== undefined
+          ? { currentFamilyHead: input.currentFamilyHead }
+          : {}),
+        ...(input.reportedFamilyHead !== undefined
+          ? { reportedFamilyHead: input.reportedFamilyHead }
+          : {}),
+        shipPrState: input.shipPrState,
+      },
+      heads: {
+        ...(input.currentFamilyHead !== undefined
+          ? { actualFamilyHead: input.currentFamilyHead }
+          : {}),
+        ...(input.latestVerifiedCmrHead !== undefined
+          ? { verifiedCmrHead: input.latestVerifiedCmrHead }
+          : {}),
+        sources: {
+          actualFamilyHead: "family head after ship worker failure",
+          verifiedCmrHead: "latest cmr_passed ledger row",
+        },
+      },
+    });
+  }
+  return shipWorkerContractDriftStopSummary(input);
+}
+
 function familyCmrBlockingStopSummary(
   classification: FamilyCmrClassification,
   fallbackReason: string,
@@ -1176,7 +1221,7 @@ export async function runVerifyCmr(
       phase,
       reason,
       familyHeadAfter: postShipFamilyHead,
-      stopSummary: shipWorkerContractDriftStopSummary({
+      stopSummary: shipWorkerFailedStopSummary({
         reason,
         latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
         currentFamilyHead: postShipFamilyHead,

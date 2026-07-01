@@ -1180,4 +1180,45 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/ship worker threw on startup/i);
   });
+
+  it("a ship worker failed result for push/auth infra is recorded as infra_failure", async () => {
+    class FailedShipBackend extends ThrowingDispatchBackend {
+      constructor() {
+        super("cmr");
+      }
+      override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: true,
+              successfulLegs: ["opus", "gpt-5.5", "agy"],
+            },
+          };
+        }
+        this.currentFamilyHead = "head-after-ship-worker";
+        return { kind: "failed", reason: "git push authentication failed" };
+      }
+    }
+    const backend = new FailedShipBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      reason: expect.stringContaining("git push authentication failed"),
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        repairHint: expect.stringContaining("ship worker infrastructure"),
+      }),
+    }));
+  });
 });

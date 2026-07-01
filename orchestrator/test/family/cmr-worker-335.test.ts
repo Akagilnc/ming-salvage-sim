@@ -495,14 +495,15 @@ describe("integrated CMR pass prompt closure contract", () => {
     });
   }
 
-  it("integrated completeness prompt declares undeveloped_modules as structured module metadata", () => {
+  it("integrated completeness prompt keeps undeveloped targets out of issue-body YAML", () => {
     const prompt = readFileSync(
       join(realPromptsDir, "integrated_cmr_completeness.md"),
       "utf8",
     );
 
-    expect(prompt).toContain("undeveloped_modules");
     expect(prompt).toContain("module_scope");
+    expect(prompt).toContain("runner-supplied metadata");
+    expect(prompt).toContain("not issue-body prose or extra YAML");
     expect(prompt).toContain("Do not infer");
   });
 });
