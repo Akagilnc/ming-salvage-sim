@@ -281,9 +281,12 @@ function containsNormalized(haystack: string, needle: string | undefined): boole
 function locationPath(location: string): string {
   const withoutLineColumn = location
     .trim()
-    .replace(/(:\d+(?::\d+)?)(:[^:/\\]+)?$/, "");
-  if (/^[A-Za-z]:[\\/]/.test(withoutLineColumn)) return withoutLineColumn;
-  return withoutLineColumn.replace(/:[^:/\\]+$/, "").trim();
+    .replace(/:\d+(?::\d+)?(?::[^:/\\]+)?$/, "");
+  const withoutSymbol = withoutLineColumn.replace(/:[^:/\\]+$/, "").trim();
+  if (/^[A-Za-z]$/.test(withoutSymbol) && /^[A-Za-z]:$/.test(withoutLineColumn)) {
+    return `${withoutSymbol}:`;
+  }
+  return withoutSymbol;
 }
 
 function pathMatchesScope(path: string, scope: string): boolean {
