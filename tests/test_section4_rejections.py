@@ -40,6 +40,14 @@ def _an_army(db):
     return row[0]
 
 
+def _pay_source():
+    return {
+        "pay_source_region": "shaanxi",
+        "province_pay_share": 1.0,
+        "central_pay_share": 0.0,
+    }
+
+
 # ---- region_delta：查无此地 ----
 
 def test_unknown_region_rejected_good_item_lands(game):
@@ -571,7 +579,7 @@ def test_absent_optional_army_fields_use_defaults(game):
 
     run_settle(db, state, content, {
         "new_armies": [{"id": "default_army_ok", "name": "默认军", "owner_power": "ming",
-                        "manpower": 5000, "maintenance_per_turn": 2}],
+                        "manpower": 5000, "maintenance_per_turn": 2, **_pay_source()}],
     }, narrative="x", decree_text="y")
 
     row = db.conn.execute(
@@ -727,7 +735,7 @@ def test_required_field_historical_strictness_on_issue_path(game):
     # manpower=float（历史 int(3.7)=3 静默套用=可活）+ 缺 maintenance（PR2 后不再必填）→ 容忍不抛
     I._apply_issue_entities(db, state, {
         "new_armies": [{"id": "req_a", "name": "需填军甲", "owner_power": "ming",
-                        "manpower": 3.7}],
+                        "manpower": 3.7, **_pay_source()}],
     }, "局势#测试结案")  # 不抛
     # manpower=串:历史 int("三千") ValueError → 致命 → raise（维护费在场与否不影响）
     with pytest.raises(ValueError):
@@ -743,5 +751,5 @@ def test_required_field_historical_strictness_on_issue_path(game):
     # 合法 manpower、缺 maintenance:PR2 核心——维护费退役后建军照样成立 → 容忍不抛
     I._apply_issue_entities(db, state, {
         "new_armies": [{"id": "req_d", "name": "需填军丁", "owner_power": "ming",
-                        "manpower": 5000}],
+                        "manpower": 5000, **_pay_source()}],
     }, "局势#测试结案")  # 不抛
