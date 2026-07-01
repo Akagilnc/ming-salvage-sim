@@ -908,6 +908,34 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       ],
     });
   });
+
+  it("rejects accepted_suppressed prior dispositions that omit reason", () => {
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: true,
+      successfulLegs: ["gpt-5.5"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|accepted"],
+      priorFindingDispositions: [
+        {
+          identityKey: "correctness|src/x.ts:1|accepted",
+          status: "accepted_suppressed",
+          source: "#445 owner answer",
+          scope: "runner review/fix loop",
+          boundedReopen: "reopen if the same scope regresses",
+        },
+      ],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome).toMatchObject({
+      kind: "malformed",
+      reason: expect.stringContaining(
+        "cmr worker <cmr> tag matched no valid shape",
+      ),
+    });
+  });
 });
 
 describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {

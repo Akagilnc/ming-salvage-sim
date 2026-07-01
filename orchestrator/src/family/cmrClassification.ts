@@ -359,8 +359,13 @@ function suppressionScopeMatchesContext(input: {
   readonly context: FamilyModuleContext;
   readonly scope?: string;
 }): boolean {
+  const child = childAttribution(input.finding, input.context);
+  const fallback = fallbackModule(input.context);
   const attributedDeclaration =
-    childAttribution(input.finding, input.context) ?? fallbackModule(input.context);
+    child ??
+    (fallback !== undefined && declarationCoversFinding(fallback, input.finding)
+      ? fallback
+      : undefined);
   if (attributedDeclaration === undefined) return false;
 
   const scope = normalizedEvidenceText(input.scope);

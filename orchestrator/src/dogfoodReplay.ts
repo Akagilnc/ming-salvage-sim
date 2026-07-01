@@ -695,7 +695,8 @@ async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
       seam: "runner",
       mechanism: "changed_shape_progress",
       findingShape: "changed_after_local_progress",
-      implementationMovement: true,
+      implementationMovement: false,
+      movementEvidence: "scripted repairEvidence only; no real git worktree movement",
       status: result.status,
       dispatched: backend.dispatched,
       originalFindingIdentityKey: originalKey,
@@ -2135,7 +2136,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   const familyAlreadyDoneSource = await familyAlreadyDoneReplay();
   const familyModule = {
     module: "orchestrator-family",
-    moduleScope: ["orchestrator/src/family"],
+    moduleScope: ["orchestrator/src/family", "docs/adr/0023.md"],
     source: "family_issue" as const,
     issue: 287,
   };

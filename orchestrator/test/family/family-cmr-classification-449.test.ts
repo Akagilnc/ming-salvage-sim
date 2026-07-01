@@ -471,6 +471,50 @@ describe("#449 family CMR finding classification", () => {
     );
   });
 
+  it("fails closed when accepted suppression scope matches fallback text but not module path scope", () => {
+    const acceptedSource = {
+      source: "#445",
+      scope: "fiscal accepted suppression",
+      reason: "Accepted only inside the declared fiscal module scope",
+      findingIdentity: findingIdentityKey(finding),
+      boundedReopen: "reopen on different scope",
+    };
+    const suppressedFinding: Finding = {
+      ...finding,
+      action: "wont_fix",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: acceptedSource.source,
+        scope: acceptedSource.scope,
+        reason: acceptedSource.reason,
+        boundedReopen: acceptedSource.boundedReopen,
+      },
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [suppressedFinding],
+      moduleContext: buildFamilyModuleContext({
+        childModules: [],
+        familyModule: {
+          module: "fiscal",
+          moduleScope: ["docs/fiscal"],
+          source: "family_issue",
+          issue: 445,
+        },
+        acceptedSuppressionSources: [acceptedSource],
+      }),
+    });
+
+    expect(classified.blocking).toEqual([suppressedFinding]);
+    expect(classified.deferred).toEqual([]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "same_module_still_red",
+      attribution: { method: "missing_module_context" },
+    });
+    expect(classified.dispositions).toEqual([]);
+  });
+
   it("fails closed when a prior accepted suppression has stale module scope", () => {
     const currentFinding: Finding = {
       ...finding,
@@ -1123,7 +1167,7 @@ module_scope:
         currentModules: [
           {
             module: "orchestrator-family",
-            moduleScope: ["orchestrator/src/family"],
+            moduleScope: ["orchestrator/src/modelRoutes.ts"],
             source: "family_issue",
             issue: 287,
           },
