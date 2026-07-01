@@ -223,20 +223,6 @@ function repoOwnerLogin(repo: string): string {
   return repo.split("/", 1)[0] ?? "";
 }
 
-function isTrustedBriefAuthor(
-  carrier: {
-    readonly author?: { readonly login?: string | null } | null;
-    readonly user?: { readonly login?: string | null } | null;
-  } | null | undefined,
-  ownerLogin: string,
-): boolean {
-  const normalizedOwner = ownerLogin.trim().toLowerCase();
-  return (
-    normalizedOwner !== "" &&
-    actorLogin(carrier).trim().toLowerCase() === normalizedOwner
-  );
-}
-
 /**
  * Extract the latest trusted `## Agent Brief` from the issue body/comments. Only
  * repo-owner-authored carriers count; among those, later comments supersede
@@ -250,15 +236,23 @@ export function extractAgentBrief(json: GhIssueJson, ownerLogin: string): string
   // (a re-issued brief supersedes the original) — the body only stands when no
   // comment carries a brief.
   const carriers = [
-    { text: json.body ?? "", author: json },
-    ...(json.comments ?? []).map((c) => ({ text: c.body ?? "", author: c })),
+    { text: json.body ?? "", author: json, sourceKind: "issue body" },
+    ...(json.comments ?? []).map((c) => ({
+      text: c.body ?? "",
+      author: c,
+      sourceKind: "issue comment",
+    })),
   ];
   let brief = "";
   for (const carrier of carriers) {
-    if (
-      carrier.text.includes(AGENT_BRIEF_HEADING) &&
-      isTrustedBriefAuthor(carrier.author, ownerLogin)
-    ) {
+    if (!carrier.text.includes(AGENT_BRIEF_HEADING)) continue;
+    const sourceCheck = checkExecutableInstructionSource({
+      sourceKind: carrier.sourceKind,
+      instructionKind: "Agent Brief",
+      trustedAuthor: ownerLogin,
+      candidateAuthor: actorLogin(carrier.author),
+    });
+    if (sourceCheck.accepted) {
       brief = carrier.text;
     }
   }

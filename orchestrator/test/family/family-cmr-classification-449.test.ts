@@ -54,6 +54,15 @@ extra: forbidden
 \`\`\`yaml
 module: fiscal
 module_scope:
+  -orchestrator/src/family
+\`\`\`
+`),
+    ).toBeUndefined();
+    expect(
+      parseModuleDeclaration(`## Module Declaration
+\`\`\`yaml
+module: fiscal
+module_scope:
 \`\`\`
 `),
     ).toBeUndefined();
@@ -221,6 +230,35 @@ describe("#449 family CMR finding classification", () => {
       method: "child_module_scope",
       issue: 449,
       module: "windows-runner",
+      source: "child_issue",
+    });
+  });
+
+  it("matches finding locations with trailing line-column-symbol suffixes", () => {
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [
+        {
+          ...finding,
+          location: "orchestrator/src/family/verifyCmr.ts:42:10:runPass",
+        },
+      ],
+      moduleContext: buildFamilyModuleContext({
+        childModules: [
+          {
+            module: "verify-cmr",
+            moduleScope: ["orchestrator/src/family/verifyCmr.ts"],
+            source: "child_issue",
+            issue: 449,
+          },
+        ],
+      }),
+    });
+
+    expect(classified.results[0]?.attribution).toEqual({
+      method: "child_module_scope",
+      issue: 449,
+      module: "verify-cmr",
       source: "child_issue",
     });
   });

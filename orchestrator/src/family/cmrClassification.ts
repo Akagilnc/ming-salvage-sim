@@ -207,7 +207,7 @@ function parseModuleDeclarationYaml(yaml: string): ModuleDeclaration | undefined
     }
 
     if (!inScope) return undefined;
-    const item = /^\s*-\s*(.+?)\s*$/.exec(line);
+    const item = /^\s*-\s+(.+?)\s*$/.exec(line);
     if (item === null) return undefined;
     const scope = unquoteScalar(item[1] ?? "");
     if (scope === undefined || scope.length === 0) return undefined;
@@ -279,7 +279,9 @@ function containsNormalized(haystack: string, needle: string | undefined): boole
 }
 
 function locationPath(location: string): string {
-  const withoutLineColumn = location.trim().replace(/:\d+(?::\d+)?$/, "");
+  const withoutLineColumn = location
+    .trim()
+    .replace(/(:\d+(?::\d+)?)(:[^:/\\]+)?$/, "");
   if (/^[A-Za-z]:[\\/]/.test(withoutLineColumn)) return withoutLineColumn;
   return withoutLineColumn.replace(/:[^:/\\]+$/, "").trim();
 }
