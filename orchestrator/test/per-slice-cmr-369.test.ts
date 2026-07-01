@@ -418,6 +418,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           findings: [{ ...acceptedRisk, action: "fix_now" }],
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "verified-closed" },
+            {
+              identityKey: acceptedRiskKey,
+              status: "still-active",
+              reason: "reviewer-only suppression must be repaired",
+            },
           ],
         },
       },
@@ -446,19 +451,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S7:ship",
     ]);
     const firstS4Write = backend.ledgerWrites.find((entry) => entry.step === "S4");
-    expect(firstS4Write?.findingDispositions).toEqual([
-      {
-        identityKey:
-          "correctness|src/runner.ts:736|accepted risk remains same severity",
-        status: "accepted_suppressed",
-        reason: "Accepted as out of scope for this slice",
-        severity: "medium",
-        reopenAttempts: 0,
-        source: "issue #428 acceptance criteria",
-        scope: "out-of-scope accepted risk",
-        boundedReopen: "reopen on material severity upgrade",
-      },
-    ]);
+    expect(firstS4Write?.findingDispositions).toEqual([]);
   });
 
   it("bounds repeated still-active findings instead of looping forever", async () => {
@@ -1982,6 +1975,11 @@ describe("#369 runner resume/retry review fixes", () => {
             findings: [{ ...acceptedRisk, action: "fix_now" }],
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "verified-closed" },
+              {
+                identityKey: acceptedRiskKey,
+                status: "still-active",
+                reason: "reviewer-only suppression must be repaired",
+              },
             ],
           },
         },
@@ -2151,6 +2149,14 @@ describe("#369 finding identity and classification", () => {
     suggested_fix: "review current full diff",
     action: "fix_now",
   };
+  const findingKey = "correctness|src/runner.ts:120|missing full diff review";
+  const acceptedSource = {
+    source: "issue #448 acceptance criteria",
+    scope: "same documented non-goal",
+    reason: "Accepted as outside this slice",
+    findingIdentity: findingKey,
+    boundedReopen: "reopen on severity upgrade, new evidence, or wider scope",
+  };
 
   it("uses a normalized category/location/claim identity key, not an object hash", () => {
     const sameFindingDifferentWording: Finding = {
@@ -2195,48 +2201,48 @@ describe("#369 finding identity and classification", () => {
   });
 
   it("persists wont-fix and rejected dispositions with identity and rationale", () => {
-    const classification = classifyFindings([
-      {
+    const first: Finding = {
         ...finding,
         action: "wont_fix",
         disposition_reason: "Accepted as outside this slice",
         disposition: {
           kind: "accepted_suppressed",
-          source: "issue #448 acceptance criteria",
-          scope: "same documented non-goal",
-          reason: "Accepted as outside this slice",
-          findingIdentity: "correctness|src/runner.ts:120|missing full diff review",
-          boundedReopen: "reopen on severity upgrade, new evidence, or wider scope",
+          ...acceptedSource,
         },
-      },
-      {
+      };
+    const secondSource = {
+      source: "ADR 0030 accepted scope",
+      scope: "existing invariant",
+      reason: "The claim is false on the current full diff",
+      findingIdentity:
+        "correctness|src/runner.ts:120|already covered by existing invariant",
+      boundedReopen: "reopen if reviewer shows new failing evidence",
+    };
+    const second: Finding = {
         ...finding,
         claim_quote: "  Already covered by existing invariant ",
         action: "rejected",
         disposition_reason: "The claim is false on the current full diff",
         disposition: {
           kind: "accepted_suppressed",
-          source: "ADR 0030 accepted scope",
-          scope: "existing invariant",
-          reason: "The claim is false on the current full diff",
-          findingIdentity:
-            "correctness|src/runner.ts:120|already covered by existing invariant",
-          boundedReopen: "reopen if reviewer shows new failing evidence",
+          ...secondSource,
         },
-      },
-    ]);
+      };
+    const classification = classifyFindings([first, second], [], {
+      acceptedSuppressionSources: [acceptedSource, secondSource],
+    });
 
     expect(classification.deferred).toEqual([]);
     expect(classification.dispositions).toEqual([
       {
-        identityKey: "correctness|src/runner.ts:120|missing full diff review",
+        identityKey: findingKey,
         status: "accepted_suppressed",
         reason: "Accepted as outside this slice",
         severity: "medium",
         reopenAttempts: 0,
-        source: "issue #448 acceptance criteria",
-        scope: "same documented non-goal",
-        boundedReopen: "reopen on severity upgrade, new evidence, or wider scope",
+        source: acceptedSource.source,
+        scope: acceptedSource.scope,
+        boundedReopen: acceptedSource.boundedReopen,
       },
       {
         identityKey:
@@ -2245,9 +2251,9 @@ describe("#369 finding identity and classification", () => {
         reason: "The claim is false on the current full diff",
         severity: "medium",
         reopenAttempts: 0,
-        source: "ADR 0030 accepted scope",
-        scope: "existing invariant",
-        boundedReopen: "reopen if reviewer shows new failing evidence",
+        source: secondSource.source,
+        scope: secondSource.scope,
+        boundedReopen: secondSource.boundedReopen,
       },
     ]);
   });
@@ -2258,26 +2264,46 @@ describe("#369 finding identity and classification", () => {
       action: "wont_fix",
       disposition: {
         kind: "accepted_suppressed",
-        source: "issue #448 acceptance criteria",
-        scope: "same documented non-goal",
-        reason: "Accepted as outside this slice",
-        boundedReopen: "reopen on severity upgrade, new evidence, or wider scope",
+        source: acceptedSource.source,
+        scope: acceptedSource.scope,
+        reason: acceptedSource.reason,
+        boundedReopen: acceptedSource.boundedReopen,
       },
     };
 
     expect(isValidFinding(suppressed)).toBe(true);
-    expect(classifyFindings([suppressed]).dispositions).toEqual([
+    expect(
+      classifyFindings([suppressed], [], {
+        acceptedSuppressionSources: [acceptedSource],
+      }).dispositions,
+    ).toEqual([
       {
-        identityKey: "correctness|src/runner.ts:120|missing full diff review",
+        identityKey: findingKey,
         status: "accepted_suppressed",
-        reason: "Accepted as outside this slice",
+        reason: acceptedSource.reason,
         severity: "medium",
         reopenAttempts: 0,
-        source: "issue #448 acceptance criteria",
-        scope: "same documented non-goal",
-        boundedReopen: "reopen on severity upgrade, new evidence, or wider scope",
+        source: acceptedSource.source,
+        scope: acceptedSource.scope,
+        boundedReopen: acceptedSource.boundedReopen,
       },
     ]);
+  });
+
+  it("does not let reviewer text fabricate an accepted suppression", () => {
+    const suppressed: Finding = {
+      ...finding,
+      action: "wont_fix",
+      disposition: {
+        kind: "accepted_suppressed",
+        ...acceptedSource,
+      },
+    };
+
+    const classification = classifyFindings([suppressed]);
+
+    expect(classification.blocking).toEqual([suppressed]);
+    expect(classification.dispositions).toEqual([]);
   });
 
   it("rejects critical/high findings unless they are fix-now", () => {
@@ -2431,7 +2457,18 @@ describe("#369 finding identity and classification", () => {
       },
     };
 
-    const suppressed = classifyFindings([acceptedSuppressed]);
+    const acceptedSuppressions = [
+      {
+        source: "issue #448 acceptance criteria",
+        scope: "cross-module target already tracked",
+        reason: "Accepted by issue text as out of scope",
+        findingIdentity: findingIdentityKey(finding),
+        boundedReopen: "reopen on higher severity, new evidence, or different scope",
+      },
+    ];
+    const suppressed = classifyFindings([acceptedSuppressed], [], {
+      acceptedSuppressionSources: acceptedSuppressions,
+    });
 
     expect(suppressed.blocking).toEqual([]);
     expect(suppressed.dispositions).toEqual([
@@ -2461,6 +2498,7 @@ describe("#369 finding identity and classification", () => {
     const reopened = classifyFindings(
       [{ ...finding, severity: "high", action: "fix_now" }],
       suppressed.dispositions,
+      { acceptedSuppressionSources: acceptedSuppressions },
     );
 
     expect(reopened.blocking).toEqual([
@@ -2479,6 +2517,15 @@ describe("#369 finding identity and classification", () => {
     const adjudication = adjudicatePriorClaimedFixedFindings({
       priorFindings: [finding],
       priorIdentityKeys: [key],
+      acceptedSuppressionSources: [
+        {
+          source: "issue #448 acceptance criteria",
+          scope: "same claimed-fixed finding",
+          reason: "accepted by the owner for this bounded scope",
+          findingIdentity: key,
+          boundedReopen: "reopen on higher severity or different scope",
+        },
+      ],
       review: {
         kind: "reviewer",
         findings: [],
@@ -2510,6 +2557,15 @@ describe("#369 finding identity and classification", () => {
     const adjudication = adjudicatePriorClaimedFixedFindings({
       priorFindings: [highFinding],
       priorIdentityKeys: [key],
+      acceptedSuppressionSources: [
+        {
+          source: "issue #448 acceptance criteria",
+          scope: "same claimed-fixed finding",
+          reason: "accepted by the owner for this bounded scope",
+          findingIdentity: key,
+          boundedReopen: "reopen on higher severity or different scope",
+        },
+      ],
       review: {
         kind: "reviewer",
         findings: [],
@@ -2643,6 +2699,15 @@ describe("#369 finding identity and classification", () => {
   });
 
   it("reopens a suppressed finding on severity upgrade but caps reopen attempts at four", () => {
+    const acceptedSuppressionSources = [
+      {
+        source: "issue #448 acceptance criteria",
+        scope: "same finding identity",
+        reason: "previously accepted risk",
+        findingIdentity: findingIdentityKey(finding),
+        boundedReopen: "reopen on severity upgrade",
+      },
+    ];
     const classification = classifyFindings(
       [
         {
@@ -2663,6 +2728,7 @@ describe("#369 finding identity and classification", () => {
           boundedReopen: "reopen on severity upgrade",
         },
       ],
+      { acceptedSuppressionSources },
     );
 
     expect(classification.blocking).toHaveLength(1);
@@ -2688,6 +2754,7 @@ describe("#369 finding identity and classification", () => {
         },
       ],
       classification.dispositions,
+      { acceptedSuppressionSources },
     );
 
     expect(capped.blocking).toEqual([
@@ -2702,6 +2769,15 @@ describe("#369 finding identity and classification", () => {
   });
 
   it("allows one same-severity dispute of a suppressed finding, then suppresses repeats", () => {
+    const acceptedSuppressionSources = [
+      {
+        source: "issue #448 acceptance criteria",
+        scope: "same finding identity",
+        reason: "previously accepted risk",
+        findingIdentity: findingIdentityKey(finding),
+        boundedReopen: "reopen on same-severity dispute once",
+      },
+    ];
     const disputed = classifyFindings(
       [
         {
@@ -2722,6 +2798,7 @@ describe("#369 finding identity and classification", () => {
           boundedReopen: "reopen on same-severity dispute once",
         },
       ],
+      { acceptedSuppressionSources },
     );
 
     expect(disputed.blocking).toEqual([
@@ -2754,6 +2831,7 @@ describe("#369 finding identity and classification", () => {
         },
       ],
       disputed.dispositions,
+      { acceptedSuppressionSources },
     );
 
     expect(repeated.blocking).toEqual([]);
