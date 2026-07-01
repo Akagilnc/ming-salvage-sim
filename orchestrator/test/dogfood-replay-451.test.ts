@@ -153,13 +153,27 @@ describe("#451 dogfood replay fixture", () => {
     for (const id of [
       "307-continue-fixing-after-human-answer",
       "307-local-progress-shape-changed",
-      "307-continue-fixing-targeted-reset",
     ]) {
       const row = rowsById.get(id);
       expect(row, id).toBeDefined();
       expect(row?.source, id).toBe("runner");
       expect(row?.sourceStopSummary, id).toMatchObject({ reason: "success" });
+      expect(row?.sourceEvidence, id).toMatchObject({
+        seam: "runner",
+        status: "success",
+        dispatched: expect.arrayContaining(["S5:coder", "S6:reviewer", "S7:ship"]),
+      });
     }
+    expect(rowsById.get("307-continue-fixing-targeted-reset")).toMatchObject({
+      source: "runner",
+      classification: "spec_conflict",
+      stopReason: "spec_conflict",
+      sourceStopSummary: expect.objectContaining({ reason: "spec_conflict" }),
+      sourceEvidence: expect.objectContaining({
+        seam: "runner",
+        status: "escalate",
+      }),
+    });
 
     for (const id of [
       "287-module-declaration-fenced-yaml",
@@ -176,6 +190,7 @@ describe("#451 dogfood replay fixture", () => {
       expect(row?.source, id).not.toBe("stop_summary");
       expect(row?.sourceStopSummary, id).toBeDefined();
       expect(row?.stopSummary, id).toEqual(row?.sourceStopSummary);
+      expect(row?.sourceEvidence, id).toBeDefined();
     }
 
     expect(rowsById.get("family-resume-already-done-child")).toMatchObject({
@@ -229,5 +244,44 @@ describe("#451 dogfood replay fixture", () => {
       "family-admission-non-runnable-child",
       "family-resume-already-done-child",
     ]);
+  });
+
+  it("does not reuse generic success summaries for rows that name a specific replay seam", async () => {
+    const replay = await issue451DogfoodReplay();
+    const rowsById = new Map(replay.scenarios.map((scenario) => [scenario.id, scenario]));
+
+    expect(rowsById.get("307-local-progress-shape-changed")?.sourceEvidence).toMatchObject({
+      seam: "runner",
+      mechanism: "changed_shape_progress",
+      findingShape: "changed_after_local_progress",
+    });
+    expect(rowsById.get("307-continue-fixing-targeted-reset")?.sourceEvidence).toMatchObject({
+      seam: "runner",
+      mechanism: "continue_fixing_bookkeeping",
+      resetScope: "single_identity_key",
+      preservedSibling: true,
+    });
+    expect(rowsById.get("287-module-declaration-fenced-yaml")?.sourceEvidence).toMatchObject({
+      seam: "module_declaration_parser",
+      parsedModule: "orchestrator-family",
+      proseIgnored: true,
+    });
+    expect(rowsById.get("287-family-attribution-child-before-parent")?.sourceEvidence).toMatchObject({
+      seam: "family_cmr_classification",
+      attribution: {
+        method: "child_module_scope",
+        issue: 307,
+        module: "orchestrator-runner",
+      },
+    });
+    expect(rowsById.get("287-correctness-r3-legacy-disposition")?.sourceEvidence).toMatchObject({
+      seam: "cmr_outcome_parser",
+      normalizedPriorDisposition: "verified-closed",
+    });
+    expect(rowsById.get("287-correctness-final-legacy-disposition")?.sourceEvidence).toMatchObject({
+      seam: "family",
+      finalCmrPass: "correctness",
+      legacyDispositionAccepted: true,
+    });
   });
 });
