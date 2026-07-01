@@ -253,33 +253,23 @@ function suppressionScopeMatchesContext(input: {
   readonly finding: Finding;
   readonly context: FamilyModuleContext;
   readonly scope?: string;
-  readonly targetModule?: string;
 }): boolean {
-  const attribution = attributionFor(input.finding, input.context);
-  if (attribution.method === "missing_module_context") return false;
+  const attributedDeclaration =
+    childAttribution(input.finding, input.context) ?? fallbackModule(input.context);
+  if (attributedDeclaration === undefined) return false;
 
   const scope = normalizedEvidenceText(input.scope);
-  const targetModule = normalizedModule(input.targetModule ?? "");
-  const currentModules = currentModuleNames(input.context);
-  if (targetModule.length > 0 && currentModules.has(targetModule)) {
-    return true;
-  }
-
-  if (containsNormalized(scope, attribution.module)) return true;
+  if (containsNormalized(scope, attributedDeclaration.module)) return true;
   if (
-    attribution.issue !== undefined &&
-    scope.includes(`#${attribution.issue}`)
+    attributedDeclaration.issue !== undefined &&
+    scope.includes(`#${attributedDeclaration.issue}`)
   ) {
     return true;
   }
 
-  return input.context.currentModules.some((decl) => {
-    if (containsNormalized(scope, decl.module)) return true;
-    if (decl.issue !== undefined && scope.includes(`#${decl.issue}`)) return true;
-    return decl.moduleScope.some((moduleScope) =>
-      containsNormalized(scope, moduleScope),
-    );
-  });
+  return attributedDeclaration.moduleScope.some((moduleScope) =>
+    containsNormalized(scope, moduleScope),
+  );
 }
 
 function acceptedSuppressionFindingMatchesContext(
@@ -300,7 +290,6 @@ function acceptedSuppressionFindingMatchesContext(
       finding,
       context,
       scope: disposition.scope,
-      targetModule: disposition.targetModule,
     })
   );
 }
@@ -318,7 +307,6 @@ function priorDispositionMatchesContext(
       finding,
       context,
       scope: disposition.scope,
-      targetModule: disposition.targetModule,
     })
   );
 }
