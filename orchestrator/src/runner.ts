@@ -284,7 +284,7 @@ function isEscalationAnswerEntry(
     (entry.findingIdentityKey === undefined ||
       typeof entry.findingIdentityKey === "string") &&
     (entry.findingScope === undefined ||
-      typeof entry.findingScope === "object")
+      isFindingRepairScope(entry.findingScope))
   );
 }
 
@@ -342,6 +342,29 @@ function isBookkeepingSource(
     value === "coordinator" ||
     value === "peripheral" ||
     value === "resume_input"
+  );
+}
+
+function isStringArray(value: unknown): value is ReadonlyArray<string> {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isFindingRepairScope(
+  value: unknown,
+): value is NonNullable<ContinueFixingEvent["findingScope"]> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const scope = value as Record<string, unknown>;
+  return (
+    (scope.identityKeys === undefined || isStringArray(scope.identityKeys)) &&
+    (scope.locations === undefined || isStringArray(scope.locations)) &&
+    (scope.categories === undefined || isStringArray(scope.categories)) &&
+    (scope.findingGroup === undefined ||
+      typeof scope.findingGroup === "string") &&
+    (scope.reviewContext === undefined ||
+      typeof scope.reviewContext === "string") &&
+    (scope.featureArea === undefined || typeof scope.featureArea === "string")
   );
 }
 
@@ -427,7 +450,7 @@ function isContinueFixingEntry(
     (entry.findingIdentityKey === undefined ||
       typeof entry.findingIdentityKey === "string") &&
     (entry.findingScope === undefined ||
-      typeof entry.findingScope === "object")
+      isFindingRepairScope(entry.findingScope))
   );
 }
 
