@@ -11,7 +11,10 @@ import {
 } from "../src/findings.js";
 import { route } from "../src/route.js";
 import { runOrchestrator } from "../src/runner.js";
-import { isValidFinding } from "../src/validate.js";
+import {
+  isValidFinding,
+  isValidPriorFindingDisposition,
+} from "../src/validate.js";
 import type {
   Backend,
   DispatchContext,
@@ -594,6 +597,84 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S5:coder",
       "S6:reviewer",
       "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
+  it("restores resume repair movement paths before judging still-active no-progress", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-427",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: {
+            kind: "coder",
+            committed: true,
+            commitsAdded: 1,
+            repairEvidence: {
+              findingScope: { identityKeys: [blockingKey] },
+              changedFiles: ["src/runner.ts"],
+              tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+            },
+          },
+          repairMovementPaths: ["src/runner.ts"],
+        },
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
       "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
@@ -2125,6 +2206,24 @@ describe("#369 finding identity and classification", () => {
 
     expect(adjudication.stillOpen).toEqual([]);
     expect(adjudication.verifiedClosedIdentityKeys).toEqual([key]);
+  });
+
+  it("requires accepted_suppressed prior dispositions to carry the suppression reason", () => {
+    const baseDisposition = {
+      identityKey: "correctness|src/runner.ts:427|accepted by owner",
+      status: "accepted_suppressed" as const,
+      source: "#427 owner answer",
+      scope: "runner review/fix loop",
+      boundedReopen: "reopen if the same runner path regresses",
+    };
+
+    expect(isValidPriorFindingDisposition(baseDisposition)).toBe(false);
+    expect(
+      isValidPriorFindingDisposition({
+        ...baseDisposition,
+        reason: "Owner accepted this bounded risk.",
+      }),
+    ).toBe(true);
   });
 
   it("fails closed when prior dispositions lack sourced accepted-suppression evidence", () => {

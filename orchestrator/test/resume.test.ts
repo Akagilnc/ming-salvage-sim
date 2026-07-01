@@ -521,6 +521,44 @@ describe("#439 decision-escalate answer channel", () => {
     );
   });
 
+  it("turns repair-intent ledger write failures into a structured S8 error handoff", async () => {
+    class RepairIntentWriteFailureBackend extends DispatchRecordingResumeBackend {
+      async writeLedger(
+        ledgerEntry: PersistentLedgerEntry,
+        stateDir: string,
+      ): Promise<void> {
+        if (ledgerEntry.event === "runner_bookkeeping") {
+          throw new Error("repair intent ledger write failed");
+        }
+        await super.writeLedger(ledgerEntry, stateDir);
+      }
+    }
+    const backend = new RepairIntentWriteFailureBackend(decisionEscalatedAtS4());
+
+    const result = await runOrchestrator({
+      issueNumber: 439,
+      backend,
+      repairIntent: {
+        event: "runner_bookkeeping",
+        intent: "continue_fixing",
+        findingIdentityKey: CLAIMED_FIXED_KEY,
+        source: "resume_input",
+        ts: "2026-07-01T00:00:01.000Z",
+      },
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.errorPackage).toMatchObject({
+      failedStep: "S4",
+      reason: expect.stringContaining("repair intent ledger write failed"),
+    });
+    expect(backend.dispatchSpecs).toEqual([]);
+    expect(backend.ledgerWrites.at(-1)).toMatchObject({
+      step: "S8",
+      handoffStatus: "error",
+    });
+  });
+
   it("failure-escalate remains terminal even if an answer row is appended", async () => {
     const backend = new DispatchRecordingResumeBackend(
       decisionEscalatedAtS4({
