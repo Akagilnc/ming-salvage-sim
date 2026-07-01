@@ -242,6 +242,27 @@ describe("#422 model route presets", () => {
     ).toBeUndefined();
   });
 
+  it("does not throw on null nested route-shaped properties", () => {
+    const malformedRoute = {
+      slots: null,
+      legCollections: null,
+      tightFamilyViolations: [],
+    };
+
+    expect(() =>
+      cmrLegAccountingFailure(
+        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        malformedRoute as never,
+      ),
+    ).not.toThrow();
+    expect(
+      cmrLegAccountingFailure(
+        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        malformedRoute as never,
+      ),
+    ).toBeUndefined();
+  });
+
   it("feeds the resolved route into every worker spec model slot", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     vi.resetModules();

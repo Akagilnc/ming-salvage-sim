@@ -454,8 +454,10 @@ function isResolvedModelRoute(value: unknown): value is ResolvedModelRoute {
   const candidate = value as Partial<ResolvedModelRoute>;
   return (
     candidate.slots !== undefined &&
+    candidate.slots !== null &&
     typeof candidate.slots === "object" &&
     candidate.legCollections !== undefined &&
+    candidate.legCollections !== null &&
     typeof candidate.legCollections === "object" &&
     Array.isArray(candidate.legCollections.cmrReview) &&
     Array.isArray(candidate.tightFamilyViolations)

@@ -274,6 +274,13 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
   it("reads sub-issues + each child's blocked_by and builds the epic", () => {
     const sh: Sh = (file, args) => {
       expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        return JSON.stringify({
+          number: Number(args[2]),
+          body: "",
+          author: { login: "Akagilnc" },
+        });
+      }
       if (String(args[1]).includes("/sub_issues")) {
         return JSON.stringify([{ number: 11 }, { number: 12 }]);
       }
@@ -367,6 +374,22 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
 
     expect(() => readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh)).toThrow(
       /failed to read issue #291 body/i,
+    );
+  });
+  it("fails closed when gh issue view returns a non-object payload", () => {
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        return "null";
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 11 }]);
+      }
+      return "[]";
+    };
+
+    expect(() => readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh)).toThrow(
+      /unexpected gh issue payload/i,
     );
   });
   it("admits only OPEN ready-for-agent leaf children, logs every skipped non-runnable child, and continues", () => {

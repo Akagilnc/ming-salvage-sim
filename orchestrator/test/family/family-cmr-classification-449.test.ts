@@ -556,6 +556,52 @@ describe("#449 family CMR finding classification", () => {
     expect(classified.results[1]?.targetModule).toBe("military-state-machine");
   });
 
+  it("skips blank current module slugs and normalizes undeveloped scope casing", () => {
+    const crossModule: Finding = {
+      ...finding,
+      claim_quote: "military state machine is not implemented",
+      location: "docs/military-state-machine.md:1",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "military-state-machine",
+        reason: "outside the declared fiscal family module",
+      },
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [crossModule],
+      moduleContext: {
+        currentModules: [
+          {
+            module: "",
+            moduleScope: ["docs/empty"],
+            source: "run_option",
+          },
+          {
+            module: "fiscal",
+            moduleScope: ["docs/fiscal"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
+        childModules: [],
+        undevelopedModules: [
+          {
+            module: "external-roadmap",
+            moduleScope: ["DOCS/MILITARY-STATE-MACHINE.MD"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
+      },
+    });
+
+    expect(classified.blocking).toEqual([]);
+    expect(classified.deferred).toEqual([crossModule]);
+    expect(classified.results[0]?.classification).toBe("cross_module_defer");
+  });
+
   it("fails closed when a cross-module target aliases the current module name", () => {
     const aliasedModuleFinding: Finding = {
       ...finding,
