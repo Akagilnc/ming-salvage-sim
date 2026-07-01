@@ -401,6 +401,31 @@ def test_conservation_rejects_excluded_army_with_pay_source_debt(fresh_db):
         fresh_db.assert_army_pay_source_container_conservation()
 
 
+def test_conservation_rejects_province_source_army_without_settle_base(fresh_db):
+    fresh_db.conn.execute(
+        "UPDATE regions SET controlled_by = 'ming', fiscal = '{}' WHERE id = 'taiwan'"
+    )
+    fresh_db.conn.execute(
+        """
+        UPDATE armies
+        SET owner_power = 'ming',
+            is_tusi = 0,
+            self_funded_pay = 0,
+            pay_source_region = 'taiwan',
+            province_pay_share = 1,
+            central_pay_share = 0,
+            province_pay_arrears = 1,
+            central_pay_arrears = 0,
+            arrears = 1
+        WHERE id = 'fujian_navy'
+        """
+    )
+    fresh_db._reconcile_central_army_pay_arrears_container()
+
+    with pytest.raises(ValueError, match="pay_source_region 无 settle st/p 基座"):
+        fresh_db.assert_army_pay_source_container_conservation()
+
+
 def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
     import ming_sim.flows as flows_mod
 
@@ -2444,6 +2469,7 @@ def test_substrate_absent_does_not_break_flows(game):
     # 显式保证「无基座」前提（不依赖 probe.db 恰好缺 settle——刷新种子档也不失效，PR#110 coderabbit）。
     from ming_sim.flows import apply_fixed_period_flows
     db, state, _ = game
+    _disable_army_pay_source_cutover(db)
     row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
     fiscal = json.loads(str(row["fiscal"] or "{}")) if row else {}
     fiscal.pop("settle", None)

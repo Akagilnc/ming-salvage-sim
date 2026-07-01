@@ -2316,6 +2316,24 @@ class GameDB:
                 "army "
                 f"{exempt_bad['id']} 自养/非明军双累加器必须为 0"
             )
+        if self.is_substrate_hub_fiscal_engine_enabled():
+            province_source_rows = self.conn.execute(
+                """
+                SELECT id, pay_source_region
+                FROM armies
+                WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+                  AND (
+                    ABS(COALESCE(province_pay_share, 0)) > 1e-9 OR
+                    ABS(COALESCE(province_pay_arrears, 0)) > 1e-9
+                  )
+                ORDER BY id
+                """
+            ).fetchall()
+            for province_source in province_source_rows:
+                self._require_valid_pay_source_region(
+                    str(province_source["id"]),
+                    str(province_source["pay_source_region"] or ""),
+                )
         central_container = self.get_central_army_pay_arrears_container()
         row = self.conn.execute(
             """
