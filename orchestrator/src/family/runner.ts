@@ -556,6 +556,7 @@ export async function runFamily(
   const declaredModuleContext =
     moduleContext.currentModules.length > 0 ||
     moduleContext.childModules.length > 0 ||
+    (moduleContext.undevelopedModules?.length ?? 0) > 0 ||
     (moduleContext.acceptedSuppressionSources?.length ?? 0) > 0
       ? moduleContext
       : undefined;
@@ -971,6 +972,9 @@ export async function runFamily(
       };
     }
     familyHead = preFinalFamilyHead;
+    const shippedVerifiedCmrHead =
+      shippedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
+      preFinalFamilyHead;
     const alreadyDoneSummary: StopSummary = {
       reason: "already_done",
       summary: "family run already shipped for the current family HEAD",
@@ -978,11 +982,14 @@ export async function runFamily(
         heads: {
           actualFamilyHead: preFinalFamilyHead,
           reportedFamilyHead: shippedRecord.familyHeadAfter,
-          verifiedCmrHead: preFinalFamilyHead,
+          verifiedCmrHead: shippedVerifiedCmrHead,
           sources: {
             actualFamilyHead: "current family head",
             reportedFamilyHead: "shipped ledger row",
-            verifiedCmrHead: "shipped ledger row",
+            verifiedCmrHead:
+              shippedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead !== undefined
+                ? "shipped ledger stop summary"
+                : "shipped ledger row",
           },
         },
       },

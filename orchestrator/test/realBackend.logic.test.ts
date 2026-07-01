@@ -1066,6 +1066,16 @@ describe("RealBackend reviewer output contract", () => {
     soul: "READ-ONLY",
     toolchain: ["node", "typescript"],
   };
+  const coderSpec: StepSpec = {
+    id: "S5",
+    role: "coder",
+    promptFile: "coder_fix.md",
+    model: "sonnet",
+    completionSignal: "CODER_STEP_COMPLETE",
+    maxIter: 5,
+    soul: "coder",
+    toolchain: ["node", "typescript"],
+  };
 
   it("rejects accepted_suppressed prior dispositions without a reviewer reason", () => {
     const here = dirname(fileURLToPath(import.meta.url));
@@ -1148,6 +1158,39 @@ describe("RealBackend reviewer output contract", () => {
     expect(decoded.findings?.[0]?.disposition_reason).toBe(
       "Owner accepted this bounded risk.",
     );
+  });
+
+  it("rejects repair evidence that only self-reports a patch summary", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 445,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "prompts"),
+    });
+
+    expect(() =>
+      (
+        backend as unknown as {
+          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+        }
+      ).decodeOutput(
+        coderSpec,
+        {
+          committed: true,
+          commitsAdded: 1,
+          repairEvidence: {
+            findingScope: {
+              identityKeys: ["correctness|orchestrator/src/x.ts:1|bug"],
+            },
+            patchSummary: "updated the fix",
+          },
+        },
+        1,
+      ),
+    ).toThrow(/repairEvidence.*changedFiles.*tests.*fixtures/i);
   });
 });
 

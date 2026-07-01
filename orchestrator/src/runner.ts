@@ -1436,23 +1436,26 @@ function errorMessage(err: unknown): string {
 function acceptedSuppressionsFromDispositions(
   dispositions: ReadonlyArray<FindingDisposition>,
 ): AcceptedSuppressionSummary[] {
-  return dispositions
-    .filter(
-      (disposition) =>
-        (disposition.status === "accepted_suppressed" &&
-          hasAcceptedSuppressionAuthority(disposition)) ||
-        disposition.status === "wont_fix" ||
-        disposition.status === "rejected",
-    )
-    .map((disposition) => ({
-      source: disposition.source ?? "reviewer disposition",
-      scope: disposition.scope ?? disposition.targetModule ?? "slice",
-      reason: disposition.reason,
-      findingIdentity: disposition.identityKey,
-      boundedReopen:
-        disposition.boundedReopen ??
-        "reopen when the accepted finding materially reappears",
-    }));
+  return dispositions.flatMap((disposition) => {
+    if (
+      disposition.status !== "accepted_suppressed" ||
+      !hasAcceptedSuppressionAuthority(disposition) ||
+      disposition.source === undefined ||
+      disposition.scope === undefined ||
+      disposition.boundedReopen === undefined
+    ) {
+      return [];
+    }
+    return [
+      {
+        source: disposition.source,
+        scope: disposition.scope,
+        reason: disposition.reason,
+        findingIdentity: disposition.identityKey,
+        boundedReopen: disposition.boundedReopen,
+      },
+    ];
+  });
 }
 
 function successSummaryForCurrentState(input: {
@@ -2790,15 +2793,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // Mirror the error paths (errorTermination / no-progress bail): best-
         // effort persist a TAGGED 'error' S8 so the disk carries the true
         // terminal status and a re-feed reports ERROR via planResume Case 3a.
-        // persistBestEffort swallows a secondary write fault — we already return
-        // status:error, a second ledger fault must not mask the original cause.
-        await persistBestEffort("S8", undefined, undefined, "error");
         const errorPackage: ErrorPackage = {
           failedStep: "S8",
           reason: `writeLedger(S8) failed while persisting the handoff entry: ${cause}`,
           branchHead: worktree?.branch,
         };
         const stopSummary = stopSummaryForErrorPackage(errorPackage);
+        // persistBestEffort swallows a secondary write fault — we already return
+        // status:error, a second ledger fault must not mask the original cause.
+        await persistBestEffort(
+          "S8",
+          undefined,
+          undefined,
+          "error",
+          undefined,
+          undefined,
+          undefined,
+          stopSummary,
+        );
         return {
           status: "error",
           errorPackage,

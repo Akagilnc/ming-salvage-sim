@@ -450,12 +450,15 @@ export function cmrReviewLegs(
 }
 
 function isResolvedModelRoute(value: unknown): value is ResolvedModelRoute {
+  if (value === null || typeof value !== "object") return false;
+  const candidate = value as Partial<ResolvedModelRoute>;
   return (
-    value !== null &&
-    typeof value === "object" &&
-    "slots" in value &&
-    "legCollections" in value &&
-    "tightFamilyViolations" in value
+    candidate.slots !== undefined &&
+    typeof candidate.slots === "object" &&
+    candidate.legCollections !== undefined &&
+    typeof candidate.legCollections === "object" &&
+    Array.isArray(candidate.legCollections.cmrReview) &&
+    Array.isArray(candidate.tightFamilyViolations)
   );
 }
 

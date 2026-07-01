@@ -230,6 +230,41 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     });
   });
 
+  it("passes undeveloped-module-only context into the final CMR hook", async () => {
+    const calls: VerifyCmrInput[] = [];
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      calls.push(input);
+      return { ok: true, ran: false };
+    };
+
+    await runFamily({
+      epic: epicWith(10),
+      familyBackend: new FakeFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/445-base",
+      undevelopedModules: [
+        {
+          module: "route-accounting",
+          moduleScope: ["orchestrator/src/modelRoutes.ts"],
+          source: "run_option",
+        },
+      ],
+      verifyCmr,
+    });
+
+    expect(calls.at(-1)?.moduleContext).toMatchObject({
+      currentModules: [],
+      childModules: [],
+      undevelopedModules: [
+        {
+          module: "route-accounting",
+          moduleScope: ["orchestrator/src/modelRoutes.ts"],
+          source: "run_option",
+        },
+      ],
+    });
+  });
+
   it("keeps pending correctness CMR finding keys across a newer unrelated completeness pass", async () => {
     const priorKey =
       "correctness|orchestrator/src/family/verifycmr.ts:42|correctness blocker";

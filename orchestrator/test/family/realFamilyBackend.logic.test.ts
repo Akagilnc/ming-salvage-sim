@@ -972,6 +972,35 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       ),
     });
   });
+
+  it("strips legacy disposition aliases even when status is already present", () => {
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: true,
+      successfulLegs: ["gpt-5.5"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|accepted"],
+      priorFindingDispositions: [
+        {
+          identityKey: "correctness|src/x.ts:1|accepted",
+          status: "verified-closed",
+          disposition: "accepted_suppressed",
+        },
+      ],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome).toMatchObject({
+      converged: true,
+      priorFindingDispositions: [
+        {
+          identityKey: "correctness|src/x.ts:1|accepted",
+          status: "verified-closed",
+        },
+      ],
+    });
+  });
 });
 
 describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {

@@ -650,6 +650,7 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
 describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R4)", () => {
   class EscalatingFamilyBackend implements FamilyBackend {
     escalations: string[] = [];
+    ledger: FamilyLedgerEntry[] = [];
     escalateOn: "cmr" | "ship";
     constructor(escalateOn: "cmr" | "ship") {
       this.escalateOn = escalateOn;
@@ -657,9 +658,11 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
-    async appendFamilyLedger(): Promise<void> {}
-    async readFamilyLedger(): Promise<[]> {
-      return [];
+    async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+      this.ledger.push(entry);
+    }
+    async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+      return this.ledger;
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
@@ -705,6 +708,16 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     });
     expect(res.ok).toBe(false);
     expect(be.escalations.length).toBe(1);
+    expect(be.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      reason: expect.stringContaining("family ship worker escalated"),
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        summary: expect.stringContaining("family ship worker escalated"),
+      }),
+    }));
   });
 });
 

@@ -404,6 +404,15 @@ describe("#451 dogfood replay fixture", () => {
         runStatus: "success",
       }),
     });
+    expect(rowsById.get("287-same-module-cmr-gap")).toMatchObject({
+      source: "family",
+      classification: "same_module_still_red",
+      stopReason: "same_module_still_red",
+      sourceEvidence: expect.objectContaining({
+        seam: "family_verify_cmr",
+        runStatus: "same_module_still_red",
+      }),
+    });
     expect(rowsById.get("376-route-accounting-non-default")?.sourceEvidence).toMatchObject({
       seam: "family_verify_cmr",
       helperSeam: "family_cmr_accounting",
@@ -508,6 +517,26 @@ describe("#451 dogfood replay fixture", () => {
         failedLeg: "agy",
         status: "aborted",
         dispatches: ["cmr:completeness"],
+      }),
+    });
+    expect(rowsById.get("376-provider-degraded-nonblocking")).toMatchObject({
+      source: "family",
+      classification: "provider_degraded",
+      stopReason: "success",
+      sourceEvidence: expect.objectContaining({
+        seam: "family_verify_cmr_provider_metadata",
+        familyBase: "family/376-provider",
+        status: "success",
+      }),
+    });
+    expect(rowsById.get("433-provider-leg-skipped-strong-leg-pass")).toMatchObject({
+      source: "family",
+      classification: "provider_degraded",
+      stopReason: "success",
+      sourceEvidence: expect.objectContaining({
+        seam: "family_verify_cmr_provider_metadata",
+        familyBase: "family/433-provider",
+        status: "success",
       }),
     });
     expect(rowsById.get("376-closure-context-missing")).toMatchObject({
