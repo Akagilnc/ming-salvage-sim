@@ -59,8 +59,8 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `category` | ≤40 字 | 自由文本 |
 | `reason` | ≤80 字 | 自由文本 |
 | `purpose` | 可选 `补饷` / `其它` | 补饷会跟 army arrears 联动 |
-| `target_kind` | 可选 `army` | 配合 target_id 用 |
-| `target_id` | 可选 | 当 purpose=补饷 时定向 |
+| `target_kind` | `purpose=补饷` 时必填 `army` | 配合 target_id 用 |
+| `target_id` | `purpose=补饷` 时必填合法 army_id | 缺失或不存在则整条拒收不扣账 |
 
 > ⚠️ **常踩坑**：建筑日常产出 / 固定月度收支 **不要写**（已由程序 `apply_fixed_period_flows` 落账）。这里只写本回合"诏书/事件导致的一次性真金白银收支"，每笔三要素「源→目标，金额」点死。
 > 「太仓岁亏三十万」是困境描述，不是本月一笔收支，**别照写成 economy_moves**。
@@ -114,11 +114,12 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   - quantity：`manpower`
   - text：`station` `commander` `controller` `troop_type` `status` `owner_power`
 - 中文别名都吃
+- `army_delta.arrears` / `欠饷` 只允许既有军**正值外生加欠**（如剧情罚欠、战役拖欠），cutover 下引擎按饷源比例拆入省/中央累加器；`欠饷` 负值拒收。真钱补饷、减欠、核销必须走 `economy_moves`（`purpose=补饷`）或显式核销路径，不能用负数 `arrears` 绕过预算流。新军初始欠饷固定为 0，`new_armies` 不写 `欠饷`。
 - ⚠️ `maintenance_per_turn`（维护费）#173 **列已物理删除**：别名（维护费/军费）已移除，写它当非法字段逐项拒收留痕（`invalid_enum`）。月饷由引擎 `army_needed`（=`ceil(manpower × salary_rate / 10000)`，仅 ming）唯一承载；调月饷改 `manpower`。
 
 ### `new_armies` — 建军
 ⚠️ **`id` 必填**（英文 army_id，如 `tianxiong`）。缺 id 该项逐项拒收留痕（落 `rejection_reports`，不再 print WARN——v0.8.x PR2-S2）。〔崇祯二年八月实测，turn 11〕
-全字段：`id`（必填）`name` `owner_power` `station` `theater` `commander` `controller` `troop_type` `manpower`（必填）`morale` `training` `loyalty` `equipment` `supply` `mobility` `status`…（参考 `ARMY_FIELD_ALIASES`）。#173：`maintenance_per_turn` 列已删，LLM 若仍塞维护费键当未知键忽略（不入库、不影响建军）；月饷由 `army_needed` 按 `manpower` 派生。
+全字段：`id`（必填）`name` `owner_power` `station` `theater` `commander` `controller` `troop_type` `manpower`（必填）`morale` `training` `loyalty` `equipment` `supply` `mobility` `status` `pay_source_region` `province_pay_share` `central_pay_share` `is_tusi` `self_funded_pay`…（参考 `ARMY_FIELD_ALIASES`）。普通明军（`owner_power="ming"` 且非土司/自养）必填 `pay_source_region`（明控省 region_id）+ `province_pay_share` + `central_pay_share`，两份额和必须为 1；土司/自养明军才可写 `is_tusi`/`self_funded_pay`，且饷源省为空、两份额为 0/0。#173：`maintenance_per_turn` 列已删，LLM 若仍塞维护费键当未知键忽略（不入库、不影响建军）；月饷由 `army_needed` 按 `manpower` 派生。
 
 ### `power_updates` — 外部势力变化
 - key：非 `ming` 的 power_id，必须来自输入盘面 `power_ids`（如 `houjin` / `mongol` / `korea` / `bandits` / `bandit_li_zicheng` / `bandit_zhang_xianzhong` 等）；禁止写 `ming`。

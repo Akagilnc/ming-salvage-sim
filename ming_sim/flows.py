@@ -177,22 +177,30 @@ def calc_province_fiscal(
 
 # 固定月度收支科目目录现走数据驱动：db.iter_budget_items() 从 fiscal_config 读
 # budget_role=fixed 的 base 项（account/direction/display）。加新税源只改 content/fiscal_config.json。
-# 税收/皇庄走 calc_province_fiscal（动态），军饷走 SUM(maint)。这是「定额预算」唯一定义，
-# flows 落账 / UI budget_payload / db.treasury_budget_summary 三处共用 compute_budget_lines，禁止各自重算。
+# 税收/皇庄走 calc_province_fiscal（动态）；legacy 军饷走 army_needed，substrate_hub 军饷
+# 旧预算行归零、由 per-source 省/中央欠账路径承载。compute_budget_lines 是预算展示同源，
+# flows 落账 / UI budget_payload / db.treasury_budget_summary 三处共用，禁止各自重算。
 
 
 def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, list]]:
     """唯一定额预算源。返回 {"国库":{"income":[{name,amount,note}],"expense":[...]},"内库":{...}}。
-    税收/皇庄＝calc_province_fiscal 动态值；军饷＝SUM(明军 maint)；建筑＝按 condition 折产/维护；
+    税收/皇庄＝calc_province_fiscal 动态值；legacy 军饷＝SUM(明军应发)；
+    substrate_hub 军饷由省级基座 / hub 承载，不再列入旧国库固定支出；
+    建筑＝按 condition 折产/维护；
     其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。"""
     cfg = db.get_fiscal_config()
     gk_tax, nk_huang, _ = calc_province_fiscal(state, db)
     # #44 军饷=SUM(应发)，应发挂钩兵力(army_needed=ceil(manpower×salary_rate/10000))，非旧 maintenance 定额。
-    army_total = sum(
-        army_needed(r) for r in db.conn.execute(
-            "SELECT manpower, salary_rate, owner_power FROM armies WHERE owner_power='ming'"
-        ).fetchall()
-    )
+    # #307 substrate_hub 下旧「户部直扣国库发饷」全局路径退役；预算行改读 hub 预计实拨，
+    # 与 apply_fixed_period_flows 的 边饷hub 扣款同源，避免预算净额虚高。
+    if db.fiscal_engine() == "legacy":
+        army_total = sum(
+            army_needed(r) for r in db.conn.execute(
+                "SELECT manpower, salary_rate, owner_power FROM armies WHERE owner_power='ming'"
+            ).fetchall()
+        )
+    else:
+        army_total = _substrate_hub_budget_army_pay(db, state)
 
     budget: Dict[str, Dict[str, list]] = {
         "国库": {"income": [], "expense": []},
@@ -238,6 +246,32 @@ def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, li
     return budget
 
 
+def _substrate_hub_budget_army_pay(db: GameDB, state: GameState) -> int:
+    """Return the fixed-budget army-pay outflow for substrate_hub saves."""
+    rows = db.conn.execute(
+        """
+        SELECT id, manpower, salary_rate, owner_power, central_pay_share
+        FROM armies
+        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+          AND central_pay_share > 0
+        """
+    ).fetchall()
+    central_due_by_army = {
+        str(row["id"]): army_needed(row) * float(row["central_pay_share"] or 0)
+        for row in rows
+    }
+    hub_outbound = _compute_substrate_hub_outbound(
+        db,
+        max(0.0, float(state.metrics.get("国库", 0) or 0)),
+        central_due_by_army,
+    )
+    return int(
+        hub_outbound.jingyun_paid_total
+        + hub_outbound.central_paid_total
+        + hub_outbound.central_transport_loss
+    )
+
+
 ISSUE_METRIC_KEYS = {"民心", "皇威"}
 ISSUE_METRIC_LOCK_CAPS = {
     "民心": 8, "皇威": 5,
@@ -275,6 +309,169 @@ def army_needed(row) -> int:
     if not math.isfinite(rate) or rate <= 0:
         rate = SALARY_RATE_ANCHOR
     return math.ceil(manpower * rate / 10000)
+
+
+def army_pay_morale_delta(total_due: float, current_shortfall: float, opening_arrears: float) -> int:
+    """欠饷→士气底料：只看本月流量缺口；旧欠只阻止足额无欠奖励。"""
+    if total_due <= 0:
+        return 0
+    shortfall = max(0.0, min(float(current_shortfall), float(total_due)))
+    if shortfall > 0:
+        return -max(1, round(8 * shortfall / total_due))
+    if opening_arrears <= 1e-9:
+        return 2
+    return 0
+
+
+class _HubOutboundResult(NamedTuple):
+    """Substrate hub top-tier outbound allocation for this fixed-flow tick."""
+    k: float
+    jingyun_due_total: float
+    jingyun_paid_by_region: Dict[str, float]
+    jingyun_paid_total: float
+    central_due_total: float
+    central_paid_by_army: Dict[str, float]
+    central_paid_total: float
+    central_transport_loss: float
+
+
+def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
+    """Read the existing province substrate 京运补 gross demand for the shared hub tier."""
+    due_by_region: Dict[str, float] = {}
+    rows = db.conn.execute(
+        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
+    ).fetchall()
+    for row in rows:
+        try:
+            fiscal = json.loads(str(row["fiscal"] or "{}"))
+        except (TypeError, ValueError):
+            continue
+        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        p = settle.get("p") if isinstance(settle, dict) else None
+        if not isinstance(p, dict):
+            continue
+        raw = p.get("拨付gross", 0)
+        if raw is None:
+            continue
+        try:
+            amount = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"region {row['id']} settle.p.拨付gross 非数值：{raw!r}") from exc
+        if not math.isfinite(amount) or amount < 0:
+            raise ValueError(f"region {row['id']} settle.p.拨付gross 非法：{raw!r}")
+        due_by_region[str(row["id"])] = amount
+    return due_by_region
+
+
+def _compute_substrate_hub_outbound(
+    db: GameDB,
+    treasury_available: float,
+    central_due_by_army: Dict[str, float],
+) -> _HubOutboundResult:
+    """Allocate the shared 京运补 + 中央军饷 hub tier by ADR 0023 D9."""
+    central_due_total = sum(max(0.0, due) for due in central_due_by_army.values())
+    jingyun_due_by_region = _substrate_hub_jingyun_due_by_region(db)
+    jingyun_due_total = sum(jingyun_due_by_region.values())
+    tier_due_total = jingyun_due_total + central_due_total
+    k = (
+        min(1.0, max(0.0, float(treasury_available)) / tier_due_total)
+        if tier_due_total > 0
+        else 1.0
+    )
+    # Central transport-loss accounts are not persisted yet; keep the hook explicit
+    # and lossless until the hub C_ accounts land, while still sharing the k tier.
+    central_transport_loss = 0.0
+    jingyun_paid_by_region, central_paid_by_army = _allocate_substrate_hub_paid_ints(
+        jingyun_due_by_region,
+        central_due_by_army,
+        k,
+        treasury_available,
+    )
+    return _HubOutboundResult(
+        k=k,
+        jingyun_due_total=jingyun_due_total,
+        jingyun_paid_by_region=jingyun_paid_by_region,
+        jingyun_paid_total=sum(jingyun_paid_by_region.values()),
+        central_due_total=central_due_total,
+        central_paid_by_army=central_paid_by_army,
+        central_paid_total=sum(central_paid_by_army.values()),
+        central_transport_loss=central_transport_loss,
+    )
+
+
+def _allocate_substrate_hub_paid_ints(
+    jingyun_due_by_region: Dict[str, float],
+    central_due_by_army: Dict[str, float],
+    k: float,
+    treasury_available: float,
+) -> Tuple[Dict[str, float], Dict[str, float]]:
+    """Return one integer allocation source for ledger, province ticks, and central pay."""
+    items: List[Tuple[str, str, float, float]] = []
+    for region_id, due in jingyun_due_by_region.items():
+        positive_due = max(0.0, due)
+        items.append(("jingyun", region_id, positive_due, positive_due * k))
+    for army_id, due in central_due_by_army.items():
+        positive_due = max(0.0, due)
+        items.append(("central", army_id, positive_due, positive_due * k))
+    caps = [int(math.floor(due)) for _, _, due, _scaled in items]
+    target = min(
+        max(0, int(math.floor(max(0.0, treasury_available)))),
+        max(0, int(round(sum(scaled for _, _, _due, scaled in items)))),
+        sum(caps),
+    )
+    floors = [
+        min(cap, int(math.floor(scaled)))
+        for cap, (_kind, _key, _due, scaled) in zip(caps, items)
+    ]
+    remainder = max(0, target - sum(floors))
+    allocations = floors[:]
+    ranked = sorted(
+        range(len(items)),
+        key=lambda idx: (items[idx][3] - floors[idx], -idx),
+        reverse=True,
+    )
+    for idx in ranked:
+        if remainder <= 0:
+            break
+        if allocations[idx] >= caps[idx]:
+            continue
+        allocations[idx] += 1
+        remainder -= 1
+
+    jingyun_paid = {region_id: 0.0 for region_id in jingyun_due_by_region}
+    central_paid = {army_id: 0.0 for army_id in central_due_by_army}
+    for (kind, key, _due, _scaled), paid in zip(items, allocations):
+        if kind == "jingyun":
+            jingyun_paid[key] = float(paid)
+        else:
+            central_paid[key] = float(paid)
+    return jingyun_paid, central_paid
+
+
+def _debit_substrate_hub_outbound(
+    db: GameDB, state: GameState, hub_outbound: _HubOutboundResult
+) -> int:
+    """Book the shared hub tier once from 国库 after k allocation."""
+    payout = hub_outbound.jingyun_paid_total + hub_outbound.central_paid_total \
+        + hub_outbound.central_transport_loss
+    debit = int(payout)
+    if debit <= 0:
+        return 0
+    actual = db.record_issue_economy_move(
+        state, "国库", -debit, "边饷hub",
+        f"{TURN_UNIT}边饷hub实拨（京运补+中央军饷）",
+    )
+    try:
+        actual_debit = abs(int(actual))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"边饷hub实拨失败：应扣{debit}万两，实际写入{actual!r}"
+        ) from exc
+    if actual_debit != debit:
+        raise RuntimeError(
+            f"边饷hub实拨失败：应扣{debit}万两，实际写入{actual_debit}万两"
+        )
+    return actual_debit
 
 
 def _apply_metric_dict(
@@ -320,58 +517,153 @@ def _auto_pay_arrears_by_priority(
     reason: str,
     *,
     commit: bool = True,
+    allowed_army_ids: Optional[List[str]] = None,
 ) -> int:
-    """LLM 补饷 economy_move 没指定 target 时的兜底：按 ARMY_SALARY_PRIORITY 顺序
-    分配 budget 给有 arrears 的明军，每军按 arrears 上限扣，扣完 budget 为止。
+    """按 ARMY_SALARY_PRIORITY 顺序分配一笔已明确允许非定向的补饷。
+
+    每军按当前省/中央欠额占比分销销账，扣完 budget 为止。若给出 allowed_army_ids，
+    只在该集合内池化；用于承诺 stop gate 的多军范围。
     返回实际花出去的总额（万两）。"""
     if budget <= 0:
         return 0
+    pay_source_cutover = db.is_army_pay_source_cutover_enabled()
+    allowed_ids = (
+        {str(army_id).strip() for army_id in allowed_army_ids if str(army_id).strip()}
+        if allowed_army_ids is not None
+        else None
+    )
     # #44：受饷资格用 arrears>0（不再 maintenance_per_turn>0）。#44 把欠饷累计从 maintenance 改成
     # army_needed(salary_rate 派生)，二者已解耦——salary_rate>0 但 maintenance=0 的军会累 arrears 却被
     # 旧 filter 排除、拨饷永远散不到（cmr r2 claude）。arrears>0 本就隐含曾有应发（needed>0 才累）。
     rows = db.conn.execute(
-        "SELECT id, name, arrears FROM armies "
+        "SELECT * FROM armies "
         "WHERE owner_power='ming' AND arrears>0"
     ).fetchall()
+    if allowed_ids is not None:
+        rows = [row for row in rows if str(row["id"]) in allowed_ids]
     army_map = {str(r["id"]): r for r in rows}
     ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
     ordered += [r for r in rows if str(r["id"]) not in ARMY_SALARY_PRIORITY]
     spent = 0
     remaining = budget
+    touched_regions: set[str] = set()
     for row in ordered:
         if remaining <= 0:
             break
         army_id = str(row["id"])
         name = str(row["name"])
-        current_arrears = int(row["arrears"])
-        if current_arrears <= 0:
+        payable_arrears = _payable_army_arrears_cap(
+            float(row["arrears"] or 0), pay_source_cutover
+        )
+        if payable_arrears <= 0:
             continue
-        pay = min(current_arrears, remaining)
-        actual = db.record_issue_economy_move(
-            state, account, -pay, category,
-            f"{reason}（按优先级分给{name}{pay}万两）",
-            purpose="补饷", target_kind="army", target_id=army_id,
-            commit=False,
+        pay_cap = min(payable_arrears, remaining)
+        spent_now = _pay_single_army_arrears(
+            db, state, row, account, pay_cap, category,
+            f"{reason}（按优先级分给{name}{pay_cap}万两）",
+            "诏拨补饷", "按优先级",
         )
-        if not actual:
-            continue
-        new_arrears = max(0, current_arrears + actual)
-        db.conn.execute(
-            "UPDATE armies SET arrears = ? WHERE id = ?", (new_arrears, army_id)
-        )
-        db.conn.execute(
-            """INSERT INTO army_logs
-               (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '诏拨补饷')""",
-            (state.turn, state.year, state.period, army_id, "arrears",
-             str(current_arrears), str(new_arrears), new_arrears - current_arrears,
-             f"诏拨补饷{abs(actual)}万两（按优先级）"),
-        )
-        if commit:
-            db.conn.commit()
-        spent += abs(actual)
-        remaining -= abs(actual)
+        spent += spent_now
+        remaining -= spent_now
+        if spent_now and pay_source_cutover:
+            touched_regions.add(str(row["pay_source_region"] or ""))
+    if spent and pay_source_cutover:
+        for region_id in sorted(touched_regions):
+            db._reconcile_army_pay_source_region_container(region_id)
+        db._reconcile_central_army_pay_arrears_container()
+    if spent and commit:
+        db.conn.commit()
     return spent
+
+
+def _payable_army_arrears_cap(current_arrears: float, pay_source_cutover: bool) -> int:
+    """Integer ledger cap: never spend more whole 万两 than the current debt."""
+    if current_arrears <= 1e-9:
+        return 0
+    return math.floor(current_arrears + 1e-9)
+
+
+def _normalized_cutover_pay_arrears(row, current_arrears: float) -> Tuple[float, float]:
+    province_old = float(row["province_pay_arrears"] or 0)
+    central_old = float(row["central_pay_arrears"] or 0)
+    total_old = province_old + central_old
+    if abs(total_old - current_arrears) <= 1e-9:
+        return province_old, central_old
+    if total_old > 0:
+        scale = current_arrears / total_old
+        return province_old * scale, central_old * scale
+    return (
+        current_arrears * float(row["province_pay_share"] or 0),
+        current_arrears * float(row["central_pay_share"] or 0),
+    )
+
+
+def _pay_single_army_arrears(
+    db: GameDB,
+    state: GameState,
+    row,
+    account: str,
+    amount: int,
+    category: str,
+    reason: str,
+    actor: str,
+    log_suffix: str = "",
+    *,
+    commit: bool = True,
+) -> int:
+    _ = commit  # transaction ownership belongs to the caller/batch boundary.
+    current_arrears = float(row["arrears"] or 0)
+    if amount <= 0 or current_arrears <= 0:
+        return 0
+    pay_source_cutover = db.is_army_pay_source_cutover_enabled()
+    actual_pay = min(
+        int(amount),
+        _payable_army_arrears_cap(current_arrears, pay_source_cutover),
+    )
+    if actual_pay <= 0:
+        return 0
+    province_old = central_old = total_old = 0.0
+    if pay_source_cutover:
+        province_old, central_old = _normalized_cutover_pay_arrears(row, current_arrears)
+        total_old = province_old + central_old
+        if total_old <= 1e-9:
+            return 0
+    actual = db.record_issue_economy_move(
+        state, account, -actual_pay, category, reason,
+        purpose="补饷", target_kind="army", target_id=str(row["id"]),
+        commit=False,
+    )
+    if not actual:
+        return 0
+    paid = abs(float(actual))
+    if pay_source_cutover:
+        province_pay = min(province_old, paid * province_old / total_old)
+        central_pay = min(central_old, paid * central_old / total_old)
+        province_new = max(0.0, province_old - province_pay)
+        central_new = max(0.0, central_old - central_pay)
+        new_arrears = province_new + central_new
+        db.conn.execute(
+            """
+            UPDATE armies
+            SET province_pay_arrears = ?, central_pay_arrears = ?, arrears = ?
+            WHERE id = ?
+            """,
+            (province_new, central_new, new_arrears, str(row["id"])),
+        )
+    else:
+        new_arrears = max(0.0, current_arrears + float(actual))
+        db.conn.execute(
+            "UPDATE armies SET arrears = ? WHERE id = ?", (new_arrears, str(row["id"]))
+        )
+    db.conn.execute(
+        """INSERT INTO army_logs
+           (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)""",
+        (state.turn, state.year, state.period, str(row["id"]), "arrears",
+         str(current_arrears), str(new_arrears), new_arrears - current_arrears,
+         f"诏拨补饷{paid:g}万两{f'（{log_suffix}）' if log_suffix else ''}", actor),
+    )
+    return int(round(paid))
 
 
 def _apply_economy_list(
@@ -380,16 +672,21 @@ def _apply_economy_list(
     economy: List[Dict[str, object]],
     *,
     commit: bool = True,
+    allow_pay_arrears_pool: bool = False,
+    pay_arrears_pool_army_ids: Optional[List[str]] = None,
 ) -> List[Dict[str, object]]:
     """落 extractor 抽出的 economy_moves 到 economy_ledger。
 
     支持结构化字段：
     - purpose='补饷' + target_kind='army' + target_id=army_id
-      → 走"按 arrears 上限扣"路径：实际扣 = min(|delta|, 该军 arrears 万两)；
+      → 走真钱补饷路径：按该军当前省/中央欠额占比分销两累加器；
         同步把 armies.arrears 减掉 actual_pay；多余的钱留在 account 不扣。
     - 其它（purpose='其它' 或 NULL）：按常规扣账（现状）。
 
-    LLM 写非法 purpose / 找不到 target_id → 退化为'其它'常规扣账。
+    LLM 写非法 purpose → 退化为'其它'常规扣账。
+    purpose='补饷' 但目标缺失/不存在 → 逐项拒收，不得改付其它军队。
+    allow_pay_arrears_pool=True 仅供承诺结算内部使用，表示该承诺的 arrears
+    stop gate 已经给出范围，可在 pay_arrears_pool_army_ids 内按优先级池偿还。
     """
     from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS, TURN_UNIT as _TU
     applied: List[Dict[str, object]] = []
@@ -431,55 +728,85 @@ def _apply_economy_list(
         purpose = raw_purpose if raw_purpose in ECONOMY_PURPOSES else None
         target_kind = raw_target_kind if raw_target_kind in ECONOMY_TARGET_KINDS else None
 
-        # ── 补饷分发：按 arrears 上限扣 + 同步减 armies.arrears ───────────────
-        # purpose=补饷 但缺 target_kind/target_id → 按 ARMY_SALARY_PRIORITY 优先级
-        # 自动散到各军（每军按 arrears 上限扣，扣完 budget 为止）。
+        # ── 补饷分发：按当前欠额占比分销两累加器 + 同步减 armies.arrears ───────
+        # purpose=补饷 必须定向到具体 army_id；非定向补饷需要另立显式契约，
+        # 不能把缺失/错拼目标 fallback 成改付其它军队。
         if purpose == "补饷" and delta < 0 and (target_kind != "army" or not raw_target_id):
-            budget = abs(delta)
-            spent = _auto_pay_arrears_by_priority(db, state, account, budget, category, reason, commit=commit)
-            applied.append({"account": account, "delta": -spent, "reason": reason})
+            explicit_target = bool(raw_target_kind or raw_target_id)
+            allowed_pool_ids = None
+            if pay_arrears_pool_army_ids is not None:
+                allowed_pool_ids = [
+                    str(army_id) for army_id in pay_arrears_pool_army_ids
+                    if str(army_id).strip()
+                ]
+            if (
+                allow_pay_arrears_pool
+                and not explicit_target
+                and (pay_arrears_pool_army_ids is None or allowed_pool_ids)
+            ):
+                budget = abs(delta)
+                spent = _auto_pay_arrears_by_priority(
+                    db,
+                    state,
+                    account,
+                    budget,
+                    category,
+                    reason,
+                    commit=commit,
+                    allowed_army_ids=allowed_pool_ids,
+                )
+                applied.append({"account": account, "delta": -spent, "reason": reason})
+                continue
+            applied.append({
+                "account": account,
+                "rejected": True,
+                "category": "missing_ref",
+                "reason": "economy_moves 补饷必须指定 target_kind='army' 与有效 target_id",
+                "item": move,
+            })
             continue
         if purpose == "补饷" and target_kind == "army" and delta < 0 and raw_target_id:
             row = db.conn.execute(
-                "SELECT id, name, arrears FROM armies WHERE id = ?", (raw_target_id,)
+                "SELECT * FROM armies WHERE id = ?", (raw_target_id,)
             ).fetchone()
             if row is None:
-                # army_id 拼错 → 退化为按优先级散
-                budget = abs(delta)
-                spent = _auto_pay_arrears_by_priority(db, state, account, budget, category, reason, commit=commit)
-                applied.append({"account": account, "delta": -spent, "reason": reason})
-                continue
-            current_arrears = int(row["arrears"])
-            if current_arrears <= 0:
-                # 该军已无欠饷，不扣
                 applied.append({
-                    "account": account, "delta": 0,
-                    "reason": f"{row['name']}已无欠饷，{abs(delta)}万两未拨"
+                    "account": account,
+                    "rejected": True,
+                    "category": "missing_ref",
+                    "reason": f"economy_moves 补饷目标军队未入库：{raw_target_id}",
+                    "item": move,
                 })
                 continue
-            actual_pay = min(abs(delta), current_arrears)
-            actual = db.record_issue_economy_move(
-                state, account, -actual_pay, category, reason,
-                purpose="补饷", target_kind="army", target_id=str(row["id"]),
-                commit=False,
+            pay_source_cutover = db.is_army_pay_source_cutover_enabled()
+            payable_arrears = _payable_army_arrears_cap(
+                float(row["arrears"] or 0), pay_source_cutover
             )
-            if actual:
-                # 同步减 arrears
-                new_arrears = max(0, current_arrears + actual)  # actual<0, 加=减
-                db.conn.execute(
-                    "UPDATE armies SET arrears = ? WHERE id = ?", (new_arrears, row["id"])
-                )
-                db.conn.execute(
-                    """INSERT INTO army_logs
-                       (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '诏拨补饷')""",
-                    (state.turn, state.year, state.period, row["id"], "arrears",
-                     str(current_arrears), str(new_arrears), new_arrears - current_arrears,
-                     f"诏拨补饷{abs(actual)}万两"),
-                )
+            if payable_arrears <= 0:
+                current_arrears = float(row["arrears"] or 0)
+                if current_arrears > 0:
+                    reason_text = (
+                        f"{row['name']}欠饷不足1万两，"
+                        f"{abs(delta)}万两未拨"
+                    )
+                else:
+                    reason_text = f"{row['name']}已无欠饷，{abs(delta)}万两未拨"
+                applied.append({
+                    "account": account, "delta": 0,
+                    "reason": reason_text,
+                })
+                continue
+            spent = _pay_single_army_arrears(
+                db, state, row, account, min(abs(delta), payable_arrears), category,
+                reason, "诏拨补饷",
+            )
+            if spent:
+                if pay_source_cutover:
+                    db._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
+                    db._reconcile_central_army_pay_arrears_container()
                 if commit:
                     db.conn.commit()
-                applied.append({"account": account, "delta": actual, "reason": reason})
+                applied.append({"account": account, "delta": -spent, "reason": reason})
             continue
 
         # ── 常规扣账（其它/无 purpose）─────────────────────────────────────────
@@ -496,6 +823,17 @@ def _apply_economy_list(
 
 def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, object]]:
     """月度财政 tick：固定收支（compute_budget_lines 定额）+ 军饷逐军 + 建筑逐项落账，LLM 推演前完成。"""
+    if not getattr(db.conn, "_commit_suspended", False):
+        from ming_sim.applier import atomic
+        metrics_before = dict(state.metrics)
+        try:
+            with atomic(db):
+                return apply_fixed_period_flows(db, state)
+        except BaseException:
+            state.metrics.clear()
+            state.metrics.update(metrics_before)
+            raise
+
     flows: List[Dict[str, object]] = []
 
     def _income(account: str, amount: int, category: str, reason: str) -> None:
@@ -512,6 +850,128 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         flows.append({"dir": "expense", "account": account, "amount": abs(actual),
                       "category": category, "reason": reason})
 
+    # ── substrate hub 顶层拨付：京运补 + 中央军饷优先占用月初国库 ──
+    # substrate_hub 下旧「户部直扣国库发饷」全局路径退役；省份额由 province substrate，
+    # 中央份额由 hub/outbound 后续路径承载，避免同一军饷从旧全局路双付。
+    pay_source_cutover = db.is_army_pay_source_cutover_enabled()
+    if db.is_substrate_hub_fiscal_engine_enabled():
+        db._current_month_central_pay_shortfalls = {}
+        db._current_month_pay_opening_arrears = {}
+        army_rows_raw = db.conn.execute(
+            """
+            SELECT id, name, manpower, salary_rate, owner_power, arrears, morale,
+                   pay_source_region, province_pay_share, central_pay_share,
+                   province_pay_arrears, central_pay_arrears, is_tusi, self_funded_pay
+            FROM armies
+            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+              AND central_pay_share > 0
+            """
+        ).fetchall()
+        for row in army_rows_raw:
+            db._validate_pay_source_values(
+                str(row["id"]), str(row["owner_power"]), str(row["pay_source_region"]),
+                float(row["province_pay_share"] or 0), float(row["central_pay_share"] or 0),
+                bool(row["is_tusi"]), bool(row["self_funded_pay"]),
+                float(row["province_pay_arrears"] or 0), float(row["central_pay_arrears"] or 0),
+            )
+        army_map = {str(r["id"]): r for r in army_rows_raw}
+        ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
+        ordered += [r for r in army_rows_raw if str(r["id"]) not in ARMY_SALARY_PRIORITY]
+        central_due_by_army = {
+            str(row["id"]): army_needed(row) * float(row["central_pay_share"] or 0)
+            for row in ordered
+        }
+        hub_outbound = _compute_substrate_hub_outbound(
+            db,
+            max(0.0, float(state.metrics.get("国库", 0) or 0)),
+            central_due_by_army,
+        )
+        hub_debit = _debit_substrate_hub_outbound(db, state, hub_outbound)
+        if hub_debit > 0:
+            flows.append({
+                "dir": "expense",
+                "account": "国库",
+                "category": "边饷hub",
+                "needed": hub_outbound.jingyun_due_total + hub_outbound.central_due_total,
+                "paid": hub_debit,
+                "jingyun_paid": hub_outbound.jingyun_paid_total,
+                "central_paid": hub_outbound.central_paid_total,
+                "k": hub_outbound.k,
+            })
+        if hub_outbound.central_due_total > 0:
+            flows.append({
+                "dir": "hub_outbound",
+                "account": "中央hub",
+                "category": "中央军饷",
+                "needed": hub_outbound.central_due_total,
+                "paid": hub_outbound.central_paid_total,
+                "shortfall": max(0.0, hub_outbound.central_due_total - hub_outbound.central_paid_total),
+                "jingyun_due": hub_outbound.jingyun_due_total,
+                "k": hub_outbound.k,
+                "transport_loss": hub_outbound.central_transport_loss,
+            })
+        for row in ordered:
+            army_id = str(row["id"])
+            name = str(row["name"])
+            full_needed = army_needed(row)
+            needed = max(0.0, central_due_by_army.get(army_id, 0.0))
+            if needed <= 0:
+                continue
+            pay_current = min(needed, hub_outbound.central_paid_by_army.get(army_id, 0.0))
+            shortfall = max(0.0, needed - pay_current)
+            old_arrears = float(row["arrears"] or 0)
+            old_morale = int(row["morale"])
+
+            old_central_arrears = float(row["central_pay_arrears"] or 0)
+            province_arrears = float(row["province_pay_arrears"] or 0)
+            central_arrears = max(0.0, old_central_arrears + shortfall)
+            new_arrears = max(0.0, province_arrears + central_arrears)
+            db._current_month_central_pay_shortfalls[army_id] = shortfall
+            db._current_month_pay_opening_arrears[army_id] = old_arrears
+
+            province_pay_share = float(row["province_pay_share"] or 0)
+            if province_pay_share > 0:
+                morale_delta = 0
+            else:
+                morale_delta = army_pay_morale_delta(full_needed, shortfall, old_arrears)
+            new_morale = max(0, min(100, old_morale + morale_delta))
+
+            db.conn.execute(
+                """
+                UPDATE armies
+                SET central_pay_arrears = ?, arrears = ?, morale = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (central_arrears, new_arrears, new_morale, army_id),
+            )
+            if shortfall > 0:
+                reason_tag = f"{TURN_UNIT}中央军饷欠发{shortfall}万两"
+            else:
+                reason_tag = f"{TURN_UNIT}中央军饷足额"
+            db.conn.executemany(
+                """INSERT INTO army_logs
+                   (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '户部')""",
+                [
+                    (state.turn, state.year, state.period, army_id,
+                     "arrears", str(old_arrears), str(new_arrears), new_arrears - old_arrears,
+                     reason_tag),
+                    (state.turn, state.year, state.period, army_id,
+                     "morale", str(old_morale), str(new_morale), new_morale - old_morale,
+                     reason_tag),
+                ],
+            )
+
+            flows.append({
+                "dir": "arrears", "account": "中央军饷欠账", "category": "中央军饷",
+                "army": name, "needed": needed, "paid": pay_current,
+                "shortfall": shortfall,
+                "arrears_delta": new_arrears - old_arrears,
+                "morale_delta": new_morale - old_morale,
+            })
+        db._reconcile_central_army_pay_arrears_container()
+
     # ── 固定收支落账（税/皇庄/宗室/官俸/织造…全走唯一定额源 compute_budget_lines）──
     # 军饷与建筑另有逐项落账逻辑（arrears/condition），故下面跳过这两类，仅落其余定额项。
     budget = compute_budget_lines(db, state)
@@ -526,78 +986,68 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 continue
             _expense(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}支")
 
-    # ── 各军军饷（按优先级，先发当月、余额抵旧欠；不足挂 arrears 累计万两）──
-    # arrears 字段语义=累计欠饷万两（整数，无上限）。flows 是唯一变更点：
-    #   缺口 → arrears += 缺口；当月足额且仍有国库余 → arrears -= 抵欠（不下穿 0）。
-    # 拨饷诏书走 economy_moves 加钱进国库，下月自动抵旧欠。extractor 禁写 arrears。
-    army_rows_raw = db.conn.execute(
-        # #44 army_needed 需 manpower/salary_rate/owner_power（应发挂钩兵力派生）
-        "SELECT id, name, manpower, salary_rate, owner_power, arrears, morale FROM armies"
-    ).fetchall()
-    if not army_rows_raw:
-        raise SystemExit("fiscal_tick: armies 表无数据，中止。")
-    army_map = {str(r["id"]): r for r in army_rows_raw}
-    ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
-    ordered += [r for r in army_rows_raw if str(r["id"]) not in ARMY_SALARY_PRIORITY]
+    # ── legacy 各军军饷（按优先级，先发当月；不足挂 arrears 累计万两）──
+    if db.fiscal_engine() == "legacy":
+        army_rows_raw = db.conn.execute(
+            # #44 army_needed 需 manpower/salary_rate/owner_power（应发挂钩兵力派生）
+            "SELECT id, name, manpower, salary_rate, owner_power, arrears, morale FROM armies"
+        ).fetchall()
+        if not army_rows_raw:
+            raise SystemExit("fiscal_tick: armies 表无数据，中止。")
+        army_map = {str(r["id"]): r for r in army_rows_raw}
+        ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
+        ordered += [r for r in army_rows_raw if str(r["id"]) not in ARMY_SALARY_PRIORITY]
 
-    for row in ordered:
-        army_id = str(row["id"])
-        name = str(row["name"])
-        needed = army_needed(row)  # #44 应发挂钩兵力(ceil(manpower×salary_rate/10000)，仅 ming)
-        if needed <= 0:
-            continue
-        available = max(0, int(state.metrics["国库"]))
-        pay_current = min(needed, available)
-        shortfall = needed - pay_current
+        for row in ordered:
+            army_id = str(row["id"])
+            name = str(row["name"])
+            needed = army_needed(row)  # #44 应发挂钩兵力(ceil(manpower×salary_rate/10000)，仅 ming)
+            if needed <= 0:
+                continue
+            available = max(0, int(state.metrics["国库"]))
+            pay_current = min(needed, available)
+            shortfall = max(0.0, needed - pay_current)
 
-        old_arrears = int(row["arrears"])
-        old_morale = int(row["morale"])
+            old_arrears = float(row["arrears"] or 0)
+            old_morale = int(row["morale"])
 
-        # 月固定军饷只发当月，不主动还旧欠。旧欠累积拖着，等玩家下旨拨饷才清。
-        if pay_current > 0:
-            db.record_issue_economy_move(
-                state, "国库", -pay_current, "各军军饷", f"{name}{TURN_UNIT}军饷"
+            # 月固定军饷只发当月，不主动还旧欠。旧欠累积拖着，等玩家下旨拨饷才清。
+            if pay_current > 0:
+                db.record_issue_economy_move(
+                    state, "国库", -int(pay_current), "各军军饷", f"{name}{TURN_UNIT}军饷"
+                )
+            new_arrears = max(0.0, old_arrears + shortfall)
+            morale_delta = army_pay_morale_delta(needed, shortfall, old_arrears)
+            new_morale = max(0, min(100, old_morale + morale_delta))
+
+            db.conn.execute(
+                "UPDATE armies SET arrears = ?, morale = ? WHERE id = ?",
+                (new_arrears, new_morale, army_id),
             )
-
-        new_arrears = max(0, old_arrears + shortfall)
-        if shortfall > 0:
-            morale_delta = -max(1, round(8 * shortfall / needed))
-        elif old_arrears == 0:
-            morale_delta = +2     # 长期足额且无旧欠：缓慢恢复
-        else:
-            morale_delta = 0      # 当月发足但仍有旧欠：不奖励也不惩罚
-        new_morale = max(0, min(100, old_morale + morale_delta))
-
-        db.conn.execute(
-            "UPDATE armies SET arrears = ?, morale = ? WHERE id = ?",
-            (new_arrears, new_morale, army_id),
-        )
-        if shortfall > 0:
-            reason_tag = f"{TURN_UNIT}军饷欠发{shortfall}万两"
-        else:
-            reason_tag = f"{TURN_UNIT}军饷足额"
-        db.conn.executemany(
-            """INSERT INTO army_logs
-               (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '户部')""",
-            [
-                (state.turn, state.year, state.period, army_id,
-                 "arrears", str(old_arrears), str(new_arrears), new_arrears - old_arrears,
-                 reason_tag),
-                (state.turn, state.year, state.period, army_id,
-                 "morale", str(old_morale), str(new_morale), new_morale - old_morale,
-                 reason_tag),
-            ],
-        )
-        db.conn.commit()
-
-        flows.append({
-            "dir": "expense", "account": "国库", "category": "各军军饷",
-            "army": name, "needed": needed, "paid": pay_current,
-            "shortfall": shortfall,
-            "arrears_delta": new_arrears - old_arrears,
-            "morale_delta": new_morale - old_morale,
-        })
+            if shortfall > 0:
+                reason_tag = f"{TURN_UNIT}军饷欠发{shortfall}万两"
+            else:
+                reason_tag = f"{TURN_UNIT}军饷足额"
+            db.conn.executemany(
+                """INSERT INTO army_logs
+                   (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '户部')""",
+                [
+                    (state.turn, state.year, state.period, army_id,
+                     "arrears", str(old_arrears), str(new_arrears), new_arrears - old_arrears,
+                     reason_tag),
+                    (state.turn, state.year, state.period, army_id,
+                     "morale", str(old_morale), str(new_morale), new_morale - old_morale,
+                     reason_tag),
+                ],
+            )
+            flows.append({
+                "dir": "expense", "account": "国库", "category": "各军军饷",
+                "army": name, "needed": needed, "paid": pay_current,
+                "shortfall": shortfall,
+                "arrears_delta": new_arrears - old_arrears,
+                "morale_delta": new_morale - old_morale,
+            })
 
     # ── 建筑：固定产出 + 固定维护（纯程序化，不调 LLM）─────────────────────────
     # buildings 表 maintenance/output_amount 已是月值，不过 monthly_amount。
@@ -641,11 +1091,33 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # 因此上面的固定收支（田赋/军饷/建筑产出）已自动被修正，无需独立 tick，否则会重复计。
 
     # ── #66 省级财政基座（settle_tick）shadow 推进 ──
-    _advance_province_fiscal_substrate(db, state)
+    try:
+        _advance_province_fiscal_substrate(
+            db,
+            state,
+            hub_outbound.jingyun_paid_by_region
+            if db.is_substrate_hub_fiscal_engine_enabled()
+            else None,
+        )
+        if pay_source_cutover:
+            db._reconcile_central_army_pay_arrears_container()
+            db.assert_army_pay_source_container_conservation()
+    finally:
+        if pay_source_cutover:
+            for attr in (
+                "_current_month_central_pay_shortfalls",
+                "_current_month_pay_opening_arrears",
+            ):
+                if hasattr(db, attr):
+                    delattr(db, attr)
     return flows
 
 
-def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
+def _advance_province_fiscal_substrate(
+    db: GameDB,
+    state: GameState,
+    jingyun_paid_gross_by_region: Optional[Dict[str, float]] = None,
+) -> None:
     """#66/#266：月末固定财政相位推进省级 settle_tick 基座（动态 shadow spine）。
 
     **shadow 模式**：推进基座末态（军饷欠/民欠/火耗的死亡螺旋逐月累积）并落库，但**不驱动
@@ -662,10 +1134,27 @@ def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
     """
     owns_transaction = db.owns_transaction()
     advanced = False
-    for outcome in db.settle_ming_province_substrate_ticks():
+    p_overrides_by_region = {
+        region_id: {"拨付gross": paid}
+        for region_id, paid in (jingyun_paid_gross_by_region or {}).items()
+    }
+    outcomes = (
+        db.settle_ming_province_substrate_ticks(
+            p_overrides_by_region=p_overrides_by_region
+        )
+        if p_overrides_by_region
+        else db.settle_ming_province_substrate_ticks()
+    )
+    for outcome in outcomes:
         if outcome.error is not None:
             # settle_tick 的契约失败（坏态/守恒破）+ 基座缺失 → shadow 隔离，不炸 pre_settle
             exc = outcome.error
+            if db.is_army_pay_source_cutover_enabled():
+                tlog(
+                    f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}结算中止："
+                    f"{type(exc).__name__}: {exc}"
+                )
+                raise exc
             tlog(
                 f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}未推进（隔离）："
                 f"{type(exc).__name__}: {exc}"
