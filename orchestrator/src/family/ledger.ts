@@ -332,7 +332,9 @@ function isValidFamilyAnswer(entry: FamilyLedgerEntry): boolean {
     entry.phase === "final" &&
     typeof entry.answer === "string" &&
     entry.answer.trim().length > 0 &&
-    (entry.source === "human" || entry.source === "resume_input") &&
+    (entry.source === undefined ||
+      entry.source === "human" ||
+      entry.source === "resume_input") &&
     (entry.note === undefined || typeof entry.note === "string")
   );
 }
@@ -355,7 +357,7 @@ function familyAnswerPayload(entry: FamilyLedgerEntry): EscalationAnswerPayload 
   return {
     event: "escalation_answered",
     answer: entry.answer!,
-    source: entry.source as "human" | "resume_input",
+    source: (entry.source ?? "human") as "human" | "resume_input",
     ...(entry.note !== undefined ? { note: entry.note } : {}),
   };
 }

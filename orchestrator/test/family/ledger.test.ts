@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   cmrPassAlreadyPassed,
   familyAlreadyShipped,
+  familyEscalationState,
   hasBoundShippedMarker,
   hasUnboundLegacyShippedMarker,
   mergedSet,
@@ -315,6 +316,32 @@ describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guar
         { cmrPass: "completeness", familyHeadAfter: "head-1", routeFingerprint: "route:v1" },
       ),
     ).toBe(false);
+  });
+});
+
+describe("family-ledger.familyEscalationState", () => {
+  it("accepts legacy escalation_answered rows without source as human answers", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        escalationKind: "decision",
+        reason: "needs human decision",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "Continue the family flow.",
+      },
+    ];
+
+    expect(familyEscalationState(entries)?.answer).toEqual({
+      event: "escalation_answered",
+      answer: "Continue the family flow.",
+      source: "human",
+    });
   });
 });
 

@@ -647,6 +647,45 @@ describe("#439 decision-escalate answer channel", () => {
     },
   );
 
+  it("legacy untagged agent decision escalation accepts source-less legacy answer rows as human", async () => {
+    const legacyAnswer = escalationAnswer("S2", "continue-with-x-required");
+    const { source: _source, ...sourceLessAnswer } = legacyAnswer;
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry(
+          "S2",
+          {
+            kind: "coder",
+            committed: false,
+            commitsAdded: 0,
+            escalate: {
+              reason: "design ambiguity",
+              diagnosis: "needs a human answer",
+            },
+          },
+          "session-escalated-S2",
+        ),
+        s8("escalate"),
+        sourceLessAnswer,
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 439, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.resumeSessionCalls[0]).toEqual(["S2", "session-escalated-S2"]);
+    expect(backend.dispatchContexts[0]?.escalationAnswer).toEqual({
+      event: "escalation_answered",
+      forStep: "S2",
+      answer: "continue-with-x-required",
+      source: "human",
+    });
+  });
+
   it.each(["coordinator", "peripheral"] as const)(
     "legacy untagged agent decision escalation ignores %s answer rows",
     async (source) => {
@@ -915,6 +954,19 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
       expect(backend.resumeSessionCalls).toHaveLength(0);
     },
   );
+
+  it("S7 decision escalation accepts source-less legacy answer rows as human", async () => {
+    const legacyAnswer = escalationAnswer("S7", "retry-ship-after-human-fix");
+    const { source: _source, ...sourceLessAnswer } = legacyAnswer;
+    const backend = new ResumeBackend(
+      escalatedAtS7(sourceLessAnswer, "decision"),
+    );
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.pushCount).toBe(1);
+  });
 
   it.each(["coordinator", "peripheral"] as const)(
     "S7 decision escalation ignores %s answer rows",

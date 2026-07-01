@@ -22,6 +22,7 @@ import type {
 } from "../../src/family/types.js";
 import type {
   DispatchContext,
+  Finding,
   WorkerResult,
   WorkerSpec,
 } from "../../src/types.js";
@@ -342,6 +343,70 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
 
     expect(result).toEqual({ ok: true, ran: true });
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);
+  });
+
+  it("blocking family CMR stop summary selects a blocking result, not an earlier suppression", async () => {
+    const suppressed: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "accepted hub-loss gap",
+      location: "orchestrator/src/family/verifyCmr.ts:1",
+      suggested_fix: "accepted by issue scope",
+      action: "wont_fix",
+      disposition_reason: "accepted by issue scope",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "issue #448 acceptance criteria",
+        scope: "family integrated CMR",
+        reason: "accepted by issue scope",
+        findingIdentity:
+          "correctness|orchestrator/src/family/verifycmr.ts:1|accepted hub-loss gap",
+        boundedReopen: "reopen on higher severity or different scope",
+      },
+    };
+    const blocker: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "ADR conflicts with implementation",
+      location: "orchestrator/src/family/verifyCmr.ts:2",
+      suggested_fix: "resolve the accepted contract conflict",
+      action: "defer",
+      disposition: {
+        kind: "spec_conflict",
+        source: "ADR 0030",
+        reason: "ADR and implementation require different CMR outcomes.",
+      },
+    };
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: false,
+          reason: "has blocking findings",
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+          findings: [suppressed, blocker],
+        },
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      stopSummary: expect.objectContaining({
+        reason: "spec_conflict",
+        finding: blocker,
+      }),
+    }));
   });
 
   it("cmr worker MALFORMED / crash ⇒ recordAborted + INCOMPLETE_GATE (ok:false), NO ship", async () => {

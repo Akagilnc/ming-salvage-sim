@@ -61,7 +61,7 @@ import {
   type GhBlockedBy,
   type GhIssueJson,
 } from "../src/realBackend.js";
-import type { StepSpec } from "../src/types.js";
+import type { RepairEvidence, StepSpec } from "../src/types.js";
 import type * as sc from "@ai-hero/sandcastle";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
 // brief); S1's `extractAgentBrief` is the surviving brief reader.
@@ -972,6 +972,14 @@ describe("realBackend promptsDirError (F4)", () => {
     expect(new Set(files).size).toBe(files.length);
   });
 
+  it("prompt inventory is route-independent and does not call shipWorkerSpec during module setup", () => {
+    const src = readFileSync(
+      fileURLToPath(new URL("../src/realBackend.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(src).not.toContain("shipWorkerSpec().promptFile");
+  });
+
   it("promptsDirError reports a dir missing ship.md as invalid (integ-cmr int-r1 C-3)", () => {
     // A promptsDir that has the four agent prompts but no ship.md must FAIL
     // construction validation — not pass and crash at S7 run time.
@@ -1446,6 +1454,27 @@ describe("realBackend reconcileCoderCommits", () => {
       committed: false,
       commitsAdded: 0,
       escalate: { reason: "blocked", diagnosis: "design gap" },
+    });
+  });
+
+  it("preserves repairEvidence while deriving commit truth from git", () => {
+    const repairEvidence: RepairEvidence = {
+      findingScope: {
+        identityKeys: ["correctness|src/x.ts:1|active bug"],
+      },
+      changedFiles: ["src/x.ts"],
+      tests: ["npm test -- src/x.test.ts"],
+    };
+
+    const out = reconcileCoderCommits(
+      { committed: true, commitsAdded: 1, repairEvidence },
+      1,
+    );
+
+    expect(out).toEqual({
+      committed: true,
+      commitsAdded: 1,
+      repairEvidence,
     });
   });
 

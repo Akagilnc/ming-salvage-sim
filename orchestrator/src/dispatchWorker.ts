@@ -195,6 +195,8 @@ export function stepSpecToWorkerSpec(
  * `gstack-ship`, no longer an inline `git push`). #331 prefactor: the legacy
  * wrapper forwards it to `backend.push`; #336 makes it invoke `gstack-ship`.
  */
+export const SHIP_PROMPT_FILE = "ship.md";
+
 export function shipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S7",
@@ -204,7 +206,7 @@ export function shipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
     session: "fresh",
     contextRetention: "clean",
     skill: SKILL_FOR_KIND.ship,
-    promptFile: "ship.md",
+    promptFile: SHIP_PROMPT_FILE,
     completionSignal: "SHIP_STEP_COMPLETE",
     // A WRITE/coder ship worker must self-rerun gstack-ship's rerun-able failures
     // (ship.md: "rerun it yourself") → an iterative budget like coder/fix (runner

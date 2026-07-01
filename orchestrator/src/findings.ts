@@ -278,7 +278,14 @@ export function adjudicatePriorClaimedFixedFindings(input: {
         `reviewer omitted required disposition for prior claimed-fixed finding ${key}`,
       );
     }
-    if (disposition.status === "verified-closed") {
+    if (
+      disposition.status === "verified-closed" ||
+      (disposition.status === "accepted_suppressed" &&
+        isFilledString(disposition.source) &&
+        isFilledString(disposition.scope) &&
+        isFilledString(disposition.reason) &&
+        isFilledString(disposition.boundedReopen))
+    ) {
       verifiedClosedIdentityKeys.push(key);
       continue;
     }
