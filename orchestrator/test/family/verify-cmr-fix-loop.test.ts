@@ -489,6 +489,61 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
     expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(["cmr"]);
   });
 
+  it("fails closed when a runner-protected prior blocker is closed by accepted_suppressed", async () => {
+    const priorKey = "correctness|src/x.ts:1|protected blocker";
+    const trustedSuppression = {
+      source: "issue #445 acceptance criteria",
+      scope: "#445 family integrated CMR",
+      reason: "accepted by parent issue",
+      findingIdentity: priorKey,
+      boundedReopen: "reopen on higher severity",
+    };
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [priorKey],
+          priorFindingDispositions: [
+            {
+              identityKey: priorKey,
+              status: "accepted_suppressed",
+              source: trustedSuppression.source,
+              scope: trustedSuppression.scope,
+              reason: trustedSuppression.reason,
+              boundedReopen: trustedSuppression.boundedReopen,
+            },
+          ],
+        },
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      priorCmrFindingIdentityKeys: [priorKey],
+      moduleContext: {
+        currentModules: [],
+        childModules: [],
+        acceptedSuppressionSources: [trustedSuppression],
+      },
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      reason: expect.stringContaining("cannot be closed by accepted_suppressed"),
+      stopSummary: expect.objectContaining({
+        reason: "contract_drift",
+      }),
+    }));
+    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(["cmr"]);
+  });
+
   it("cmr worker MALFORMED / crash ⇒ recordAborted + INCOMPLETE_GATE (ok:false), NO ship", async () => {
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({ kind: "malformed", reason: "no parseable CMR-VERDICT" }),

@@ -90,6 +90,24 @@ module_scope:
       moduleScope: ["foo#bar", "orchestrator/src/family"],
     });
   });
+
+  it("allows explanatory prose between the Module Declaration heading and fence", () => {
+    expect(
+      parseModuleDeclaration(`## Module Declaration
+
+This section is authoritative; prose here is not parsed as YAML.
+
+\`\`\`yaml
+module: fiscal
+module_scope:
+  - orchestrator/src/family
+\`\`\`
+`),
+    ).toEqual({
+      module: "fiscal",
+      moduleScope: ["orchestrator/src/family"],
+    });
+  });
 });
 
 const finding: Finding = {

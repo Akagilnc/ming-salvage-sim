@@ -705,8 +705,10 @@ function cmrClosureFailureReason(input: {
       `prior findings but the runner supplied no protected prior finding identity set`
     );
   }
-  if (input.protectedPriorFindingIdentityKeys !== undefined) {
-    const protectedKeys = new Set(input.protectedPriorFindingIdentityKeys);
+  const protectedPriorKeys = input.protectedPriorFindingIdentityKeys;
+  const protectedKeys =
+    protectedPriorKeys !== undefined ? new Set(protectedPriorKeys) : undefined;
+  if (protectedKeys !== undefined && protectedPriorKeys !== undefined) {
     const staleClaims = claimed.filter((key) => !protectedKeys.has(key));
     if (staleClaims.length > 0) {
       return (
@@ -715,9 +717,7 @@ function cmrClosureFailureReason(input: {
       );
     }
     const claimedSet = new Set(claimed);
-    const unclaimedPriorKeys = input.protectedPriorFindingIdentityKeys.filter(
-      (key) => !claimedSet.has(key),
-    );
+    const unclaimedPriorKeys = protectedPriorKeys.filter((key) => !claimedSet.has(key));
     if (unclaimedPriorKeys.length > 0) {
       return (
         `integrated cmr ${input.pass} closure failed: runner-supplied prior ` +
@@ -746,6 +746,22 @@ function cmrClosureFailureReason(input: {
     return (
       `integrated cmr ${input.pass} closure failed: accepted_suppressed ` +
       `dispositions missing source/scope/boundedReopen for ${malformedAcceptedSuppressions.join(", ")}`
+    );
+  }
+  const suppressedProtectedPriorKeys =
+    protectedKeys === undefined
+      ? []
+      : priorDispositions
+          .filter(
+            (disposition) =>
+              disposition.status === "accepted_suppressed" &&
+              protectedKeys.has(disposition.identityKey),
+          )
+          .map((disposition) => disposition.identityKey);
+  if (suppressedProtectedPriorKeys.length > 0) {
+    return (
+      `integrated cmr ${input.pass} closure failed: runner-protected prior ` +
+      `findings cannot be closed by accepted_suppressed: ${suppressedProtectedPriorKeys.join(", ")}`
     );
   }
   const stillOpen = priorDispositions
