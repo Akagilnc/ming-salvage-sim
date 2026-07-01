@@ -207,6 +207,8 @@ async function familyClassificationScenario(input: {
     throw new Error(`dogfood replay ${input.id} produced no stop summary`);
   }
 
+  const runStatus = run.ok ? "success" : stopSummary.reason;
+
   if (result.classification === "cross_module_defer") {
     return scenario({
       id: input.id,
@@ -219,7 +221,7 @@ async function familyClassificationScenario(input: {
       sourceEvidence: {
         seam: "family_verify_cmr",
         dispatches: backend.dispatches,
-        runStatus: run.ok ? "success" : "verify_failed",
+        runStatus,
         ...cmrWorkerParserEvidence(cmrOutput),
       },
     });
@@ -236,7 +238,7 @@ async function familyClassificationScenario(input: {
     sourceEvidence: {
       seam: "family_verify_cmr",
       dispatches: backend.dispatches,
-      runStatus: run.ok ? "success" : "verify_failed",
+      runStatus,
       ...cmrWorkerParserEvidence(cmrOutput),
     },
   });
@@ -1869,7 +1871,9 @@ async function providerBlockingReplay(): Promise<SeamReplay> {
   };
 }
 
-async function providerStrongLegPassReplay(): Promise<SeamReplay> {
+async function providerStrongLegPassReplay(input: {
+  readonly familyBase: string;
+}): Promise<SeamReplay> {
   const backend = new DogfoodCmrFamilyBackend("provider-pass-head", [], [
     {
       kind: "completed",
@@ -1897,9 +1901,9 @@ async function providerStrongLegPassReplay(): Promise<SeamReplay> {
       kind: "completed",
       output: {
         kind: "ship",
-        branch: "family/433-provider",
+        branch: input.familyBase,
         status: "pr_opened",
-        pr: "pr://family/433-provider",
+        pr: `pr://${input.familyBase}`,
         prHead: "provider-pass-head",
       },
     },
@@ -1909,7 +1913,7 @@ async function providerStrongLegPassReplay(): Promise<SeamReplay> {
     () =>
       runVerifyCmr({
         phase: "final",
-        familyBase: "family/433-provider",
+        familyBase: input.familyBase,
         familyBackend: backend,
       }),
   );
@@ -1927,6 +1931,7 @@ async function providerStrongLegPassReplay(): Promise<SeamReplay> {
     stopSummary: pass.stopSummary,
     sourceEvidence: {
       seam: "family_verify_cmr_provider_metadata",
+      familyBase: input.familyBase,
       status: "success",
       routeName: "claude-tight",
       dispatches: backend.dispatches,
@@ -2154,7 +2159,12 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   const closureContextMissingSource = await closureContextMissingReplay();
   const closurePositiveSource = await closurePositiveReplay();
   const providerBlockingSource = await providerBlockingReplay();
-  const providerStrongLegPassSource = await providerStrongLegPassReplay();
+  const providerStrongLegPass376Source = await providerStrongLegPassReplay({
+    familyBase: "family/376-provider",
+  });
+  const providerStrongLegPass433Source = await providerStrongLegPassReplay({
+    familyBase: "family/433-provider",
+  });
   const runnerModuleNotFoundSource = await runnerModuleNotFoundReplay();
   const shipMalformedAfterCmrSource = await familyShipMalformedAfterCmrReplay();
   const finalVerifyModuleNotFoundSource =
@@ -2575,10 +2585,10 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 376,
       title: "route-selected strong legs pass while a provider leg is degraded",
       classification: "provider_degraded",
-      stopSummary: providerStrongLegPassSource.stopSummary,
+      stopSummary: providerStrongLegPass376Source.stopSummary,
       source: "family",
-      sourceStopSummary: providerStrongLegPassSource.stopSummary,
-      sourceEvidence: providerStrongLegPassSource.sourceEvidence,
+      sourceStopSummary: providerStrongLegPass376Source.stopSummary,
+      sourceEvidence: providerStrongLegPass376Source.sourceEvidence,
     }),
     replayScenario({
       id: "376-provider-degraded-blocking",
@@ -2595,10 +2605,10 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 433,
       title: "skipped provider leg is metadata when selected strong leg converges",
       classification: "provider_degraded",
-      stopSummary: providerStrongLegPassSource.stopSummary,
+      stopSummary: providerStrongLegPass433Source.stopSummary,
       source: "family",
-      sourceStopSummary: providerStrongLegPassSource.stopSummary,
-      sourceEvidence: providerStrongLegPassSource.sourceEvidence,
+      sourceStopSummary: providerStrongLegPass433Source.stopSummary,
+      sourceEvidence: providerStrongLegPass433Source.sourceEvidence,
     }),
     replayScenario({
       id: "440-agent-brief-spec-conflict",

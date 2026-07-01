@@ -437,6 +437,22 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
         phase: "final",
         pr: "pr://family/291-base",
         familyHeadAfter: "ship-head",
+        stopSummary: {
+          reason: "success",
+          summary: "run completed successfully",
+          metadata: {
+            heads: {
+              reportedFamilyHead: "ship-head",
+              actualFamilyHead: "ship-head",
+              verifiedCmrHead: "verified-cmr-head",
+              sources: {
+                reportedFamilyHead: "ship worker reported prHead",
+                actualFamilyHead: "family head after ship worker",
+                verifiedCmrHead: "latest cmr_passed ledger row",
+              },
+            },
+          },
+        },
       },
     );
     const result = await runFamily({
@@ -462,6 +478,9 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
     // Honest: every child is ledger-merged ⇒ already delivered = success.
     expect(result.status).toBe("success");
     expect(result.children.every((c) => c.status === "already_done")).toBe(true);
+    expect(result.stopSummary.metadata?.heads?.verifiedCmrHead).toBe(
+      "verified-cmr-head",
+    );
   });
 
   it("a current-head shipped marker whose PR no longer verifies fails closed", async () => {

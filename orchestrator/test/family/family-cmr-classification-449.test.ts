@@ -267,6 +267,46 @@ describe("#449 family CMR finding classification", () => {
     });
   });
 
+  it("matches undeveloped module targets by declared module_scope text", () => {
+    const scopeTargetFinding: Finding = {
+      ...finding,
+      location: "docs/hub/central-accounts.md:12",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "hub",
+        reason: "The hub docs belong to an undeveloped module scope.",
+      },
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [scopeTargetFinding],
+      moduleContext: buildFamilyModuleContext({
+        childModules: [],
+        familyModule: {
+          module: "fiscal",
+          moduleScope: ["orchestrator/src/fiscal"],
+          source: "family_issue",
+          issue: 445,
+        },
+        undevelopedModules: [
+          {
+            module: "central-accounts",
+            moduleScope: ["docs/hub"],
+            source: "run_option",
+          },
+        ],
+      }),
+    });
+
+    expect(classified.blocking).toEqual([]);
+    expect(classified.deferred).toEqual([scopeTargetFinding]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "cross_module_defer",
+      targetModule: "hub",
+    });
+  });
+
   it("fails closed when the family fallback module scope does not cover the finding location", () => {
     const scopedOutFinding: Finding = {
       ...finding,
@@ -361,6 +401,65 @@ describe("#449 family CMR finding classification", () => {
     expect(classified.results[0]).toMatchObject({
       classification: "same_module_still_red",
       attribution: { method: "missing_module_context" },
+    });
+  });
+
+  it("fails closed when overlapping child module scopes make attribution ambiguous", () => {
+    const overlappingFinding: Finding = {
+      ...finding,
+      location: "orchestrator/src/family/verifyCmr.ts:42",
+      action: "wont_fix",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "#445",
+        scope: "orchestrator/src/family",
+        reason: "Owner accepted this exact finding for the family CMR scope",
+        findingIdentity: findingIdentityKey(finding),
+        boundedReopen: "reopen on different scope, higher severity, or new evidence",
+      },
+    };
+    const acceptedSource = {
+      source: "#445",
+      scope: "orchestrator/src/family",
+      reason: "Owner accepted this exact finding for the family CMR scope",
+      findingIdentity: findingIdentityKey(finding),
+      boundedReopen: "reopen on different scope, higher severity, or new evidence",
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [overlappingFinding],
+      moduleContext: buildFamilyModuleContext({
+        childModules: [
+          {
+            module: "family-runner",
+            moduleScope: ["orchestrator/src/family"],
+            source: "child_issue",
+            issue: 449,
+          },
+          {
+            module: "family-cmr",
+            moduleScope: ["orchestrator/src/family"],
+            source: "child_issue",
+            issue: 450,
+          },
+        ],
+        familyModule: {
+          module: "orchestrator-family",
+          moduleScope: ["orchestrator/src/family"],
+          source: "family_issue",
+          issue: 445,
+        },
+        acceptedSuppressionSources: [acceptedSource],
+      }),
+    });
+
+    expect(classified.blocking).toEqual([overlappingFinding]);
+    expect(classified.deferred).toEqual([]);
+    expect(classified.dispositions).toEqual([]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "same_module_still_red",
+      attribution: { method: "ambiguous_child_module_scope" },
     });
   });
 

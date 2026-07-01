@@ -2348,13 +2348,12 @@ function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<strin
     priorFindingDispositions: dispositions.map((rawDisposition) => {
       if (
         !isJsonRecord(rawDisposition) ||
-        rawDisposition.status !== undefined ||
         typeof rawDisposition.disposition !== "string"
       ) {
         return rawDisposition;
       }
-      const { disposition, ...withoutAlias } = rawDisposition;
-      return { ...withoutAlias, status: disposition };
+      const { disposition, status, ...withoutAlias } = rawDisposition;
+      return { ...withoutAlias, status: status ?? disposition };
     }),
   };
 }

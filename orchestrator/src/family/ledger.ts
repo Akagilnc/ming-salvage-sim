@@ -516,7 +516,13 @@ export function familyShippedRecordForHead(
       isValidFamilyShipped(e) && e.familyHeadAfter === familyHeadAfter,
   );
   if (shipped === undefined) return undefined;
-  return { pr: shipped.pr, familyHeadAfter: shipped.familyHeadAfter };
+  return {
+    pr: shipped.pr,
+    familyHeadAfter: shipped.familyHeadAfter,
+    ...(shipped.stopSummary !== undefined
+      ? { stopSummary: shipped.stopSummary }
+      : {}),
+  };
 }
 
 /**

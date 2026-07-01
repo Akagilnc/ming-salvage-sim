@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   providerDegradedStopSummary,
   stopReasonForFindingDisposition,
+  stopSummaryFromFindingDispositionEvidence,
   successStopSummary,
 } from "../src/stopSummary.js";
-import type { Finding } from "../src/types.js";
+import type { Finding, FindingDispositionEvidence } from "../src/types.js";
 
 const FINDING: Finding = {
   severity: "high",
@@ -129,5 +130,37 @@ describe("stop summary vocabulary (#450)", () => {
         ],
       },
     });
+  });
+
+  it("fails closed instead of inventing unknown metadata for incomplete disposition evidence", () => {
+    expect(() =>
+      stopSummaryFromFindingDispositionEvidence({
+        finding: FINDING,
+        evidence: {
+          kind: "owning_issue_still_red",
+          reason: "the owning issue still lacks a surface",
+        } as FindingDispositionEvidence,
+      }),
+    ).toThrow(/owningIssue/i);
+
+    expect(() =>
+      stopSummaryFromFindingDispositionEvidence({
+        finding: FINDING,
+        evidence: {
+          kind: "cross_module",
+          reason: "belongs elsewhere",
+        } as FindingDispositionEvidence,
+      }),
+    ).toThrow(/targetModule/i);
+
+    expect(() =>
+      stopSummaryFromFindingDispositionEvidence({
+        finding: FINDING,
+        evidence: {
+          kind: "accepted_suppressed",
+          reason: "owner accepted this exact bounded finding",
+        } as FindingDispositionEvidence,
+      }),
+    ).toThrow(/source.*scope.*boundedReopen/i);
   });
 });

@@ -1,4 +1,5 @@
 import type { Finding, FindingDispositionEvidence } from "./types.js";
+import { findingIdentityKey } from "./findings.js";
 
 export type StopReason =
   | "success"
@@ -242,6 +243,16 @@ export function stopSummaryFromFindingDispositionEvidence(input: {
   readonly evidence: FindingDispositionEvidence;
 }): StopSummary {
   const { finding, evidence } = input;
+  const requireField = (
+    value: string | undefined,
+    field: string,
+    kind: string,
+  ): string => {
+    if (value === undefined || value.trim() === "") {
+      throw new Error(`${kind} disposition evidence requires ${field}`);
+    }
+    return value;
+  };
   switch (evidence.kind) {
     case "same_module":
       return stopReasonForFindingDisposition({
@@ -253,7 +264,11 @@ export function stopSummaryFromFindingDispositionEvidence(input: {
       return stopReasonForFindingDisposition({
         kind: "owning_issue_still_red",
         finding,
-        owningIssue: evidence.owningIssue ?? "unknown",
+        owningIssue: requireField(
+          evidence.owningIssue,
+          "owningIssue",
+          evidence.kind,
+        ),
         missingSurface: evidence.missingSurface,
         nextStep: evidence.nextStep,
         reason: evidence.reason,
@@ -262,7 +277,11 @@ export function stopSummaryFromFindingDispositionEvidence(input: {
       return stopReasonForFindingDisposition({
         kind: "cross_module",
         finding,
-        targetModule: evidence.targetModule ?? "unknown",
+        targetModule: requireField(
+          evidence.targetModule,
+          "targetModule",
+          evidence.kind,
+        ),
         reason: evidence.reason,
       });
     case "spec_conflict":
@@ -279,6 +298,24 @@ export function stopSummaryFromFindingDispositionEvidence(input: {
         repairHint: "repair the infrastructure failure and rerun",
       });
     case "accepted_suppressed":
+      {
+        const missing = [
+          evidence.source === undefined || evidence.source.trim() === ""
+            ? "source"
+            : undefined,
+          evidence.scope === undefined || evidence.scope.trim() === ""
+            ? "scope"
+            : undefined,
+          evidence.boundedReopen === undefined || evidence.boundedReopen.trim() === ""
+            ? "boundedReopen"
+            : undefined,
+        ].filter((field): field is string => field !== undefined);
+        if (missing.length > 0) {
+          throw new Error(
+            `accepted_suppressed disposition evidence requires ${missing.join(", ")}`,
+          );
+        }
+      }
       return {
         reason: "accepted_suppressed",
         summary: evidence.reason,
@@ -286,11 +323,15 @@ export function stopSummaryFromFindingDispositionEvidence(input: {
         metadata: {
           acceptedSuppressions: [
             {
-              source: evidence.source ?? "unknown",
-              scope: evidence.scope ?? "unknown",
+              source: requireField(evidence.source, "source", evidence.kind),
+              scope: requireField(evidence.scope, "scope", evidence.kind),
               reason: evidence.reason,
-              findingIdentity: evidence.findingIdentity ?? "unknown",
-              boundedReopen: evidence.boundedReopen ?? "unknown",
+              findingIdentity: evidence.findingIdentity ?? findingIdentityKey(finding),
+              boundedReopen: requireField(
+                evidence.boundedReopen,
+                "boundedReopen",
+                evidence.kind,
+              ),
             },
           ],
         },

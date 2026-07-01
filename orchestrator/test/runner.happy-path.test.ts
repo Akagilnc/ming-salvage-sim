@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
 import type {
   Backend,
+  FindingDisposition,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
+  ResumeState,
   StepOutput,
   StepSpec,
   WorktreeHandle,
@@ -240,5 +242,56 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     );
     expect(prepareCalls).toEqual(["prepareWorktree(247, main)"]);
     expect(result.branch).toBe(backend.worktree.branch);
+  });
+
+  it("does not turn rejected or wont_fix dispositions into accepted suppression metadata", async () => {
+    const legacyRejected: FindingDisposition = {
+      identityKey: "correctness|src/x.ts:1|old rejected review",
+      status: "rejected",
+      reason: "reviewer-only rejection without owner authority",
+      severity: "medium",
+      reopenAttempts: 0,
+    };
+    class ResumeAfterS4Backend extends HappyPathBackend {
+      override async findResumeState(): Promise<ResumeState> {
+        return {
+          worktree: this.worktree,
+          stateDir: "/resident/worktrees/.ledger-247",
+          ledger: [
+            {
+              step: "S0",
+              sessionId: "prior",
+              prompt_hash: "hash-S0",
+              branchHEAD: "head",
+              ts: "2026-07-02T00:00:00.000Z",
+            },
+            {
+              step: "S3",
+              sessionId: "prior",
+              prompt_hash: "hash-S3",
+              branchHEAD: "head",
+              ts: "2026-07-02T00:00:01.000Z",
+              output: { kind: "reviewer", findings: [] },
+            },
+            {
+              step: "S4",
+              sessionId: "prior",
+              prompt_hash: "hash-S4",
+              branchHEAD: "head",
+              ts: "2026-07-02T00:00:02.000Z",
+              findingDispositions: [legacyRejected],
+            },
+          ],
+        };
+      }
+    }
+    const backend = new ResumeAfterS4Backend();
+
+    const result = await runOrchestrator({ issueNumber: 247, backend });
+
+    expect(result.status).toBe("success");
+    expect(result.stopSummary.metadata?.acceptedSuppressions).toBeUndefined();
+    expect(backend.ledgerWrites.at(-1)?.stopSummary?.metadata?.acceptedSuppressions)
+      .toBeUndefined();
   });
 });

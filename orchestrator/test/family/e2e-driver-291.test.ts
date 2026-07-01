@@ -110,6 +110,12 @@ function makeSh(): Sh {
         const n = m ? Number(m[1]) : -1;
         return blockedBy[n] ?? "[]";
       }
+      if (args[0] === "issue" && args[1] === "view") {
+        return JSON.stringify({
+          number: Number(args[2]),
+          body: "",
+        });
+      }
       throw new Error(`unexpected gh call: ${args.join(" ")}`);
     }
     // REAL git (the family-base cut etc.).

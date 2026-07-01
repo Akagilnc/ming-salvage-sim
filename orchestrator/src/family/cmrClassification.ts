@@ -91,6 +91,7 @@ export interface FamilyCmrFindingResult {
   readonly attribution: {
     readonly method:
       | "child_module_scope"
+      | "ambiguous_child_module_scope"
       | "family_module"
       | "missing_module_context"
       | "reviewer_disposition";
@@ -255,15 +256,22 @@ function pathMatchesScope(path: string, scope: string): boolean {
   );
 }
 
+type ChildAttribution =
+  | { readonly kind: "matched"; readonly declaration: SourcedModuleDeclaration }
+  | { readonly kind: "ambiguous" }
+  | { readonly kind: "none" };
+
 function childAttribution(
   finding: Finding,
   context: FamilyModuleContext,
-): SourcedModuleDeclaration | undefined {
+): ChildAttribution {
   const path = locationPath(finding.location);
   const matches = context.childModules.filter((decl) =>
     decl.moduleScope.some((scope) => pathMatchesScope(path, scope)),
   );
-  return matches.length === 1 ? matches[0] : undefined;
+  if (matches.length === 1) return { kind: "matched", declaration: matches[0]! };
+  if (matches.length > 1) return { kind: "ambiguous" };
+  return { kind: "none" };
 }
 
 function declarationCoversFinding(
@@ -288,12 +296,16 @@ function attributionFor(
   context: FamilyModuleContext,
 ): FamilyCmrFindingResult["attribution"] {
   const child = childAttribution(finding, context);
-  if (child !== undefined) {
+  if (child.kind === "ambiguous") {
+    return { method: "ambiguous_child_module_scope" };
+  }
+  if (child.kind === "matched") {
+    const declaration = child.declaration;
     return {
       method: "child_module_scope",
-      issue: child.issue,
-      module: child.module,
-      source: child.source,
+      issue: declaration.issue,
+      module: declaration.module,
+      source: declaration.source,
     };
   }
   const fallback = fallbackModule(context);
@@ -355,7 +367,7 @@ function declaredUndevelopedTarget(
     return (
       target === moduleName ||
       targetSlug === moduleSlug ||
-      decl.moduleScope.some((scope) => containsNormalized(target, scope))
+      decl.moduleScope.some((scope) => containsNormalized(scope, target))
     );
   });
 }
@@ -366,9 +378,10 @@ function suppressionScopeMatchesContext(input: {
   readonly scope?: string;
 }): boolean {
   const child = childAttribution(input.finding, input.context);
+  if (child.kind === "ambiguous") return false;
   const fallback = fallbackModule(input.context);
   const attributedDeclaration =
-    child ??
+    (child.kind === "matched" ? child.declaration : undefined) ??
     (fallback !== undefined && declarationCoversFinding(fallback, input.finding)
       ? fallback
       : undefined);

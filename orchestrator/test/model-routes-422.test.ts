@@ -227,6 +227,21 @@ describe("#422 model route presets", () => {
     ).toMatch(/duplicate skipped legs.*agy/i);
   });
 
+  it("does not treat shallow route-shaped objects as resolved routes", () => {
+    const malformedRoute = {
+      slots: {},
+      legCollections: { cmrReview: "gpt-5.5,opus,agy" },
+      tightFamilyViolations: "none",
+    };
+
+    expect(
+      cmrLegAccountingFailure(
+        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        malformedRoute as never,
+      ),
+    ).toBeUndefined();
+  });
+
   it("feeds the resolved route into every worker spec model slot", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     vi.resetModules();

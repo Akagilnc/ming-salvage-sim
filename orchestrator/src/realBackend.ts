@@ -1669,6 +1669,19 @@ const repairEvidenceSchema = z
     fixtures: z.array(z.string().min(1)).optional(),
     patchSummary: z.string().optional(),
   })
+  .superRefine((value, ctx) => {
+    if (
+      (value.changedFiles?.length ?? 0) === 0 &&
+      (value.tests?.length ?? 0) === 0 &&
+      (value.fixtures?.length ?? 0) === 0
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "repairEvidence requires changedFiles, tests, or fixtures; patchSummary alone is not concrete repair evidence",
+      });
+    }
+  })
   .strict();
 const coderOutputSchema = z.object({
   committed: z.boolean(),

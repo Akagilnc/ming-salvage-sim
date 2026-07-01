@@ -457,11 +457,11 @@ function familyCmrBlockingStopSummary(
     };
   }
   if (result?.classification === "owning_issue_still_red") {
-    if (finding !== undefined) {
+    if (finding !== undefined && result.owningIssue !== undefined) {
       return stopReasonForFindingDisposition({
         kind: "owning_issue_still_red",
         finding,
-        owningIssue: result.owningIssue ?? "unknown",
+        owningIssue: result.owningIssue,
         missingSurface: result.missingSurface,
         nextStep: result.nextStep,
         reason: result.reason || fallbackReason,
@@ -1339,9 +1339,43 @@ export async function runVerifyCmr(
       familyBase,
       cmrPassedFamilyHeadAfter,
     );
+    const escalationReason =
+      `${shipResult.escalation.reason} — ${shipResult.escalation.diagnosis}`;
+    const reason = `family ship worker escalated: ${escalationReason}`;
+    const stopSummary = infraFailureStopSummary({
+      summary: reason,
+      repairHint: "answer or repair the family ship worker escalation, then rerun",
+      ship: {
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { latestVerifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        ...(postShipFamilyHead !== undefined
+          ? { currentFamilyHead: postShipFamilyHead }
+          : {}),
+        shipPrState: "ship-worker-escalated",
+      },
+      heads: {
+        ...(postShipFamilyHead !== undefined
+          ? { actualFamilyHead: postShipFamilyHead }
+          : {}),
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        sources: {
+          actualFamilyHead: "family head after ship worker escalation",
+          verifiedCmrHead: "latest cmr_passed ledger row",
+        },
+      },
+    });
     await familyBackend.escalateFamily?.({
-      reason: `${shipResult.escalation.reason} — ${shipResult.escalation.diagnosis}`,
+      reason: escalationReason,
       familyHeadAfter: postShipFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: postShipFamilyHead,
+      stopSummary,
     });
     return { ok: false, ran: true };
   }

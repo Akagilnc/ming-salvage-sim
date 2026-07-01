@@ -325,11 +325,30 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
       issue: 12,
     });
   });
+  it("fails closed when a module declaration issue body cannot be read", () => {
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        throw new Error(`gh failed for #${args[2]}`);
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 11 }]);
+      }
+      return "[]";
+    };
+
+    expect(() => readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh)).toThrow(
+      /failed to read issue #291 body/i,
+    );
+  });
   it("admits only OPEN ready-for-agent leaf children, logs every skipped non-runnable child, and continues", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const sh: Sh = (file, args) => {
         expect(file).toBe("gh");
+        if (args[0] === "issue" && args[1] === "view") {
+          return JSON.stringify({ number: Number(args[2]), body: "" });
+        }
         if (String(args[1]).includes("/sub_issues")) {
           return JSON.stringify([
             {
@@ -377,6 +396,9 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
     const subIssueCalls: string[] = [];
     const sh: Sh = (file, args) => {
       expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        return JSON.stringify({ number: Number(args[2]), body: "" });
+      }
       if (String(args[1]).includes("/sub_issues")) {
         subIssueCalls.push(String(args[1]));
         const page = Number(/[?&]page=(\d+)/.exec(String(args[1]))?.[1] ?? "1");

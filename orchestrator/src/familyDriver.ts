@@ -433,8 +433,12 @@ function readIssueBody(issue: number, repo: string, sh: Sh): string {
     ]);
     const parsed = JSON.parse(raw) as { readonly body?: unknown };
     return typeof parsed.body === "string" ? parsed.body : "";
-  } catch {
-    return "";
+  } catch (err) {
+    throw new Error(
+      `readIssueBody: failed to read issue #${issue} body from ${repo}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
   }
 }
 
