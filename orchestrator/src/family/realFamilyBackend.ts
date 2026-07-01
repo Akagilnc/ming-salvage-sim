@@ -990,7 +990,13 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (outcome.kind === "malformed") {
       // No parseable verdict ⇒ malformed (the gate must never read it as a pass).
-      return { kind: "malformed", reason: outcome.reason };
+      return {
+        kind: "malformed",
+        reason: outcome.reason,
+        ...(outcome.cmrLegAccountingPayload !== undefined
+          ? { cmrLegAccountingPayload: outcome.cmrLegAccountingPayload }
+          : {}),
+      };
     }
     return {
       kind: "completed",
@@ -2003,7 +2009,14 @@ export type CmrWorkerOutcome =
       readonly findings?: readonly Finding[];
     }
   | { readonly kind: "escalate"; readonly reason: string; readonly diagnosis: string }
-  | { readonly kind: "malformed"; readonly reason: string };
+  | {
+      readonly kind: "malformed";
+      readonly reason: string;
+      readonly cmrLegAccountingPayload?: {
+        readonly successfulLegs?: readonly string[];
+        readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+      };
+    };
 
 interface CmrSkippedLeg {
   readonly slug: string;
@@ -2336,7 +2349,16 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
     const converged = cmrConvergedSchema.parse(normalizedParsed);
     const legAccountingFailure = cmrLegAccountingFailure(converged);
     if (legAccountingFailure !== undefined) {
-      return { kind: "malformed", reason: legAccountingFailure };
+      return {
+        kind: "malformed",
+        reason: legAccountingFailure,
+        cmrLegAccountingPayload: {
+          successfulLegs: converged.successfulLegs,
+          ...(converged.skippedLegs !== undefined
+            ? { skippedLegs: converged.skippedLegs }
+            : {}),
+        },
+      };
     }
     return {
       kind: "verdict",
@@ -2353,7 +2375,16 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
   if (red.success) {
     const legAccountingFailure = cmrLegAccountingFailure(red.data);
     if (legAccountingFailure !== undefined) {
-      return { kind: "malformed", reason: legAccountingFailure };
+      return {
+        kind: "malformed",
+        reason: legAccountingFailure,
+        cmrLegAccountingPayload: {
+          successfulLegs: red.data.successfulLegs,
+          ...(red.data.skippedLegs !== undefined
+            ? { skippedLegs: red.data.skippedLegs }
+            : {}),
+        },
+      };
     }
     return {
       kind: "verdict",

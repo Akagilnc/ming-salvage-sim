@@ -735,7 +735,21 @@ async function runIntegratedCmrPass(input: {
     const reason =
       cmrResult.kind === "failed"
         ? `family integrated cmr ${pass} worker failed: ${cmrResult.reason}`
-        : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
+        : cmrResult.kind === "malformed"
+          ? `family integrated cmr ${pass} worker malformed: ${cmrResult.reason}`
+          : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
+    const stopSummary =
+      cmrResult.kind === "malformed" &&
+      cmrResult.cmrLegAccountingPayload !== undefined
+        ? legAccountingFailureStopSummary({
+            reason,
+            resolvedRoute,
+            routeFingerprint,
+            successfulLegs:
+              cmrResult.cmrLegAccountingPayload.successfulLegs ?? [],
+            skippedLegs: cmrResult.cmrLegAccountingPayload.skippedLegs,
+          })
+        : undefined;
     await familyBackend.recordAborted?.({
       phase: "final",
       cmrPass: pass,
@@ -748,6 +762,7 @@ async function runIntegratedCmrPass(input: {
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
+      ...(stopSummary !== undefined ? { stopSummary } : {}),
     });
     return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
   }

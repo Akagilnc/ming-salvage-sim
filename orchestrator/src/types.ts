@@ -683,7 +683,15 @@ export type WorkerOutput =
 export type WorkerResult =
   | { readonly kind: "completed"; readonly output: WorkerOutput; readonly sessionId?: string }
   | { readonly kind: "failed"; readonly reason: string; readonly sessionId?: string }
-  | { readonly kind: "malformed"; readonly reason: string; readonly sessionId?: string }
+  | {
+      readonly kind: "malformed";
+      readonly reason: string;
+      readonly sessionId?: string;
+      readonly cmrLegAccountingPayload?: {
+        readonly successfulLegs?: readonly string[];
+        readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+      };
+    }
   | {
       readonly kind: "escalated";
       readonly escalation: Escalation;
