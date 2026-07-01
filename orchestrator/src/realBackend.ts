@@ -1426,6 +1426,43 @@ export interface RealBackendOptions {
 }
 
 /** zod schema for the reviewer step's structured output (route() consumes it). */
+const findingDispositionSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("same_module"),
+    reason: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("cross_module"),
+    targetModule: z.string().min(1),
+    reason: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("spec_conflict"),
+    source: z.string().min(1),
+    reason: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("infra_failure"),
+    source: z.string().min(1),
+    reason: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("owning_issue_still_red"),
+    owningIssue: z.string().min(1),
+    missingSurface: z.string().min(1),
+    nextStep: z.string().min(1),
+    reason: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("accepted_suppressed"),
+    source: z.string().min(1),
+    scope: z.string().min(1),
+    reason: z.string().min(1),
+    findingIdentity: z.string().min(1),
+    targetModule: z.string().min(1).optional(),
+    boundedReopen: z.string().min(1),
+  }),
+]);
 const findingSchema = z.object({
   severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
   category: z.string(),
@@ -1434,6 +1471,40 @@ const findingSchema = z.object({
   suggested_fix: z.string(),
   action: z.enum(["fix_now", "defer", "wont_fix", "rejected"]),
   disposition_reason: z.string().optional(),
+  disposition: findingDispositionSchema.optional(),
+}).superRefine((finding, ctx) => {
+  if (
+    (finding.severity === "critical" || finding.severity === "high") &&
+    finding.action !== "fix_now"
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["action"],
+      message: "critical/high findings must be fix_now",
+    });
+  }
+  if (
+    (finding.action === "wont_fix" || finding.action === "rejected") &&
+    (!finding.disposition_reason ||
+      finding.disposition?.kind !== "accepted_suppressed")
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["disposition"],
+      message: "suppressed findings require accepted_suppressed disposition",
+    });
+  }
+  if (
+    finding.action === "defer" &&
+    (finding.disposition === undefined ||
+      finding.disposition.kind === "accepted_suppressed")
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["disposition"],
+      message: "deferred findings require a non-suppression disposition",
+    });
+  }
 });
 const priorFindingDispositionSchema = z.object({
   identityKey: z.string().min(1),

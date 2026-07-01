@@ -1,6 +1,7 @@
 import type {
   Finding,
   FindingDisposition,
+  FindingDispositionEvidence,
   PriorFindingDisposition,
   ReviewerOutput,
 } from "./types.js";
@@ -58,13 +59,39 @@ function isDispositionAction(
   return action === "wont_fix" || action === "rejected";
 }
 
+function isAcceptedSuppression(
+  disposition: FindingDispositionEvidence | undefined,
+): disposition is FindingDispositionEvidence & {
+  readonly kind: "accepted_suppressed";
+} {
+  return disposition?.kind === "accepted_suppressed";
+}
+
 function dispositionFromFinding(finding: Finding): FindingDisposition {
+  const acceptedSuppression = isAcceptedSuppression(finding.disposition)
+    ? finding.disposition
+    : undefined;
   return {
     identityKey: findingIdentityKey(finding),
-    status: finding.action === "rejected" ? "rejected" : "wont_fix",
+    status:
+      acceptedSuppression !== undefined
+        ? "accepted_suppressed"
+        : finding.action === "rejected"
+          ? "rejected"
+          : "wont_fix",
     reason: finding.disposition_reason ?? "",
     severity: finding.severity,
     reopenAttempts: 0,
+    ...(acceptedSuppression !== undefined
+      ? {
+          source: acceptedSuppression.source,
+          scope: acceptedSuppression.scope,
+          ...(acceptedSuppression.targetModule !== undefined
+            ? { targetModule: acceptedSuppression.targetModule }
+            : {}),
+          boundedReopen: acceptedSuppression.boundedReopen,
+        }
+      : {}),
   };
 }
 
@@ -103,6 +130,22 @@ function disputedDisposition(disposition: FindingDisposition): FindingDispositio
   };
 }
 
+function isAllowedCrossModuleDefer(finding: Finding): boolean {
+  return (
+    finding.action === "defer" &&
+    finding.disposition?.kind === "cross_module" &&
+    finding.disposition.targetModule !== undefined &&
+    finding.disposition.targetModule.trim().length > 0 &&
+    finding.disposition.reason.trim().length > 0
+  );
+}
+
+function isBlockingByDisposition(finding: Finding): boolean {
+  if (isBlockingFinding(finding)) return true;
+  if (finding.action !== "defer") return false;
+  return !isAllowedCrossModuleDefer(finding);
+}
+
 export function classifyFindings(
   findings: ReadonlyArray<Finding>,
   priorDispositions: ReadonlyArray<FindingDisposition> = [],
@@ -137,7 +180,7 @@ export function classifyFindings(
         continue;
       }
     }
-    if (isBlockingFinding(finding)) {
+    if (isBlockingByDisposition(finding)) {
       blocking.push(finding);
     } else {
       deferred.push(finding);
