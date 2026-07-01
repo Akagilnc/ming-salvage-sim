@@ -1144,6 +1144,7 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
       event: "escalation_answered",
       phase: "final",
       answer: "continue-after-legacy-pause",
+      source: "human",
     });
 
     expect(familyEscalationState(await b.readFamilyLedger())).toMatchObject({
@@ -1151,6 +1152,7 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
       answer: {
         event: "escalation_answered",
         answer: "continue-after-legacy-pause",
+        source: "human",
       },
     });
   });

@@ -1508,8 +1508,27 @@ const findingSchema = z.object({
 });
 const priorFindingDispositionSchema = z.object({
   identityKey: z.string().min(1),
-  status: z.enum(["still-active", "verified-closed", "unable-to-assess"]),
+  status: z.enum([
+    "still-active",
+    "verified-closed",
+    "unable-to-assess",
+    "accepted_suppressed",
+  ]),
   reason: z.string().optional(),
+  source: z.string().optional(),
+  scope: z.string().optional(),
+  boundedReopen: z.string().optional(),
+}).superRefine((disposition, ctx) => {
+  if (disposition.status !== "accepted_suppressed") return;
+  for (const field of ["source", "scope", "boundedReopen"] as const) {
+    if (disposition[field] === undefined || disposition[field].trim() === "") {
+      ctx.addIssue({
+        code: "custom",
+        path: [field],
+        message: `accepted_suppressed prior finding disposition requires ${field}`,
+      });
+    }
+  }
 });
 const reviewerOutputSchema = z.object({
   findings: z.array(findingSchema),

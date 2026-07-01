@@ -1170,6 +1170,7 @@ describe("#369 runner resume/retry review fixes", () => {
           event: "escalation_answered",
           forStep: "S5",
           answer: "continue after human answer",
+          source: "human",
         },
       ] as ReadonlyArray<PersistentLedgerEntry>,
     };
@@ -2073,6 +2074,7 @@ describe("#369 legacy S5 landing file", () => {
         forStep: "S4",
         answer: "continue-same-class",
         note: "human approved another targeted fix round",
+        source: "human",
       },
     });
 
@@ -2085,6 +2087,7 @@ describe("#369 legacy S5 landing file", () => {
         forStep: "S4",
         answer: "continue-same-class",
         note: "human approved another targeted fix round",
+        source: "human",
       },
     });
     expect(JSON.parse(readFileSync(join(worktree.path, ".orchestrator-fix-findings.json"), "utf8"))).toEqual({

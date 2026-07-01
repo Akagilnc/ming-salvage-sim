@@ -140,6 +140,7 @@ describe("#439 family escalation answer events", () => {
     });
     await recordFamilyEscalationAnswered(backend, {
       answer: "continue-same-class",
+      source: "human",
       note: "human approved another pass",
     });
 
@@ -161,6 +162,7 @@ describe("#439 family escalation answer events", () => {
         event: "escalation_answered",
         phase: "final",
         answer: "continue-same-class",
+        source: "human",
         note: "human approved another pass",
       },
     ]);
@@ -168,6 +170,7 @@ describe("#439 family escalation answer events", () => {
       answer: {
         event: "escalation_answered",
         answer: "continue-same-class",
+        source: "human",
         note: "human approved another pass",
       },
       escalation: { escalationKind: "decision" },
@@ -178,7 +181,10 @@ describe("#439 family escalation answer events", () => {
     const backend = new FakeFamilyBackend();
 
     await expect(
-      recordFamilyEscalationAnswered(backend, { answer: "   " }),
+      recordFamilyEscalationAnswered(backend, {
+        answer: "   ",
+        source: "human",
+      }),
     ).rejects.toThrow("family escalation answer must be a non-empty string");
 
     expect(backend.appended).toEqual([]);
@@ -196,6 +202,7 @@ describe("#439 family escalation answer events", () => {
         event: "escalation_answered",
         phase: "final",
         answer: "continue-old",
+        source: "human",
       },
       {
         status: "escalation_answered",
@@ -208,6 +215,7 @@ describe("#439 family escalation answer events", () => {
         event: "escalation_answered",
         phase: "final",
         answer: "continue-latest",
+        source: "human",
         note: "latest human answer wins",
       },
     ];
@@ -217,6 +225,7 @@ describe("#439 family escalation answer events", () => {
       answer: {
         event: "escalation_answered",
         answer: "continue-latest",
+        source: "human",
         note: "latest human answer wins",
       },
     });
@@ -267,7 +276,10 @@ describe("#439 family escalation answer events", () => {
       escalationKind: "failure",
       reason: "family base diverged from ledger",
     });
-    await recordFamilyEscalationAnswered(backend, { answer: "try-anyway" });
+    await recordFamilyEscalationAnswered(backend, {
+      answer: "try-anyway",
+      source: "human",
+    });
 
     expect(familyEscalationState(backend.appended)).toEqual({
       escalation: backend.appended[0],

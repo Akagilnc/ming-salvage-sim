@@ -116,6 +116,35 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(result.failedPhase).toBeUndefined();
   });
 
+  it("keeps production admission skips visible in the success stop summary", async () => {
+    const result = await runFamily({
+      epic: {
+        ...epicWith(10),
+        admissionSkipped: [
+          {
+            issue: 12,
+            reason: "not_ready_for_agent",
+            message: "family admission skipped child #12: missing ready-for-agent label",
+          },
+        ],
+      },
+      familyBackend: new FakeFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr: async () => ({ ok: true, ran: false }),
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.admissionSkipped).toEqual([
+      {
+        issue: 12,
+        reason: "not_ready_for_agent",
+        message: "family admission skipped child #12: missing ready-for-agent label",
+      },
+    ]);
+    expect(result.stopSummary.metadata?.admissionSkipped).toEqual(result.admissionSkipped);
+  });
+
   it("FAIL-FAST: a red wave verify aborts the loop (no end-of-run call, no further waves)", async () => {
     const phases: string[] = [];
     // Two waves (11 blocked_by 10). The wave verify returns ok:false on the FIRST

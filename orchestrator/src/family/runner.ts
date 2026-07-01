@@ -112,6 +112,11 @@ function familyStopSummary(input: {
   readonly familyBase: string;
   readonly children: ReadonlyArray<FamilyChildResult>;
   readonly escalationReason?: string;
+  readonly admissionSkipped?: ReadonlyArray<{
+    readonly issue: number;
+    readonly reason: string;
+    readonly message: string;
+  }>;
 }): StopSummary {
   const metadata =
     input.headMetadata ??
@@ -121,7 +126,14 @@ function familyStopSummary(input: {
     });
   if (input.status === "success") {
     return successStopSummary(
-      metadata?.heads !== undefined ? { heads: metadata.heads } : undefined,
+      metadata?.heads !== undefined || (input.admissionSkipped?.length ?? 0) > 0
+        ? {
+            ...(metadata?.heads !== undefined ? { heads: metadata.heads } : {}),
+            ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
+              ? { admissionSkipped: input.admissionSkipped }
+              : {}),
+          }
+        : undefined,
     );
   }
   if (input.status === "verify_failed") {
@@ -463,8 +475,12 @@ export async function runFamily(
         familyHead,
         headMetadata,
         children,
+        admissionSkipped: epic.admissionSkipped,
       }),
       children,
+      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
     };
   };
 

@@ -87,12 +87,23 @@ function isSourcedAcceptedSuppression(
   );
 }
 
+function isMatchingAcceptedSuppression(
+  finding: Finding,
+  key: string,
+): boolean {
+  return (
+    isAcceptedSuppression(finding.disposition) &&
+    finding.disposition.findingIdentity === key
+  );
+}
+
 function dispositionFromFinding(finding: Finding): FindingDisposition {
-  const acceptedSuppression = isAcceptedSuppression(finding.disposition)
+  const key = findingIdentityKey(finding);
+  const acceptedSuppression = isMatchingAcceptedSuppression(finding, key)
     ? finding.disposition
     : undefined;
   return {
-    identityKey: findingIdentityKey(finding),
+    identityKey: key,
     status:
       acceptedSuppression !== undefined
         ? "accepted_suppressed"
@@ -186,6 +197,10 @@ export function classifyFindings(
       ? priorDisposition
       : undefined;
     if (isDispositionAction(finding.action) && !isBlockingFinding(finding)) {
+      if (!isMatchingAcceptedSuppression(finding, key)) {
+        blocking.push(finding);
+        continue;
+      }
       dispositionByKey.set(key, dispositionFromFinding(finding));
       continue;
     }

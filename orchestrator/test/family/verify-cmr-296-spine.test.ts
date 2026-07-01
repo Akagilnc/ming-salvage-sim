@@ -302,6 +302,7 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
 
     await recordFamilyEscalationAnswered(backend, {
       answer: "continue-same-class",
+      source: "human",
     });
     const answered = await runFamily(input);
 
@@ -312,10 +313,12 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       {
         event: "escalation_answered",
         answer: "continue-same-class",
+        source: "human",
       },
       {
         event: "escalation_answered",
         answer: "continue-same-class",
+        source: "human",
       },
     ]);
     expect(backend.prCalls).toHaveLength(1);

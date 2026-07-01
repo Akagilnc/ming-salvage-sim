@@ -76,6 +76,14 @@ export interface FamilyEpic {
   readonly children: ReadonlyArray<ChildSlice>;
   /** Structured module declaration parsed from the parent/family issue body (#449). */
   readonly moduleDeclaration?: SourcedModuleDeclaration;
+  /** Children excluded at production admission before scheduling, kept for summary audit. */
+  readonly admissionSkipped?: ReadonlyArray<FamilyAdmissionSkippedChild>;
+}
+
+export interface FamilyAdmissionSkippedChild {
+  readonly issue: number;
+  readonly reason: string;
+  readonly message: string;
 }
 
 // ─────────────────────────── family ledger ───────────────────────────
@@ -218,6 +226,8 @@ export interface FamilyLedgerEntry {
   readonly escalationKind?: "decision" | "failure";
   /** Human answer payload when `event === "escalation_answered"` (#439). */
   readonly answer?: string;
+  /** Required executable source for answer rows. */
+  readonly source?: "human" | "resume_input" | "coordinator" | "peripheral";
   /** Optional human note attached to an escalation answer (#439). */
   readonly note?: string;
   /** Unified run-level/family-level stop reason summary (#450). */
@@ -809,4 +819,6 @@ export interface FamilyRunResult {
   readonly stopSummary: StopSummary;
   /** Per-child outcomes, in execution order. */
   readonly children: ReadonlyArray<FamilyChildResult>;
+  /** Non-runnable children excluded before wave scheduling, if any. */
+  readonly admissionSkipped?: ReadonlyArray<FamilyAdmissionSkippedChild>;
 }

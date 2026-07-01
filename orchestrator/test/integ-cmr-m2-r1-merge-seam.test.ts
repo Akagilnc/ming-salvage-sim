@@ -342,6 +342,7 @@ describe("Finding 2: malformed-escalate-terminated run reports error on re-feed 
           event: "escalation_answered",
           forStep: "S2",
           answer: "continue after product decision",
+          source: "human",
         },
       ],
     };
