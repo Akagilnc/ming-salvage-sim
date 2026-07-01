@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>越次召对：杨嗣昌</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+      font-size: 18px;
+      line-height: 1.55;
+      color: #1a1410;
+      background: #1c211d;
+      --paper: #26190f;
+      --muted: #725f42;
+      --gold: #d2a34a;
+      --red: #8f2f25;
+      --jade: #315d47;
+      --border: rgba(74, 45, 20, 0.24);
+      --panel: rgba(255, 255, 255, 0.8);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      margin: 0;
+    }
+
+    body {
+      font-weight: 700;
+      padding: 0;
+      background: #f4eddd;
+    }
+
+    /* 满幅铺平：不浮卡、不投影、不留深色边——静态海报要平实，不要屏幕 UI 的悬空感 */
+    .stage {
+      display: grid;
+      grid-template-rows: auto auto;
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      height: auto;
+      border-radius: 0;
+      box-shadow: none;
+      background: #f4eddd;
+    }
+
+    .modal-header {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 78px;
+      background: #2b211a;
+      border-bottom: 1px solid rgba(255, 232, 170, 0.18);
+    }
+
+    .modal-title {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
+
+    .modal-title h1 {
+      margin: 0;
+      color: #ffffff;
+      font-size: 1.7rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+    }
+
+    .modal-title span {
+      margin-top: 2px;
+      color: rgba(255, 255, 255, 0.92);
+      font-size: 0.92rem;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+    }
+
+    .close-button {
+      position: absolute;
+      top: 50%;
+      right: 18px;
+      display: grid;
+      place-items: center;
+      width: 48px;
+      height: 48px;
+      transform: translateY(-50%);
+      border: 1px solid rgba(0, 0, 0, 0.28);
+      border-radius: 8px;
+      color: #1a1410;
+      background: rgba(255, 250, 235, 0.85);
+      font-size: 34px;
+      line-height: 1;
+    }
+
+    .chat-full-grid {
+      display: grid;
+      grid-template-columns: 210px minmax(0, 1fr);
+      align-items: start;
+      gap: 12px;
+      height: auto;
+      padding: 14px;
+      background: rgba(255, 255, 255, 0.8);
+    }
+
+    .modal-pane {
+      border: 1px solid rgba(74, 45, 20, 0.18);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.8);
+    }
+
+    .minister-side {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 14px;
+      position: sticky;
+      /* sticky-top 设成与加载位置(header 下方 ≈116)一致，栏就不动、立绘恒在左下、滚动不上移 */
+      top: 116px;
+      align-self: start;
+      /* 扣掉上方 header + 内外边距，保证整栏（含立绘底部）在视口内、初次加载不截断 */
+      height: calc(100vh - 130px);
+      /* 立绘压到左下角，上方留白直接透出海报底纸，不做成白盒子 */
+      border: none;
+      background: transparent;
+    }
+
+    /* 立绘保持自然比例（不拉伸），和名字一起压到左下角 */
+    .minister-side .chat-portrait-wrap {
+      flex: 0 0 auto;
+      width: 100%;
+    }
+
+    .minister-meta {
+      display: flex;
+      flex: 1 1 auto;
+      flex-direction: column;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .minister-meta .secondary-action {
+      align-self: flex-start;
+    }
+
+    /* margin-top:auto 把 名字+立绘 整组推到栏底 = 左下角 */
+    .minister-profile {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: auto;
+    }
+
+    .minister-profile h2 {
+      margin: 0;
+      color: #0e0a06;
+      font-size: 1.22rem;
+      letter-spacing: 0.04em;
+    }
+
+    .minister-profile p,
+    .profile-copy,
+    .side-note {
+      margin: 2px 0 0;
+      color: #1a1410;
+    }
+
+    .profile-office {
+      color: #725f42;
+      font-size: 0.92rem;
+    }
+
+    .favorite {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border: 1px solid rgba(0, 0, 0, 0.28);
+      border-radius: 8px;
+      background: rgba(255, 250, 235, 0.82);
+      color: #7c4d17;
+      font-size: 22px;
+    }
+
+    .profile-copy {
+      font-size: 0.95rem;
+    }
+
+    .side-note {
+      padding: 10px 12px;
+      border: 1px solid rgba(111, 83, 46, 0.18);
+      border-radius: 5px;
+      background: rgba(255, 250, 235, 0.58);
+      font-size: 0.9rem;
+    }
+
+    .secondary-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      gap: 6px;
+      border: 1px solid rgba(0, 0, 0, 0.28);
+      border-radius: 4px;
+      color: #1a1410;
+      background: rgba(252, 249, 240, 0.92);
+      font: inherit;
+      font-weight: 700;
+    }
+
+    .chat-portrait-wrap {
+      flex: 0 0 auto;
+      width: 100%;
+      aspect-ratio: 341 / 512;
+      max-height: 100%;
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 4px;
+    }
+
+    .chat-portrait-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center top;
+      border-radius: 10px;
+    }
+
+    .chat-main {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 18px;
+      /* 去掉容器边框：气泡各自有框，容器那条淡边框在无框旁白处会裸露成孤立竖线 */
+      border: none;
+      background: transparent;
+    }
+
+    .chat-log {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow: visible;
+      padding: 4px;
+    }
+
+    .chat-message {
+      display: grid;
+      gap: 4px;
+      width: fit-content;
+      max-width: min(780px, 78%);
+      padding: 10px 12px;
+      border: 1px solid rgba(74, 45, 20, 0.18);
+      border-radius: 5px;
+      background: rgba(255, 255, 255, 0.8);
+    }
+
+    .chat-message.user {
+      align-self: flex-end;
+      border-color: rgba(226, 130, 96, 0.42);
+      background:
+        linear-gradient(90deg, rgba(143, 47, 37, 0.1), transparent 34%),
+        rgba(255, 250, 235, 0.84);
+    }
+
+    .chat-message.minister {
+      align-self: flex-start;
+      border-color: rgba(122, 180, 150, 0.4);
+    }
+
+    .chat-message.aside {
+      align-self: flex-start;
+      position: relative;
+      margin-left: 62px;
+      max-width: min(680px, 72%);
+      border: 1px dashed rgba(111, 83, 46, 0.34);
+      background: rgba(255, 250, 235, 0.7);
+    }
+
+    .aside-avatar {
+      position: absolute;
+      left: -54px;
+      top: 2px;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      object-fit: cover;
+      object-position: center top;
+      border: 1px solid rgba(111, 83, 46, 0.4);
+      background: rgba(255, 250, 235, 0.9);
+    }
+
+    .chat-message.aside span {
+      color: #5c6b4a;
+    }
+
+    .chat-message.aside p {
+      font-style: italic;
+    }
+
+    /* 画外音/旁白：无气泡框、左对齐、叙事体，与「有人说话」的对话气泡明确区分 */
+    .chat-message.scene {
+      align-self: stretch;
+      max-width: 100%;
+      border: none;
+      background: transparent;
+      padding: 4px 6px;
+      margin: 10px 0;
+      text-align: left;
+    }
+
+    .chat-message.scene p,
+    .chat-message.scene em {
+      font-style: normal;
+      color: #7a6a4d;
+      line-height: 1.8;
+    }
+
+    /* 尾注：叙事体基础上，用一条细线与正文分隔，像落幕旁白 */
+    .chat-message.scene.coda {
+      margin-top: 20px;
+      padding-top: 18px;
+      border-top: 1px solid rgba(111, 83, 46, 0.22);
+    }
+
+    .chat-message span {
+      color: #704c1e;
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+
+    /* 动作 / 内心戏：斜体、淡棕、常规字重，比正文略小 —— 像舞台提示，不是说话 */
+    .chat-message .action {
+      display: block;
+      color: #94805d;
+      font-style: italic;
+      font-weight: 400;
+      font-size: 0.9rem;
+      line-height: 1.6;
+      margin-bottom: 6px;
+    }
+
+    .chat-message p {
+      margin: 0;
+      color: #1a1410;
+      white-space: pre-wrap;
+    }
+
+    .chat-message p + p {
+      margin-top: 0.55rem;
+    }
+
+    strong {
+      color: #7b241a;
+    }
+
+    .chat-composer {
+      display: grid;
+      gap: 8px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(111, 83, 46, 0.18);
+    }
+
+    .hitl-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .hitl-bar button {
+      min-height: 30px;
+      padding: 5px 8px;
+      border: 1px solid rgba(111, 83, 46, 0.22);
+      border-radius: 4px;
+      color: #573d1f;
+      background: rgba(255, 238, 198, 0.56);
+      font: inherit;
+      font-size: 0.9rem;
+    }
+
+    .hitl-bar button.hitl-prefix {
+      border-color: rgba(120, 50, 20, 0.45);
+      background: rgba(200, 140, 60, 0.15);
+      color: #5a2a05;
+      font-weight: 700;
+    }
+
+    .chat-input {
+      display: grid;
+      gap: 6px;
+      color: #725f42;
+    }
+
+    .chat-input textarea {
+      width: 100%;
+      min-height: 86px;
+      max-height: 190px;
+      resize: vertical;
+      padding: 9px;
+      border: 1px solid rgba(80, 52, 24, 0.28);
+      border-radius: 4px;
+      color: #26190f;
+      background: rgba(255, 241, 208, 0.92);
+      font: inherit;
+    }
+
+    .composer-actions {
+      display: grid;
+      grid-template-columns: minmax(120px, auto) minmax(120px, auto) minmax(120px, auto) minmax(0, 1fr);
+      align-items: center;
+      gap: 10px;
+    }
+
+    .primary-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 38px;
+      border: 1px solid rgba(0, 0, 0, 0.28);
+      border-radius: 4px;
+      color: #1a1410;
+      background: rgba(252, 249, 240, 0.92);
+      font: inherit;
+      font-weight: 700;
+    }
+
+    /* 窄屏(手机)：仍保持两栏、立绘常驻左侧，只缩小左栏，不堆叠 */
+    @media (max-width: 720px) {
+      body {
+        padding: 0;
+      }
+
+      .stage {
+        max-width: 100%;
+        border-radius: 0;
+      }
+
+      .chat-full-grid {
+        grid-template-columns: 132px minmax(0, 1fr);
+        gap: 10px;
+        padding: 10px;
+      }
+
+      .chat-message {
+        max-width: 96%;
+      }
+
+      .composer-actions {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <header class="modal-header">
+      <div class="modal-title">
+        <h1>召对：杨嗣昌</h1>
+        <span>户部郎中 · 越次召对</span>
+      </div>
+      <div class="close-button" aria-hidden="true">×</div>
+    </header>
+
+    <div class="chat-full-grid">
+      <aside class="modal-pane minister-side">
+        <div class="minister-profile">
+          <div>
+            <h2>杨嗣昌</h2>
+            <p><span class="profile-office">户部郎中</span></p>
+          </div>
+          <div class="favorite" aria-hidden="true">☆</div>
+        </div>
+        <div class="chat-portrait-wrap">
+          <img src="../web/public/portraits/minister_杨嗣昌.png" alt="杨嗣昌立绘" />
+        </div>
+      </aside>
+
+      <section class="modal-pane chat-main">
+        <div class="chat-log">
+          <div class="chat-message scene">
+            <p>崇祯登极方一月，太仓只剩三百二十万两，新君威信未立。他越过满朝公卿，点名召见了一个五品户部郎中。司礼监随堂、信邸旧人王承恩侍立御座一侧。</p>
+          </div>
+
+          <div class="chat-message user">
+            <span>朕</span>
+            <p>宣杨嗣昌。</p>
+          </div>
+
+          <div class="chat-message minister">
+            <span class="action">应召入殿，叩首。皇帝越次亲召一个五品郎中，他眼中又惊又奋</span>
+            <p>臣户部郎中杨嗣昌，叩见皇爷。皇爷越次召臣这小小郎中，臣惶恐，唯有知无不言。</p>
+            <p>臣斗胆先奏一句：皇爷新定关宁月饷八十万、内外库各半，这魄力，臣佩服。只是——太仓眼下实存不足三百万，月入不过一百五六十万，养九边、百官、宗禄已是寅吃卯粮。这八十万若<strong>月月照发，不出半年，太仓与内库俱要见底</strong>。</p>
+            <p>臣不敢说旨意不行，只敢说：光靠「挪」，挪不长久，终须<strong>开源</strong>。盐课为豪商把持、江南清丈历年未行——此二处但凡动得一处，岁可增银数百万。臣……不知当讲不当讲。</p>
+          </div>
+
+          <div class="chat-message aside">
+            <img class="aside-avatar" src="../web/public/portraits/minister_王承恩.png" alt="王承恩" />
+            <span>王承恩</span>
+            <span class="action">欠身，凑近御座低声</span>
+            <p>皇爷，这郎中不过五品，却敢当面奏一句「半年见底」，还一指就点中盐课、江南清丈——这两处，是本朝积年动不得的死结，谁动谁得罪天下豪商士绅，可不动，便是坐等库竭。满朝公卿避之唯恐不及，他敢说。这人，奴婢替皇爷记下了。</p>
+          </div>
+
+          <div class="chat-message user">
+            <span>朕</span>
+            <p>盐课、清丈，怎么动？</p>
+          </div>
+
+          <div class="chat-message minister">
+            <span class="action">精神一振，这是他憋了许久的话</span>
+            <p>回皇爷。这两刀，<strong>盐课易动、清丈难啃</strong>，须分先后。</p>
+            <p><strong>盐课</strong>——病在两淮。纲商世袭窝本、把持盐引，每年积引壅塞、浮费层层盘剥，朝廷十成盐利到不了三成。皇爷若动，先从清积引、缉私盐、核纲商浮费入手，不必骤改盐法，半年内两淮岁课可增二三百万。只是……盐商背后多有勋贵、内臣照应——（他眼神一闪，不敢明指）——须皇爷择一强项御史巡盐，撑得住那些说情的条子。</p>
+            <p><strong>清丈</strong>——这是动士绅的命根。投献、诡寄、隐田遍天下；张居正清丈一回，人一亡便政息。臣劝皇爷切莫一刀切全国，树敌太多、反噬更烈。不如先择一省试点——畿辅天子脚下好弹压，或江南隐田最多——以<strong>考成法</strong>督责地方官，按实亩征赋，见了成效再图推广。然此事非三五年不见功，须皇爷<strong>始终撑腰</strong>，臣方敢说有望。</p>
+            <p>臣人微言轻，不敢妄请专任；唯愿为皇爷查档、拟一条陈，备裁择。</p>
+          </div>
+
+          <div class="chat-message aside">
+            <img class="aside-avatar" src="../web/public/portraits/minister_王承恩.png" alt="王承恩" />
+            <span>王承恩</span>
+            <span class="action">低声</span>
+            <p>皇爷留心——他没怂恿您一刀切全国，反劝您先试点、以考成法徐徐督责。这是懂轻重的话。张江陵清丈，正是人一亡便政息；他劝皇爷「始终撑腰」，是把难处先说在了前头。</p>
+          </div>
+
+          <div class="chat-message user">
+            <span>朕</span>
+            <p>那你觉得，谁才是撑得住那些说情条子的人？</p>
+          </div>
+
+          <div class="chat-message minister">
+            <span class="action">压低了声音，这话他斟酌着说</span>
+            <p>皇爷问到了点子上。巡盐这差，<strong>才不才在其次，硬不硬是头一条</strong>。寻常御史一到扬州，盐商的程仪、勋贵的条子、内臣的招呼一齐压来，十个有九个先软了腰。要撑得住，得用与盐商勋贵无半点瓜葛的寒门硬骨头，还得皇爷<strong>亲点钦差、绕开都察院</strong>——崔呈秀把着左都御史那关，走常规派谁都过不去。</p>
+            <p>臣斗胆举三人：一是<strong>袁可立</strong>，前登莱巡抚，刚正廉能、办过实务，惜罢居睢州，须皇爷起复；二是翰林<strong>倪元璐、黄道周</strong>之辈，清望素著、敢撄权贵之锋，破格授个巡盐御史、赐钦差关防，正好借皇爷天威压住扬州。</p>
+            <p>只是……（他顿了顿）这几位皆东林清流。起复重用他们去砍盐课，阉党那边……必有话说。皇爷须先掂量：是借这把刀整盐课，还是暂且不惊动那位九千岁。</p>
+          </div>
+
+          <div class="chat-message aside">
+            <img class="aside-avatar" src="../web/public/portraits/minister_王承恩.png" alt="王承恩" />
+            <span>王承恩</span>
+            <span class="action">凑近半步，声音压得更低</span>
+            <p>皇爷，杨郎中那句没敢说尽，奴婢替他说完——袁可立罢居睢州，要起复才动得了，跟袁崇焕、徐光启一样，得些时日；倪、黄二位倒是现成，一道钦差关防即可。可这三位，都是东林。皇爷起复他们去砍盐课，断的正是盐商背后那些勋贵、内臣的财源。这一刀亮出来，便是当着九千岁的面亮的。是先手布局，还是惊动得太早……奴婢多嘴了。</p>
+          </div>
+
+          <div class="chat-message user">
+            <span>朕</span>
+            <p>让倪元璐、黄道周两人，分别督办两件事。你觉得何如？</p>
+          </div>
+
+          <div class="chat-message minister">
+            <span class="action">沉吟了一下，这回他斟酌得更久</span>
+            <p>皇爷这一手……大胆。两人分督，火力是足了。只是臣方才说「分先后」，正为这个——<strong>两线齐发，就是同时开罪盐商勋贵与天下士绅</strong>：一边砍钱袋、一边掘祖坟，反扑要加倍。皇爷皇威方立，怕压不匀。</p>
+            <p>再者，倪、黄二公清望盖世、骨头够硬，撄权贵之锋绝无问题；可盐课要盘积引、缉私枭，清丈要丈田亩、查诡寄，俱是琐碎实务——此二公是<strong>诤臣文胆，未必是案牍干吏</strong>。臣斗胆补一句：清流挂帅压阵，须配懂行的属员盘账丈田，否则恐「敢任而不能竟」。</p>
+            <p>若论分派：盐课盘账繁细，倪公心思缜密，或更相宜；清丈要硬压士绅，黄公骨鲠震慑，或更压得住。若皇爷执意并举，臣愿在户部替二公接应钱粮、调拨干吏，账目臣替皇爷盯着。只是——皇爷须有把两边都得罪、还撑得住的决心。</p>
+          </div>
+
+          <div class="chat-message aside">
+            <img class="aside-avatar" src="../web/public/portraits/minister_王承恩.png" alt="王承恩" />
+            <span>王承恩</span>
+            <span class="action">垂手，轻声</span>
+            <p>皇爷……这一个月，您已起复袁崇焕、月补八十万边饷，又召徐光启入直历局；如今再开盐课、清丈两线。奴婢斗胆——届时这些反扑，怕要一齐找上门来。</p>
+          </div>
+
+          <div class="chat-message user">
+            <span>朕</span>
+            <span class="action">顿了顿</span>
+            <p>那就让两人先试点清丈，畿辅天子脚下好弹压，后面找机会再两路并进。</p>
+          </div>
+
+          <div class="chat-message minister">
+            <p>臣遵旨，臣即在户部查档拟条陈，先以畿辅清丈为试点，接应倪、黄二公所需钱粮干吏，备皇爷裁夺。</p>
+          </div>
+
+          <div class="chat-message scene coda">
+            <p><em>这一年杨嗣昌三十几岁，一个无人在意的五品郎中。十余年后，他官至兵部尚书、督师天下，以「四正六隅、十面张网」总揽剿寇全局——崇祯最倚重、也最争议的那柄刀。而第一次照见他锋芒的，是登极方一月的少年天子，在乾清宫，越次的一召。</em></p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
