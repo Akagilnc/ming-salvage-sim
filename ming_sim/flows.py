@@ -354,14 +354,12 @@ def _compute_substrate_hub_outbound(
     # Central transport-loss accounts are not persisted yet; keep the hook explicit
     # and lossless until the hub C_ accounts land, while still sharing the k tier.
     central_transport_loss = 0.0
-    central_paid_by_army = {
-        army_id: max(0.0, due) * k
-        for army_id, due in central_due_by_army.items()
-    }
-    jingyun_paid_by_region = {
-        region_id: max(0.0, due) * k
-        for region_id, due in jingyun_due_by_region.items()
-    }
+    jingyun_paid_by_region, central_paid_by_army = _allocate_substrate_hub_paid_ints(
+        jingyun_due_by_region,
+        central_due_by_army,
+        k,
+        treasury_available,
+    )
     return _HubOutboundResult(
         k=k,
         jingyun_due_total=jingyun_due_total,
@@ -374,27 +372,41 @@ def _compute_substrate_hub_outbound(
     )
 
 
-def _write_substrate_hub_jingyun_paid_gross(
-    db: GameDB, paid_by_region: Dict[str, float]
-) -> None:
-    """Persist this tick's scaled 京运 gross before province settle ticks consume it."""
-    for region_id, paid in paid_by_region.items():
-        row = db.conn.execute(
-            "SELECT fiscal FROM regions WHERE id = ?", (region_id,)
-        ).fetchone()
-        if row is None:
-            continue
-        fiscal = json.loads(str(row["fiscal"] or "{}"))
-        if not isinstance(fiscal, dict):
-            raise ValueError(f"region {region_id!r} fiscal 非字典")
-        settle = fiscal.get("settle")
-        if not isinstance(settle, dict) or not isinstance(settle.get("p"), dict):
-            continue
-        settle["p"]["拨付gross"] = paid
-        db.conn.execute(
-            "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (json.dumps(fiscal, ensure_ascii=False), region_id),
-        )
+def _allocate_substrate_hub_paid_ints(
+    jingyun_due_by_region: Dict[str, float],
+    central_due_by_army: Dict[str, float],
+    k: float,
+    treasury_available: float,
+) -> Tuple[Dict[str, float], Dict[str, float]]:
+    """Return one integer allocation source for ledger, province ticks, and central pay."""
+    items: List[Tuple[str, str, float]] = []
+    for region_id, due in jingyun_due_by_region.items():
+        items.append(("jingyun", region_id, max(0.0, due) * k))
+    for army_id, due in central_due_by_army.items():
+        items.append(("central", army_id, max(0.0, due) * k))
+    target = min(
+        max(0, int(math.floor(max(0.0, treasury_available)))),
+        max(0, int(round(sum(scaled for _, _, scaled in items)))),
+    )
+    floors = [int(math.floor(scaled)) for _, _, scaled in items]
+    remainder = max(0, target - sum(floors))
+    allocations = floors[:]
+    ranked = sorted(
+        range(len(items)),
+        key=lambda idx: (items[idx][2] - floors[idx], -idx),
+        reverse=True,
+    )
+    for idx in ranked[:remainder]:
+        allocations[idx] += 1
+
+    jingyun_paid = {region_id: 0.0 for region_id in jingyun_due_by_region}
+    central_paid = {army_id: 0.0 for army_id in central_due_by_army}
+    for (kind, key, _scaled), paid in zip(items, allocations):
+        if kind == "jingyun":
+            jingyun_paid[key] = float(paid)
+        else:
+            central_paid[key] = float(paid)
+    return jingyun_paid, central_paid
 
 
 def _debit_substrate_hub_outbound(
@@ -403,7 +415,7 @@ def _debit_substrate_hub_outbound(
     """Book the shared hub tier once from 国库 after k allocation."""
     payout = hub_outbound.jingyun_paid_total + hub_outbound.central_paid_total \
         + hub_outbound.central_transport_loss
-    debit = int(round(payout))
+    debit = int(payout)
     if debit <= 0:
         return 0
     return abs(db.record_issue_economy_move(
@@ -766,9 +778,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             max(0.0, float(state.metrics.get("国库", 0) or 0)),
             central_due_by_army,
         )
-        _write_substrate_hub_jingyun_paid_gross(
-            db, hub_outbound.jingyun_paid_by_region
-        )
         hub_debit = _debit_substrate_hub_outbound(db, state, hub_outbound)
         if hub_debit > 0:
             flows.append({
@@ -963,7 +972,13 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
     # ── #66 省级财政基座（settle_tick）shadow 推进 ──
     try:
-        _advance_province_fiscal_substrate(db, state)
+        _advance_province_fiscal_substrate(
+            db,
+            state,
+            hub_outbound.jingyun_paid_by_region
+            if db.is_substrate_hub_fiscal_engine_enabled()
+            else None,
+        )
         if pay_source_cutover:
             db._reconcile_central_army_pay_arrears_container()
             db.assert_army_pay_source_container_conservation()
@@ -978,7 +993,11 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     return flows
 
 
-def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
+def _advance_province_fiscal_substrate(
+    db: GameDB,
+    state: GameState,
+    jingyun_paid_gross_by_region: Optional[Dict[str, float]] = None,
+) -> None:
     """#66/#266：月末固定财政相位推进省级 settle_tick 基座（动态 shadow spine）。
 
     **shadow 模式**：推进基座末态（军饷欠/民欠/火耗的死亡螺旋逐月累积）并落库，但**不驱动
@@ -995,7 +1014,18 @@ def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
     """
     owns_transaction = db.owns_transaction()
     advanced = False
-    for outcome in db.settle_ming_province_substrate_ticks():
+    p_overrides_by_region = {
+        region_id: {"拨付gross": paid}
+        for region_id, paid in (jingyun_paid_gross_by_region or {}).items()
+    }
+    outcomes = (
+        db.settle_ming_province_substrate_ticks(
+            p_overrides_by_region=p_overrides_by_region
+        )
+        if p_overrides_by_region
+        else db.settle_ming_province_substrate_ticks()
+    )
+    for outcome in outcomes:
         if outcome.error is not None:
             # settle_tick 的契约失败（坏态/守恒破）+ 基座缺失 → shadow 隔离，不炸 pre_settle
             exc = outcome.error

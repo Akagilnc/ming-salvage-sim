@@ -1636,7 +1636,9 @@ class GameDB:
         return self._settle_province_tick_from_fiscal(region_id, fiscal, actions or [])
 
     def settle_ming_province_substrate_ticks(
-        self, actions_by_region: Optional[Dict[str, List[Dict[str, Any]]]] = None
+        self,
+        actions_by_region: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        p_overrides_by_region: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> List[ProvinceFiscalTickOutcome]:
         """一次扫描 Ming 省 fiscal payload 并推进已有 settle 基座。
 
@@ -1648,6 +1650,7 @@ class GameDB:
         from .fiscal_tick import FiscalConservationError
 
         actions_by_region = actions_by_region or {}
+        p_overrides_by_region = p_overrides_by_region or {}
         outcomes: List[ProvinceFiscalTickOutcome] = []
         rows = self.conn.execute(
             "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
@@ -1659,7 +1662,10 @@ class GameDB:
                 if isinstance(fiscal, dict) and "settle" not in fiscal:
                     continue
                 result = self._settle_province_tick_from_fiscal(
-                    region_id, fiscal, actions_by_region.get(region_id, [])
+                    region_id,
+                    fiscal,
+                    actions_by_region.get(region_id, []),
+                    p_overrides_by_region.get(region_id),
                 )
             except (ValueError, FiscalConservationError) as exc:
                 outcomes.append(ProvinceFiscalTickOutcome(region_id, None, exc))
@@ -1668,7 +1674,11 @@ class GameDB:
         return outcomes
 
     def _settle_province_tick_from_fiscal(
-        self, region_id: str, fiscal: object, actions: List[Dict[str, Any]]
+        self,
+        region_id: str,
+        fiscal: object,
+        actions: List[Dict[str, Any]],
+        p_overrides: Optional[Dict[str, Any]] = None,
     ):
         from .fiscal_tick import settle_tick
 
@@ -1681,7 +1691,11 @@ class GameDB:
         pay_rows: List[Dict[str, float | str]] = []
         if self.is_army_pay_source_cutover_enabled():
             pay_rows = self._derive_region_army_pay_due(region_id, settle)
-        result = settle_tick(settle["st"], settle["p"], actions)  # raise→下方不执行（港口锁）
+        tick_p = settle["p"]
+        if p_overrides:
+            tick_p = dict(tick_p)
+            tick_p.update(p_overrides)
+        result = settle_tick(settle["st"], tick_p, actions)  # raise→下方不执行（港口锁）
         if pay_rows:
             self._apply_region_army_pay_tick(pay_rows, result)
         settle["st"] = result.new_st
