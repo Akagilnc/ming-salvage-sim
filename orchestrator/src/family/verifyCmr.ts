@@ -77,6 +77,7 @@ import {
   contractDriftStopSummary,
   infraFailureStopSummary,
   successStopSummary,
+  stopReasonForFindingDisposition,
   type StopSummary,
 } from "../stopSummary.js";
 import type {
@@ -329,6 +330,33 @@ function familyCmrBlockingStopSummary(
     summary: fallbackReason,
     repairHint: "fix the blocking family CMR finding and rerun",
   };
+}
+
+function familyCmrPassStopSummary(input: {
+  readonly classification?: FamilyCmrClassification;
+  readonly familyHeadAfter?: string;
+  readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+}): StopSummary | undefined {
+  const crossModule = input.classification?.results.find(
+    (result) => result.classification === "cross_module_defer",
+  );
+  const finding = input.classification?.deferred[0];
+  if (
+    crossModule !== undefined &&
+    finding !== undefined &&
+    crossModule.targetModule !== undefined
+  ) {
+    return stopReasonForFindingDisposition({
+      kind: "cross_module",
+      finding,
+      targetModule: crossModule.targetModule,
+      reason: crossModule.reason,
+    });
+  }
+  return providerDegradedPassStopSummary({
+    familyHeadAfter: input.familyHeadAfter,
+    skippedLegs: input.skippedLegs,
+  });
 }
 
 function familyVerifyFailureStopSummary(reason: string): StopSummary {
@@ -735,7 +763,8 @@ async function runIntegratedCmrPass(input: {
     familyHeadAfter: postWorkerFamilyHead,
     routeFingerprint,
     cmrFindingClassification,
-    stopSummary: providerDegradedPassStopSummary({
+    stopSummary: familyCmrPassStopSummary({
+      classification: cmrFindingClassification,
       familyHeadAfter: postWorkerFamilyHead,
       skippedLegs: cmrResult.output.skippedLegs,
     }),
@@ -824,8 +853,8 @@ export async function runVerifyCmr(
   } catch (err) {
     const reason =
       err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
-    const stopSummary = contractDriftStopSummary({
-      summary: reason,
+    const stopSummary = infraFailureStopSummary({
+      summary: `startup route failure: ${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`,
       repairHint: "repair the CMR route environment and rerun the family barrier",
     });
     await familyBackend.recordAborted?.({
@@ -1031,6 +1060,28 @@ export async function runVerifyCmr(
       phase,
       reason,
       familyHeadAfter: cmrPassedFamilyHeadAfter,
+      stopSummary: infraFailureStopSummary({
+        summary: reason,
+        repairHint:
+          "resolve the current family HEAD, verify the family PR still points at it, and rerun the final family barrier",
+        ship: {
+          ...(cmrPassedFamilyHeadAfter !== undefined
+            ? {
+                latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
+                reportedFamilyHead: cmrPassedFamilyHeadAfter,
+              }
+            : {}),
+          shipPrState: "current-family-head-unresolved",
+        },
+        heads: {
+          ...(cmrPassedFamilyHeadAfter !== undefined
+            ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+            : {}),
+          sources: {
+            verifiedCmrHead: "latest cmr_passed ledger row",
+          },
+        },
+      }),
     });
     return INCOMPLETE_GATE;
   }
@@ -1048,6 +1099,25 @@ export async function runVerifyCmr(
       phase,
       reason,
       familyHeadAfter: exactPostShipFamilyHead,
+      stopSummary: infraFailureStopSummary({
+        summary: reason,
+        repairHint:
+          "repair the family ship worker PR head binding and rerun the final family barrier",
+        ship: {
+          latestVerifiedCmrHead: exactPostShipFamilyHead,
+          currentFamilyHead: exactPostShipFamilyHead,
+          reportedFamilyHead: ship.prHead,
+          shipPrState: "pr-head-mismatch",
+        },
+        heads: {
+          actualFamilyHead: exactPostShipFamilyHead,
+          verifiedCmrHead: exactPostShipFamilyHead,
+          sources: {
+            actualFamilyHead: "family head after ship worker",
+            verifiedCmrHead: "latest cmr_passed ledger row",
+          },
+        },
+      }),
     });
     return INCOMPLETE_GATE;
   }

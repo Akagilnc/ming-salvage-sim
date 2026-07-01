@@ -231,17 +231,18 @@ describe("#422 model route presets", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     vi.resetModules();
 
-    const { STEP_SPECS } = await import("../src/runner.js");
+    const { stepSpecsForEnv } = await import("../src/runner.js");
     const { shipWorkerSpec } = await import("../src/dispatchWorker.js");
     const { cmrWorkerSpec, familyShipWorkerSpec } = await import(
       "../src/family/dispatchFamilyWorker.js"
     );
     const { mergerModel } = await import("../src/family/realFamilyBackend.js");
 
-    expect(STEP_SPECS.S2.model).toBe("gpt-5.5");
-    expect(STEP_SPECS.S3.model).toBe("gpt-5.5");
-    expect(STEP_SPECS.S5.model).toBe("gpt-5.5");
-    expect(STEP_SPECS.S6.model).toBe("gpt-5.5");
+    const stepSpecs = stepSpecsForEnv();
+    expect(stepSpecs.S2.model).toBe("gpt-5.5");
+    expect(stepSpecs.S3.model).toBe("gpt-5.5");
+    expect(stepSpecs.S5.model).toBe("gpt-5.5");
+    expect(stepSpecs.S6.model).toBe("gpt-5.5");
     expect(shipWorkerSpec().model).toBe("gpt-5.5");
     expect(cmrWorkerSpec("fresh", "completeness").model).toBe("gpt-5.5");
     expect(cmrWorkerSpec("fresh", "correctness").model).toBe("gpt-5.5");

@@ -670,6 +670,11 @@ describe("#449 verifyCmr family gate classification", () => {
     expect(backend.ledger[0]).toMatchObject({
       status: "cmr_passed",
       cmrPass: "completeness",
+      stopSummary: {
+        reason: "cross_module_defer",
+        targetModule: "military-state-machine",
+        summary: "outside the declared fiscal family module",
+      },
       cmrFindingClassification: {
         deferred: [expect.objectContaining({ claim_quote: crossModuleFinding.claim_quote })],
         results: [{ classification: "cross_module_defer", targetModule: "military-state-machine" }],

@@ -98,7 +98,7 @@ export function familyShipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
     completionSignal: "SHIP_STEP_COMPLETE",
     // A WRITE/coder ship worker must self-rerun gstack-ship's rerun-able failures
     // (family_ship.md: "rerun it yourself") → an iterative budget like coder/fix
-    // (runner STEP_SPECS use 5), NOT the cmr reviewer's single-pass 1 (#336 cmr r6).
+    // (runner worker specs use 5), NOT the cmr reviewer's single-pass 1 (#336 cmr r6).
     maxIter: 5,
     model: route?.slots.ship ?? modelForSlot("ship"),
     // The family ship worker runs under the dedicated "ship" soul (delivery
