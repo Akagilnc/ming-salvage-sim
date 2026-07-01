@@ -775,7 +775,10 @@ def build_extractor_tools(context: CourtContext):
         army_delta          军队数值变化 {army_id: {字段:增量}}
                             合法字段：supply/morale/training/equipment/arrears/mobility/loyalty/
                             manpower/station/commander/controller/troop_type/status
-                            禁止写cohesion（势力字段）
+                            禁止写cohesion（势力字段）。army_delta.arrears/欠饷只允许既有军
+                            正值外生加欠，引擎按饷源比例拆入省/中央累加器；负值拒收。
+                            补饷、减欠、核销必须走 economy_moves（purpose=补饷）或显式核销路径。
+                            新军初始欠饷固定 0，不在 new_armies 写欠饷。
         new_armies          新建军队列表，每项含 id/name/owner_power/manpower/station/
                             commander/troop_type/status 等完整军队字段。
                             owner_power="ming" 且不是土司/自养军时，必须写饷源三字段：

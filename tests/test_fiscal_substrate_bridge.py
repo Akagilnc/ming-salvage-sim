@@ -1571,6 +1571,19 @@ def test_army_delta_arrears_reconciles_pay_source_container_immediately(fresh_db
     )
 
 
+def test_pay_source_conservation_rejects_per_army_derived_arrears_drift(fresh_db):
+    """旧 arrears 标量只是双累加器合计，不能被 offset poison 抵消总和。"""
+    fresh_db.conn.execute(
+        "UPDATE armies SET arrears = arrears + 10 WHERE id = 'shaanxi_army'"
+    )
+    fresh_db.conn.execute(
+        "UPDATE armies SET arrears = arrears - 10 WHERE id = 'guanning'"
+    )
+
+    with pytest.raises(ValueError, match="军饷欠派生合计"):
+        fresh_db.assert_army_pay_source_container_conservation()
+
+
 def test_army_delta_manpower_reconciles_pay_source_due_immediately(fresh_db):
     state = fresh_db.load_state()
     event = SimpleNamespace(id="test", title="募兵")
