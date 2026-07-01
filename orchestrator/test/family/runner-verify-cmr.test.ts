@@ -17,7 +17,9 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { classifyFamilyCmrFindings } from "../../src/family/cmrClassification.js";
 import { runFamily } from "../../src/family/runner.js";
+import type { Finding } from "../../src/types.js";
 import type {
   Backend,
   IssueMeta,
@@ -155,6 +157,61 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
           source: "run_option",
         },
       ],
+    });
+  });
+
+  it("passes the known #287 hub-loss accepted suppression through production CMR context", async () => {
+    const classified: ReturnType<typeof classifyFamilyCmrFindings>[] = [];
+    const hubLossFinding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote:
+        "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
+      location: "docs/adr/0023.md:D9",
+      suggested_fix: "do not block #287 on the accepted #261/ADR0021 hub implementation",
+      action: "defer",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "hub",
+        reason: "the hub implementation is outside #287",
+      },
+    };
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      if (input.phase === "final") {
+        classified.push(
+          classifyFamilyCmrFindings({
+            familyIssue: 287,
+            findings: [hubLossFinding],
+            moduleContext: input.moduleContext,
+          }),
+        );
+      }
+      return { ok: true, ran: false };
+    };
+
+    await runFamily({
+      epic: {
+        issue: 287,
+        moduleDeclaration: {
+          module: "fiscal",
+          moduleScope: ["docs/adr/0023.md"],
+          source: "family_issue",
+          issue: 287,
+        },
+        children: [{ issue: 10, blockedBy: [] }],
+      },
+      familyBackend: new FakeFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/287-base",
+      verifyCmr,
+    });
+
+    expect(classified).toHaveLength(1);
+    expect(classified[0]?.blocking).toEqual([]);
+    expect(classified[0]?.results[0]).toMatchObject({
+      classification: "accepted_suppressed",
+      source: "#303",
+      targetModule: "#261/ADR0021 hub implementation",
     });
   });
 
