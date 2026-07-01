@@ -33,6 +33,7 @@ import type {
   VerifyCmrPhase,
   VerifyCmrResult,
 } from "./verifyCmr.js";
+import type { StopSummary } from "../stopSummary.js";
 
 /** The two runner-visible integrated CMR gates (#419). */
 export type IntegratedCmrPass = "completeness" | "correctness";
@@ -219,6 +220,8 @@ export interface FamilyLedgerEntry {
   readonly answer?: string;
   /** Optional human note attached to an escalation answer (#439). */
   readonly note?: string;
+  /** Unified run-level/family-level stop reason summary (#450). */
+  readonly stopSummary?: StopSummary;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────
@@ -802,6 +805,8 @@ export interface FamilyRunResult {
   readonly familyHead?: string;
   /** Structured startup/escalation reason when status is `"escalated"`. */
   readonly escalation?: Escalation;
+  /** Unified family-level stop reason summary (#450). */
+  readonly stopSummary: StopSummary;
   /** Per-child outcomes, in execution order. */
   readonly children: ReadonlyArray<FamilyChildResult>;
 }

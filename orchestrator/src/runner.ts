@@ -65,6 +65,14 @@ import {
   isValidEscalation,
   isValidStepOutput,
 } from "./validate.js";
+import {
+  contractDriftStopSummary,
+  infraFailureStopSummary,
+  stopSummaryFromFindingDispositionEvidence,
+  successStopSummary,
+  type AcceptedSuppressionSummary,
+  type StopSummary,
+} from "./stopSummary.js";
 import type {
   Backend,
   ContinueFixingEvent,
@@ -191,6 +199,8 @@ function buildPersistentEntry(opts: {
   escalationKind?: EscalationKind;
   /** ADR0030 S4 classification state, persisted for resume replay. */
   findingDispositions?: ReadonlyArray<FindingDisposition>;
+  /** Terminal stop reason summary (#450). */
+  stopSummary?: StopSummary;
 }): PersistentLedgerEntry {
   let entry: PersistentLedgerEntry = {
     step: opts.step,
@@ -213,6 +223,9 @@ function buildPersistentEntry(opts: {
   }
   if (opts.findingDispositions !== undefined) {
     entry = { ...entry, findingDispositions: opts.findingDispositions };
+  }
+  if (opts.stopSummary !== undefined) {
+    entry = { ...entry, stopSummary: opts.stopSummary };
   }
   return entry;
 }
@@ -1190,6 +1203,81 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function acceptedSuppressionsFromDispositions(
+  dispositions: ReadonlyArray<FindingDisposition>,
+): AcceptedSuppressionSummary[] {
+  return dispositions
+    .filter(
+      (disposition) =>
+        disposition.status === "accepted_suppressed" ||
+        disposition.status === "wont_fix" ||
+        disposition.status === "rejected",
+    )
+    .map((disposition) => ({
+      source: disposition.source ?? "reviewer disposition",
+      scope: disposition.scope ?? disposition.targetModule ?? "slice",
+      reason: disposition.reason,
+      findingIdentity: disposition.identityKey,
+      boundedReopen:
+        disposition.boundedReopen ??
+        "reopen when the accepted finding materially reappears",
+    }));
+}
+
+function successSummaryForCurrentState(input: {
+  readonly deferredFindings: ReadonlyArray<Finding>;
+  readonly findingDispositions: ReadonlyArray<FindingDisposition>;
+}): StopSummary {
+  const crossModuleFinding = input.deferredFindings.find(
+    (finding) => finding.disposition?.kind === "cross_module",
+  );
+  if (crossModuleFinding?.disposition !== undefined) {
+    return stopSummaryFromFindingDispositionEvidence({
+      finding: crossModuleFinding,
+      evidence: crossModuleFinding.disposition,
+    });
+  }
+  const acceptedSuppressions = acceptedSuppressionsFromDispositions(
+    input.findingDispositions,
+  );
+  return successStopSummary(
+    acceptedSuppressions.length > 0 ? { acceptedSuppressions } : undefined,
+  );
+}
+
+function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
+  const repairHint = `inspect ${errorPackage.failedStep} and rerun after repairing the cause`;
+  if (/contract|malformed|does not match|no valid result|off-contract/i.test(errorPackage.reason)) {
+    return contractDriftStopSummary({
+      summary: errorPackage.reason,
+      repairHint,
+    });
+  }
+  return infraFailureStopSummary({
+    summary: errorPackage.reason,
+    repairHint,
+  });
+}
+
+function stopSummaryForEscalation(escalation: Escalation): StopSummary {
+  const reason = `${escalation.reason}: ${escalation.diagnosis}`;
+  return {
+    reason: "spec_conflict",
+    summary: reason,
+    repairHint: "answer the decision escalation and rerun",
+  };
+}
+
+function latestLedgerStopSummary(
+  ledger: ReadonlyArray<LedgerEntry>,
+): StopSummary | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const stopSummary = ledger[i]!.stopSummary;
+    if (stopSummary !== undefined) return stopSummary;
+  }
+  return undefined;
+}
+
 function isReviewerStructuredOutputError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return (
@@ -1209,13 +1297,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     warn: (message) => console.warn(`[orchestrator] ${message}`),
   });
   if (routePolicy.kind === "stop") {
+    const stopSummary = stopSummaryForEscalation(routePolicy.escalation);
     return {
       status: "escalate",
       errorPackage: {
         failedStep: "S0",
         reason: `${routePolicy.escalation.reason}: ${routePolicy.escalation.diagnosis}`,
       },
-      stepLedger: [{ step: "S8" }],
+      stepLedger: [{ step: "S8", stopSummary }],
+      stopSummary,
       deferredFindings: [],
     };
   }
@@ -1370,6 +1460,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     stepSessionId?: string,
     findingDispositions?: ReadonlyArray<FindingDisposition>,
     escalationKind?: EscalationKind,
+    stopSummary?: StopSummary,
   ): Promise<void> {
     const ph = await hashPrompt(promptFile, s, backend);
     const branchHEAD = await resolveBranchHEAD();
@@ -1383,6 +1474,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       handoffStatus,
       escalationKind,
       findingDispositions,
+      stopSummary,
     });
 
     if (stateDir === undefined) {
@@ -1430,6 +1522,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     stepSessionId?: string,
     findingDispositions?: ReadonlyArray<FindingDisposition>,
     escalationKind?: EscalationKind,
+    stopSummary?: StopSummary,
   ): Promise<void> {
     try {
       await emitLedger(
@@ -1440,6 +1533,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         stepSessionId,
         findingDispositions,
         escalationKind,
+        stopSummary,
       );
     } catch {
       // Swallow: error termination must not be derailed by a ledger I/O fault.
@@ -1498,6 +1592,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       reason,
       branchHead: worktree?.branch,
     };
+    const stopSummary = stopSummaryForErrorPackage(errorPackage);
 
     // Record the failing step. The in-memory push is skipped when the caller
     // already pushed it (recordInMemory:false) or it is S8 itself; the
@@ -1531,8 +1626,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // step — reporting a spurious success). The in-memory entry stays untagged,
     // matching the normal handoff path (only the disk ledger is the resume truth;
     // the in-memory ledger is the live result).
-    ledger.push({ step: "S8" });
-    await persistBestEffort("S8", undefined, undefined, "error");
+    ledger.push({ step: "S8", stopSummary });
+    await persistBestEffort(
+      "S8",
+      undefined,
+      undefined,
+      "error",
+      undefined,
+      undefined,
+      undefined,
+      stopSummary,
+    );
 
     // An error abort returns whatever deferred findings were already collected
     // (typically none before S4). ADR 0030 keeps per-slice review/fix work in
@@ -1542,6 +1646,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       status: "error",
       errorPackage,
       stepLedger: ledger,
+      stopSummary,
       deferredFindings,
     };
   }
@@ -1570,6 +1675,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     sessionId?: string,
     escalationKind: EscalationKind = "decision",
   ): Promise<RunResult> {
+    const stopSummary = stopSummaryForEscalation(escalation);
     if (failedStep !== "S8") {
       ledger.push({ step: failedStep });
       // Persist the failing step carrying its REAL worker session id (5th arg —
@@ -1587,7 +1693,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         failedStep === "S7" ? shipWorkerSpec().promptFile : undefined;
       await persistBestEffort(failedStep, undefined, failedPromptFile, undefined, sessionId);
     }
-    ledger.push({ step: "S8" });
+    ledger.push({ step: "S8", stopSummary });
     await persistBestEffort(
       "S8",
       undefined,
@@ -1596,6 +1702,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       undefined,
       undefined,
       escalationKind,
+      stopSummary,
     );
     return {
       status: "escalate",
@@ -1607,6 +1714,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         branchHead: worktree?.branch,
       },
       stepLedger: ledger,
+      stopSummary,
       deferredFindings,
     };
   }
@@ -1695,17 +1803,31 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason,
           branchHead: worktree.branch,
         };
+        const stopSummary = stopSummaryForErrorPackage(errorPackage);
         return {
           status: "error",
           errorPackage,
           stepLedger: ledger,
+          stopSummary,
           deferredFindings,
         };
       }
+      const stopSummary: StopSummary =
+        plan.terminalStatus === "success"
+          ? {
+              reason: "already_done",
+              summary: "prior run already reached a success handoff",
+            }
+          : latestLedgerStopSummary(ledger) ?? {
+              reason: "spec_conflict",
+              summary: "prior run is paused at an unanswered escalation",
+              repairHint: "answer the escalation and rerun",
+            };
       return {
         status: plan.terminalStatus,
         branch: plan.terminalStatus === "success" ? worktree.branch : undefined,
         stepLedger: ledger,
+        stopSummary,
         deferredFindings,
       };
     }
@@ -2228,7 +2350,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     });
 
     if (decision.kind === "handoff") {
-      ledger.push({ step: "S8" });
+      const handoffStopSummary: StopSummary =
+        decision.status === "success"
+          ? successSummaryForCurrentState({ deferredFindings, findingDispositions })
+          : decision.status === "error"
+            ? stopSummaryForErrorPackage({
+                failedStep: step,
+                reason: buildErrorReason(step, lastOutput),
+                branchHead: worktree?.branch,
+              })
+            : stopSummaryForEscalation(
+                escalateOf(lastOutput) ?? {
+                  reason: "run escalated",
+                  diagnosis: `step ${step} routed to an escalate handoff`,
+                },
+              );
+      ledger.push({ step: "S8", stopSummary: handoffStopSummary });
       // #249: persist the S8 handoff entry too.
       // #6 / integ-cmr base r2 (E): a writeLedger failure on the S8 entry →
       // S8(error), not a raw rejection. (deferredFindings stays whatever was
@@ -2245,6 +2382,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           undefined,
           undefined,
           escalationKindForHandoff(decision.status, lastOutput),
+          handoffStopSummary,
         );
       } catch (err) {
         // integ-cmr base r2 (E): the failing operation here is the S8 handoff
@@ -2272,10 +2410,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason: `writeLedger(S8) failed while persisting the handoff entry: ${cause}`,
           branchHead: worktree?.branch,
         };
+        const stopSummary = stopSummaryForErrorPackage(errorPackage);
         return {
           status: "error",
           errorPackage,
           stepLedger: ledger,
+          stopSummary,
           deferredFindings,
         };
       }
@@ -2293,6 +2433,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           status: "error",
           errorPackage,
           stepLedger: ledger,
+          stopSummary: handoffStopSummary,
           deferredFindings,
         };
       }
@@ -2301,6 +2442,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         status: decision.status,
         branch: decision.status === "success" ? worktree?.branch : undefined,
         stepLedger: ledger,
+        stopSummary: handoffStopSummary,
         deferredFindings,
       };
     }

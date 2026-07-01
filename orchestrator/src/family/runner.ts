@@ -45,6 +45,11 @@ import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import { runVerifyCmr } from "./verifyCmr.js";
 import { buildFamilyModuleContext } from "./cmrClassification.js";
+import {
+  infraFailureStopSummary,
+  successStopSummary,
+  type StopSummary,
+} from "../stopSummary.js";
 import type {
   ChildSlice,
   FamilyBackend,
@@ -54,6 +59,64 @@ import type {
   FamilyRunStatus,
 } from "./types.js";
 import type { VerifyCmrPhase } from "./verifyCmr.js";
+
+function familyHeadMetadata(
+  familyHead: string | undefined,
+): StopSummary["metadata"] | undefined {
+  if (familyHead === undefined || familyHead.trim().length === 0) {
+    return undefined;
+  }
+  return {
+    heads: {
+      reportedFamilyHead: familyHead,
+      actualFamilyHead: familyHead,
+      sources: {
+        reportedFamilyHead: "FamilyRunResult.familyHead",
+        actualFamilyHead: "family runner current head",
+      },
+    },
+  };
+}
+
+function familyStopSummary(input: {
+  readonly status: FamilyRunStatus;
+  readonly failedPhase?: VerifyCmrPhase;
+  readonly familyHead?: string;
+  readonly familyBase: string;
+  readonly children: ReadonlyArray<FamilyChildResult>;
+  readonly escalationReason?: string;
+}): StopSummary {
+  const metadata = familyHeadMetadata(input.familyHead);
+  if (input.status === "success") {
+    return successStopSummary(
+      metadata?.heads !== undefined ? { heads: metadata.heads } : undefined,
+    );
+  }
+  if (input.status === "verify_failed") {
+    return infraFailureStopSummary({
+      summary: `family ${input.failedPhase ?? "unknown"} verify/cmr barrier failed`,
+      repairHint: "inspect the family ledger aborted entry, repair the failing barrier, and rerun",
+      ...(metadata?.heads !== undefined ? { heads: metadata.heads } : {}),
+    });
+  }
+  if (input.status === "incomplete") {
+    const blocked = input.children
+      .filter((child) => child.status !== "merged")
+      .map((child) => `#${child.issue}:${child.status}`)
+      .join(", ");
+    return {
+      reason: "owning_issue_still_red",
+      summary: `family run is incomplete; unmerged children: ${blocked}`,
+      repairHint: "repair or complete the listed child slices and rerun the family",
+    };
+  }
+  return {
+    reason: "infra_failure",
+    summary: input.escalationReason ?? "family run escalated",
+    repairHint: "inspect the family ledger escalation entry and repair before rerun",
+    ...(metadata !== undefined ? { metadata } : {}),
+  };
+}
 
 /**
  * Run a child slice through the reused single-slice runner in FAMILY MODE.
@@ -178,14 +241,21 @@ export async function runFamily(
     warn: (message) => console.warn(`[orchestrator:family] ${message}`),
   });
   if (routePolicy.kind === "stop") {
+    const children = input.epic.children.map((child) => ({
+      issue: child.issue,
+      status: "skipped" as const,
+    }));
     return {
       status: "escalated",
       familyBase: input.familyBase,
       escalation: routePolicy.escalation,
-      children: input.epic.children.map((child) => ({
-        issue: child.issue,
-        status: "skipped",
-      })),
+      stopSummary: familyStopSummary({
+        status: "escalated",
+        familyBase: input.familyBase,
+        children,
+        escalationReason: `${routePolicy.escalation.reason}: ${routePolicy.escalation.diagnosis}`,
+      }),
+      children,
     };
   }
   console.info(
@@ -217,6 +287,23 @@ export async function runFamily(
                 ? "Prior family escalation kind is missing or invalid; append-only answers only reopen decision escalations."
               : "Prior family decision escalation has no later valid escalation_answered ledger event.",
         },
+        stopSummary: familyStopSummary({
+          status: "escalated",
+          familyBase,
+          familyHead:
+            typeof escalation.familyHeadAfter === "string" &&
+            escalation.familyHeadAfter.trim().length > 0
+              ? escalation.familyHeadAfter
+              : undefined,
+          children: input.epic.children.map((child) => ({
+            issue: child.issue,
+            status: ledgerMerged.has(child.issue) ? "merged" : "skipped",
+          })),
+          escalationReason:
+            typeof escalation.reason === "string" && escalation.reason.trim().length > 0
+              ? escalation.reason
+              : "family escalation is not answered",
+        }),
         children: input.epic.children.map((child) => ({
           issue: child.issue,
           status: ledgerMerged.has(child.issue) ? "merged" : "skipped",
@@ -310,6 +397,13 @@ export async function runFamily(
       ...(verifyFailedPhase !== undefined ? { failedPhase: verifyFailedPhase } : {}),
       familyBase,
       familyHead,
+      stopSummary: familyStopSummary({
+        status,
+        failedPhase: verifyFailedPhase,
+        familyBase,
+        familyHead,
+        children,
+      }),
       children,
     };
   };
@@ -350,7 +444,20 @@ export async function runFamily(
         reason: "family reconcile found the live family-base HEAD inconsistent with the ledger",
         familyHeadAfter: plan.liveHead,
       });
-      return { status: "escalated", familyBase, familyHead, children };
+      return {
+        status: "escalated",
+        familyBase,
+        familyHead,
+        stopSummary: familyStopSummary({
+          status: "escalated",
+          familyBase,
+          familyHead,
+          children,
+          escalationReason:
+            "family reconcile found the live family-base HEAD inconsistent with the ledger",
+        }),
+        children,
+      };
     }
     // Append each reconcile補账条 (status:"merged" + event:"reconciled") through
     // the ledger seam so the wave loop's `currentMerged` counts it (codex R3) and
@@ -548,7 +655,20 @@ export async function runFamily(
           "family ledger contains a shipped marker but this backend cannot verify the PR still covers the current family HEAD",
         familyHeadAfter: preFinalFamilyHead,
       });
-      return { status: "escalated", familyBase, familyHead: preFinalFamilyHead, children };
+      return {
+        status: "escalated",
+        familyBase,
+        familyHead: preFinalFamilyHead,
+        stopSummary: familyStopSummary({
+          status: "escalated",
+          familyBase,
+          familyHead: preFinalFamilyHead,
+          children,
+          escalationReason:
+            "family ledger contains a shipped marker but this backend cannot verify the PR still covers the current family HEAD",
+        }),
+        children,
+      };
     }
     const shippedPr = await familyBackend.verifyFamilyShippedPr({
       pr: shippedRecord.pr,
@@ -562,7 +682,19 @@ export async function runFamily(
         reason: `family shipped marker no longer verifies: ${shippedPr.reason}`,
         familyHeadAfter: preFinalFamilyHead,
       });
-      return { status: "escalated", familyBase, familyHead: preFinalFamilyHead, children };
+      return {
+        status: "escalated",
+        familyBase,
+        familyHead: preFinalFamilyHead,
+        stopSummary: familyStopSummary({
+          status: "escalated",
+          familyBase,
+          familyHead: preFinalFamilyHead,
+          children,
+          escalationReason: `family shipped marker no longer verifies: ${shippedPr.reason}`,
+        }),
+        children,
+      };
     }
     familyHead = preFinalFamilyHead;
     return await finalize();
@@ -586,7 +718,22 @@ export async function runFamily(
           : "family ledger contains a legacy shipped marker without familyHeadAfter; cannot prove which family HEAD the prior PR covered",
       familyHeadAfter: preFinalFamilyHead,
     });
-    return { status: "escalated", familyBase, familyHead: preFinalFamilyHead, children };
+    return {
+      status: "escalated",
+      familyBase,
+      familyHead: preFinalFamilyHead,
+      stopSummary: familyStopSummary({
+        status: "escalated",
+        familyBase,
+        familyHead: preFinalFamilyHead,
+        children,
+        escalationReason:
+          preFinalFamilyHead === undefined && hasBoundShippedMarker(preFinalLedger)
+            ? "family ledger contains a shipped marker but current family HEAD could not be resolved"
+            : "family ledger contains a legacy shipped marker without familyHeadAfter; cannot prove which family HEAD the prior PR covered",
+      }),
+      children,
+    };
   }
 
   // ── verify-cmr hook: end-of-run barrier (#293 no-op seam, #296 fills) ─────────

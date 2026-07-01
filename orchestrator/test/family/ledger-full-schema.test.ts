@@ -86,13 +86,17 @@ describe("recordAborted — PHASE-LEVEL verify/cmr failure event (#291 缺口 2)
       reason: "tsc: TS2345 cross-slice",
       familyHeadAfter: "baseX",
     });
-    expect(backend.appended).toEqual([
+    expect(backend.appended).toMatchObject([
       {
         status: "aborted",
         event: "aborted",
         phase: "wave",
         reason: "tsc: TS2345 cross-slice",
         familyHeadAfter: "baseX",
+        stopSummary: {
+          reason: "infra_failure",
+          repairHint: "inspect this aborted ledger row, repair the barrier, and rerun",
+        },
       },
     ]);
     // PHASE-LEVEL: an abort is not a single child's failure → no childIssue.
@@ -102,7 +106,15 @@ describe("recordAborted — PHASE-LEVEL verify/cmr failure event (#291 缺口 2)
   it("omits undefined optional fields (reason / familyHeadAfter)", async () => {
     const backend = new FakeFamilyBackend();
     await recordAborted(backend, { phase: "final" });
-    expect(backend.appended[0]).toEqual({ status: "aborted", event: "aborted", phase: "final" });
+    expect(backend.appended[0]).toMatchObject({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      stopSummary: {
+        reason: "infra_failure",
+        repairHint: "inspect this aborted ledger row, repair the barrier, and rerun",
+      },
+    });
     expect("reason" in backend.appended[0]!).toBe(false);
     expect("familyHeadAfter" in backend.appended[0]!).toBe(false);
   });
@@ -131,7 +143,7 @@ describe("#439 family escalation answer events", () => {
       note: "human approved another pass",
     });
 
-    expect(backend.appended).toEqual([
+    expect(backend.appended).toMatchObject([
       {
         status: "escalated",
         event: "escalated",
@@ -139,6 +151,10 @@ describe("#439 family escalation answer events", () => {
         reason: "cmr needs human disposition",
         familyHeadAfter: "baseZ",
         escalationKind: "decision",
+        stopSummary: {
+          reason: "infra_failure",
+          repairHint: "inspect this escalation row and repair before rerun",
+        },
       },
       {
         status: "escalation_answered",
