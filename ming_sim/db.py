@@ -2294,6 +2294,28 @@ class GameDB:
     def assert_army_pay_source_container_conservation(self) -> None:
         if not self.is_army_pay_source_cutover_enabled():
             return
+        exempt_bad = self.conn.execute(
+            """
+            SELECT id, province_pay_share, central_pay_share,
+                   province_pay_arrears, central_pay_arrears, arrears
+            FROM armies
+            WHERE (owner_power != 'ming' OR is_tusi != 0 OR self_funded_pay != 0)
+              AND (
+                ABS(COALESCE(province_pay_share, 0)) > 1e-9 OR
+                ABS(COALESCE(central_pay_share, 0)) > 1e-9 OR
+                ABS(COALESCE(province_pay_arrears, 0)) > 1e-9 OR
+                ABS(COALESCE(central_pay_arrears, 0)) > 1e-9 OR
+                ABS(COALESCE(arrears, 0)) > 1e-9
+              )
+            ORDER BY id
+            LIMIT 1
+            """
+        ).fetchone()
+        if exempt_bad is not None:
+            raise ValueError(
+                "army "
+                f"{exempt_bad['id']} 自养/非明军双累加器必须为 0"
+            )
         central_container = self.get_central_army_pay_arrears_container()
         row = self.conn.execute(
             """
@@ -2630,28 +2652,47 @@ class GameDB:
         repaid = float((result.breakdown.get("Repaid") or {}).get("军饷欠", 0) or 0)
         action_paid = float((result.breakdown.get("action还") or {}).get("军饷欠", 0) or 0)
         balances = {str(row["id"]): float(row["province_pay_arrears"]) for row in pay_rows}
+        action_repaid_by_army = {str(row["id"]): 0.0 for row in pay_rows}
+        new_debt_by_army = {str(row["id"]): 0.0 for row in pay_rows}
+        surplus_repaid_by_army = {str(row["id"]): 0.0 for row in pay_rows}
         province_shortfalls = {str(row["id"]): 0.0 for row in pay_rows}
         if action_paid > 0:
             basis = sum(balances.values())
             if basis > 0:
                 paid = min(action_paid, basis)
                 for army_id, bal in list(balances.items()):
-                    balances[army_id] = max(0.0, bal - paid * bal / basis)
+                    share = paid * bal / basis
+                    action_repaid_by_army[army_id] = share
+                    balances[army_id] = max(0.0, bal - share)
         due_total = sum(float(row["due"]) for row in pay_rows)
         if new_debt > 0 and due_total > 0:
             for row in pay_rows:
                 army_id = str(row["id"])
                 shortfall = new_debt * float(row["due"]) / due_total
                 province_shortfalls[army_id] = shortfall
+                new_debt_by_army[army_id] = shortfall
                 balances[army_id] += shortfall
         if repaid > 0:
             basis = sum(balances.values())
             if basis > 0:
                 paid = min(repaid, basis)
                 for army_id, bal in list(balances.items()):
-                    balances[army_id] = max(0.0, bal - paid * bal / basis)
+                    share = paid * bal / basis
+                    surplus_repaid_by_army[army_id] = share
+                    balances[army_id] = max(0.0, bal - share)
+        state_row = self.conn.execute(
+            "SELECT turn, year, period FROM game_state WHERE id = 1"
+        ).fetchone()
+        if state_row is None:
+            state = self.load_state("")
+            log_turn, log_year, log_period = state.turn, state.year, state.period
+        else:
+            log_turn = int(state_row["turn"])
+            log_year = int(state_row["year"])
+            log_period = int(state_row["period"])
         for row in pay_rows:
             army_id = str(row["id"])
+            old_province_arrears = float(row["province_pay_arrears"])
             province_arrears = balances[army_id]
             central_arrears = float(row["central_pay_arrears"])
             central_shortfalls = getattr(self, "_current_month_central_pay_shortfalls", {})
@@ -2676,6 +2717,34 @@ class GameDB:
                 """,
                 (province_arrears, province_arrears + central_arrears, new_morale, army_id),
             )
+            province_delta = province_arrears - old_province_arrears
+            if abs(province_delta) > 1e-9:
+                reason_parts = []
+                if new_debt_by_army[army_id] > 1e-9:
+                    reason_parts.append(
+                        f"按本月省份额应付占比摊新增欠{new_debt_by_army[army_id]:g}万两"
+                    )
+                repaid_total = action_repaid_by_army[army_id] + surplus_repaid_by_army[army_id]
+                if repaid_total > 1e-9:
+                    reason_parts.append(
+                        f"按省份额欠余额占比偿还{repaid_total:g}万两"
+                    )
+                reason = f"{TURN_UNIT}省源军饷分账"
+                if reason_parts:
+                    reason += "（" + "；".join(reason_parts) + "）"
+                self.conn.execute(
+                    """
+                    INSERT INTO army_logs
+                    (turn, year, period, army_id, field, old_value, new_value, delta,
+                     reason, event_id, edict_id, actor)
+                    VALUES (?, ?, ?, ?, 'province_pay_arrears', ?, ?, ?, ?, NULL, NULL, '户部')
+                    """,
+                    (
+                        log_turn, log_year, log_period, army_id,
+                        str(old_province_arrears), str(province_arrears),
+                        province_delta, reason,
+                    ),
+                )
 
     def _reconcile_region_army_pay_container(self, region_id: str, settle: Dict[str, Any]) -> None:
         total = self.conn.execute(
@@ -5187,6 +5256,16 @@ class GameDB:
                 except (TypeError, ValueError):
                     return 0
             initial_arrears = _arrears_init()
+            if self.is_army_pay_source_cutover_enabled() and initial_arrears > 0:
+                created.append({
+                    "id": aid, "rejected": True, "category": "invalid_enum",
+                    "reason": (
+                        f"new_armies '{aid}' 新军初始欠饷必须为 0；"
+                        "外生加欠须走 army_delta.arrears 正值"
+                    ),
+                    "item": raw,
+                })
+                continue
             pay_source_region = ""
             province_pay_share = central_pay_share = 0.0
             province_pay_arrears = central_pay_arrears = 0.0
