@@ -269,6 +269,41 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(read("integrated_cmr_correctness.md")).toMatch(/<cmr>/);
     expect(read("integrated_cmr_correctness.md")).toMatch(/CMR_STEP_COMPLETE/);
   });
+
+  it("reviewer and integrated-cmr prompts document every parser-required disposition field", () => {
+    const files = [
+      read("reviewer_review.md"),
+      read("integrated_cmr.md"),
+      read("integrated_cmr_completeness.md"),
+      read("integrated_cmr_correctness.md"),
+      readSoul("reviewer.md"),
+    ];
+
+    for (const text of files) {
+      expect(text).toMatch(/cross_module[\s\S]*targetModule[\s\S]*reason/i);
+      expect(text).toMatch(
+        /owning_issue_still_red[\s\S]*owningIssue[\s\S]*missingSurface[\s\S]*nextStep[\s\S]*reason/i,
+      );
+      expect(text).toMatch(/spec_conflict[\s\S]*source[\s\S]*reason/i);
+      expect(text).toMatch(/infra_failure[\s\S]*source[\s\S]*reason/i);
+      expect(text).toMatch(
+        /accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*(findingIdentity|finding identity)[\s\S]*boundedReopen/i,
+      );
+    }
+  });
+
+  it("prior finding disposition instructions include accepted_suppressed terminal closure metadata", () => {
+    for (const text of [
+      read("reviewer_review.md"),
+      read("integrated_cmr.md"),
+      read("integrated_cmr_completeness.md"),
+      read("integrated_cmr_correctness.md"),
+    ]) {
+      expect(text).toMatch(
+        /priorFindingDispositions[\s\S]*accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen/i,
+      );
+    }
+  });
 });
 
 // ─── (3) the runner dispatches S2/S3, then S5/S6 while blockers remain ──────

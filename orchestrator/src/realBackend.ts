@@ -96,7 +96,11 @@ export {
   type ModelProviderFactory,
   type ModelSlugRegistryEntry,
 };
-import { legacyDispatchWorker, shipWorkerSpec } from "./dispatchWorker.js";
+import {
+  legacyDispatchWorker,
+  SHIP_PROMPT_FILE,
+  shipWorkerSpec,
+} from "./dispatchWorker.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
   SHIP_COMPLETION_SIGNAL,
@@ -118,6 +122,7 @@ import type {
   StepResult,
   StepSoul,
   StepSpec,
+  RepairEvidence,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -964,6 +969,7 @@ export interface SelfReportedCoder {
   readonly committed: boolean;
   readonly commitsAdded: number;
   readonly escalate?: { readonly reason: string; readonly diagnosis: string };
+  readonly repairEvidence?: RepairEvidence;
 }
 
 /**
@@ -1014,7 +1020,13 @@ export function reconcileCoderCommits(
         `contract violation → S8(error).`,
     );
   }
-  const base = { committed, commitsAdded: gitCommitCount };
+  const base = {
+    committed,
+    commitsAdded: gitCommitCount,
+    ...(selfReported.repairEvidence !== undefined
+      ? { repairEvidence: selfReported.repairEvidence }
+      : {}),
+  };
   return selfReported.escalate !== undefined
     ? { ...base, escalate: selfReported.escalate }
     : base;
@@ -1344,7 +1356,7 @@ export function attributeFailure(
  * Keep this derived from the worker prompt-file constants plus the S7 ship spec.
  */
 export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
-  ...new Set([...Object.values(WORKER_PROMPT_FILES), shipWorkerSpec().promptFile]),
+  ...new Set([...Object.values(WORKER_PROMPT_FILES), SHIP_PROMPT_FILE]),
 ];
 
 /**
@@ -1585,9 +1597,29 @@ const reviewerOutputSchema = z.object({
     .object({ reason: z.string(), diagnosis: z.string() })
     .optional(),
 });
+const findingRepairScopeSchema = z
+  .object({
+    identityKeys: z.array(z.string()).optional(),
+    locations: z.array(z.string()).optional(),
+    categories: z.array(z.string()).optional(),
+    findingGroup: z.string().optional(),
+    reviewContext: z.string().optional(),
+    featureArea: z.string().optional(),
+  })
+  .strict();
+const repairEvidenceSchema = z
+  .object({
+    findingScope: findingRepairScopeSchema,
+    changedFiles: z.array(z.string().min(1)).optional(),
+    tests: z.array(z.string().min(1)).optional(),
+    fixtures: z.array(z.string().min(1)).optional(),
+    patchSummary: z.string().optional(),
+  })
+  .strict();
 const coderOutputSchema = z.object({
   committed: z.boolean(),
   commitsAdded: z.number().int().nonnegative(),
+  repairEvidence: repairEvidenceSchema.optional(),
   escalate: z
     .object({ reason: z.string(), diagnosis: z.string() })
     .optional(),
@@ -2301,17 +2333,23 @@ export class RealBackend implements Backend {
       );
     }
     const out = reconcileCoderCommits(c, gitCommitCount);
+    const repairEvidence =
+      out.repairEvidence !== undefined
+        ? { repairEvidence: out.repairEvidence }
+        : {};
     return out.escalate
       ? {
           kind: "coder",
           committed: out.committed,
           commitsAdded: out.commitsAdded,
+          ...repairEvidence,
           escalate: out.escalate,
         }
       : {
           kind: "coder",
           committed: out.committed,
           commitsAdded: out.commitsAdded,
+          ...repairEvidence,
         };
   }
 

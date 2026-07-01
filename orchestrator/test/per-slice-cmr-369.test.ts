@@ -2101,6 +2101,32 @@ describe("#369 finding identity and classification", () => {
     });
   });
 
+  it("treats accepted_suppressed prior claimed-fixed dispositions as terminal closure", () => {
+    const key = findingIdentityKey(finding);
+
+    const adjudication = adjudicatePriorClaimedFixedFindings({
+      priorFindings: [finding],
+      priorIdentityKeys: [key],
+      review: {
+        kind: "reviewer",
+        findings: [],
+        priorFindingDispositions: [
+          {
+            identityKey: key,
+            status: "accepted_suppressed",
+            source: "issue #448 acceptance criteria",
+            scope: "same claimed-fixed finding",
+            reason: "accepted by the owner for this bounded scope",
+            boundedReopen: "reopen on higher severity or different scope",
+          },
+        ],
+      },
+    });
+
+    expect(adjudication.stillOpen).toEqual([]);
+    expect(adjudication.verifiedClosedIdentityKeys).toEqual([key]);
+  });
+
   it("fails closed when prior dispositions lack sourced accepted-suppression evidence", () => {
     const priorDispositions = [
       {

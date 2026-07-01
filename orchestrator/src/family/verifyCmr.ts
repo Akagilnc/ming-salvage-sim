@@ -66,6 +66,7 @@ import {
 import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
 import { modelIsStrongLeg } from "../realBackend.js";
 import type { EscalationAnswerPayload } from "../types.js";
+import { findingIdentityKey } from "../findings.js";
 import {
   cmrPassAlreadyPassed,
   recordAborted as recordDurableAbort,
@@ -414,10 +415,36 @@ function familyCmrBlockingStopSummary(
   classification: FamilyCmrClassification,
   fallbackReason: string,
 ): StopSummary {
-  const result = classification.results.find(
-    (item) => item.classification !== "cross_module_defer",
-  );
+  const blockingClassifications = new Set([
+    "same_module_still_red",
+    "owning_issue_still_red",
+    "spec_conflict",
+    "infra_failure",
+  ]);
+  const result =
+    classification.results.find(
+      (item) =>
+        item.classification === "owning_issue_still_red" ||
+        item.classification === "spec_conflict" ||
+        item.classification === "infra_failure",
+    ) ??
+    classification.results.find((item) =>
+      blockingClassifications.has(item.classification),
+    );
+  const finding =
+    result !== undefined
+      ? classification.blocking.find(
+          (item) => findingIdentityKey(item) === result.identityKey,
+        )
+      : undefined;
   if (result?.classification === "same_module_still_red") {
+    if (finding !== undefined) {
+      return stopReasonForFindingDisposition({
+        kind: "same_module",
+        finding,
+        reason: result.reason || fallbackReason,
+      });
+    }
     return {
       reason: "same_module_still_red",
       summary: result.reason || fallbackReason,
@@ -425,6 +452,16 @@ function familyCmrBlockingStopSummary(
     };
   }
   if (result?.classification === "owning_issue_still_red") {
+    if (finding !== undefined) {
+      return stopReasonForFindingDisposition({
+        kind: "owning_issue_still_red",
+        finding,
+        owningIssue: result.owningIssue ?? "unknown",
+        missingSurface: result.missingSurface,
+        nextStep: result.nextStep,
+        reason: result.reason || fallbackReason,
+      });
+    }
     return {
       reason: "owning_issue_still_red",
       summary: result.reason || fallbackReason,
@@ -437,6 +474,13 @@ function familyCmrBlockingStopSummary(
     };
   }
   if (result?.classification === "spec_conflict") {
+    if (finding !== undefined) {
+      return stopReasonForFindingDisposition({
+        kind: "spec_conflict",
+        finding,
+        reason: result.reason || fallbackReason,
+      });
+    }
     return {
       reason: "spec_conflict",
       summary: result.reason || fallbackReason,
@@ -444,6 +488,14 @@ function familyCmrBlockingStopSummary(
     };
   }
   if (result?.classification === "infra_failure") {
+    if (finding !== undefined) {
+      return stopReasonForFindingDisposition({
+        kind: "infra_failure",
+        finding,
+        reason: result.reason || fallbackReason,
+        repairHint: "repair the infrastructure failure and rerun the family CMR gate",
+      });
+    }
     return infraFailureStopSummary({
       summary: result.reason || fallbackReason,
       repairHint: "repair the infrastructure failure and rerun the family CMR gate",

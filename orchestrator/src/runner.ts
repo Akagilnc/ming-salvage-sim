@@ -47,6 +47,7 @@ import {
 // instead of reaching for runStep/resumeSession/push directly.
 import {
   dispatchWorker,
+  SHIP_PROMPT_FILE,
   shipWorkerSpec,
   stepSpecToWorkerSpec,
   workerResultToStep,
@@ -204,6 +205,8 @@ function buildPersistentEntry(opts: {
   escalationKind?: EscalationKind;
   /** ADR0030 S4 classification state, persisted for resume replay. */
   findingDispositions?: ReadonlyArray<FindingDisposition>;
+  /** Runner-observed files changed by a coder step, for resume replay. */
+  repairMovementPaths?: ReadonlyArray<string>;
   /** Terminal stop reason summary (#450). */
   stopSummary?: StopSummary;
 }): PersistentLedgerEntry {
@@ -228,6 +231,9 @@ function buildPersistentEntry(opts: {
   }
   if (opts.findingDispositions !== undefined) {
     entry = { ...entry, findingDispositions: opts.findingDispositions };
+  }
+  if (opts.repairMovementPaths !== undefined) {
+    entry = { ...entry, repairMovementPaths: opts.repairMovementPaths };
   }
   if (opts.stopSummary !== undefined) {
     entry = { ...entry, stopSummary: opts.stopSummary };
@@ -301,7 +307,7 @@ function isEscalationAnswerEntry(
     typeof entry.answer === "string" &&
     entry.answer.trim().length > 0 &&
     (entry.note === undefined || typeof entry.note === "string") &&
-    isBookkeepingSource(entry.source) &&
+    (entry.source === undefined || isBookkeepingSource(entry.source)) &&
     (entry.findingIdentityKey === undefined ||
       typeof entry.findingIdentityKey === "string") &&
     (entry.findingScope === undefined ||
@@ -317,7 +323,7 @@ function answerPayload(
     forStep: entry.forStep,
     answer: entry.answer,
     ...(entry.note !== undefined ? { note: entry.note } : {}),
-    ...(entry.source !== undefined ? { source: entry.source } : {}),
+    source: entry.source ?? "human",
     ...(entry.findingIdentityKey !== undefined
       ? { findingIdentityKey: entry.findingIdentityKey }
       : {}),
@@ -374,7 +380,7 @@ function isExecutableEscalationAnswerSource(
   value: unknown,
 ): value is
   | Extract<ContinueFixingEvent["source"], "human" | "resume_input"> {
-  return value === "human" || value === "resume_input";
+  return value === undefined || value === "human" || value === "resume_input";
 }
 
 function isStringArray(value: unknown): value is ReadonlyArray<string> {
@@ -872,7 +878,7 @@ function replayS4AdjudicationState(
     }
     if (entry.output?.kind === "coder") {
       lastCoderRepairEvidenceForS4 = entry.output.repairEvidence;
-      lastCoderActualRepairPathsForS4 = [];
+      lastCoderActualRepairPathsForS4 = entry.repairMovementPaths ?? [];
     }
     if (entry.output?.kind === "reviewer") {
       lastReviewerOutputForS4 = entry.output;
@@ -1827,6 +1833,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     findingDispositions?: ReadonlyArray<FindingDisposition>,
     escalationKind?: EscalationKind,
     stopSummary?: StopSummary,
+    repairMovementPaths?: ReadonlyArray<string>,
   ): Promise<void> {
     const ph = await hashPrompt(promptFile, s, backend);
     const branchHEAD = await resolveBranchHEAD();
@@ -1840,6 +1847,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       handoffStatus,
       escalationKind,
       findingDispositions,
+      repairMovementPaths,
       stopSummary,
     });
 
@@ -1889,6 +1897,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     findingDispositions?: ReadonlyArray<FindingDisposition>,
     escalationKind?: EscalationKind,
     stopSummary?: StopSummary,
+    repairMovementPaths?: ReadonlyArray<string>,
   ): Promise<void> {
     try {
       await emitLedger(
@@ -1900,6 +1909,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         findingDispositions,
         escalationKind,
         stopSummary,
+        repairMovementPaths,
       );
     } catch {
       // Swallow: error termination must not be derailed by a ledger I/O fault.
@@ -1934,6 +1944,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       recordInMemory?: boolean;
       output?: StepOutput;
       findingDispositions?: ReadonlyArray<FindingDisposition>;
+      repairMovementPaths?: ReadonlyArray<string>;
       stopSummary?: StopSummary;
     },
   ): Promise<RunResult> {
@@ -1973,6 +1984,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           ...(opts?.findingDispositions !== undefined
             ? { findingDispositions: opts.findingDispositions }
             : {}),
+          ...(opts?.repairMovementPaths !== undefined
+            ? { repairMovementPaths: opts.repairMovementPaths }
+            : {}),
         });
       }
       await persistBestEffort(
@@ -1982,6 +1996,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         undefined,
         undefined,
         opts?.findingDispositions,
+        undefined,
+        undefined,
+        opts?.repairMovementPaths,
       );
     }
 
@@ -2057,7 +2074,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // ship promptFile only for S7 keeps every other failing step's persist
       // unchanged (promptFile undefined → step-name hash, as before).
       const failedPromptFile =
-        failedStep === "S7" ? shipWorkerSpec().promptFile : undefined;
+        failedStep === "S7" ? SHIP_PROMPT_FILE : undefined;
       await persistBestEffort(failedStep, undefined, failedPromptFile, undefined, sessionId);
     }
     ledger.push({ step: "S8", stopSummary });
@@ -2704,6 +2721,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     const stepFindingDispositions =
       step === "S4" ? findingDispositions : undefined;
+    const stepRepairMovementPaths =
+      output?.kind === "coder" ? lastCoderActualRepairPaths : undefined;
 
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).
@@ -2712,6 +2731,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ...(output !== undefined ? { output } : {}),
       ...(stepFindingDispositions !== undefined
         ? { findingDispositions: stepFindingDispositions }
+        : {}),
+      ...(stepRepairMovementPaths !== undefined
+        ? { repairMovementPaths: stepRepairMovementPaths }
         : {}),
     });
     // #6: a writeLedger failure here is a backend-call exception → it must
@@ -2728,6 +2750,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         undefined,
         stepSessionId,
         stepFindingDispositions,
+        undefined,
+        undefined,
+        stepRepairMovementPaths,
       );
     } catch (err) {
       // integ-cmr base r2 (D): the step is already in the in-memory ledger
@@ -2741,6 +2766,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         recordInMemory: false,
         output,
         findingDispositions: stepFindingDispositions,
+        repairMovementPaths: stepRepairMovementPaths,
       });
     }
 

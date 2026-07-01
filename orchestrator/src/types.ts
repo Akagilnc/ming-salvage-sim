@@ -800,6 +800,12 @@ export interface LedgerEntry {
    * reopens instead of reclassifying from only the last reviewer payload.
    */
   readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
+  /**
+   * Runner-observed implementation/test paths that actually moved during a coder
+   * step. Persisted so resume replay can evaluate repairEvidence with the same
+   * evidence live S4 used.
+   */
+  readonly repairMovementPaths?: ReadonlyArray<string>;
   /** Runner-owned terminal stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
 }

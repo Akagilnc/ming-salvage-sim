@@ -1468,7 +1468,15 @@ function cmrClosureWorkerResult(input: {
   readonly claimedFixedFindingIdentityKeys: readonly string[];
   readonly priorFindingDispositions: ReadonlyArray<{
     readonly identityKey: string;
-    readonly status: "still-active" | "verified-closed" | "unable-to-assess";
+    readonly status:
+      | "still-active"
+      | "verified-closed"
+      | "unable-to-assess"
+      | "accepted_suppressed";
+    readonly reason?: string;
+    readonly source?: string;
+    readonly scope?: string;
+    readonly boundedReopen?: string;
   }>;
 }): WorkerResult {
   return {
@@ -1488,7 +1496,15 @@ async function familyClosureFailure(input: {
   readonly claimedFixedFindingIdentityKeys: readonly string[];
   readonly priorFindingDispositions: ReadonlyArray<{
     readonly identityKey: string;
-    readonly status: "still-active" | "verified-closed" | "unable-to-assess";
+    readonly status:
+      | "still-active"
+      | "verified-closed"
+      | "unable-to-assess"
+      | "accepted_suppressed";
+    readonly reason?: string;
+    readonly source?: string;
+    readonly scope?: string;
+    readonly boundedReopen?: string;
   }>;
   readonly priorCmrFindingIdentityKeys?: readonly string[];
 }): Promise<{ readonly shape: string; readonly reason: string }> {

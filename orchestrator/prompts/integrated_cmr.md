@@ -51,7 +51,9 @@ Rules:
   `priorFindingDispositions` are REQUIRED. Use empty arrays only when no
   claimed-fixed findings occurred in the CMR loop. If a prior claimed-fixed
   finding exists, include its stable identity key and an explicit disposition:
-  `still-active`, `verified-closed`, or `unable-to-assess`.
+  `still-active`, `verified-closed`, `unable-to-assess`, or
+  `accepted_suppressed`. `accepted_suppressed` requires `source`, `scope`,
+  `reason`, and `boundedReopen`.
 - On any not-converged verdict, `reason`, `successfulLegs`,
   `claimedFixedFindingIdentityKeys`, and `priorFindingDispositions` are REQUIRED;
   `findings` is optional but must use reviewer finding shape when present.
@@ -60,8 +62,12 @@ Rules:
   `owning_issue_still_red`, or `accepted_suppressed`. Only `cross_module`
   defer may pass without a fix, and only when `.cmr-focus.md` /
   `.cmr-route.json` contain parsed module context supporting it. Do not infer
-  module boundaries from titles, prose, or logs.
+  module boundaries from titles, prose, or logs. Parser-required fields:
+  `same_module` needs `reason`; `cross_module` needs `targetModule` and
+  `reason`; `owning_issue_still_red` needs `owningIssue`, `missingSurface`,
+  `nextStep`, and `reason`; `spec_conflict` needs `source` and `reason`;
+  `infra_failure` needs `source` and `reason`.
 - `accepted_suppressed` requires an explicit user/ADR/issue source, matching
-  scope, reason, finding identity, and bounded reopen condition.
+  scope, reason, `findingIdentity`, and `boundedReopen`.
 - Emit the `<cmr>` tag LAST; if you iterate, the LAST tag is the one that counts.
 - Always print `CMR_STEP_COMPLETE` on its own line at the very end.
