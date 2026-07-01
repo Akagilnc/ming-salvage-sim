@@ -67,6 +67,7 @@ import {
 } from "./validate.js";
 import type {
   Backend,
+  ContinueFixingEvent,
   ErrorPackage,
   Escalation,
   EscalationAnswerEvent,
@@ -251,6 +252,7 @@ interface ResumePlan {
   readonly resumeStep: StepId;
   readonly resumeSessionId?: string;
   readonly escalationAnswer?: EscalationAnswerEvent;
+  readonly continueFixingRepair?: ContinueFixingRepair;
   readonly lastOutput?: StepOutput;
   readonly priorLedger: ReadonlyArray<LedgerEntry>;
 }
@@ -277,7 +279,12 @@ function isEscalationAnswerEntry(
     isValidStepId(entry.forStep) &&
     typeof entry.answer === "string" &&
     entry.answer.trim().length > 0 &&
-    (entry.note === undefined || typeof entry.note === "string")
+    (entry.note === undefined || typeof entry.note === "string") &&
+    (entry.source === undefined || isBookkeepingSource(entry.source)) &&
+    (entry.findingIdentityKey === undefined ||
+      typeof entry.findingIdentityKey === "string") &&
+    (entry.findingScope === undefined ||
+      isFindingRepairScope(entry.findingScope))
   );
 }
 
@@ -289,13 +296,24 @@ function answerPayload(
     forStep: entry.forStep,
     answer: entry.answer,
     ...(entry.note !== undefined ? { note: entry.note } : {}),
+    ...(entry.source !== undefined ? { source: entry.source } : {}),
+    ...(entry.findingIdentityKey !== undefined
+      ? { findingIdentityKey: entry.findingIdentityKey }
+      : {}),
+    ...(entry.findingScope !== undefined
+      ? { findingScope: entry.findingScope }
+      : {}),
   };
+}
+
+function isBookkeepingEntry(entry: LedgerEntry): boolean {
+  return entry.event !== undefined;
 }
 
 function executableLedgerEntries(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
 ): ReadonlyArray<PersistentLedgerEntry> {
-  return ledger.filter((entry) => entry.event !== "escalation_answered");
+  return ledger.filter((entry) => !isBookkeepingEntry(entry));
 }
 
 function latestAnswerAfter(
@@ -305,9 +323,255 @@ function latestAnswerAfter(
 ): EscalationAnswerEvent | undefined {
   for (let i = ledger.length - 1; i > index; i--) {
     const entry = ledger[i]!;
-    if (isEscalationAnswerEntry(entry) && entry.forStep === forStep) {
+    if (
+      isEscalationAnswerEntry(entry) &&
+      entry.forStep === forStep &&
+      isExecutableEscalationAnswerSource(entry.source)
+    ) {
       return answerPayload(entry);
     }
+  }
+  return undefined;
+}
+
+function normaliseScopePart(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function isBookkeepingSource(
+  value: unknown,
+): value is ContinueFixingEvent["source"] {
+  return (
+    value === "human" ||
+    value === "coordinator" ||
+    value === "peripheral" ||
+    value === "resume_input"
+  );
+}
+
+function isExecutableEscalationAnswerSource(
+  value: unknown,
+): value is
+  | undefined
+  | Extract<ContinueFixingEvent["source"], "human" | "resume_input"> {
+  return value === undefined || value === "human" || value === "resume_input";
+}
+
+function isStringArray(value: unknown): value is ReadonlyArray<string> {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isFindingRepairScope(
+  value: unknown,
+): value is NonNullable<ContinueFixingEvent["findingScope"]> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const scope = value as Record<string, unknown>;
+  return (
+    (scope.identityKeys === undefined || isStringArray(scope.identityKeys)) &&
+    (scope.locations === undefined || isStringArray(scope.locations)) &&
+    (scope.categories === undefined || isStringArray(scope.categories)) &&
+    (scope.findingGroup === undefined ||
+      typeof scope.findingGroup === "string") &&
+    (scope.reviewContext === undefined ||
+      typeof scope.reviewContext === "string") &&
+    (scope.featureArea === undefined || typeof scope.featureArea === "string")
+  );
+}
+
+function stripLocationLine(value: string): string {
+  return value.replace(/:\d+(?::\d+)?$/, "");
+}
+
+function locationScopeMatches(scope: string, location: string): boolean {
+  const normalisedScope = normaliseScopePart(stripLocationLine(scope));
+  const normalisedLocation = normaliseScopePart(location);
+  const normalisedLocationPath = normaliseScopePart(stripLocationLine(location));
+  if (
+    normalisedScope === normalisedLocation ||
+    normalisedScope === normalisedLocationPath
+  ) {
+    return true;
+  }
+  return (
+    normalisedLocationPath.startsWith(`${normalisedScope}/`) ||
+    normalisedLocationPath.endsWith(`/${normalisedScope}`)
+  );
+}
+
+function textScopeMatches(scope: string, values: ReadonlyArray<string>): boolean {
+  const normalisedScope = normaliseScopePart(scope);
+  return values.some((value) => normaliseScopePart(value) === normalisedScope);
+}
+
+function findingMatchesBroadScope(
+  finding: Finding,
+  key: string,
+  scope: NonNullable<ContinueFixingEvent["findingScope"]>,
+): boolean {
+  const locationScopes = scope.locations ?? [];
+  const categoryScopes = scope.categories ?? [];
+  const groupScope = scope.findingGroup;
+  const contextScope = scope.reviewContext;
+  const featureScope = scope.featureArea;
+  const textualValues = [finding.category, finding.claim_quote, key];
+
+  const locationMatches =
+    locationScopes.length === 0 ||
+    locationScopes.some((location) =>
+      locationScopeMatches(location, finding.location),
+    );
+  const categoryMatches =
+    categoryScopes.length === 0 ||
+    categoryScopes.some((category) =>
+      textScopeMatches(category, [finding.category]),
+    );
+  const groupMatches =
+    groupScope === undefined ||
+    locationScopeMatches(groupScope, finding.location) ||
+    textScopeMatches(groupScope, textualValues);
+  const contextMatches =
+    contextScope === undefined ||
+    locationScopeMatches(contextScope, finding.location) ||
+    textScopeMatches(contextScope, textualValues);
+  const featureMatches =
+    featureScope === undefined ||
+    locationScopeMatches(featureScope, finding.location) ||
+    textScopeMatches(featureScope, textualValues);
+
+  return (
+    locationMatches &&
+    categoryMatches &&
+    groupMatches &&
+    contextMatches &&
+    featureMatches
+  );
+}
+
+function isContinueFixingEntry(
+  entry: LedgerEntry,
+): entry is LedgerEntry & ContinueFixingEvent {
+  return (
+    entry.event === "runner_bookkeeping" &&
+    entry.intent === "continue_fixing" &&
+    isBookkeepingSource(entry.source) &&
+    typeof entry.ts === "string" &&
+    entry.ts.trim().length > 0 &&
+    (entry.reason === undefined || typeof entry.reason === "string") &&
+    (entry.findingIdentityKey === undefined ||
+      typeof entry.findingIdentityKey === "string") &&
+    (entry.findingScope === undefined ||
+      isFindingRepairScope(entry.findingScope))
+  );
+}
+
+function answerMapsToContinueFixing(answer: EscalationAnswerEvent): boolean {
+  const text = answer.answer.trim().toLowerCase();
+  return (
+    text.includes("continue") ||
+    text.includes("继续修") ||
+    text.includes("继续改") ||
+    text.includes("接着修")
+  );
+}
+
+function matchingContinueFixingKeys(
+  event: ContinueFixingEvent,
+  activeFindings: ReadonlyArray<Finding>,
+  activeIdentityKeys: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  const exactKeys = new Set<string>();
+  const addKey = (key: string | undefined) => {
+    if (key !== undefined && key.trim().length > 0) exactKeys.add(key);
+  };
+  addKey(event.findingIdentityKey);
+  for (const key of event.findingScope?.identityKeys ?? []) addKey(key);
+
+  const exactMatches = activeIdentityKeys.filter((key) => exactKeys.has(key));
+  if (exactMatches.length > 0) return exactMatches;
+
+  const scope = event.findingScope;
+  if (scope === undefined) return [];
+  const hasBroadScope =
+    (scope.locations?.length ?? 0) > 0 ||
+    (scope.categories?.length ?? 0) > 0 ||
+    (scope.findingGroup?.trim().length ?? 0) > 0 ||
+    (scope.reviewContext?.trim().length ?? 0) > 0 ||
+    (scope.featureArea?.trim().length ?? 0) > 0;
+  if (!hasBroadScope) return [];
+
+  const broadMatches = activeFindings
+    .map((finding, index) => ({ finding, key: activeIdentityKeys[index] }))
+    .filter(({ finding, key }) => {
+      if (key === undefined) return false;
+      return findingMatchesBroadScope(finding, key, scope);
+    })
+    .map(({ key }) => key!);
+
+  // Broad module/file scopes must not reset sibling findings together. Without
+  // a durable exact identity/group key, only a single active match is safe.
+  return broadMatches.length === 1 ? broadMatches : [];
+}
+
+interface ContinueFixingRepair {
+  readonly event: ContinueFixingEvent | EscalationAnswerEvent;
+  readonly matchingIdentityKeys: ReadonlyArray<string>;
+}
+
+function continueRepairFromEvent(
+  event: ContinueFixingEvent,
+  replay: Pick<S4AdjudicationReplay, "blocking" | "blockingIdentityKeys">,
+): ContinueFixingRepair | undefined {
+  const matchingIdentityKeys = matchingContinueFixingKeys(
+    event,
+    replay.blocking,
+    replay.blockingIdentityKeys,
+  );
+  if (matchingIdentityKeys.length === 0) return undefined;
+  return { event, matchingIdentityKeys };
+}
+
+function continueRepairFromAnswer(
+  answer: EscalationAnswerEvent | undefined,
+  replay: Pick<S4AdjudicationReplay, "blocking" | "blockingIdentityKeys">,
+): ContinueFixingRepair | undefined {
+  if (answer === undefined || !answerMapsToContinueFixing(answer)) {
+    return undefined;
+  }
+  const source = answer.source;
+  if (!isExecutableEscalationAnswerSource(source)) return undefined;
+  const repairSource = source ?? "human";
+  const matchingIdentityKeys = matchingContinueFixingKeys(
+    {
+      event: "runner_bookkeeping",
+      intent: "continue_fixing",
+      source: repairSource,
+      ts: "answer-scope-only",
+      ...(answer.findingIdentityKey !== undefined
+        ? { findingIdentityKey: answer.findingIdentityKey }
+        : {}),
+      ...(answer.findingScope !== undefined
+        ? { findingScope: answer.findingScope }
+        : {}),
+    },
+    replay.blocking,
+    replay.blockingIdentityKeys,
+  );
+  if (matchingIdentityKeys.length === 0) return undefined;
+  return { event: answer, matchingIdentityKeys };
+}
+
+function latestContinueFixingAfter(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+  index: number,
+  replay: Pick<S4AdjudicationReplay, "blocking" | "blockingIdentityKeys">,
+): ContinueFixingRepair | undefined {
+  for (let i = ledger.length - 1; i > index; i--) {
+    const entry = ledger[i]!;
+    if (!isContinueFixingEntry(entry)) continue;
+    const repair = continueRepairFromEvent(entry, replay);
+    if (repair !== undefined) return repair;
   }
   return undefined;
 }
@@ -395,7 +659,7 @@ function replayS4AdjudicationState(
   let lastReviewerStepForS4: StepId | undefined;
 
   for (const entry of ledger) {
-    if (entry.event === "escalation_answered") {
+    if (isBookkeepingEntry(entry)) {
       continue;
     }
     if (entry.output?.kind === "reviewer") {
@@ -497,6 +761,7 @@ function adjudicatedBlockingFindingsForPersistedS4(
  */
 function planResume(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
+  repairIntent?: ContinueFixingEvent,
 ): ResumePlan {
   if (ledger.length === 0) {
     return { resumeStep: "S0", priorLedger: [] };
@@ -534,11 +799,25 @@ function planResume(
     }
 
     const decisionStep = lastNonTerminalStep(executableLedger);
+    const replayedS4 = replayS4AdjudicationState(executableLedger);
     const answer =
       decisionStep !== undefined
         ? latestAnswerAfter(ledger, lastEntryIndex, decisionStep)
         : undefined;
-    if (answer === undefined || decisionStep === undefined) {
+    const continueFixingRepair =
+      decisionStep === "S4"
+        ? (
+            repairIntent !== undefined
+              ? continueRepairFromEvent(repairIntent, replayedS4)
+              : undefined
+          ) ??
+          latestContinueFixingAfter(ledger, lastEntryIndex, replayedS4) ??
+          continueRepairFromAnswer(answer, replayedS4)
+        : undefined;
+    if (
+      decisionStep === undefined ||
+      (answer === undefined && continueFixingRepair === undefined)
+    ) {
       return {
         terminalStatus: "escalate",
         resumeStep: "S8",
@@ -548,9 +827,21 @@ function planResume(
     }
 
     if (decisionStep === "S4") {
+      if (continueFixingRepair === undefined) {
+        return {
+          terminalStatus: "escalate",
+          resumeStep: "S8",
+          lastOutput: agentEntry?.output,
+          priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+        };
+      }
       return {
         resumeStep: "S5",
-        escalationAnswer: answer,
+        escalationAnswer:
+          answer !== undefined && answerMapsToContinueFixing(answer)
+            ? answer
+            : undefined,
+        continueFixingRepair,
         lastOutput: agentEntry?.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
       };
@@ -1359,7 +1650,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let resumedEscalationAnswer: EscalationAnswerEvent | undefined;
 
   if (resumeState !== undefined && resumeState.ledger.length > 0) {
-    const plan = planResume(resumeState.ledger);
+    const plan = planResume(resumeState.ledger, input.repairIntent);
 
     // Reuse the resident worktree (NO re-cut) and fix the sibling stateDir.
     worktree = resumeState.worktree;
@@ -1383,6 +1674,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     noProgressByFindingIdentityKey.clear();
     for (const [key, count] of replayedS4.noProgressCounts) {
       noProgressByFindingIdentityKey.set(key, count);
+    }
+    for (const key of plan.continueFixingRepair?.matchingIdentityKeys ?? []) {
+      noProgressByFindingIdentityKey.delete(key);
     }
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
 

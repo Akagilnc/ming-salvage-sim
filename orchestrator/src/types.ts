@@ -218,11 +218,49 @@ export interface EscalationAnswerPayload {
   readonly forStep?: StepId;
   readonly answer: string;
   readonly note?: string;
+  /** Source of the answer row when known; omitted on legacy rows. */
+  readonly source?: "human" | "coordinator" | "peripheral" | "resume_input";
+  /** Optional exact finding identity targeted by a run-state repair answer. */
+  readonly findingIdentityKey?: string;
+  /** Optional finding scope targeted by a run-state repair answer. */
+  readonly findingScope?: FindingRepairScope;
 }
 
 export interface EscalationAnswerEvent extends EscalationAnswerPayload {
   readonly forStep: StepId;
 }
+
+/** Scope carried by runner bookkeeping events that target active findings. */
+export interface FindingRepairScope {
+  /** Exact runner identity keys for the finding lineage, when available. */
+  readonly identityKeys?: ReadonlyArray<string>;
+  /** Broader path/location scope; only used when it maps to one active finding. */
+  readonly locations?: ReadonlyArray<string>;
+  /** Broader category scope; only used when it maps to one active finding. */
+  readonly categories?: ReadonlyArray<string>;
+  /** Optional durable grouping label from a review thread / finding group. */
+  readonly findingGroup?: string;
+  /** Optional review-context label from the coordinator. */
+  readonly reviewContext?: string;
+  /** Optional feature/module area label from the coordinator. */
+  readonly featureArea?: string;
+}
+
+/**
+ * Append-only runner bookkeeping event. It is ledger truth, but not reviewer
+ * output and not a step adjudication.
+ */
+export interface ContinueFixingEvent {
+  readonly event: "runner_bookkeeping";
+  readonly intent: "continue_fixing";
+  readonly findingIdentityKey?: string;
+  readonly findingScope?: FindingRepairScope;
+  readonly source: "human" | "coordinator" | "peripheral" | "resume_input";
+  readonly ts: string;
+  readonly reason?: string;
+}
+
+export type LedgerBookkeepingEvent = EscalationAnswerEvent | ContinueFixingEvent;
 
 /**
  * The structured output of any worker step.
@@ -643,14 +681,26 @@ export interface LedgerEntry {
   readonly step: StepId;
   /** Structured output for agent steps; undefined for runner-action steps. */
   readonly output?: StepOutput;
-  /** Append-only event marker for non-step ledger facts (#439). */
-  readonly event?: EscalationAnswerEvent["event"];
+  /** Append-only event marker for non-step ledger facts (#439 / #446). */
+  readonly event?: LedgerBookkeepingEvent["event"];
   /** Step this answer reopens when `event === "escalation_answered"` (#439). */
   readonly forStep?: StepId;
   /** Human answer payload when `event === "escalation_answered"` (#439). */
   readonly answer?: string;
   /** Optional human note attached to an escalation answer (#439). */
   readonly note?: string;
+  /** Runner repair intent when `event === "runner_bookkeeping"` (#446). */
+  readonly intent?: ContinueFixingEvent["intent"];
+  /** Exact finding identity targeted by a continue-fixing bookkeeping event. */
+  readonly findingIdentityKey?: string;
+  /** Active finding scope targeted by a continue-fixing bookkeeping event. */
+  readonly findingScope?: FindingRepairScope;
+  /** Source of a bookkeeping event, when recorded. */
+  readonly source?: LedgerBookkeepingEvent["source"];
+  /** Timestamp for a bookkeeping event, when recorded. */
+  readonly ts?: string;
+  /** Optional reason for a bookkeeping event. */
+  readonly reason?: string;
   /**
    * Runner-owned ADR0030 finding dispositions after an S4 classification.
    *
@@ -987,6 +1037,11 @@ export interface FamilyContext {
 export interface RunInput {
   readonly issueNumber: number;
   readonly backend: Backend;
+  /**
+   * Current invocation repair intent. This has higher priority than durable
+   * ledger bookkeeping when resuming a paused S4 decision escalation.
+   */
+  readonly repairIntent?: ContinueFixingEvent;
   /**
    * Family-run context (ADR 0022 decision 2). Present ⇒ this is a CHILD slice of
    * a family run (family base + no-op push). Absent ⇒ a standalone single-slice
