@@ -348,7 +348,7 @@ def _auto_pay_arrears_by_priority(
     commit: bool = True,
 ) -> int:
     """LLM 补饷 economy_move 没指定 target 时的兜底：按 ARMY_SALARY_PRIORITY 顺序
-    分配 budget 给有可由该账户核销欠账的明军，每军按来源欠账上限扣，扣完 budget 为止。
+    分配 budget 给有欠账的明军，每军按当前省/中央欠额占比分销销账，扣完 budget 为止。
     返回实际花出去的总额（万两）。"""
     if budget <= 0:
         return 0
@@ -370,8 +370,9 @@ def _auto_pay_arrears_by_priority(
             break
         army_id = str(row["id"])
         name = str(row["name"])
-        source_arrears = _pay_source_arrears_for_account(row, account, pay_source_cutover)
-        payable_arrears = _payable_army_arrears_cap(source_arrears, pay_source_cutover)
+        payable_arrears = _payable_army_arrears_cap(
+            float(row["arrears"] or 0), pay_source_cutover
+        )
         if payable_arrears <= 0:
             continue
         pay_cap = min(payable_arrears, remaining)
@@ -392,10 +393,6 @@ def _payable_army_arrears_cap(current_arrears: float, pay_source_cutover: bool) 
     return int(current_arrears)
 
 
-def _is_central_pay_account(account: str) -> bool:
-    return account in ("国库", "内库")
-
-
 def _normalized_cutover_pay_arrears(row, current_arrears: float) -> Tuple[float, float]:
     province_old = float(row["province_pay_arrears"] or 0)
     central_old = float(row["central_pay_arrears"] or 0)
@@ -409,20 +406,6 @@ def _normalized_cutover_pay_arrears(row, current_arrears: float) -> Tuple[float,
         current_arrears * float(row["province_pay_share"] or 0),
         current_arrears * float(row["central_pay_share"] or 0),
     )
-
-
-def _pay_source_arrears_for_account(row, account: str, pay_source_cutover: bool) -> float:
-    current_arrears = float(row["arrears"] or 0)
-    if not pay_source_cutover:
-        return current_arrears
-    province_old, central_old = _normalized_cutover_pay_arrears(row, current_arrears)
-    return central_old if _is_central_pay_account(account) else province_old
-
-
-def _pay_source_label_for_account(account: str, pay_source_cutover: bool) -> str:
-    if not pay_source_cutover:
-        return ""
-    return "中央份额" if _is_central_pay_account(account) else "省份额"
 
 
 def _allocate_integer_payments_pro_rata(
@@ -476,13 +459,18 @@ def _pay_single_army_arrears(
     if amount <= 0 or current_arrears <= 0:
         return 0
     pay_source_cutover = db.is_army_pay_source_cutover_enabled()
-    source_arrears = _pay_source_arrears_for_account(row, account, pay_source_cutover)
     actual_pay = min(
         int(amount),
-        _payable_army_arrears_cap(source_arrears, pay_source_cutover),
+        _payable_army_arrears_cap(current_arrears, pay_source_cutover),
     )
     if actual_pay <= 0:
         return 0
+    province_old = central_old = total_old = 0.0
+    if pay_source_cutover:
+        province_old, central_old = _normalized_cutover_pay_arrears(row, current_arrears)
+        total_old = province_old + central_old
+        if total_old <= 1e-9:
+            return 0
     actual = db.record_issue_economy_move(
         state, account, -actual_pay, category, reason,
         purpose="补饷", target_kind="army", target_id=str(row["id"]),
@@ -492,13 +480,8 @@ def _pay_single_army_arrears(
         return 0
     paid = abs(float(actual))
     if pay_source_cutover:
-        province_old, central_old = _normalized_cutover_pay_arrears(row, current_arrears)
-        if _is_central_pay_account(account):
-            province_pay = 0.0
-            central_pay = min(central_old, paid)
-        else:
-            province_pay = min(province_old, paid)
-            central_pay = 0.0
+        province_pay = min(province_old, paid * province_old / total_old)
+        central_pay = min(central_old, paid * central_old / total_old)
         province_new = max(0.0, province_old - province_pay)
         central_new = max(0.0, central_old - central_pay)
         new_arrears = province_new + central_new
@@ -541,7 +524,7 @@ def _apply_economy_list(
 
     支持结构化字段：
     - purpose='补饷' + target_kind='army' + target_id=army_id
-      → 走"按来源欠账上限扣"路径：cutover 后国库/内库只核销中央份额欠账；
+      → 走真钱补饷路径：按该军当前省/中央欠额占比分销两累加器；
         同步把 armies.arrears 减掉 actual_pay；多余的钱留在 account 不扣。
     - 其它（purpose='其它' 或 NULL）：按常规扣账（现状）。
 
@@ -587,9 +570,9 @@ def _apply_economy_list(
         purpose = raw_purpose if raw_purpose in ECONOMY_PURPOSES else None
         target_kind = raw_target_kind if raw_target_kind in ECONOMY_TARGET_KINDS else None
 
-        # ── 补饷分发：按来源欠账上限扣 + 同步减 armies.arrears ───────────────
+        # ── 补饷分发：按当前欠额占比分销两累加器 + 同步减 armies.arrears ───────
         # purpose=补饷 但缺 target_kind/target_id → 按 ARMY_SALARY_PRIORITY 优先级
-        # 自动散到各军（每军按来源欠账上限扣，扣完 budget 为止）。
+        # 自动散到各军（每军按总欠账上限扣，扣完 budget 为止）。
         if purpose == "补饷" and delta < 0 and (target_kind != "army" or not raw_target_id):
             budget = abs(delta)
             spent = _auto_pay_arrears_by_priority(db, state, account, budget, category, reason, commit=commit)
@@ -606,16 +589,15 @@ def _apply_economy_list(
                 applied.append({"account": account, "delta": -spent, "reason": reason})
                 continue
             pay_source_cutover = db.is_army_pay_source_cutover_enabled()
-            source_arrears = _pay_source_arrears_for_account(row, account, pay_source_cutover)
             payable_arrears = _payable_army_arrears_cap(
-                source_arrears, pay_source_cutover
+                float(row["arrears"] or 0), pay_source_cutover
             )
             if payable_arrears <= 0:
-                source_label = _pay_source_label_for_account(account, pay_source_cutover)
-                if source_arrears > 0:
-                    reason_text = f"{row['name']}{source_label}欠饷未满1万两，{abs(delta)}万两未拨"
+                current_arrears = float(row["arrears"] or 0)
+                if current_arrears > 0:
+                    reason_text = f"{row['name']}欠饷未满1万两，{abs(delta)}万两未拨"
                 else:
-                    reason_text = f"{row['name']}{source_label}已无欠饷，{abs(delta)}万两未拨"
+                    reason_text = f"{row['name']}已无欠饷，{abs(delta)}万两未拨"
                 applied.append({
                     "account": account, "delta": 0,
                     "reason": reason_text,
