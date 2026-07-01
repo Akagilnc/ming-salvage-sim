@@ -1027,7 +1027,11 @@ async function runIntegratedCmrPass(input: {
       const reason =
         `integrated cmr ${pass} found blocking family-scope findings: ` +
         cmrFindingClassification.results
-          .filter((result) => result.classification !== "cross_module_defer")
+          .filter(
+            (result) =>
+              result.classification !== "cross_module_defer" &&
+              result.classification !== "accepted_suppressed",
+          )
           .map((result) => `${result.classification}:${result.identityKey}`)
           .join(", ");
       await recordDurableAbort(familyBackend, {
