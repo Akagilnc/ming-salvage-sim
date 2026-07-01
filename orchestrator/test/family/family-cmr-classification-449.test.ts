@@ -271,6 +271,37 @@ describe("#449 family CMR finding classification", () => {
     expect(classified.results[1]?.targetModule).toBe("military-state-machine");
   });
 
+  it("fails closed when a cross-module target aliases the current module name", () => {
+    const aliasedModuleFinding: Finding = {
+      ...finding,
+      disposition: {
+        kind: "cross_module",
+        targetModule: "fiscal follow-up",
+        reason: "claimed as an external follow-up bucket",
+      },
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [aliasedModuleFinding],
+      moduleContext: {
+        currentModules: [
+          {
+            module: "fiscal",
+            moduleScope: ["orchestrator/src/family"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
+        childModules: [],
+      },
+    });
+
+    expect(classified.deferred).toEqual([]);
+    expect(classified.blocking).toEqual([aliasedModuleFinding]);
+    expect(classified.results[0]?.classification).toBe("same_module_still_red");
+  });
+
   it("records accepted suppression for the #287 hub-loss finding with bounded reopen conditions", () => {
     const hubLossFinding: Finding = {
       ...finding,

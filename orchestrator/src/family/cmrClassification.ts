@@ -169,6 +169,30 @@ function normalizedModule(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function normalizedModuleSlug(value: string): string {
+  return normalizedModule(value)
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function targetModuleIsOutsideCurrentModules(
+  targetModule: string,
+  currentModules: ReadonlySet<string>,
+): boolean {
+  const targetSlug = normalizedModuleSlug(targetModule);
+  if (targetSlug.length === 0) return false;
+
+  for (const currentModule of currentModules) {
+    const currentSlug = normalizedModuleSlug(currentModule);
+    if (currentSlug.length === 0) return false;
+    if (targetSlug.includes(currentSlug)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function normalizedEvidenceText(value: string | undefined): string {
   return (value ?? "").trim().toLowerCase();
 }
@@ -451,7 +475,8 @@ export function classifyFamilyCmrFindings(input: {
       if (
         attribution.method !== "missing_module_context" &&
         currentModules.size > 0 &&
-        !currentModules.has(targetModule)
+        !currentModules.has(targetModule) &&
+        targetModuleIsOutsideCurrentModules(targetModule, currentModules)
       ) {
         deferred.push(finding);
         results.push(resultForDeferred(finding, input.moduleContext));
