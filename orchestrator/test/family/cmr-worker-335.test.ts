@@ -231,6 +231,55 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       }
     });
 
+    it("normalizes the known priorFindingDispositions[].disposition alias to status", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          claimedFixedFindingIdentityKeys: [
+            "correctness|src/family/verifyCmr.ts:1|closed",
+          ],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|src/family/verifyCmr.ts:1|closed",
+              disposition: "verified-closed",
+            },
+          ],
+        })}</cmr>`,
+      );
+
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.priorFindingDispositions).toEqual([
+          {
+            identityKey: "correctness|src/family/verifyCmr.ts:1|closed",
+            status: "verified-closed",
+          },
+        ]);
+      }
+    });
+
+    it("rejects mixed priorFindingDispositions status plus legacy disposition", () => {
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            claimedFixedFindingIdentityKeys: [
+              "correctness|src/family/verifyCmr.ts:1|closed",
+            ],
+            priorFindingDispositions: [
+              {
+                identityKey: "correctness|src/family/verifyCmr.ts:1|closed",
+                status: "verified-closed",
+                disposition: "verified-closed",
+              },
+            ],
+          })}</cmr>`,
+        ).kind,
+      ).toBe("malformed");
+    });
+
     it("converged:true requires explicit empty closure arrays when no claimed-fixed findings occurred", () => {
       const o = parseCmrOutcome(
         `<cmr>${JSON.stringify({
