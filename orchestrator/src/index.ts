@@ -73,15 +73,18 @@ export type {
 } from "./family/types.js";
 export type {
   Backend,
+  ContinueFixingEvent,
   CoderOutput,
   ErrorPackage,
   Escalation,
+  FindingRepairScope,
   Finding,
   HandoffStatus,
   IssueMeta,
   IssueSnapshot,
   IssueSnapshotMeta,
   LedgerEntry,
+  LedgerBookkeepingEvent,
   PersistentLedgerEntry,
   ReviewerOutput,
   RunInput,
