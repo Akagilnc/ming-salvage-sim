@@ -253,9 +253,15 @@ function providerDegradedWorkerFailureStopSummary(input: {
   }
   const normalizedReason = input.reason.toLowerCase();
   const matchedLegs = input.resolvedRoute.legCollections.cmrReview.filter(
-    (leg) =>
-      normalizedReason.includes(leg.slug.toLowerCase()) ||
-      normalizedReason.includes(leg.family.toLowerCase()),
+    (leg) => {
+      const rawFamily = "family" in leg ? leg.family : undefined;
+      const family =
+        typeof rawFamily === "string" ? rawFamily.toLowerCase() : undefined;
+      return (
+        normalizedReason.includes(leg.slug.toLowerCase()) ||
+        (family !== undefined && normalizedReason.includes(family))
+      );
+    },
   );
   const providerDegraded =
     matchedLegs.length > 0
