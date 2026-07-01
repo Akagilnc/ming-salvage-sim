@@ -240,7 +240,37 @@ function providerDegradedFloorStopSummary(input: {
   };
 }
 
-function providerDegradedWorkerFailureStopSummary(input: {
+interface CmrRouteLegEvidence {
+  readonly slug: string;
+  readonly family?: string;
+}
+
+function cmrRouteLegEvidence(leg: unknown): CmrRouteLegEvidence | undefined {
+  if (typeof leg === "string") {
+    const slug = leg.trim();
+    return slug.length > 0 ? { slug } : undefined;
+  }
+  if (leg === null || typeof leg !== "object") return undefined;
+  const candidate = leg as { readonly slug?: unknown; readonly family?: unknown };
+  const slug = typeof candidate.slug === "string" ? candidate.slug.trim() : "";
+  if (slug.length === 0) return undefined;
+  return {
+    slug,
+    ...(typeof candidate.family === "string"
+      ? { family: candidate.family.trim().toLowerCase() }
+      : {}),
+  };
+}
+
+function providerForCmrLegSlug(slug: string): string | undefined {
+  try {
+    return modelFamilyForCmrReviewLeg(slug);
+  } catch {
+    return undefined;
+  }
+}
+
+export function providerDegradedWorkerFailureStopSummary(input: {
   readonly reason: string;
   readonly resolvedRoute: ResolvedModelRoute;
 }): StopSummary | undefined {
@@ -252,26 +282,27 @@ function providerDegradedWorkerFailureStopSummary(input: {
     return undefined;
   }
   const normalizedReason = input.reason.toLowerCase();
-  const matchedLegs = input.resolvedRoute.legCollections.cmrReview.filter(
-    (leg) => {
-      const rawFamily = "family" in leg ? leg.family : undefined;
-      const family =
-        typeof rawFamily === "string" ? rawFamily.toLowerCase() : undefined;
+  const matchedLegs = input.resolvedRoute.legCollections.cmrReview
+    .map((leg) => cmrRouteLegEvidence(leg))
+    .filter((leg): leg is CmrRouteLegEvidence => {
+      if (leg === undefined) return false;
       return (
         normalizedReason.includes(leg.slug.toLowerCase()) ||
-        (family !== undefined && normalizedReason.includes(family))
+        (leg.family !== undefined && normalizedReason.includes(leg.family))
       );
-    },
-  );
+    });
   const providerDegraded =
     matchedLegs.length > 0
-      ? matchedLegs.map((leg) => ({
-          provider: modelFamilyForCmrReviewLeg(leg.slug),
-          leg: leg.slug,
-          reason: input.reason,
-          blocking: true,
-          repairHint: `restore provider availability for ${leg.slug} and rerun the CMR gate`,
-        }))
+      ? matchedLegs.map((leg) => {
+          const provider = providerForCmrLegSlug(leg.slug);
+          return {
+            ...(provider !== undefined ? { provider } : {}),
+            leg: leg.slug,
+            reason: input.reason,
+            blocking: true,
+            repairHint: `restore provider availability for ${leg.slug} and rerun the CMR gate`,
+          };
+        })
       : [
           {
             reason: input.reason,

@@ -407,7 +407,7 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
         });
       }
       if (String(args[1]).match(/repos\/MingOrg\/ming-salvage-sim\/issues\/\d+$/)) {
-        return "MEMBER";
+        return "member";
       }
       if (String(args[1]).includes("/sub_issues")) {
         return JSON.stringify([{ number: 11 }]);

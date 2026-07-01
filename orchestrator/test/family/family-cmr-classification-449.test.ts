@@ -8,7 +8,10 @@ import {
 import { findingIdentityKey } from "../../src/findings.js";
 import { recordFamilyEscalated } from "../../src/family/ledger.js";
 import { parseCmrOutcome } from "../../src/family/realFamilyBackend.js";
-import { runVerifyCmr } from "../../src/family/verifyCmr.js";
+import {
+  providerDegradedWorkerFailureStopSummary,
+  runVerifyCmr,
+} from "../../src/family/verifyCmr.js";
 import type {
   FamilyBackend,
   FamilyEscalation,
@@ -1016,6 +1019,51 @@ describe("#449 family CMR finding classification", () => {
     ]);
   });
 
+  it("fails closed when accepted suppression scope only prefix-matches the module path", () => {
+    const prefixScopeFinding: Finding = {
+      ...finding,
+      location: "orchestrator/src/family/verifyCmr.ts:42",
+      action: "wont_fix",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "#445",
+        scope: "orchestrator/src/family-runner",
+        reason: "Owner accepted only the family-runner scope",
+        findingIdentity: findingIdentityKey(finding),
+        boundedReopen: "reopen on different scope",
+      },
+    };
+    const acceptedSource = {
+      source: "#445",
+      scope: "orchestrator/src/family-runner",
+      reason: "Owner accepted only the family-runner scope",
+      findingIdentity: findingIdentityKey(finding),
+      boundedReopen: "reopen on different scope",
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [prefixScopeFinding],
+      moduleContext: buildFamilyModuleContext({
+        childModules: [],
+        familyModule: {
+          module: "orchestrator-family",
+          moduleScope: ["orchestrator/src/family"],
+          source: "family_issue",
+          issue: 445,
+        },
+        acceptedSuppressionSources: [acceptedSource],
+      }),
+    });
+
+    expect(classified.blocking).toEqual([prefixScopeFinding]);
+    expect(classified.dispositions).toEqual([]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "same_module_still_red",
+      attribution: { method: "family_module", module: "orchestrator-family" },
+    });
+  });
+
   it("fails closed when a prior accepted suppression has stale module scope", () => {
     const currentFinding: Finding = {
       ...finding,
@@ -1583,6 +1631,31 @@ module_scope:
             }),
           ],
         },
+      },
+    });
+  });
+
+  it("normalizes dirty string-shaped CMR route legs in provider-degraded summaries", () => {
+    const summary = providerDegradedWorkerFailureStopSummary({
+      reason: "provider authentication failed for agy reviewer",
+      resolvedRoute: {
+        routeName: "dirty-test",
+        slots: {} as never,
+        legCollections: { cmrReview: ["agy"] } as never,
+        tightFamilyViolations: [],
+      },
+    });
+
+    expect(summary).toMatchObject({
+      reason: "provider_degraded",
+      metadata: {
+        providerDegraded: [
+          expect.objectContaining({
+            provider: "agy",
+            leg: "agy",
+            blocking: true,
+          }),
+        ],
       },
     });
   });

@@ -269,13 +269,19 @@ function normalizedEvidenceText(value: string | undefined): string {
   return (value ?? "").trim().toLowerCase();
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function containsNormalized(haystack: string, needle: string | undefined): boolean {
   const normalizedHaystack = normalizedEvidenceText(haystack);
   const normalizedNeedle = normalizedEvidenceText(needle);
-  return (
-    normalizedNeedle.length > 0 &&
-    normalizedHaystack.includes(normalizedNeedle)
-  );
+  if (normalizedNeedle.length === 0) return false;
+  const boundary = String.raw`(?:^|[\s/.,:;()[\]])`;
+  const tailBoundary = String.raw`(?:$|[\s/.,:;()[\]])`;
+  return new RegExp(
+    `${boundary}${escapeRegExp(normalizedNeedle)}${tailBoundary}`,
+  ).test(normalizedHaystack);
 }
 
 function locationPath(location: string): string {
