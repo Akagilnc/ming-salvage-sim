@@ -64,7 +64,7 @@ const finding: Finding = {
 };
 
 describe("#449 family CMR finding classification", () => {
-  it("uses child module declarations before parent declarations and run options", () => {
+  it("uses child module declarations before the parent fallback and run options", () => {
     expect(
       buildFamilyModuleContext({
         childModules: [
@@ -86,15 +86,79 @@ describe("#449 family CMR finding classification", () => {
           moduleScope: ["fallback"],
           source: "run_option",
         },
-      }).currentModules,
-    ).toEqual([
-      {
-        module: "child-fiscal",
-        moduleScope: ["orchestrator/src/family"],
-        source: "child_issue",
-        issue: 449,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        currentModules: [
+          {
+            module: "child-fiscal",
+            moduleScope: ["orchestrator/src/family"],
+            source: "child_issue",
+            issue: 449,
+          },
+          {
+            module: "parent-fiscal",
+            moduleScope: ["docs/fiscal"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
+        fallbackModule: {
+          module: "parent-fiscal",
+          moduleScope: ["docs/fiscal"],
+          source: "family_issue",
+          issue: 445,
+        },
+      }),
+    );
+  });
+
+  it("keeps the parent module as fallback when child attribution is unavailable", () => {
+    const parentScopedFinding: Finding = {
+      ...finding,
+      location: "docs/fiscal/family-contract.md:12",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "fiscal",
+        reason: "claimed as outside child issue scope",
       },
-    ]);
+    };
+    const moduleContext = buildFamilyModuleContext({
+      childModules: [
+        {
+          module: "transport",
+          moduleScope: ["orchestrator/src/transport"],
+          source: "child_issue",
+          issue: 451,
+        },
+        {
+          module: "hub",
+          moduleScope: ["orchestrator/src/hub"],
+          source: "child_issue",
+          issue: 452,
+        },
+      ],
+      familyModule: {
+        module: "fiscal",
+        moduleScope: ["docs/fiscal"],
+        source: "family_issue",
+        issue: 445,
+      },
+    });
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [parentScopedFinding],
+      moduleContext,
+    });
+
+    expect(classified.blocking).toEqual([parentScopedFinding]);
+    expect(classified.deferred).toEqual([]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "same_module_still_red",
+      attribution: { method: "family_module", issue: 445, module: "fiscal" },
+      owningIssue: "#445",
+    });
   });
 
   it("fails closed on cross-module defer when no module declaration establishes the family module", () => {
