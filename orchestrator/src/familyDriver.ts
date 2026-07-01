@@ -429,7 +429,7 @@ function readIssueBody(issue: number, repo: string, sh: Sh): string {
       "--repo",
       repo,
       "--json",
-      "number,body,author,authorAssociation",
+      "number,body,author",
     ]);
     const parsedValue: unknown = JSON.parse(raw);
     if (
@@ -442,7 +442,6 @@ function readIssueBody(issue: number, repo: string, sh: Sh): string {
     const parsed = parsedValue as {
       readonly body?: unknown;
       readonly author?: { readonly login?: unknown };
-      readonly authorAssociation?: unknown;
     };
     const repoOwnerLogin = repo.split("/", 1)[0];
     const repoOwner = repoOwnerLogin?.toLowerCase();
@@ -450,16 +449,13 @@ function readIssueBody(issue: number, repo: string, sh: Sh): string {
       typeof parsed.author?.login === "string"
         ? parsed.author.login.toLowerCase()
         : undefined;
-    const trustedAssociation =
-      parsed.authorAssociation === "OWNER" ||
-      parsed.authorAssociation === "MEMBER" ||
-      parsed.authorAssociation === "COLLABORATOR";
     const body = typeof parsed.body === "string" ? parsed.body : "";
-    if (
-      repoOwner === undefined ||
-      (authorLogin !== repoOwner && !trustedAssociation)
-    ) {
-      if (body.length > 0 && parseModuleDeclaration(body) !== undefined) {
+    if (repoOwner === undefined || authorLogin !== repoOwner) {
+      const declaration = body.length > 0 ? parseModuleDeclaration(body) : undefined;
+      if (declaration !== undefined) {
+        if (isTrustedIssueAssociation(readIssueAuthorAssociation(issue, repo, sh))) {
+          return body;
+        }
         console.warn(
           `family module declaration ignored for issue #${issue}: author ${
             typeof parsed.author?.login === "string" ? parsed.author.login : "<unknown>"
@@ -476,6 +472,31 @@ function readIssueBody(issue: number, repo: string, sh: Sh): string {
       }`,
     );
   }
+}
+
+function readIssueAuthorAssociation(issue: number, repo: string, sh: Sh): string {
+  try {
+    return sh("gh", [
+      "api",
+      `repos/${repo}/issues/${issue}`,
+      "--jq",
+      ".author_association",
+    ]).trim();
+  } catch (err) {
+    throw new Error(
+      `failed to read issue #${issue} author association from ${repo}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
+
+function isTrustedIssueAssociation(association: string): boolean {
+  return (
+    association === "OWNER" ||
+    association === "MEMBER" ||
+    association === "COLLABORATOR"
+  );
 }
 
 function readFamilyModuleDeclarations(

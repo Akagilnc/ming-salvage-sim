@@ -271,6 +271,29 @@ describe("#291 assertExternalBlockersCleared — family-admission external-block
 });
 
 describe("#291 readFamilyEpic (injected gh sh)", () => {
+  it("uses only gh issue view JSON fields supported by the real CLI", () => {
+    const issueViewFields: string[] = [];
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        issueViewFields.push(String(args[6]));
+        return JSON.stringify({
+          number: Number(args[2]),
+          body: "",
+          author: { login: "Akagilnc" },
+        });
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 11 }]);
+      }
+      return "[]";
+    };
+
+    readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
+
+    expect(issueViewFields).toEqual(["number,body,author", "number,body,author"]);
+  });
+
   it("reads sub-issues + each child's blocked_by and builds the epic", () => {
     const sh: Sh = (file, args) => {
       expect(file).toBe("gh");
@@ -381,8 +404,10 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
           number: issue,
           body,
           author: { login: "org-member" },
-          authorAssociation: "MEMBER",
         });
+      }
+      if (String(args[1]).match(/repos\/MingOrg\/ming-salvage-sim\/issues\/\d+$/)) {
+        return "MEMBER";
       }
       if (String(args[1]).includes("/sub_issues")) {
         return JSON.stringify([{ number: 11 }]);
