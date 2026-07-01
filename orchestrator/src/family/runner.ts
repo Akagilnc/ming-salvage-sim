@@ -161,7 +161,7 @@ function familyStopSummary(input: {
   }
   if (input.status === "incomplete") {
     const blocked = input.children
-      .filter((child) => child.status !== "merged")
+      .filter((child) => child.status !== "merged" && child.status !== "already_done")
       .map((child) => `#${child.issue}:${child.status}`)
       .join(", ");
     return {

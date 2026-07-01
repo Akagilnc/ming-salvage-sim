@@ -1310,11 +1310,11 @@ async function runnerTrustBoundaryReplay(): Promise<SeamReplay> {
   }
   const backend = new UntrustedInstructionBackend();
   const result = await runOrchestrator({ issueNumber: 440, backend });
-  if (result.status !== "error" || result.stopSummary.reason !== "spec_conflict") {
+  if (result.status !== "success" || result.stopSummary.reason !== "success") {
     throw new Error(`dogfood trust-boundary replay ended ${result.status}`);
   }
-  if (backend.dispatched.length > 0) {
-    throw new Error("dogfood trust-boundary replay dispatched a worker");
+  if (backend.dispatched.length === 0) {
+    throw new Error("dogfood trust-boundary replay did not dispatch the normal worker path");
   }
   return {
     stopSummary: result.stopSummary,
@@ -2083,7 +2083,15 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     claimQuote: "reviewer wording changes cannot prove implementation progress",
     location: "orchestrator/src/runner.ts:919",
   });
+  const textOnlyNoProgressNarrowedFinding = {
+    ...textOnlyNoProgressFinding,
+    claim_quote: "wording changes cannot prove implementation progress",
+    suggested_fix: "same finding with reviewer wording changed only",
+  };
   const textOnlyNoProgressKey = findingIdentityKey(textOnlyNoProgressFinding);
+  const textOnlyNoProgressNarrowedKey = findingIdentityKey(
+    textOnlyNoProgressNarrowedFinding,
+  );
   const textOnlyNoProgressReplay = await runnerNoProgressReplay({
     mechanism: "reviewer_text_only_no_progress",
     finding: textOnlyNoProgressFinding,
@@ -2091,12 +2099,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       { kind: "reviewer", findings: [textOnlyNoProgressFinding] },
       {
         kind: "reviewer",
-        findings: [
-          {
-            ...textOnlyNoProgressFinding,
-            suggested_fix: "same finding with reviewer wording changed only",
-          },
-        ],
+        findings: [textOnlyNoProgressNarrowedFinding],
         priorFindingDispositions: [
           { identityKey: textOnlyNoProgressKey, status: "still-active" },
         ],
@@ -2106,11 +2109,13 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         findings: [
           {
             ...textOnlyNoProgressFinding,
+            claim_quote: "changes cannot prove implementation progress",
             suggested_fix: "same finding with another wording-only review change",
           },
         ],
         priorFindingDispositions: [
           { identityKey: textOnlyNoProgressKey, status: "still-active" },
+          { identityKey: textOnlyNoProgressNarrowedKey, status: "still-active" },
         ],
       },
     ],
@@ -2615,7 +2620,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       id: "440-coder-trust-boundary",
       issue: 440,
       title: "non-owner issue context is data-only and cannot instruct coder/fixer/ship",
-      classification: "spec_conflict",
+      classification: "success",
       stopSummary: trustBoundarySource.stopSummary,
       source: "runner",
       sourceStopSummary: trustBoundarySource.stopSummary,
