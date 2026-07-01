@@ -140,6 +140,8 @@ ARMY_FIELD_LABELS = {
     "training": "训练",
     "equipment": "装备",
     "arrears": "欠饷",
+    "province_pay_arrears": "省源欠饷",
+    "central_pay_arrears": "中央欠饷",
     "mobility": "机动",
     "loyalty": "忠诚",
     "firearm_equipment": "火器",
