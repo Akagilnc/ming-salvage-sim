@@ -8,7 +8,7 @@
 
 ### 新增
 - **family CMR 结论分类**：integrated CMR 现在能把同模块仍红、跨模块 defer、owning issue、spec conflict、infra failure 与受信 accepted suppression 分开记录，ship 前的 family gate 可以给出可执行的停止原因。
-- **family stop summary 与 dogfood replay**：runner、family verify、ship worker 与 replay fixture 统一输出结构化 stop summary，历史 orchestration 回归可通过同一套 seam 重放和审计。
+- **family stop summary 与 dogfood replay**：runner、family verify、ship 后 ledger 记录与 replay fixture 统一输出结构化 stop summary，历史 orchestration 回归可通过同一套 seam 重放和审计。
 - **provider degraded 可观测性**：CMR/ship 路线会把 provider/auth/quota 降级记录到 metadata，并在强 leg 下限不满足时 fail closed。
 
 ### 变更
