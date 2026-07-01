@@ -487,6 +487,45 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     }
   }
 
+  class PrHeadMismatchRecordingBackend implements FamilyBackend {
+    readonly ledger: FamilyLedgerEntry[] = [];
+    private shipDispatched = false;
+    async mergeChildIntoFamilyBase(): Promise<never> {
+      throw new Error("not used");
+    }
+    async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+      this.ledger.push(entry);
+    }
+    async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+      return this.ledger;
+    }
+    async readFamilyHead(): Promise<string> {
+      return this.shipDispatched ? "post-ship-head" : "cmr-head";
+    }
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      if (spec.kind === "cmr") {
+        return {
+          kind: "completed",
+          output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] },
+        };
+      }
+      this.shipDispatched = true;
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: "feat/445",
+          status: "pr_opened",
+          pr: "https://gh/pr/445",
+          prHead: "stale-pr-head",
+        },
+      };
+    }
+  }
+
   it("a malformed cmr worker (completed but NOT a cmr payload) ⇒ INCOMPLETE_GATE + durable aborted(final)", async () => {
     const backend = new RecordingFamilyBackend(
       { kind: "completed", output: { kind: "ship", branch: "feat/330", status: "pushed" } },
@@ -578,6 +617,33 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     expect(latest?.stopSummary?.reason).toBe("infra_failure");
     expect(latest?.stopSummary?.summary).toMatch(/PR/i);
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+  });
+
+  it("PR-head mismatch records latest verified CMR head separately from post-ship head", async () => {
+    const backend = new PrHeadMismatchRecordingBackend();
+
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/445",
+      familyBackend: backend,
+    });
+
+    expect(res).toEqual({ ok: false, ran: true });
+    const abort = backend.ledger.find((e) => e.status === "aborted");
+    expect(abort?.stopSummary?.metadata?.ship).toEqual({
+      latestVerifiedCmrHead: "cmr-head",
+      currentFamilyHead: "post-ship-head",
+      reportedFamilyHead: "stale-pr-head",
+      shipPrState: "pr-head-mismatch",
+    });
+    expect(abort?.stopSummary?.metadata?.heads).toEqual({
+      actualFamilyHead: "post-ship-head",
+      verifiedCmrHead: "cmr-head",
+      sources: {
+        actualFamilyHead: "family head after ship worker",
+        verifiedCmrHead: "latest cmr_passed ledger row",
+      },
+    });
   });
 });
 

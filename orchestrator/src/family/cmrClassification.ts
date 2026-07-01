@@ -46,6 +46,7 @@ export function buildFamilyModuleContext(input: {
   readonly familyModule?: SourcedModuleDeclaration;
   readonly runOptionModule?: SourcedModuleDeclaration;
   readonly undevelopedModules?: ReadonlyArray<SourcedModuleDeclaration | undefined>;
+  readonly acceptedSuppressionSources?: ReadonlyArray<AcceptedSuppressionSource>;
 }): FamilyModuleContext {
   const childModules = input.childModules.filter(
     (decl): decl is SourcedModuleDeclaration => decl !== undefined,
@@ -68,6 +69,10 @@ export function buildFamilyModuleContext(input: {
     childModules,
     ...(fallbackModule !== undefined ? { fallbackModule } : {}),
     ...(undevelopedModules.length > 0 ? { undevelopedModules } : {}),
+    ...(input.acceptedSuppressionSources !== undefined &&
+    input.acceptedSuppressionSources.length > 0
+      ? { acceptedSuppressionSources: input.acceptedSuppressionSources }
+      : {}),
   };
 }
 
@@ -179,7 +184,7 @@ function parseModuleDeclarationYaml(yaml: string): ModuleDeclaration | undefined
     moduleScope.push(scope);
   }
 
-  if (moduleName === undefined) return undefined;
+  if (moduleName === undefined || moduleScope.length === 0) return undefined;
   return { module: moduleName, moduleScope };
 }
 
@@ -190,8 +195,10 @@ function parseModuleDeclarationYaml(yaml: string): ModuleDeclaration | undefined
  * outside the exact `## Module Declaration` section.
  */
 export function parseModuleDeclaration(body: string): ModuleDeclaration | undefined {
-  const heading = MODULE_DECLARATION_HEADING.exec(body);
-  if (heading === null) return undefined;
+  const headings = [...body.matchAll(/^##\s+Module Declaration\s*$/gim)];
+  if (headings.length !== 1) return undefined;
+  const heading = headings[0];
+  if (heading.index === undefined) return undefined;
   const afterHeading = body.slice(heading.index + heading[0].length);
   const fence = /^\s*```(?:ya?ml)\s*\n([\s\S]*?)\n```\s*/i.exec(afterHeading);
   if (fence === null) return undefined;

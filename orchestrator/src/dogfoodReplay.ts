@@ -139,6 +139,18 @@ function finding(overrides: Partial<Finding>): Finding {
   return { ...BASE_FINDING, ...overrides };
 }
 
+function cmrWorkerParserEvidence(result: WorkerResult): { cmrWorkerParserValid: true } {
+  if (result.kind !== "completed" || result.output.kind !== "cmr") {
+    throw new Error("dogfood CMR parser evidence requires a completed CMR output");
+  }
+  const { kind: _kind, ...payload } = result.output;
+  const parsed = parseCmrOutcome(`<cmr>${JSON.stringify(payload)}</cmr>`);
+  if (parsed.kind === "malformed") {
+    throw new Error(`dogfood scripted CMR output is parser-invalid: ${parsed.reason}`);
+  }
+  return { cmrWorkerParserValid: true };
+}
+
 async function familyClassificationScenario(input: {
   readonly id: string;
   readonly issue: number;
@@ -211,6 +223,7 @@ async function familyClassificationScenario(input: {
         seam: "family_verify_cmr",
         dispatches: backend.dispatches,
         runStatus: run.ok ? "success" : "verify_failed",
+        ...cmrWorkerParserEvidence(cmrOutput),
       },
     });
   }
@@ -227,6 +240,7 @@ async function familyClassificationScenario(input: {
       seam: "family_verify_cmr",
       dispatches: backend.dispatches,
       runStatus: run.ok ? "success" : "verify_failed",
+      ...cmrWorkerParserEvidence(cmrOutput),
     },
   });
 }
@@ -876,6 +890,7 @@ module_scope:
     throw new Error("dogfood module declaration replay did not exercise parser contract");
   }
   const crossModuleFinding = finding({
+    severity: "medium",
     claim_quote: "module declaration undeveloped target unlocks cross-module defer",
     location: "docs/military-state-machine.md:1",
     action: "defer",
@@ -950,6 +965,7 @@ module_scope:
       undevelopedTargets: ["military-state-machine"],
       proseIgnored: prose === undefined,
       dispatches: backend.dispatches,
+      ...cmrWorkerParserEvidence(cmrOutput),
     },
   };
 }
@@ -998,6 +1014,18 @@ async function familyAttributionReplay(
       attribution: result.attribution,
       classification: result.classification,
       dispatches: backend.dispatches,
+      ...cmrWorkerParserEvidence({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: false,
+          reason: "child attribution must stay local",
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+          findings: [attributedFinding],
+        },
+      }),
     },
   };
 }
@@ -2169,6 +2197,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   };
   const familyAttributionSource = await familyAttributionReplay(moduleContext);
   const sameModuleFinding = finding({
+    severity: "medium",
     claim_quote: "same-module CMR gap was incorrectly treated as defer",
     location: "orchestrator/src/family/verifyCmr.ts:42",
     action: "defer",
@@ -2179,6 +2208,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     },
   });
   const crossModuleFinding = finding({
+    severity: "medium",
     claim_quote: "military state machine follow-up belongs to another module",
     location: "docs/military-state-machine.md:1",
     action: "defer",
@@ -2216,11 +2246,13 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     ],
   };
   const specConflictFinding = finding({
+    severity: "medium",
     claim_quote: "Agent Brief contradicts the owner-authored acceptance criteria",
     location: "orchestrator/prompts/coder_implement.md:1",
     action: "defer",
     disposition: {
       kind: "spec_conflict",
+      source: "#440 owner-authored Agent Brief",
       reason: "owner-authored instructions conflict and need human resolution",
     },
   });
@@ -2427,6 +2459,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         ...specConflictFinding,
         disposition: {
           kind: "spec_conflict",
+          source: "#287 coordinator escalation answer",
           reason: "peripheral coordinator answer requires fresh module/defer classification",
         },
       },

@@ -1467,14 +1467,14 @@ export async function runVerifyCmr(
         repairHint:
           "repair the family ship worker PR head binding and rerun the final family barrier",
         ship: {
-          latestVerifiedCmrHead: exactPostShipFamilyHead,
+          latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
           currentFamilyHead: exactPostShipFamilyHead,
           reportedFamilyHead: ship.prHead,
           shipPrState: "pr-head-mismatch",
         },
         heads: {
           actualFamilyHead: exactPostShipFamilyHead,
-          verifiedCmrHead: exactPostShipFamilyHead,
+          verifiedCmrHead: cmrPassedFamilyHeadAfter,
           sources: {
             actualFamilyHead: "family head after ship worker",
             verifiedCmrHead: "latest cmr_passed ledger row",

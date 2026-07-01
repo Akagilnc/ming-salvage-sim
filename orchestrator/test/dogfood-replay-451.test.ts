@@ -177,6 +177,24 @@ describe("#451 dogfood replay fixture", () => {
     expect(replay.summary).toContain("9 stop reasons");
   });
 
+  it("keeps scripted family CMR finding fixtures valid for the real worker parser", async () => {
+    const replay = await issue451DogfoodReplay();
+    const scriptedCmrFindingScenarioIds = [
+      "287-same-module-cmr-gap",
+      "287-cross-module-defer-with-module",
+      "287-module-declaration-fenced-yaml",
+      "287-family-attribution-child-before-parent",
+      "287-coordinator-answer-reclassified",
+      "287-known-hub-loss-suppression",
+      "376-owning-issue-still-red",
+    ];
+
+    for (const id of scriptedCmrFindingScenarioIds) {
+      const scenario = replay.scenarios.find((s) => s.id === id);
+      expect(scenario?.sourceEvidence?.cmrWorkerParserValid, id).toBe(true);
+    }
+  });
+
   it("uses seam-produced stop summaries for replay rows that claim success or already-done", async () => {
     const replay = await issue451DogfoodReplay();
     const rowsById = new Map(replay.scenarios.map((scenario) => [scenario.id, scenario]));
