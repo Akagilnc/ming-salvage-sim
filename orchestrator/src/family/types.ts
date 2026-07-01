@@ -715,6 +715,12 @@ export interface FamilyRunInput {
    */
   readonly moduleDeclaration?: SourcedModuleDeclaration;
   /**
+   * Runner/run-option/route declared modules intentionally outside the current
+   * family surface. CMR may defer to these targets; issue-body YAML must not
+   * invent them.
+   */
+  readonly undevelopedModules?: ReadonlyArray<SourcedModuleDeclaration>;
+  /**
    * The verify-cmr hook (ADR 0022 decision 3④/⑤/⑥) — the family verify (per-wave
    * fail-fast) + end-of-run integrated cmr. Optional: defaults to the #293 no-op
    * {@link runVerifyCmr} module export. #296 fills the module body OR injects a
