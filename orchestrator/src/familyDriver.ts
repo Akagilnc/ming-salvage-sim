@@ -431,7 +431,15 @@ function readIssueBody(issue: number, repo: string, sh: Sh): string {
       "--json",
       "number,body,author",
     ]);
-    const parsed = JSON.parse(raw) as {
+    const parsedValue: unknown = JSON.parse(raw);
+    if (
+      parsedValue === null ||
+      typeof parsedValue !== "object" ||
+      Array.isArray(parsedValue)
+    ) {
+      throw new Error(`unexpected gh issue payload for #${issue}`);
+    }
+    const parsed = parsedValue as {
       readonly body?: unknown;
       readonly author?: { readonly login?: unknown };
     };

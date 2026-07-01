@@ -227,7 +227,7 @@ function targetModuleIsOutsideCurrentModules(
 
   for (const currentModule of currentModules) {
     const currentSlug = normalizedModuleSlug(currentModule);
-    if (currentSlug.length === 0) return false;
+    if (currentSlug.length === 0) continue;
     if (targetSlug === currentSlug) {
       return false;
     }
@@ -241,8 +241,12 @@ function normalizedEvidenceText(value: string | undefined): string {
 }
 
 function containsNormalized(haystack: string, needle: string | undefined): boolean {
+  const normalizedHaystack = normalizedEvidenceText(haystack);
   const normalizedNeedle = normalizedEvidenceText(needle);
-  return normalizedNeedle.length > 0 && haystack.includes(normalizedNeedle);
+  return (
+    normalizedNeedle.length > 0 &&
+    normalizedHaystack.includes(normalizedNeedle)
+  );
 }
 
 function locationPath(location: string): string {
@@ -250,8 +254,15 @@ function locationPath(location: string): string {
 }
 
 function pathMatchesScope(path: string, scope: string): boolean {
-  const normalizedPath = path.replace(/\\/g, "/").replace(/\/+$/, "");
-  const normalizedScope = scope.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalizedPath = path
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "")
+    .toLowerCase();
+  const normalizedScope = scope
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "")
+    .toLowerCase();
   return (
     normalizedScope.length > 0 &&
     (normalizedPath === normalizedScope ||
