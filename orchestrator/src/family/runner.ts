@@ -320,7 +320,7 @@ function pendingPriorCmrFindingIdentityKeysByPass(
     keysByPass[pass] = keys;
   }
   return Object.fromEntries(
-    Object.entries(keysByPass).map(([pass, values]) => [pass, [...values].reverse()]),
+    Object.entries(keysByPass).map(([pass, values]) => [pass, values]),
   ) as Partial<Record<IntegratedCmrPass, ReadonlyArray<string>>>;
 }
 

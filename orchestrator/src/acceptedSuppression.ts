@@ -11,7 +11,6 @@ export function hasExplicitAcceptedSuppressionSource(
   const hasAuthoritativeToken =
     /(^|\s)(#\d+|issue\s*#\d+|adr\s*0*\d+|owner|human|user)\b/i.test(text);
   if (hasAuthoritativeToken) return true;
-  if (/\b(reviewer|self|worker|model)\b/.test(text)) return false;
   return false;
 }
 

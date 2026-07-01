@@ -332,6 +332,8 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       "correctness|orchestrator/src/family/verifycmr.ts:41|old blocker";
     const newKey =
       "correctness|orchestrator/src/family/verifycmr.ts:42|new blocker";
+    const newerKey =
+      "correctness|orchestrator/src/family/verifycmr.ts:43|newer blocker";
     const calls: VerifyCmrInput[] = [];
     class PreSeededFamilyBackend extends FakeFamilyBackend {
       constructor() {
@@ -383,6 +385,12 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
                   attribution: { method: "family_module", issue: 293 },
                   reason: "new blocker remains open",
                 },
+                {
+                  identityKey: newerKey,
+                  classification: "same_module_still_red",
+                  attribution: { method: "family_module", issue: 293 },
+                  reason: "newer blocker remains open",
+                },
               ],
             },
           },
@@ -404,7 +412,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
 
     expect((calls.at(-1) as VerifyCmrInput & {
       priorCmrFindingIdentityKeysByPass?: { correctness?: readonly string[] };
-    })?.priorCmrFindingIdentityKeysByPass?.correctness).toEqual([newKey]);
+    })?.priorCmrFindingIdentityKeysByPass?.correctness).toEqual([newKey, newerKey]);
   });
 
   it("passes the known #287 hub-loss accepted suppression through production CMR context", async () => {

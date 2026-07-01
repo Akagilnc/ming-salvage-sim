@@ -703,5 +703,7 @@ describe("the verifyCmr seam keeps cmr pass outcomes at the WorkerResult boundar
     expect(src).not.toMatch(/familyCoderFixWorkerSpec/);
     // No resume-session plumbing for the cmr worker.
     expect(src).not.toMatch(/resumeSessionId:/);
+    // Provider-degradation matching must tolerate dirty route legs without family.
+    expect(src).not.toMatch(/leg\.family\.toLowerCase\(\)/);
   });
 });
