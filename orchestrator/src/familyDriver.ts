@@ -40,6 +40,11 @@ import { RealBackend } from "./realBackend.js";
 import { parseBlockedBy, type GhBlockedBy } from "./realBackend.js";
 import { RealFamilyBackend } from "./family/realFamilyBackend.js";
 import { runFamily } from "./family/runner.js";
+import {
+  parseModuleDeclaration,
+  sourcedModuleDeclaration,
+  type SourcedModuleDeclaration,
+} from "./family/cmrClassification.js";
 import type { Backend } from "./types.js";
 import type {
   ChildSlice,
@@ -190,12 +195,25 @@ export function buildFamilyEpic(
   epicIssue: number,
   childNumbers: ReadonlyArray<number>,
   blockedByByChild: ReadonlyMap<number, ReadonlyArray<GhBlockedBy>>,
+  moduleDeclarations: {
+    readonly family?: SourcedModuleDeclaration;
+    readonly children?: ReadonlyMap<number, SourcedModuleDeclaration>;
+  } = {},
 ): FamilyEpic {
   const children: ChildSlice[] = childNumbers.map((issue) => ({
     issue,
     blockedBy: (blockedByByChild.get(issue) ?? []).map((b) => b.number),
+    ...(moduleDeclarations.children?.get(issue) !== undefined
+      ? { moduleDeclaration: moduleDeclarations.children.get(issue)! }
+      : {}),
   }));
-  return { issue: epicIssue, children };
+  return {
+    issue: epicIssue,
+    children,
+    ...(moduleDeclarations.family !== undefined
+      ? { moduleDeclaration: moduleDeclarations.family }
+      : {}),
+  };
 }
 
 /** A family child blocked by an EXTERNAL (non-family) issue still open at admission. */
@@ -379,11 +397,61 @@ export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyE
     ]);
     blockedByByChild.set(child, parseBlockedBy(JSON.parse(depRaw)));
   }
+  const moduleDeclarations = readFamilyModuleDeclarations(
+    epicIssue,
+    childNumbers,
+    repo,
+    sh,
+  );
   // Family-admission gate (online R1 #1): fail-closed up front if any EXTERNAL blocker
   // is still open — runs on the initial admission AND on every resume refetch, so a
   // re-opened external blocker re-rejects on re-entry.
   assertExternalBlockersCleared(childNumbers, blockedByByChild);
-  return buildFamilyEpic(epicIssue, childNumbers, blockedByByChild);
+  return buildFamilyEpic(epicIssue, childNumbers, blockedByByChild, moduleDeclarations);
+}
+
+function readIssueBody(issue: number, repo: string, sh: Sh): string {
+  try {
+    const raw = sh("gh", [
+      "issue",
+      "view",
+      String(issue),
+      "--repo",
+      repo,
+      "--json",
+      "number,body",
+    ]);
+    const parsed = JSON.parse(raw) as { readonly body?: unknown };
+    return typeof parsed.body === "string" ? parsed.body : "";
+  } catch {
+    return "";
+  }
+}
+
+function readFamilyModuleDeclarations(
+  epicIssue: number,
+  childNumbers: ReadonlyArray<number>,
+  repo: string,
+  sh: Sh,
+): {
+  readonly family?: SourcedModuleDeclaration;
+  readonly children: ReadonlyMap<number, SourcedModuleDeclaration>;
+} {
+  const family = sourcedModuleDeclaration(
+    parseModuleDeclaration(readIssueBody(epicIssue, repo, sh)),
+    "family_issue",
+    epicIssue,
+  );
+  const children = new Map<number, SourcedModuleDeclaration>();
+  for (const child of childNumbers) {
+    const declaration = sourcedModuleDeclaration(
+      parseModuleDeclaration(readIssueBody(child, repo, sh)),
+      "child_issue",
+      child,
+    );
+    if (declaration !== undefined) children.set(child, declaration);
+  }
+  return { ...(family !== undefined ? { family } : {}), children };
 }
 
 /**

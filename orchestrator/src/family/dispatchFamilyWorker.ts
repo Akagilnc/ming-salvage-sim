@@ -168,6 +168,7 @@ export async function legacyDispatchFamilyWorker(
       ...(ctx.escalationAnswer !== undefined
         ? { escalationAnswer: ctx.escalationAnswer }
         : {}),
+      ...(ctx.moduleContext !== undefined ? { moduleContext: ctx.moduleContext } : {}),
     });
     // A `red` (non-converged) verdict is `completed` with payload — NOT `failed`
     // (PRD #330 R2). The verify-cmr hook reads `converged` off the payload.
@@ -189,6 +190,7 @@ export async function legacyDispatchFamilyWorker(
         ...(cmr.priorFindingDispositions !== undefined
           ? { priorFindingDispositions: cmr.priorFindingDispositions }
           : {}),
+        ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
       },
     };
   }

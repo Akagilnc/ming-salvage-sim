@@ -48,6 +48,11 @@
  */
 
 import {
+  classifyFamilyCmrFindings,
+  type FamilyCmrClassification,
+  type FamilyModuleContext,
+} from "./cmrClassification.js";
+import {
   cmrWorkerSpec,
   dispatchFamilyWorker,
   familyShipWorkerSpec,
@@ -117,8 +122,12 @@ export interface VerifyCmrInput {
    * ledger entry's `familyHeadAfter`, so reconcile's "read末条 familyHeadAfter"
    * baseline covers an abort. Absent ⇒ no merge landed yet (a fresh run's first
    * barrier); the durable entry omits the head.
-   */
+  */
   readonly familyHeadAfter?: string;
+  /** Parent/family issue number, used for issue-specific accepted suppressions. */
+  readonly familyIssue?: number;
+  /** Parsed module declarations for family-CMR defer classification (#449). */
+  readonly moduleContext?: FamilyModuleContext;
 }
 
 /** The verify-cmr hook result. */
@@ -291,6 +300,8 @@ async function runIntegratedCmrPass(input: {
   readonly llmResolvedChildren?: readonly number[];
   readonly escalationAnswer?: EscalationAnswerPayload;
   readonly familyHeadAfter?: string;
+  readonly familyIssue?: number;
+  readonly moduleContext?: FamilyModuleContext;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -299,6 +310,8 @@ async function runIntegratedCmrPass(input: {
     llmResolvedChildren,
     escalationAnswer,
     familyHeadAfter,
+    familyIssue,
+    moduleContext,
   } = input;
   const routeFingerprint = modelRouteFingerprint(resolveActiveModelRoute());
   const resolvedFamilyHeadAfter = await readPostCmrFamilyHead(
@@ -328,6 +341,7 @@ async function runIntegratedCmrPass(input: {
         ? { llmResolvedChildren }
         : {}),
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
+      ...(moduleContext !== undefined ? { moduleContext } : {}),
     },
   );
   const postWorkerFamilyHead = await readPostCmrFamilyHead(
@@ -369,7 +383,43 @@ async function runIntegratedCmrPass(input: {
     });
     return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
   }
-  if (!cmrResult.output.converged) {
+  let cmrFindingClassification: FamilyCmrClassification | undefined;
+  if (
+    cmrResult.output.findings !== undefined &&
+    cmrResult.output.findings.length > 0
+  ) {
+    cmrFindingClassification = classifyFamilyCmrFindings({
+      familyIssue: familyIssue ?? 0,
+      findings: cmrResult.output.findings,
+      moduleContext: moduleContext ?? { currentModules: [], childModules: [] },
+    });
+    if (cmrFindingClassification.blocking.length > 0) {
+      const reason =
+        `integrated cmr ${pass} found blocking family-scope findings: ` +
+        cmrFindingClassification.results
+          .filter((result) => result.classification !== "cross_module_defer")
+          .map((result) => `${result.classification}:${result.identityKey}`)
+          .join(", ");
+      await recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        cmrFindingClassification,
+      });
+      await familyBackend.escalateFamily?.({
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+      });
+      return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+    }
+  }
+  if (
+    !cmrResult.output.converged &&
+    (cmrFindingClassification === undefined ||
+      (cmrFindingClassification.deferred.length === 0 &&
+        cmrFindingClassification.dispositions.length === 0))
+  ) {
     const reason =
       cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
     await recordDurableAbort(familyBackend, {
@@ -443,6 +493,7 @@ async function runIntegratedCmrPass(input: {
     cmrPass: pass,
     familyHeadAfter: postWorkerFamilyHead,
     routeFingerprint,
+    cmrFindingClassification,
   });
   return { result: { ok: true, ran: true }, familyHeadAfter: postWorkerFamilyHead };
 }
@@ -468,6 +519,8 @@ export async function runVerifyCmr(
     llmResolvedChildren,
     escalationAnswer,
     familyHeadAfter,
+    familyIssue,
+    moduleContext,
   } = input;
 
   // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
@@ -526,6 +579,8 @@ export async function runVerifyCmr(
     llmResolvedChildren,
     escalationAnswer,
     familyHeadAfter,
+    familyIssue,
+    moduleContext,
   });
   if (!completeness.result.ok) return completeness.result;
 
@@ -536,6 +591,8 @@ export async function runVerifyCmr(
     llmResolvedChildren,
     escalationAnswer,
     familyHeadAfter: completeness.familyHeadAfter,
+    familyIssue,
+    moduleContext,
   });
   if (!correctness.result.ok) return correctness.result;
   const cmrPassedFamilyHeadAfter = correctness.familyHeadAfter;

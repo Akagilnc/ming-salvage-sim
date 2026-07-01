@@ -13,6 +13,8 @@
  * fill behaviour in, not re-shape these.
  */
 
+import type { FamilyModuleContext } from "./family/cmrClassification.js";
+
 // ───────────────────────────── step identifiers ─────────────────────────────
 
 /**
@@ -527,6 +529,8 @@ export interface DispatchContext {
    * dispatched only after completeness passes.
    */
   readonly cmrPass?: "completeness" | "correctness";
+  /** FAMILY cmr worker only: parsed module declarations supplied by the runner. */
+  readonly moduleContext?: FamilyModuleContext;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */
@@ -540,11 +544,10 @@ export type CoderResult = CoderOutput;
 export type ReviewerResult = ReviewerOutput;
 
 /**
- * A family integrated-cmr worker's output (#335). A BARE verdict is correct here
- * (PRD #330 R2): the consumer `verifyCmr.ts` reads `converged`; a `red` verdict
- * does NOT drive a fix-loop at this layer, so no findings array is required. (=
- * existing {@link IntegratedCmrResult}, re-exported via family/types — kept as a
- * separate `kind` payload in the union below.)
+ * A family integrated-cmr worker's output (#335/#449). The consumer
+ * `verifyCmr.ts` reads `converged`, and when the worker supplies structured
+ * findings it classifies defers/suppressions against the declared family module
+ * context before deciding whether the pass can proceed.
  */
 export interface CmrResult {
   readonly kind: "cmr";
@@ -562,6 +565,8 @@ export interface CmrResult {
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   /** Explicit closure disposition for claimed-fixed integrated CMR findings. */
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
+  /** Structured CMR findings for family-level defer/suppression classification. */
+  readonly findings?: readonly Finding[];
   // NOTE: a STUCK cmr worker is the WorkerResult-level `{kind:"escalated"}` case,
   // NOT an `escalate` field on this `completed` payload (codex cmr R3b finding: a
   // payload-level escalate would be silently ignored by the verifyCmr consumer,

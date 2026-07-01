@@ -290,6 +290,41 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
       ],
     });
   });
+  it("parses parent and child Module Declaration issue bodies into the FamilyEpic", () => {
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        const issue = Number(args[2]);
+        const body =
+          issue === 291
+            ? "## Module Declaration\n```yaml\nmodule: parent-fiscal\nmodule_scope:\n  - docs/fiscal\n```"
+            : issue === 12
+              ? "## Module Declaration\n```yaml\nmodule: child-hub\nmodule_scope:\n  - orchestrator/src/family\n```"
+              : "";
+        return JSON.stringify({ number: issue, body });
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 11 }, { number: 12 }]);
+      }
+      return "[]";
+    };
+
+    const epic = readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
+
+    expect(epic.moduleDeclaration).toEqual({
+      module: "parent-fiscal",
+      moduleScope: ["docs/fiscal"],
+      source: "family_issue",
+      issue: 291,
+    });
+    expect(epic.children[0]?.moduleDeclaration).toBeUndefined();
+    expect(epic.children[1]?.moduleDeclaration).toEqual({
+      module: "child-hub",
+      moduleScope: ["orchestrator/src/family"],
+      source: "child_issue",
+      issue: 12,
+    });
+  });
   it("admits only OPEN ready-for-agent leaf children, logs every skipped non-runnable child, and continues", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
