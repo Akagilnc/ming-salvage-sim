@@ -642,6 +642,75 @@ function repairEvidenceMatchesKey(
   );
 }
 
+const FINDING_SEVERITY_RANK: Readonly<Record<Finding["severity"], number>> = {
+  clarity: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+  critical: 4,
+};
+
+function sameFindingLineage(a: Finding, b: Finding): boolean {
+  return a.category === b.category && a.location === b.location;
+}
+
+function normalizedClaim(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function reviewerNarrowedFinding(
+  previous: Finding,
+  current: Finding,
+): boolean {
+  if (!sameFindingLineage(previous, current)) return false;
+  const previousClaim = normalizedClaim(previous.claim_quote);
+  const currentClaim = normalizedClaim(current.claim_quote);
+  return (
+    currentClaim.length > 0 &&
+    currentClaim !== previousClaim &&
+    currentClaim.length < previousClaim.length &&
+    previousClaim.includes(currentClaim)
+  );
+}
+
+function reviewerObservedProgress(input: {
+  readonly previousBlockingFindings: ReadonlyArray<Finding>;
+  readonly previousBlockingIdentityKeys: ReadonlyArray<string>;
+  readonly currentBlockingFindings: ReadonlyArray<Finding>;
+  readonly currentBlockingIdentityKeys: ReadonlyArray<string>;
+  readonly previousFinding: Finding;
+  readonly previousIdentityKey: string;
+  readonly previousNoProgressCount: number;
+}): boolean {
+  if (
+    input.previousNoProgressCount === 0 &&
+    input.currentBlockingFindings.length > 0 &&
+    input.currentBlockingIdentityKeys.length <
+    input.previousBlockingIdentityKeys.length
+  ) {
+    return true;
+  }
+
+  const currentBySameKey = input.currentBlockingFindings.find(
+    (finding) => findingIdentityKey(finding) === input.previousIdentityKey,
+  );
+  if (
+    currentBySameKey !== undefined &&
+    FINDING_SEVERITY_RANK[currentBySameKey.severity] <
+      FINDING_SEVERITY_RANK[input.previousFinding.severity]
+  ) {
+    return true;
+  }
+
+  return input.currentBlockingFindings.some(
+    (finding) =>
+      sameFindingLineage(input.previousFinding, finding) &&
+      (FINDING_SEVERITY_RANK[finding.severity] <
+        FINDING_SEVERITY_RANK[input.previousFinding.severity] ||
+        reviewerNarrowedFinding(input.previousFinding, finding)),
+  );
+}
+
 function latestCoderRepairEvidence(
   ledger: ReadonlyArray<LedgerEntry>,
 ): RepairEvidence | undefined {
@@ -818,6 +887,8 @@ function replayS4AdjudicationState(
       lastReviewerOutputForS4.findings,
       findingDispositions,
     );
+    const reviewerBlocking = [...classification.blocking];
+    const reviewerBlockingIdentityKeys = [...classification.blockingIdentityKeys];
     let blocking = [...classification.blocking];
     let blockingIdentityKeys = [...classification.blockingIdentityKeys];
     findingDispositions = [
@@ -839,10 +910,34 @@ function replayS4AdjudicationState(
       const seenBlocking = new Set(blockingIdentityKeys);
       for (const finding of adjudication.stillOpen) {
         const key = findingIdentityKey(finding);
+        const previousFinding =
+          pendingBlockingFindings[
+            pendingBlockingFindingIdentityKeys.indexOf(key)
+          ] ?? finding;
+        const observedReviewerProgress = reviewerObservedProgress({
+          previousBlockingFindings: pendingBlockingFindings,
+          previousBlockingIdentityKeys: pendingBlockingFindingIdentityKeys,
+          currentBlockingFindings: reviewerBlocking,
+          currentBlockingIdentityKeys: reviewerBlockingIdentityKeys,
+          previousFinding,
+          previousIdentityKey: key,
+          previousNoProgressCount: noProgressCounts.get(key) ?? 0,
+        });
         if (!seenBlocking.has(key)) {
-          blocking.push(finding);
-          blockingIdentityKeys.push(key);
-          seenBlocking.add(key);
+          const replacedByNarrowerFinding =
+            observedReviewerProgress &&
+            reviewerBlocking.some(
+              (current) =>
+                findingIdentityKey(current) !== key &&
+                reviewerNarrowedFinding(previousFinding, current),
+            );
+          if (replacedByNarrowerFinding) {
+            noProgressCounts.delete(key);
+          } else {
+            blocking.push(finding);
+            blockingIdentityKeys.push(key);
+            seenBlocking.add(key);
+          }
         }
         if (
           repairEvidenceMatchesKey(
@@ -852,7 +947,8 @@ function replayS4AdjudicationState(
             key,
             pendingBlockingFindings,
             pendingBlockingFindingIdentityKeys,
-          )
+          ) ||
+          observedReviewerProgress
         ) {
           noProgressCounts.set(key, 0);
         } else {
@@ -1575,6 +1671,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       reviewerOutput.findings,
       findingDispositions,
     );
+    const reviewerBlocking = [...classification.blocking];
+    const reviewerBlockingIdentityKeys = [...classification.blockingIdentityKeys];
     let blocking = [...classification.blocking];
     let blockingIdentityKeys = [...classification.blockingIdentityKeys];
     findingDispositions = [...classification.dispositions];
@@ -1592,10 +1690,34 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       const seenBlocking = new Set(blockingIdentityKeys);
       for (const finding of adjudication.stillOpen) {
         const key = findingIdentityKey(finding);
+        const previousFinding =
+          pendingBlockingFindings[
+            pendingBlockingFindingIdentityKeys.indexOf(key)
+          ] ?? finding;
+        const observedReviewerProgress = reviewerObservedProgress({
+          previousBlockingFindings: pendingBlockingFindings,
+          previousBlockingIdentityKeys: pendingBlockingFindingIdentityKeys,
+          currentBlockingFindings: reviewerBlocking,
+          currentBlockingIdentityKeys: reviewerBlockingIdentityKeys,
+          previousFinding,
+          previousIdentityKey: key,
+          previousNoProgressCount: noProgressByFindingIdentityKey.get(key) ?? 0,
+        });
         if (!seenBlocking.has(key)) {
-          blocking.push(finding);
-          blockingIdentityKeys.push(key);
-          seenBlocking.add(key);
+          const replacedByNarrowerFinding =
+            observedReviewerProgress &&
+            reviewerBlocking.some(
+              (current) =>
+                findingIdentityKey(current) !== key &&
+                reviewerNarrowedFinding(previousFinding, current),
+            );
+          if (replacedByNarrowerFinding) {
+            noProgressByFindingIdentityKey.delete(key);
+          } else {
+            blocking.push(finding);
+            blockingIdentityKeys.push(key);
+            seenBlocking.add(key);
+          }
         }
         if (
           repairEvidenceMatchesKey(
@@ -1605,7 +1727,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             key,
             pendingBlockingFindings,
             pendingBlockingFindingIdentityKeys,
-          )
+          ) ||
+          observedReviewerProgress
         ) {
           noProgressByFindingIdentityKey.set(key, 0);
         } else {
