@@ -16,6 +16,16 @@ export interface FamilyModuleContext {
   readonly currentModules: ReadonlyArray<SourcedModuleDeclaration>;
   readonly childModules: ReadonlyArray<SourcedModuleDeclaration>;
   readonly fallbackModule?: SourcedModuleDeclaration;
+  readonly undevelopedModules?: ReadonlyArray<SourcedModuleDeclaration>;
+  readonly acceptedSuppressionSources?: ReadonlyArray<AcceptedSuppressionSource>;
+}
+
+export interface AcceptedSuppressionSource {
+  readonly source: string;
+  readonly scope: string;
+  readonly reason: string;
+  readonly findingIdentity: string;
+  readonly boundedReopen: string;
 }
 
 export function sourcedModuleDeclaration(
@@ -79,6 +89,8 @@ export interface FamilyCmrFindingResult {
     readonly source?: SourcedModuleDeclaration["source"];
   };
   readonly owningIssue?: string;
+  readonly missingSurface?: string;
+  readonly nextStep?: string;
   readonly targetModule?: string;
   readonly source?: string;
   readonly reason: string;
@@ -265,11 +277,22 @@ function currentModuleNames(context: FamilyModuleContext): ReadonlySet<string> {
   return new Set(context.currentModules.map((decl) => normalizedModule(decl.module)));
 }
 
-function hasExplicitSuppressionSource(source: string | undefined): boolean {
-  const normalized = normalizedEvidenceText(source);
-  return /(^|\s)#\d+\b|\bissue\s+#?\d+\b|\badr\s*0*\d+\b|\buser\b/.test(
-    normalized,
-  );
+function declaredUndevelopedTarget(
+  targetModule: string | undefined,
+  context: FamilyModuleContext,
+): SourcedModuleDeclaration | undefined {
+  const target = normalizedModule(targetModule ?? "");
+  if (target.length === 0) return undefined;
+  const targetSlug = normalizedModuleSlug(target);
+  return (context.undevelopedModules ?? []).find((decl) => {
+    const moduleName = normalizedModule(decl.module);
+    const moduleSlug = normalizedModuleSlug(decl.module);
+    return (
+      target === moduleName ||
+      targetSlug === moduleSlug ||
+      decl.moduleScope.some((scope) => containsNormalized(target, scope))
+    );
+  });
 }
 
 function suppressionScopeMatchesContext(input: {
@@ -306,13 +329,20 @@ function acceptedSuppressionFindingMatchesContext(
     return true;
   }
   const disposition = finding.disposition;
+  const matchingSource = (context.acceptedSuppressionSources ?? []).find(
+    (source) =>
+      source.source === disposition.source &&
+      source.findingIdentity === disposition.findingIdentity &&
+      source.boundedReopen === disposition.boundedReopen &&
+      source.reason === disposition.reason,
+  );
+  if (matchingSource === undefined) return false;
   return (
     disposition.findingIdentity === findingIdentityKey(finding) &&
-    hasExplicitSuppressionSource(disposition.source) &&
     suppressionScopeMatchesContext({
       finding,
       context,
-      scope: disposition.scope,
+      scope: matchingSource.scope,
     })
   );
 }
@@ -323,13 +353,20 @@ function priorDispositionMatchesContext(
   context: FamilyModuleContext,
 ): boolean {
   if (disposition.status !== "accepted_suppressed") return true;
+  const matchingSource = (context.acceptedSuppressionSources ?? []).find(
+    (source) =>
+      source.source === disposition.source &&
+      source.findingIdentity === disposition.identityKey &&
+      source.boundedReopen === disposition.boundedReopen &&
+      source.reason === disposition.reason,
+  );
+  if (matchingSource === undefined) return false;
   return (
     disposition.identityKey === findingIdentityKey(finding) &&
-    hasExplicitSuppressionSource(disposition.source) &&
     suppressionScopeMatchesContext({
       finding,
       context,
-      scope: disposition.scope,
+      scope: matchingSource.scope,
     })
   );
 }
@@ -401,6 +438,14 @@ function resultForBlocking(
       : attribution.issue !== undefined
         ? { owningIssue: `#${attribution.issue}` }
         : {}),
+    ...(disposition?.kind === "owning_issue_still_red" &&
+    disposition.missingSurface !== undefined
+      ? { missingSurface: disposition.missingSurface }
+      : {}),
+    ...(disposition?.kind === "owning_issue_still_red" &&
+    disposition.nextStep !== undefined
+      ? { nextStep: disposition.nextStep }
+      : {}),
     ...(disposition?.targetModule !== undefined
       ? { targetModule: disposition.targetModule }
       : {}),
@@ -445,6 +490,26 @@ export function classifyFamilyCmrFindings(input: {
       }
 
       const disposition = acceptedSuppressionDisposition(finding);
+      const suppressionFinding: Finding = {
+        ...finding,
+        action: "wont_fix",
+        disposition: {
+          kind: "accepted_suppressed",
+          source: disposition.source,
+          scope: disposition.scope,
+          reason: disposition.reason,
+          findingIdentity: disposition.identityKey,
+          boundedReopen: disposition.boundedReopen,
+        },
+      };
+      if (!acceptedSuppressionFindingMatchesContext(
+        suppressionFinding,
+        input.moduleContext,
+      )) {
+        blocking.push(finding);
+        results.push(resultForBlocking(finding, input.moduleContext));
+        continue;
+      }
       seededDispositions.push(disposition);
       results.push({
         identityKey: disposition.identityKey,
@@ -472,8 +537,13 @@ export function classifyFamilyCmrFindings(input: {
       findingsForFinalClassification.push(finding);
       const attribution = attributionFor(finding, input.moduleContext);
       const targetModule = normalizedModule(finding.disposition.targetModule ?? "");
+      const undevelopedTarget = declaredUndevelopedTarget(
+        finding.disposition.targetModule,
+        input.moduleContext,
+      );
       if (
         attribution.method !== "missing_module_context" &&
+        undevelopedTarget !== undefined &&
         currentModules.size > 0 &&
         !currentModules.has(targetModule) &&
         targetModuleIsOutsideCurrentModules(targetModule, currentModules)

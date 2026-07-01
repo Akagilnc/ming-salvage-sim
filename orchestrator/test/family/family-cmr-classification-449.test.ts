@@ -258,6 +258,14 @@ describe("#449 family CMR finding classification", () => {
             issue: 449,
           },
         ],
+        undevelopedModules: [
+          {
+            module: "military-state-machine",
+            moduleScope: ["docs/military-state-machine.md"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
       },
     });
 
@@ -294,6 +302,14 @@ describe("#449 family CMR finding classification", () => {
           },
         ],
         childModules: [],
+        undevelopedModules: [
+          {
+            module: "military-state-machine",
+            moduleScope: ["docs/military-state-machine.md"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
       },
     });
 
@@ -328,6 +344,18 @@ describe("#449 family CMR finding classification", () => {
           },
         ],
         childModules: [],
+        acceptedSuppressionSources: [
+          {
+            source: "#303",
+            scope:
+              "#287 hub-loss / central C_ accounts finding only; not #287 local integration or stub-contract failures",
+            reason:
+              "#287 ADR0023 D9 central transport-loss C_ accounts are accepted as #261/ADR0021 hub implementation scope",
+            findingIdentity: findingIdentityKey(hubLossFinding),
+            boundedReopen:
+              "reopen if severity escalates, new evidence changes the scope, or the finding targets #287-owned local integration/stub contract behavior",
+          },
+        ],
       },
     });
 
@@ -376,6 +404,14 @@ describe("#449 family CMR finding classification", () => {
           },
         ],
         childModules: [],
+        undevelopedModules: [
+          {
+            module: "military-state-machine",
+            moduleScope: ["docs/military-state-machine.md"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
       },
     });
 
@@ -467,6 +503,14 @@ describe("#449 family CMR finding classification", () => {
           },
         ],
         childModules: [],
+        undevelopedModules: [
+          {
+            module: "military-state-machine",
+            moduleScope: ["docs/military-state-machine.md"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
       },
     });
 
@@ -661,6 +705,14 @@ describe("#449 verifyCmr family gate classification", () => {
           },
         ],
         childModules: [],
+        undevelopedModules: [
+          {
+            module: "military-state-machine",
+            moduleScope: ["docs/military-state-machine.md"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
       },
     });
 
@@ -683,17 +735,23 @@ describe("#449 verifyCmr family gate classification", () => {
   });
 
   it("records accepted_suppressed dispositions in successful CMR stop summary metadata", async () => {
-    const suppressedFinding: Finding = {
+    const suppressedFindingBase: Finding = {
       ...finding,
-      claim_quote: "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
-      location: "docs/adr/0023.md:D9",
+      severity: "medium",
+      claim_quote: "route accounting follow-up is accepted as bounded out of scope",
+      location: "orchestrator/src/modelRoutes.ts:1",
       action: "wont_fix",
+      disposition_reason: "accepted hub stub suppression",
+    };
+    const suppressedFindingIdentity = findingIdentityKey(suppressedFindingBase);
+    const suppressedFinding: Finding = {
+      ...suppressedFindingBase,
       disposition: {
         kind: "accepted_suppressed",
         source: "#303",
         scope: "#287 hub-loss / central C_ accounts finding only",
         reason: "accepted hub stub suppression",
-        findingIdentity: "correctness|docs/adr/0023.md:D9|ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
+        findingIdentity: suppressedFindingIdentity,
         boundedReopen: "reopen on severity escalation, new evidence, or #287-owned local integration scope",
       },
     };
@@ -725,6 +783,16 @@ describe("#449 verifyCmr family gate classification", () => {
           },
         ],
         childModules: [],
+        acceptedSuppressionSources: [
+          {
+            source: "#303",
+            scope: "#287 hub-loss / central C_ accounts finding only",
+            reason: "accepted hub stub suppression",
+            findingIdentity: suppressedFindingIdentity,
+            boundedReopen:
+              "reopen on severity escalation, new evidence, or #287-owned local integration scope",
+          },
+        ],
       },
     });
 
@@ -740,7 +808,7 @@ describe("#449 verifyCmr family gate classification", () => {
             expect.objectContaining({
               source: "#303",
               scope: expect.stringContaining("#287 hub-loss / central C_ accounts"),
-              findingIdentity: expect.stringMatching(/adr0023 d9 central transport-loss/i),
+              findingIdentity: expect.stringMatching(/route accounting follow-up/i),
               boundedReopen: expect.stringMatching(/severity escalat/i),
             }),
           ],

@@ -20,6 +20,8 @@ export interface StopSummary {
   readonly finding?: Finding;
   readonly targetModule?: string;
   readonly owningIssue?: string;
+  readonly missingSurface?: string;
+  readonly nextStep?: string;
   readonly metadata?: StopSummaryMetadata;
 }
 
@@ -54,6 +56,14 @@ export interface RouteAccountingSummary {
   readonly successfulLegs: ReadonlyArray<string>;
   readonly skippedLegs: ReadonlyArray<{ readonly slug: string; readonly reason: string }>;
   readonly routeFingerprint: string;
+  readonly routeArtifact?: {
+    readonly path: string;
+    readonly content: unknown;
+  };
+  readonly actualPayload?: {
+    readonly successfulLegs: ReadonlyArray<string>;
+    readonly skippedLegs?: ReadonlyArray<{ readonly slug: string; readonly reason: string }>;
+  };
   readonly repairHint: string;
 }
 
@@ -93,6 +103,8 @@ export type FindingDispositionStopInput =
       readonly kind: "owning_issue_still_red";
       readonly finding: Finding;
       readonly owningIssue: string;
+      readonly missingSurface?: string;
+      readonly nextStep?: string;
       readonly reason?: string;
     }
   | {
@@ -130,6 +142,10 @@ export function stopReasonForFindingDisposition(
         summary: input.reason ?? "owning issue has not closed the required surface",
         finding: input.finding,
         owningIssue: input.owningIssue,
+        ...(input.missingSurface !== undefined
+          ? { missingSurface: input.missingSurface }
+          : {}),
+        ...(input.nextStep !== undefined ? { nextStep: input.nextStep } : {}),
       };
     case "cross_module":
       return {
@@ -218,6 +234,8 @@ export function stopSummaryFromFindingDispositionEvidence(input: {
         kind: "owning_issue_still_red",
         finding,
         owningIssue: evidence.owningIssue ?? "unknown",
+        missingSurface: evidence.missingSurface,
+        nextStep: evidence.nextStep,
         reason: evidence.reason,
       });
     case "cross_module":

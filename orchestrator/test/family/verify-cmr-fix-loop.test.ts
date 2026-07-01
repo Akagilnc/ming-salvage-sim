@@ -151,7 +151,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
-  it("cmr worker COMPLETED but NOT converged (no escalate) ⇒ fail-safe escalateFamily with the reason, ok:false, NO ship", async () => {
+  it("cmr worker COMPLETED but NOT converged (no escalate) ⇒ machine abort with the reason, ok:false, NO ship", async () => {
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({
         kind: "completed",
@@ -164,8 +164,13 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
       familyBackend: backend,
     });
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.escalations).toHaveLength(1);
-    expect(backend.escalations[0]?.reason).toContain("contract drift");
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      reason: expect.stringContaining("contract drift"),
+      stopSummary: expect.objectContaining({ reason: "contract_drift" }),
+    }));
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
@@ -190,10 +195,11 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.escalations[0]?.reason).toMatch(/missing explicit disposition/i);
+    expect(backend.escalations).toEqual([]);
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
+      reason: expect.stringMatching(/missing explicit disposition/i),
       stopSummary: expect.objectContaining({
         reason: "contract_drift",
         repairHint: expect.stringContaining("claimed-fixed closure payload"),
@@ -228,7 +234,12 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.escalations[0]?.reason).toMatch(/closure_context_missing/i);
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      reason: expect.stringMatching(/closure_context_missing/i),
+    }));
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
@@ -259,7 +270,12 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.escalations[0]?.reason).toMatch(/outside the runner-supplied/i);
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      reason: expect.stringMatching(/outside the runner-supplied/i),
+    }));
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
@@ -289,7 +305,12 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.escalations[0]?.reason).toMatch(/not verified closed/i);
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      reason: expect.stringMatching(/were not explicitly claimed fixed|not verified closed/i),
+    }));
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 

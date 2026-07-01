@@ -257,8 +257,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.escalations[0]?.reason).toContain("floor");
-    expect(backend.escalations[0]?.reason).toContain("agy");
+    expect(backend.escalations).toEqual([]);
     expect(backend.prCalls).toEqual([]);
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
@@ -305,8 +304,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
 
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.prCalls).toEqual([]);
-    expect(backend.escalations[0]?.reason).toContain("not declared");
-    expect(backend.escalations[0]?.reason).toContain("opus");
+    expect(backend.escalations).toEqual([]);
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
@@ -323,6 +321,21 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
             successfulLegs: ["agy", "opus"],
             skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
             routeFingerprint: expect.any(String),
+            routeArtifact: expect.objectContaining({
+              path: ".cmr-route.json",
+              content: expect.objectContaining({
+                legCollections: expect.objectContaining({
+                  cmrReview: expect.arrayContaining([
+                    expect.objectContaining({ slug: "gpt-5.5" }),
+                    expect.objectContaining({ slug: "agy" }),
+                  ]),
+                }),
+              }),
+            }),
+            actualPayload: expect.objectContaining({
+              successfulLegs: ["agy", "opus"],
+              skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
+            }),
             repairHint: expect.stringContaining("undeclared legs"),
           }),
         }),
@@ -424,6 +437,37 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
             },
           },
         },
+      }),
+    }));
+  });
+
+  it("rejects converged CMR when runner-protected prior findings are not explicitly claimed fixed", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+      priorCmrFindingIdentityKeys: ["medium|completeness|prior claim|scope"],
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.prCalls).toEqual([]);
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      familyHeadAfter: "head-1",
+      reason: expect.stringContaining("were not explicitly claimed fixed"),
+      stopSummary: expect.objectContaining({
+        reason: "contract_drift",
+        repairHint: expect.stringContaining("claimed-fixed closure payload"),
       }),
     }));
   });
@@ -868,10 +912,18 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     // verify_failed (止于 PR is NOT reached).
     expect(result.ok).toBe(false);
     expect(result.ran).toBe(true);
-    // Escalate续跑 (#298): #296 only CALLS the escalate seam, carrying the cmr
-    // non-convergence reason.
-    expect(backend.escalations).toHaveLength(1);
-    expect(backend.escalations[0]?.reason).toContain("mismatch");
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("mismatch"),
+      stopSummary: expect.objectContaining({
+        reason: "contract_drift",
+        summary: expect.stringContaining("mismatch"),
+      }),
+    }));
     // No PR while cmr is unresolved.
     expect(backend.prCalls).toEqual([]);
   });
