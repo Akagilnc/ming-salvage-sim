@@ -277,6 +277,26 @@ function providerDegradedWorkerFailureStopSummary(input: {
   };
 }
 
+function cmrWorkerFailedStopSummary(input: {
+  readonly reason: string;
+  readonly resolvedRoute: ResolvedModelRoute;
+}): StopSummary | undefined {
+  const providerSummary = providerDegradedWorkerFailureStopSummary(input);
+  if (providerSummary !== undefined) return providerSummary;
+  if (
+    /\b(MODULE_NOT_FOUND|Cannot find module|dependency|build|test|toolchain)\b/i.test(
+      input.reason,
+    )
+  ) {
+    return infraFailureStopSummary({
+      summary: input.reason,
+      repairHint:
+        "install or restore the missing CMR worker dependency/runtime, rebuild if needed, then rerun the CMR gate",
+    });
+  }
+  return undefined;
+}
+
 function providerDegradedPassStopSummary(input: {
   readonly familyHeadAfter?: string;
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
@@ -846,7 +866,7 @@ async function runIntegratedCmrPass(input: {
           : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
     const stopSummary =
       cmrResult.kind === "failed"
-        ? providerDegradedWorkerFailureStopSummary({
+        ? cmrWorkerFailedStopSummary({
             reason,
             resolvedRoute,
           })
