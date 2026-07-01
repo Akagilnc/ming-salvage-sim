@@ -300,15 +300,17 @@ class _HubOutboundResult(NamedTuple):
     """Substrate hub top-tier outbound allocation for this fixed-flow tick."""
     k: float
     jingyun_due_total: float
+    jingyun_paid_by_region: Dict[str, float]
+    jingyun_paid_total: float
     central_due_total: float
     central_paid_by_army: Dict[str, float]
     central_paid_total: float
     central_transport_loss: float
 
 
-def _substrate_hub_jingyun_due_total(db: GameDB) -> float:
+def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
     """Read the existing province substrate 京运补 gross demand for the shared hub tier."""
-    total = 0.0
+    due_by_region: Dict[str, float] = {}
     rows = db.conn.execute(
         "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
     ).fetchall()
@@ -330,8 +332,8 @@ def _substrate_hub_jingyun_due_total(db: GameDB) -> float:
             raise ValueError(f"region {row['id']} settle.p.拨付gross 非数值：{raw!r}") from exc
         if not math.isfinite(amount) or amount < 0:
             raise ValueError(f"region {row['id']} settle.p.拨付gross 非法：{raw!r}")
-        total += amount
-    return total
+        due_by_region[str(row["id"])] = amount
+    return due_by_region
 
 
 def _compute_substrate_hub_outbound(
@@ -341,7 +343,8 @@ def _compute_substrate_hub_outbound(
 ) -> _HubOutboundResult:
     """Allocate the shared 京运补 + 中央军饷 hub tier by ADR 0023 D9."""
     central_due_total = sum(max(0.0, due) for due in central_due_by_army.values())
-    jingyun_due_total = _substrate_hub_jingyun_due_total(db)
+    jingyun_due_by_region = _substrate_hub_jingyun_due_by_region(db)
+    jingyun_due_total = sum(jingyun_due_by_region.values())
     tier_due_total = jingyun_due_total + central_due_total
     k = (
         min(1.0, max(0.0, float(treasury_available)) / tier_due_total)
@@ -355,14 +358,58 @@ def _compute_substrate_hub_outbound(
         army_id: max(0.0, due) * k
         for army_id, due in central_due_by_army.items()
     }
+    jingyun_paid_by_region = {
+        region_id: max(0.0, due) * k
+        for region_id, due in jingyun_due_by_region.items()
+    }
     return _HubOutboundResult(
         k=k,
         jingyun_due_total=jingyun_due_total,
+        jingyun_paid_by_region=jingyun_paid_by_region,
+        jingyun_paid_total=sum(jingyun_paid_by_region.values()),
         central_due_total=central_due_total,
         central_paid_by_army=central_paid_by_army,
         central_paid_total=sum(central_paid_by_army.values()),
         central_transport_loss=central_transport_loss,
     )
+
+
+def _write_substrate_hub_jingyun_paid_gross(
+    db: GameDB, paid_by_region: Dict[str, float]
+) -> None:
+    """Persist this tick's scaled 京运 gross before province settle ticks consume it."""
+    for region_id, paid in paid_by_region.items():
+        row = db.conn.execute(
+            "SELECT fiscal FROM regions WHERE id = ?", (region_id,)
+        ).fetchone()
+        if row is None:
+            continue
+        fiscal = json.loads(str(row["fiscal"] or "{}"))
+        if not isinstance(fiscal, dict):
+            raise ValueError(f"region {region_id!r} fiscal 非字典")
+        settle = fiscal.get("settle")
+        if not isinstance(settle, dict) or not isinstance(settle.get("p"), dict):
+            continue
+        settle["p"]["拨付gross"] = paid
+        db.conn.execute(
+            "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(fiscal, ensure_ascii=False), region_id),
+        )
+
+
+def _debit_substrate_hub_outbound(
+    db: GameDB, state: GameState, hub_outbound: _HubOutboundResult
+) -> int:
+    """Book the shared hub tier once from 国库 after k allocation."""
+    payout = hub_outbound.jingyun_paid_total + hub_outbound.central_paid_total \
+        + hub_outbound.central_transport_loss
+    debit = int(round(payout))
+    if debit <= 0:
+        return 0
+    return abs(db.record_issue_economy_move(
+        state, "国库", -debit, "边饷hub",
+        f"{TURN_UNIT}边饷hub实拨（京运补+中央军饷）",
+    ))
 
 
 def _apply_metric_dict(
@@ -719,6 +766,21 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             max(0.0, float(state.metrics.get("国库", 0) or 0)),
             central_due_by_army,
         )
+        _write_substrate_hub_jingyun_paid_gross(
+            db, hub_outbound.jingyun_paid_by_region
+        )
+        hub_debit = _debit_substrate_hub_outbound(db, state, hub_outbound)
+        if hub_debit > 0:
+            flows.append({
+                "dir": "expense",
+                "account": "国库",
+                "category": "边饷hub",
+                "needed": hub_outbound.jingyun_due_total + hub_outbound.central_due_total,
+                "paid": hub_debit,
+                "jingyun_paid": hub_outbound.jingyun_paid_total,
+                "central_paid": hub_outbound.central_paid_total,
+                "k": hub_outbound.k,
+            })
         if hub_outbound.central_due_total > 0:
             flows.append({
                 "dir": "hub_outbound",
