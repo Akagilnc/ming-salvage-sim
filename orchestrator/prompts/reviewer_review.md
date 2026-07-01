@@ -30,6 +30,22 @@ With findings:
 REVIEWER_STEP_COMPLETE
 ```
 
+Deferred or suppressed findings must carry a machine-verifiable `disposition`.
+Use one of:
+`same_module`, `cross_module`, `spec_conflict`, `infra_failure`,
+`owning_issue_still_red`, `accepted_suppressed`.
+
+P0/P1 findings (`critical`/`high`) must always use `action:"fix_now"`.
+For P2/P3 `action:"defer"`, only `cross_module` may pass without a fix, and it
+must include `targetModule` and `reason`. Same-module gaps, owning-issue still-red
+gaps, spec conflicts, and infra failures must be classified explicitly and will
+fail closed through the runner rather than silently passing.
+
+`accepted_suppressed` is not a reviewer-created defer. Only use it when there is
+an explicit user decision, accepted ADR, or named issue acceptance text, and
+include `source`, `scope`, `reason`, `findingIdentity`, optional `targetModule`,
+and `boundedReopen`.
+
 When the runner supplies prior claimed-fixed findings for a fresh re-review,
 it exposes them at `$ORCHESTRATOR_FIX_FINDINGS_PATH` as JSON. Read that file,
 classify every prior finding explicitly in `priorFindingDispositions`, and use the

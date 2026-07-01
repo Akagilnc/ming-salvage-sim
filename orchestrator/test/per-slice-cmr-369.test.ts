@@ -171,6 +171,11 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
       location: "src/runner.ts:11",
       suggested_fix: "file follow-up",
       action: "defer",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "follow-up tracker",
+        reason: "This is intentionally outside the current slice runner module.",
+      },
     };
     const backend = new RetryReviewBackend([
       { kind: "completed", output: { kind: "reviewer", findings: [blocking, deferred] } },
@@ -341,6 +346,15 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       suggested_fix: "do not reopen without a material severity upgrade",
       action: "wont_fix",
       disposition_reason: "Accepted as out of scope for this slice",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "issue #428 acceptance criteria",
+        scope: "out-of-scope accepted risk",
+        reason: "Accepted as out of scope for this slice",
+        findingIdentity:
+          "correctness|src/runner.ts:736|accepted risk remains same severity",
+        boundedReopen: "reopen on material severity upgrade",
+      },
     };
     const acceptedRiskKey =
       "correctness|src/runner.ts:736|accepted risk remains same severity";
@@ -388,10 +402,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         identityKey:
           "correctness|src/runner.ts:736|accepted risk remains same severity",
-        status: "wont_fix",
+        status: "accepted_suppressed",
         reason: "Accepted as out of scope for this slice",
         severity: "medium",
         reopenAttempts: 0,
+        source: "issue #428 acceptance criteria",
+        scope: "out-of-scope accepted risk",
+        boundedReopen: "reopen on material severity upgrade",
       },
     ]);
   });
@@ -1291,6 +1308,8 @@ describe("#369 runner resume/retry review fixes", () => {
       action: "fix_now",
     };
     const blockingKey = "correctness|src/runner.ts:970|fix this first";
+    const acceptedRiskKey =
+      "correctness|src/runner.ts:971|accepted risk survives resume";
     const acceptedRisk: Finding = {
       severity: "medium",
       category: "Correctness",
@@ -1299,15 +1318,24 @@ describe("#369 runner resume/retry review fixes", () => {
       suggested_fix: "do not reopen at the same severity",
       action: "wont_fix",
       disposition_reason: "Accepted outside this slice",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "issue #369 resume fixture",
+        scope: "accepted risk survives resume",
+        reason: "Accepted outside this slice",
+        findingIdentity: acceptedRiskKey,
+        boundedReopen: "reopen on material severity upgrade",
+      },
     };
-    const acceptedRiskKey =
-      "correctness|src/runner.ts:971|accepted risk survives resume";
     const acceptedRiskDisposition = {
       identityKey: acceptedRiskKey,
-      status: "wont_fix" as const,
+      status: "accepted_suppressed" as const,
       reason: "Accepted outside this slice",
       severity: "medium" as const,
       reopenAttempts: 0,
+      source: "issue #369 resume fixture",
+      scope: "accepted risk survives resume",
+      boundedReopen: "reopen on material severity upgrade",
     };
     const resumeState: ResumeState = {
       worktree: WORKTREE,
@@ -1369,6 +1397,11 @@ describe("#369 runner resume/retry review fixes", () => {
       location: "src/runner.ts:926",
       suggested_fix: "surface the deferred finding",
       action: "defer",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "follow-up tracker",
+        reason: "Terminal resume should preserve valid cross-module defers.",
+      },
     };
     const resumeState: ResumeState = {
       worktree: WORKTREE,
@@ -1545,12 +1578,29 @@ describe("#369 finding identity and classification", () => {
         ...finding,
         action: "wont_fix",
         disposition_reason: "Accepted as outside this slice",
+        disposition: {
+          kind: "accepted_suppressed",
+          source: "issue #448 acceptance criteria",
+          scope: "same documented non-goal",
+          reason: "Accepted as outside this slice",
+          findingIdentity: "correctness|src/runner.ts:120|missing full diff review",
+          boundedReopen: "reopen on severity upgrade, new evidence, or wider scope",
+        },
       },
       {
         ...finding,
         claim_quote: "  Already covered by existing invariant ",
         action: "rejected",
         disposition_reason: "The claim is false on the current full diff",
+        disposition: {
+          kind: "accepted_suppressed",
+          source: "ADR 0030 accepted scope",
+          scope: "existing invariant",
+          reason: "The claim is false on the current full diff",
+          findingIdentity:
+            "correctness|src/runner.ts:120|already covered by existing invariant",
+          boundedReopen: "reopen if reviewer shows new failing evidence",
+        },
       },
     ]);
 
@@ -1558,18 +1608,24 @@ describe("#369 finding identity and classification", () => {
     expect(classification.dispositions).toEqual([
       {
         identityKey: "correctness|src/runner.ts:120|missing full diff review",
-        status: "wont_fix",
+        status: "accepted_suppressed",
         reason: "Accepted as outside this slice",
         severity: "medium",
         reopenAttempts: 0,
+        source: "issue #448 acceptance criteria",
+        scope: "same documented non-goal",
+        boundedReopen: "reopen on severity upgrade, new evidence, or wider scope",
       },
       {
         identityKey:
           "correctness|src/runner.ts:120|already covered by existing invariant",
-        status: "rejected",
+        status: "accepted_suppressed",
         reason: "The claim is false on the current full diff",
         severity: "medium",
         reopenAttempts: 0,
+        source: "ADR 0030 accepted scope",
+        scope: "existing invariant",
+        boundedReopen: "reopen if reviewer shows new failing evidence",
       },
     ]);
   });
@@ -1599,6 +1655,228 @@ describe("#369 finding identity and classification", () => {
     ).toBe(true);
   });
 
+  it("keeps same-module defer blocking instead of letting S4 pass", () => {
+    const sameModuleDefer: Finding = {
+      ...finding,
+      action: "defer",
+      disposition: {
+        kind: "same_module",
+        reason: "The finding is inside the current runner/reviewer contract.",
+      },
+    };
+
+    const classification = classifyFindings([sameModuleDefer]);
+
+    expect(classification.blocking).toEqual([sameModuleDefer]);
+    expect(classification.deferred).toEqual([]);
+    expect(
+      route({
+        from: "S4",
+        output: { kind: "reviewer", findings: [sameModuleDefer] },
+      }),
+    ).toEqual({ kind: "next", step: "S5" });
+  });
+
+  it("allows only well-scoped cross-module defer to pass through deferred", () => {
+    const crossModuleDefer: Finding = {
+      ...finding,
+      action: "defer",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "family integrated CMR",
+        reason: "Requires the separate family-level CMR worker, not this slice runner.",
+      },
+    };
+
+    const classification = classifyFindings([crossModuleDefer]);
+
+    expect(classification.blocking).toEqual([]);
+    expect(classification.deferred).toEqual([crossModuleDefer]);
+    expect(
+      route({
+        from: "S4",
+        output: { kind: "reviewer", findings: [crossModuleDefer] },
+      }),
+    ).toEqual({ kind: "next", step: "S7" });
+    expect(
+      isValidFinding({
+        ...crossModuleDefer,
+        disposition: { kind: "cross_module", reason: "missing target" },
+      }),
+    ).toBe(false);
+  });
+
+  it("records owning-issue still-red defer as blocking with the target surface", () => {
+    const stillRed: Finding = {
+      ...finding,
+      action: "defer",
+      disposition: {
+        kind: "owning_issue_still_red",
+        owningIssue: "#446",
+        missingSurface: "runner resume route still lacks continue-fixing replay",
+        nextStep: "continue the #446 fix loop",
+        reason: "The gap is in this family/module and remains unclosed.",
+      },
+    };
+
+    const classification = classifyFindings([stillRed]);
+
+    expect(classification.blocking).toEqual([stillRed]);
+    expect(classification.deferred).toEqual([]);
+    expect(isValidFinding(stillRed)).toBe(true);
+    expect(
+      isValidFinding({
+        ...stillRed,
+        disposition: {
+          kind: "owning_issue_still_red",
+          owningIssue: "#446",
+          reason: "missing required fields",
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("classifies spec conflicts and infra failures separately but fail-closed", () => {
+    const specConflict: Finding = {
+      ...finding,
+      action: "defer",
+      disposition: {
+        kind: "spec_conflict",
+        source: "ADR 0030 conflicts with issue #448",
+        reason: "Two accepted contracts require different S4 outcomes.",
+      },
+    };
+    const infraFailure: Finding = {
+      ...finding,
+      claim_quote: "gh auth failed",
+      action: "defer",
+      disposition: {
+        kind: "infra_failure",
+        source: "gh issue view",
+        reason: "The runner cannot fetch issue truth.",
+      },
+    };
+
+    const classification = classifyFindings([specConflict, infraFailure]);
+
+    expect(classification.blocking).toEqual([specConflict, infraFailure]);
+    expect(classification.deferred).toEqual([]);
+    expect(isValidFinding(specConflict)).toBe(true);
+    expect(isValidFinding(infraFailure)).toBe(true);
+  });
+
+  it("requires sourced accepted suppression and reopens it when evidence exceeds the bound", () => {
+    const acceptedSuppressed: Finding = {
+      ...finding,
+      action: "wont_fix",
+      disposition_reason: "Accepted by issue text as out of scope",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "issue #448 acceptance criteria",
+        scope: "cross-module target already tracked",
+        reason: "Accepted by issue text as out of scope",
+        findingIdentity: findingIdentityKey(finding),
+        targetModule: "family integrated CMR",
+        boundedReopen: "reopen on higher severity, new evidence, or different scope",
+      },
+    };
+
+    const suppressed = classifyFindings([acceptedSuppressed]);
+
+    expect(suppressed.blocking).toEqual([]);
+    expect(suppressed.dispositions).toEqual([
+      {
+        identityKey: findingIdentityKey(finding),
+        status: "accepted_suppressed",
+        reason: "Accepted by issue text as out of scope",
+        severity: "medium",
+        reopenAttempts: 0,
+        source: "issue #448 acceptance criteria",
+        scope: "cross-module target already tracked",
+        targetModule: "family integrated CMR",
+        boundedReopen: "reopen on higher severity, new evidence, or different scope",
+      },
+    ]);
+    expect(
+      isValidFinding({
+        ...acceptedSuppressed,
+        disposition: {
+          kind: "accepted_suppressed",
+          source: "issue #448 acceptance criteria",
+          reason: "missing scope, identity, and reopen condition",
+        },
+      }),
+    ).toBe(false);
+
+    const reopened = classifyFindings(
+      [{ ...finding, severity: "high", action: "fix_now" }],
+      suppressed.dispositions,
+    );
+
+    expect(reopened.blocking).toEqual([
+      { ...finding, severity: "high", action: "fix_now" },
+    ]);
+    expect(reopened.dispositions[0]).toMatchObject({
+      status: "accepted_suppressed",
+      severity: "high",
+      reopenAttempts: 1,
+    });
+  });
+
+  it("fails closed when prior dispositions lack sourced accepted-suppression evidence", () => {
+    const priorDispositions = [
+      {
+        identityKey: findingIdentityKey(finding),
+        status: "wont_fix" as const,
+        reason: "legacy unsourced acceptance",
+        severity: "medium" as const,
+        reopenAttempts: 0,
+        disputeAttempts: 1,
+      },
+      {
+        identityKey: findingIdentityKey({
+          ...finding,
+          claim_quote: "legacy rejected finding",
+        }),
+        status: "rejected" as const,
+        reason: "legacy unsourced rejection",
+        severity: "medium" as const,
+        reopenAttempts: 0,
+        disputeAttempts: 1,
+      },
+      {
+        identityKey: findingIdentityKey({
+          ...finding,
+          claim_quote: "incomplete accepted suppression",
+        }),
+        status: "accepted_suppressed" as const,
+        reason: "missing source/scope/bounded reopen",
+        severity: "medium" as const,
+        reopenAttempts: 0,
+        disputeAttempts: 1,
+        source: "issue #448",
+      },
+    ];
+    const findings = [
+      { ...finding, action: "fix_now" as const },
+      {
+        ...finding,
+        claim_quote: "legacy rejected finding",
+        action: "fix_now" as const,
+      },
+      {
+        ...finding,
+        claim_quote: "incomplete accepted suppression",
+        action: "fix_now" as const,
+      },
+    ];
+
+    const classification = classifyFindings(findings, priorDispositions);
+
+    expect(classification.blocking).toEqual(findings);
+    expect(classification.deferred).toEqual([]);
+  });
+
   it("reopens a suppressed finding on severity upgrade but caps reopen attempts at four", () => {
     const classification = classifyFindings(
       [
@@ -1611,10 +1889,13 @@ describe("#369 finding identity and classification", () => {
       [
         {
           identityKey: findingIdentityKey(finding),
-          status: "wont_fix",
+          status: "accepted_suppressed",
           reason: "previously accepted risk",
           severity: "medium",
           reopenAttempts: 3,
+          source: "issue #448 acceptance criteria",
+          scope: "same finding identity",
+          boundedReopen: "reopen on severity upgrade",
         },
       ],
     );
@@ -1623,10 +1904,13 @@ describe("#369 finding identity and classification", () => {
     expect(classification.dispositions).toEqual([
       {
         identityKey: findingIdentityKey(finding),
-        status: "wont_fix",
+        status: "accepted_suppressed",
         reason: "previously accepted risk",
         severity: "high",
         reopenAttempts: 4,
+        source: "issue #448 acceptance criteria",
+        scope: "same finding identity",
+        boundedReopen: "reopen on severity upgrade",
       },
     ]);
 
@@ -1664,10 +1948,13 @@ describe("#369 finding identity and classification", () => {
       [
         {
           identityKey: findingIdentityKey(finding),
-          status: "wont_fix",
+          status: "accepted_suppressed",
           reason: "previously accepted risk",
           severity: "medium",
           reopenAttempts: 0,
+          source: "issue #448 acceptance criteria",
+          scope: "same finding identity",
+          boundedReopen: "reopen on same-severity dispute once",
         },
       ],
     );
@@ -1682,10 +1969,13 @@ describe("#369 finding identity and classification", () => {
     expect(disputed.dispositions).toEqual([
       {
         identityKey: findingIdentityKey(finding),
-        status: "wont_fix",
+        status: "accepted_suppressed",
         reason: "previously accepted risk",
         severity: "medium",
         reopenAttempts: 0,
+        source: "issue #448 acceptance criteria",
+        scope: "same finding identity",
+        boundedReopen: "reopen on same-severity dispute once",
         disputeAttempts: 1,
       },
     ]);
