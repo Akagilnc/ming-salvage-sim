@@ -659,6 +659,72 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     expect(backend.dispatched).toEqual([]);
   });
 
+  it("ignores malformed finding scopes on resume bookkeeping without throwing", async () => {
+    const baseLedger = [
+      { step: "S0" },
+      { step: "S1" },
+      { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+      { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+      { step: "S4" },
+      { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+      {
+        step: "S6",
+        output: {
+          kind: "reviewer",
+          findings: [blocking],
+          priorFindingDispositions: [
+            { identityKey: blockingKey, status: "still-active" },
+          ],
+        },
+      },
+      { step: "S4" },
+      { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+      {
+        step: "S6",
+        output: {
+          kind: "reviewer",
+          findings: [blocking],
+          priorFindingDispositions: [
+            { identityKey: blockingKey, status: "still-active" },
+          ],
+        },
+      },
+      { step: "S4" },
+      { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+    ] as const;
+    const malformedEvents = [
+      {
+        step: "S4",
+        event: "runner_bookkeeping",
+        intent: "continue_fixing",
+        findingScope: { identityKeys: "not-an-array" },
+        source: "resume_input",
+        ts: "2026-07-01T00:00:03.000Z",
+      },
+      {
+        step: "S4",
+        event: "escalation_answered",
+        forStep: "S4",
+        answer: "继续修",
+        source: "human",
+        findingScope: { locations: [7] },
+      },
+    ];
+
+    for (const event of malformedEvents) {
+      const backend = new RetryReviewBackend([], {
+        worktree: WORKTREE,
+        stateDir: "/resident/worktrees/.ledger-446",
+        ledger: [...baseLedger, event] as ReadonlyArray<PersistentLedgerEntry>,
+      });
+
+      const result = await runOrchestrator({ issueNumber: 446, backend });
+
+      expect(result.status).toBe("escalate");
+      expect(backend.dispatched).toEqual([]);
+    }
+  });
+
   it("does not map unscoped escalation answers to continue-fixing repair intent", async () => {
     const resumeState: ResumeState = {
       worktree: WORKTREE,
