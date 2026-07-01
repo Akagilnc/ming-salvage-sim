@@ -1776,7 +1776,7 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
     )
 
 
-def test_economy_pay_arrears_does_not_over_debit_fractional_pay_source_debt(fresh_db):
+def test_economy_pay_arrears_clears_fractional_pay_source_tail(fresh_db):
     from ming_sim.flows import _apply_economy_list
 
     state = fresh_db.load_state()
@@ -1823,13 +1823,11 @@ def test_economy_pay_arrears_does_not_over_debit_fractional_pay_source_debt(fres
         """
     ).fetchone()
 
-    assert applied[0]["account"] == "国库"
-    assert applied[0]["delta"] == 0
-    assert "欠饷未满1万两" in applied[0]["reason"]
-    assert ledger_row is None
-    assert row["province_pay_arrears"] == pytest.approx(0.3)
-    assert row["central_pay_arrears"] == pytest.approx(0.2)
-    assert row["arrears"] == pytest.approx(0.5)
+    assert applied == [{"account": "国库", "delta": -1, "reason": "测试小数欠饷补齐"}]
+    assert ledger_row["delta"] == -1
+    assert row["province_pay_arrears"] == pytest.approx(0)
+    assert row["central_pay_arrears"] == pytest.approx(0)
+    assert row["arrears"] == pytest.approx(0)
     assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
     )
