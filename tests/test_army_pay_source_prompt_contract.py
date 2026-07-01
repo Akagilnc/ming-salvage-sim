@@ -61,6 +61,19 @@ def test_army_delta_arrears_contract_is_documented_across_extractor_surfaces():
         assert "新军" in surface, surface_name
 
 
+def test_army_repayment_prompt_uses_immediate_economy_move_contract():
+    """补饷在 phase2 同事务销账，prompt 不能说成下月 flows 自动抵。"""
+    military = (ROOT / "content/prompts/score_extractor_military_external.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "下月自动抵" not in military
+    assert "purpose=补饷" in military
+    assert "target_id" in military
+    assert "phase2" in military
+    assert "立即销账" in military
+
+
 def test_prompt_compatible_ming_new_army_pay_source_aliases_land(game):
     """Chinese prompt aliases for new_armies pay source fields must reach the DB."""
     db, state, content = game
