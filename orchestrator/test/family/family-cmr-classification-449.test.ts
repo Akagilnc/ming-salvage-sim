@@ -210,6 +210,97 @@ describe("#449 family CMR finding classification", () => {
     });
   });
 
+  it("fails closed when an accepted suppression names a different finding identity", () => {
+    const suppressedFinding: Finding = {
+      ...finding,
+      action: "wont_fix",
+      disposition_reason: "Accepted elsewhere, but not for this finding",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "#445",
+        scope: "fiscal",
+        reason: "Accepted elsewhere, but not for this finding",
+        findingIdentity: "correctness|other.ts:1|a different finding",
+        targetModule: "fiscal",
+        boundedReopen: "reopen on severity escalation, new evidence, or different scope",
+      },
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [suppressedFinding],
+      moduleContext: {
+        currentModules: [
+          {
+            module: "fiscal",
+            moduleScope: ["orchestrator/src/family"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
+        childModules: [],
+      },
+    });
+
+    expect(classified.blocking).toEqual([suppressedFinding]);
+    expect(classified.deferred).toEqual([]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "same_module_still_red",
+      attribution: { method: "family_module", issue: 445, module: "fiscal" },
+    });
+    expect(classified.dispositions).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ status: "accepted_suppressed" }),
+      ]),
+    );
+  });
+
+  it("fails closed when a prior accepted suppression has stale module scope", () => {
+    const currentFinding: Finding = {
+      ...finding,
+      action: "fix_now",
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [currentFinding],
+      moduleContext: {
+        currentModules: [
+          {
+            module: "fiscal",
+            moduleScope: ["orchestrator/src/family"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
+        childModules: [],
+      },
+      priorDispositions: [
+        {
+          identityKey:
+            "correctness|orchestrator/src/family/verifycmr.ts:42|hub loss accounts are still unimplemented",
+          status: "accepted_suppressed",
+          reason: "Accepted only for a different module",
+          severity: "medium",
+          reopenAttempts: 0,
+          disputeAttempts: 1,
+          source: "#445",
+          scope: "military-state-machine",
+          targetModule: "military-state-machine",
+          boundedReopen: "reopen on different scope",
+        },
+      ],
+    });
+
+    expect(classified.blocking).toEqual([currentFinding]);
+    expect(classified.deferred).toEqual([]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "same_module_still_red",
+      attribution: { method: "family_module", issue: 445, module: "fiscal" },
+    });
+    expect(classified.dispositions).toEqual([]);
+  });
+
   it.each(["high", "critical"] as const)(
     "reopens the #287 hub-loss suppression when reviewer severity escalates to %s",
     (severity) => {
