@@ -67,13 +67,14 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
   it("recordShipped appends the terminal marker with the shipped family HEAD", async () => {
     const backend = new FakeFamilyBackend();
     await recordShipped(backend, { pr: "https://gh/pr/352", familyHeadAfter: "head-1" });
-    expect(backend.appended).toEqual([
+    expect(backend.appended).toMatchObject([
       {
         status: "shipped",
         event: "shipped",
         phase: "final",
         pr: "https://gh/pr/352",
         familyHeadAfter: "head-1",
+        stopSummary: { reason: "success" },
       },
     ]);
   });
@@ -174,7 +175,7 @@ describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guar
       familyHeadAfter: "head-1",
       routeFingerprint: "route:v1",
     });
-    expect(backend.appended).toEqual([
+    expect(backend.appended).toMatchObject([
       {
         status: "cmr_passed",
         event: "cmr_passed",
@@ -182,6 +183,7 @@ describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guar
         cmrPass: "completeness",
         familyHeadAfter: "head-1",
         routeFingerprint: "route:v1",
+        stopSummary: { reason: "success" },
       },
     ]);
   });

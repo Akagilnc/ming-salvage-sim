@@ -1085,13 +1085,17 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
   it("persists a durable family-ledger decision escalation readable back", async () => {
     const b = new RealFamilyBackend(opts(trackRepo()));
     await b.escalateFamily({ reason: "integrated cmr did not converge: field mismatch" });
-    expect(await b.readFamilyLedger()).toEqual([
+    expect(await b.readFamilyLedger()).toMatchObject([
       {
         status: "escalated",
         event: "escalated",
         phase: "final",
         reason: "integrated cmr did not converge: field mismatch",
         escalationKind: "decision",
+        stopSummary: {
+          reason: "infra_failure",
+          repairHint: "inspect this escalation row and repair before rerun",
+        },
       },
     ]);
     const recs = await b.readEscalations();

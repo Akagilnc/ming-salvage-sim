@@ -5,6 +5,23 @@
 export { runOrchestrator } from "./runner.js";
 export { route } from "./route.js";
 export type { RouteContext, RouteDecision } from "./route.js";
+export {
+  contractDriftStopSummary,
+  infraFailureStopSummary,
+  providerDegradedStopSummary,
+  stopReasonForFindingDisposition,
+  stopSummaryFromFindingDispositionEvidence,
+  successStopSummary,
+} from "./stopSummary.js";
+export type {
+  AcceptedSuppressionSummary,
+  HeadFreshnessSummary,
+  ProviderDegradationSummary,
+  ShipFailureSummary,
+  StopReason,
+  StopSummary,
+  StopSummaryMetadata,
+} from "./stopSummary.js";
 
 // ── unified worker-dispatch seam (ADR 0026 / PRD #330, #331) ────────────────
 export {

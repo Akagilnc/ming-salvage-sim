@@ -14,6 +14,7 @@
  */
 
 import type { FamilyModuleContext } from "./family/cmrClassification.js";
+import type { StopSummary } from "./stopSummary.js";
 
 // ───────────────────────────── step identifiers ─────────────────────────────
 
@@ -751,6 +752,8 @@ export interface LedgerEntry {
    * reopens instead of reclassifying from only the last reviewer payload.
    */
   readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
+  /** Runner-owned terminal stop reason summary (#450). */
+  readonly stopSummary?: StopSummary;
 }
 
 /**
@@ -1121,6 +1124,8 @@ export interface RunResult {
   readonly errorPackage?: ErrorPackage;
   /** The step ledger — anti-skip + resume truth. */
   readonly stepLedger: ReadonlyArray<LedgerEntry>;
+  /** Unified run-level stop reason summary (#450). */
+  readonly stopSummary: StopSummary;
   /**
    * Reviewer findings with action:'defer' collected at S4 (PRD #244 US#25).
    * Present on success handoff so the caller can surface them (e.g. as a
