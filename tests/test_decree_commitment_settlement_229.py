@@ -1206,6 +1206,50 @@ def test_commitment_malformed_pay_target_does_not_fall_back_to_priority_pool(gam
     ).fetchone()[0] == 0
 
 
+def test_commitment_pay_pool_is_scoped_to_arrears_stop_gate_armies(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    _seed_central_army_arrears(db, {"guanning": 100, "xuan_da": 100, "jizhen": 100})
+    state.metrics["国库"] = 500
+    db.save_state(state)
+
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="多军范围补饷承诺",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:scoped-pool-pay",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={
+            "economy": [
+                {
+                    "account": "国库",
+                    "delta": -50,
+                    "reason": "只补宣大蓟镇旧欠",
+                    "purpose": "补饷",
+                }
+            ]
+        },
+        stop_condition=json.dumps({"army.xuan_da|jizhen.arrears.sum": "<=0"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+
+    _settle_empty_month(db, state, content)
+
+    assert _army_arrears(db, "guanning") == 100
+    assert _army_arrears(db, "xuan_da") + _army_arrears(db, "jizhen") == 150
+    paid_targets = {
+        row["target_id"]
+        for row in db.conn.execute(
+            "SELECT target_id FROM economy_ledger WHERE purpose='补饷' AND target_kind='army'"
+        ).fetchall()
+    }
+    assert paid_targets <= {"xuan_da", "jizhen"}
+
+
 def test_commitment_progress_keeps_strict_stop_gate_semantics(game):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")

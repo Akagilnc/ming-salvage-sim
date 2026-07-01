@@ -479,14 +479,17 @@ def _auto_pay_arrears_by_priority(
     reason: str,
     *,
     commit: bool = True,
+    allowed_army_ids: Optional[List[str]] = None,
 ) -> int:
     """按 ARMY_SALARY_PRIORITY 顺序分配一笔已明确允许非定向的补饷。
 
-    每军按当前省/中央欠额占比分销销账，扣完 budget 为止。
+    每军按当前省/中央欠额占比分销销账，扣完 budget 为止。若给出 allowed_army_ids，
+    只在该集合内池化；用于承诺 stop gate 的多军范围。
     返回实际花出去的总额（万两）。"""
     if budget <= 0:
         return 0
     pay_source_cutover = db.is_army_pay_source_cutover_enabled()
+    allowed_ids = {str(army_id) for army_id in (allowed_army_ids or []) if str(army_id).strip()}
     # #44：受饷资格用 arrears>0（不再 maintenance_per_turn>0）。#44 把欠饷累计从 maintenance 改成
     # army_needed(salary_rate 派生)，二者已解耦——salary_rate>0 但 maintenance=0 的军会累 arrears 却被
     # 旧 filter 排除、拨饷永远散不到（cmr r2 claude）。arrears>0 本就隐含曾有应发（needed>0 才累）。
@@ -494,6 +497,8 @@ def _auto_pay_arrears_by_priority(
         "SELECT * FROM armies "
         "WHERE owner_power='ming' AND arrears>0"
     ).fetchall()
+    if allowed_ids:
+        rows = [row for row in rows if str(row["id"]) in allowed_ids]
     army_map = {str(r["id"]): r for r in rows}
     ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
     ordered += [r for r in rows if str(r["id"]) not in ARMY_SALARY_PRIORITY]
@@ -620,6 +625,7 @@ def _apply_economy_list(
     *,
     commit: bool = True,
     allow_pay_arrears_pool: bool = False,
+    pay_arrears_pool_army_ids: Optional[List[str]] = None,
 ) -> List[Dict[str, object]]:
     """落 extractor 抽出的 economy_moves 到 economy_ledger。
 
@@ -632,7 +638,7 @@ def _apply_economy_list(
     LLM 写非法 purpose → 退化为'其它'常规扣账。
     purpose='补饷' 但目标缺失/不存在 → 逐项拒收，不得改付其它军队。
     allow_pay_arrears_pool=True 仅供承诺结算内部使用，表示该承诺的 arrears
-    stop gate 已经给出范围，可按优先级池偿还。
+    stop gate 已经给出范围，可在 pay_arrears_pool_army_ids 内按优先级池偿还。
     """
     from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS, TURN_UNIT as _TU
     applied: List[Dict[str, object]] = []
@@ -682,7 +688,14 @@ def _apply_economy_list(
             if allow_pay_arrears_pool and not explicit_target:
                 budget = abs(delta)
                 spent = _auto_pay_arrears_by_priority(
-                    db, state, account, budget, category, reason, commit=commit
+                    db,
+                    state,
+                    account,
+                    budget,
+                    category,
+                    reason,
+                    commit=commit,
+                    allowed_army_ids=pay_arrears_pool_army_ids,
                 )
                 applied.append({"account": account, "delta": -spent, "reason": reason})
                 continue

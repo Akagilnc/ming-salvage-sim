@@ -6802,6 +6802,9 @@ def apply_issue_inertia_and_ongoing(
                 state,
                 _monthly_economy_items(ongoing),
                 allow_pay_arrears_pool=is_commitment,
+                pay_arrears_pool_army_ids=(
+                    _commitment_arrears_gate_army_ids(row) if is_commitment else None
+                ),
             )
             economy_rejections = [r for r in _eco_out if r.get("rejected")]
             issue_monthly_rejections.extend(economy_rejections)
