@@ -227,13 +227,13 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.escalations[0]?.reason).toContain("floor");
     expect(backend.escalations[0]?.reason).toContain("agy");
     expect(backend.prCalls).toEqual([]);
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
       phase: "final",
       cmrPass: "completeness",
       reason: expect.stringContaining("floor"),
-    });
+    }));
   });
 
   it("rejects route-undeclared strong legs before applying the CMR floor", async () => {
@@ -257,14 +257,14 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.prCalls).toEqual([]);
     expect(backend.escalations[0]?.reason).toContain("not declared");
     expect(backend.escalations[0]?.reason).toContain("opus");
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
       phase: "final",
       cmrPass: "completeness",
       familyHeadAfter: "head-1",
       reason: expect.stringContaining("not declared"),
-    });
+    }));
   });
 
   it("fingerprints the resolved route without re-throwing an already accepted tight-route violation", async () => {
@@ -325,29 +325,29 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     // online review r2 (codex P1): a durable `shipped` terminal marker is persisted
     // carrying the family PR URL, so a resume sees the family is already delivered
     // and the spine's guard does not re-run the barrier / re-ship.
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_passed",
       event: "cmr_passed",
       phase: "final",
       cmrPass: "completeness",
       familyHeadAfter: "head-1",
       routeFingerprint: currentRouteFingerprint(),
-    });
-    expect(backend.ledger).toContainEqual({
+    }));
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_passed",
       event: "cmr_passed",
       phase: "final",
       cmrPass: "correctness",
       familyHeadAfter: "head-1",
       routeFingerprint: currentRouteFingerprint(),
-    });
-    expect(backend.ledger).toContainEqual({
+    }));
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "shipped",
       event: "shipped",
       phase: "final",
       pr: "pr://family/291-base",
       familyHeadAfter: "head-1",
-    });
+    }));
   });
 
   it("resume skips a CMR pass that already passed for the current family HEAD", async () => {
@@ -491,14 +491,14 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.cmrCalls).toEqual([]);
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
       phase: "final",
       reason:
         "family ship worker opened a PR, but the current family HEAD could not be resolved; refusing to persist a stale shipped marker",
       familyHeadAfter: "head-1",
-    });
+    }));
   });
 
   it("resume reruns a CMR pass when the family HEAD advanced after the pass marker", async () => {
@@ -620,29 +620,29 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-1",
     });
     expect(result).toEqual({ ok: true, ran: true });
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_passed",
       event: "cmr_passed",
       phase: "final",
       cmrPass: "completeness",
       familyHeadAfter: "head-1",
       routeFingerprint: currentRouteFingerprint(),
-    });
-    expect(backend.ledger).toContainEqual({
+    }));
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_passed",
       event: "cmr_passed",
       phase: "final",
       cmrPass: "correctness",
       familyHeadAfter: "head-1",
       routeFingerprint: currentRouteFingerprint(),
-    });
-    expect(backend.ledger).toContainEqual({
+    }));
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "shipped",
       event: "shipped",
       phase: "final",
       pr: "pr://family/291-base",
       familyHeadAfter: "head-1",
-    });
+    }));
   });
 
   it("records the post-CMR-worker family HEAD and uses it for the next pass resume guard", async () => {
@@ -676,14 +676,14 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.cmrCalls).toEqual([
       { familyBase: "family/291-base", cmrPass: "completeness" },
     ]);
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_passed",
       event: "cmr_passed",
       phase: "final",
       cmrPass: "completeness",
       familyHeadAfter: "head-after-cmr-fix",
       routeFingerprint: currentRouteFingerprint(),
-    });
+    }));
     expect(
       backend.ledger.filter(
         (e) => e.status === "cmr_passed" && e.cmrPass === "correctness",
@@ -795,7 +795,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]?.reason).toContain("completeness cmr");
     expect(backend.escalations[0]?.familyHeadAfter).toBe("head-after-cmr-worker-fix");
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
       phase: "final",
@@ -803,7 +803,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       reason:
         "completeness cmr needs human review — review workers disagreed on whether the pass can converge",
       familyHeadAfter: "head-after-cmr-worker-fix",
-    });
+    }));
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
 
@@ -973,7 +973,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/cmr worker threw on startup/i);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/no such ref/i);
     expect(backend.aborted[0]?.familyHeadAfter).toBe("head-after-cmr-worker");
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
       phase: "final",
@@ -981,7 +981,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       reason:
         "family integrated cmr completeness worker failed: family cmr worker threw on startup: cmr worker: git checkout family/291-base failed (no such ref)",
       familyHeadAfter: "head-after-cmr-worker",
-    });
+    }));
   });
 
   it("a ship worker that throws on startup (after a converged cmr) ⇒ INCOMPLETE_GATE, abort recorded — never an escaped throw", async () => {

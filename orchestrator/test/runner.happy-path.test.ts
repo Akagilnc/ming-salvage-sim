@@ -28,6 +28,7 @@ class HappyPathBackend implements Backend {
   readonly calls: string[] = [];
   /** Ordered log of every agent step actually dispatched to a sandbox. */
   readonly runStepIds: string[] = [];
+  readonly ledgerWrites: PersistentLedgerEntry[] = [];
   /** Vitest mock call-order marker for sandbox dispatch. */
   readonly markRunStep = vi.fn();
   /** Number of times push() was invoked. */
@@ -104,10 +105,10 @@ class HappyPathBackend implements Backend {
   // #249: writeLedger is part of the Backend seam; the happy-path fake is a
   // no-op stub so existing tests keep passing without asserting ledger details.
   async writeLedger(
-    _entry: PersistentLedgerEntry,
+    entry: PersistentLedgerEntry,
     _stateDir: string,
   ): Promise<void> {
-    // no-op in the happy-path fake
+    this.ledgerWrites.push(entry);
   }
 }
 
@@ -151,6 +152,9 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     // Final state: success handoff pointing at the pushed resident branch.
     expect(result.status).toBe("success");
     expect(result.branch).toBe("feat/orchestrator/issue-247");
+    expect(result.stopSummary.reason).toBe("success");
+    expect(result.stepLedger.at(-1)?.stopSummary?.reason).toBe("success");
+    expect(backend.ledgerWrites.at(-1)?.stopSummary?.reason).toBe("success");
 
     // Exactly one push, no PR / no merge (the fake exposes neither — proving
     // the runner never reaches for those actions).

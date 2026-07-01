@@ -19,6 +19,11 @@
  */
 
 import type { EscalationAnswerPayload, EscalationKind } from "../types.js";
+import {
+  infraFailureStopSummary,
+  successStopSummary,
+  type StopSummary,
+} from "../stopSummary.js";
 import type { FamilyCmrClassification } from "./cmrClassification.js";
 import type {
   FamilyBackend,
@@ -70,6 +75,8 @@ export interface AbortedRecord {
   readonly familyHeadAfter?: string;
   /** Family CMR finding classification audit trail (#449). */
   readonly cmrFindingClassification?: FamilyCmrClassification;
+  /** Unified stop reason summary (#450). */
+  readonly stopSummary?: StopSummary;
 }
 
 /**
@@ -84,6 +91,8 @@ export interface ShippedRecord {
   readonly pr: string;
   /** The family base HEAD covered by the terminal ship / PR. */
   readonly familyHeadAfter: string;
+  /** Unified stop reason summary (#450). */
+  readonly stopSummary?: StopSummary;
 }
 
 /** The fields for a green integrated CMR pass audit event (#419). */
@@ -95,6 +104,8 @@ export interface CmrPassedRecord {
   readonly routeFingerprint?: string;
   /** Family CMR finding classification audit trail (#449). */
   readonly cmrFindingClassification?: FamilyCmrClassification;
+  /** Unified stop reason summary (#450). */
+  readonly stopSummary?: StopSummary;
 }
 
 /** A PHASE-LEVEL family escalation marker (#439). */
@@ -103,6 +114,8 @@ export interface FamilyEscalatedRecord {
   readonly phase?: "wave" | "final";
   readonly reason?: string;
   readonly familyHeadAfter?: string;
+  /** Unified stop reason summary (#450). */
+  readonly stopSummary?: StopSummary;
 }
 
 /** A PHASE-LEVEL append-only answer to a prior family decision escalation (#439). */
@@ -184,6 +197,20 @@ export async function recordAborted(
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
       cmrFindingClassification: record.cmrFindingClassification,
+      stopSummary:
+        record.stopSummary ??
+        infraFailureStopSummary({
+          summary: record.reason ?? "family barrier aborted",
+          repairHint: "inspect this aborted ledger row, repair the barrier, and rerun",
+          ...(record.familyHeadAfter !== undefined
+            ? {
+                heads: {
+                  actualFamilyHead: record.familyHeadAfter,
+                  sources: { actualFamilyHead: "family aborted ledger row" },
+                },
+              }
+            : {}),
+        }),
     }) as FamilyLedgerEntry,
   );
 }
@@ -202,6 +229,18 @@ export async function recordCmrPassed(
       familyHeadAfter: record.familyHeadAfter,
       routeFingerprint: record.routeFingerprint,
       cmrFindingClassification: record.cmrFindingClassification,
+      stopSummary:
+        record.stopSummary ??
+        successStopSummary(
+          record.familyHeadAfter !== undefined
+            ? {
+                heads: {
+                  verifiedCmrHead: record.familyHeadAfter,
+                  sources: { verifiedCmrHead: "cmr_passed ledger row" },
+                },
+              }
+            : undefined,
+        ),
     }) as FamilyLedgerEntry,
   );
 }
@@ -219,6 +258,20 @@ export async function recordFamilyEscalated(
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
       escalationKind: record.escalationKind,
+      stopSummary:
+        record.stopSummary ??
+        infraFailureStopSummary({
+          summary: record.reason ?? "family run escalated",
+          repairHint: "inspect this escalation row and repair before rerun",
+          ...(record.familyHeadAfter !== undefined
+            ? {
+                heads: {
+                  actualFamilyHead: record.familyHeadAfter,
+                  sources: { actualFamilyHead: "family escalation ledger row" },
+                },
+              }
+            : {}),
+        }),
     }) as FamilyLedgerEntry,
   );
 }
@@ -387,6 +440,14 @@ export async function recordShipped(
       phase: "final",
       pr,
       familyHeadAfter,
+      stopSummary:
+        record.stopSummary ??
+        successStopSummary({
+          heads: {
+            actualFamilyHead: familyHeadAfter,
+            sources: { actualFamilyHead: "shipped ledger row" },
+          },
+        }),
     }) as FamilyLedgerEntry,
   );
 }
