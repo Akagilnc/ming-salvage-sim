@@ -1,7 +1,7 @@
 import React from "react";
 import { Crown, Landmark, MapPinned, ScrollText, Star, Swords, X } from "lucide-react";
 import { MinisterPortrait, PortraitUploadButton, RightDrawer, cacheBust, courtSlots, loadCourtPos, saveCourtPos, snapToSlot } from "./hud";
-import { formatMoney, formatSignedMoney } from "../format";
+import { formatArmyArrears, formatMoney, formatSignedMoney, qualitativeArmyStat } from "../format";
 import type { Army, Building, GameState, MapNode, Minister, Region } from "../types";
 
 export function MinisterCardList({
@@ -309,15 +309,11 @@ export function ArmyDrawer({
               <tr><th>驻地</th><td>{selected.station}</td><th>战区</th><td>{selected.theater}</td></tr>
               <tr><th>统帅</th><td>{selected.commander || "—"}</td><th>兵种</th><td>{selected.troop_type}</td></tr>
               <tr><th>兵力</th><td>{selected.manpower}</td><th>月饷</th><td>{selected.army_needed}万</td></tr>
-              <tr><th>士气</th><td>{selected.morale}</td><th>操练</th><td>{selected.training}</td></tr>
-              <tr><th>军械</th><td>{selected.equipment}</td><th>补给</th><td>{selected.supply}</td></tr>
-              <tr><th>机动</th><td>{selected.mobility}</td><th>忠诚</th><td>{selected.loyalty}</td></tr>
+              <tr><th>士气</th><td>{qualitativeArmyStat("morale", selected.morale)}</td><th>操练</th><td>{qualitativeArmyStat("training", selected.training)}</td></tr>
+              <tr><th>军械</th><td>{qualitativeArmyStat("equipment", selected.equipment)}</td><th>补给</th><td>{qualitativeArmyStat("supply", selected.supply)}</td></tr>
+              <tr><th>机动</th><td>{qualitativeArmyStat("mobility", selected.mobility)}</td><th>忠诚</th><td>{qualitativeArmyStat("loyalty", selected.loyalty)}</td></tr>
               <tr><th>欠饷</th><td colSpan={3}>
-                {selected.arrears > 0
-                  ? (selected.army_needed > 0
-                      ? `${selected.arrears}万两（≈${(selected.arrears / selected.army_needed).toFixed(1)}月）`
-                      : `${selected.arrears}万两`)
-                  : "无欠饷"}
+                {formatArmyArrears(selected)}
               </td></tr>
               <tr><th>状态</th><td colSpan={3}>{selected.status}</td></tr>
             </tbody>
@@ -689,4 +685,3 @@ export function HaremDrawer({
     </>
   );
 }
-

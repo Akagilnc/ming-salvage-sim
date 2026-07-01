@@ -23,6 +23,18 @@ def _shaanxi_settle(db):
     return json.loads(str(row["fiscal"] or "{}")).get("settle")
 
 
+def _shaanxi_source_arrears(db):
+    return float(db.conn.execute(
+        """
+        SELECT COALESCE(SUM(province_pay_arrears), 0) AS total
+        FROM armies
+        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+          AND pay_source_region = 'shaanxi'
+          AND province_pay_share > 0
+        """
+    ).fetchone()["total"] or 0)
+
+
 @pytest.fixture
 def fresh_game_dir(tmp_path):
     content = GameContent.load()
@@ -45,14 +57,14 @@ def test_new_game_has_fiscal_substrate(fresh_game_dir):
     settle = _shaanxi_settle(sess.db)
     assert isinstance(settle, dict) and "st" in settle and "p" in settle, \
         "新档陕西应带 #66 省级财政基座"
-    assert settle["st"]["军饷欠"] == 20  # 种子
+    assert settle["st"]["军饷欠"] == pytest.approx(_shaanxi_source_arrears(sess.db))
 
 
 def test_new_game_three_turn_chain_advances_substrate_and_restores(fresh_game_dir):
     sess, dbp, content = fresh_game_dir
     db, state = sess.db, sess.state
     start_turn = state.turn
-    seed_arrears = _shaanxi_settle(db)["st"]["军饷欠"]
+    seed_tax_arrears = _shaanxi_settle(db)["st"]["民欠旧赋"]
     for i in range(3):
         before = state.turn
         report = run_settle(
@@ -65,12 +77,11 @@ def test_new_game_three_turn_chain_advances_substrate_and_restores(fresh_game_di
         st = _shaanxi_settle(db)["st"]
         # #66 shadow：固定财政相位每回合推进基座，末态有效（省库非 None、军饷欠有限非负）
         assert st["省库库银"] is not None
-        assert st["军饷欠"] >= 0
+        assert st["军饷欠"] == pytest.approx(_shaanxi_source_arrears(db))
     assert state.turn == start_turn + 3
-    # 死亡螺旋：穷省占位 Due 高，3 回合后军饷欠应较种子累积增长（基座真在推进、非 dormant）
-    end_arrears = _shaanxi_settle(db)["st"]["军饷欠"]
-    assert end_arrears > seed_arrears, \
-        f"3 回合后军饷欠应累积（{seed_arrears}→{end_arrears}），证明基座在固定财政相位真推进"
+    end_tax_arrears = _shaanxi_settle(db)["st"]["民欠旧赋"]
+    assert end_tax_arrears > seed_tax_arrears, \
+        f"3 回合后民欠应累积（{seed_tax_arrears}→{end_tax_arrears}），证明基座在固定财政相位真推进"
 
     # restore：关库重开 → 状态接续（turn 一致 + 基座仍在）
     db.close()

@@ -140,7 +140,10 @@ def test_resolve_with_new_armies_no_warning_in_result(game):
         origin_kind="decree", bar_value=50, tags=["练军"],
         # manpower 必填（fresh seed 无 tianxiong → 走建新军严格校验路；#5 deterministic）；
         # maintenance_per_turn #173 PR2 后退役、不再必填，保留此值仅证「在场仍兼容接收」。
-        effect_on_resolve={"new_armies": [{"id": "tianxiong", "name": "天雄军", "manpower": 18000, "maintenance_per_turn": 50}]},
+        effect_on_resolve={"new_armies": [{
+            "id": "tianxiong", "name": "天雄军", "manpower": 18000, "maintenance_per_turn": 50,
+            "pay_source_region": "shaanxi", "province_pay_share": 1.0, "central_pay_share": 0.0,
+        }]},
     )
     db.conn.commit()
     out = issues.apply_issue_tracker_output(

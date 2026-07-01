@@ -18,9 +18,12 @@
      a. db.commit_pending_actions(...)            # 动作闸门：聊天暂存的结构化写动作批量落库（driver 路无暂存=no-op）
      b. apply_fixed_period_flows(db, state)       # 月度财政 tick
         ↳ compute_budget_lines 的定额项（田赋/辽饷/盐税/商税/官俸/宫廷/…）
-        ↳ 逐军军饷：**应发 = ceil(manpower × salary_rate / 10000)**（#44 挂钩兵力，仅 ming；
-          0 兵=0 饷；salary_rate=每军名义月饷率两/兵·月，存 rate 不存 derived maintenance），
-          国库不足挂 arrears tick / 逐建筑 condition × output_amount → 国库/内库
+        ↳ 军饷按存档级 `fiscal_engine` 分流：
+          - `legacy` 老档：保留旧「各军军饷」预算行 + 逐军从国库扣发；国库不足挂 `armies.arrears`。
+          - `substrate_hub` 新档：旧「各军军饷」预算/流水为 0，不再从该全局路径双付；省份额由省级
+            substrate 写 `province_pay_arrears`，中央份额走 `中央军饷` outbound 写 `central_pay_arrears`
+            与中央容器，仍用 **应发 = ceil(manpower × salary_rate / 10000)**（#44，0 兵=0 饷）。
+        ↳ 逐建筑 condition × output_amount → 国库/内库
         ↳ 我那座金矿(+800)/银行(+300)/帝国航空(+10皇威) 在这一步生效
         ↳ #66/#266 省级财政基座：动态 shadow spine 通过
           `GameDB.settle_ming_province_substrate_ticks()` 一次扫描 Ming 省 fiscal payload，
@@ -30,7 +33,8 @@
           形状错误和 settle_tick 守恒错误会作为逐省 outcome 隔离并写 tlog。
           其它 bridge bug 继续 fail-loud。
           陕西 seed 已按 #266 重标到史实量级（正赋/辽饷九厘/军饷/官俸/宗禄/逋赋/火耗/起运定额），
-          末态逐月演化+落库并 tlog 打印实征/起运/火耗/末态欠账，但**不驱动国库**；
+          末态逐月演化+落库并 tlog 打印实征/起运/火耗/末态欠账；本切片仅把省/中央军饷欠账接入
+          per-source 容器，**起运入国库 hub 仍不在此处落账**；
           fail-loud 但隔离（基座 bug 不掀翻本步固定财政，cmr S4 F4）。
         ⚠️ 我的 economy_moves 不要重复这些固定项！
      c. apply_event_terminal_states(state, db)    # 事件终态写路径（候选读取本身只读）
