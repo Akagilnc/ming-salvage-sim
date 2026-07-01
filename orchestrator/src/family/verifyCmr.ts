@@ -295,12 +295,57 @@ function shipWorkerContractDriftStopSummary(input: {
   });
 }
 
+function familyCmrBlockingStopSummary(
+  classification: FamilyCmrClassification,
+  fallbackReason: string,
+): StopSummary {
+  const result = classification.results.find(
+    (item) => item.classification !== "cross_module_defer",
+  );
+  if (result?.classification === "same_module_still_red") {
+    return {
+      reason: "same_module_still_red",
+      summary: result.reason || fallbackReason,
+      repairHint: "fix the same-module family CMR finding and rerun",
+    };
+  }
+  if (result?.classification === "owning_issue_still_red") {
+    return {
+      reason: "owning_issue_still_red",
+      summary: result.reason || fallbackReason,
+      ...(result.owningIssue !== undefined ? { owningIssue: result.owningIssue } : {}),
+      repairHint: "close the owning issue surface before rerun",
+    };
+  }
+  if (result?.classification === "spec_conflict") {
+    return {
+      reason: "spec_conflict",
+      summary: result.reason || fallbackReason,
+      repairHint: "resolve the specification conflict and rerun",
+    };
+  }
+  return {
+    reason: "same_module_still_red",
+    summary: fallbackReason,
+    repairHint: "fix the blocking family CMR finding and rerun",
+  };
+}
+
+function notConvergedStopSummary(reason: string): StopSummary {
+  return {
+    reason: "contract_drift",
+    summary: `integrated CMR did not converge: ${reason}`,
+    repairHint: "continue the CMR fix loop until the pass converges",
+  };
+}
+
 function cmrClosureFailureReason(input: {
   readonly pass: IntegratedCmrPass;
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   readonly priorFindingDispositions?: readonly {
     readonly identityKey: string;
     readonly status: string;
+    readonly reason?: string;
     readonly source?: string;
     readonly scope?: string;
     readonly boundedReopen?: string;
@@ -324,7 +369,12 @@ function cmrClosureFailureReason(input: {
         disposition.status === "accepted_suppressed" &&
         (!isFilledString(disposition.source) ||
           !isFilledString(disposition.scope) ||
-          !isFilledString(disposition.boundedReopen)),
+          !isFilledString(disposition.reason) ||
+          !isFilledString(disposition.boundedReopen) ||
+          !/^(#\d+|issue\s+#?\d+|adr\s*0*\d+|user\b|owner\b)/i.test(
+            disposition.source,
+          ) ||
+          /^never$/i.test(disposition.boundedReopen.trim())),
     )
     .map((disposition) => disposition.identityKey);
   if (malformedAcceptedSuppressions.length > 0) {
@@ -557,6 +607,10 @@ async function runIntegratedCmrPass(input: {
         reason,
         familyHeadAfter: postWorkerFamilyHead,
         cmrFindingClassification,
+        stopSummary: familyCmrBlockingStopSummary(
+          cmrFindingClassification,
+          reason,
+        ),
       });
       await familyBackend.escalateFamily?.({
         reason,
@@ -578,6 +632,20 @@ async function runIntegratedCmrPass(input: {
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
+      cmrFindingClassification: {
+        blocking: [],
+        deferred: [],
+        dispositions: [],
+        results: [
+          {
+            identityKey: `not_converged|${pass}`,
+            classification: "not_converged",
+            attribution: { method: "reviewer_disposition" },
+            reason,
+          },
+        ],
+      },
+      stopSummary: notConvergedStopSummary(reason),
     });
     await familyBackend.escalateFamily?.({
       reason,
@@ -976,6 +1044,16 @@ export async function runVerifyCmr(
   await recordShipped(familyBackend, {
     pr: ship.pr,
     familyHeadAfter: exactPostShipFamilyHead,
+    stopSummary:
+      ship.degradedReviews !== undefined && ship.degradedReviews.length > 0
+        ? successStopSummary({
+            heads: {
+              actualFamilyHead: exactPostShipFamilyHead,
+              sources: { actualFamilyHead: "shipped ledger row" },
+            },
+            providerDegraded: ship.degradedReviews,
+          })
+        : undefined,
   });
   return { ok: true, ran: true };
 }

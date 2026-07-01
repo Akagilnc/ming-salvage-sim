@@ -46,6 +46,7 @@ import { reconcileFamilyLedger } from "./reconcile.js";
 import { runVerifyCmr } from "./verifyCmr.js";
 import { buildFamilyModuleContext } from "./cmrClassification.js";
 import {
+  contractDriftStopSummary,
   infraFailureStopSummary,
   successStopSummary,
   type StopSummary,
@@ -296,7 +297,34 @@ async function llmResolvedChildren(
 export async function runFamily(
   input: FamilyRunInput,
 ): Promise<FamilyRunResult> {
-  const modelRoute = resolveActiveModelRoute();
+  let modelRoute;
+  try {
+    modelRoute = resolveActiveModelRoute();
+  } catch (err) {
+    const reason =
+      err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
+    const children = input.epic.children.map((child) => ({
+      issue: child.issue,
+      status: "skipped" as const,
+    }));
+    return {
+      status: "escalated",
+      familyBase: input.familyBase,
+      escalation: {
+        reason: "startup route failure",
+        diagnosis: reason,
+      },
+      stopSummary: contractDriftStopSummary({
+        summary: reason,
+        repairHint: "repair the family runner route environment before rerun",
+      }),
+      children,
+      ...(input.epic.admissionSkipped !== undefined &&
+      input.epic.admissionSkipped.length > 0
+        ? { admissionSkipped: input.epic.admissionSkipped }
+        : {}),
+    };
+  }
   const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
     interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
     warn: (message) => console.warn(`[orchestrator:family] ${message}`),

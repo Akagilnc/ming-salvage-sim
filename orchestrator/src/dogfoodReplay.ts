@@ -695,7 +695,7 @@ async function runnerNoProgressReplay(input: {
   if (result.status !== "escalate") {
     throw new Error(`dogfood runner no-progress replay ended ${result.status}`);
   }
-  if (result.stopSummary.reason !== "spec_conflict") {
+  if (result.stopSummary.reason !== "same_module_still_red") {
     throw new Error(
       `dogfood runner no-progress replay stopped with ${result.stopSummary.reason}`,
     );
@@ -1526,7 +1526,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       id: "307-reviewer-text-only-change",
       issue: 307,
       title: "reviewer wording changes without implementation progress",
-      classification: "spec_conflict",
+      classification: "same_module_still_red",
       stopSummary: textOnlyNoProgressReplay.stopSummary,
       source: "runner",
       sourceStopSummary: textOnlyNoProgressReplay.stopSummary,
@@ -1536,7 +1536,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       id: "307-no-observable-progress",
       issue: 307,
       title: "worker claims attempted repair without scope-local diff/test/fixture movement",
-      classification: "spec_conflict",
+      classification: "same_module_still_red",
       stopSummary: noObservableProgressReplay.stopSummary,
       source: "runner",
       sourceStopSummary: noObservableProgressReplay.stopSummary,
@@ -1546,7 +1546,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       id: "307-continue-fixing-targeted-reset",
       issue: 307,
       title: "continue-fixing resets only the target finding group",
-      classification: "spec_conflict",
+      classification: "same_module_still_red",
       stopSummary: targetedResetReplay.stopSummary,
       source: "runner",
       sourceStopSummary: targetedResetReplay.stopSummary,
