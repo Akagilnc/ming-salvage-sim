@@ -327,5 +327,32 @@ describe("#451 dogfood replay fixture", () => {
       priorFindingStatus: "verified-closed",
       dispatched: expect.arrayContaining(["S5:coder", "S6:reviewer", "S7:ship"]),
     });
+    expect(rowsById.get("376-closure-context-negative")).toMatchObject({
+      source: "family",
+      classification: "contract_drift",
+      stopReason: "contract_drift",
+      sourceStopSummary: expect.objectContaining({ reason: "contract_drift" }),
+      sourceEvidence: expect.objectContaining({
+        seam: "family_cmr_closure",
+        rejectedStatuses: ["still-active", "unable-to-assess"],
+        rejectedShapes: expect.arrayContaining([
+          "missing-disposition",
+          "duplicate-disposition",
+          "extra-stale-disposition",
+        ]),
+      }),
+    });
+    expect(rowsById.get("376-closure-context-missing")).toMatchObject({
+      source: "runner",
+      classification: "contract_drift",
+      stopReason: "contract_drift",
+      sourceStopSummary: expect.objectContaining({ reason: "contract_drift" }),
+      sourceEvidence: expect.objectContaining({
+        seam: "runner",
+        mechanism: "s6_missing_prior_context",
+        status: "error",
+        closureContext: "missing",
+      }),
+    });
   });
 });
