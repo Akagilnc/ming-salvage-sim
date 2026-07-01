@@ -63,6 +63,13 @@ def _disable_army_pay_source_cutover(db):
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
         """
     )
+    db.conn.execute(
+        """
+        INSERT INTO fiscal_config (key, value, kind, note)
+        VALUES ('__fiscal_engine', 0, 'meta', 'test legacy engine')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
+        """
+    )
     db.conn.commit()
 
 
@@ -341,7 +348,7 @@ def test_province_tick_derives_due_and_allocates_province_arrears_by_pay_source(
     )
 
 
-def test_fixed_flows_cutover_accrues_unpaid_central_pay_share(fresh_game):
+def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -386,7 +393,7 @@ def test_fixed_flows_cutover_accrues_unpaid_central_pay_share(fresh_game):
     )
     db.conn.commit()
 
-    flows_mod.apply_fixed_period_flows(db, state)
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
 
     row = db.conn.execute(
         """
@@ -394,6 +401,10 @@ def test_fixed_flows_cutover_accrues_unpaid_central_pay_share(fresh_game):
         FROM armies WHERE id = 'shaanxi_army'
         """
     ).fetchone()
+    assert not any(
+        flow.get("account") == "国库" and flow.get("category") == "各军军饷"
+        for flow in flow_rows
+    )
     assert row["central_pay_arrears"] == pytest.approx(3.5)
     assert row["arrears"] == pytest.approx(
         row["province_pay_arrears"] + row["central_pay_arrears"]
@@ -406,11 +417,12 @@ def test_fixed_flows_cutover_accrues_unpaid_central_pay_share(fresh_game):
     )
 
 
-def test_fixed_flows_cutover_carries_fractional_central_pay_due(fresh_game):
+def test_fixed_flows_legacy_engine_keeps_global_army_pay_route(fresh_game):
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
-    state.metrics["国库"] = 1
+    _disable_army_pay_source_cutover(db)
+    state.metrics["国库"] = 0
     db.save_state(state)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
     db.conn.execute(
@@ -433,7 +445,7 @@ def test_fixed_flows_cutover_carries_fractional_central_pay_due(fresh_game):
     db.conn.execute(
         """
         UPDATE armies
-        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+        SET owner_power = 'other', self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
             central_pay_share = 0, pay_source_region = '',
             province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
         """
@@ -445,7 +457,7 @@ def test_fixed_flows_cutover_carries_fractional_central_pay_due(fresh_game):
             pay_source_region = 'shaanxi', province_pay_share = 0.65,
             central_pay_share = 0.35, province_pay_arrears = 0,
             central_pay_arrears = 0, arrears = 0,
-            manpower = 10000, salary_rate = 1
+            manpower = 10000, salary_rate = 10
         WHERE id = 'shaanxi_army'
         """
     )
@@ -459,24 +471,12 @@ def test_fixed_flows_cutover_carries_fractional_central_pay_due(fresh_game):
         FROM armies WHERE id = 'shaanxi_army'
         """
     ).fetchone()
-    ledger_row = db.conn.execute(
-        """
-        SELECT delta
-        FROM economy_ledger
-        WHERE category = '各军军饷' AND reason LIKE '陕西军%'
-        ORDER BY id DESC
-        LIMIT 1
-        """
-    ).fetchone()
-    assert ledger_row is None
-    assert row["central_pay_arrears"] == pytest.approx(0.35)
-    assert row["arrears"] == pytest.approx(
-        row["province_pay_arrears"] + row["central_pay_arrears"]
-    )
-    assert db.get_central_army_pay_arrears_container() == pytest.approx(0.35)
+    assert row["arrears"] == pytest.approx(10)
+    assert row["province_pay_arrears"] == pytest.approx(0)
+    assert row["central_pay_arrears"] == pytest.approx(0)
 
 
-def test_fixed_flows_cutover_allocates_central_pool_by_due_not_priority(fresh_game):
+def test_fixed_flows_substrate_hub_does_not_allocate_legacy_central_pool(fresh_game):
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -523,7 +523,7 @@ def test_fixed_flows_cutover_allocates_central_pool_by_due_not_priority(fresh_ga
         )
     db.conn.commit()
 
-    flows_mod.apply_fixed_period_flows(db, state)
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
 
     rows = {
         row["id"]: row
@@ -535,13 +535,17 @@ def test_fixed_flows_cutover_allocates_central_pool_by_due_not_priority(fresh_ga
             """
         ).fetchall()
     }
+    assert not any(
+        flow.get("account") == "国库" and flow.get("category") == "各军军饷"
+        for flow in flow_rows
+    )
     assert rows["guanning"]["central_pay_arrears"] == pytest.approx(5)
     assert rows["shaanxi_army"]["central_pay_arrears"] == pytest.approx(5)
     assert rows["guanning"]["arrears"] == pytest.approx(5)
     assert rows["shaanxi_army"]["arrears"] == pytest.approx(5)
 
 
-def test_budget_lines_cutover_counts_only_central_pay_share(fresh_game):
+def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -572,12 +576,12 @@ def test_budget_lines_cutover_counts_only_central_pay_share(fresh_game):
     )
     db.conn.commit()
 
-    cutover_budget = flows_mod.compute_budget_lines(db, state)
-    cutover_pay = next(
-        row["amount"] for row in cutover_budget["国库"]["expense"]
+    substrate_budget = flows_mod.compute_budget_lines(db, state)
+    substrate_pay = next(
+        row["amount"] for row in substrate_budget["国库"]["expense"]
         if row["name"] == "各军军饷"
     )
-    assert cutover_pay == 3
+    assert substrate_pay == 0
 
     _disable_army_pay_source_cutover(db)
 
