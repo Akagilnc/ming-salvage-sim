@@ -163,6 +163,39 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
     expect(backend.cmrCalls).toEqual([]);
     expect(backend.prCalls).toEqual([]);
   });
+
+  it("MODULE_NOT_FOUND verify failures persist a machine repair hint on the family ledger", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({
+        ok: false,
+        errorPackage: {
+          reason: "Error: Cannot find module 'tsx'",
+        },
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-before-final-verify",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "aborted",
+        event: "aborted",
+        phase: "final",
+        reason: "Error: Cannot find module 'tsx'",
+        familyHeadAfter: "head-before-final-verify",
+        stopSummary: expect.objectContaining({
+          reason: "infra_failure",
+          repairHint: expect.stringContaining("install or restore"),
+        }),
+      }),
+    );
+  });
 });
 
 describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)", () => {
@@ -364,6 +397,21 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       phase: "final",
       pr: "pr://family/291-base",
       familyHeadAfter: "head-1",
+      stopSummary: expect.objectContaining({
+        reason: "success",
+        metadata: {
+          heads: {
+            reportedFamilyHead: "head-1",
+            actualFamilyHead: "head-1",
+            verifiedCmrHead: "head-1",
+            sources: {
+              reportedFamilyHead: "ship worker reported prHead",
+              actualFamilyHead: "family head after ship worker",
+              verifiedCmrHead: "latest cmr_passed ledger row",
+            },
+          },
+        },
+      }),
     }));
   });
 

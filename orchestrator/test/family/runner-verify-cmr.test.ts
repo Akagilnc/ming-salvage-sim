@@ -117,6 +117,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
   });
 
   it("keeps production admission skips visible in the success stop summary", async () => {
+    const familyBackend = new FakeFamilyBackend();
     const result = await runFamily({
       epic: {
         ...epicWith(10),
@@ -128,7 +129,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
           },
         ],
       },
-      familyBackend: new FakeFamilyBackend(),
+      familyBackend,
       singleSliceBackend: new ChildBackend(),
       familyBase: "family/293-base",
       verifyCmr: async () => ({ ok: true, ran: false }),
@@ -143,6 +144,14 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       },
     ]);
     expect(result.stopSummary.metadata?.admissionSkipped).toEqual(result.admissionSkipped);
+    expect(familyBackend.ledger).toContainEqual(
+      expect.objectContaining({
+        childIssue: 12,
+        status: "admission_skipped",
+        event: "admission_skipped",
+        reason: "not_ready_for_agent",
+      }),
+    );
   });
 
   it("FAIL-FAST: a red wave verify aborts the loop (no end-of-run call, no further waves)", async () => {

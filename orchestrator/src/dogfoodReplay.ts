@@ -30,7 +30,6 @@ import { runOrchestrator } from "./runner.js";
 import {
   contractDriftStopSummary,
   infraFailureStopSummary,
-  providerDegradedStopSummary,
   stopReasonForFindingDisposition,
   successStopSummary,
   type StopReason,
@@ -297,10 +296,12 @@ class DogfoodSingleSliceBackend implements Backend {
   readonly dispatched: string[] = [];
   readonly dispatchedModels: string[] = [];
   private reviewerAttempt = 0;
+  private coderAttempt = 0;
 
   constructor(
     private readonly resumeState?: ResumeState,
     private readonly reviewerOutputs: ReadonlyArray<StepOutput> = [],
+    private readonly coderOutputs: ReadonlyArray<StepOutput> = [],
   ) {}
 
   async findResumeState(): Promise<ResumeState | undefined> {
@@ -357,7 +358,10 @@ class DogfoodSingleSliceBackend implements Backend {
       this.reviewerAttempt += 1;
       return scripted ?? { kind: "reviewer", findings: [] };
     }
-    return { kind: "coder", committed: true, commitsAdded: 1 };
+    const scripted =
+      spec.id === "S5" ? this.coderOutputs[this.coderAttempt] : undefined;
+    if (spec.id === "S5") this.coderAttempt += 1;
+    return scripted ?? { kind: "coder", committed: true, commitsAdded: 1 };
   }
 
   async dispatchWorker(
@@ -384,15 +388,27 @@ class DogfoodSingleSliceBackend implements Backend {
         output: scripted ?? { kind: "reviewer", findings: [] },
       };
     }
+    const scripted =
+      spec.id === "S5" ? this.coderOutputs[this.coderAttempt] : undefined;
+    if (spec.id === "S5") this.coderAttempt += 1;
     return {
       kind: "completed",
-      output: { kind: "coder", committed: true, commitsAdded: 1 },
+      output: scripted ?? { kind: "coder", committed: true, commitsAdded: 1 },
     };
   }
 
   async push(): Promise<void> {}
 
   async writeLedger(): Promise<void> {}
+}
+
+class ThrowingDogfoodSingleSliceBackend extends DogfoodSingleSliceBackend {
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    if (spec.kind === "coder") {
+      throw new Error("Cannot find module 'missing-worker-dependency'");
+    }
+    return super.dispatchWorker(spec, ctx);
+  }
 }
 
 class DogfoodFamilyBackend implements FamilyBackend {
@@ -585,6 +601,26 @@ async function runnerAnsweredResumeReplay(): Promise<SeamReplay> {
   };
 }
 
+async function runnerModuleNotFoundReplay(): Promise<SeamReplay> {
+  const result = await runOrchestrator({
+    issueNumber: 440,
+    backend: new ThrowingDogfoodSingleSliceBackend(),
+  });
+  if (result.status !== "error" || result.stopSummary.reason !== "infra_failure") {
+    throw new Error(`dogfood runner module-not-found replay ended ${result.status}`);
+  }
+  return {
+    stopSummary: result.stopSummary,
+    sourceEvidence: {
+      seam: "runner",
+      mechanism: "worker_startup_error",
+      status: result.status,
+      errorCode: "MODULE_NOT_FOUND",
+      repairHint: result.stopSummary.repairHint,
+    },
+  };
+}
+
 async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
   const originalFinding = runnerFinding({
     claimQuote: "review loop asks a generic decision even after local progress",
@@ -596,23 +632,54 @@ async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
   });
   const originalKey = findingIdentityKey(originalFinding);
   const changedKey = findingIdentityKey(changedFinding);
-  const backend = new DogfoodSingleSliceBackend(undefined, [
-    { kind: "reviewer", findings: [originalFinding] },
-    {
-      kind: "reviewer",
-      findings: [changedFinding],
-      priorFindingDispositions: [
-        { identityKey: originalKey, status: "verified-closed" },
-      ],
-    },
-    {
-      kind: "reviewer",
-      findings: [],
-      priorFindingDispositions: [
-        { identityKey: changedKey, status: "verified-closed" },
-      ],
-    },
-  ]);
+  const backend = new DogfoodSingleSliceBackend(
+    undefined,
+    [
+      { kind: "reviewer", findings: [originalFinding] },
+      {
+        kind: "reviewer",
+        findings: [changedFinding],
+        priorFindingDispositions: [
+          { identityKey: originalKey, status: "verified-closed" },
+        ],
+      },
+      {
+        kind: "reviewer",
+        findings: [],
+        priorFindingDispositions: [
+          { identityKey: changedKey, status: "verified-closed" },
+        ],
+      },
+    ],
+    [
+      {
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+        repairEvidence: {
+          findingScope: {
+            identityKeys: [originalKey],
+            locations: ["orchestrator/src/runner.ts"],
+          },
+          changedFiles: ["orchestrator/src/runner.ts"],
+          tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+        },
+      },
+      {
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+        repairEvidence: {
+          findingScope: {
+            identityKeys: [changedKey],
+            locations: ["orchestrator/src/runner.ts"],
+          },
+          changedFiles: ["orchestrator/src/runner.ts"],
+          tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+        },
+      },
+    ],
+  );
   const result = await runOrchestrator({ issueNumber: 307, backend });
   if (result.status !== "success") {
     throw new Error(`dogfood runner changed-shape replay ended ${result.status}`);
@@ -623,6 +690,7 @@ async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
       seam: "runner",
       mechanism: "changed_shape_progress",
       findingShape: "changed_after_local_progress",
+      implementationMovement: true,
       status: result.status,
       dispatched: backend.dispatched,
       originalFindingIdentityKey: originalKey,
@@ -1341,6 +1409,135 @@ async function providerStrongLegPassReplay(): Promise<SeamReplay> {
   };
 }
 
+async function familyShipMalformedAfterCmrReplay(): Promise<SeamReplay> {
+  const convergedCmr: WorkerResult = {
+    kind: "completed",
+    output: {
+      kind: "cmr",
+      converged: true,
+      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+    },
+  };
+  const backend = new DogfoodCmrFamilyBackend("family-head", [], [
+    convergedCmr,
+    convergedCmr,
+    { kind: "malformed", reason: "ship worker emitted no valid result" },
+  ]);
+  const result = await runVerifyCmr({
+    phase: "final",
+    familyBase: "family/dogfood-base",
+    familyBackend: backend,
+    familyHeadAfter: "verified-head",
+  });
+  const abort = backend.ledger.find((entry) => entry.status === "aborted");
+  if (result.ok || abort?.stopSummary?.reason !== "contract_drift") {
+    throw new Error("dogfood family ship-malformed replay did not abort as contract drift");
+  }
+  return {
+    stopSummary: abort.stopSummary,
+    sourceEvidence: {
+      seam: "family_verify_cmr",
+      mechanism: "ship_worker_contract",
+      finalCmrPassed: true,
+      shippedMarkerWritten: false,
+      dispatches: backend.dispatches,
+    },
+  };
+}
+
+async function familyFinalVerifyModuleNotFoundReplay(): Promise<SeamReplay> {
+  class MissingVerifyDependencyBackend extends DogfoodFamilyBackend {
+    async runFamilyVerify(): Promise<{
+      ok: false;
+      errorPackage: { reason: string };
+    }> {
+      return {
+        ok: false,
+        errorPackage: { reason: "Error: Cannot find module 'tsx'" },
+      };
+    }
+  }
+  const backend = new MissingVerifyDependencyBackend("family-head");
+  const result = await runVerifyCmr({
+    phase: "final",
+    familyBase: "family/dogfood-base",
+    familyBackend: backend,
+    familyHeadAfter: "family-head",
+  });
+  const abort = backend.ledger.find((entry) => entry.status === "aborted");
+  if (result.ok || abort?.stopSummary?.reason !== "infra_failure") {
+    throw new Error("dogfood family verify MODULE_NOT_FOUND replay did not abort as infra failure");
+  }
+  return {
+    stopSummary: abort.stopSummary,
+    sourceEvidence: {
+      seam: "family_verify_cmr",
+      mechanism: "verify_dependency_failure",
+      classification: "infra_failure",
+      errorCode: "MODULE_NOT_FOUND",
+      repairHint: abort.stopSummary.repairHint,
+    },
+  };
+}
+
+async function familyShipReviewDegradedReplay(): Promise<SeamReplay> {
+  const convergedCmr: WorkerResult = {
+    kind: "completed",
+    output: {
+      kind: "cmr",
+      converged: true,
+      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+    },
+  };
+  const backend = new DogfoodCmrFamilyBackend("family-head", [], [
+    convergedCmr,
+    convergedCmr,
+    {
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: "family/dogfood-base",
+        status: "pr_opened",
+        pr: "pr://family/dogfood-base",
+        prHead: "family-head",
+        degradedReviews: [
+          {
+            provider: "ship-review",
+            leg: "ship-side-review",
+            reason: "sandbox/auth/provider restriction prevented extra ship review",
+            blocking: false,
+            repairHint: "restore ship-side review capability before making it required",
+          },
+        ],
+      },
+    },
+  ]);
+  const result = await runVerifyCmr({
+    phase: "final",
+    familyBase: "family/dogfood-base",
+    familyBackend: backend,
+    familyHeadAfter: "family-head",
+  });
+  const shipped = backend.ledger.find((entry) => entry.status === "shipped");
+  if (!result.ok || shipped?.stopSummary?.metadata?.providerDegraded === undefined) {
+    throw new Error("dogfood family ship-review-degraded replay did not ship with metadata");
+  }
+  return {
+    stopSummary: shipped.stopSummary,
+    sourceEvidence: {
+      seam: "family_verify_cmr",
+      mechanism: "ship_worker_degraded_reviews",
+      classification: "provider_degraded",
+      blocking: false,
+      dispatches: backend.dispatches,
+    },
+  };
+}
+
 function uniqueSortedStopReasons(
   scenarios: ReadonlyArray<DogfoodReplayScenario>,
 ): ReadonlyArray<StopReason> {
@@ -1424,6 +1621,11 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   const closurePositiveSource = await closurePositiveReplay();
   const providerBlockingSource = await providerBlockingReplay();
   const providerStrongLegPassSource = await providerStrongLegPassReplay();
+  const runnerModuleNotFoundSource = await runnerModuleNotFoundReplay();
+  const shipMalformedAfterCmrSource = await familyShipMalformedAfterCmrReplay();
+  const finalVerifyModuleNotFoundSource =
+    await familyFinalVerifyModuleNotFoundReplay();
+  const shipReviewDegradedSource = await familyShipReviewDegradedReplay();
   const currentHeadFamilySuccessSummary =
     await familyCurrentHeadSuccessStopSummary();
   const staleFamilyHeadStopSummary = await familyStaleHeadStopSummary();
@@ -1486,15 +1688,6 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       reason: "owner-authored instructions conflict and need human resolution",
     },
   });
-  const infraFinding = finding({
-    claim_quote: "MODULE_NOT_FOUND prevented final verification from running",
-    location: "orchestrator/src/family/verifyCmr.ts:1",
-    disposition: {
-      kind: "infra_failure",
-      reason: "runtime dependency missing",
-    },
-  });
-
   const scenarios: DogfoodReplayScenario[] = [
     replayScenario({
       id: "307-continue-fixing-after-human-answer",
@@ -1817,16 +2010,10 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 440,
       title: "MODULE_NOT_FOUND is machine repairable infrastructure failure",
       classification: "infra_failure",
-      stopSummary: infraFailureStopSummary({
-        summary: "MODULE_NOT_FOUND during worker startup",
-        repairHint: "install or restore the missing module, then rerun",
-      }),
+      stopSummary: runnerModuleNotFoundSource.stopSummary,
       source: "runner",
-      sourceEvidence: {
-        seam: "runner_stop_reason_mapping",
-        classification: "infra_failure",
-        errorCode: "MODULE_NOT_FOUND",
-      },
+      sourceStopSummary: runnerModuleNotFoundSource.stopSummary,
+      sourceEvidence: runnerModuleNotFoundSource.sourceEvidence,
     }),
     replayScenario({
       id: "440-coder-trust-boundary",
@@ -1865,68 +2052,30 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 405,
       title: "ship worker malformed after final CMR pass does not write shipped marker",
       classification: "contract_drift",
-      stopSummary: {
-        reason: "contract_drift",
-        summary: "ship worker returned no valid result after verified final CMR",
-        repairHint:
-          "preserve latest verified CMR head and rerun ship after repairing the worker contract",
-        metadata: {
-          ship: {
-            latestVerifiedCmrHead: "verified-head",
-            currentFamilyHead: "family-head",
-            reportedFamilyHead: "reported-head",
-            shipPrState: "not-written",
-          },
-          heads: {
-            reportedFamilyHead: "reported-head",
-            actualFamilyHead: "family-head",
-            verifiedCmrHead: "verified-head",
-          },
-        },
-      },
+      stopSummary: shipMalformedAfterCmrSource.stopSummary,
       source: "family",
-      sourceEvidence: {
-        seam: "family_ship_contract",
-        finalCmrPassed: true,
-        shippedMarkerWritten: false,
-      },
+      sourceStopSummary: shipMalformedAfterCmrSource.stopSummary,
+      sourceEvidence: shipMalformedAfterCmrSource.sourceEvidence,
     }),
     replayScenario({
       id: "405-module-not-found-final-verify",
       issue: 405,
       title: "final verification dependency failure is infrastructure, not product decision",
       classification: "infra_failure",
-      stopSummary: stopReasonForFindingDisposition({
-        kind: "infra_failure",
-        finding: infraFinding,
-        reason: "final verify dependency missing",
-        repairHint: "restore verification dependencies and rerun final verify",
-      }),
+      stopSummary: finalVerifyModuleNotFoundSource.stopSummary,
       source: "family",
-      sourceEvidence: {
-        seam: "family_verify_cmr",
-        classification: "infra_failure",
-        errorCode: "MODULE_NOT_FOUND",
-      },
+      sourceStopSummary: finalVerifyModuleNotFoundSource.stopSummary,
+      sourceEvidence: finalVerifyModuleNotFoundSource.sourceEvidence,
     }),
     replayScenario({
       id: "376-ship-side-review-degraded",
       issue: 376,
       title: "ship-side extra review degradation is recorded with blocking metadata",
       classification: "provider_degraded",
-      stopSummary: providerDegradedStopSummary({
-        provider: "ship-review",
-        leg: "ship-side-review",
-        reason: "sandbox/auth/provider restriction prevented extra ship review",
-        blocking: false,
-        repairHint: "restore ship-side review capability before making it required",
-      }),
+      stopSummary: shipReviewDegradedSource.stopSummary,
       source: "family",
-      sourceEvidence: {
-        seam: "family_ship_review_metadata",
-        classification: "provider_degraded",
-        blocking: false,
-      },
+      sourceStopSummary: shipReviewDegradedSource.stopSummary,
+      sourceEvidence: shipReviewDegradedSource.sourceEvidence,
     }),
     replayScenario({
       id: "family-admission-non-runnable-child",

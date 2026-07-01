@@ -38,10 +38,12 @@ class RetryReviewBackend implements Backend {
   readonly ctxs: DispatchContext[] = [];
   readonly ledgerWrites: PersistentLedgerEntry[] = [];
   reviewerAttempts = 0;
+  coderAttempts = 0;
 
   constructor(
     private readonly reviewerResults: ReadonlyArray<WorkerResult>,
     private readonly resumeState?: ResumeState,
+    private readonly coderOutputs: ReadonlyArray<StepOutput> = [],
   ) {}
 
   async findResumeState(): Promise<ResumeState | undefined> {
@@ -80,6 +82,13 @@ class RetryReviewBackend implements Backend {
     this.dispatched.push(`${spec.id}:${spec.kind}`);
     this.specs.push(spec);
     this.ctxs.push(ctx);
+    if (spec.kind === "coder" && spec.id === "S5") {
+      const scripted = this.coderOutputs[this.coderAttempts];
+      this.coderAttempts += 1;
+      if (scripted !== undefined) {
+        return { kind: "completed", output: scripted };
+      }
+    }
     if (spec.kind === "coder") {
       return {
         kind: "completed",
@@ -458,6 +467,74 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         escalationKind: "decision",
       }),
     );
+  });
+
+  it("requires observable scope-local repair evidence before counting a still-active round as progress", async () => {
+    const scopedEvidence = {
+      kind: "coder" as const,
+      committed: true,
+      commitsAdded: 1,
+      repairEvidence: {
+        findingScope: {
+          identityKeys: [blockingKey],
+          locations: ["src/runner.ts"],
+        },
+        changedFiles: ["src/runner.ts"],
+        tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+      },
+    };
+    const backend = new RetryReviewBackend(
+      [
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      undefined,
+      [scopedEvidence, scopedEvidence, scopedEvidence],
+    );
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
   });
 
   it("continues fixing after a scoped continue-fixing bookkeeping event resets no-progress state", async () => {

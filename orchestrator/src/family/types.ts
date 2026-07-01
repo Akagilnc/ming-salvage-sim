@@ -137,6 +137,8 @@ export interface FamilyLedgerEntry {
    *   - `"escalation_answered"` — a PHASE-LEVEL append-only human answer event
    *     (#439). It reopens a prior decision escalation without editing/deleting
    *     that prior row. NOT counted as merged.
+   *   - `"admission_skipped"` — production admission skipped a child before wave
+   *     scheduling; durable audit only, not an unblock fact.
    */
   readonly status:
     | "merged"
@@ -144,7 +146,8 @@ export interface FamilyLedgerEntry {
     | "shipped"
     | "cmr_passed"
     | "escalated"
-    | "escalation_answered";
+    | "escalation_answered"
+    | "admission_skipped";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -162,6 +165,8 @@ export interface FamilyLedgerEntry {
    *     escalation bucket (#439).
    *   - `"escalation_answered"` — paired with `status:"escalation_answered"`; an
    *     append-only human answer to a prior decision escalation (#439).
+   *   - `"admission_skipped"` — paired with `status:"admission_skipped"`; records
+   *     production admission skips before scheduling.
    * Not the unblock truth (that is `status`); the tag is for observability.
    */
   readonly event?:
@@ -170,7 +175,8 @@ export interface FamilyLedgerEntry {
     | "shipped"
     | "cmr_passed"
     | "escalated"
-    | "escalation_answered";
+    | "escalation_answered"
+    | "admission_skipped";
   /**
    * Which phase this PHASE-LEVEL event belongs to. Set on `aborted` entries and
    * on `cmr_passed` audit entries; `merged` / `reconciled` entries omit it because
@@ -184,6 +190,8 @@ export interface FamilyLedgerEntry {
    * failures; `escalated` rows use it for answerable family decision pauses.
    */
   readonly reason?: string;
+  /** Admission-skip diagnostic message, when status/event is admission_skipped. */
+  readonly message?: string;
   /** The child branch that was merged (full schema, #298). */
   readonly childBranch?: string;
   /** The child branch HEAD commit that was merged (the ancestor reconcile checks). */

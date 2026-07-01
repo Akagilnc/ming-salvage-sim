@@ -20,6 +20,7 @@ import {
   hasBoundShippedMarker,
   hasUnboundLegacyShippedMarker,
   mergedSet,
+  recordAdmissionSkipped,
   recordCmrPassed,
   recordMerged,
   recordShipped,
@@ -60,6 +61,43 @@ describe("family-ledger.recordMerged (#293 seam 3)", () => {
     // Append-only — both events are retained (reconcile dedup is #298, not #293).
     expect(backend.appended).toHaveLength(2);
     expect(backend.appended.every((e) => e.childIssue === 10)).toBe(true);
+  });
+});
+
+describe("family-ledger.recordAdmissionSkipped", () => {
+  it("appends durable admission-skip audit rows without marking the child merged", async () => {
+    const backend = new FakeFamilyBackend();
+
+    await recordAdmissionSkipped(backend, {
+      issue: 12,
+      reason: "not_ready_for_agent",
+      message: "family admission skipped child #12: missing ready-for-agent label",
+    });
+
+    expect(backend.appended).toMatchObject([
+      {
+        childIssue: 12,
+        status: "admission_skipped",
+        event: "admission_skipped",
+        phase: "wave",
+        reason: "not_ready_for_agent",
+        message: "family admission skipped child #12: missing ready-for-agent label",
+        stopSummary: {
+          reason: "success",
+          metadata: {
+            admissionSkipped: [
+              {
+                issue: 12,
+                reason: "not_ready_for_agent",
+                message:
+                  "family admission skipped child #12: missing ready-for-agent label",
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    expect(mergedSet(backend.appended)).toEqual(new Set());
   });
 });
 
