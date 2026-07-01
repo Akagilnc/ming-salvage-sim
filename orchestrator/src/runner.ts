@@ -1811,6 +1811,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       recordInMemory?: boolean;
       output?: StepOutput;
       findingDispositions?: ReadonlyArray<FindingDisposition>;
+      stopSummary?: StopSummary;
     },
   ): Promise<RunResult> {
     // integ-cmr base r2 (D): split the two concerns the old single
@@ -1835,7 +1836,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       reason,
       branchHead: worktree?.branch,
     };
-    const stopSummary = stopSummaryForErrorPackage(errorPackage);
+    const stopSummary = opts?.stopSummary ?? stopSummaryForErrorPackage(errorPackage);
 
     // Record the failing step. The in-memory push is skipped when the caller
     // already pushed it (recordInMemory:false) or it is S8 itself; the
@@ -2250,6 +2251,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           return await errorTermination(
             "S1",
             new Error(`source authentication failed: ${sourceAuthFailure.summary}`),
+            { stopSummary: sourceAuthFailure },
           );
         }
         try {

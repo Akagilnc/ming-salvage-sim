@@ -13,8 +13,8 @@ describe("#451 dogfood replay fixture", () => {
         expect.objectContaining({
           id: "307-continue-fixing-after-human-answer",
           issue: 307,
-          classification: "resumed",
-          stopReason: "resumed",
+          classification: "success",
+          stopReason: "success",
           source: "runner",
           sourceStopSummary: expect.objectContaining({ reason: "success" }),
         }),
@@ -171,15 +171,14 @@ describe("#451 dogfood replay fixture", () => {
       "infra_failure",
       "owning_issue_still_red",
       "provider_degraded",
-      "resumed",
       "same_module_still_red",
       "spec_conflict",
       "success",
     ]);
-    expect(replay.summary).toContain("11 stop reasons");
+    expect(replay.summary).toContain("10 stop reasons");
   });
 
-  it("uses seam-produced stop summaries for replay rows that claim success, resumed, or already-done", async () => {
+  it("uses seam-produced stop summaries for replay rows that claim success or already-done", async () => {
     const replay = await issue451DogfoodReplay();
     const rowsById = new Map(replay.scenarios.map((scenario) => [scenario.id, scenario]));
 
