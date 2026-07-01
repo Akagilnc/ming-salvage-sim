@@ -263,6 +263,35 @@ describe("#449 family CMR finding classification", () => {
     });
   });
 
+  it("matches Windows absolute finding locations with trailing symbol suffixes", () => {
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [
+        {
+          ...finding,
+          location: "C:\\repo\\orchestrator\\src\\family\\verifyCmr.ts:runPass",
+        },
+      ],
+      moduleContext: buildFamilyModuleContext({
+        childModules: [
+          {
+            module: "verify-cmr",
+            moduleScope: ["C:\\repo\\orchestrator\\src\\family\\verifyCmr.ts"],
+            source: "child_issue",
+            issue: 449,
+          },
+        ],
+      }),
+    });
+
+    expect(classified.results[0]?.attribution).toEqual({
+      method: "child_module_scope",
+      issue: 449,
+      module: "verify-cmr",
+      source: "child_issue",
+    });
+  });
+
   it("keeps the parent module as fallback when child attribution is unavailable", () => {
     const parentScopedFinding: Finding = {
       ...finding,
