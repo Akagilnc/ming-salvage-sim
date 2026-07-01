@@ -261,6 +261,30 @@ describe("#451 dogfood replay fixture", () => {
       resetScope: "single_identity_key",
       preservedSibling: true,
     });
+    expect(rowsById.get("307-reviewer-text-only-change")).toMatchObject({
+      source: "runner",
+      classification: "spec_conflict",
+      stopReason: "spec_conflict",
+      sourceStopSummary: expect.objectContaining({ reason: "spec_conflict" }),
+      sourceEvidence: expect.objectContaining({
+        seam: "runner",
+        mechanism: "reviewer_text_only_no_progress",
+        status: "escalate",
+        implementationMovement: false,
+      }),
+    });
+    expect(rowsById.get("307-no-observable-progress")).toMatchObject({
+      source: "runner",
+      classification: "spec_conflict",
+      stopReason: "spec_conflict",
+      sourceStopSummary: expect.objectContaining({ reason: "spec_conflict" }),
+      sourceEvidence: expect.objectContaining({
+        seam: "runner",
+        mechanism: "claimed_attempt_without_observable_progress",
+        status: "escalate",
+        implementationMovement: false,
+      }),
+    });
     expect(rowsById.get("287-module-declaration-fenced-yaml")?.sourceEvidence).toMatchObject({
       seam: "module_declaration_parser",
       parsedModule: "orchestrator-family",
@@ -282,6 +306,26 @@ describe("#451 dogfood replay fixture", () => {
       seam: "family",
       finalCmrPass: "correctness",
       legacyDispositionAccepted: true,
+    });
+    expect(rowsById.get("376-route-accounting-non-default")?.sourceEvidence).toMatchObject({
+      seam: "family_cmr_accounting",
+      routeName: "claude-tight",
+      declaredLegs: ["gpt-5.5", "agy"],
+      rejectedDefaultLeg: "opus",
+    });
+    expect(rowsById.get("376-route-freeze-after-import")?.sourceEvidence).toMatchObject({
+      seam: "runner",
+      mechanism: "route_freeze_after_import",
+      routeName: "codex-tight",
+      reviewerModel: "opus",
+      envMutatedAfterImport: true,
+    });
+    expect(rowsById.get("376-closure-context-positive")?.sourceEvidence).toMatchObject({
+      seam: "runner",
+      mechanism: "s5_s6_closure_loop",
+      status: "success",
+      priorFindingStatus: "verified-closed",
+      dispatched: expect.arrayContaining(["S5:coder", "S6:reviewer", "S7:ship"]),
     });
   });
 });

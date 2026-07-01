@@ -14,6 +14,11 @@ import type {
   MergeRequest,
 } from "./family/types.js";
 import { findingIdentityKey } from "./findings.js";
+import {
+  cmrLegAccountingFailure,
+  resolveRouteModels,
+  type ModelRouteEnv,
+} from "./modelRoutes.js";
 import { runOrchestrator } from "./runner.js";
 import {
   contractDriftStopSummary,
@@ -276,6 +281,7 @@ class DogfoodSingleSliceBackend implements Backend {
   readonly resumeSessionCalls: Array<[StepId, string]> = [];
   readonly runStepCalls: StepId[] = [];
   readonly dispatched: string[] = [];
+  readonly dispatchedModels: string[] = [];
   private reviewerAttempt = 0;
 
   constructor(
@@ -345,6 +351,7 @@ class DogfoodSingleSliceBackend implements Backend {
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}`);
+    this.dispatchedModels.push(`${spec.id}:${spec.model}`);
     if (spec.kind === "ship") {
       return {
         kind: "completed",
@@ -609,6 +616,35 @@ async function runnerTargetedResetReplay(): Promise<SeamReplay> {
   };
 }
 
+async function runnerNoProgressReplay(input: {
+  readonly mechanism: string;
+  readonly finding: Finding;
+  readonly reviewerOutputs: ReadonlyArray<StepOutput>;
+}): Promise<SeamReplay> {
+  const key = findingIdentityKey(input.finding);
+  const backend = new DogfoodSingleSliceBackend(undefined, input.reviewerOutputs);
+  const result = await runOrchestrator({ issueNumber: 307, backend });
+  if (result.status !== "escalate") {
+    throw new Error(`dogfood runner no-progress replay ended ${result.status}`);
+  }
+  if (result.stopSummary.reason !== "spec_conflict") {
+    throw new Error(
+      `dogfood runner no-progress replay stopped with ${result.stopSummary.reason}`,
+    );
+  }
+  return {
+    stopSummary: result.stopSummary,
+    sourceEvidence: {
+      seam: "runner",
+      mechanism: input.mechanism,
+      status: result.status,
+      implementationMovement: false,
+      dispatched: backend.dispatched,
+      findingIdentityKey: key,
+    },
+  };
+}
+
 function moduleDeclarationReplay(): SeamReplay {
   const parsed = parseModuleDeclaration(`## Module Declaration
 \`\`\`yaml
@@ -688,31 +724,6 @@ function legacyDispositionParserReplay(): SeamReplay {
       normalizedPriorDisposition: normalized,
       claimedFixedFindingIdentityKey: identityKey,
     },
-  };
-}
-
-function runnerSuccessEvidence(
-  mechanism: string,
-  backend: DogfoodSingleSliceBackend,
-  status: string,
-): Readonly<Record<string, unknown>> {
-  return {
-    seam: "runner",
-    mechanism,
-    status,
-    dispatched: backend.dispatched,
-  };
-}
-
-async function runnerSuccessReplay(mechanism: string): Promise<SeamReplay> {
-  const backend = new DogfoodSingleSliceBackend();
-  const result = await runOrchestrator({
-    issueNumber: 451,
-    backend,
-  });
-  return {
-    stopSummary: result.stopSummary,
-    sourceEvidence: runnerSuccessEvidence(mechanism, backend, result.status),
   };
 }
 
@@ -803,6 +814,123 @@ async function familyAlreadyDoneStopSummary(): Promise<StopSummary> {
   return result.stopSummary;
 }
 
+async function withRouteEnv<T>(
+  env: ModelRouteEnv,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = new Map<string, string | undefined>();
+  for (const key of Object.keys(env)) {
+    previous.set(key, process.env[key]);
+    const value = env[key];
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  try {
+    return await run();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+function routeAccountingReplay(): SeamReplay {
+  const env = { ORCHESTRATOR_ROUTE: "claude-tight" };
+  const route = resolveRouteModels("claude-tight", {});
+  const declaredLegs = route.legCollections.cmrReview.map((leg) => leg.slug);
+  const rejectedDefaultLeg = "opus";
+  const failure = cmrLegAccountingFailure(
+    { successfulLegs: [...declaredLegs, rejectedDefaultLeg] },
+    env,
+  );
+  if (failure === undefined || !failure.includes(rejectedDefaultLeg)) {
+    throw new Error("dogfood route accounting replay did not reject default legs");
+  }
+  return {
+    stopSummary: successStopSummary(),
+    sourceEvidence: {
+      seam: "family_cmr_accounting",
+      routeName: route.routeName,
+      declaredLegs,
+      rejectedDefaultLeg,
+      failure,
+    },
+  };
+}
+
+async function routeFreezeReplay(): Promise<SeamReplay> {
+  class RouteMutatingBackend extends DogfoodSingleSliceBackend {
+    override async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+      process.env.ORCHESTRATOR_ROUTE = "normal";
+      return super.fetchIssueMeta(issueNumber);
+    }
+  }
+
+  const backend = new RouteMutatingBackend();
+  const result = await withRouteEnv(
+    { ORCHESTRATOR_ROUTE: "codex-tight" },
+    () => runOrchestrator({ issueNumber: 376, backend }),
+  );
+  if (result.status !== "success") {
+    throw new Error(`dogfood route freeze replay ended ${result.status}`);
+  }
+  if (!backend.dispatchedModels.includes("S3:opus")) {
+    throw new Error("dogfood route freeze replay did not dispatch codex-tight reviewer");
+  }
+  return {
+    stopSummary: result.stopSummary,
+    sourceEvidence: {
+      seam: "runner",
+      mechanism: "route_freeze_after_import",
+      routeName: "codex-tight",
+      envMutatedAfterImport: true,
+      reviewerModel: "opus",
+      dispatchedModels: backend.dispatchedModels,
+      dispatched: backend.dispatched,
+    },
+  };
+}
+
+async function closurePositiveReplay(): Promise<SeamReplay> {
+  const closureFinding = runnerFinding({
+    claimQuote: "S6 must receive and close the prior finding context",
+    location: "orchestrator/src/runner.ts:376",
+  });
+  const key = findingIdentityKey(closureFinding);
+  const backend = new DogfoodSingleSliceBackend(undefined, [
+    { kind: "reviewer", findings: [closureFinding] },
+    {
+      kind: "reviewer",
+      findings: [],
+      priorFindingDispositions: [
+        { identityKey: key, status: "verified-closed" },
+      ],
+    },
+  ]);
+  const result = await runOrchestrator({ issueNumber: 376, backend });
+  if (result.status !== "success") {
+    throw new Error(`dogfood closure-positive replay ended ${result.status}`);
+  }
+  return {
+    stopSummary: result.stopSummary,
+    sourceEvidence: {
+      seam: "runner",
+      mechanism: "s5_s6_closure_loop",
+      status: result.status,
+      priorFindingStatus: "verified-closed",
+      findingIdentityKey: key,
+      dispatched: backend.dispatched,
+    },
+  };
+}
+
 function uniqueSortedStopReasons(
   scenarios: ReadonlyArray<DogfoodReplayScenario>,
 ): ReadonlyArray<StopReason> {
@@ -813,11 +941,73 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   const answeredResumeReplay = await runnerAnsweredResumeReplay();
   const changedShapeReplay = await runnerShapeChangedProgressReplay();
   const targetedResetReplay = await runnerTargetedResetReplay();
+  const textOnlyNoProgressFinding = runnerFinding({
+    claimQuote: "reviewer wording changes cannot prove implementation progress",
+    location: "orchestrator/src/runner.ts:919",
+  });
+  const textOnlyNoProgressKey = findingIdentityKey(textOnlyNoProgressFinding);
+  const textOnlyNoProgressReplay = await runnerNoProgressReplay({
+    mechanism: "reviewer_text_only_no_progress",
+    finding: textOnlyNoProgressFinding,
+    reviewerOutputs: [
+      { kind: "reviewer", findings: [textOnlyNoProgressFinding] },
+      {
+        kind: "reviewer",
+        findings: [
+          {
+            ...textOnlyNoProgressFinding,
+            suggested_fix: "same finding with reviewer wording changed only",
+          },
+        ],
+        priorFindingDispositions: [
+          { identityKey: textOnlyNoProgressKey, status: "still-active" },
+        ],
+      },
+      {
+        kind: "reviewer",
+        findings: [
+          {
+            ...textOnlyNoProgressFinding,
+            suggested_fix: "same finding with another wording-only review change",
+          },
+        ],
+        priorFindingDispositions: [
+          { identityKey: textOnlyNoProgressKey, status: "still-active" },
+        ],
+      },
+    ],
+  });
+  const noObservableProgressFinding = runnerFinding({
+    claimQuote: "claimed repair attempts without relevant movement cannot reset no-progress",
+    location: "orchestrator/src/runner.ts:920",
+  });
+  const noObservableProgressKey = findingIdentityKey(noObservableProgressFinding);
+  const noObservableProgressReplay = await runnerNoProgressReplay({
+    mechanism: "claimed_attempt_without_observable_progress",
+    finding: noObservableProgressFinding,
+    reviewerOutputs: [
+      { kind: "reviewer", findings: [noObservableProgressFinding] },
+      {
+        kind: "reviewer",
+        findings: [noObservableProgressFinding],
+        priorFindingDispositions: [
+          { identityKey: noObservableProgressKey, status: "still-active" },
+        ],
+      },
+      {
+        kind: "reviewer",
+        findings: [noObservableProgressFinding],
+        priorFindingDispositions: [
+          { identityKey: noObservableProgressKey, status: "still-active" },
+        ],
+      },
+    ],
+  });
   const moduleDeclarationSource = moduleDeclarationReplay();
   const legacyDispositionSource = legacyDispositionParserReplay();
-  const routeAccountingReplay = await runnerSuccessReplay("route_accounting");
-  const routeFreezeReplay = await runnerSuccessReplay("route_freeze");
-  const closurePositiveReplay = await runnerSuccessReplay("closure_positive");
+  const routeAccountingSource = routeAccountingReplay();
+  const routeFreezeSource = await routeFreezeReplay();
+  const closurePositiveSource = await closurePositiveReplay();
   const currentHeadFamilySuccessSummary =
     await familyCurrentHeadSuccessStopSummary();
   const staleFamilyHeadStopSummary = await familyStaleHeadStopSummary();
@@ -921,22 +1111,20 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 307,
       title: "reviewer wording changes without implementation progress",
       classification: "spec_conflict",
-      stopSummary: stopReasonForFindingDisposition({
-        kind: "spec_conflict",
-        finding: specConflictFinding,
-        reason: "no-progress guard requires observable implementation evidence",
-      }),
+      stopSummary: textOnlyNoProgressReplay.stopSummary,
+      source: "runner",
+      sourceStopSummary: textOnlyNoProgressReplay.stopSummary,
+      sourceEvidence: textOnlyNoProgressReplay.sourceEvidence,
     }),
     staticScenario({
       id: "307-no-observable-progress",
       issue: 307,
       title: "worker claims attempted repair without scope-local diff/test/fixture movement",
       classification: "spec_conflict",
-      stopSummary: stopReasonForFindingDisposition({
-        kind: "spec_conflict",
-        finding: specConflictFinding,
-        reason: "claimed attempts alone cannot reset no-progress protection",
-      }),
+      stopSummary: noObservableProgressReplay.stopSummary,
+      source: "runner",
+      sourceStopSummary: noObservableProgressReplay.stopSummary,
+      sourceEvidence: noObservableProgressReplay.sourceEvidence,
     }),
     staticScenario({
       id: "307-continue-fixing-targeted-reset",
@@ -1047,10 +1235,10 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 376,
       title: "non-default route accounting uses declared route legs",
       classification: "success",
-      stopSummary: routeAccountingReplay.stopSummary,
-      source: "runner",
-      sourceStopSummary: routeAccountingReplay.stopSummary,
-      sourceEvidence: routeAccountingReplay.sourceEvidence,
+      stopSummary: routeAccountingSource.stopSummary,
+      source: "family",
+      sourceStopSummary: routeAccountingSource.stopSummary,
+      sourceEvidence: routeAccountingSource.sourceEvidence,
     }),
     staticScenario({
       id: "376-route-env-format-mismatch",
@@ -1067,10 +1255,10 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 376,
       title: "route is frozen at invocation even if env changes after import",
       classification: "success",
-      stopSummary: routeFreezeReplay.stopSummary,
+      stopSummary: routeFreezeSource.stopSummary,
       source: "runner",
-      sourceStopSummary: routeFreezeReplay.stopSummary,
-      sourceEvidence: routeFreezeReplay.sourceEvidence,
+      sourceStopSummary: routeFreezeSource.stopSummary,
+      sourceEvidence: routeFreezeSource.sourceEvidence,
     }),
     staticScenario({
       id: "376-startup-route-tight-violation",
@@ -1107,10 +1295,10 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 376,
       title: "S6 verifies prior finding closed and lets the run continue",
       classification: "success",
-      stopSummary: closurePositiveReplay.stopSummary,
+      stopSummary: closurePositiveSource.stopSummary,
       source: "runner",
-      sourceStopSummary: closurePositiveReplay.stopSummary,
-      sourceEvidence: closurePositiveReplay.sourceEvidence,
+      sourceStopSummary: closurePositiveSource.stopSummary,
+      sourceEvidence: closurePositiveSource.sourceEvidence,
     }),
     staticScenario({
       id: "376-owning-issue-still-red",
