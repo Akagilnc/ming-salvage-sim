@@ -1356,7 +1356,10 @@ function stopSummaryForEscalation(escalation: Escalation): StopSummary {
 }
 
 function stopSummaryForStartupRouteFailure(escalation: Escalation): StopSummary {
-  const reason = `${escalation.reason}: ${escalation.diagnosis}`;
+  const reason =
+    `${escalation.reason}: ${escalation.diagnosis}; ` +
+    `route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ` +
+    `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`;
   return infraFailureStopSummary({
     summary: reason,
     repairHint: "fix the active model route or route env overrides before dispatching workers",

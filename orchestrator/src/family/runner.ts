@@ -111,6 +111,7 @@ function familyStopSummary(input: {
   readonly failedPhase?: VerifyCmrPhase;
   readonly familyHead?: string;
   readonly headMetadata?: StopSummary["metadata"];
+  readonly barrierStopSummary?: StopSummary;
   readonly familyBase: string;
   readonly children: ReadonlyArray<FamilyChildResult>;
   readonly escalationReason?: string;
@@ -139,6 +140,7 @@ function familyStopSummary(input: {
     );
   }
   if (input.status === "verify_failed") {
+    if (input.barrierStopSummary !== undefined) return input.barrierStopSummary;
     return infraFailureStopSummary({
       summary: `family ${input.failedPhase ?? "unknown"} verify/cmr barrier failed`,
       repairHint: "inspect the family ledger aborted entry, repair the failing barrier, and rerun",
@@ -257,6 +259,16 @@ function latestVerifiedCmrHead(
     ) {
       return filled(entry.familyHeadAfter);
     }
+  }
+  return undefined;
+}
+
+function latestStopSummary(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+): StopSummary | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const stopSummary = ledger[i]!.stopSummary;
+    if (stopSummary !== undefined) return stopSummary;
   }
   return undefined;
 }
@@ -483,6 +495,7 @@ export async function runFamily(
   ): Promise<FamilyRunResult> => {
     const recorded = new Set(childResults.map((c) => c.issue));
     const ledgerMerged = await currentMerged(familyBackend);
+    const familyLedger = await familyBackend.readFamilyLedger();
     const extra: FamilyChildResult[] = epic.children
       .filter((c) => !recorded.has(c.issue))
       .map((c) =>
@@ -505,8 +518,10 @@ export async function runFamily(
         actualFamilyHead !== undefined
           ? "familyBackend.readFamilyHead"
           : "family runner current head",
-      verifiedCmrHead: latestVerifiedCmrHead(await familyBackend.readFamilyLedger()),
+      verifiedCmrHead: latestVerifiedCmrHead(familyLedger),
     });
+    const barrierStopSummary =
+      status === "verify_failed" ? latestStopSummary(familyLedger) : undefined;
     return {
       status,
       ...(verifyFailedPhase !== undefined ? { failedPhase: verifyFailedPhase } : {}),
@@ -518,6 +533,7 @@ export async function runFamily(
         familyBase,
         familyHead,
         headMetadata,
+        barrierStopSummary,
         children,
         admissionSkipped: epic.admissionSkipped,
       }),

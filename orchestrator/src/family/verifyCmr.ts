@@ -751,6 +751,11 @@ async function runIntegratedCmrPass(input: {
       cmrPass: pass,
       reason: closureFailure,
       familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: contractDriftStopSummary({
+        summary: closureFailure,
+        repairHint:
+          "repair the integrated CMR claimed-fixed closure payload and rerun the family barrier",
+      }),
     });
     await familyBackend.escalateFamily?.({
       reason: closureFailure,
