@@ -2220,16 +2220,26 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       reason: "declared target module is outside the family module",
     },
   });
+  const hubLossAcceptedScope =
+    "#287 hub-loss / central C_ accounts finding only; not #287 local integration or stub-contract failures";
+  const hubLossAcceptedReason =
+    "#287 ADR0023 D9 central transport-loss C_ accounts are accepted as #261/ADR0021 hub implementation scope";
+  const hubLossBoundedReopen =
+    "reopen if severity escalates, new evidence changes the scope, or the finding targets #287-owned local integration/stub contract behavior";
   const hubLossFinding = finding({
     severity: "medium",
     claim_quote:
       "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
     location: "docs/adr/0023.md:D9",
-    action: "defer",
+    action: "wont_fix",
+    disposition_reason: hubLossAcceptedReason,
     disposition: {
-      kind: "cross_module",
-      targetModule: "hub",
-      reason: "the hub implementation is outside #287",
+      kind: "accepted_suppressed",
+      source: "#303",
+      scope: hubLossAcceptedScope,
+      reason: hubLossAcceptedReason,
+      targetModule: "#261/ADR0021 hub implementation",
+      boundedReopen: hubLossBoundedReopen,
     },
   });
   const hubLossModuleContext: FamilyModuleContext = {
@@ -2237,13 +2247,10 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     acceptedSuppressionSources: [
       {
         source: "#303",
-        scope:
-          "#287 hub-loss / central C_ accounts finding only; not #287 local integration or stub-contract failures",
-        reason:
-          "#287 ADR0023 D9 central transport-loss C_ accounts are accepted as #261/ADR0021 hub implementation scope",
+        scope: hubLossAcceptedScope,
+        reason: hubLossAcceptedReason,
         findingIdentity: findingIdentityKey(hubLossFinding),
-        boundedReopen:
-          "reopen if severity escalates, new evidence changes the scope, or the finding targets #287-owned local integration/stub contract behavior",
+        boundedReopen: hubLossBoundedReopen,
       },
     ],
   };

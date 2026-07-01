@@ -93,8 +93,7 @@ export interface FamilyCmrFindingResult {
       | "child_module_scope"
       | "family_module"
       | "missing_module_context"
-      | "reviewer_disposition"
-      | "known_suppression";
+      | "reviewer_disposition";
     readonly issue?: number;
     readonly module?: string;
     readonly source?: SourcedModuleDeclaration["source"];
@@ -446,52 +445,6 @@ function priorDispositionMatchesContext(
   );
 }
 
-const SEVERITY_RANK: Readonly<Record<Finding["severity"], number>> = {
-  clarity: 0,
-  low: 1,
-  medium: 2,
-  high: 3,
-  critical: 4,
-};
-
-const KNOWN_287_HUB_LOSS_ACCEPTED_SEVERITY: Finding["severity"] = "medium";
-
-function exceedsKnown287HubLossAcceptedSeverity(finding: Finding): boolean {
-  return (
-    SEVERITY_RANK[finding.severity] >
-    SEVERITY_RANK[KNOWN_287_HUB_LOSS_ACCEPTED_SEVERITY]
-  );
-}
-
-function isKnown287HubLossFinding(familyIssue: number, finding: Finding): boolean {
-  if (familyIssue !== 287) return false;
-  const text = `${finding.claim_quote}\n${finding.location}`.toLowerCase();
-  if (/(#287[-\s]?owned|local integration|stub contract)/i.test(text)) {
-    return false;
-  }
-  return (
-    /adr0023|d9|transport[-\s]?loss|central\s+c_?\s+accounts|hub oracle|adr0021/i.test(
-      text,
-    ) && /hub|adr0021|transport[-\s]?loss|central\s+c_?\s+accounts/i.test(text)
-  );
-}
-
-function acceptedSuppressionDisposition(finding: Finding): FindingDisposition {
-  return {
-    identityKey: findingIdentityKey(finding),
-    status: "accepted_suppressed",
-    reason:
-      "#287 ADR0023 D9 central transport-loss C_ accounts are accepted as #261/ADR0021 hub implementation scope",
-    severity: finding.severity,
-    reopenAttempts: 0,
-    source: "#303",
-    scope: "#287 hub-loss / central C_ accounts finding only; not #287 local integration or stub-contract failures",
-    targetModule: "#261/ADR0021 hub implementation",
-    boundedReopen:
-      "reopen if severity escalates, new evidence changes the scope, or the finding targets #287-owned local integration/stub contract behavior",
-  };
-}
-
 function resultForBlocking(
   finding: Finding,
   context: FamilyModuleContext,
@@ -559,49 +512,6 @@ export function classifyFamilyCmrFindings(input: {
   const currentModules = currentModuleNames(input.moduleContext);
 
   for (const finding of input.findings) {
-    if (isKnown287HubLossFinding(input.familyIssue, finding)) {
-      if (exceedsKnown287HubLossAcceptedSeverity(finding)) {
-        blocking.push(finding);
-        results.push(resultForBlocking(finding, input.moduleContext));
-        continue;
-      }
-
-      const disposition = acceptedSuppressionDisposition(finding);
-      const suppressionFinding: Finding = {
-        ...finding,
-        action: "wont_fix",
-        disposition: {
-          kind: "accepted_suppressed",
-          source: disposition.source,
-          scope: disposition.scope,
-          reason: disposition.reason,
-          findingIdentity: disposition.identityKey,
-          boundedReopen: disposition.boundedReopen,
-        },
-      };
-      if (
-        !suppressionScopeMatchesContext({
-          finding: suppressionFinding,
-          context: input.moduleContext,
-          scope: disposition.scope,
-        })
-      ) {
-        blocking.push(finding);
-        results.push(resultForBlocking(finding, input.moduleContext));
-        continue;
-      }
-      seededDispositions.push(disposition);
-      results.push({
-        identityKey: disposition.identityKey,
-        classification: "accepted_suppressed",
-        attribution: { method: "known_suppression" },
-        source: disposition.source,
-        targetModule: disposition.targetModule,
-        reason: disposition.reason,
-      });
-      continue;
-    }
-
     if (
       !acceptedSuppressionFindingMatchesContext(finding, input.moduleContext)
     ) {
