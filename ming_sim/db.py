@@ -5053,6 +5053,40 @@ class GameDB:
                     delta = int(value)
                     new_value = max(0, int(old_value) + delta)
                     actual_delta = new_value - int(old_value)
+                    if (
+                        self.is_army_pay_source_cutover_enabled()
+                        and new_value == 0
+                        and str(row["owner_power"]) == "ming"
+                        and float(row["arrears"] or 0) > 1e-9
+                    ):
+                        old_arrears = float(row["arrears"] or 0)
+                        old_source = str(row["pay_source_region"] or "")
+                        self.conn.execute(
+                            """
+                            INSERT INTO army_logs
+                            (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                            VALUES (?, ?, ?, ?, 'arrears', ?, '0.0', ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                state.turn, state.year, state.period, army_id,
+                                str(old_arrears), -old_arrears,
+                                f"兵力归零核销：{reason}",
+                                event.id, edict_id, actor,
+                            ),
+                        )
+                        self.conn.execute(
+                            """
+                            UPDATE armies
+                            SET province_pay_arrears = 0,
+                                central_pay_arrears = 0,
+                                arrears = 0,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                            """,
+                            (army_id,),
+                        )
+                        self._reconcile_army_pay_source_region_container(old_source)
+                        self._reconcile_central_army_pay_arrears_container()
                     if actual_delta == 0:
                         # #44：请求非 0 但 clamp 后无净变化（如减兵超过现有兵力→clamp 到 0）留一条
                         # delta=0 army_log（参照 region cannon delta=0 留痕，#14 不静默吞）；真 no-op

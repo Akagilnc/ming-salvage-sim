@@ -520,10 +520,10 @@ def _auto_pay_arrears_by_priority(
 
 
 def _payable_army_arrears_cap(current_arrears: float, pay_source_cutover: bool) -> int:
-    """Integer ledger cap: any positive fractional debt needs one more 万两 ledger unit."""
+    """Integer ledger cap: never spend more whole 万两 than the current debt."""
     if current_arrears <= 1e-9:
         return 0
-    return math.ceil(current_arrears)
+    return math.floor(current_arrears + 1e-9)
 
 
 def _normalized_cutover_pay_arrears(row, current_arrears: float) -> Tuple[float, float]:

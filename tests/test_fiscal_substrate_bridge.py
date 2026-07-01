@@ -1874,7 +1874,7 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
     )
 
 
-def test_economy_pay_arrears_clears_fractional_pay_source_tail(fresh_db):
+def test_economy_pay_arrears_preserves_unpayable_fractional_pay_source_tail(fresh_db):
     from ming_sim.flows import _apply_economy_list
 
     state = fresh_db.load_state()
@@ -1921,17 +1921,21 @@ def test_economy_pay_arrears_clears_fractional_pay_source_tail(fresh_db):
         """
     ).fetchone()
 
-    assert applied == [{"account": "国库", "delta": -1, "reason": "测试小数欠饷补齐"}]
-    assert ledger_row["delta"] == -1
-    assert row["province_pay_arrears"] == pytest.approx(0)
-    assert row["central_pay_arrears"] == pytest.approx(0)
-    assert row["arrears"] == pytest.approx(0)
+    assert applied == [{
+        "account": "国库",
+        "delta": 0,
+        "reason": "陕西边军欠饷未满1万两，1万两未拨",
+    }]
+    assert ledger_row is None
+    assert row["province_pay_arrears"] == pytest.approx(0.3)
+    assert row["central_pay_arrears"] == pytest.approx(0.2)
+    assert row["arrears"] == pytest.approx(0.5)
     assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
     )
 
 
-def test_economy_pay_arrears_ceils_fractional_pay_source_debt(fresh_db):
+def test_economy_pay_arrears_clamps_to_floor_without_overpaying_fractional_debt(fresh_db):
     from ming_sim.flows import _apply_economy_list
 
     state = fresh_db.load_state()
@@ -1953,7 +1957,7 @@ def test_economy_pay_arrears_ceils_fractional_pay_source_debt(fresh_db):
             "account": "国库",
             "delta": -4,
             "category": "补饷",
-            "reason": "测试小数欠饷进位补齐",
+            "reason": "测试小数欠饷不超扣",
             "purpose": "补饷",
             "target_kind": "army",
             "target_id": "shaanxi_army",
@@ -1978,13 +1982,74 @@ def test_economy_pay_arrears_ceils_fractional_pay_source_debt(fresh_db):
         """
     ).fetchone()
 
-    assert applied == [{"account": "国库", "delta": -4, "reason": "测试小数欠饷进位补齐"}]
-    assert ledger_row["delta"] == -4
+    assert applied == [{"account": "国库", "delta": -3, "reason": "测试小数欠饷不超扣"}]
+    assert ledger_row["delta"] == -3
+    assert row["province_pay_arrears"] == pytest.approx(0.3)
+    assert row["central_pay_arrears"] == pytest.approx(0.2)
+    assert row["arrears"] == pytest.approx(0.5)
+    assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
+        _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
+    )
+
+
+def test_manpower_zero_writeoffs_pay_source_arrears_before_retiring_army(fresh_db):
+    state = fresh_db.load_state()
+    event = SimpleNamespace(id="test", title="陕西边军覆没")
+    fresh_db.conn.execute(
+        """
+        UPDATE armies
+        SET manpower = 1000,
+            province_pay_arrears = 6,
+            central_pay_arrears = 4,
+            arrears = 10
+        WHERE id = 'shaanxi_army'
+        """
+    )
+    fresh_db._reconcile_army_pay_source_region_container("shaanxi")
+    fresh_db._reconcile_central_army_pay_arrears_container()
+
+    changes = fresh_db.apply_army_deltas(
+        state,
+        event,
+        None,
+        "测试",
+        {"shaanxi_army": {"manpower": -9999, "reason": "全军覆没"}},
+        commit=False,
+    )
+
+    row = fresh_db.conn.execute(
+        """
+        SELECT manpower, arrears, province_pay_arrears, central_pay_arrears
+        FROM armies
+        WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    writeoff = fresh_db.conn.execute(
+        """
+        SELECT *
+        FROM army_logs
+        WHERE army_id = 'shaanxi_army'
+          AND field = 'arrears'
+          AND reason LIKE '%核销%'
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+
+    assert any(change["field"] == "manpower" for change in changes)
+    assert row["manpower"] == 0
     assert row["province_pay_arrears"] == pytest.approx(0)
     assert row["central_pay_arrears"] == pytest.approx(0)
     assert row["arrears"] == pytest.approx(0)
+    assert writeoff is not None
+    assert float(writeoff["old_value"]) == pytest.approx(10)
+    assert float(writeoff["new_value"]) == pytest.approx(0)
+    assert writeoff["delta"] == pytest.approx(-10)
     assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
+    )
+    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+        _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
     )
 
 
