@@ -4907,7 +4907,11 @@ class GameDB:
             FROM army_logs al
             JOIN armies a ON a.id = al.army_id
             WHERE al.turn = ?
-            ORDER BY al.id
+            ORDER BY CASE
+                       WHEN al.delta IS NULL THEN 0
+                       WHEN al.delta != 0 THEN 0
+                       ELSE 1
+                     END, al.id
             LIMIT ?
             """,
             (turn, limit),
@@ -4921,11 +4925,13 @@ class GameDB:
             if delta is None:
                 parts.append(f"{row['army_name']}{label}改为{row['new_value']}（{row['reason']}）")
             else:
-                sign = "+" if int(delta) > 0 else ""
+                delta_num = float(delta)
+                delta_text = str(int(delta_num)) if delta_num.is_integer() else f"{delta_num:g}"
+                sign = "+" if delta_num > 0 else ""
                 if row["field"] == "manpower":
-                    parts.append(f"{row['army_name']}{label}{sign}{int(delta)}人（{row['reason']}）")
+                    parts.append(f"{row['army_name']}{label}{sign}{int(delta_num)}人（{row['reason']}）")
                 else:
-                    parts.append(f"{row['army_name']}{label}{sign}{int(delta)}（{row['reason']}）")
+                    parts.append(f"{row['army_name']}{label}{sign}{delta_text}（{row['reason']}）")
         return "；".join(parts) + "。"
 
     def apply_army_deltas(

@@ -1306,6 +1306,39 @@ def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
     assert "福建水师士气-8" in fresh_db.turn_army_summary(fresh_db.load_state().turn)
 
 
+def test_turn_army_summary_keeps_real_morale_changes_when_log_cap_fills(fresh_db):
+    state = fresh_db.load_state()
+    earlier_armies = [
+        row["id"]
+        for row in fresh_db.conn.execute(
+            "SELECT id FROM armies WHERE id != 'fujian_navy' ORDER BY id LIMIT 10"
+        ).fetchall()
+    ]
+    assert len(earlier_armies) == 10
+    for army_id in earlier_armies:
+        fresh_db.conn.execute(
+            """
+            INSERT INTO army_logs
+            (turn, year, period, army_id, field, old_value, new_value, delta, reason, actor)
+            VALUES (?, ?, ?, ?, 'morale', '80', '80', 0, '中央军饷足额', '户部')
+            """,
+            (state.turn, state.year, state.period, army_id),
+        )
+    fresh_db.conn.execute(
+        """
+        INSERT INTO army_logs
+        (turn, year, period, army_id, field, old_value, new_value, delta, reason, actor)
+        VALUES (?, ?, ?, 'fujian_navy', 'morale', '80', '72', -8, '本月省源军饷分账', '户部')
+        """,
+        (state.turn, state.year, state.period),
+    )
+    fresh_db.conn.commit()
+
+    summary = fresh_db.turn_army_summary(state.turn)
+
+    assert "福建水师士气-8" in summary
+
+
 def test_armies_provision_empty_mutiny_status_flag(fresh_db):
     columns = {
         row["name"]: row
@@ -1933,7 +1966,7 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
     )
 
 
-def test_economy_pay_arrears_preserves_unpayable_fractional_pay_source_tail(fresh_db):
+def test_economy_pay_arrears_writes_off_fractional_pay_source_tail(fresh_db):
     from ming_sim.flows import _apply_economy_list
 
     state = fresh_db.load_state()
@@ -1983,18 +2016,18 @@ def test_economy_pay_arrears_preserves_unpayable_fractional_pay_source_tail(fres
     assert applied == [{
         "account": "国库",
         "delta": 0,
-        "reason": "陕西边军欠饷未满1万两，1万两未拨",
+        "reason": "陕西边军欠饷尾数0.5万两已核销，1万两未拨",
     }]
     assert ledger_row is None
-    assert row["province_pay_arrears"] == pytest.approx(0.3)
-    assert row["central_pay_arrears"] == pytest.approx(0.2)
-    assert row["arrears"] == pytest.approx(0.5)
+    assert row["province_pay_arrears"] == pytest.approx(0)
+    assert row["central_pay_arrears"] == pytest.approx(0)
+    assert row["arrears"] == pytest.approx(0)
     assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
     )
 
 
-def test_economy_pay_arrears_clamps_to_floor_without_overpaying_fractional_debt(fresh_db):
+def test_economy_pay_arrears_clamps_integer_spend_and_writes_off_tail(fresh_db):
     from ming_sim.flows import _apply_economy_list
 
     state = fresh_db.load_state()
@@ -2043,9 +2076,9 @@ def test_economy_pay_arrears_clamps_to_floor_without_overpaying_fractional_debt(
 
     assert applied == [{"account": "国库", "delta": -3, "reason": "测试小数欠饷不超扣"}]
     assert ledger_row["delta"] == -3
-    assert row["province_pay_arrears"] == pytest.approx(0.3)
-    assert row["central_pay_arrears"] == pytest.approx(0.2)
-    assert row["arrears"] == pytest.approx(0.5)
+    assert row["province_pay_arrears"] == pytest.approx(0)
+    assert row["central_pay_arrears"] == pytest.approx(0)
+    assert row["arrears"] == pytest.approx(0)
     assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
     )

@@ -507,6 +507,9 @@ def _auto_pay_arrears_by_priority(
             float(row["arrears"] or 0), pay_source_cutover
         )
         if payable_arrears <= 0:
+            _writeoff_fractional_army_arrears_tail(
+                db, state, row, reason, "诏拨补饷", commit=commit
+            )
             continue
         pay_cap = min(payable_arrears, remaining)
         spent_now = _pay_single_army_arrears(
@@ -516,6 +519,14 @@ def _auto_pay_arrears_by_priority(
         )
         spent += spent_now
         remaining -= spent_now
+        if remaining > 0:
+            fresh_row = db.conn.execute(
+                "SELECT * FROM armies WHERE id = ?", (army_id,)
+            ).fetchone()
+            if fresh_row is not None:
+                _writeoff_fractional_army_arrears_tail(
+                    db, state, fresh_row, reason, "诏拨补饷", commit=commit
+                )
     return spent
 
 
@@ -539,6 +550,50 @@ def _normalized_cutover_pay_arrears(row, current_arrears: float) -> Tuple[float,
         current_arrears * float(row["province_pay_share"] or 0),
         current_arrears * float(row["central_pay_share"] or 0),
     )
+
+
+def _writeoff_fractional_army_arrears_tail(
+    db: GameDB,
+    state: GameState,
+    row,
+    reason: str,
+    actor: str,
+    *,
+    commit: bool = True,
+) -> float:
+    current_arrears = float(row["arrears"] or 0)
+    if current_arrears <= 1e-9 or current_arrears >= 1 - 1e-9:
+        return 0.0
+    pay_source_cutover = db.is_army_pay_source_cutover_enabled()
+    if pay_source_cutover:
+        province_old, central_old = _normalized_cutover_pay_arrears(row, current_arrears)
+        old_value = province_old + central_old
+        db.conn.execute(
+            """
+            UPDATE armies
+            SET province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+            WHERE id = ?
+            """,
+            (str(row["id"]),),
+        )
+        db._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
+        db._reconcile_central_army_pay_arrears_container()
+    else:
+        old_value = current_arrears
+        db.conn.execute("UPDATE armies SET arrears = 0 WHERE id = ?", (str(row["id"]),))
+    db.conn.execute(
+        """INSERT INTO army_logs
+           (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)""",
+        (
+            state.turn, state.year, state.period, str(row["id"]), "arrears",
+            f"{old_value:g}", "0", -current_arrears,
+            f"补饷尾数核销{current_arrears:g}万两（{reason}）", actor,
+        ),
+    )
+    if commit:
+        db.conn.commit()
+    return current_arrears
 
 
 def _pay_single_army_arrears(
@@ -694,7 +749,13 @@ def _apply_economy_list(
             if payable_arrears <= 0:
                 current_arrears = float(row["arrears"] or 0)
                 if current_arrears > 0:
-                    reason_text = f"{row['name']}欠饷未满1万两，{abs(delta)}万两未拨"
+                    cleared = _writeoff_fractional_army_arrears_tail(
+                        db, state, row, reason, "诏拨补饷", commit=commit
+                    )
+                    reason_text = (
+                        f"{row['name']}欠饷尾数{cleared:g}万两已核销，"
+                        f"{abs(delta)}万两未拨"
+                    )
                 else:
                     reason_text = f"{row['name']}已无欠饷，{abs(delta)}万两未拨"
                 applied.append({
@@ -707,6 +768,14 @@ def _apply_economy_list(
                 reason, "诏拨补饷", commit=commit,
             )
             if spent:
+                if abs(delta) > spent:
+                    fresh_row = db.conn.execute(
+                        "SELECT * FROM armies WHERE id = ?", (raw_target_id,)
+                    ).fetchone()
+                    if fresh_row is not None:
+                        _writeoff_fractional_army_arrears_tail(
+                            db, state, fresh_row, reason, "诏拨补饷", commit=commit
+                        )
                 applied.append({"account": account, "delta": -spent, "reason": reason})
             continue
 
