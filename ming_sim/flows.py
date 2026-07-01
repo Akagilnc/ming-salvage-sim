@@ -296,6 +296,75 @@ def army_pay_morale_delta(total_due: float, current_shortfall: float, opening_ar
     return 0
 
 
+class _HubOutboundResult(NamedTuple):
+    """Substrate hub top-tier outbound allocation for this fixed-flow tick."""
+    k: float
+    jingyun_due_total: float
+    central_due_total: float
+    central_paid_by_army: Dict[str, float]
+    central_paid_total: float
+    central_transport_loss: float
+
+
+def _substrate_hub_jingyun_due_total(db: GameDB) -> float:
+    """Read the existing province substrate 京运补 gross demand for the shared hub tier."""
+    total = 0.0
+    rows = db.conn.execute(
+        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
+    ).fetchall()
+    for row in rows:
+        try:
+            fiscal = json.loads(str(row["fiscal"] or "{}"))
+        except (TypeError, ValueError):
+            continue
+        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        p = settle.get("p") if isinstance(settle, dict) else None
+        if not isinstance(p, dict):
+            continue
+        raw = p.get("拨付gross", 0)
+        if raw is None:
+            continue
+        try:
+            amount = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"region {row['id']} settle.p.拨付gross 非数值：{raw!r}") from exc
+        if not math.isfinite(amount) or amount < 0:
+            raise ValueError(f"region {row['id']} settle.p.拨付gross 非法：{raw!r}")
+        total += amount
+    return total
+
+
+def _compute_substrate_hub_outbound(
+    db: GameDB,
+    treasury_available: float,
+    central_due_by_army: Dict[str, float],
+) -> _HubOutboundResult:
+    """Allocate the shared 京运补 + 中央军饷 hub tier by ADR 0023 D9."""
+    central_due_total = sum(max(0.0, due) for due in central_due_by_army.values())
+    jingyun_due_total = _substrate_hub_jingyun_due_total(db)
+    tier_due_total = jingyun_due_total + central_due_total
+    k = (
+        min(1.0, max(0.0, float(treasury_available)) / tier_due_total)
+        if tier_due_total > 0
+        else 1.0
+    )
+    # Central transport-loss accounts are not persisted yet; keep the hook explicit
+    # and lossless until the hub C_ accounts land, while still sharing the k tier.
+    central_transport_loss = 0.0
+    central_paid_by_army = {
+        army_id: max(0.0, due) * k
+        for army_id, due in central_due_by_army.items()
+    }
+    return _HubOutboundResult(
+        k=k,
+        jingyun_due_total=jingyun_due_total,
+        central_due_total=central_due_total,
+        central_paid_by_army=central_paid_by_army,
+        central_paid_total=sum(central_paid_by_army.values()),
+        central_transport_loss=central_transport_loss,
+    )
+
+
 def _apply_metric_dict(
     state: GameState, metric_delta: Dict[str, object], caps: Optional[Dict[str, int]] = None,
     db: Optional[GameDB] = None,
@@ -645,16 +714,23 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             str(row["id"]): army_needed(row) * float(row["central_pay_share"] or 0)
             for row in ordered
         }
-        central_due_total = sum(max(0.0, due) for due in central_due_by_army.values())
-        central_capacity = min(
-            central_due_total,
+        hub_outbound = _compute_substrate_hub_outbound(
+            db,
             max(0.0, float(state.metrics.get("国库", 0) or 0)),
+            central_due_by_army,
         )
-        central_pay_ratio = (
-            central_capacity / central_due_total
-            if central_due_total > 0
-            else 1.0
-        )
+        if hub_outbound.central_due_total > 0:
+            flows.append({
+                "dir": "hub_outbound",
+                "account": "中央hub",
+                "category": "中央军饷",
+                "needed": hub_outbound.central_due_total,
+                "paid": hub_outbound.central_paid_total,
+                "shortfall": max(0.0, hub_outbound.central_due_total - hub_outbound.central_paid_total),
+                "jingyun_due": hub_outbound.jingyun_due_total,
+                "k": hub_outbound.k,
+                "transport_loss": hub_outbound.central_transport_loss,
+            })
         for row in ordered:
             army_id = str(row["id"])
             name = str(row["name"])
@@ -662,7 +738,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             needed = max(0.0, central_due_by_army.get(army_id, 0.0))
             if needed <= 0:
                 continue
-            pay_current = min(needed, needed * central_pay_ratio)
+            pay_current = min(needed, hub_outbound.central_paid_by_army.get(army_id, 0.0))
             shortfall = max(0.0, needed - pay_current)
             old_arrears = float(row["arrears"] or 0)
             old_morale = int(row["morale"])
