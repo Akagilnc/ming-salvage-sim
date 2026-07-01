@@ -59,7 +59,7 @@ describe("#451 dogfood replay fixture", () => {
             providerDegraded: [
               expect.objectContaining({
                 provider: "agy",
-                leg: "agy-tight",
+                leg: "agy",
                 blocking: false,
               }),
             ],
@@ -204,6 +204,17 @@ describe("#451 dogfood replay fixture", () => {
         },
       },
     });
+  });
+
+  it("does not count static stop-summary rows as dogfood replay coverage", async () => {
+    const replay = await issue451DogfoodReplay();
+
+    for (const row of replay.scenarios) {
+      expect(row.source, row.id).toBeDefined();
+      expect(row.source, row.id).not.toBe("stop_summary");
+      expect(row.sourceStopSummary, row.id).toBeDefined();
+      expect(row.sourceEvidence, row.id).toBeDefined();
+    }
   });
 
   it("contains a replay row for each owner-specified #451 accident sample", async () => {

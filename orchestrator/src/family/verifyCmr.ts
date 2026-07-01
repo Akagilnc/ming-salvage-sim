@@ -62,6 +62,7 @@ import {
   modelRouteFingerprint,
   resolveActiveModelRoute,
 } from "../modelRoutes.js";
+import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
 import { modelIsStrongLeg } from "../realBackend.js";
 import type { EscalationAnswerPayload } from "../types.js";
 import {
@@ -71,7 +72,7 @@ import {
   recordShipped,
 } from "./ledger.js";
 import { isFilledString } from "../shipOutcome.js";
-import { infraFailureStopSummary } from "../stopSummary.js";
+import { infraFailureStopSummary, type StopSummary } from "../stopSummary.js";
 import type {
   FamilyBackend,
   FamilyVerifyResult,
@@ -189,6 +190,35 @@ function cmrFloorFailureReason(input: {
     `integrated cmr ${input.pass} floor failed: successful legs [` +
     `${successfulLegs.join(", ")}] include no strong leg${skipped}`
   );
+}
+
+function providerDegradedFloorStopSummary(input: {
+  readonly reason: string;
+  readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+}): StopSummary {
+  const providerDegraded =
+    input.skippedLegs !== undefined && input.skippedLegs.length > 0
+      ? input.skippedLegs.map((leg) => ({
+          provider: modelFamilyForCmrReviewLeg(leg.slug),
+          leg: leg.slug,
+          reason: leg.reason,
+          blocking: true,
+          repairHint: `restore provider availability for ${leg.slug} and rerun the CMR gate`,
+        }))
+      : [
+          {
+            reason: input.reason,
+            blocking: true,
+            repairHint: "restore a route-selected strong CMR provider leg and rerun the gate",
+          },
+        ];
+
+  return {
+    reason: "provider_degraded",
+    summary: input.reason,
+    repairHint: "restore the required CMR provider leg coverage and rerun",
+    metadata: { providerDegraded },
+  };
 }
 
 function cmrClosureFailureReason(input: {
@@ -476,6 +506,10 @@ async function runIntegratedCmrPass(input: {
       cmrPass: pass,
       reason: floorFailure,
       familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: providerDegradedFloorStopSummary({
+        reason: floorFailure,
+        skippedLegs: cmrResult.output.skippedLegs,
+      }),
     });
     await familyBackend.escalateFamily?.({
       reason: floorFailure,
