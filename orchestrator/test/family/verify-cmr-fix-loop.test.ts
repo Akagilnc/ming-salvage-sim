@@ -10,6 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { findingIdentityKey } from "../../src/findings.js";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
 import type {
   FamilyBackend,
@@ -542,6 +543,93 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
       }),
     }));
     expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(["cmr"]);
+  });
+
+  it("threads prior family CMR dispositions from the ledger into finding classification", async () => {
+    const finding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "stateful suppression should not reopen forever",
+      location: "orchestrator/src/family/verifyCmr.ts:77",
+      suggested_fix: "honor prior family CMR dispositions",
+      action: "fix_now",
+    };
+    const identityKey = findingIdentityKey(finding);
+    const trustedSuppression = {
+      source: "issue #445 acceptance criteria",
+      scope: "#445 family integrated CMR",
+      reason: "accepted by parent issue",
+      findingIdentity: identityKey,
+      boundedReopen: "reopen on higher severity",
+    };
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: false,
+          reason: "same finding reappeared",
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+          findings: [finding],
+        },
+      }),
+    });
+    backend.ledger.push({
+      status: "cmr_passed",
+      event: "cmr_passed",
+      phase: "final",
+      cmrPass: "completeness",
+      cmrFindingClassification: {
+        blocking: [],
+        deferred: [],
+        results: [],
+        dispositions: [
+          {
+            identityKey,
+            status: "accepted_suppressed",
+            reason: trustedSuppression.reason,
+            severity: "medium",
+            reopenAttempts: 0,
+            disputeAttempts: 1,
+            source: trustedSuppression.source,
+            scope: trustedSuppression.scope,
+            boundedReopen: trustedSuppression.boundedReopen,
+          },
+        ],
+        moduleContext: {
+          currentModules: [],
+          childModules: [],
+          undevelopedModules: [],
+        },
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      moduleContext: {
+        currentModules: [
+          {
+            module: "family-cmr",
+            moduleScope: ["orchestrator/src/family/verifyCmr.ts"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
+        childModules: [],
+        acceptedSuppressionSources: [trustedSuppression],
+      },
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual([
+      "cmr",
+      "cmr",
+      "ship",
+    ]);
   });
 
   it("cmr worker MALFORMED / crash ⇒ recordAborted + INCOMPLETE_GATE (ok:false), NO ship", async () => {
