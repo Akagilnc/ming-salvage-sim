@@ -1077,36 +1077,87 @@ async function legacyDispositionParserReplay(): Promise<SeamReplay> {
   };
 }
 
-async function familyCurrentHeadSuccessStopSummary(): Promise<StopSummary> {
-  const familyBackend = new DogfoodFamilyBackend(
-    "current-head",
-    [],
-    "current-head",
-  );
-  const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
-    if (input.phase === "final") {
-      await input.familyBackend.appendFamilyLedger({
-        status: "cmr_passed",
-        event: "cmr_passed",
-        phase: "final",
-        cmrPass: "correctness",
-        familyHeadAfter: "current-head",
-      });
-    }
-    return { ok: true, ran: true };
-  };
-  return (
-    await runFamily({
-      epic: {
-        issue: 287,
-        children: [{ issue: 287, blockedBy: [] }],
+async function finalLegacyDispositionReplay(): Promise<SeamReplay> {
+  const identityKey =
+    "correctness|orchestrator/src/family/verifyCmr.ts:1|final legacy disposition";
+  const rawFinalCmr = `<cmr>${JSON.stringify({
+    converged: true,
+    successfulLegs: ["opus", "gpt-5.5", "agy"],
+    claimedFixedFindingIdentityKeys: [identityKey],
+    priorFindingDispositions: [
+      { identityKey, disposition: "verified-closed" },
+    ],
+  })}</cmr>`;
+  const parsedFinal = parseCmrOutcome(rawFinalCmr);
+  if (parsedFinal.kind !== "verdict" || !parsedFinal.converged) {
+    throw new Error("dogfood final legacy disposition replay did not parse");
+  }
+  const normalized = parsedFinal.priorFindingDispositions?.[0]?.status;
+  if (normalized !== "verified-closed") {
+    throw new Error("dogfood final legacy disposition replay did not normalize");
+  }
+  const backend = new DogfoodCmrFamilyBackend("final-legacy-head", [], [
+    {
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: true,
+        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        claimedFixedFindingIdentityKeys: [identityKey],
+        priorFindingDispositions: [
+          { identityKey, status: "verified-closed" },
+        ],
       },
-      familyBackend,
-      singleSliceBackend: new DogfoodSingleSliceBackend(),
-      familyBase: "family/287-base",
-      verifyCmr,
-    })
-  ).stopSummary;
+    },
+    {
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: parsedFinal.converged,
+        successfulLegs: parsedFinal.successfulLegs,
+        skippedLegs: parsedFinal.skippedLegs,
+        claimedFixedFindingIdentityKeys:
+          parsedFinal.claimedFixedFindingIdentityKeys,
+        priorFindingDispositions: parsedFinal.priorFindingDispositions,
+      },
+    },
+    {
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: "family/287-final-legacy-disposition",
+        status: "pr_opened",
+        pr: "pr://family/287-final-legacy-disposition",
+        prHead: "final-legacy-head",
+      },
+    },
+  ]);
+  const result = await runVerifyCmr({
+    phase: "final",
+    familyBase: "family/287-final-legacy-disposition",
+    familyBackend: backend,
+    priorCmrFindingIdentityKeys: [identityKey],
+  });
+  const pass = backend.ledger.find(
+    (entry) => entry.status === "cmr_passed" && entry.cmrPass === "correctness",
+  );
+  if (!result.ok || pass?.stopSummary?.reason !== "success") {
+    throw new Error(
+      "dogfood final legacy disposition replay did not pass through correctness gate",
+    );
+  }
+  return {
+    stopSummary: pass.stopSummary,
+    sourceEvidence: {
+      seam: "family_verify_cmr",
+      parserSeam: "cmr_outcome_parser",
+      finalCmrPass: "correctness",
+      rawLegacyDispositionField: "disposition",
+      normalizedPriorDisposition: normalized,
+      claimedFixedFindingIdentityKey: identityKey,
+      dispatches: backend.dispatches,
+    },
+  };
 }
 
 async function familyStaleHeadStopSummary(): Promise<StopSummary> {
@@ -2028,6 +2079,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   });
   const moduleDeclarationSource = await moduleDeclarationReplay();
   const legacyDispositionSource = await legacyDispositionParserReplay();
+  const finalLegacyDispositionSource = await finalLegacyDispositionReplay();
   const routeAccountingSource = await routeAccountingReplay();
   const routeEnvMismatchSource = routeEnvMismatchReplay();
   const routeFreezeSource = await routeFreezeReplay();
@@ -2044,8 +2096,6 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   const shipReviewDegradedSource = await familyShipReviewDegradedReplay();
   const familyAdmissionSkippedSource = await familyAdmissionSkippedReplay();
   const trustBoundarySource = await runnerTrustBoundaryReplay();
-  const currentHeadFamilySuccessSummary =
-    await familyCurrentHeadSuccessStopSummary();
   const staleFamilyHeadStopSummary = await familyStaleHeadStopSummary();
   const familyAlreadyDoneSourceSummary = await familyAlreadyDoneStopSummary();
   const familyModule = {
@@ -2312,14 +2362,10 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 287,
       title: "final correctness CMR normalizes legacy disposition into pass",
       classification: "success",
-      stopSummary: currentHeadFamilySuccessSummary,
+      stopSummary: finalLegacyDispositionSource.stopSummary,
       source: "family",
-      sourceStopSummary: currentHeadFamilySuccessSummary,
-      sourceEvidence: {
-        seam: "family",
-        finalCmrPass: "correctness",
-        legacyDispositionAccepted: true,
-      },
+      sourceStopSummary: finalLegacyDispositionSource.stopSummary,
+      sourceEvidence: finalLegacyDispositionSource.sourceEvidence,
     }),
     replayScenario({
       id: "287-stale-family-head-current-cmr-pass",

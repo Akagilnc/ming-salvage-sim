@@ -361,9 +361,16 @@ describe("#451 dogfood replay fixture", () => {
       dispatches: expect.arrayContaining(["cmr:completeness", "cmr:correctness", "ship:family/287-legacy-disposition"]),
     });
     expect(rowsById.get("287-correctness-final-legacy-disposition")?.sourceEvidence).toMatchObject({
-      seam: "family",
+      seam: "family_verify_cmr",
+      parserSeam: "cmr_outcome_parser",
       finalCmrPass: "correctness",
-      legacyDispositionAccepted: true,
+      rawLegacyDispositionField: "disposition",
+      normalizedPriorDisposition: "verified-closed",
+      dispatches: expect.arrayContaining([
+        "cmr:completeness",
+        "cmr:correctness",
+        "ship:family/287-final-legacy-disposition",
+      ]),
     });
     expect(rowsById.get("376-route-accounting-non-default")?.sourceEvidence).toMatchObject({
       seam: "family_verify_cmr",

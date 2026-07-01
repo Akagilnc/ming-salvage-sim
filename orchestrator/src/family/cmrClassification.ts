@@ -111,11 +111,26 @@ export interface FamilyCmrFindingResult {
   readonly reason: string;
 }
 
+export interface FamilyModuleDeclarationSnapshot {
+  readonly module: string;
+  readonly moduleScope: ReadonlyArray<string>;
+  readonly source: SourcedModuleDeclaration["source"];
+  readonly issue?: number;
+}
+
+export interface FamilyModuleContextSnapshot {
+  readonly currentModules: ReadonlyArray<FamilyModuleDeclarationSnapshot>;
+  readonly childModules: ReadonlyArray<FamilyModuleDeclarationSnapshot>;
+  readonly fallbackModule?: FamilyModuleDeclarationSnapshot;
+  readonly undevelopedModules: ReadonlyArray<FamilyModuleDeclarationSnapshot>;
+}
+
 export interface FamilyCmrClassification {
   readonly blocking: ReadonlyArray<Finding>;
   readonly deferred: ReadonlyArray<Finding>;
   readonly dispositions: ReadonlyArray<FindingDisposition>;
   readonly results: ReadonlyArray<FamilyCmrFindingResult>;
+  readonly moduleContext: FamilyModuleContextSnapshot;
 }
 
 const MODULE_DECLARATION_HEADING = /^##\s+Module Declaration\s*$/im;
@@ -299,6 +314,32 @@ function attributionFor(
     };
   }
   return { method: "missing_module_context" };
+}
+
+function moduleDeclarationSnapshot(
+  declaration: SourcedModuleDeclaration,
+): FamilyModuleDeclarationSnapshot {
+  return {
+    module: declaration.module,
+    moduleScope: declaration.moduleScope,
+    source: declaration.source,
+    ...(declaration.issue !== undefined ? { issue: declaration.issue } : {}),
+  };
+}
+
+function moduleContextSnapshot(
+  context: FamilyModuleContext,
+): FamilyModuleContextSnapshot {
+  return {
+    currentModules: context.currentModules.map(moduleDeclarationSnapshot),
+    childModules: context.childModules.map(moduleDeclarationSnapshot),
+    ...(context.fallbackModule !== undefined
+      ? { fallbackModule: moduleDeclarationSnapshot(context.fallbackModule) }
+      : {}),
+    undevelopedModules: (context.undevelopedModules ?? []).map(
+      moduleDeclarationSnapshot,
+    ),
+  };
 }
 
 function currentModuleNames(context: FamilyModuleContext): ReadonlySet<string> {
@@ -631,5 +672,6 @@ export function classifyFamilyCmrFindings(input: {
     deferred,
     dispositions: finalClassification.dispositions,
     results,
+    moduleContext: moduleContextSnapshot(input.moduleContext),
   };
 }
