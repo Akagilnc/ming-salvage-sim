@@ -2265,6 +2265,19 @@ class GameDB:
             return
 
         army_id = str(row["id"])
+        if "owner_power" in normalized:
+            proposed_owner = str(normalized.get("owner_power") or "").strip()
+            owner_exists = self.conn.execute(
+                "SELECT 1 FROM powers WHERE id = ?", (proposed_owner,)
+            ).fetchone()
+            if owner_exists is None:
+                changes.append({
+                    "army": row["name"], "field": "owner_power",
+                    "rejected": True, "category": "hallucinated_id",
+                    "reason": f"army_delta owner_power '{proposed_owner}' 不在 powers 表",
+                    "item": {"army_id": army_id, "changes": raw_changes},
+                })
+                return
         old_source = str(row["pay_source_region"] or "")
         owner_power = str(normalized.get("owner_power", row["owner_power"]) or "").strip()
         pay_source_region = str(normalized.get("pay_source_region", row["pay_source_region"]) or "").strip()
