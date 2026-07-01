@@ -66,7 +66,7 @@ import {
 import { hasAcceptedSuppressionAuthority } from "../acceptedSuppression.js";
 import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
 import { modelIsStrongLeg } from "../realBackend.js";
-import type { EscalationAnswerPayload } from "../types.js";
+import type { EscalationAnswerPayload, FindingDisposition } from "../types.js";
 import { findingIdentityKey } from "../findings.js";
 import {
   cmrPassAlreadyPassed,
@@ -683,6 +683,19 @@ function trustedAcceptedSuppressionDisposition(
   );
 }
 
+function latestFamilyCmrDispositions(
+  ledger: ReadonlyArray<{
+    readonly cmrFindingClassification?: {
+      readonly dispositions: ReadonlyArray<FindingDisposition>;
+    };
+  }>,
+): ReadonlyArray<FindingDisposition> | undefined {
+  return [...ledger]
+    .reverse()
+    .find((entry) => entry.cmrFindingClassification?.dispositions !== undefined)
+    ?.cmrFindingClassification?.dispositions;
+}
+
 function cmrClosureFailureReason(input: {
   readonly pass: IntegratedCmrPass;
   readonly moduleContext?: FamilyModuleContext;
@@ -1001,10 +1014,14 @@ async function runIntegratedCmrPass(input: {
     cmrResult.output.findings !== undefined &&
     cmrResult.output.findings.length > 0
   ) {
+    const priorDispositions = latestFamilyCmrDispositions(
+      await familyBackend.readFamilyLedger(),
+    );
     cmrFindingClassification = classifyFamilyCmrFindings({
       familyIssue: familyIssue ?? 0,
       findings: cmrResult.output.findings,
       moduleContext: moduleContext ?? { currentModules: [], childModules: [] },
+      ...(priorDispositions !== undefined ? { priorDispositions } : {}),
     });
     if (cmrFindingClassification.blocking.length > 0) {
       const reason =
