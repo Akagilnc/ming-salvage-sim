@@ -190,6 +190,14 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
 
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.escalations[0]?.reason).toMatch(/missing explicit disposition/i);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      stopSummary: expect.objectContaining({
+        reason: "contract_drift",
+        repairHint: expect.stringContaining("claimed-fixed closure payload"),
+      }),
+    }));
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 

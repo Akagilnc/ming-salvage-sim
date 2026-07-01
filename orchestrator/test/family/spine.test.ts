@@ -283,4 +283,37 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
     expect(result.stopSummary.reason).toBe("owning_issue_still_red");
     expect(result.stopSummary.summary).toContain("#11:failed");
   });
+
+  it("verify_failed family result preserves the barrier stop summary from the ledger", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+      verifyCmr: async ({ familyBackend: backend }) => {
+        await backend.appendFamilyLedger({
+          status: "aborted",
+          event: "aborted",
+          phase: "final",
+          reason: "same-module CMR finding still red",
+          familyHeadAfter: "head-after-cmr",
+          stopSummary: {
+            reason: "same_module_still_red",
+            summary: "same-module CMR finding still red",
+            repairHint: "continue the family CMR fix loop",
+          },
+        });
+        return { ok: false, ran: true };
+      },
+    });
+
+    expect(result.status).toBe("verify_failed");
+    expect(result.stopSummary).toMatchObject({
+      reason: "same_module_still_red",
+      summary: "same-module CMR finding still red",
+      repairHint: "continue the family CMR fix loop",
+    });
+  });
 });
