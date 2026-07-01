@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { issue451DogfoodReplay } from "../src/dogfoodReplay.js";
 
 describe("#451 dogfood replay fixture", () => {
-  it("summarizes the historical orchestrator regressions through the runner/family seams", () => {
-    const replay = issue451DogfoodReplay();
+  it("summarizes the historical orchestrator regressions through the runner/family seams", async () => {
+    const replay = await issue451DogfoodReplay();
 
     expect(replay.issue).toBe(451);
     expect(replay.parentIssue).toBe(445);
@@ -15,6 +15,8 @@ describe("#451 dogfood replay fixture", () => {
           issue: 307,
           classification: "resumed",
           stopReason: "resumed",
+          source: "runner",
+          sourceStopSummary: expect.objectContaining({ reason: "success" }),
         }),
         expect.objectContaining({
           id: "307-no-observable-progress",
@@ -39,12 +41,29 @@ describe("#451 dogfood replay fixture", () => {
           issue: 287,
           classification: "accepted_suppressed",
           stopReason: "accepted_suppressed",
+          metadata: {
+            acceptedSuppressions: [
+              expect.objectContaining({
+                source: "#303",
+                scope: expect.stringContaining("#287 hub-loss / central C_ accounts"),
+              }),
+            ],
+          },
         }),
         expect.objectContaining({
           id: "376-provider-degraded-nonblocking",
           issue: 376,
           classification: "provider_degraded",
           stopReason: "success",
+          metadata: {
+            providerDegraded: [
+              expect.objectContaining({
+                provider: "agy",
+                leg: "agy-tight",
+                blocking: false,
+              }),
+            ],
+          },
         }),
         expect.objectContaining({
           id: "440-agent-brief-spec-conflict",
@@ -63,6 +82,17 @@ describe("#451 dogfood replay fixture", () => {
           issue: 405,
           classification: "contract_drift",
           stopReason: "contract_drift",
+          metadata: {
+            ship: expect.objectContaining({
+              latestVerifiedCmrHead: "verified-head",
+              currentFamilyHead: "family-head",
+              shipPrState: "not-written",
+            }),
+            heads: expect.objectContaining({
+              verifiedCmrHead: "verified-head",
+              actualFamilyHead: "family-head",
+            }),
+          },
         }),
         expect.objectContaining({
           id: "family-admission-non-runnable-child",
@@ -75,9 +105,30 @@ describe("#451 dogfood replay fixture", () => {
           issue: 451,
           classification: "already_done",
           stopReason: "already_done",
+          source: "runner",
+          sourceStopSummary: expect.objectContaining({ reason: "already_done" }),
         }),
       ]),
     );
+
+    const staleHead = replay.scenarios.find(
+      (item) => item.id === "287-stale-family-head-current-cmr-pass",
+    );
+    expect(staleHead).toMatchObject({
+      source: "family",
+      metadata: {
+        heads: {
+          reportedFamilyHead: "+287",
+          actualFamilyHead: "f0a72055",
+          verifiedCmrHead: "f0a72055",
+          sources: {
+            reportedFamilyHead: "FamilyRunResult.familyHead",
+            actualFamilyHead: "familyBackend.readFamilyHead",
+            verifiedCmrHead: "latest cmr_passed ledger row",
+          },
+        },
+      },
+    });
 
     expect(replay.coveredStopReasons).toEqual([
       "accepted_suppressed",
@@ -95,8 +146,8 @@ describe("#451 dogfood replay fixture", () => {
     expect(replay.summary).toContain("11 stop reasons");
   });
 
-  it("contains a replay row for each owner-specified #451 accident sample", () => {
-    expect(issue451DogfoodReplay().scenarios.map((scenario) => scenario.id)).toEqual([
+  it("contains a replay row for each owner-specified #451 accident sample", async () => {
+    expect((await issue451DogfoodReplay()).scenarios.map((scenario) => scenario.id)).toEqual([
       "307-continue-fixing-after-human-answer",
       "307-local-progress-shape-changed",
       "307-reviewer-text-only-change",

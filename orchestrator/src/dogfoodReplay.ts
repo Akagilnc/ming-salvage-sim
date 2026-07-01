@@ -4,7 +4,15 @@ import {
   type FamilyCmrFindingClassification,
   type FamilyModuleContext,
 } from "./family/cmrClassification.js";
+import { runFamily } from "./family/runner.js";
+import type {
+  FamilyBackend,
+  FamilyEpic,
+  FamilyLedgerEntry,
+  MergeRequest,
+} from "./family/types.js";
 import { findingIdentityKey } from "./findings.js";
+import { runOrchestrator } from "./runner.js";
 import {
   contractDriftStopSummary,
   infraFailureStopSummary,
@@ -14,7 +22,19 @@ import {
   type StopReason,
   type StopSummary,
 } from "./stopSummary.js";
-import type { Finding } from "./types.js";
+import type { VerifyCmrInput, VerifyCmrResult } from "./family/verifyCmr.js";
+import type {
+  Backend,
+  Finding,
+  IssueMeta,
+  IssueSnapshot,
+  PersistentLedgerEntry,
+  ResumeState,
+  StepId,
+  StepOutput,
+  StepSpec,
+  WorktreeHandle,
+} from "./types.js";
 
 export type DogfoodReplayClassification =
   | FamilyCmrFindingClassification
@@ -33,6 +53,10 @@ export interface DogfoodReplayScenario {
   readonly stopReason: StopReason;
   readonly summary: string;
   readonly repairHint?: string;
+  readonly metadata?: StopSummary["metadata"];
+  readonly stopSummary: StopSummary;
+  readonly source?: "runner" | "family" | "family_cmr_classification" | "stop_summary";
+  readonly sourceStopSummary?: StopSummary;
 }
 
 export interface DogfoodReplay {
@@ -58,16 +82,27 @@ function scenario(input: {
   readonly title: string;
   readonly classification: DogfoodReplayClassification;
   readonly stopSummary: StopSummary;
+  readonly stopReason?: StopReason;
+  readonly source?: DogfoodReplayScenario["source"];
+  readonly sourceStopSummary?: StopSummary;
 }): DogfoodReplayScenario {
   return {
     id: input.id,
     issue: input.issue,
     title: input.title,
     classification: input.classification,
-    stopReason: input.stopSummary.reason,
+    stopReason: input.stopReason ?? input.stopSummary.reason,
     summary: input.stopSummary.summary,
+    stopSummary: input.stopSummary,
     ...(input.stopSummary.repairHint !== undefined
       ? { repairHint: input.stopSummary.repairHint }
+      : {}),
+    ...(input.stopSummary.metadata !== undefined
+      ? { metadata: input.stopSummary.metadata }
+      : {}),
+    ...(input.source !== undefined ? { source: input.source } : {}),
+    ...(input.sourceStopSummary !== undefined
+      ? { sourceStopSummary: input.sourceStopSummary }
       : {}),
   };
 }
@@ -106,10 +141,14 @@ function familyClassificationScenario(input: {
         targetModule: result.targetModule ?? "unknown",
         reason: result.reason,
       }),
+      source: "family_cmr_classification",
     });
   }
 
   if (result.classification === "accepted_suppressed") {
+    const disposition = classified.dispositions.find(
+      (item) => item.identityKey === findingIdentityKey(input.finding),
+    );
     return scenario({
       id: input.id,
       issue: input.issue,
@@ -123,15 +162,19 @@ function familyClassificationScenario(input: {
           acceptedSuppressions: [
             {
               source: result.source ?? "unknown",
-              scope: "#287 hub-loss / central C_ accounts finding only",
+              scope:
+                disposition?.scope ??
+                "#287 hub-loss / central C_ accounts finding only",
               reason: result.reason,
               findingIdentity: findingIdentityKey(input.finding),
               boundedReopen:
+                disposition?.boundedReopen ??
                 "reopen on severity escalation, new evidence, or #287-owned local integration scope",
             },
           ],
         },
       },
+      source: "family_cmr_classification",
     });
   }
 
@@ -151,6 +194,7 @@ function familyClassificationScenario(input: {
       owningIssue: result.owningIssue ?? `#${input.familyIssue}`,
       reason: result.reason,
     }),
+    source: "family_cmr_classification",
   });
 }
 
@@ -160,8 +204,209 @@ function staticScenario(input: {
   readonly title: string;
   readonly classification: DogfoodReplayClassification;
   readonly stopSummary: StopSummary;
+  readonly stopReason?: StopReason;
+  readonly source?: DogfoodReplayScenario["source"];
+  readonly sourceStopSummary?: StopSummary;
 }): DogfoodReplayScenario {
-  return scenario(input);
+  return scenario({ ...input, source: input.source ?? "stop_summary" });
+}
+
+const REPLAY_WORKTREE: WorktreeHandle = {
+  branch: "feat/dogfood-replay",
+  base: "main",
+  path: "/dogfood/replay",
+};
+
+function ledgerEntry(
+  step: StepId,
+  input?: {
+    readonly output?: StepOutput;
+    readonly handoffStatus?: "success" | "escalate" | "error";
+    readonly escalationKind?: "decision" | "failure";
+    readonly event?: "escalation_answered";
+    readonly forStep?: StepId;
+    readonly answer?: string;
+    readonly source?: "human" | "resume_input";
+  },
+): PersistentLedgerEntry {
+  return {
+    step,
+    sessionId: `dogfood-${step}`,
+    prompt_hash: `hash-${step}`,
+    branchHEAD: "dogfood-head",
+    ts: "2026-07-01T00:00:00.000Z",
+    ...(input?.output !== undefined ? { output: input.output } : {}),
+    ...(input?.handoffStatus !== undefined
+      ? { handoffStatus: input.handoffStatus }
+      : {}),
+    ...(input?.escalationKind !== undefined
+      ? { escalationKind: input.escalationKind }
+      : {}),
+    ...(input?.event !== undefined ? { event: input.event } : {}),
+    ...(input?.forStep !== undefined ? { forStep: input.forStep } : {}),
+    ...(input?.answer !== undefined ? { answer: input.answer } : {}),
+    ...(input?.source !== undefined ? { source: input.source } : {}),
+  };
+}
+
+class DogfoodSingleSliceBackend implements Backend {
+  readonly resumeSessionCalls: Array<[StepId, string]> = [];
+
+  constructor(private readonly resumeState?: ResumeState) {}
+
+  async findResumeState(): Promise<ResumeState | undefined> {
+    return this.resumeState;
+  }
+
+  async cleanResidue(): Promise<void> {}
+
+  async resumeSession(
+    spec: StepSpec,
+    _worktree: WorktreeHandle,
+    sessionId: string,
+  ): Promise<StepOutput> {
+    this.resumeSessionCalls.push([spec.id, sessionId]);
+    return this.runStep(spec);
+  }
+
+  async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+    return {
+      number: issueNumber,
+      isReadyForAgent: true,
+      hasSubIssues: false,
+      isClosed: false,
+      openBlockedBy: [],
+    };
+  }
+
+  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
+    return {
+      number: issueNumber,
+      body: "dogfood replay issue",
+      comments: [],
+      agentBrief: "## Agent Brief\nreplay the historical orchestrator accident",
+    };
+  }
+
+  async prepareWorktree(
+    issueNumber: number,
+    base: string,
+  ): Promise<WorktreeHandle> {
+    return {
+      branch: `feat/dogfood-${issueNumber}`,
+      base,
+      path: `/dogfood/${issueNumber}`,
+    };
+  }
+
+  async writeSnapshot(): Promise<void> {}
+
+  async runStep(spec: StepSpec): Promise<StepOutput> {
+    if (spec.role === "reviewer") {
+      return { kind: "reviewer", findings: [] };
+    }
+    return { kind: "coder", committed: true, commitsAdded: 1 };
+  }
+
+  async push(): Promise<void> {}
+
+  async writeLedger(): Promise<void> {}
+}
+
+class DogfoodFamilyBackend implements FamilyBackend {
+  readonly ledger: FamilyLedgerEntry[] = [];
+
+  constructor(private readonly currentHead = "family-head") {}
+
+  async mergeChildIntoFamilyBase(
+    request: MergeRequest,
+  ): Promise<{ familyHead: string }> {
+    return { familyHead: `+${request.childIssue}` };
+  }
+
+  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+    this.ledger.push(entry);
+  }
+
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return this.ledger;
+  }
+
+  async readFamilyHead(): Promise<string> {
+    return this.currentHead;
+  }
+}
+
+async function runnerAnsweredResumeStopSummary(): Promise<StopSummary> {
+  const escalatedOutput: StepOutput = {
+    kind: "coder",
+    committed: false,
+    commitsAdded: 0,
+    escalate: {
+      reason: "review loop needs owner direction",
+      diagnosis: "owner answered that the runner should continue fixing",
+    },
+  };
+  const backend = new DogfoodSingleSliceBackend({
+    worktree: REPLAY_WORKTREE,
+    stateDir: "/dogfood/.ledger-307",
+    ledger: [
+      ledgerEntry("S2", { output: escalatedOutput }),
+      ledgerEntry("S8", {
+        handoffStatus: "escalate",
+        escalationKind: "decision",
+      }),
+      ledgerEntry("S2", {
+        event: "escalation_answered",
+        forStep: "S2",
+        answer: "继续修",
+        source: "human",
+      }),
+    ],
+  });
+  const result = await runOrchestrator({ issueNumber: 307, backend });
+  if (backend.resumeSessionCalls.length === 0) {
+    throw new Error("dogfood runner resume scenario did not call resumeSession");
+  }
+  return result.stopSummary;
+}
+
+async function runnerAlreadyDoneStopSummary(): Promise<StopSummary> {
+  const backend = new DogfoodSingleSliceBackend({
+    worktree: REPLAY_WORKTREE,
+    stateDir: "/dogfood/.ledger-451",
+    ledger: [ledgerEntry("S8", { handoffStatus: "success" })],
+  });
+  return (await runOrchestrator({ issueNumber: 451, backend })).stopSummary;
+}
+
+async function familyStaleHeadStopSummary(): Promise<StopSummary> {
+  const familyBackend = new DogfoodFamilyBackend("f0a72055");
+  const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+    if (input.phase === "final") {
+      await input.familyBackend.appendFamilyLedger({
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadAfter: "f0a72055",
+      });
+    }
+    return { ok: true, ran: true };
+  };
+  const epic: FamilyEpic = {
+    issue: 287,
+    children: [{ issue: 287, blockedBy: [] }],
+  };
+  return (
+    await runFamily({
+      epic,
+      familyBackend,
+      singleSliceBackend: new DogfoodSingleSliceBackend(),
+      familyBase: "family/287-base",
+      verifyCmr,
+    })
+  ).stopSummary;
 }
 
 function uniqueSortedStopReasons(
@@ -170,7 +415,10 @@ function uniqueSortedStopReasons(
   return [...new Set(scenarios.map((item) => item.stopReason))].sort();
 }
 
-export function issue451DogfoodReplay(): DogfoodReplay {
+export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
+  const answeredResumeStopSummary = await runnerAnsweredResumeStopSummary();
+  const alreadyDoneStopSummary = await runnerAlreadyDoneStopSummary();
+  const staleFamilyHeadStopSummary = await familyStaleHeadStopSummary();
   const familyModule = {
     module: "orchestrator-family",
     moduleScope: ["orchestrator/src/family"],
@@ -243,14 +491,24 @@ export function issue451DogfoodReplay(): DogfoodReplay {
       issue: 307,
       title: "owner says continue fixing and the resumed run stays in the fix loop",
       classification: "resumed",
-      stopSummary: { reason: "resumed", summary: "decision answer reopened S4 at S5" },
+      stopSummary: {
+        reason: "resumed",
+        summary: "decision answer reopened the runner and completed through S8",
+      },
+      source: "runner",
+      sourceStopSummary: answeredResumeStopSummary,
     }),
     staticScenario({
       id: "307-local-progress-shape-changed",
       issue: 307,
       title: "finding shape changes with scoped implementation progress",
       classification: "resumed",
-      stopSummary: { reason: "resumed", summary: "observable scoped progress resets only the target finding group" },
+      stopSummary: {
+        reason: "resumed",
+        summary: "observable scoped progress resets only the target finding group",
+      },
+      source: "runner",
+      sourceStopSummary: answeredResumeStopSummary,
     }),
     staticScenario({
       id: "307-reviewer-text-only-change",
@@ -283,6 +541,8 @@ export function issue451DogfoodReplay(): DogfoodReplay {
         reason: "resumed",
         summary: "sibling finding progress state remains intact outside the answered target group",
       },
+      source: "runner",
+      sourceStopSummary: answeredResumeStopSummary,
     }),
     familyClassificationScenario({
       id: "287-same-module-cmr-gap",
@@ -345,13 +605,8 @@ export function issue451DogfoodReplay(): DogfoodReplay {
       issue: 287,
       title: "stale reported familyHead does not override current-head CMR pass",
       classification: "success",
-      stopSummary: successStopSummary({
-        heads: {
-          reportedFamilyHead: "4bfa5dd4",
-          actualFamilyHead: "f0a72055",
-          verifiedCmrHead: "f0a72055",
-        },
-      }),
+      stopSummary: staleFamilyHeadStopSummary,
+      source: "family",
     }),
     staticScenario({
       id: "287-coordinator-answer-reclassified",
@@ -560,11 +815,25 @@ export function issue451DogfoodReplay(): DogfoodReplay {
       issue: 405,
       title: "ship worker malformed after final CMR pass does not write shipped marker",
       classification: "contract_drift",
-      stopSummary: contractDriftStopSummary({
+      stopSummary: {
+        reason: "contract_drift",
         summary: "ship worker returned no valid result after verified final CMR",
         repairHint:
           "preserve latest verified CMR head and rerun ship after repairing the worker contract",
-      }),
+        metadata: {
+          ship: {
+            latestVerifiedCmrHead: "verified-head",
+            currentFamilyHead: "family-head",
+            reportedFamilyHead: "reported-head",
+            shipPrState: "not-written",
+          },
+          heads: {
+            reportedFamilyHead: "reported-head",
+            actualFamilyHead: "family-head",
+            verifiedCmrHead: "verified-head",
+          },
+        },
+      },
     }),
     staticScenario({
       id: "405-module-not-found-final-verify",
@@ -611,10 +880,9 @@ export function issue451DogfoodReplay(): DogfoodReplay {
       issue: 451,
       title: "already completed child is skipped during family resume",
       classification: "already_done",
-      stopSummary: {
-        reason: "already_done",
-        summary: "family resume reused the shipped child result instead of rerunning it",
-      },
+      stopSummary: alreadyDoneStopSummary,
+      source: "runner",
+      sourceStopSummary: alreadyDoneStopSummary,
     }),
   ];
 
