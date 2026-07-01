@@ -777,71 +777,116 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     expect(backend.dispatched).toEqual([]);
   });
 
-  it("maps scoped escalation answers to the matching active S4 finding only", async () => {
-    const resumeState: ResumeState = {
-      worktree: WORKTREE,
-      stateDir: "/resident/worktrees/.ledger-446",
-      ledger: [
-        { step: "S0" },
-        { step: "S1" },
-        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
-        { step: "S4" },
-        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        {
-          step: "S6",
-          output: {
-            kind: "reviewer",
-            findings: [blocking],
-            priorFindingDispositions: [
-              { identityKey: blockingKey, status: "still-active" },
-            ],
+  it("maps scoped human or resume-input escalation answers to the matching active S4 finding only", async () => {
+    for (const source of ["human", "resume_input"] as const) {
+      const resumeState: ResumeState = {
+        worktree: WORKTREE,
+        stateDir: `/resident/worktrees/.ledger-446-${source}`,
+        ledger: [
+          { step: "S0" },
+          { step: "S1" },
+          { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+          { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+          { step: "S4" },
+          { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+          {
+            step: "S6",
+            output: {
+              kind: "reviewer",
+              findings: [blocking],
+              priorFindingDispositions: [
+                { identityKey: blockingKey, status: "still-active" },
+              ],
+            },
           },
-        },
-        { step: "S4" },
-        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        {
-          step: "S6",
-          output: {
-            kind: "reviewer",
-            findings: [blocking],
-            priorFindingDispositions: [
-              { identityKey: blockingKey, status: "still-active" },
-            ],
+          { step: "S4" },
+          { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+          {
+            step: "S6",
+            output: {
+              kind: "reviewer",
+              findings: [blocking],
+              priorFindingDispositions: [
+                { identityKey: blockingKey, status: "still-active" },
+              ],
+            },
           },
-        },
-        { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
-        {
-          step: "S4",
-          event: "escalation_answered",
-          forStep: "S4",
-          answer: "继续修",
-          source: "human",
-          findingScope: { identityKeys: [blockingKey] },
-        } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
-    };
-    const backend = new RetryReviewBackend(
-      [
-        {
-          kind: "completed",
-          output: {
-            kind: "reviewer",
-            findings: [],
-            priorFindingDispositions: [
-              { identityKey: blockingKey, status: "verified-closed" },
-            ],
+          { step: "S4" },
+          { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+          {
+            step: "S4",
+            event: "escalation_answered",
+            forStep: "S4",
+            answer: "继续修",
+            source,
+            findingScope: { identityKeys: [blockingKey] },
+          } as unknown as PersistentLedgerEntry,
+        ] as ReadonlyArray<PersistentLedgerEntry>,
+      };
+      const backend = new RetryReviewBackend(
+        [
+          {
+            kind: "completed",
+            output: {
+              kind: "reviewer",
+              findings: [],
+              priorFindingDispositions: [
+                { identityKey: blockingKey, status: "verified-closed" },
+              ],
+            },
           },
-        },
-      ],
-      resumeState,
-    );
+        ],
+        resumeState,
+      );
 
-    const result = await runOrchestrator({ issueNumber: 446, backend });
+      const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("success");
-    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship"]);
+      expect(result.status).toBe("success");
+      expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship"]);
+    }
+  });
+
+  it("does not treat scoped coordinator or peripheral escalation answers as executable continue-fixing input", async () => {
+    for (const source of ["coordinator", "peripheral"] as const) {
+      const resumeState: ResumeState = {
+        worktree: WORKTREE,
+        stateDir: `/resident/worktrees/.ledger-446-${source}`,
+        ledger: [
+          { step: "S0" },
+          { step: "S1" },
+          { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+          { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+          { step: "S4" },
+          { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+          {
+            step: "S6",
+            output: {
+              kind: "reviewer",
+              findings: [blocking],
+              priorFindingDispositions: [
+                { identityKey: blockingKey, status: "still-active" },
+              ],
+            },
+          },
+          { step: "S4" },
+          { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+          {
+            step: "S4",
+            event: "escalation_answered",
+            forStep: "S4",
+            answer: "继续修",
+            source,
+            findingScope: { identityKeys: [blockingKey] },
+          } as unknown as PersistentLedgerEntry,
+        ] as ReadonlyArray<PersistentLedgerEntry>,
+      };
+      const backend = new RetryReviewBackend([], resumeState);
+
+      const result = await runOrchestrator({ issueNumber: 446, backend });
+
+      expect(result.status).toBe("escalate");
+      expect(backend.dispatched).toEqual([]);
+    }
   });
 
   it("matches broad file scope against path-line findings without resetting sibling findings", async () => {
