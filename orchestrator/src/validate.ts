@@ -85,6 +85,18 @@ function optionalString(v: unknown): boolean {
   return v === undefined || isString(v);
 }
 
+function acceptedSuppressionAuthorityFromRecord(
+  obj: Record<string, unknown>,
+): boolean {
+  return hasAcceptedSuppressionAuthority({
+    source: typeof obj.source === "string" ? obj.source : undefined,
+    scope: typeof obj.scope === "string" ? obj.scope : undefined,
+    reason: typeof obj.reason === "string" ? obj.reason : undefined,
+    boundedReopen:
+      typeof obj.boundedReopen === "string" ? obj.boundedReopen : undefined,
+  });
+}
+
 function isStringArray(v: unknown): v is ReadonlyArray<string> {
   return Array.isArray(v) && v.every(isString);
 }
@@ -161,9 +173,7 @@ function isValidDispositionEvidence(
         isFilledString(obj.nextStep)
       );
     case "accepted_suppressed":
-      return (
-        hasAcceptedSuppressionAuthority(obj)
-      );
+      return acceptedSuppressionAuthorityFromRecord(obj);
     case "spec_conflict":
     case "infra_failure":
       return isFilledString(obj.source);
@@ -294,7 +304,7 @@ export function isValidPriorFindingDisposition(
   }
   if (obj.reason !== undefined && !isString(obj.reason)) return false;
   if (obj.status === "accepted_suppressed") {
-    return hasAcceptedSuppressionAuthority(obj);
+    return acceptedSuppressionAuthorityFromRecord(obj);
   }
   return true;
 }

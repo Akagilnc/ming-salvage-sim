@@ -2728,6 +2728,13 @@ describe("#369 finding identity and classification", () => {
         boundedReopen: "maybe later",
       }),
     ).toBe(false);
+    expect(
+      isValidPriorFindingDisposition({
+        ...baseDisposition,
+        source: { issue: "#427" },
+        reason: "Owner accepted this bounded risk.",
+      }),
+    ).toBe(false);
   });
 
   it("fails closed when prior dispositions lack sourced accepted-suppression evidence", () => {

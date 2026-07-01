@@ -132,8 +132,28 @@ export interface FamilyCmrClassification {
 const MODULE_DECLARATION_HEADING = /^##\s+Module Declaration\s*$/gim;
 
 function trimComment(line: string): string {
-  const comment = /(?:^|\s)#/.exec(line);
-  return (comment !== null ? line.slice(0, comment.index) : line).trimEnd();
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  for (let idx = 0; idx < line.length; idx += 1) {
+    const char = line[idx]!;
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+    if (
+      char === "#" &&
+      !inSingleQuote &&
+      !inDoubleQuote &&
+      (idx === 0 || /\s/.test(line[idx - 1]!))
+    ) {
+      return line.slice(0, idx).trimEnd();
+    }
+  }
+  return line.trimEnd();
 }
 
 function unquoteScalar(value: string): string | undefined {
