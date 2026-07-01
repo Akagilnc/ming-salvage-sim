@@ -557,6 +557,15 @@ function normalizeGitPath(path: string): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
+function normalizeRepairEvidencePath(path: string): string | undefined {
+  const normalized = normalizeGitPath(path);
+  if (normalized === undefined) return undefined;
+  if (/\s/.test(normalized)) return undefined;
+  return normalized.includes("/") || /\.[A-Za-z0-9]+$/.test(normalized)
+    ? normalized
+    : undefined;
+}
+
 function gitOutputLines(
   worktree: WorktreeHandle | undefined,
   args: ReadonlyArray<string>,
@@ -629,11 +638,10 @@ function repairEvidenceMatchesKey(
   );
   if (!matchingKeys.includes(identityKey)) return false;
   const declaredChangedPaths = [
-    ...(evidence.changedFiles ?? []),
-    ...(evidence.fixtures ?? []),
-  ]
-    .map(normalizeGitPath)
-    .filter((path): path is string => path !== undefined);
+    ...(evidence.changedFiles ?? []).map(normalizeGitPath),
+    ...(evidence.fixtures ?? []).map(normalizeGitPath),
+    ...(evidence.tests ?? []).map(normalizeRepairEvidencePath),
+  ].filter((path): path is string => path !== undefined);
   const scopedActualMovement = actualChangedPaths.some((path) =>
     locationScopeMatches(path, finding.location),
   );

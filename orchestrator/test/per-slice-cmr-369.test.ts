@@ -611,8 +611,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       commitsAdded: 1,
       repairEvidence: {
         findingScope: { identityKeys: [blockingKey] },
-        changedFiles: ["test/per-slice-cmr-369.test.ts"],
-        tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+        tests: ["test/per-slice-cmr-369.test.ts"],
       },
     };
     const worktree = makeGitWorktree();
