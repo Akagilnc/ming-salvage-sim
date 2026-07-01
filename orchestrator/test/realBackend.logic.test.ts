@@ -966,6 +966,8 @@ describe("realBackend promptsDirError (F4)", () => {
         "coder_fix.md",
         "reviewer_review.md",
         "ship.md",
+        "integrated_cmr_completeness.md",
+        "integrated_cmr_correctness.md",
       ]),
     );
     // No duplicates.

@@ -28,6 +28,7 @@ import {
   applyRuntimeTightRoutePolicy,
   printableRouteLineup,
   resolveActiveModelRoute,
+  type ResolvedModelRoute,
 } from "../modelRoutes.js";
 import type { Backend } from "../types.js";
 import { assertAcyclic, selectWave } from "./commander.js";
@@ -406,7 +407,7 @@ async function llmResolvedChildren(
 export async function runFamily(
   input: FamilyRunInput,
 ): Promise<FamilyRunResult> {
-  let modelRoute;
+  let modelRoute: ResolvedModelRoute;
   try {
     modelRoute = resolveActiveModelRoute();
   } catch (err) {

@@ -1356,7 +1356,12 @@ export function attributeFailure(
  * Keep this derived from the worker prompt-file constants plus the S7 ship spec.
  */
 export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
-  ...new Set([...Object.values(WORKER_PROMPT_FILES), SHIP_PROMPT_FILE]),
+  ...new Set([
+    ...Object.values(WORKER_PROMPT_FILES),
+    SHIP_PROMPT_FILE,
+    "integrated_cmr_completeness.md",
+    "integrated_cmr_correctness.md",
+  ]),
 ];
 
 /**
