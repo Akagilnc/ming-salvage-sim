@@ -36,6 +36,7 @@
 
 import { execFileSync } from "node:child_process";
 
+import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
 import { route } from "./route.js";
 import {
   adjudicatePriorClaimedFixedFindings,
@@ -627,23 +628,31 @@ function repairEvidenceMatchesKey(
     activeIdentityKeys,
   );
   if (!matchingKeys.includes(identityKey)) return false;
-  const scopedActualMovement = actualChangedPaths.some((path) =>
-    locationScopeMatches(path, finding.location),
-  );
-  if (!scopedActualMovement) return false;
   const declaredChangedPaths = [
     ...(evidence.changedFiles ?? []),
     ...(evidence.fixtures ?? []),
+    ...(evidence.tests ?? []),
   ]
     .map(normalizeGitPath)
     .filter((path): path is string => path !== undefined);
+  const scopedActualMovement = actualChangedPaths.some((path) =>
+    locationScopeMatches(path, finding.location),
+  );
+  const declaredActualMovement =
+    declaredChangedPaths.length > 0 &&
+    declaredChangedPaths.some((declared) =>
+      actualChangedPaths.some(
+        (actual) =>
+          actual === declared ||
+          locationScopeMatches(actual, declared) ||
+          locationScopeMatches(declared, actual),
+      ),
+    );
+  if (!scopedActualMovement && !declaredActualMovement) return false;
   return (
     declaredChangedPaths.length === 0 ||
-    declaredChangedPaths.some(
-      (path) =>
-        actualChangedPaths.includes(path) ||
-        locationScopeMatches(path, finding.location),
-    )
+    declaredActualMovement ||
+    declaredChangedPaths.some((path) => locationScopeMatches(path, finding.location))
   );
 }
 
@@ -1432,7 +1441,8 @@ function acceptedSuppressionsFromDispositions(
   return dispositions
     .filter(
       (disposition) =>
-        disposition.status === "accepted_suppressed" ||
+        (disposition.status === "accepted_suppressed" &&
+          hasAcceptedSuppressionAuthority(disposition)) ||
         disposition.status === "wont_fix" ||
         disposition.status === "rejected",
     )
@@ -2156,7 +2166,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason,
           branchHead: worktree.branch,
         };
-        const stopSummary = stopSummaryForErrorPackage(errorPackage);
+        const stopSummary =
+          latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
         return {
           status: "error",
           errorPackage,

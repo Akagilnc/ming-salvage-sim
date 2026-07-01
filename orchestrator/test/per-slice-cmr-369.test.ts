@@ -604,6 +604,98 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     ]);
   });
 
+  it("counts scoped test-file repair evidence as observable progress", async () => {
+    const scopedTestEvidence = {
+      kind: "coder" as const,
+      committed: true,
+      commitsAdded: 1,
+      repairEvidence: {
+        findingScope: { identityKeys: [blockingKey] },
+        tests: ["test/per-slice-cmr-369.test.ts"],
+      },
+    };
+    const worktree = makeGitWorktree();
+    const backend = new RetryReviewBackend(
+      [
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      undefined,
+      [scopedTestEvidence, scopedTestEvidence, scopedTestEvidence],
+      worktree,
+      (attempt, wt) => {
+        const testDir = join(wt.path, "test");
+        mkdirSync(testDir, { recursive: true });
+        writeFileSync(
+          join(testDir, "per-slice-cmr-369.test.ts"),
+          `export const attempt = ${attempt};\n`,
+          "utf8",
+        );
+        execFileSync("git", ["add", "test/per-slice-cmr-369.test.ts"], {
+          cwd: wt.path,
+          stdio: "ignore",
+        });
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            `test evidence ${attempt}`,
+          ],
+          { cwd: wt.path, stdio: "ignore" },
+        );
+      },
+    );
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
   it("restores resume repair movement paths before judging still-active no-progress", async () => {
     const resumeState: ResumeState = {
       worktree: WORKTREE,
@@ -1160,6 +1252,37 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
     expect(result.status).toBe("escalate");
+    expect(backend.dispatched).toEqual([]);
+  });
+
+  it("preserves a persisted terminal error stop summary on already-done re-feed", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446-error",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: false, commitsAdded: 0 } },
+        {
+          step: "S8",
+          handoffStatus: "error",
+          stopSummary: {
+            reason: "contract_drift",
+            summary: "persisted malformed coder output",
+            repairHint: "repair the coder contract and rerun",
+          },
+        },
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend([], resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.stopSummary).toMatchObject({
+      reason: "contract_drift",
+      summary: "persisted malformed coder output",
+    });
     expect(backend.dispatched).toEqual([]);
   });
 
@@ -2247,6 +2370,32 @@ describe("#369 finding identity and classification", () => {
     expect(adjudication.verifiedClosedIdentityKeys).toEqual([key]);
   });
 
+  it("does not treat reviewer-created accepted_suppressed prior dispositions as terminal closure", () => {
+    const key = findingIdentityKey(finding);
+
+    const adjudication = adjudicatePriorClaimedFixedFindings({
+      priorFindings: [finding],
+      priorIdentityKeys: [key],
+      review: {
+        kind: "reviewer",
+        findings: [],
+        priorFindingDispositions: [
+          {
+            identityKey: key,
+            status: "accepted_suppressed",
+            source: "reviewer judgement",
+            scope: "same claimed-fixed finding",
+            reason: "the reviewer decided this is acceptable",
+            boundedReopen: "maybe reconsider later",
+          },
+        ],
+      },
+    });
+
+    expect(adjudication.stillOpen).toEqual([finding]);
+    expect(adjudication.verifiedClosedIdentityKeys).toEqual([]);
+  });
+
   it("requires accepted_suppressed prior dispositions to carry the suppression reason", () => {
     const baseDisposition = {
       identityKey: "correctness|src/runner.ts:427|accepted by owner",
@@ -2263,6 +2412,20 @@ describe("#369 finding identity and classification", () => {
         reason: "Owner accepted this bounded risk.",
       }),
     ).toBe(true);
+    expect(
+      isValidPriorFindingDisposition({
+        ...baseDisposition,
+        source: "reviewer judgement",
+        reason: "Reviewer accepted this bounded risk.",
+      }),
+    ).toBe(false);
+    expect(
+      isValidPriorFindingDisposition({
+        ...baseDisposition,
+        reason: "Owner accepted this bounded risk.",
+        boundedReopen: "maybe later",
+      }),
+    ).toBe(false);
   });
 
   it("fails closed when prior dispositions lack sourced accepted-suppression evidence", () => {

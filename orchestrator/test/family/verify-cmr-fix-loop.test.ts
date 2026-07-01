@@ -357,7 +357,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
       disposition: {
         kind: "accepted_suppressed",
         source: "issue #448 acceptance criteria",
-        scope: "family integrated CMR",
+        scope: "#448 family integrated CMR",
         reason: "accepted by issue scope",
         findingIdentity:
           "correctness|orchestrator/src/family/verifycmr.ts:1|accepted hub-loss gap",
@@ -396,12 +396,43 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
       phase: "final",
       familyBase: "family/291-base",
       familyBackend: backend,
+      familyIssue: 448,
+      moduleContext: {
+        currentModules: [
+          {
+            module: "family-cmr",
+            moduleScope: ["orchestrator/src/family/verifyCmr.ts"],
+            source: "family_issue",
+            issue: 448,
+          },
+        ],
+        childModules: [],
+        acceptedSuppressionSources: [
+          {
+            source: "issue #448 acceptance criteria",
+            scope: "#448 family integrated CMR",
+            reason: "accepted by issue scope",
+            findingIdentity:
+              "correctness|orchestrator/src/family/verifycmr.ts:1|accepted hub-loss gap",
+            boundedReopen: "reopen on higher severity or different scope",
+          },
+        ],
+      },
     });
 
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
+      cmrFindingClassification: expect.objectContaining({
+        results: expect.arrayContaining([
+          expect.objectContaining({
+            identityKey:
+              "correctness|orchestrator/src/family/verifycmr.ts:1|accepted hub-loss gap",
+            classification: "accepted_suppressed",
+          }),
+        ]),
+      }),
       stopSummary: expect.objectContaining({
         reason: "spec_conflict",
         finding: blocker,

@@ -66,6 +66,10 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 
+import {
+  hasBoundedReopenCondition,
+  hasExplicitAcceptedSuppressionSource,
+} from "./acceptedSuppression.js";
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
 import { findingIdentityKey } from "./findings.js";
@@ -1514,15 +1518,32 @@ const findingDispositionSchema = z.discriminatedUnion("kind", [
     nextStep: z.string().min(1),
     reason: z.string().min(1),
   }),
-  z.object({
-    kind: z.literal("accepted_suppressed"),
-    source: z.string().min(1),
-    scope: z.string().min(1),
-    reason: z.string().min(1),
-    findingIdentity: z.string().min(1).optional(),
-    targetModule: z.string().min(1).optional(),
-    boundedReopen: z.string().min(1),
-  }),
+  z
+    .object({
+      kind: z.literal("accepted_suppressed"),
+      source: z.string().min(1),
+      scope: z.string().min(1),
+      reason: z.string().min(1),
+      findingIdentity: z.string().min(1).optional(),
+      targetModule: z.string().min(1).optional(),
+      boundedReopen: z.string().min(1),
+    })
+    .superRefine((disposition, ctx) => {
+      if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["source"],
+          message: "accepted_suppressed requires explicit user/ADR/issue source",
+        });
+      }
+      if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["boundedReopen"],
+          message: "accepted_suppressed requires bounded reopen condition",
+        });
+      }
+    }),
 ]);
 const findingSchema = z.object({
   severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
@@ -1597,8 +1618,8 @@ const priorFindingDispositionSchema = z.object({
   scope: z.string().optional(),
   boundedReopen: z.string().optional(),
 }).superRefine((disposition, ctx) => {
-  if (disposition.status !== "accepted_suppressed") return;
-  for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
+	  if (disposition.status !== "accepted_suppressed") return;
+	  for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
     if (disposition[field] === undefined || disposition[field].trim() === "") {
       ctx.addIssue({
         code: "custom",
@@ -1606,8 +1627,28 @@ const priorFindingDispositionSchema = z.object({
         message: `accepted_suppressed prior finding disposition requires ${field}`,
       });
     }
-  }
-});
+	  }
+	  if (
+	    disposition.source !== undefined &&
+	    !hasExplicitAcceptedSuppressionSource(disposition.source)
+	  ) {
+	    ctx.addIssue({
+	      code: "custom",
+	      path: ["source"],
+	      message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
+	    });
+	  }
+	  if (
+	    disposition.boundedReopen !== undefined &&
+	    !hasBoundedReopenCondition(disposition.boundedReopen)
+	  ) {
+	    ctx.addIssue({
+	      code: "custom",
+	      path: ["boundedReopen"],
+	      message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
+	    });
+	  }
+	});
 const reviewerOutputSchema = z.object({
   findings: z.array(findingSchema),
   priorFindingDispositions: z.array(priorFindingDispositionSchema).optional(),

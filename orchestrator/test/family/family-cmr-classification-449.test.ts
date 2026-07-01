@@ -1409,4 +1409,61 @@ module_scope:
       },
     });
   });
+
+  it("shipped summary ignores material CMR disposition from an older family head", async () => {
+    const backend = new SequencedCmrBackend([
+      {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+        },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+        },
+      },
+    ]);
+    backend.ledger.push({
+      status: "cmr_passed",
+      event: "cmr_passed",
+      phase: "final",
+      cmrPass: "correctness",
+      familyHeadAfter: "old-head",
+      stopSummary: {
+        reason: "cross_module_defer",
+        summary: "old material defer",
+        repairHint: "old follow-up",
+        targetModule: "old-module",
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/445-base",
+      familyBackend: backend,
+      familyIssue: 445,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    const shipped = backend.ledger.find((entry) => entry.status === "shipped");
+    expect(shipped?.stopSummary).toMatchObject({
+      reason: "success",
+      metadata: {
+        heads: expect.objectContaining({
+          verifiedCmrHead: "head-449",
+        }),
+      },
+    });
+    expect(shipped?.stopSummary?.reason).not.toBe("cross_module_defer");
+  });
 });

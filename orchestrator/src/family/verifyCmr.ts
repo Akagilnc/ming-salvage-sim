@@ -63,6 +63,7 @@ import {
   resolveActiveModelRoute,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
+import { hasAcceptedSuppressionAuthority } from "../acceptedSuppression.js";
 import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
 import { modelIsStrongLeg } from "../realBackend.js";
 import type { EscalationAnswerPayload } from "../types.js";
@@ -713,14 +714,7 @@ function cmrClosureFailureReason(input: {
     .filter(
       (disposition) =>
         disposition.status === "accepted_suppressed" &&
-        (!isFilledString(disposition.source) ||
-          !isFilledString(disposition.scope) ||
-          !isFilledString(disposition.reason) ||
-          !isFilledString(disposition.boundedReopen) ||
-          !/^(#\d+|issue\s+#?\d+|adr\s*0*\d+|user\b|owner\b)/i.test(
-            disposition.source,
-          ) ||
-          /^never$/i.test(disposition.boundedReopen.trim())),
+        !hasAcceptedSuppressionAuthority(disposition),
     )
     .map((disposition) => disposition.identityKey);
   if (malformedAcceptedSuppressions.length > 0) {
@@ -1526,6 +1520,7 @@ export async function runVerifyCmr(
     .find(
       (entry) =>
         entry.status === "cmr_passed" &&
+        entry.familyHeadAfter === cmrPassedFamilyHeadAfter &&
         entry.stopSummary !== undefined &&
         isMaterialCmrStopSummary(entry.stopSummary),
     )?.stopSummary;
