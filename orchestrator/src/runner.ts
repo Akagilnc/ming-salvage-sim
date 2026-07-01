@@ -1246,8 +1246,12 @@ export function stepSpecsForEnv(
   return stepSpecsForRoute(resolveActiveModelRoute(env));
 }
 
-export const STEP_SPECS: Readonly<Record<WorkerStepId, StepSpec>> =
-  stepSpecsForEnv();
+export const WORKER_PROMPT_FILES: Readonly<Record<WorkerStepId, string>> = {
+  S2: "coder_implement.md",
+  S3: "reviewer_review.md",
+  S5: "coder_fix.md",
+  S6: "reviewer_review.md",
+};
 
 /**
  * Synthesise a human-readable reason string for route()-detected error edges
@@ -1388,9 +1392,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   } catch (err) {
     const reason =
       err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
-    const stopSummary = contractDriftStopSummary({
-      summary: reason,
-      repairHint: "repair the model route environment before dispatching workers",
+    const stopSummary = stopSummaryForStartupRouteFailure({
+      reason: "startup route failure",
+      diagnosis: `${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`,
     });
     return {
       status: "error",

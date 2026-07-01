@@ -563,6 +563,61 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       reason:
         "family ship worker opened a PR, but the current family HEAD could not be resolved; refusing to persist a stale shipped marker",
       familyHeadAfter: "head-1",
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        repairHint: expect.stringContaining("resolve the current family HEAD"),
+        metadata: {
+          heads: expect.objectContaining({
+            verifiedCmrHead: "head-1",
+          }),
+          ship: expect.objectContaining({
+            latestVerifiedCmrHead: "head-1",
+            reportedFamilyHead: "head-1",
+            shipPrState: "current-family-head-unresolved",
+          }),
+        },
+      }),
+    }));
+  });
+
+  it("does not persist a shipped marker when the opened PR head differs from the current family HEAD", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
+      pr: (req) => ({ url: `pr://${req.familyBase}`, prHead: "stale-pr-head" }),
+    });
+    backend.currentFamilyHead = "current-family-head";
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "verified-cmr-head",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      familyHeadAfter: "current-family-head",
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        repairHint: expect.stringContaining("repair the family ship worker PR head"),
+        metadata: {
+          heads: expect.objectContaining({
+            actualFamilyHead: "current-family-head",
+            verifiedCmrHead: "current-family-head",
+          }),
+          ship: expect.objectContaining({
+            latestVerifiedCmrHead: "current-family-head",
+            currentFamilyHead: "current-family-head",
+            reportedFamilyHead: "stale-pr-head",
+            shipPrState: "pr-head-mismatch",
+          }),
+        },
+      }),
     }));
   });
 

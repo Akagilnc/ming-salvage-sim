@@ -93,7 +93,7 @@ export {
   type ModelSlugRegistryEntry,
 };
 import { legacyDispatchWorker, shipWorkerSpec } from "./dispatchWorker.js";
-import { STEP_SPECS } from "./runner.js";
+import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
   SHIP_COMPLETION_SIGNAL,
   shipOutcomeFromResult,
@@ -736,7 +736,7 @@ export function checkOwnGitDir(
  * throws → the runner's S8(error) edge, never a silently-mis-souled run.
  *
  * Why this closes the finding: previously `spec.soul` was declared in the
- * StepSpec contract and populated in STEP_SPECS but NEVER consumed by the real
+ * StepSpec contract and populated in per-run worker specs but NEVER consumed by the real
  * Backend (`grep spec.soul` = no hit) — a dead contract field. Now it is read
  * and asserted at the step's run-setup, so the v0.1 "role 决定注哪份 soul"
  * selection is realised and the field can no longer drift unnoticed.
@@ -1286,17 +1286,12 @@ export function attributeFailure(
  * so all must exist under `promptsDir` or the real path cannot run end-to-end
  * (#256 AC "对一个真叶子 issue 端到端跑通").
  *
- * integ-cmr int-r1 (C-3): DERIVED from the actual worker specs — STEP_SPECS
- * (S2/S3/S5/S6 agent workers) + shipWorkerSpec() (S7 ship, ship.md) — rather
- * than a hand-maintained literal. The hand-kept list omitted ship.md, so
- * promptsDir validation passed yet S7 crashed at run time looking for the absent
- * prompt. By reading the prompt off every dispatched spec, a new/changed worker
- * step can never silently drift out of the validation list again. De-duped.
+ * Route-independent prompt inventory: prompt validation must not import a
+ * route-bearing StepSpec snapshot, because model routes are resolved per run.
+ * Keep this derived from the worker prompt-file constants plus the S7 ship spec.
  */
 export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
-  ...new Set(
-    [...Object.values(STEP_SPECS), shipWorkerSpec()].map((s) => s.promptFile),
-  ),
+  ...new Set([...Object.values(WORKER_PROMPT_FILES), shipWorkerSpec().promptFile]),
 ];
 
 /**

@@ -88,6 +88,9 @@ class FakeFamilyBackend implements FamilyBackend {
   async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
     return this.ledger;
   }
+  async readFamilyHead(_familyBase: string): Promise<string> {
+    return this.head;
+  }
 }
 
 function epicWith(...childIssues: number[]): FamilyEpic {
@@ -128,6 +131,41 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     ]);
     // A complete clean run is observably "success" (#293 no-op verify passes).
     expect(result.status).toBe("success");
+  });
+
+  it("already-shipped resume reports already_done instead of a generic success summary", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "pr://family/293-base",
+        familyHeadAfter: "family-base-0",
+      },
+    );
+    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.stopSummary).toMatchObject({
+      reason: "already_done",
+      summary: "family run already shipped for the current family HEAD",
+      metadata: {
+        heads: expect.objectContaining({
+          actualFamilyHead: "family-base-0",
+        }),
+      },
+    });
+    expect(singleSliceBackend.prepareBases).toEqual([]);
   });
 
   it("each child is cut from the FAMILY base (not main) and does NOT push remotely", async () => {

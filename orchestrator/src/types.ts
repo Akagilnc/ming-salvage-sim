@@ -112,7 +112,7 @@ export interface StepSpec {
    * orchestrator gives up": the orchestrator only stops when the MODEL emits an
    * `escalate` signal (US#18/US#19), never by counting iterations/rounds.
    *
-   * v0.1: the runner does NOT enforce maxIter (lazy field — see STEP_SPECS).
+   * v0.1: the runner does NOT enforce maxIter (lazy field on worker specs).
    * When #256 wires Sandcastle, maxIter MUST be implemented with exactly this
    * semantics (within-step retry budget) and MUST NOT degrade into a
    * "count-to-N-then-give-up" fix-loop cap, which would violate US#18.

@@ -208,7 +208,7 @@ export function shipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
     completionSignal: "SHIP_STEP_COMPLETE",
     // A WRITE/coder ship worker must self-rerun gstack-ship's rerun-able failures
     // (ship.md: "rerun it yourself") → an iterative budget like coder/fix (runner
-    // STEP_SPECS use 5), NOT a single-pass reviewer's 1 (#336 cmr r6). The completion
+    // runner worker specs use 5), NOT a single-pass reviewer's 1 (#336 cmr r6). The completion
     // signal stops the loop early on a clean ship; the <ship> parser reads the LAST tag.
     maxIter: 5,
     model: route?.slots.ship ?? modelForSlot("ship"),

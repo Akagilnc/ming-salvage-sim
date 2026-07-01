@@ -315,8 +315,8 @@ export async function runFamily(
         reason: "startup route failure",
         diagnosis: reason,
       },
-      stopSummary: contractDriftStopSummary({
-        summary: reason,
+      stopSummary: infraFailureStopSummary({
+        summary: `startup route failure: ${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`,
         repairHint: "repair the family runner route environment before rerun",
       }),
       children,
@@ -817,7 +817,32 @@ export async function runFamily(
       };
     }
     familyHead = preFinalFamilyHead;
-    return await finalize();
+    const alreadyDoneSummary: StopSummary = {
+      reason: "already_done",
+      summary: "family run already shipped for the current family HEAD",
+      metadata: {
+        heads: {
+          actualFamilyHead: preFinalFamilyHead,
+          reportedFamilyHead: shippedRecord.familyHeadAfter,
+          verifiedCmrHead: preFinalFamilyHead,
+          sources: {
+            actualFamilyHead: "current family head",
+            reportedFamilyHead: "shipped ledger row",
+            verifiedCmrHead: "shipped ledger row",
+          },
+        },
+      },
+    };
+    return {
+      status: "success",
+      familyBase,
+      familyHead,
+      stopSummary: alreadyDoneSummary,
+      children,
+      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
+    };
   }
   if (
     hasUnboundLegacyShippedMarker(preFinalLedger) ||
