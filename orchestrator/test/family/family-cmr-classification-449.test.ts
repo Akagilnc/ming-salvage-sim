@@ -790,6 +790,63 @@ undeveloped_modules:
       cmrFindingClassification: {
         deferred: [expect.objectContaining({ claim_quote: crossModuleFinding.claim_quote })],
         results: [{ classification: "cross_module_defer", targetModule: "military-state-machine" }],
+        moduleContext: {
+          currentModules: [
+            expect.objectContaining({
+              module: "fiscal",
+              moduleScope: ["orchestrator/src/family"],
+              source: "family_issue",
+              issue: 445,
+            }),
+          ],
+          childModules: [],
+          fallbackModule: expect.objectContaining({
+            module: "fiscal",
+            source: "family_issue",
+            issue: 445,
+          }),
+          undevelopedModules: [
+            expect.objectContaining({
+              module: "military-state-machine",
+              moduleScope: ["military-state-machine"],
+              source: "family_issue",
+              issue: 445,
+            }),
+          ],
+        },
+      },
+    });
+  });
+
+  it("records a CMR worker decision escalation as a spec conflict, not infra failure", async () => {
+    const backend = new CmrFindingBackend({
+      kind: "escalated",
+      escalation: {
+        reason: "accepted designs conflict",
+        diagnosis: "ADR and issue acceptance criteria disagree",
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/445-base",
+      familyBackend: backend,
+      familyIssue: 445,
+      moduleContext: {
+        currentModules: [],
+        childModules: [],
+      },
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatched).toEqual(["cmr"]);
+    expect(backend.ledger[0]).toMatchObject({
+      status: "aborted",
+      cmrPass: "completeness",
+      stopSummary: {
+        reason: "spec_conflict",
+        summary: expect.stringContaining("accepted designs conflict"),
+        repairHint: expect.stringContaining("design/specification conflict"),
       },
     });
   });

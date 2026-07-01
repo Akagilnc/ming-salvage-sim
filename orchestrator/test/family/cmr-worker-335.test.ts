@@ -494,6 +494,17 @@ describe("integrated CMR pass prompt closure contract", () => {
       }
     });
   }
+
+  it("integrated completeness prompt declares undeveloped_modules as structured module metadata", () => {
+    const prompt = readFileSync(
+      join(realPromptsDir, "integrated_cmr_completeness.md"),
+      "utf8",
+    );
+
+    expect(prompt).toContain("undeveloped_modules");
+    expect(prompt).toContain("module_scope");
+    expect(prompt).toContain("Do not infer");
+  });
 });
 
 // ═══════════════════════ 2. cmrOutcomeFromResult (signal gate) ═══════════════════════

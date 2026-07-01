@@ -443,6 +443,15 @@ function notConvergedStopSummary(reason: string): StopSummary {
   };
 }
 
+function cmrEscalationStopSummary(reason: string): StopSummary {
+  return {
+    reason: "spec_conflict",
+    summary: reason,
+    repairHint:
+      "resolve the CMR worker's design/specification conflict and rerun the family CMR gate",
+  };
+}
+
 function legAccountingFailureStopSummary(input: {
   readonly reason: string;
   readonly resolvedRoute: ResolvedModelRoute;
@@ -725,11 +734,13 @@ async function runIntegratedCmrPass(input: {
   );
   if (cmrResult.kind === "escalated") {
     const reason = `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`;
+    const stopSummary = cmrEscalationStopSummary(reason);
     await recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
+      stopSummary,
     });
     await familyBackend.escalateFamily?.({
       reason,
@@ -828,6 +839,11 @@ async function runIntegratedCmrPass(input: {
             reason,
           },
         ],
+        moduleContext: {
+          currentModules: [],
+          childModules: [],
+          undevelopedModules: [],
+        },
       },
       stopSummary: notConvergedStopSummary(reason),
     });

@@ -68,6 +68,11 @@ Rules:
   defer may pass without a fix, and only when `.cmr-focus.md` /
   `.cmr-route.json` contain parsed module context supporting it. Do not infer
   module boundaries from titles, prose, or logs.
+- Parsed module context comes only from the exact `## Module Declaration`
+  fenced YAML block or runner-supplied route metadata. The supported YAML keys
+  are `module`, `module_scope`, and optional `undeveloped_modules`. Use
+  `undeveloped_modules` only for declared target modules that are intentionally
+  outside the current family surface but not yet implemented in this family base.
 - `accepted_suppressed` requires an explicit user/ADR/issue source, matching
   scope, reason, finding identity, and bounded reopen condition.
 - Emit the `<cmr>` tag LAST; if you iterate, the LAST tag is the one that counts.
