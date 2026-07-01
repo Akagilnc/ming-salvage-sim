@@ -540,8 +540,13 @@ export function classifyFamilyCmrFindings(input: {
       findingsForFinalClassification.push(finding);
       const attribution = attributionFor(finding, input.moduleContext);
       const targetModule = normalizedModule(finding.disposition.targetModule ?? "");
+      const undevelopedTarget = declaredUndevelopedTarget(
+        finding.disposition.targetModule,
+        input.moduleContext,
+      );
       if (
         attribution.method !== "missing_module_context" &&
+        undevelopedTarget !== undefined &&
         currentModules.size > 0 &&
         !currentModules.has(targetModule) &&
         targetModuleIsOutsideCurrentModules(targetModule, currentModules)
