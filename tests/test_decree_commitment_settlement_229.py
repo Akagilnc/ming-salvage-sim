@@ -630,6 +630,24 @@ def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
     assert progress["remaining_arrears"] == 0
 
     db.conn.execute("UPDATE armies SET arrears=1.5 WHERE id='guanning'")
+    short_issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="关宁欠饷仍须降至一万以下",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:fractional-strict-arrears-short",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={"economy": []},
+        stop_condition=json.dumps({"army.guanning.arrears": "<1"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+
+    short_progress = commitment_progress_payload(db, state, _issue_row(db, short_issue_id))
+
+    assert short_progress["remaining_arrears"] == 1
+
+    db.conn.execute("UPDATE armies SET arrears=1.5 WHERE id='guanning'")
     greater_issue_id = db.insert_issue(
         state,
         kind="initiative",
@@ -1197,6 +1215,54 @@ def test_commitment_malformed_pay_target_does_not_fall_back_to_priority_pool(gam
         SELECT 1 FROM rejection_reports
         WHERE category = 'missing_ref'
           AND reason LIKE '%补饷目标军队未入库%'
+        """
+    ).fetchone() is not None
+    assert _army_arrears(db, "guanning") == 100
+    assert _army_arrears(db, "xuan_da") == 100
+    assert db.conn.execute(
+        "SELECT COALESCE(SUM(delta), 0) FROM economy_ledger WHERE purpose='补饷'"
+    ).fetchone()[0] == 0
+
+
+def test_non_arrears_commitment_missing_pay_target_does_not_open_priority_pool(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    _seed_central_army_arrears(db, {"guanning": 100, "xuan_da": 100})
+    state.metrics["国库"] = 500
+    state.metrics["皇威"] = 50
+    db.save_state(state)
+
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="非欠饷门槛承诺不得空目标补饷",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:non-arrears-pay",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={
+            "economy": [
+                {
+                    "account": "国库",
+                    "delta": -50,
+                    "reason": "缺目标补饷不应改付",
+                    "purpose": "补饷",
+                }
+            ]
+        },
+        stop_condition=json.dumps({"皇威": ">=99"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+
+    _settle_empty_month(db, state, content)
+
+    assert db.conn.execute(
+        """
+        SELECT 1 FROM rejection_reports
+        WHERE category = 'missing_ref'
+          AND reason LIKE '%补饷必须指定%'
         """
     ).fetchone() is not None
     assert _army_arrears(db, "guanning") == 100

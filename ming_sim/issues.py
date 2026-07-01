@@ -242,11 +242,11 @@ def _commitment_remaining_from_gate(
         if op == "<=":
             need = max(0.0, val_num - target)
         elif op == "<":
-            need = max(0.0, val_num - target + (1 if val_num.is_integer() else 0))
+            need = 0.0 if val_num < target else float(int(val_num - target) + 1)
         elif op == ">=":
             need = max(0.0, target - val_num)
         elif op == ">":
-            need = max(0.0, target - val_num + (1 if val_num.is_integer() else 0))
+            need = 0.0 if val_num > target else float(int(target - val_num) + 1)
         else:
             need = abs(val_num - target)
         remaining += need
@@ -6797,14 +6797,24 @@ def apply_issue_inertia_and_ongoing(
 
             # economy
             issue_monthly_rejections: List[Dict[str, object]] = []
+            pay_arrears_pool_army_ids = (
+                _commitment_arrears_gate_army_ids(row)
+                if is_commitment and _commitment_gate_references_arrears(row)
+                else None
+            )
+            allow_pay_arrears_pool = (
+                is_commitment
+                and (
+                    not commitment_stop_gate
+                    or bool(pay_arrears_pool_army_ids)
+                )
+            )
             _eco_out = _apply_economy_list(
                 db,
                 state,
                 _monthly_economy_items(ongoing),
-                allow_pay_arrears_pool=is_commitment,
-                pay_arrears_pool_army_ids=(
-                    _commitment_arrears_gate_army_ids(row) if is_commitment else None
-                ),
+                allow_pay_arrears_pool=allow_pay_arrears_pool,
+                pay_arrears_pool_army_ids=pay_arrears_pool_army_ids,
             )
             economy_rejections = [r for r in _eco_out if r.get("rejected")]
             issue_monthly_rejections.extend(economy_rejections)

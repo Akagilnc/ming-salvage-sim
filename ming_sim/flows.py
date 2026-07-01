@@ -504,6 +504,7 @@ def _auto_pay_arrears_by_priority(
     ordered += [r for r in rows if str(r["id"]) not in ARMY_SALARY_PRIORITY]
     spent = 0
     remaining = budget
+    touched_regions: set[str] = set()
     for row in ordered:
         if remaining <= 0:
             break
@@ -518,10 +519,18 @@ def _auto_pay_arrears_by_priority(
         spent_now = _pay_single_army_arrears(
             db, state, row, account, pay_cap, category,
             f"{reason}（按优先级分给{name}{pay_cap}万两）",
-            "诏拨补饷", "按优先级", commit=commit,
+            "诏拨补饷", "按优先级",
         )
         spent += spent_now
         remaining -= spent_now
+        if spent_now and pay_source_cutover:
+            touched_regions.add(str(row["pay_source_region"] or ""))
+    if spent and pay_source_cutover:
+        for region_id in sorted(touched_regions):
+            db._reconcile_army_pay_source_region_container(region_id)
+        db._reconcile_central_army_pay_arrears_container()
+    if spent and commit:
+        db.conn.commit()
     return spent
 
 
@@ -560,6 +569,7 @@ def _pay_single_army_arrears(
     *,
     commit: bool = True,
 ) -> int:
+    _ = commit  # transaction ownership belongs to the caller/batch boundary.
     current_arrears = float(row["arrears"] or 0)
     if amount <= 0 or current_arrears <= 0:
         return 0
@@ -598,8 +608,6 @@ def _pay_single_army_arrears(
             """,
             (province_new, central_new, new_arrears, str(row["id"])),
         )
-        db._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
-        db._reconcile_central_army_pay_arrears_container()
     else:
         new_arrears = max(0.0, current_arrears + float(actual))
         db.conn.execute(
@@ -613,8 +621,6 @@ def _pay_single_army_arrears(
          str(current_arrears), str(new_arrears), new_arrears - current_arrears,
          f"诏拨补饷{paid:g}万两{f'（{log_suffix}）' if log_suffix else ''}", actor),
     )
-    if commit:
-        db.conn.commit()
     return int(round(paid))
 
 
@@ -685,7 +691,17 @@ def _apply_economy_list(
         # 不能把缺失/错拼目标 fallback 成改付其它军队。
         if purpose == "补饷" and delta < 0 and (target_kind != "army" or not raw_target_id):
             explicit_target = bool(raw_target_kind or raw_target_id)
-            if allow_pay_arrears_pool and not explicit_target:
+            allowed_pool_ids = None
+            if pay_arrears_pool_army_ids is not None:
+                allowed_pool_ids = [
+                    str(army_id) for army_id in pay_arrears_pool_army_ids
+                    if str(army_id).strip()
+                ]
+            if (
+                allow_pay_arrears_pool
+                and not explicit_target
+                and (pay_arrears_pool_army_ids is None or allowed_pool_ids)
+            ):
                 budget = abs(delta)
                 spent = _auto_pay_arrears_by_priority(
                     db,
@@ -695,7 +711,7 @@ def _apply_economy_list(
                     category,
                     reason,
                     commit=commit,
-                    allowed_army_ids=pay_arrears_pool_army_ids,
+                    allowed_army_ids=allowed_pool_ids,
                 )
                 applied.append({"account": account, "delta": -spent, "reason": reason})
                 continue
@@ -740,9 +756,14 @@ def _apply_economy_list(
                 continue
             spent = _pay_single_army_arrears(
                 db, state, row, account, min(abs(delta), payable_arrears), category,
-                reason, "诏拨补饷", commit=commit,
+                reason, "诏拨补饷",
             )
             if spent:
+                if pay_source_cutover:
+                    db._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
+                    db._reconcile_central_army_pay_arrears_container()
+                if commit:
+                    db.conn.commit()
                 applied.append({"account": account, "delta": -spent, "reason": reason})
             continue
 
@@ -871,7 +892,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 """,
                 (central_arrears, new_arrears, new_morale, army_id),
             )
-            db._reconcile_central_army_pay_arrears_container()
             if shortfall > 0:
                 reason_tag = f"{TURN_UNIT}中央军饷欠发{shortfall}万两"
             else:
@@ -889,7 +909,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                      reason_tag),
                 ],
             )
-            db.conn.commit()
 
             flows.append({
                 "dir": "arrears", "account": "中央军饷欠账", "category": "中央军饷",
@@ -898,6 +917,8 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 "arrears_delta": new_arrears - old_arrears,
                 "morale_delta": new_morale - old_morale,
             })
+        db._reconcile_central_army_pay_arrears_container()
+        db.conn.commit()
 
     # ── 固定收支落账（税/皇庄/宗室/官俸/织造…全走唯一定额源 compute_budget_lines）──
     # 军饷与建筑另有逐项落账逻辑（arrears/condition），故下面跳过这两类，仅落其余定额项。
