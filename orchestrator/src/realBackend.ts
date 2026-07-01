@@ -394,6 +394,7 @@ export function buildIssueSnapshot(
     bodyAuthorLogin: actorLogin(json),
     comments: (json.comments ?? []).map((c) => c.body ?? ""),
     commentAuthorLogins: (json.comments ?? []).map((c) => actorLogin(c)),
+    trustedOwnerLogin: ownerLogin,
     agentBrief: extractAgentBrief(json, ownerLogin),
     nativeMeta: buildIssueSnapshotMeta(json, blockedBy, subIssueCount),
   };
