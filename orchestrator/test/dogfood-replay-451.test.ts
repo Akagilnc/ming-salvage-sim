@@ -99,6 +99,21 @@ describe("#451 dogfood replay fixture", () => {
           issue: 451,
           classification: "owning_issue_still_red",
           stopReason: "owning_issue_still_red",
+          sourceStopSummary: expect.objectContaining({
+            reason: "success",
+            metadata: expect.objectContaining({
+              admissionSkipped: [
+                expect.objectContaining({
+                  issue: 451,
+                  reason: "missing-ready-for-agent",
+                }),
+              ],
+            }),
+          }),
+          sourceEvidence: expect.objectContaining({
+            seam: "family",
+            mechanism: "admission_skip_summary",
+          }),
         }),
         expect.objectContaining({
           id: "family-resume-already-done-child",
@@ -106,7 +121,17 @@ describe("#451 dogfood replay fixture", () => {
           classification: "already_done",
           stopReason: "already_done",
           source: "family",
-          sourceStopSummary: expect.objectContaining({ reason: "success" }),
+          sourceStopSummary: expect.objectContaining({
+            reason: "success",
+            metadata: expect.objectContaining({
+              alreadyDone: [
+                expect.objectContaining({
+                  issue: 451,
+                  status: "merged",
+                }),
+              ],
+            }),
+          }),
         }),
       ]),
     );
@@ -198,11 +223,22 @@ describe("#451 dogfood replay fixture", () => {
       sourceStopSummary: {
         reason: "success",
         metadata: {
+          alreadyDone: [
+            expect.objectContaining({
+              issue: 451,
+              status: "merged",
+            }),
+          ],
           heads: expect.objectContaining({
             actualFamilyHead: "family-done-head",
           }),
         },
       },
+      sourceEvidence: expect.objectContaining({
+        seam: "family",
+        mechanism: "already_done_child_resume",
+        skippedChildIssue: 451,
+      }),
     });
   });
 
@@ -363,6 +399,21 @@ describe("#451 dogfood replay fixture", () => {
         mechanism: "s6_missing_prior_context",
         status: "error",
         closureContext: "missing",
+      }),
+    });
+    expect(rowsById.get("440-coder-trust-boundary")).toMatchObject({
+      source: "runner",
+      classification: "spec_conflict",
+      stopReason: "spec_conflict",
+      sourceStopSummary: expect.objectContaining({
+        reason: "spec_conflict",
+        repairHint: expect.stringContaining("repo-owner"),
+      }),
+      sourceEvidence: expect.objectContaining({
+        seam: "source_auth",
+        rejectedAuthor: "drive-by",
+        trustedAuthor: "Akagilnc",
+        executableInstructionSourceAccepted: false,
       }),
     });
   });

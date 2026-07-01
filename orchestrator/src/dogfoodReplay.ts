@@ -7,6 +7,7 @@ import {
 } from "./family/cmrClassification.js";
 import { runFamily } from "./family/runner.js";
 import { parseCmrOutcome } from "./family/realFamilyBackend.js";
+import { checkExecutableInstructionSource } from "./realBackend.js";
 import {
   runVerifyCmr,
   type VerifyCmrInput,
@@ -950,6 +951,59 @@ async function familyAlreadyDoneStopSummary(): Promise<StopSummary> {
   return result.stopSummary;
 }
 
+async function familyAdmissionSkippedReplay(): Promise<SeamReplay> {
+  const result = await runFamily({
+    epic: {
+      issue: 445,
+      children: [],
+      admissionSkipped: [
+        {
+          issue: 451,
+          reason: "missing-ready-for-agent",
+          message: "child #451 is not ready-for-agent",
+        },
+      ],
+    },
+    familyBackend: new DogfoodFamilyBackend("family-admission-head"),
+    singleSliceBackend: new DogfoodSingleSliceBackend(),
+    familyBase: "family/445-base",
+  });
+  const skipped = result.stopSummary.metadata?.admissionSkipped?.[0];
+  if (
+    result.status !== "success" ||
+    result.stopSummary.reason !== "success" ||
+    skipped?.issue !== 451
+  ) {
+    throw new Error("dogfood family admission replay did not produce admission metadata");
+  }
+  return {
+    stopSummary: result.stopSummary,
+    sourceEvidence: {
+      seam: "family",
+      mechanism: "admission_skip_summary",
+      status: result.status,
+      skippedIssue: skipped.issue,
+      skippedReason: skipped.reason,
+    },
+  };
+}
+
+function runnerTrustBoundaryReplay(): SeamReplay {
+  const decision = checkExecutableInstructionSource({
+    sourceKind: "issue comment",
+    instructionKind: "Agent Brief",
+    trustedAuthor: "Akagilnc",
+    candidateAuthor: "drive-by",
+  });
+  if (decision.accepted || decision.stopSummary === undefined) {
+    throw new Error("dogfood trust-boundary replay accepted non-owner instructions");
+  }
+  return {
+    stopSummary: decision.stopSummary,
+    sourceEvidence: decision.evidence,
+  };
+}
+
 async function withRouteEnv<T>(
   env: ModelRouteEnv,
   run: () => Promise<T>,
@@ -1626,6 +1680,8 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   const finalVerifyModuleNotFoundSource =
     await familyFinalVerifyModuleNotFoundReplay();
   const shipReviewDegradedSource = await familyShipReviewDegradedReplay();
+  const familyAdmissionSkippedSource = await familyAdmissionSkippedReplay();
+  const trustBoundarySource = runnerTrustBoundaryReplay();
   const currentHeadFamilySuccessSummary =
     await familyCurrentHeadSuccessStopSummary();
   const staleFamilyHeadStopSummary = await familyStaleHeadStopSummary();
@@ -2020,16 +2076,10 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 440,
       title: "non-owner issue context is data-only and cannot instruct coder/fixer/ship",
       classification: "spec_conflict",
-      stopSummary: stopReasonForFindingDisposition({
-        kind: "spec_conflict",
-        finding: specConflictFinding,
-        reason: "source authentication failed for executable instructions",
-      }),
+      stopSummary: trustBoundarySource.stopSummary,
       source: "runner",
-      sourceEvidence: {
-        seam: "runner_trust_boundary",
-        executableInstructionSourceAccepted: false,
-      },
+      sourceStopSummary: trustBoundarySource.stopSummary,
+      sourceEvidence: trustBoundarySource.sourceEvidence,
     }),
     replayScenario({
       id: "440-escalation-answer-invalid",
@@ -2092,8 +2142,9 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         reason: "family admission skipped a non-runnable child",
       }),
       source: "family",
+      sourceStopSummary: familyAdmissionSkippedSource.stopSummary,
       sourceEvidence: {
-        seam: "family_admission",
+        ...familyAdmissionSkippedSource.sourceEvidence,
         classification: "owning_issue_still_red",
         owningIssue: "#445",
       },
@@ -2110,6 +2161,11 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       },
       source: "family",
       sourceStopSummary: familyAlreadyDoneSourceSummary,
+      sourceEvidence: {
+        seam: "family",
+        mechanism: "already_done_child_resume",
+        skippedChildIssue: 451,
+      },
     }),
   ];
 

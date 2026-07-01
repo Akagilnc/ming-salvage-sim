@@ -120,6 +120,11 @@ function familyStopSummary(input: {
     readonly reason: string;
     readonly message: string;
   }>;
+  readonly alreadyDone?: ReadonlyArray<{
+    readonly issue: number;
+    readonly status: "merged" | "shipped" | "completed";
+    readonly source: string;
+  }>;
 }): StopSummary {
   const metadata =
     input.headMetadata ??
@@ -128,12 +133,19 @@ function familyStopSummary(input: {
       actualFamilyHead: input.familyHead,
     });
   if (input.status === "success") {
+    const hasMetadata =
+      metadata?.heads !== undefined ||
+      (input.admissionSkipped?.length ?? 0) > 0 ||
+      (input.alreadyDone?.length ?? 0) > 0;
     return successStopSummary(
-      metadata?.heads !== undefined || (input.admissionSkipped?.length ?? 0) > 0
+      hasMetadata
         ? {
             ...(metadata?.heads !== undefined ? { heads: metadata.heads } : {}),
             ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
               ? { admissionSkipped: input.admissionSkipped }
+              : {}),
+            ...(input.alreadyDone !== undefined && input.alreadyDone.length > 0
+              ? { alreadyDone: input.alreadyDone }
               : {}),
           }
         : undefined,
@@ -522,6 +534,13 @@ export async function runFamily(
     });
     const barrierStopSummary =
       status === "verify_failed" ? latestStopSummary(familyLedger) : undefined;
+    const alreadyDone = extra
+      .filter((child) => child.status === "merged")
+      .map((child) => ({
+        issue: child.issue,
+        status: "merged" as const,
+        source: "family ledger merged entry",
+      }));
     return {
       status,
       ...(verifyFailedPhase !== undefined ? { failedPhase: verifyFailedPhase } : {}),
@@ -536,6 +555,7 @@ export async function runFamily(
         barrierStopSummary,
         children,
         admissionSkipped: epic.admissionSkipped,
+        alreadyDone,
       }),
       children,
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0

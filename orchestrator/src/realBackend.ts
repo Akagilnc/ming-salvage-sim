@@ -69,6 +69,10 @@ import { z } from "zod";
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
 import {
+  sourceAuthFailureStopSummary,
+  type StopSummary,
+} from "./stopSummary.js";
+import {
   agentForSlug,
   CODER_CODEX_SLUG,
   modelFamilyForSlug,
@@ -254,6 +258,54 @@ export function extractAgentBrief(json: GhIssueJson, ownerLogin: string): string
     }
   }
   return brief;
+}
+
+export interface ExecutableInstructionSourceCheck {
+  readonly accepted: boolean;
+  readonly stopSummary?: StopSummary;
+  readonly evidence: {
+    readonly seam: "source_auth";
+    readonly sourceKind: string;
+    readonly instructionKind: string;
+    readonly trustedAuthor: string;
+    readonly candidateAuthor: string;
+    readonly rejectedAuthor?: string;
+    readonly executableInstructionSourceAccepted: boolean;
+  };
+}
+
+export function checkExecutableInstructionSource(input: {
+  readonly sourceKind: string;
+  readonly instructionKind: string;
+  readonly trustedAuthor: string;
+  readonly candidateAuthor: string;
+}): ExecutableInstructionSourceCheck {
+  const trusted = input.trustedAuthor.trim();
+  const candidate = input.candidateAuthor.trim();
+  const accepted =
+    trusted.length > 0 && candidate.toLowerCase() === trusted.toLowerCase();
+  return {
+    accepted,
+    ...(accepted
+      ? {}
+      : {
+          stopSummary: sourceAuthFailureStopSummary({
+            instructionKind: input.instructionKind,
+            rejectedAuthor: candidate,
+            trustedAuthor: trusted,
+            sourceKind: input.sourceKind,
+          }),
+        }),
+    evidence: {
+      seam: "source_auth",
+      sourceKind: input.sourceKind,
+      instructionKind: input.instructionKind,
+      trustedAuthor: trusted,
+      candidateAuthor: candidate,
+      ...(!accepted ? { rejectedAuthor: candidate } : {}),
+      executableInstructionSourceAccepted: accepted,
+    },
+  };
 }
 
 /**
