@@ -453,6 +453,9 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
       return this.ledger;
     }
+    async readFamilyHead(): Promise<string> {
+      return "head-1";
+    }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
     }
@@ -485,6 +488,52 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     const aborts = backend.ledger.filter((e) => e.status === "aborted");
     expect(aborts).toHaveLength(1);
     expect(aborts[0]?.phase).toBe("final");
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+  });
+
+  it("an off-contract ship success writes durable aborted(final) with ship/head summary", async () => {
+    const backend = new RecordingFamilyBackend(
+      {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+        },
+      },
+      {
+        kind: "completed",
+        output: { kind: "ship", branch: "feat/330", status: "pushed" },
+      },
+    );
+
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: backend,
+    });
+
+    expect(res).toEqual({ ok: false, ran: true });
+    const aborts = backend.ledger.filter((e) => e.status === "aborted");
+    expect(aborts).toHaveLength(1);
+    expect(aborts[0]?.phase).toBe("final");
+    expect(aborts[0]?.reason).toMatch(/did not open a valid family PR/i);
+    expect(aborts[0]?.familyHeadAfter).toBe("head-1");
+    expect(aborts[0]?.stopSummary?.reason).toBe("infra_failure");
+    expect(aborts[0]?.stopSummary?.repairHint).toMatch(/rerun/i);
+    expect(aborts[0]?.stopSummary?.metadata?.ship).toEqual({
+      latestVerifiedCmrHead: "head-1",
+      currentFamilyHead: "head-1",
+      shipPrState: "branch=feat/330 status=pushed pr=missing",
+    });
+    expect(aborts[0]?.stopSummary?.metadata?.heads).toEqual({
+      actualFamilyHead: "head-1",
+      verifiedCmrHead: "head-1",
+      sources: {
+        actualFamilyHead: "family head after ship contract failure",
+        verifiedCmrHead: "latest cmr_passed ledger row",
+      },
+    });
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
 });

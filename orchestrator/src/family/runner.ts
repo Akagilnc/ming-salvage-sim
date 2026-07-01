@@ -54,26 +54,52 @@ import type {
   ChildSlice,
   FamilyBackend,
   FamilyChildResult,
+  FamilyLedgerEntry,
   FamilyRunInput,
   FamilyRunResult,
   FamilyRunStatus,
 } from "./types.js";
 import type { VerifyCmrPhase } from "./verifyCmr.js";
 
-function familyHeadMetadata(
-  familyHead: string | undefined,
-): StopSummary["metadata"] | undefined {
-  if (familyHead === undefined || familyHead.trim().length === 0) {
+function filled(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function familyHeadMetadata(input: {
+  readonly reportedFamilyHead?: string;
+  readonly actualFamilyHead?: string;
+  readonly actualFamilyHeadSource?: string;
+  readonly verifiedCmrHead?: string;
+}): StopSummary["metadata"] | undefined {
+  const reportedFamilyHead = filled(input.reportedFamilyHead);
+  const actualFamilyHead = filled(input.actualFamilyHead);
+  const verifiedCmrHead = filled(input.verifiedCmrHead);
+  if (
+    reportedFamilyHead === undefined &&
+    actualFamilyHead === undefined &&
+    verifiedCmrHead === undefined
+  ) {
     return undefined;
+  }
+  const sources: Record<string, string> = {};
+  if (reportedFamilyHead !== undefined) {
+    sources.reportedFamilyHead = "FamilyRunResult.familyHead";
+  }
+  if (actualFamilyHead !== undefined) {
+    sources.actualFamilyHead =
+      input.actualFamilyHeadSource ?? "family runner current head";
+  }
+  if (verifiedCmrHead !== undefined) {
+    sources.verifiedCmrHead = "latest cmr_passed ledger row";
   }
   return {
     heads: {
-      reportedFamilyHead: familyHead,
-      actualFamilyHead: familyHead,
-      sources: {
-        reportedFamilyHead: "FamilyRunResult.familyHead",
-        actualFamilyHead: "family runner current head",
-      },
+      ...(reportedFamilyHead !== undefined ? { reportedFamilyHead } : {}),
+      ...(actualFamilyHead !== undefined ? { actualFamilyHead } : {}),
+      ...(verifiedCmrHead !== undefined ? { verifiedCmrHead } : {}),
+      sources,
     },
   };
 }
@@ -82,11 +108,17 @@ function familyStopSummary(input: {
   readonly status: FamilyRunStatus;
   readonly failedPhase?: VerifyCmrPhase;
   readonly familyHead?: string;
+  readonly headMetadata?: StopSummary["metadata"];
   readonly familyBase: string;
   readonly children: ReadonlyArray<FamilyChildResult>;
   readonly escalationReason?: string;
 }): StopSummary {
-  const metadata = familyHeadMetadata(input.familyHead);
+  const metadata =
+    input.headMetadata ??
+    familyHeadMetadata({
+      reportedFamilyHead: input.familyHead,
+      actualFamilyHead: input.familyHead,
+    });
   if (input.status === "success") {
     return successStopSummary(
       metadata?.heads !== undefined ? { heads: metadata.heads } : undefined,
@@ -196,6 +228,23 @@ async function readCurrentFamilyHead(
   } catch {
     return undefined;
   }
+}
+
+function latestVerifiedCmrHead(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+): string | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.status === "cmr_passed" &&
+      entry.event === "cmr_passed" &&
+      entry.phase === "final" &&
+      filled(entry.familyHeadAfter) !== undefined
+    ) {
+      return filled(entry.familyHeadAfter);
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -392,6 +441,16 @@ export async function runFamily(
         : children.every((c) => c.status === "merged")
           ? "success"
           : "incomplete";
+    const actualFamilyHead = await readCurrentFamilyHead(familyBackend, familyBase);
+    const headMetadata = familyHeadMetadata({
+      reportedFamilyHead: familyHead,
+      actualFamilyHead: actualFamilyHead ?? familyHead,
+      actualFamilyHeadSource:
+        actualFamilyHead !== undefined
+          ? "familyBackend.readFamilyHead"
+          : "family runner current head",
+      verifiedCmrHead: latestVerifiedCmrHead(await familyBackend.readFamilyLedger()),
+    });
     return {
       status,
       ...(verifyFailedPhase !== undefined ? { failedPhase: verifyFailedPhase } : {}),
@@ -402,6 +461,7 @@ export async function runFamily(
         failedPhase: verifyFailedPhase,
         familyBase,
         familyHead,
+        headMetadata,
         children,
       }),
       children,
