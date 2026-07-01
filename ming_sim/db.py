@@ -53,6 +53,9 @@ class ProvinceFiscalTickOutcome(NamedTuple):
 
 
 _ARMY_PAY_SOURCE_CUTOVER_KEY = "__army_pay_source_cutover"
+_FISCAL_ENGINE_KEY = "__fiscal_engine"
+_FISCAL_ENGINE_LEGACY = 0
+_FISCAL_ENGINE_SUBSTRATE_HUB = 1
 _CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY = "central_army_pay_arrears"
 
 
@@ -1340,6 +1343,7 @@ class GameDB:
             self._set_meta_flag("__leverage_offsets_float_v2")
             self.conn.commit()
         self.init_fiscal_config()
+        self._migrate_missing_fiscal_engine_from_pay_source_cutover()
 
     def _migrate_legacy_office_pollution(self) -> None:
         """ADR 0009 决定9/L94 一次性数据清洗（幂等，init 时跑）：pre-0009 存档把状态词塞在
@@ -1633,7 +1637,9 @@ class GameDB:
         return self._settle_province_tick_from_fiscal(region_id, fiscal, actions or [])
 
     def settle_ming_province_substrate_ticks(
-        self, actions_by_region: Optional[Dict[str, List[Dict[str, Any]]]] = None
+        self,
+        actions_by_region: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        p_overrides_by_region: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> List[ProvinceFiscalTickOutcome]:
         """一次扫描 Ming 省 fiscal payload 并推进已有 settle 基座。
 
@@ -1645,6 +1651,7 @@ class GameDB:
         from .fiscal_tick import FiscalConservationError
 
         actions_by_region = actions_by_region or {}
+        p_overrides_by_region = p_overrides_by_region or {}
         outcomes: List[ProvinceFiscalTickOutcome] = []
         rows = self.conn.execute(
             "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
@@ -1656,7 +1663,10 @@ class GameDB:
                 if isinstance(fiscal, dict) and "settle" not in fiscal:
                     continue
                 result = self._settle_province_tick_from_fiscal(
-                    region_id, fiscal, actions_by_region.get(region_id, [])
+                    region_id,
+                    fiscal,
+                    actions_by_region.get(region_id, []),
+                    p_overrides_by_region.get(region_id),
                 )
             except (ValueError, FiscalConservationError) as exc:
                 outcomes.append(ProvinceFiscalTickOutcome(region_id, None, exc))
@@ -1665,7 +1675,11 @@ class GameDB:
         return outcomes
 
     def _settle_province_tick_from_fiscal(
-        self, region_id: str, fiscal: object, actions: List[Dict[str, Any]]
+        self,
+        region_id: str,
+        fiscal: object,
+        actions: List[Dict[str, Any]],
+        p_overrides: Optional[Dict[str, Any]] = None,
     ):
         from .fiscal_tick import settle_tick
 
@@ -1678,7 +1692,11 @@ class GameDB:
         pay_rows: List[Dict[str, float | str]] = []
         if self.is_army_pay_source_cutover_enabled():
             pay_rows = self._derive_region_army_pay_due(region_id, settle)
-        result = settle_tick(settle["st"], settle["p"], actions)  # raise→下方不执行（港口锁）
+        tick_p = settle["p"]
+        if p_overrides:
+            tick_p = dict(tick_p)
+            tick_p.update(p_overrides)
+        result = settle_tick(settle["st"], tick_p, actions)  # raise→下方不执行（港口锁）
         if pay_rows:
             self._apply_region_army_pay_tick(pay_rows, result)
         settle["st"] = result.new_st
@@ -2096,6 +2114,28 @@ class GameDB:
         ).fetchone()
         return bool(row and int(row["value"] or 0) == 1)
 
+    def fiscal_engine(self) -> str:
+        row = self.conn.execute(
+            "SELECT value FROM fiscal_config WHERE key = ?",
+            (_FISCAL_ENGINE_KEY,),
+        ).fetchone()
+        value = int(row["value"] or 0) if row is not None else _FISCAL_ENGINE_LEGACY
+        return "substrate_hub" if value == _FISCAL_ENGINE_SUBSTRATE_HUB else "legacy"
+
+    def is_substrate_hub_fiscal_engine_enabled(self) -> bool:
+        return self.fiscal_engine() == "substrate_hub"
+
+    def _migrate_missing_fiscal_engine_from_pay_source_cutover(self) -> None:
+        if self.conn.execute(
+            "SELECT 1 FROM fiscal_config WHERE key = ?",
+            (_FISCAL_ENGINE_KEY,),
+        ).fetchone():
+            return
+        if not self.is_army_pay_source_cutover_enabled():
+            return
+        self._mark_substrate_hub_fiscal_engine_enabled()
+        self.conn.commit()
+
     def _mark_army_pay_source_cutover_enabled(self) -> None:
         self.conn.execute(
             """
@@ -2104,6 +2144,16 @@ class GameDB:
             ON CONFLICT(key) DO UPDATE SET value=excluded.value, kind=excluded.kind, note=excluded.note
             """,
             (_ARMY_PAY_SOURCE_CUTOVER_KEY,),
+        )
+
+    def _mark_substrate_hub_fiscal_engine_enabled(self) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO fiscal_config (key, value, kind, note)
+            VALUES (?, ?, 'meta', 'fiscal_engine=substrate_hub; legacy=0 substrate_hub=1')
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, kind=excluded.kind, note=excluded.note
+            """,
+            (_FISCAL_ENGINE_KEY, _FISCAL_ENGINE_SUBSTRATE_HUB),
         )
 
     def _initialize_army_pay_source_spine(self, is_fresh_armies_seed: bool) -> None:
@@ -2163,6 +2213,7 @@ class GameDB:
                 ),
             )
         self._mark_army_pay_source_cutover_enabled()
+        self._mark_substrate_hub_fiscal_engine_enabled()
         self._reconcile_all_army_pay_source_regions()
         self._reconcile_central_army_pay_arrears_container()
         self.assert_army_pay_source_container_conservation()
