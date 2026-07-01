@@ -567,7 +567,7 @@ export async function runFamily(
       .map((child) => ({
         issue: child.issue,
         status: "merged" as const,
-        source: "family ledger merged entry",
+        source: "family child already_done result",
       }));
     const allChildrenAlreadyDone =
       status === "success" &&

@@ -2001,11 +2001,34 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let resumedEscalationAnswer: EscalationAnswerEvent | undefined;
 
   if (resumeState !== undefined && resumeState.ledger.length > 0) {
-    const plan = planResume(resumeState.ledger, input.repairIntent);
-
     // Reuse the resident worktree (NO re-cut) and fix the sibling stateDir.
     worktree = resumeState.worktree;
     stateDir = resumeState.stateDir;
+    let resumeLedger = resumeState.ledger;
+    if (input.repairIntent !== undefined) {
+      const repairIntentEntry: PersistentLedgerEntry = {
+        step: "S4",
+        event: input.repairIntent.event,
+        intent: input.repairIntent.intent,
+        source: input.repairIntent.source,
+        ts: input.repairIntent.ts,
+        ...(input.repairIntent.findingIdentityKey !== undefined
+          ? { findingIdentityKey: input.repairIntent.findingIdentityKey }
+          : {}),
+        ...(input.repairIntent.findingScope !== undefined
+          ? { findingScope: input.repairIntent.findingScope }
+          : {}),
+        ...(input.repairIntent.reason !== undefined
+          ? { reason: input.repairIntent.reason }
+          : {}),
+        sessionId,
+        prompt_hash: await hashPrompt(undefined, "S4", backend),
+        branchHEAD: await resolveBranchHEAD(),
+      };
+      await backend.writeLedger(repairIntentEntry, stateDir);
+      resumeLedger = [...resumeLedger, repairIntentEntry];
+    }
+    const plan = planResume(resumeLedger);
 
     // Seed the in-memory ledger with prior progress so committed work is
     // preserved and the prior steps are NOT re-run.

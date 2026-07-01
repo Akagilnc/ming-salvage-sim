@@ -33,6 +33,7 @@ export interface StopSummaryMetadata {
   readonly ship?: ShipFailureSummary;
   readonly admissionSkipped?: ReadonlyArray<AdmissionSkippedSummary>;
   readonly alreadyDone?: ReadonlyArray<AlreadyDoneSummary>;
+  readonly trustBoundary?: TrustBoundarySummary;
 }
 
 export interface AcceptedSuppressionSummary {
@@ -91,6 +92,15 @@ export interface AlreadyDoneSummary {
   readonly issue: number;
   readonly status: "merged" | "shipped" | "completed";
   readonly source: string;
+}
+
+export interface TrustBoundarySummary {
+  readonly stage: string;
+  readonly failureClass: "source_auth_failure";
+  readonly instructionKind: string;
+  readonly rejectedAuthor: string;
+  readonly trustedAuthor: string;
+  readonly sourceKind: string;
 }
 
 export type FindingDispositionStopInput =
@@ -214,6 +224,16 @@ export function sourceAuthFailureStopSummary(input: {
     summary: `${input.sourceKind} by ${input.rejectedAuthor} is not an authenticated executable ${input.instructionKind} source`,
     repairHint:
       "move executable instructions into a repo-owner-authored Agent Brief, accepted issue body, ADR, or runner Agent Brief, then rerun",
+    metadata: {
+      trustBoundary: {
+        stage: "S1",
+        failureClass: "source_auth_failure",
+        instructionKind: input.instructionKind,
+        rejectedAuthor: input.rejectedAuthor,
+        trustedAuthor: input.trustedAuthor,
+        sourceKind: input.sourceKind,
+      },
+    },
   };
 }
 
