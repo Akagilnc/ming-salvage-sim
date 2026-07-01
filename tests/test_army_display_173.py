@@ -120,7 +120,7 @@ def test_army_payload_preserves_fractional_arrears_for_web_rendering(game):
 
 
 def test_army_arrears_p4_prompt_contract_is_documented():
-    """#305/D10：LLM 层须知道欠饷可 approximate 报钱，抽象 stat 仍不向皇帝报裸数。"""
+    """#305/D10：LLM 层须知道欠饷可 approximate 报钱，抽象 stat 用定性口径呈报。"""
     surfaces = {
         "game_world": ROOT / "content/prompts/game_world.md",
         "minister_agent": ROOT / "content/prompts/minister_agent.md",
@@ -130,7 +130,7 @@ def test_army_arrears_p4_prompt_contract_is_documented():
         text = path.read_text(encoding="utf-8")
         assert "军饷欠是真钱" in text, name
         assert "approximate" in text, name
-        assert "不拆省/中央分账" in text, name
+        assert "全军总欠饷大势" in text, name
         assert "忠诚/能力" in text, name
 
 

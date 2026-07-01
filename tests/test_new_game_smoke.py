@@ -30,6 +30,7 @@ def _shaanxi_source_arrears(db):
         FROM armies
         WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
           AND pay_source_region = 'shaanxi'
+          AND province_pay_share > 0
         """
     ).fetchone()["total"] or 0)
 

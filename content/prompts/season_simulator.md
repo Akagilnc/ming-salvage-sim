@@ -21,7 +21,7 @@ input 含本{{TURN_UNIT}}全量盘面，不另查。**盘面表（buildings/cour
 - `secret_orders`：密旨/待裁承诺分组对象，两组——`在办`（承办中）、`待核议`（本{{TURN_UNIT}}待裁决）。`待核议` 中 `entry_kind:"due_commitment"` 的条目不是密旨结案，而是到期待裁的一次性承诺。`relevant_memories`：过往事件/承诺/情报，用于连续性与避错。
 - `historical_anchor` / `victory_status` / `deaths_this_turn` / `debuts_this_turn`：历史锚点、终局状态、讣闻、史实登场。
 
-**P4 呈现口径**：奏章写给皇帝，忠诚/能力这类抽象 stat 不写裸数。军饷欠是真钱，可用 approximate 奏报总额（如「欠饷已逾二十万两」）并配军心定性；玩家只见总欠饷，不拆省/中央分账。
+**P4 呈现口径**：奏章写给皇帝，忠诚/能力这类抽象 stat 以定性描述回奏（如「渐失圣心」「众望所归」）。军饷欠是真钱，用 approximate 总额（如「欠饷已逾二十万两」）配军心定性回奏，聚焦全军总欠饷大势。
 
 ## 落笔流程：逐章判案，每判一步即落对应章节
 

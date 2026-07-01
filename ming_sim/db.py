@@ -2161,15 +2161,39 @@ class GameDB:
         if not is_fresh_armies_seed:
             return
         rows = self.conn.execute(
-            "SELECT id, owner_power, arrears FROM armies ORDER BY id"
+            """
+            SELECT id, owner_power, arrears, pay_source_region,
+                   province_pay_share, central_pay_share, is_tusi, self_funded_pay
+            FROM armies
+            ORDER BY id
+            """
         ).fetchall()
         for row in rows:
             army_id = str(row["id"])
             owner = str(row["owner_power"] or "")
-            source, province_share, central_share, is_tusi = _ARMY_PAY_SOURCE_SEED.get(
-                army_id, ("", 0.0, 0.0, False)
+            content_source = str(row["pay_source_region"] or "")
+            content_province_share = float(row["province_pay_share"] or 0)
+            content_central_share = float(row["central_pay_share"] or 0)
+            content_is_tusi = bool(row["is_tusi"])
+            content_self_funded = bool(row["self_funded_pay"])
+            has_content_pay_source = bool(
+                content_source
+                or content_province_share
+                or content_central_share
+                or content_is_tusi
+                or content_self_funded
             )
-            self_funded = bool(is_tusi)
+            if has_content_pay_source:
+                source = content_source
+                province_share = content_province_share
+                central_share = content_central_share
+                is_tusi = content_is_tusi
+                self_funded = content_self_funded
+            else:
+                source, province_share, central_share, is_tusi = _ARMY_PAY_SOURCE_SEED.get(
+                    army_id, ("", 0.0, 0.0, False)
+                )
+                self_funded = bool(is_tusi)
             old_arrears = float(row["arrears"] or 0)
             if owner != "ming" or self_funded:
                 if self_funded and old_arrears > 0:
