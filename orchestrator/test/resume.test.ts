@@ -110,6 +110,7 @@ function escalationAnswer(
     event: "escalation_answered",
     forStep,
     answer,
+    source: "human",
     ...(note !== undefined ? { note } : {}),
   };
 }
@@ -608,6 +609,7 @@ describe("#439 decision-escalate answer channel", () => {
       event: "escalation_answered",
       forStep: "S2",
       answer: "continue-with-x-required",
+      source: "human",
     });
   });
 
@@ -1002,6 +1004,7 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
       forStep: "S7",
       answer: "retry-ship-after-human-fix",
       note: "Human resolved the delivery blocker; retry ship.",
+      source: "human",
     });
   });
 

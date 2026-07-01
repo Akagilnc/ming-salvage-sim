@@ -287,13 +287,16 @@ function isValidStepId(value: unknown): value is StepId {
 function isEscalationAnswerEntry(
   entry: LedgerEntry,
 ): entry is LedgerEntry & EscalationAnswerEvent {
+  const raw = entry as unknown as Record<string, unknown>;
   return (
     entry.event === "escalation_answered" &&
+    entry.output === undefined &&
+    raw.verdict === undefined &&
     isValidStepId(entry.forStep) &&
     typeof entry.answer === "string" &&
     entry.answer.trim().length > 0 &&
     (entry.note === undefined || typeof entry.note === "string") &&
-    (entry.source === undefined || isBookkeepingSource(entry.source)) &&
+    isBookkeepingSource(entry.source) &&
     (entry.findingIdentityKey === undefined ||
       typeof entry.findingIdentityKey === "string") &&
     (entry.findingScope === undefined ||
@@ -365,9 +368,8 @@ function isBookkeepingSource(
 function isExecutableEscalationAnswerSource(
   value: unknown,
 ): value is
-  | undefined
   | Extract<ContinueFixingEvent["source"], "human" | "resume_input"> {
-  return value === undefined || value === "human" || value === "resume_input";
+  return value === "human" || value === "resume_input";
 }
 
 function isStringArray(value: unknown): value is ReadonlyArray<string> {
@@ -465,8 +467,11 @@ function findingMatchesBroadScope(
 function isContinueFixingEntry(
   entry: LedgerEntry,
 ): entry is LedgerEntry & ContinueFixingEvent {
+  const raw = entry as unknown as Record<string, unknown>;
   return (
     entry.event === "runner_bookkeeping" &&
+    entry.output === undefined &&
+    raw.verdict === undefined &&
     entry.intent === "continue_fixing" &&
     isBookkeepingSource(entry.source) &&
     typeof entry.ts === "string" &&
@@ -554,12 +559,11 @@ function continueRepairFromAnswer(
   }
   const source = answer.source;
   if (!isExecutableEscalationAnswerSource(source)) return undefined;
-  const repairSource = source ?? "human";
   const matchingIdentityKeys = matchingContinueFixingKeys(
     {
       event: "runner_bookkeeping",
       intent: "continue_fixing",
-      source: repairSource,
+      source,
       ts: "answer-scope-only",
       ...(answer.findingIdentityKey !== undefined
         ? { findingIdentityKey: answer.findingIdentityKey }
@@ -1246,7 +1250,9 @@ function successSummaryForCurrentState(input: {
 }
 
 function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
-  const repairHint = `inspect ${errorPackage.failedStep} and rerun after repairing the cause`;
+  const repairHint = /MODULE_NOT_FOUND|Cannot find module/i.test(errorPackage.reason)
+    ? `install or restore the missing module for ${errorPackage.failedStep}, then rerun`
+    : `inspect ${errorPackage.failedStep} and rerun after repairing the cause`;
   if (
     /contract|malformed|does not match|no valid result|off-contract|prior claimed-fixed finding|prior finding disposition/i.test(
       errorPackage.reason,
@@ -1272,6 +1278,14 @@ function stopSummaryForEscalation(escalation: Escalation): StopSummary {
   };
 }
 
+function stopSummaryForStartupRouteFailure(escalation: Escalation): StopSummary {
+  const reason = `${escalation.reason}: ${escalation.diagnosis}`;
+  return infraFailureStopSummary({
+    summary: reason,
+    repairHint: "fix the active model route or route env overrides before dispatching workers",
+  });
+}
+
 function latestLedgerStopSummary(
   ledger: ReadonlyArray<LedgerEntry>,
 ): StopSummary | undefined {
@@ -1295,13 +1309,30 @@ function isReviewerStructuredOutputError(err: unknown): boolean {
 
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
-  const modelRoute = resolveActiveModelRoute();
+  let modelRoute: ResolvedModelRoute;
+  try {
+    modelRoute = resolveActiveModelRoute();
+  } catch (err) {
+    const reason =
+      err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
+    const stopSummary = contractDriftStopSummary({
+      summary: reason,
+      repairHint: "repair the model route environment before dispatching workers",
+    });
+    return {
+      status: "error",
+      errorPackage: { failedStep: "S0", reason },
+      stepLedger: [{ step: "S8", stopSummary }],
+      stopSummary,
+      deferredFindings: [],
+    };
+  }
   const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
     interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
     warn: (message) => console.warn(`[orchestrator] ${message}`),
   });
   if (routePolicy.kind === "stop") {
-    const stopSummary = stopSummaryForEscalation(routePolicy.escalation);
+    const stopSummary = stopSummaryForStartupRouteFailure(routePolicy.escalation);
     return {
       status: "escalate",
       errorPackage: {
@@ -2199,7 +2230,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // contract, types.ts:"promptFile CONTENT is hashed into the ledger") — NOT
           // the degraded step-name hash (`name:<sha("S7")>`) the missing assignment
           // produced. The escalateTermination path below ALSO uses it (resume truth).
-          const shipSpec = shipWorkerSpec();
+          const shipSpec = shipWorkerSpec(routePolicy.route);
           promptFile = shipSpec.promptFile;
           const escalationAnswerForStep =
             resumedEscalationAnswer?.forStep === "S7"

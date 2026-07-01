@@ -121,6 +121,7 @@ export interface FamilyEscalatedRecord {
 /** A PHASE-LEVEL append-only answer to a prior family decision escalation (#439). */
 export interface FamilyEscalationAnswerRecord {
   readonly answer: string;
+  readonly source: "human" | "resume_input";
   readonly note?: string;
 }
 
@@ -291,6 +292,7 @@ export async function recordFamilyEscalationAnswered(
       event: "escalation_answered",
       phase: "final",
       answer,
+      source: record.source,
       note: record.note,
     }) as FamilyLedgerEntry,
   );
@@ -303,6 +305,7 @@ function isValidFamilyAnswer(entry: FamilyLedgerEntry): boolean {
     entry.phase === "final" &&
     typeof entry.answer === "string" &&
     entry.answer.trim().length > 0 &&
+    (entry.source === "human" || entry.source === "resume_input") &&
     (entry.note === undefined || typeof entry.note === "string")
   );
 }
@@ -325,6 +328,7 @@ function familyAnswerPayload(entry: FamilyLedgerEntry): EscalationAnswerPayload 
   return {
     event: "escalation_answered",
     answer: entry.answer!,
+    source: entry.source as "human" | "resume_input",
     ...(entry.note !== undefined ? { note: entry.note } : {}),
   };
 }

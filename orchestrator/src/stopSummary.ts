@@ -28,6 +28,7 @@ export interface StopSummaryMetadata {
   readonly providerDegraded?: ReadonlyArray<ProviderDegradationSummary>;
   readonly heads?: HeadFreshnessSummary;
   readonly ship?: ShipFailureSummary;
+  readonly admissionSkipped?: ReadonlyArray<AdmissionSkippedSummary>;
 }
 
 export interface AcceptedSuppressionSummary {
@@ -58,6 +59,12 @@ export interface ShipFailureSummary {
   readonly currentFamilyHead?: string;
   readonly reportedFamilyHead?: string;
   readonly shipPrState?: string;
+}
+
+export interface AdmissionSkippedSummary {
+  readonly issue: number;
+  readonly reason: string;
+  readonly message: string;
 }
 
 export type FindingDispositionStopInput =
@@ -136,6 +143,7 @@ export function successStopSummary(input?: {
   readonly acceptedSuppressions?: ReadonlyArray<AcceptedSuppressionSummary>;
   readonly providerDegraded?: ReadonlyArray<ProviderDegradationSummary>;
   readonly heads?: HeadFreshnessSummary;
+  readonly admissionSkipped?: ReadonlyArray<AdmissionSkippedSummary>;
 }): StopSummary {
   return {
     reason: "success",
@@ -150,6 +158,9 @@ export function successStopSummary(input?: {
               ? { providerDegraded: input.providerDegraded }
               : {}),
             ...(input.heads !== undefined ? { heads: input.heads } : {}),
+            ...(input.admissionSkipped !== undefined
+              ? { admissionSkipped: input.admissionSkipped }
+              : {}),
           },
         }
       : {}),
@@ -239,11 +250,21 @@ export function infraFailureStopSummary(input: {
 export function contractDriftStopSummary(input: {
   readonly summary: string;
   readonly repairHint: string;
+  readonly ship?: ShipFailureSummary;
+  readonly heads?: HeadFreshnessSummary;
 }): StopSummary {
   return {
     reason: "contract_drift",
     summary: input.summary,
     repairHint: input.repairHint,
+    ...(input.ship !== undefined || input.heads !== undefined
+      ? {
+          metadata: {
+            ...(input.ship !== undefined ? { ship: input.ship } : {}),
+            ...(input.heads !== undefined ? { heads: input.heads } : {}),
+          },
+        }
+      : {}),
   };
 }
 

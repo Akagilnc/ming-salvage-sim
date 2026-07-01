@@ -49,6 +49,7 @@ import type { Backend } from "./types.js";
 import type {
   ChildSlice,
   FamilyBackend,
+  FamilyAdmissionSkippedChild,
   FamilyEpic,
   FamilyRunInput,
   FamilyRunResult,
@@ -199,6 +200,7 @@ export function buildFamilyEpic(
     readonly family?: SourcedModuleDeclaration;
     readonly children?: ReadonlyMap<number, SourcedModuleDeclaration>;
   } = {},
+  admissionSkipped: ReadonlyArray<FamilyAdmissionSkippedChild> = [],
 ): FamilyEpic {
   const children: ChildSlice[] = childNumbers.map((issue) => ({
     issue,
@@ -213,6 +215,7 @@ export function buildFamilyEpic(
     ...(moduleDeclarations.family !== undefined
       ? { moduleDeclaration: moduleDeclarations.family }
       : {}),
+    ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
   };
 }
 
@@ -388,7 +391,8 @@ const defaultSh: Sh = (file, args) =>
  * before the single-slice S0 gate would abort the whole family run.
  */
 export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyEpic {
-  const childNumbers = readChildNumbers(epicIssue, repo, sh);
+  const admission = readSubIssueAdmission(epicIssue, repo, sh);
+  const childNumbers = [...admission.admitted];
   const blockedByByChild = new Map<number, GhBlockedBy[]>();
   for (const child of childNumbers) {
     const depRaw = sh("gh", [
@@ -407,7 +411,13 @@ export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyE
   // is still open — runs on the initial admission AND on every resume refetch, so a
   // re-opened external blocker re-rejects on re-entry.
   assertExternalBlockersCleared(childNumbers, blockedByByChild);
-  return buildFamilyEpic(epicIssue, childNumbers, blockedByByChild, moduleDeclarations);
+  return buildFamilyEpic(
+    epicIssue,
+    childNumbers,
+    blockedByByChild,
+    moduleDeclarations,
+    admissionSkippedChildren(admission),
+  );
 }
 
 function readIssueBody(issue: number, repo: string, sh: Sh): string {
@@ -461,7 +471,7 @@ function readFamilyModuleDeclarations(
  * over `[]` is vacuously true) → a final verify/cmr on a base with no slices → an
  * empty PR. Reject it at admission with a concrete message.
  */
-function readChildNumbers(epicIssue: number, repo: string, sh: Sh): number[] {
+function readSubIssueAdmission(epicIssue: number, repo: string, sh: Sh): SubIssueAdmission {
   const allSubIssueNodes: unknown[] = [];
   for (let page = 1; ; page += 1) {
     const subRaw = sh("gh", [
@@ -483,7 +493,21 @@ function readChildNumbers(epicIssue: number, repo: string, sh: Sh): number[] {
         `(not an epic, native sub-issues are empty, or all children were skipped) — nothing to orchestrate`,
     );
   }
-  return childNumbers;
+  return admission;
+}
+
+function readChildNumbers(epicIssue: number, repo: string, sh: Sh): number[] {
+  return [...readSubIssueAdmission(epicIssue, repo, sh).admitted];
+}
+
+function admissionSkippedChildren(
+  admission: SubIssueAdmission,
+): ReadonlyArray<FamilyAdmissionSkippedChild> {
+  return admission.skipped.map((child) => ({
+    issue: child.issue,
+    reason: child.reason,
+    message: child.message,
+  }));
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -1195,7 +1195,7 @@ function routeEnvMismatchReplay(): SeamReplay {
   } catch (err) {
     failure = err instanceof Error ? err.message : String(err);
   }
-  if (!failure.includes("unknown cmr review leg slug")) {
+  if (!failure.includes("must be comma-separated CMR leg slugs")) {
     throw new Error("dogfood route env mismatch replay did not fail closed");
   }
   return {

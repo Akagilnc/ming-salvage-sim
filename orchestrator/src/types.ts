@@ -212,10 +212,21 @@ export interface FindingDisposition {
 export interface PriorFindingDisposition {
   /** Stable key produced by `findingIdentityKey` for the prior claimed-fixed finding. */
   readonly identityKey: string;
-  /** ADR0030's explicit closure buckets; absence is never closure. */
-  readonly status: "still-active" | "verified-closed" | "unable-to-assess";
+  /**
+   * ADR0030's explicit closure buckets; absence is never closure.
+   * `accepted_suppressed` is terminal only when the reviewer supplies the
+   * source/scope/bounded reopen fields below.
+   */
+  readonly status:
+    | "still-active"
+    | "verified-closed"
+    | "unable-to-assess"
+    | "accepted_suppressed";
   /** Optional reviewer rationale for audit/debugging. */
   readonly reason?: string;
+  readonly source?: string;
+  readonly scope?: string;
+  readonly boundedReopen?: string;
 }
 
 /** Output of a coder step (S2/S5). 0 commits ⇒ committed:false (not a miss). */

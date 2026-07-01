@@ -187,6 +187,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
         event: "escalation_answered",
         phase: "final",
         answer: "continue-same-class",
+        source: "human",
       },
     );
 

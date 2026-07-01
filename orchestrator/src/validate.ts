@@ -43,6 +43,7 @@ const PRIOR_FINDING_DISPOSITIONS: ReadonlySet<string> = new Set([
   "still-active",
   "verified-closed",
   "unable-to-assess",
+  "accepted_suppressed",
 ]);
 
 /** Required string fields on a Finding (PRD #244 contract). */
@@ -243,6 +244,13 @@ export function isValidPriorFindingDisposition(
     return false;
   }
   if (obj.reason !== undefined && !isString(obj.reason)) return false;
+  if (obj.status === "accepted_suppressed") {
+    return (
+      isFilledString(obj.source) &&
+      isFilledString(obj.scope) &&
+      isFilledString(obj.boundedReopen)
+    );
+  }
   return true;
 }
 
