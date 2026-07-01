@@ -2334,6 +2334,28 @@ class GameDB:
                     str(province_source["id"]),
                     str(province_source["pay_source_region"] or ""),
                 )
+        derived_bad = self.conn.execute(
+            """
+            SELECT id, arrears, province_pay_arrears, central_pay_arrears
+            FROM armies
+            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+              AND ABS(
+                COALESCE(arrears, 0)
+                - (COALESCE(province_pay_arrears, 0) + COALESCE(central_pay_arrears, 0))
+              ) > 1e-6
+            ORDER BY id
+            LIMIT 1
+            """
+        ).fetchone()
+        if derived_bad is not None:
+            expected = float(derived_bad["province_pay_arrears"] or 0.0) + float(
+                derived_bad["central_pay_arrears"] or 0.0
+            )
+            raise ValueError(
+                "军饷欠派生合计破："
+                f"army={derived_bad['id']} arrears={derived_bad['arrears']} "
+                f"province+central={expected}"
+            )
         central_container = self.get_central_army_pay_arrears_container()
         row = self.conn.execute(
             """

@@ -114,6 +114,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   - quantity：`manpower`
   - text：`station` `commander` `controller` `troop_type` `status` `owner_power`
 - 中文别名都吃
+- `army_delta.arrears` / `欠饷` 只允许既有军**正值外生加欠**（如剧情罚欠、战役拖欠），cutover 下引擎按饷源比例拆入省/中央累加器；`欠饷` 负值拒收。真钱补饷、减欠、核销必须走 `economy_moves`（`purpose=补饷`）或显式核销路径，不能用负数 `arrears` 绕过预算流。新军初始欠饷固定为 0，`new_armies` 不写 `欠饷`。
 - ⚠️ `maintenance_per_turn`（维护费）#173 **列已物理删除**：别名（维护费/军费）已移除，写它当非法字段逐项拒收留痕（`invalid_enum`）。月饷由引擎 `army_needed`（=`ceil(manpower × salary_rate / 10000)`，仅 ming）唯一承载；调月饷改 `manpower`。
 
 ### `new_armies` — 建军

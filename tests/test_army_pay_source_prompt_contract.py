@@ -36,6 +36,31 @@ def test_ming_new_army_pay_source_contract_is_documented_across_extractor_surfac
         assert "中央份额" in surface, surface_name
 
 
+def test_army_delta_arrears_contract_is_documented_across_extractor_surfaces():
+    """既有军只允许正值外生加欠；补饷/核销不能靠 army_delta 负值绕真钱流。"""
+    shared = (ROOT / "content/prompts/score_extractor_shared.md").read_text(encoding="utf-8")
+    military = (ROOT / "content/prompts/score_extractor_military_external.md").read_text(
+        encoding="utf-8"
+    )
+    delta_schema = (ROOT / "docs/DELTA_SCHEMA.md").read_text(encoding="utf-8")
+    submit_doc = inspect.getsource(tools_mod.build_extractor_tools)
+
+    for surface_name, surface in {
+        "shared extractor contract": shared,
+        "military extractor prompt": military,
+        "delta schema": delta_schema,
+        "submit_extraction tool docs": submit_doc,
+    }.items():
+        assert "army_delta.arrears" in surface, surface_name
+        assert "正值" in surface, surface_name
+        assert "外生" in surface, surface_name
+        assert "负值" in surface, surface_name
+        assert "economy_moves" in surface, surface_name
+        assert "补饷" in surface, surface_name
+        assert "按饷源比例" in surface, surface_name
+        assert "新军" in surface, surface_name
+
+
 def test_prompt_compatible_ming_new_army_pay_source_aliases_land(game):
     """Chinese prompt aliases for new_armies pay source fields must reach the DB."""
     db, state, content = game
