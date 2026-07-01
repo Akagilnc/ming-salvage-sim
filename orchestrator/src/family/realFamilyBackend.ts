@@ -2121,6 +2121,29 @@ const cmrEscalateSchema = z
   .object({ escalate: z.object({ reason: nonEmpty, diagnosis: nonEmpty }).strict() })
   .strict();
 
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<string, unknown> {
+  const dispositions = parsed.priorFindingDispositions;
+  if (!Array.isArray(dispositions)) return parsed;
+  return {
+    ...parsed,
+    priorFindingDispositions: dispositions.map((rawDisposition) => {
+      if (
+        !isJsonRecord(rawDisposition) ||
+        rawDisposition.status !== undefined ||
+        typeof rawDisposition.disposition !== "string"
+      ) {
+        return rawDisposition;
+      }
+      const { disposition, ...withoutAlias } = rawDisposition;
+      return { ...withoutAlias, status: disposition };
+    }),
+  };
+}
+
 /**
  * Parse the cmr worker's `<cmr>{…}</cmr>` outcome from its stdout (#335). Pure so
  * it is unit-tested without a container.
@@ -2148,11 +2171,12 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
   // `JSON.parse` succeeds on bare literals (`null` / `true` / `5`); the strict
   // schemas reject every non-object, but guard explicitly so the malformed
   // message stays specific (mirrors parseShipOutcome / parseMergerOutcome).
-  if (parsed === null || typeof parsed !== "object") {
+  if (!isJsonRecord(parsed)) {
     return { kind: "malformed", reason: "cmr worker <cmr> tag was not a JSON object" };
   }
+  const normalizedParsed = normalizeKnownCmrAliases(parsed);
   // Escalate FIRST — a model-stuck worker never carries a usable verdict.
-  const escalate = cmrEscalateSchema.safeParse(parsed);
+  const escalate = cmrEscalateSchema.safeParse(normalizedParsed);
   if (escalate.success) {
     return {
       kind: "escalate",
@@ -2160,8 +2184,8 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
       diagnosis: escalate.data.escalate.diagnosis,
     };
   }
-  if (cmrConvergedSchema.safeParse(parsed).success) {
-    const converged = cmrConvergedSchema.parse(parsed);
+  if (cmrConvergedSchema.safeParse(normalizedParsed).success) {
+    const converged = cmrConvergedSchema.parse(normalizedParsed);
     const legAccountingFailure = cmrLegAccountingFailure(converged);
     if (legAccountingFailure !== undefined) {
       return { kind: "malformed", reason: legAccountingFailure };
@@ -2176,7 +2200,7 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
       priorFindingDispositions: converged.priorFindingDispositions,
     };
   }
-  const red = cmrRedSchema.safeParse(parsed);
+  const red = cmrRedSchema.safeParse(normalizedParsed);
   if (red.success) {
     const legAccountingFailure = cmrLegAccountingFailure(red.data);
     if (legAccountingFailure !== undefined) {
