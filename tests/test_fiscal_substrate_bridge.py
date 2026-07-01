@@ -293,6 +293,8 @@ def test_self_funded_seed_arrears_log_preserves_fractional_delta(tmp_path):
             SELECT old_value, new_value, delta
             FROM army_logs
             WHERE army_id = 'southwest_tusi' AND field = 'arrears'
+            ORDER BY id DESC
+            LIMIT 1
             """
         ).fetchone()
         assert log is not None
@@ -1312,6 +1314,7 @@ def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game,
     assert army["central_pay_arrears"] == pytest.approx(0)
     assert army["arrears"] == pytest.approx(0)
     assert after_balance == before_balance
+    assert state.metrics["国库"] == before_balance
 
 
 def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):

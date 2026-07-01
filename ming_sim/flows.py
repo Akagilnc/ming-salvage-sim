@@ -528,7 +528,7 @@ def _auto_pay_arrears_by_priority(
         return 0
     pay_source_cutover = db.is_army_pay_source_cutover_enabled()
     allowed_ids = (
-        {str(army_id) for army_id in allowed_army_ids if str(army_id).strip()}
+        {str(army_id).strip() for army_id in allowed_army_ids if str(army_id).strip()}
         if allowed_army_ids is not None
         else None
     )
@@ -825,8 +825,14 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     """月度财政 tick：固定收支（compute_budget_lines 定额）+ 军饷逐军 + 建筑逐项落账，LLM 推演前完成。"""
     if not getattr(db.conn, "_commit_suspended", False):
         from ming_sim.applier import atomic
-        with atomic(db):
-            return apply_fixed_period_flows(db, state)
+        metrics_before = dict(state.metrics)
+        try:
+            with atomic(db):
+                return apply_fixed_period_flows(db, state)
+        except BaseException:
+            state.metrics.clear()
+            state.metrics.update(metrics_before)
+            raise
 
     flows: List[Dict[str, object]] = []
 
