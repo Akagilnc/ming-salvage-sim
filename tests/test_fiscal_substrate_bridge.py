@@ -733,6 +733,16 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
     assert hub_row["needed"] == pytest.approx(20)
     assert hub_row["k"] == pytest.approx(0.5)
     assert hub_row["paid"] == pytest.approx(10)
+    assert state.metrics["国库"] == pytest.approx(0)
+    ledger = db.conn.execute(
+        """
+        SELECT COALESCE(SUM(delta), 0) AS delta
+        FROM economy_ledger
+        WHERE account = '国库' AND category = '边饷hub'
+        """
+    ).fetchone()
+    assert ledger["delta"] == pytest.approx(-15)
+    assert _read_settle(db, "shaanxi")["p"]["拨付gross"] == pytest.approx(5)
     assert rows["guanning"]["central_pay_arrears"] == pytest.approx(5)
     assert rows["shaanxi_army"]["central_pay_arrears"] == pytest.approx(5)
     assert rows["guanning"]["arrears"] == pytest.approx(5)
