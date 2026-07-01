@@ -906,6 +906,50 @@ def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
     assert legacy_pay == legacy_expected
 
 
+def test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub(fresh_db):
+    import ming_sim.flows as flows_mod
+
+    path = fresh_db.path
+    content = fresh_db.content
+    fresh_db.conn.execute(
+        "DELETE FROM fiscal_config WHERE key = '__fiscal_engine'"
+    )
+    fresh_db.conn.execute(
+        """
+        INSERT INTO fiscal_config (key, value, kind, note)
+        VALUES ('__army_pay_source_cutover', 1, 'meta', 'pre-S6 cutover save')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
+        """
+    )
+    fresh_db.conn.commit()
+
+    reopened = GameDB(path, content)
+    try:
+        state = reopened.load_state()
+        assert reopened.fiscal_engine() == "substrate_hub"
+        row = reopened.conn.execute(
+            "SELECT value FROM fiscal_config WHERE key = '__fiscal_engine'"
+        ).fetchone()
+        assert row is not None
+        assert int(row["value"]) == 1
+
+        budget = flows_mod.compute_budget_lines(reopened, state)
+        army_pay = next(
+            row["amount"] for row in budget["国库"]["expense"]
+            if row["name"] == "各军军饷"
+        )
+        assert army_pay == 0
+
+        flow_rows = flows_mod.apply_fixed_period_flows(reopened, state)
+        assert not any(
+            row.get("account") == "国库" and row.get("category") == "各军军饷"
+            for row in flow_rows
+        )
+        assert any(row.get("category") == "中央军饷" for row in flow_rows)
+    finally:
+        reopened.conn.close()
+
+
 def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
     _write_settle(
         fresh_db,

@@ -1343,6 +1343,7 @@ class GameDB:
             self._set_meta_flag("__leverage_offsets_float_v2")
             self.conn.commit()
         self.init_fiscal_config()
+        self._migrate_missing_fiscal_engine_from_pay_source_cutover()
 
     def _migrate_legacy_office_pollution(self) -> None:
         """ADR 0009 决定9/L94 一次性数据清洗（幂等，init 时跑）：pre-0009 存档把状态词塞在
@@ -2123,6 +2124,17 @@ class GameDB:
 
     def is_substrate_hub_fiscal_engine_enabled(self) -> bool:
         return self.fiscal_engine() == "substrate_hub"
+
+    def _migrate_missing_fiscal_engine_from_pay_source_cutover(self) -> None:
+        if self.conn.execute(
+            "SELECT 1 FROM fiscal_config WHERE key = ?",
+            (_FISCAL_ENGINE_KEY,),
+        ).fetchone():
+            return
+        if not self.is_army_pay_source_cutover_enabled():
+            return
+        self._mark_substrate_hub_fiscal_engine_enabled()
+        self.conn.commit()
 
     def _mark_army_pay_source_cutover_enabled(self) -> None:
         self.conn.execute(
