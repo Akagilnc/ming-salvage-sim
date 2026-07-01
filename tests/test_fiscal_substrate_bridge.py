@@ -860,6 +860,40 @@ def test_army_delta_owner_power_to_ming_requires_same_delta_pay_source(fresh_db)
     )
 
 
+def test_army_delta_rejects_unknown_owner_power_without_clearing_arrears(fresh_db):
+    state = fresh_db.load_state()
+    event = SimpleNamespace(id="test", title="幻觉易主")
+    before = fresh_db.conn.execute(
+        """
+        SELECT owner_power, pay_source_region, province_pay_share, central_pay_share,
+               province_pay_arrears, central_pay_arrears, arrears
+        FROM armies
+        WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+
+    rejected = fresh_db.apply_army_deltas(
+        state,
+        event,
+        None,
+        "测试",
+        {"shaanxi_army": {"owner_power": "__missing_power__"}},
+        commit=False,
+    )
+
+    after = fresh_db.conn.execute(
+        """
+        SELECT owner_power, pay_source_region, province_pay_share, central_pay_share,
+               province_pay_arrears, central_pay_arrears, arrears
+        FROM armies
+        WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    assert rejected and rejected[0]["rejected"] is True
+    assert rejected[0]["category"] == "hallucinated_id"
+    assert dict(after) == dict(before)
+
+
 def test_army_delta_rejects_pay_source_without_ming_settle_substrate(fresh_db):
     state = fresh_db.load_state()
     event = SimpleNamespace(id="test", title="移饷源")
