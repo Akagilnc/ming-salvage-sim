@@ -445,6 +445,9 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
         finding: blocker,
       }),
     }));
+    const aborted = backend.ledger.find((entry) => entry.status === "aborted");
+    expect(aborted?.reason).toContain("spec_conflict");
+    expect(aborted?.reason).not.toContain("accepted_suppressed");
   });
 
   it("fails closed when prior accepted_suppressed closure lacks a trusted suppression source", async () => {

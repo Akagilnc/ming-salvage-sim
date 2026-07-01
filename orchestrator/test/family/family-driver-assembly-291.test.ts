@@ -333,6 +333,7 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
     });
   });
   it("ignores Module Declaration issue bodies that are not authored by the repo owner", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const sh: Sh = (file, args) => {
       expect(file).toBe("gh");
       if (args[0] === "issue" && args[1] === "view") {
@@ -350,15 +351,22 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
       return "[]";
     };
 
-    const epic = readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
+    try {
+      const epic = readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
 
-    expect(epic.moduleDeclaration).toEqual({
-      module: "parent-fiscal",
-      moduleScope: ["docs/fiscal"],
-      source: "family_issue",
-      issue: 291,
-    });
-    expect(epic.children[0]?.moduleDeclaration).toBeUndefined();
+      expect(epic.moduleDeclaration).toEqual({
+        module: "parent-fiscal",
+        moduleScope: ["docs/fiscal"],
+        source: "family_issue",
+        issue: 291,
+      });
+      expect(epic.children[0]?.moduleDeclaration).toBeUndefined();
+      expect(warn.mock.calls.map((call) => String(call[0]))).toContain(
+        "family module declaration ignored for issue #11: author external-contributor is not trusted owner Akagilnc",
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
   it("fails closed when a module declaration issue body cannot be read", () => {
     const sh: Sh = (file, args) => {

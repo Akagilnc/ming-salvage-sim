@@ -443,13 +443,24 @@ function readIssueBody(issue: number, repo: string, sh: Sh): string {
       readonly body?: unknown;
       readonly author?: { readonly login?: unknown };
     };
-    const repoOwner = repo.split("/", 1)[0]?.toLowerCase();
+    const repoOwnerLogin = repo.split("/", 1)[0];
+    const repoOwner = repoOwnerLogin?.toLowerCase();
     const authorLogin =
       typeof parsed.author?.login === "string"
         ? parsed.author.login.toLowerCase()
         : undefined;
-    if (repoOwner === undefined || authorLogin !== repoOwner) return "";
-    return typeof parsed.body === "string" ? parsed.body : "";
+    const body = typeof parsed.body === "string" ? parsed.body : "";
+    if (repoOwner === undefined || authorLogin !== repoOwner) {
+      if (body.length > 0 && parseModuleDeclaration(body) !== undefined) {
+        console.warn(
+          `family module declaration ignored for issue #${issue}: author ${
+            typeof parsed.author?.login === "string" ? parsed.author.login : "<unknown>"
+          } is not trusted owner ${repoOwnerLogin ?? "<unknown>"}`,
+        );
+      }
+      return "";
+    }
+    return body;
   } catch (err) {
     throw new Error(
       `readIssueBody: failed to read issue #${issue} body from ${repo}: ${
