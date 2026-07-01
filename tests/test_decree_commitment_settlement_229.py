@@ -572,6 +572,38 @@ def test_commitment_progress_contexts_are_structured(game, capsys):
     assert "直到补齐" in output
 
 
+def test_arrears_commitment_progress_preserves_fractional_remaining(game):
+    """#305 coder-fix：承诺进度里的欠饷尾数不能截断成精确/归零显示。"""
+    db, state, _content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=12.5 WHERE id='guanning'")
+    db.conn.commit()
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="关宁零星旧欠",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:fractional-arrears",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={"economy": []},
+        stop_condition=json.dumps({"army.guanning.arrears": "<=0"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+
+    row = _issue_row(db, issue_id)
+    progress = commitment_progress_payload(db, state, row)
+
+    assert progress["remaining_arrears"] == 12.5
+    sim_issue = next(
+        issue for issue in build_simulator_payload(state, db, "", "")["active_issues"]
+        if issue["issue_id"] == issue_id
+    )
+    assert "尚欠约15万两" in sim_issue["待办未解进度"]
+
+
 def test_commitment_progress_text_splits_by_commitment_shape_and_gate(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")

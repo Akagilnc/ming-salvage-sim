@@ -1,7 +1,7 @@
 import React from "react";
 import { Eraser, MapPinned, Move, Pencil, RotateCcw, Shield, ZoomIn, ZoomOut } from "lucide-react";
 import { EXTERNAL_PATH_GROUPS, MAP_VIEW_BOX, REGION_PATH_GROUPS } from "../mapPaths";
-import { labelPower, monthlyAmount } from "../format";
+import { formatArmyArrears, labelPower, monthlyAmount, qualitativeArmyStat } from "../format";
 import type { ExternalPathRenderItem, MapNode, RegionPathRenderItem, SvgLabelPosition, TerrainTransform } from "../types";
 
 export const MING_MAP_COLOR = "#4f8a57";
@@ -817,19 +817,14 @@ export function NodeIntel({ node }: { node: MapNode }) {
           <tbody>
             {node.armies.map((army) => {
               const pay = army.army_needed || 0; // #173 月饷/欠饷月数按引擎实扣月应发
-              const arr = army.arrears || 0;
-              const months = pay > 0 && arr > 0 ? (arr / pay) : 0;
-              const arrText = arr > 0
-                ? (months > 0 ? `${arr}万两（≈${months.toFixed(1)}月）` : `${arr}万两`)
-                : '—';
               return (
                 <tr key={army.id}>
                   <td>{army.name}</td>
                   <td>{army.troop_type}</td>
                   <td>{army.manpower}</td>
                   <td>{pay}</td>
-                  <td>{army.morale}</td>
-                  <td>{arrText}</td>
+                  <td>{qualitativeArmyStat("morale", army.morale)}</td>
+                  <td>{formatArmyArrears(army)}</td>
                 </tr>
               );
             })}
