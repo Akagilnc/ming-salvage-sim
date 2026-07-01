@@ -734,6 +734,8 @@ export interface IssueSnapshot {
   readonly comments: ReadonlyArray<string>;
   /** Author login aligned by index with `comments`, when available. */
   readonly commentAuthorLogins?: ReadonlyArray<string>;
+  /** Repo owner login used to authenticate executable issue instructions. */
+  readonly trustedOwnerLogin?: string;
   readonly agentBrief: string;
   readonly nativeMeta?: IssueSnapshotMeta;
 }

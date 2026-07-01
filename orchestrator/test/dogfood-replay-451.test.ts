@@ -122,7 +122,7 @@ describe("#451 dogfood replay fixture", () => {
           stopReason: "already_done",
           source: "family",
           sourceStopSummary: expect.objectContaining({
-            reason: "success",
+            reason: "already_done",
             metadata: expect.objectContaining({
               alreadyDone: [
                 expect.objectContaining({
@@ -221,7 +221,7 @@ describe("#451 dogfood replay fixture", () => {
     expect(rowsById.get("family-resume-already-done-child")).toMatchObject({
       source: "family",
       sourceStopSummary: {
-        reason: "success",
+        reason: "already_done",
         metadata: {
           alreadyDone: [
             expect.objectContaining({

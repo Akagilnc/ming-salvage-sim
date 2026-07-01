@@ -68,6 +68,7 @@ import {
 import {
   contractDriftStopSummary,
   infraFailureStopSummary,
+  sourceAuthFailureStopSummary,
   stopSummaryFromFindingDispositionEvidence,
   successStopSummary,
   type AcceptedSuppressionSummary,
@@ -1323,6 +1324,14 @@ function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
   const repairHint = /MODULE_NOT_FOUND|Cannot find module/i.test(errorPackage.reason)
     ? `install or restore the missing module for ${errorPackage.failedStep}, then rerun`
     : `inspect ${errorPackage.failedStep} and rerun after repairing the cause`;
+  if (/source authentication failed/i.test(errorPackage.reason)) {
+    return {
+      reason: "spec_conflict",
+      summary: errorPackage.reason,
+      repairHint:
+        "move executable instructions into a repo-owner-authored Agent Brief, accepted issue body, ADR, or runner Agent Brief, then rerun",
+    };
+  }
   if (
     /contract|malformed|does not match|no valid result|off-contract|prior claimed-fixed finding|prior finding disposition/i.test(
       errorPackage.reason,
@@ -1337,6 +1346,41 @@ function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
     summary: errorPackage.reason,
     repairHint,
   });
+}
+
+function untrustedExecutableInstructionSummary(
+  snapshot: IssueSnapshot,
+): StopSummary | undefined {
+  const trustedOwner = snapshot.trustedOwnerLogin?.trim();
+  if (trustedOwner === undefined || trustedOwner.length === 0) return undefined;
+  const hasAgentBrief = (text: string): boolean => /(^|\n)## Agent Brief\b/i.test(text);
+  const ownerMatches = (login: string | undefined): boolean =>
+    login?.trim().toLowerCase() === trustedOwner.toLowerCase();
+
+  if (hasAgentBrief(snapshot.body) && !ownerMatches(snapshot.bodyAuthorLogin)) {
+    return sourceAuthFailureStopSummary({
+      instructionKind: "Agent Brief",
+      rejectedAuthor: snapshot.bodyAuthorLogin ?? "(unknown)",
+      trustedAuthor: trustedOwner,
+      sourceKind: "issue body",
+    });
+  }
+
+  for (let i = 0; i < snapshot.comments.length; i++) {
+    const comment = snapshot.comments[i]!;
+    if (!hasAgentBrief(comment)) continue;
+    const author = snapshot.commentAuthorLogins?.[i];
+    if (!ownerMatches(author)) {
+      return sourceAuthFailureStopSummary({
+        instructionKind: "Agent Brief",
+        rejectedAuthor: author ?? "(unknown)",
+        trustedAuthor: trustedOwner,
+        sourceKind: `issue comment ${i + 1}`,
+      });
+    }
+  }
+
+  return undefined;
 }
 
 function stopSummaryForEscalation(escalation: Escalation): StopSummary {
@@ -2107,6 +2151,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // writeSnapshot failure can persist its error termination to the ledger
         // (#3: error paths must persist, not vanish on resume).
         stateDir = deriveStateDir(worktree.path, issueNumber);
+        const sourceAuthFailure = untrustedExecutableInstructionSummary(snapshot);
+        if (sourceAuthFailure !== undefined) {
+          return await errorTermination(
+            "S1",
+            new Error(`source authentication failed: ${sourceAuthFailure.summary}`),
+          );
+        }
         try {
           await backend.writeSnapshot(worktree, snapshot);
         } catch (err) {

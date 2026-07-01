@@ -541,22 +541,34 @@ export async function runFamily(
         status: "merged" as const,
         source: "family ledger merged entry",
       }));
+    const allChildrenAlreadyDone =
+      status === "success" &&
+      childResults.length === 0 &&
+      children.length > 0 &&
+      alreadyDone.length === children.length;
+    const computedStopSummary = familyStopSummary({
+      status,
+      failedPhase: verifyFailedPhase,
+      familyBase,
+      familyHead,
+      headMetadata,
+      barrierStopSummary,
+      children,
+      admissionSkipped: epic.admissionSkipped,
+      alreadyDone,
+    });
     return {
       status,
       ...(verifyFailedPhase !== undefined ? { failedPhase: verifyFailedPhase } : {}),
       familyBase,
       familyHead,
-      stopSummary: familyStopSummary({
-        status,
-        failedPhase: verifyFailedPhase,
-        familyBase,
-        familyHead,
-        headMetadata,
-        barrierStopSummary,
-        children,
-        admissionSkipped: epic.admissionSkipped,
-        alreadyDone,
-      }),
+      stopSummary: allChildrenAlreadyDone
+        ? {
+            ...computedStopSummary,
+            reason: "already_done",
+            summary: "family resume found every child already merged and skipped rerun",
+          }
+        : computedStopSummary,
       children,
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
