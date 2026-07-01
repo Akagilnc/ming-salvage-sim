@@ -442,6 +442,222 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       }),
     );
   });
+
+  it("continues fixing after a scoped continue-fixing bookkeeping event resets no-progress state", async () => {
+    const continueFixingEvent = {
+      step: "S4",
+      event: "runner_bookkeeping",
+      intent: "continue_fixing",
+      findingIdentityKey: blockingKey,
+      findingScope: { identityKeys: [blockingKey] },
+      source: "resume_input",
+      ts: "2026-07-01T00:00:00.000Z",
+      reason: "human explicitly instructed the runner to keep fixing this active finding",
+    } as unknown as PersistentLedgerEntry;
+    expect(continueFixingEvent).not.toHaveProperty("output");
+    expect(continueFixingEvent).not.toHaveProperty("verdict");
+
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        continueFixingEvent,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
+  it("uses current run continue-fixing input even when no durable continue event exists", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({
+      issueNumber: 446,
+      backend,
+      repairIntent: {
+        event: "runner_bookkeeping",
+        intent: "continue_fixing",
+        findingIdentityKey: blockingKey,
+        source: "resume_input",
+        ts: "2026-07-01T00:00:01.000Z",
+      },
+    });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
+  it("does not reopen an S4 decision escalation for stale or scope-mismatched continue-fixing bookkeeping", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "runner_bookkeeping",
+          intent: "continue_fixing",
+          findingIdentityKey: "correctness|src/other.ts:1|unrelated finding",
+          findingScope: { identityKeys: ["correctness|src/other.ts:1|unrelated finding"] },
+          source: "coordinator",
+          ts: "2026-07-01T00:00:02.000Z",
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend([], resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatched).toEqual([]);
+  });
 });
 
 describe("#369 runner resume/retry review fixes", () => {
