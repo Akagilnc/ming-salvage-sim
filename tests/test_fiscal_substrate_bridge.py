@@ -1303,7 +1303,10 @@ def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
     assert morale_log["new_value"] == "72"
     assert morale_log["delta"] == -8
     assert "省源军饷分账" in morale_log["reason"]
-    assert "福建水师士气-8" in fresh_db.turn_army_summary(fresh_db.load_state().turn)
+    summary = fresh_db.turn_army_summary(fresh_db.load_state().turn)
+    assert "福建水师省源欠饷+10" in summary
+    assert "province_pay_arrears" not in summary
+    assert "福建水师士气-8" in summary
 
 
 def test_turn_army_summary_keeps_real_morale_changes_when_log_cap_fills(fresh_db):
