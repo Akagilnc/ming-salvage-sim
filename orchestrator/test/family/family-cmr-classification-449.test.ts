@@ -5,6 +5,7 @@ import {
   classifyFamilyCmrFindings,
   parseModuleDeclaration,
 } from "../../src/family/cmrClassification.js";
+import { findingIdentityKey } from "../../src/findings.js";
 import { parseCmrOutcome } from "../../src/family/realFamilyBackend.js";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
 import type {
@@ -357,6 +358,47 @@ describe("#449 family CMR finding classification", () => {
     });
 
     expect(classified.blocking).toEqual([currentFinding]);
+    expect(classified.deferred).toEqual([]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "same_module_still_red",
+      attribution: { method: "family_module", issue: 445, module: "fiscal" },
+    });
+    expect(classified.dispositions).toEqual([]);
+  });
+
+  it("fails closed when accepted suppression targetModule matches but scope text is stale", () => {
+    const suppressedFinding: Finding = {
+      ...finding,
+      action: "wont_fix",
+      disposition_reason: "Accepted only for a different module scope",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "#445",
+        scope: "military-state-machine follow-up only",
+        reason: "Accepted only for a different module scope",
+        findingIdentity: findingIdentityKey(finding),
+        targetModule: "fiscal",
+        boundedReopen: "reopen on different scope",
+      },
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [suppressedFinding],
+      moduleContext: {
+        currentModules: [
+          {
+            module: "fiscal",
+            moduleScope: ["orchestrator/src/family"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
+        childModules: [],
+      },
+    });
+
+    expect(classified.blocking).toEqual([suppressedFinding]);
     expect(classified.deferred).toEqual([]);
     expect(classified.results[0]).toMatchObject({
       classification: "same_module_still_red",
