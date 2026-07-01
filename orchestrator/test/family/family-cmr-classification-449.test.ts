@@ -177,6 +177,47 @@ describe("#449 family CMR finding classification", () => {
     });
   });
 
+  it("fails closed when child attribution is ambiguous and no explicit family fallback exists", () => {
+    const unownedFinding: Finding = {
+      ...finding,
+      claim_quote: "military state machine is not implemented",
+      location: "docs/military-state-machine.md:1",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "military-state-machine",
+        reason: "outside the declared child modules",
+      },
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [unownedFinding],
+      moduleContext: buildFamilyModuleContext({
+        childModules: [
+          {
+            module: "transport",
+            moduleScope: ["orchestrator/src/transport"],
+            source: "child_issue",
+            issue: 451,
+          },
+          {
+            module: "hub",
+            moduleScope: ["orchestrator/src/hub"],
+            source: "child_issue",
+            issue: 452,
+          },
+        ],
+      }),
+    });
+
+    expect(classified.blocking).toEqual([unownedFinding]);
+    expect(classified.deferred).toEqual([]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "same_module_still_red",
+      attribution: { method: "missing_module_context" },
+    });
+  });
+
   it("allows only target modules outside the declared family module set to defer", () => {
     const sameModule = {
       ...finding,
