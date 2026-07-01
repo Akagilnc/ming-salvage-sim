@@ -71,7 +71,6 @@ import {
 import {
   contractDriftStopSummary,
   infraFailureStopSummary,
-  sourceAuthFailureStopSummary,
   stopSummaryFromFindingDispositionEvidence,
   successStopSummary,
   type AcceptedSuppressionSummary,
@@ -660,25 +659,6 @@ function sameFindingLineage(a: Finding, b: Finding): boolean {
   return a.category === b.category && a.location === b.location;
 }
 
-function normalizedClaim(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function reviewerNarrowedFinding(
-  previous: Finding,
-  current: Finding,
-): boolean {
-  if (!sameFindingLineage(previous, current)) return false;
-  const previousClaim = normalizedClaim(previous.claim_quote);
-  const currentClaim = normalizedClaim(current.claim_quote);
-  return (
-    currentClaim.length > 0 &&
-    currentClaim !== previousClaim &&
-    currentClaim.length < previousClaim.length &&
-    previousClaim.includes(currentClaim)
-  );
-}
-
 function reviewerObservedProgress(input: {
   readonly previousBlockingFindings: ReadonlyArray<Finding>;
   readonly previousBlockingIdentityKeys: ReadonlyArray<string>;
@@ -711,9 +691,8 @@ function reviewerObservedProgress(input: {
   return input.currentBlockingFindings.some(
     (finding) =>
       sameFindingLineage(input.previousFinding, finding) &&
-      (FINDING_SEVERITY_RANK[finding.severity] <
-        FINDING_SEVERITY_RANK[input.previousFinding.severity] ||
-        reviewerNarrowedFinding(input.previousFinding, finding)),
+      FINDING_SEVERITY_RANK[finding.severity] <
+        FINDING_SEVERITY_RANK[input.previousFinding.severity],
   );
 }
 
@@ -939,20 +918,9 @@ function replayS4AdjudicationState(
           previousNoProgressCount: noProgressCounts.get(key) ?? 0,
         });
         if (!seenBlocking.has(key)) {
-          const replacedByNarrowerFinding =
-            observedReviewerProgress &&
-            reviewerBlocking.some(
-              (current) =>
-                findingIdentityKey(current) !== key &&
-                reviewerNarrowedFinding(previousFinding, current),
-            );
-          if (replacedByNarrowerFinding) {
-            noProgressCounts.delete(key);
-          } else {
-            blocking.push(finding);
-            blockingIdentityKeys.push(key);
-            seenBlocking.add(key);
-          }
+          blocking.push(finding);
+          blockingIdentityKeys.push(key);
+          seenBlocking.add(key);
         }
         if (
           repairEvidenceMatchesKey(
@@ -1529,37 +1497,10 @@ function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
 }
 
 function untrustedExecutableInstructionSummary(
-  snapshot: IssueSnapshot,
+  _snapshot: IssueSnapshot,
 ): StopSummary | undefined {
-  const trustedOwner = snapshot.trustedOwnerLogin?.trim();
-  if (trustedOwner === undefined || trustedOwner.length === 0) return undefined;
-  const hasAgentBrief = (text: string): boolean => /(^|\n)## Agent Brief\b/i.test(text);
-  const ownerMatches = (login: string | undefined): boolean =>
-    login?.trim().toLowerCase() === trustedOwner.toLowerCase();
-
-  if (hasAgentBrief(snapshot.body) && !ownerMatches(snapshot.bodyAuthorLogin)) {
-    return sourceAuthFailureStopSummary({
-      instructionKind: "Agent Brief",
-      rejectedAuthor: snapshot.bodyAuthorLogin ?? "(unknown)",
-      trustedAuthor: trustedOwner,
-      sourceKind: "issue body",
-    });
-  }
-
-  for (let i = 0; i < snapshot.comments.length; i++) {
-    const comment = snapshot.comments[i]!;
-    if (!hasAgentBrief(comment)) continue;
-    const author = snapshot.commentAuthorLogins?.[i];
-    if (!ownerMatches(author)) {
-      return sourceAuthFailureStopSummary({
-        instructionKind: "Agent Brief",
-        rejectedAuthor: author ?? "(unknown)",
-        trustedAuthor: trustedOwner,
-        sourceKind: `issue comment ${i + 1}`,
-      });
-    }
-  }
-
+  // Non-owner Agent Brief headings are ordinary issue/comment text. Only the
+  // structured IssueSnapshot.agentBrief field is executable runner input.
   return undefined;
 }
 
@@ -1719,20 +1660,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           previousNoProgressCount: noProgressByFindingIdentityKey.get(key) ?? 0,
         });
         if (!seenBlocking.has(key)) {
-          const replacedByNarrowerFinding =
-            observedReviewerProgress &&
-            reviewerBlocking.some(
-              (current) =>
-                findingIdentityKey(current) !== key &&
-                reviewerNarrowedFinding(previousFinding, current),
-            );
-          if (replacedByNarrowerFinding) {
-            noProgressByFindingIdentityKey.delete(key);
-          } else {
-            blocking.push(finding);
-            blockingIdentityKeys.push(key);
-            seenBlocking.add(key);
-          }
+          blocking.push(finding);
+          blockingIdentityKeys.push(key);
+          seenBlocking.add(key);
         }
         if (
           repairEvidenceMatchesKey(

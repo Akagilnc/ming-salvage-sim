@@ -524,17 +524,18 @@ describe("#451 dogfood replay fixture", () => {
     });
     expect(rowsById.get("440-coder-trust-boundary")).toMatchObject({
       source: "runner",
-      classification: "spec_conflict",
-      stopReason: "spec_conflict",
+      classification: "success",
+      stopReason: "success",
       sourceStopSummary: expect.objectContaining({
-        reason: "spec_conflict",
-        repairHint: expect.stringContaining("repo-owner"),
+        reason: "success",
       }),
       sourceEvidence: expect.objectContaining({
         seam: "source_auth",
         rejectedAuthor: "drive-by",
         trustedAuthor: "Akagilnc",
         executableInstructionSourceAccepted: false,
+        status: "success",
+        dispatched: expect.arrayContaining(["S2:coder", "S3:reviewer", "S7:ship"]),
       }),
     });
   });

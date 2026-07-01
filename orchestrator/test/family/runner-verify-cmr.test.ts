@@ -459,6 +459,38 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(familyBackend.ledger).toEqual([]);
   });
 
+  it("INCOMPLETE summary excludes children already merged in the family ledger", async () => {
+    class OneChildFailsBackend extends ChildBackend {
+      override async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: false, commitsAdded: 0 };
+        }
+        return { kind: "reviewer", findings: [] };
+      }
+    }
+    class PreSeededFamilyBackend extends FakeFamilyBackend {
+      constructor() {
+        super();
+        this.ledger.push({ childIssue: 10, status: "merged" });
+      }
+    }
+
+    const result = await runFamily({
+      epic: epicWith(10, 11),
+      familyBackend: new PreSeededFamilyBackend(),
+      singleSliceBackend: new OneChildFailsBackend(),
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("incomplete");
+    expect(result.children).toEqual([
+      { issue: 11, status: "failed" },
+      { issue: 10, status: "already_done" },
+    ]);
+    expect(result.stopSummary.summary).toContain("#11:failed");
+    expect(result.stopSummary.summary).not.toContain("#10:already_done");
+  });
+
   it("LEDGER-AWARE finalize: a child already merged in the ledger is reported already_done, not skipped", async () => {
     // Pre-seed the family ledger with child 10 already merged (e.g. a prior
     // invocation — #298's resume truth). The commander excludes 10 (already

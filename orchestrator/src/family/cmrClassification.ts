@@ -247,8 +247,8 @@ function locationPath(location: string): string {
 }
 
 function pathMatchesScope(path: string, scope: string): boolean {
-  const normalizedPath = path.replace(/\\/g, "/");
-  const normalizedScope = scope.trim().replace(/\\/g, "/");
+  const normalizedPath = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalizedScope = scope.trim().replace(/\\/g, "/").replace(/\/+$/, "");
   return (
     normalizedScope.length > 0 &&
     (normalizedPath === normalizedScope ||

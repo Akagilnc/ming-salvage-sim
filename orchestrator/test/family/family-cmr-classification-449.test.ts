@@ -188,6 +188,29 @@ describe("#449 family CMR finding classification", () => {
     });
   });
 
+  it("matches directory module_scope values that include a trailing slash", () => {
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [finding],
+      moduleContext: buildFamilyModuleContext({
+        childModules: [],
+        familyModule: {
+          module: "orchestrator-family",
+          moduleScope: ["orchestrator/src/family/"],
+          source: "family_issue",
+          issue: 445,
+        },
+      }),
+    });
+
+    expect(classified.blocking).toEqual([finding]);
+    expect(classified.deferred).toEqual([]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "same_module_still_red",
+      attribution: { method: "family_module", issue: 445, module: "orchestrator-family" },
+    });
+  });
+
   it("fails closed when the family fallback module scope does not cover the finding location", () => {
     const scopedOutFinding: Finding = {
       ...finding,

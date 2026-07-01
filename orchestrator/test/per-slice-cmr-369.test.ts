@@ -728,50 +728,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { identityKey: blockingKey, status: "verified-closed" as const },
       ],
     },
-    {
-      name: "reviewer narrows the old finding into a smaller remaining gap",
-      initial: [
-        {
-          ...blocking,
-          claim_quote:
-            "module parser leaves inline yaml accepted in invalid declarations",
-        },
-      ],
-      firstAfterFix: [
-        { ...blocking, claim_quote: "inline yaml accepted" },
-      ],
-      firstDispositions: [
-        {
-          identityKey: findingIdentityKey({
-            ...blocking,
-            claim_quote:
-              "module parser leaves inline yaml accepted in invalid declarations",
-          }),
-          status: "still-active" as const,
-        },
-      ],
-      secondAfterFix: [
-        { ...blocking, claim_quote: "inline yaml accepted" },
-      ],
-      secondDispositions: [
-        {
-          identityKey: findingIdentityKey({
-            ...blocking,
-            claim_quote: "inline yaml accepted",
-          }),
-          status: "still-active" as const,
-        },
-      ],
-      finalDispositions: [
-        {
-          identityKey: findingIdentityKey({
-            ...blocking,
-            claim_quote: "inline yaml accepted",
-          }),
-          status: "verified-closed" as const,
-        },
-      ],
-    },
   ])("counts reviewer-observed progress when $name", async (sample) => {
     const backend = new RetryReviewBackend([
       { kind: "completed", output: { kind: "reviewer", findings: sample.initial } },
@@ -815,6 +771,61 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S5:coder",
       "S6:reviewer",
       "S7:ship",
+    ]);
+  });
+
+  it("does not count reviewer claim narrowing as implementation progress", async () => {
+    const originalFinding = {
+      ...blocking,
+      claim_quote: "module parser leaves inline yaml accepted in invalid declarations",
+    };
+    const firstNarrowedFinding = {
+      ...blocking,
+      claim_quote: "inline yaml accepted",
+    };
+    const secondNarrowedFinding = {
+      ...blocking,
+      claim_quote: "yaml accepted",
+    };
+    const originalKey = findingIdentityKey(originalFinding);
+    const firstNarrowedKey = findingIdentityKey(firstNarrowedFinding);
+
+    const backend = new RetryReviewBackend([
+      { kind: "completed", output: { kind: "reviewer", findings: [originalFinding] } },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [firstNarrowedFinding],
+          priorFindingDispositions: [
+            { identityKey: originalKey, status: "still-active" },
+          ],
+        },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [secondNarrowedFinding],
+          priorFindingDispositions: [
+            { identityKey: originalKey, status: "still-active" },
+            { identityKey: firstNarrowedKey, status: "still-active" },
+          ],
+        },
+      },
+    ]);
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary.reason).toBe("same_module_still_red");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
     ]);
   });
 
