@@ -379,29 +379,41 @@ def _allocate_substrate_hub_paid_ints(
     treasury_available: float,
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
     """Return one integer allocation source for ledger, province ticks, and central pay."""
-    items: List[Tuple[str, str, float]] = []
+    items: List[Tuple[str, str, float, float]] = []
     for region_id, due in jingyun_due_by_region.items():
-        items.append(("jingyun", region_id, max(0.0, due) * k))
+        positive_due = max(0.0, due)
+        items.append(("jingyun", region_id, positive_due, positive_due * k))
     for army_id, due in central_due_by_army.items():
-        items.append(("central", army_id, max(0.0, due) * k))
+        positive_due = max(0.0, due)
+        items.append(("central", army_id, positive_due, positive_due * k))
+    caps = [int(math.floor(due)) for _, _, due, _scaled in items]
     target = min(
         max(0, int(math.floor(max(0.0, treasury_available)))),
-        max(0, int(round(sum(scaled for _, _, scaled in items)))),
+        max(0, int(round(sum(scaled for _, _, _due, scaled in items)))),
+        sum(caps),
     )
-    floors = [int(math.floor(scaled)) for _, _, scaled in items]
+    floors = [
+        min(cap, int(math.floor(scaled)))
+        for cap, (_kind, _key, _due, scaled) in zip(caps, items)
+    ]
     remainder = max(0, target - sum(floors))
     allocations = floors[:]
     ranked = sorted(
         range(len(items)),
-        key=lambda idx: (items[idx][2] - floors[idx], -idx),
+        key=lambda idx: (items[idx][3] - floors[idx], -idx),
         reverse=True,
     )
-    for idx in ranked[:remainder]:
+    for idx in ranked:
+        if remainder <= 0:
+            break
+        if allocations[idx] >= caps[idx]:
+            continue
         allocations[idx] += 1
+        remainder -= 1
 
     jingyun_paid = {region_id: 0.0 for region_id in jingyun_due_by_region}
     central_paid = {army_id: 0.0 for army_id in central_due_by_army}
-    for (kind, key, _scaled), paid in zip(items, allocations):
+    for (kind, key, _due, _scaled), paid in zip(items, allocations):
         if kind == "jingyun":
             jingyun_paid[key] = float(paid)
         else:
