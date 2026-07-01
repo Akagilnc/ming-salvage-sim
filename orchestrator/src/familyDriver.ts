@@ -492,10 +492,11 @@ function readIssueAuthorAssociation(issue: number, repo: string, sh: Sh): string
 }
 
 function isTrustedIssueAssociation(association: string): boolean {
+  const upper = association.trim().toUpperCase();
   return (
-    association === "OWNER" ||
-    association === "MEMBER" ||
-    association === "COLLABORATOR"
+    upper === "OWNER" ||
+    upper === "MEMBER" ||
+    upper === "COLLABORATOR"
   );
 }
 
