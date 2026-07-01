@@ -23,6 +23,16 @@ Explicitly classify each prior finding as still-active / verified-closed /
 unable-to-assess in the structured finding/disposition contract when available;
 absence alone is not proof of closure.
 
+For new findings, the structured output contract requires executable
+classification for every defer/suppression. P0/P1 findings are always
+`action:"fix_now"`. P2/P3 `action:"defer"` findings must include a
+`disposition` with one of `same_module`, `cross_module`, `spec_conflict`,
+`infra_failure`, or `owning_issue_still_red`; only `cross_module` can pass, and
+it must name `targetModule` plus a reason. `accepted_suppressed` is terminal
+only when backed by an explicit user decision, accepted ADR, or named issue
+acceptance text; include source, scope, reason, finding identity, and bounded
+reopen conditions. Do not invent an unsourced won't-fix.
+
 Snapshot files such as `.orchestrator-snapshot.json` are audit/resume artifacts,
 not execution input. Use runner-supplied environment variables, mounted files,
 and git state for the review scope.

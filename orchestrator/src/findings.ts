@@ -1,6 +1,7 @@
 import type {
   Finding,
   FindingDisposition,
+  FindingDispositionEvidence,
   PriorFindingDisposition,
   ReviewerOutput,
 } from "./types.js";
@@ -58,13 +59,59 @@ function isDispositionAction(
   return action === "wont_fix" || action === "rejected";
 }
 
+function isAcceptedSuppression(
+  disposition: FindingDispositionEvidence | undefined,
+): disposition is FindingDispositionEvidence & {
+  readonly kind: "accepted_suppressed";
+} {
+  return disposition?.kind === "accepted_suppressed";
+}
+
+function isFilledString(value: string | undefined): value is string {
+  return value !== undefined && value.trim().length > 0;
+}
+
+function isSourcedAcceptedSuppression(
+  disposition: FindingDisposition | undefined,
+): disposition is FindingDisposition & {
+  readonly status: "accepted_suppressed";
+  readonly source: string;
+  readonly scope: string;
+  readonly boundedReopen: string;
+} {
+  return (
+    disposition?.status === "accepted_suppressed" &&
+    isFilledString(disposition.source) &&
+    isFilledString(disposition.scope) &&
+    isFilledString(disposition.boundedReopen)
+  );
+}
+
 function dispositionFromFinding(finding: Finding): FindingDisposition {
+  const acceptedSuppression = isAcceptedSuppression(finding.disposition)
+    ? finding.disposition
+    : undefined;
   return {
     identityKey: findingIdentityKey(finding),
-    status: finding.action === "rejected" ? "rejected" : "wont_fix",
+    status:
+      acceptedSuppression !== undefined
+        ? "accepted_suppressed"
+        : finding.action === "rejected"
+          ? "rejected"
+          : "wont_fix",
     reason: finding.disposition_reason ?? "",
     severity: finding.severity,
     reopenAttempts: 0,
+    ...(acceptedSuppression !== undefined
+      ? {
+          source: acceptedSuppression.source,
+          scope: acceptedSuppression.scope,
+          ...(acceptedSuppression.targetModule !== undefined
+            ? { targetModule: acceptedSuppression.targetModule }
+            : {}),
+          boundedReopen: acceptedSuppression.boundedReopen,
+        }
+      : {}),
   };
 }
 
@@ -103,6 +150,22 @@ function disputedDisposition(disposition: FindingDisposition): FindingDispositio
   };
 }
 
+function isAllowedCrossModuleDefer(finding: Finding): boolean {
+  return (
+    finding.action === "defer" &&
+    finding.disposition?.kind === "cross_module" &&
+    finding.disposition.targetModule !== undefined &&
+    finding.disposition.targetModule.trim().length > 0 &&
+    finding.disposition.reason.trim().length > 0
+  );
+}
+
+function isBlockingByDisposition(finding: Finding): boolean {
+  if (isBlockingFinding(finding)) return true;
+  if (finding.action !== "defer") return false;
+  return !isAllowedCrossModuleDefer(finding);
+}
+
 export function classifyFindings(
   findings: ReadonlyArray<Finding>,
   priorDispositions: ReadonlyArray<FindingDisposition> = [],
@@ -119,25 +182,28 @@ export function classifyFindings(
   for (const finding of findings) {
     const key = findingIdentityKey(finding);
     const priorDisposition = dispositionByKey.get(key);
+    const priorSuppression = isSourcedAcceptedSuppression(priorDisposition)
+      ? priorDisposition
+      : undefined;
     if (isDispositionAction(finding.action) && !isBlockingFinding(finding)) {
       dispositionByKey.set(key, dispositionFromFinding(finding));
       continue;
     }
-    if (priorDisposition !== undefined) {
-      if (upgradedSeverity(finding, priorDisposition)) {
-        if (priorDisposition.reopenAttempts < MAX_REOPEN_ATTEMPTS) {
-          dispositionByKey.set(key, reopenedDisposition(finding, priorDisposition));
+    if (priorSuppression !== undefined) {
+      if (upgradedSeverity(finding, priorSuppression)) {
+        if (priorSuppression.reopenAttempts < MAX_REOPEN_ATTEMPTS) {
+          dispositionByKey.set(key, reopenedDisposition(finding, priorSuppression));
         }
       } else if (
-        sameSeverity(finding, priorDisposition) &&
-        (priorDisposition.disputeAttempts ?? 0) < 1
+        sameSeverity(finding, priorSuppression) &&
+        (priorSuppression.disputeAttempts ?? 0) < 1
       ) {
-        dispositionByKey.set(key, disputedDisposition(priorDisposition));
+        dispositionByKey.set(key, disputedDisposition(priorSuppression));
       } else {
         continue;
       }
     }
-    if (isBlockingFinding(finding)) {
+    if (isBlockingByDisposition(finding)) {
       blocking.push(finding);
     } else {
       deferred.push(finding);

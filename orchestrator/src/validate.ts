@@ -17,6 +17,7 @@ import type {
   CoderOutput,
   Escalation,
   Finding,
+  FindingDispositionEvidence,
   PriorFindingDisposition,
   ReviewerOutput,
   StepOutput,
@@ -52,6 +53,15 @@ const FINDING_STRING_FIELDS = [
   "suggested_fix",
 ] as const;
 
+const DISPOSITION_KINDS: ReadonlySet<string> = new Set([
+  "same_module",
+  "cross_module",
+  "spec_conflict",
+  "infra_failure",
+  "owning_issue_still_red",
+  "accepted_suppressed",
+]);
+
 /**
  * Type-only string guard (intentionally does NOT reject `""`): a Finding's
  * required string fields must be PRESENT strings per the #244 contract, but the
@@ -66,6 +76,56 @@ function isString(v: unknown): v is string {
 /** A genuinely non-empty string (rejects "" and whitespace-only). */
 function isFilledString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
+}
+
+function optionalString(v: unknown): boolean {
+  return v === undefined || isString(v);
+}
+
+function isValidDispositionEvidence(
+  d: unknown,
+): d is FindingDispositionEvidence {
+  if (d == null || typeof d !== "object") return false;
+  const obj = d as Record<string, unknown>;
+  if (typeof obj.kind !== "string" || !DISPOSITION_KINDS.has(obj.kind)) {
+    return false;
+  }
+  if (!isFilledString(obj.reason)) return false;
+  if (
+    !optionalString(obj.targetModule) ||
+    !optionalString(obj.owningIssue) ||
+    !optionalString(obj.missingSurface) ||
+    !optionalString(obj.nextStep) ||
+    !optionalString(obj.source) ||
+    !optionalString(obj.scope) ||
+    !optionalString(obj.findingIdentity) ||
+    !optionalString(obj.boundedReopen)
+  ) {
+    return false;
+  }
+  switch (obj.kind) {
+    case "cross_module":
+      return isFilledString(obj.targetModule);
+    case "owning_issue_still_red":
+      return (
+        isFilledString(obj.owningIssue) &&
+        isFilledString(obj.missingSurface) &&
+        isFilledString(obj.nextStep)
+      );
+    case "accepted_suppressed":
+      return (
+        isFilledString(obj.source) &&
+        isFilledString(obj.scope) &&
+        isFilledString(obj.findingIdentity) &&
+        isFilledString(obj.boundedReopen)
+      );
+    case "spec_conflict":
+    case "infra_failure":
+      return isFilledString(obj.source);
+    case "same_module":
+      return true;
+  }
+  return false;
 }
 
 /**
@@ -145,10 +205,24 @@ export function isValidFinding(f: unknown): f is Finding {
     return false;
   }
   if (
+    obj.disposition !== undefined &&
+    !isValidDispositionEvidence(obj.disposition)
+  ) {
+    return false;
+  }
+  if (
     (obj.severity === "critical" || obj.severity === "high") &&
     obj.action !== "fix_now"
   ) {
     return false;
+  }
+  if (obj.action === "defer") {
+    if (!isValidDispositionEvidence(obj.disposition)) return false;
+    if (obj.disposition.kind === "accepted_suppressed") return false;
+  }
+  if (obj.action === "wont_fix" || obj.action === "rejected") {
+    if (!isValidDispositionEvidence(obj.disposition)) return false;
+    if (obj.disposition.kind !== "accepted_suppressed") return false;
   }
   for (const field of FINDING_STRING_FIELDS) {
     if (!isString(obj[field])) return false;

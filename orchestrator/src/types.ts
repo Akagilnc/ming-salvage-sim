@@ -150,20 +150,57 @@ export interface Finding {
   readonly suggested_fix: string;
   /**
    * P0/P1 ⇒ always `fix_now`; P2/P3 reviewer judges fix_now vs defer.
-   * `wont_fix` / `rejected` are explicit ADR0030 suppression dispositions:
-   * they must carry a rationale and never suppress a material severity upgrade.
+   * `wont_fix` / `rejected` are accepted suppression carriers and must include
+   * an `accepted_suppressed` disposition with source, scope, rationale, and
+   * bounded reopen conditions.
    */
   readonly action: "fix_now" | "defer" | "wont_fix" | "rejected";
   /** Required when action is `wont_fix` or `rejected`; optional otherwise. */
   readonly disposition_reason?: string;
+  /** Machine-verifiable classification evidence for defer/suppression outcomes. */
+  readonly disposition?: FindingDispositionEvidence;
+}
+
+export type FindingDispositionKind =
+  | "same_module"
+  | "cross_module"
+  | "spec_conflict"
+  | "infra_failure"
+  | "owning_issue_still_red"
+  | "accepted_suppressed";
+
+export interface FindingDispositionEvidence {
+  readonly kind: FindingDispositionKind;
+  /** Why this classification applies. Required for every disposition kind. */
+  readonly reason: string;
+  /** Required for cross-module defer; optional target for accepted suppression. */
+  readonly targetModule?: string;
+  /** Required for owning_issue_still_red. */
+  readonly owningIssue?: string;
+  /** Required for owning_issue_still_red. */
+  readonly missingSurface?: string;
+  /** Required for owning_issue_still_red. */
+  readonly nextStep?: string;
+  /** Required for accepted_suppressed and spec/infra audit trails. */
+  readonly source?: string;
+  /** Required for accepted_suppressed. */
+  readonly scope?: string;
+  /** Required for accepted_suppressed. */
+  readonly findingIdentity?: string;
+  /** Required for accepted_suppressed bounded reopen. */
+  readonly boundedReopen?: string;
 }
 
 export interface FindingDisposition {
   readonly identityKey: string;
-  readonly status: "unrepaired" | "wont_fix" | "rejected";
+  readonly status: "unrepaired" | "wont_fix" | "rejected" | "accepted_suppressed";
   readonly reason: string;
   readonly severity: Finding["severity"];
   readonly reopenAttempts: number;
+  readonly source?: string;
+  readonly scope?: string;
+  readonly targetModule?: string;
+  readonly boundedReopen?: string;
   /** One same-severity fresh-review dispute is allowed before suppression resumes. */
   readonly disputeAttempts?: number;
 }
@@ -705,7 +742,7 @@ export interface LedgerEntry {
    * Runner-owned ADR0030 finding dispositions after an S4 classification.
    *
    * S4 is the durable review/fix boundary. Persisting dispositions here lets a
-   * resumed run replay wont-fix/rejected suppressions and bounded severity
+   * resumed run replay accepted suppressions and bounded severity
    * reopens instead of reclassifying from only the last reviewer payload.
    */
   readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
