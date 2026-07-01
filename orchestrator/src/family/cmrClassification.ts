@@ -645,7 +645,9 @@ export function classifyFamilyCmrFindings(input: {
       (disposition) =>
         priorDispositionMatchesContext(finding, disposition, input.moduleContext),
     );
-    const single = classifyFindings([finding], scopedPriorDispositions);
+    const single = classifyFindings([finding], scopedPriorDispositions, {
+      acceptedSuppressionSources: input.moduleContext.acceptedSuppressionSources,
+    });
     findingsForFinalClassification.push(finding);
     if (single.blocking.length > 0) {
       blocking.push(finding);
@@ -676,10 +678,11 @@ export function classifyFamilyCmrFindings(input: {
         priorDispositionMatchesContext(finding, disposition, input.moduleContext),
       ),
   );
-  const finalClassification = classifyFindings(findingsForFinalClassification, [
-    ...scopedPriorDispositions,
-    ...seededDispositions,
-  ]);
+  const finalClassification = classifyFindings(
+    findingsForFinalClassification,
+    [...scopedPriorDispositions, ...seededDispositions],
+    { acceptedSuppressionSources: input.moduleContext.acceptedSuppressionSources },
+  );
   return {
     blocking,
     deferred,

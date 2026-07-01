@@ -44,6 +44,18 @@ export interface ReviewClassification {
   readonly dispositions: ReadonlyArray<FindingDisposition>;
 }
 
+export interface TrustedAcceptedSuppressionSource {
+  readonly source: string;
+  readonly scope: string;
+  readonly reason: string;
+  readonly findingIdentity: string;
+  readonly boundedReopen: string;
+}
+
+export interface ReviewClassificationOptions {
+  readonly acceptedSuppressionSources?: ReadonlyArray<TrustedAcceptedSuppressionSource>;
+}
+
 const SEVERITY_RANK: Readonly<Record<Finding["severity"], number>> = {
   clarity: 0,
   low: 1,
@@ -70,6 +82,7 @@ function isAcceptedSuppression(
 
 function isSourcedAcceptedSuppression(
   disposition: FindingDisposition | undefined,
+  trustedSources: ReadonlyArray<TrustedAcceptedSuppressionSource>,
 ): disposition is FindingDisposition & {
   readonly status: "accepted_suppressed";
   readonly source: string;
@@ -78,24 +91,48 @@ function isSourcedAcceptedSuppression(
 } {
   return (
     disposition?.status === "accepted_suppressed" &&
-    hasAcceptedSuppressionAuthority(disposition)
+    hasAcceptedSuppressionAuthority(disposition) &&
+    trustedSources.some(
+      (source) =>
+        source.source === disposition.source &&
+        source.scope === disposition.scope &&
+        source.reason === disposition.reason &&
+        source.findingIdentity === disposition.identityKey &&
+        source.boundedReopen === disposition.boundedReopen,
+    )
   );
 }
 
 function isMatchingAcceptedSuppression(
   finding: Finding,
   key: string,
+  trustedSources: ReadonlyArray<TrustedAcceptedSuppressionSource>,
 ): boolean {
-  return (
-    isAcceptedSuppression(finding.disposition) &&
-    (finding.disposition.findingIdentity === undefined ||
-      finding.disposition.findingIdentity === key)
+  if (!isAcceptedSuppression(finding.disposition)) return false;
+  const identity = finding.disposition.findingIdentity ?? key;
+  if (identity !== key || !hasAcceptedSuppressionAuthority(finding.disposition)) {
+    return false;
+  }
+  return trustedSources.some(
+    (source) =>
+      source.source === finding.disposition?.source &&
+      source.scope === finding.disposition.scope &&
+      source.reason === finding.disposition.reason &&
+      source.findingIdentity === identity &&
+      source.boundedReopen === finding.disposition.boundedReopen,
   );
 }
 
-function dispositionFromFinding(finding: Finding): FindingDisposition {
+function dispositionFromFinding(
+  finding: Finding,
+  trustedSources: ReadonlyArray<TrustedAcceptedSuppressionSource>,
+): FindingDisposition {
   const key = findingIdentityKey(finding);
-  const acceptedSuppression = isMatchingAcceptedSuppression(finding, key)
+  const acceptedSuppression = isMatchingAcceptedSuppression(
+    finding,
+    key,
+    trustedSources,
+  )
     ? finding.disposition
     : undefined;
   return {
@@ -176,7 +213,9 @@ function isBlockingByDisposition(finding: Finding): boolean {
 export function classifyFindings(
   findings: ReadonlyArray<Finding>,
   priorDispositions: ReadonlyArray<FindingDisposition> = [],
+  options: ReviewClassificationOptions = {},
 ): ReviewClassification {
+  const trustedSources = options.acceptedSuppressionSources ?? [];
   const dispositionByKey = new Map<string, FindingDisposition>(
     priorDispositions.map((disposition) => [
       disposition.identityKey,
@@ -189,15 +228,18 @@ export function classifyFindings(
   for (const finding of findings) {
     const key = findingIdentityKey(finding);
     const priorDisposition = dispositionByKey.get(key);
-    const priorSuppression = isSourcedAcceptedSuppression(priorDisposition)
+    const priorSuppression = isSourcedAcceptedSuppression(
+      priorDisposition,
+      trustedSources,
+    )
       ? priorDisposition
       : undefined;
     if (isDispositionAction(finding.action) && !isBlockingFinding(finding)) {
-      if (!isMatchingAcceptedSuppression(finding, key)) {
+      if (!isMatchingAcceptedSuppression(finding, key, trustedSources)) {
         blocking.push(finding);
         continue;
       }
-      dispositionByKey.set(key, dispositionFromFinding(finding));
+      dispositionByKey.set(key, dispositionFromFinding(finding, trustedSources));
       continue;
     }
     if (priorSuppression !== undefined) {
@@ -237,6 +279,7 @@ export function adjudicatePriorClaimedFixedFindings(input: {
   readonly priorFindings: ReadonlyArray<Finding>;
   readonly priorIdentityKeys: ReadonlyArray<string>;
   readonly review: ReviewerOutput;
+  readonly acceptedSuppressionSources?: ReadonlyArray<TrustedAcceptedSuppressionSource>;
 }): PriorFindingAdjudication {
   if (input.priorFindings.length !== input.priorIdentityKeys.length) {
     throw new Error(
@@ -261,7 +304,9 @@ export function adjudicatePriorClaimedFixedFindings(input: {
   });
 
   const activeFindingsByKey = new Map<string, Finding>();
-  for (const finding of classifyFindings(input.review.findings).blocking) {
+  for (const finding of classifyFindings(input.review.findings, [], {
+    acceptedSuppressionSources: input.acceptedSuppressionSources,
+  }).blocking) {
     activeFindingsByKey.set(findingIdentityKey(finding), finding);
   }
 
@@ -278,7 +323,19 @@ export function adjudicatePriorClaimedFixedFindings(input: {
     if (
       disposition.status === "verified-closed" ||
       (disposition.status === "accepted_suppressed" &&
-        hasAcceptedSuppressionAuthority(disposition) &&
+        isSourcedAcceptedSuppression(
+          {
+            identityKey: disposition.identityKey,
+            status: disposition.status,
+            reason: disposition.reason ?? "",
+            severity: priorFinding?.severity ?? "medium",
+            reopenAttempts: 0,
+            source: disposition.source,
+            scope: disposition.scope,
+            boundedReopen: disposition.boundedReopen,
+          },
+          input.acceptedSuppressionSources ?? [],
+        ) &&
         priorFinding !== undefined &&
         priorFinding.severity !== "critical" &&
         priorFinding.severity !== "high")
