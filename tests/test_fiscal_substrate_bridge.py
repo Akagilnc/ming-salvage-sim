@@ -1025,6 +1025,29 @@ def test_fixed_flows_substrate_hub_integer_allocation_drives_all_consumers(fresh
     assert province_paid + central_paid == pytest.approx(5)
 
 
+def test_substrate_hub_debit_fails_loud_when_required_debit_not_booked(fresh_db, monkeypatch):
+    # #287 PR R2：hub allocation 已决定要扣国库时，ledger 写入失败不能静默当 0。
+    from ming_sim.flows import _HubOutboundResult, _debit_substrate_hub_outbound
+
+    hub_outbound = _HubOutboundResult(
+        k=1.0,
+        jingyun_due_total=0.0,
+        jingyun_paid_by_region={},
+        jingyun_paid_total=0.0,
+        central_due_total=5.0,
+        central_paid_by_army={"guanning": 5.0},
+        central_paid_total=5.0,
+        central_transport_loss=0.0,
+    )
+    monkeypatch.setattr(
+        fresh_db, "record_issue_economy_move",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(RuntimeError, match="边饷hub"):
+        _debit_substrate_hub_outbound(fresh_db, SimpleNamespace(), hub_outbound)
+
+
 def test_fixed_flows_substrate_hub_fractional_due_caps_integer_debit(fresh_game):
     import ming_sim.flows as flows_mod
 
@@ -1127,6 +1150,39 @@ def test_fixed_flows_substrate_hub_fractional_due_caps_integer_debit(fresh_game)
     assert army["arrears"] == pytest.approx(0.6)
     assert settle["p"]["拨付gross"] == pytest.approx(3.5)
     assert settle["st"]["军饷欠"] == pytest.approx(0)
+
+
+def test_region_army_pay_tick_treats_missing_breakdown_as_no_delta(fresh_db):
+    # #287 PR R2：settle result breakdown 缺失时按无本月军饷 delta 处理，不因 None 崩 tick。
+    pay_rows = fresh_db._army_pay_source_rows_for_region("shaanxi")
+    assert pay_rows, "陕西应有省源军饷行，保证测试命中实际 tick seam"
+    pay_row = dict(pay_rows[0])
+    army_id = str(pay_row["id"])
+    fresh_db.conn.execute(
+        """
+        UPDATE armies
+        SET province_pay_arrears = 1, central_pay_arrears = 0, arrears = 1
+        WHERE id = ?
+        """,
+        (army_id,),
+    )
+    fresh_db.conn.commit()
+    pay_row["province_pay_arrears"] = 1.0
+    pay_row["central_pay_arrears"] = 0.0
+    before = fresh_db.conn.execute(
+        "SELECT province_pay_arrears, arrears, morale FROM armies WHERE id = ?",
+        (army_id,),
+    ).fetchone()
+
+    fresh_db._apply_region_army_pay_tick([pay_row], SimpleNamespace(breakdown=None))
+
+    after = fresh_db.conn.execute(
+        "SELECT province_pay_arrears, arrears, morale FROM armies WHERE id = ?",
+        (army_id,),
+    ).fetchone()
+    assert after["province_pay_arrears"] == pytest.approx(before["province_pay_arrears"])
+    assert after["arrears"] == pytest.approx(before["arrears"])
+    assert after["morale"] == before["morale"]
 
 
 def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):

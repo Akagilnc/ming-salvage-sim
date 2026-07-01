@@ -219,6 +219,23 @@ def test_auto_pay_reaches_salary_army_via_arrears_filter(game):
     assert spent > 0, "兜底拨饷应能花到该军"
 
 
+def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
+    # #287 PR R2：空 scope 是「不允许任何军」，不能被 truthiness 当成「不限制」而回落全局池。
+    from ming_sim.flows import _auto_pay_arrears_by_priority
+    db, state, _ = game
+    aid = str(db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (aid,))
+    db.conn.commit()
+    spent = _auto_pay_arrears_by_priority(
+        db, state, "国库", 5, "补饷", "空范围补饷", allowed_army_ids=[]
+    )
+    row = _army_row(db, aid)
+    assert spent == 0, "allowed_army_ids=[] 应明确支付 0，不得回落全军池"
+    assert row["arrears"] == pytest.approx(10)
+
+
 def test_coerce_new_salary_rate_blocks_freeload():
     # cmr r3 codex medium: 新军 salary_rate 健壮解析——负/非数/bool/0/None → 锚点 1.5（防免费军白嫖）。
     # 原 `or 1.5` 漏负值：-1 经 army_needed(rate<=0→0) 成免费军，绕过 #44 防白嫖。

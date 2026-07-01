@@ -430,10 +430,21 @@ def _debit_substrate_hub_outbound(
     debit = int(payout)
     if debit <= 0:
         return 0
-    return abs(db.record_issue_economy_move(
+    actual = db.record_issue_economy_move(
         state, "国库", -debit, "边饷hub",
         f"{TURN_UNIT}边饷hub实拨（京运补+中央军饷）",
-    ))
+    )
+    try:
+        actual_debit = abs(int(actual))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"边饷hub实拨失败：应扣{debit}万两，实际写入{actual!r}"
+        ) from exc
+    if actual_debit != debit:
+        raise RuntimeError(
+            f"边饷hub实拨失败：应扣{debit}万两，实际写入{actual_debit}万两"
+        )
+    return actual_debit
 
 
 def _apply_metric_dict(
@@ -489,7 +500,11 @@ def _auto_pay_arrears_by_priority(
     if budget <= 0:
         return 0
     pay_source_cutover = db.is_army_pay_source_cutover_enabled()
-    allowed_ids = {str(army_id) for army_id in (allowed_army_ids or []) if str(army_id).strip()}
+    allowed_ids = (
+        {str(army_id) for army_id in allowed_army_ids if str(army_id).strip()}
+        if allowed_army_ids is not None
+        else None
+    )
     # #44：受饷资格用 arrears>0（不再 maintenance_per_turn>0）。#44 把欠饷累计从 maintenance 改成
     # army_needed(salary_rate 派生)，二者已解耦——salary_rate>0 但 maintenance=0 的军会累 arrears 却被
     # 旧 filter 排除、拨饷永远散不到（cmr r2 claude）。arrears>0 本就隐含曾有应发（needed>0 才累）。
@@ -497,7 +512,7 @@ def _auto_pay_arrears_by_priority(
         "SELECT * FROM armies "
         "WHERE owner_power='ming' AND arrears>0"
     ).fetchall()
-    if allowed_ids:
+    if allowed_ids is not None:
         rows = [row for row in rows if str(row["id"]) in allowed_ids]
     army_map = {str(r["id"]): r for r in rows}
     ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]

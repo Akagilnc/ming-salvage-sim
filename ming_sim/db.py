@@ -2699,9 +2699,10 @@ class GameDB:
             return
         from ming_sim.flows import army_pay_morale_delta
 
-        new_debt = float((result.breakdown.get("NewDebt") or {}).get("军饷欠", 0) or 0)
-        repaid = float((result.breakdown.get("Repaid") or {}).get("军饷欠", 0) or 0)
-        action_paid = float((result.breakdown.get("action还") or {}).get("军饷欠", 0) or 0)
+        breakdown = result.breakdown or {}
+        new_debt = float((breakdown.get("NewDebt") or {}).get("军饷欠", 0) or 0)
+        repaid = float((breakdown.get("Repaid") or {}).get("军饷欠", 0) or 0)
+        action_paid = float((breakdown.get("action还") or {}).get("军饷欠", 0) or 0)
         balances = {str(row["id"]): float(row["province_pay_arrears"]) for row in pay_rows}
         action_repaid_by_army = {str(row["id"]): 0.0 for row in pay_rows}
         new_debt_by_army = {str(row["id"]): 0.0 for row in pay_rows}
