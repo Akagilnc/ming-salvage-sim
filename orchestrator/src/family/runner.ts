@@ -303,12 +303,19 @@ function pendingPriorCmrFindingIdentityKeys(
   return keys.reverse();
 }
 
-function latestStopSummary(
+function latestAbortedStopSummary(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
+  phase: VerifyCmrPhase | undefined,
 ): StopSummary | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
-    const stopSummary = ledger[i]!.stopSummary;
-    if (stopSummary !== undefined) return stopSummary;
+    const entry = ledger[i]!;
+    if (
+      entry.status === "aborted" &&
+      (phase === undefined || entry.phase === phase) &&
+      entry.stopSummary !== undefined
+    ) {
+      return entry.stopSummary;
+    }
   }
   return undefined;
 }
@@ -563,7 +570,10 @@ export async function runFamily(
       verifiedCmrHead: latestVerifiedCmrHead(familyLedger),
     });
     const barrierStopSummary =
-      status === "verify_failed" ? latestStopSummary(familyLedger) : undefined;
+      status === "verify_failed"
+        ? (latestAbortedStopSummary(familyLedger, verifyFailedPhase) ??
+          latestAbortedStopSummary(familyLedger, undefined))
+        : undefined;
     const alreadyDone = extra
       .filter((child) => child.status === "already_done")
       .map((child) => ({
