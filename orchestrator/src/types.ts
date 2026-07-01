@@ -562,6 +562,12 @@ export interface DispatchContext {
   readonly cmrPass?: "completeness" | "correctness";
   /** FAMILY cmr worker only: parsed module declarations supplied by the runner. */
   readonly moduleContext?: FamilyModuleContext;
+  /**
+   * FAMILY cmr worker only: runner-owned prior finding identity keys that the
+   * worker is allowed to adjudicate as claimed-fixed. A worker may not invent
+   * closure keys outside this protected set.
+   */
+  readonly priorCmrFindingIdentityKeys?: ReadonlyArray<string>;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */

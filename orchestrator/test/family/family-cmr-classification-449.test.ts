@@ -681,4 +681,71 @@ describe("#449 verifyCmr family gate classification", () => {
       },
     });
   });
+
+  it("records accepted_suppressed dispositions in successful CMR stop summary metadata", async () => {
+    const suppressedFinding: Finding = {
+      ...finding,
+      claim_quote: "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
+      location: "docs/adr/0023.md:D9",
+      action: "wont_fix",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "#303",
+        scope: "#287 hub-loss / central C_ accounts finding only",
+        reason: "accepted hub stub suppression",
+        findingIdentity: "correctness|docs/adr/0023.md:D9|ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
+        boundedReopen: "reopen on severity escalation, new evidence, or #287-owned local integration scope",
+      },
+    };
+    const backend = new CmrFindingBackend({
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: false,
+        reason: "only accepted suppressions remain",
+        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        findings: [suppressedFinding],
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/445-base",
+      familyBackend: backend,
+      familyIssue: 287,
+      moduleContext: {
+        currentModules: [
+          {
+            module: "orchestrator-family",
+            moduleScope: ["orchestrator/src/family"],
+            source: "family_issue",
+            issue: 287,
+          },
+        ],
+        childModules: [],
+      },
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatched).toEqual(["cmr", "cmr", "ship"]);
+    expect(backend.ledger[0]).toMatchObject({
+      status: "cmr_passed",
+      cmrPass: "completeness",
+      stopSummary: {
+        reason: "success",
+        metadata: {
+          acceptedSuppressions: [
+            expect.objectContaining({
+              source: "#303",
+              scope: expect.stringContaining("#287 hub-loss / central C_ accounts"),
+              findingIdentity: expect.stringMatching(/adr0023 d9 central transport-loss/i),
+              boundedReopen: expect.stringMatching(/severity escalat/i),
+            }),
+          ],
+        },
+      },
+    });
+  });
 });

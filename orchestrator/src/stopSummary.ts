@@ -26,6 +26,7 @@ export interface StopSummary {
 export interface StopSummaryMetadata {
   readonly acceptedSuppressions?: ReadonlyArray<AcceptedSuppressionSummary>;
   readonly providerDegraded?: ReadonlyArray<ProviderDegradationSummary>;
+  readonly routeAccounting?: RouteAccountingSummary;
   readonly heads?: HeadFreshnessSummary;
   readonly ship?: ShipFailureSummary;
   readonly admissionSkipped?: ReadonlyArray<AdmissionSkippedSummary>;
@@ -46,6 +47,14 @@ export interface ProviderDegradationSummary {
   readonly reason: string;
   readonly blocking: boolean;
   readonly repairHint?: string;
+}
+
+export interface RouteAccountingSummary {
+  readonly declaredLegs: ReadonlyArray<string>;
+  readonly successfulLegs: ReadonlyArray<string>;
+  readonly skippedLegs: ReadonlyArray<{ readonly slug: string; readonly reason: string }>;
+  readonly routeFingerprint: string;
+  readonly repairHint: string;
 }
 
 export interface HeadFreshnessSummary {
@@ -256,16 +265,22 @@ export function infraFailureStopSummary(input: {
   readonly repairHint: string;
   readonly ship?: ShipFailureSummary;
   readonly heads?: HeadFreshnessSummary;
+  readonly routeAccounting?: RouteAccountingSummary;
 }): StopSummary {
   return {
     reason: "infra_failure",
     summary: input.summary,
     repairHint: input.repairHint,
-    ...(input.ship !== undefined || input.heads !== undefined
+    ...(input.ship !== undefined ||
+    input.heads !== undefined ||
+    input.routeAccounting !== undefined
       ? {
           metadata: {
             ...(input.ship !== undefined ? { ship: input.ship } : {}),
             ...(input.heads !== undefined ? { heads: input.heads } : {}),
+            ...(input.routeAccounting !== undefined
+              ? { routeAccounting: input.routeAccounting }
+              : {}),
           },
         }
       : {}),

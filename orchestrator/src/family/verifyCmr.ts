@@ -137,6 +137,12 @@ export interface VerifyCmrInput {
   readonly familyIssue?: number;
   /** Parsed module declarations for family-CMR defer classification (#449). */
   readonly moduleContext?: FamilyModuleContext;
+  /**
+   * Runner-owned prior finding identity keys that the integrated CMR worker may
+   * close. If a worker claims fixed keys without this protected context, or
+   * claims keys outside it, the family gate fails closed.
+   */
+  readonly priorCmrFindingIdentityKeys?: readonly string[];
 }
 
 /** The verify-cmr hook result. */
@@ -353,9 +359,54 @@ function familyCmrPassStopSummary(input: {
       reason: crossModule.reason,
     });
   }
-  return providerDegradedPassStopSummary({
-    familyHeadAfter: input.familyHeadAfter,
-    skippedLegs: input.skippedLegs,
+  const acceptedSuppressions = input.classification?.dispositions
+    .filter(
+      (disposition) =>
+        disposition.status === "accepted_suppressed" &&
+        isFilledString(disposition.source) &&
+        isFilledString(disposition.scope) &&
+        isFilledString(disposition.reason) &&
+        isFilledString(disposition.boundedReopen),
+    )
+    .map((disposition) => ({
+      source: disposition.source!,
+      scope: disposition.scope!,
+      reason: disposition.reason!,
+      findingIdentity: disposition.identityKey,
+      boundedReopen: disposition.boundedReopen!,
+    }));
+  if (
+    (acceptedSuppressions === undefined || acceptedSuppressions.length === 0) &&
+    (input.skippedLegs === undefined || input.skippedLegs.length === 0)
+  ) {
+    return providerDegradedPassStopSummary({
+      familyHeadAfter: input.familyHeadAfter,
+      skippedLegs: input.skippedLegs,
+    });
+  }
+  return successStopSummary({
+    ...(input.familyHeadAfter !== undefined
+      ? {
+          heads: {
+            verifiedCmrHead: input.familyHeadAfter,
+            sources: { verifiedCmrHead: "cmr_passed ledger row" },
+          },
+        }
+      : {}),
+    ...(acceptedSuppressions !== undefined && acceptedSuppressions.length > 0
+      ? { acceptedSuppressions }
+      : {}),
+    ...(input.skippedLegs !== undefined && input.skippedLegs.length > 0
+      ? {
+          providerDegraded: input.skippedLegs.map((leg) => ({
+            provider: modelFamilyForCmrReviewLeg(leg.slug),
+            leg: leg.slug,
+            reason: leg.reason,
+            blocking: false,
+            repairHint: `restore provider availability for ${leg.slug} before making this leg required`,
+          })),
+        }
+      : {}),
   });
 }
 
@@ -382,9 +433,32 @@ function notConvergedStopSummary(reason: string): StopSummary {
   };
 }
 
+function legAccountingFailureStopSummary(input: {
+  readonly reason: string;
+  readonly resolvedRoute: ResolvedModelRoute;
+  readonly routeFingerprint: string;
+  readonly successfulLegs: readonly string[];
+  readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+}): StopSummary {
+  return infraFailureStopSummary({
+    summary: input.reason,
+    repairHint:
+      "repair the CMR worker leg accounting payload so it matches the active route, then rerun the family CMR gate",
+    routeAccounting: {
+      declaredLegs: input.resolvedRoute.legCollections.cmrReview.map((leg) => leg.slug),
+      successfulLegs: input.successfulLegs,
+      skippedLegs: input.skippedLegs ?? [],
+      routeFingerprint: input.routeFingerprint,
+      repairHint:
+        "every active-route CMR leg must appear exactly once as successful or skipped; undeclared legs must be removed from the worker verdict",
+    },
+  });
+}
+
 function cmrClosureFailureReason(input: {
   readonly pass: IntegratedCmrPass;
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
+  readonly protectedPriorFindingIdentityKeys?: readonly string[];
   readonly priorFindingDispositions?: readonly {
     readonly identityKey: string;
     readonly status: string;
@@ -396,6 +470,22 @@ function cmrClosureFailureReason(input: {
 }): string | undefined {
   const claimed = input.claimedFixedFindingIdentityKeys ?? [];
   const priorDispositions = input.priorFindingDispositions ?? [];
+  if (claimed.length > 0 && input.protectedPriorFindingIdentityKeys === undefined) {
+    return (
+      `integrated cmr ${input.pass} closure_context_missing: worker claimed fixed ` +
+      `prior findings but the runner supplied no protected prior finding identity set`
+    );
+  }
+  if (input.protectedPriorFindingIdentityKeys !== undefined) {
+    const protectedKeys = new Set(input.protectedPriorFindingIdentityKeys);
+    const staleClaims = claimed.filter((key) => !protectedKeys.has(key));
+    if (staleClaims.length > 0) {
+      return (
+        `integrated cmr ${input.pass} closure failed: claimed-fixed keys outside ` +
+        `the runner-supplied prior finding set: ${staleClaims.join(", ")}`
+      );
+    }
+  }
   const dispositionKeys = priorDispositions.map((d) => d.identityKey);
   const duplicateDispositions = dispositionKeys.filter(
     (key, index, keys) => keys.indexOf(key) !== index,
@@ -544,6 +634,7 @@ async function runIntegratedCmrPass(input: {
   readonly familyHeadAfter?: string;
   readonly familyIssue?: number;
   readonly moduleContext?: FamilyModuleContext;
+  readonly priorCmrFindingIdentityKeys?: readonly string[];
   readonly resolvedRoute: ResolvedModelRoute;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
@@ -556,6 +647,7 @@ async function runIntegratedCmrPass(input: {
     familyIssue,
     moduleContext,
     resolvedRoute,
+    priorCmrFindingIdentityKeys,
   } = input;
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
   const resolvedFamilyHeadAfter = await readPostCmrFamilyHead(
@@ -586,6 +678,9 @@ async function runIntegratedCmrPass(input: {
         : {}),
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
       ...(moduleContext !== undefined ? { moduleContext } : {}),
+      ...(priorCmrFindingIdentityKeys !== undefined
+        ? { priorCmrFindingIdentityKeys }
+        : {}),
     },
   );
   const postWorkerFamilyHead = await readPostCmrFamilyHead(
@@ -710,6 +805,13 @@ async function runIntegratedCmrPass(input: {
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: legAccountingFailureStopSummary({
+        reason,
+        resolvedRoute,
+        routeFingerprint,
+        successfulLegs: cmrResult.output.successfulLegs ?? [],
+        skippedLegs: cmrResult.output.skippedLegs,
+      }),
     });
     await familyBackend.escalateFamily?.({
       reason,
@@ -743,6 +845,7 @@ async function runIntegratedCmrPass(input: {
     pass,
     claimedFixedFindingIdentityKeys:
       cmrResult.output.claimedFixedFindingIdentityKeys,
+    protectedPriorFindingIdentityKeys: priorCmrFindingIdentityKeys,
     priorFindingDispositions: cmrResult.output.priorFindingDispositions,
   });
   if (closureFailure !== undefined) {
@@ -800,6 +903,7 @@ export async function runVerifyCmr(
     familyHeadAfter,
     familyIssue,
     moduleContext,
+    priorCmrFindingIdentityKeys,
   } = input;
 
   // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
@@ -889,6 +993,7 @@ export async function runVerifyCmr(
     familyHeadAfter,
     familyIssue,
     moduleContext,
+    priorCmrFindingIdentityKeys,
     resolvedRoute,
   });
   if (!completeness.result.ok) return completeness.result;
@@ -902,6 +1007,7 @@ export async function runVerifyCmr(
     familyHeadAfter: completeness.familyHeadAfter,
     familyIssue,
     moduleContext,
+    priorCmrFindingIdentityKeys,
     resolvedRoute,
   });
   if (!correctness.result.ok) return correctness.result;

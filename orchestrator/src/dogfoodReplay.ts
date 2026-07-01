@@ -1238,6 +1238,7 @@ async function familyClosureFailure(input: {
     readonly identityKey: string;
     readonly status: "still-active" | "verified-closed" | "unable-to-assess";
   }>;
+  readonly priorCmrFindingIdentityKeys?: readonly string[];
 }): Promise<{ readonly shape: string; readonly reason: string }> {
   const backend = new DogfoodCmrFamilyBackend(
     "closure-head",
@@ -1253,6 +1254,9 @@ async function familyClosureFailure(input: {
     phase: "final",
     familyBase: "family/376-closure",
     familyBackend: backend,
+    ...(input.priorCmrFindingIdentityKeys !== undefined
+      ? { priorCmrFindingIdentityKeys: input.priorCmrFindingIdentityKeys }
+      : {}),
   });
   const reason =
     backend.escalations[0]?.reason ??
@@ -1298,6 +1302,8 @@ async function closureNegativeReplay(): Promise<SeamReplay> {
   const unableKey = "correctness|src/closure.ts:2|unable";
   const missingKey = "correctness|src/closure.ts:3|missing";
   const staleKey = "correctness|src/closure.ts:4|stale";
+  const staleSelfClaimedKey =
+    "correctness|src/closure.ts:5|stale self-claimed";
   const duplicateKey =
     "correctness|orchestrator/src/runner.ts:376|closure failure duplicate-disposition";
   const familyFailures = await Promise.all([
@@ -1319,6 +1325,14 @@ async function closureNegativeReplay(): Promise<SeamReplay> {
       shape: "missing-disposition",
       claimedFixedFindingIdentityKeys: [missingKey],
       priorFindingDispositions: [],
+      priorCmrFindingIdentityKeys: [missingKey],
+    }),
+    familyClosureFailure({
+      shape: "stale-self-claimed",
+      claimedFixedFindingIdentityKeys: [staleSelfClaimedKey],
+      priorFindingDispositions: [
+        { identityKey: staleSelfClaimedKey, status: "verified-closed" },
+      ],
     }),
     familyClosureFailure({
       shape: "extra-stale-disposition",
@@ -1391,6 +1405,65 @@ async function closureContextMissingReplay(): Promise<SeamReplay> {
       closureContext: "missing",
       errorReason: result.errorPackage.reason,
       dispatched: backend.dispatched,
+    },
+  };
+}
+
+async function familyAcceptedSuppressionSummaryReplay(input: {
+  readonly finding: Finding;
+  readonly moduleContext: FamilyModuleContext;
+}): Promise<SeamReplay> {
+  const cmrOutput: WorkerResult = {
+    kind: "completed",
+    output: {
+      kind: "cmr",
+      converged: false,
+      reason: "only accepted suppressions remain",
+      successfulLegs: ["opus", "gpt-5.5", "agy"],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      findings: [input.finding],
+    },
+  };
+  const backend = new DogfoodCmrFamilyBackend("suppression-head", [], [
+    cmrOutput,
+    cmrOutput,
+    {
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: "family/376-suppression",
+        status: "pr_opened",
+        pr: "pr://family/376-suppression",
+        prHead: "suppression-head",
+      },
+    },
+  ]);
+  const result = await runVerifyCmr({
+    phase: "final",
+    familyBase: "family/376-suppression",
+    familyBackend: backend,
+    familyIssue: 376,
+    moduleContext: input.moduleContext,
+  });
+  const pass = backend.ledger.find(
+    (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
+  );
+  const accepted = pass?.stopSummary?.metadata?.acceptedSuppressions?.[0];
+  if (!result.ok || pass?.stopSummary?.reason !== "success" || accepted === undefined) {
+    throw new Error("dogfood accepted-suppression replay lost success metadata");
+  }
+  if (backend.dispatches.filter((dispatch) => dispatch.startsWith("ship:")).length !== 1) {
+    throw new Error("dogfood accepted-suppression replay did not ship after pass");
+  }
+  return {
+    stopSummary: pass.stopSummary,
+    sourceEvidence: {
+      seam: "family_verify_cmr_pass_summary",
+      mechanism: "accepted_suppressed_success_metadata",
+      status: "success",
+      dispatches: backend.dispatches,
+      acceptedSuppression: accepted,
     },
   };
 }
@@ -1847,21 +1920,24 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       reason: "owning issue still has the named surface red",
     },
   });
-  const acceptedSuppressionFinding = finding({
+  const acceptedSuppressionBase = finding({
+    severity: "medium",
     claim_quote: "route accounting follow-up is accepted as bounded out of scope",
     location: "orchestrator/src/modelRoutes.ts:1",
     action: "wont_fix",
     disposition_reason: "accepted as bounded out of scope",
+  });
+  const acceptedSuppressionFinding: Finding = {
+    ...acceptedSuppressionBase,
     disposition: {
       kind: "accepted_suppressed",
       source: "#376 owner answer",
-      scope: "orchestrator route accounting",
+      scope: "orchestrator route accounting / orchestrator/src/modelRoutes.ts",
       reason: "accepted as bounded out of scope",
-      findingIdentity:
-        "correctness|orchestrator/src/modelRoutes.ts:1|route accounting follow-up",
+      findingIdentity: findingIdentityKey(acceptedSuppressionBase),
       boundedReopen: "reopen on scope mismatch, severity escalation, or new evidence",
     },
-  });
+  };
   const agentBriefConflictSource = await runnerReviewerEscalationReplay({
     escalation: {
       reason: "Agent Brief contradicts the owner-authored acceptance criteria",
@@ -1869,6 +1945,32 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     },
     mechanism: "agent_brief_spec_conflict",
   });
+  const routeAccountingModuleContext: FamilyModuleContext = {
+    ...moduleContext,
+    currentModules: [
+      ...moduleContext.currentModules,
+      {
+        module: "orchestrator-route-accounting",
+        moduleScope: ["orchestrator/src/modelRoutes.ts"],
+        source: "child_issue",
+        issue: 376,
+      },
+    ],
+    childModules: [
+      ...moduleContext.childModules,
+      {
+        module: "orchestrator-route-accounting",
+        moduleScope: ["orchestrator/src/modelRoutes.ts"],
+        source: "child_issue",
+        issue: 376,
+      },
+    ],
+  };
+  const acceptedSuppressionSource =
+    await familyAcceptedSuppressionSummaryReplay({
+      finding: acceptedSuppressionFinding,
+      moduleContext: routeAccountingModuleContext,
+    });
   const invalidEscalationAnswerSource = await runnerInvalidEscalationAnswerReplay();
   const scenarios: DogfoodReplayScenario[] = [
     replayScenario({
@@ -2102,13 +2204,15 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       finding: owningChildFinding,
       moduleContext,
     }),
-    familyClassificationScenario({
+    replayScenario({
       id: "376-accepted-suppression-with-source",
       issue: 376,
       title: "accepted suppression with explicit source enters success metadata",
-      familyIssue: 376,
-      finding: acceptedSuppressionFinding,
-      moduleContext,
+      classification: "accepted_suppressed",
+      stopSummary: acceptedSuppressionSource.stopSummary,
+      source: "family",
+      sourceStopSummary: acceptedSuppressionSource.stopSummary,
+      sourceEvidence: acceptedSuppressionSource.sourceEvidence,
     }),
     replayScenario({
       id: "376-provider-degraded-nonblocking",

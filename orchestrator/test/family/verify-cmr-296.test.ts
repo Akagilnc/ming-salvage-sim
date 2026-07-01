@@ -314,6 +314,19 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       cmrPass: "completeness",
       familyHeadAfter: "head-1",
       reason: expect.stringContaining("not declared"),
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        repairHint: expect.stringContaining("leg accounting payload"),
+        metadata: expect.objectContaining({
+          routeAccounting: expect.objectContaining({
+            declaredLegs: ["gpt-5.5", "agy"],
+            successfulLegs: ["agy", "opus"],
+            skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
+            routeFingerprint: expect.any(String),
+            repairHint: expect.stringContaining("undeclared legs"),
+          }),
+        }),
+      }),
     }));
   });
 

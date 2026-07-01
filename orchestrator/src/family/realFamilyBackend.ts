@@ -1205,13 +1205,21 @@ export class RealFamilyBackend implements FamilyBackend {
             2,
           )}\n\`\`\``
         : "\n\nParsed module context (#449): none declared; do not approve cross_module defer from inferred prose/logs.";
+    const closureBlock =
+      ctx.priorCmrFindingIdentityKeys !== undefined
+        ? `\n\nRunner-owned prior CMR finding identity keys that may be claimed fixed in this pass (#450 closure context):\n\n\`\`\`json\n${JSON.stringify(
+            ctx.priorCmrFindingIdentityKeys,
+            null,
+            2,
+          )}\n\`\`\`\n\nDo not invent claimed-fixed identity keys outside this list. If the list is empty, emit empty closure arrays unless this pass reports new findings.`
+        : "\n\nRunner-owned prior CMR finding identity keys (#450 closure context): none supplied. Do not claim fixed prior findings; emit empty closure arrays unless this pass reports new findings.";
     // The focus file is pass-scoped: it pins only the exact review scope and the
     // machine-resolved-child focus. Cross-pass accounting lives in the durable
     // ledger / worker verdict fields, not in this transient prompt file.
     const body =
       `# Integrated cmr — review scope + focus (machine-generated; #335)\n\n` +
       `Review THIS exact family-base diff (the commits the family base added since it\n` +
-      `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}${moduleBlock}${answerBlock}\n`;
+      `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}${moduleBlock}${closureBlock}${answerBlock}\n`;
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
     this.excludeFromGit(CMR_FOCUS_FILENAME);
@@ -1230,6 +1238,9 @@ export class RealFamilyBackend implements FamilyBackend {
         reviewLegs: cmrReviewLegs(),
         ...(ctx.moduleContext !== undefined
           ? { moduleContext: ctx.moduleContext }
+          : {}),
+        ...(ctx.priorCmrFindingIdentityKeys !== undefined
+          ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
           : {}),
       },
       null,

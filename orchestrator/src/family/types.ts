@@ -532,6 +532,12 @@ export interface IntegratedCmrRequest {
   readonly escalationAnswer?: EscalationAnswerPayload;
   /** Parsed module context supplied by the runner; the worker must not invent it. */
   readonly moduleContext?: FamilyModuleContext;
+  /**
+   * Runner-owned prior finding identity keys that this CMR worker may adjudicate
+   * as claimed-fixed. Claimed-fixed keys outside this set are stale/self-claimed
+   * closure and must fail closed at the family gate.
+   */
+  readonly priorCmrFindingIdentityKeys?: readonly string[];
 }
 
 /** The integrated-cmr outcome (the load-bearing cross-slice-seam gate). */
