@@ -520,10 +520,10 @@ def _auto_pay_arrears_by_priority(
 
 
 def _payable_army_arrears_cap(current_arrears: float, pay_source_cutover: bool) -> int:
-    """Integer ledger cap: whole debts floor; a positive final tail can be cleared by 1万两."""
+    """Integer ledger cap: any positive fractional debt needs one more 万两 ledger unit."""
     if current_arrears <= 1e-9:
         return 0
-    return max(1, int(current_arrears))
+    return math.ceil(current_arrears)
 
 
 def _normalized_cutover_pay_arrears(row, current_arrears: float) -> Tuple[float, float]:
@@ -740,21 +740,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         flows.append({"dir": "expense", "account": account, "amount": abs(actual),
                       "category": category, "reason": reason})
 
-    # ── 固定收支落账（税/皇庄/宗室/官俸/织造…全走唯一定额源 compute_budget_lines）──
-    # 军饷与建筑另有逐项落账逻辑（arrears/condition），故下面跳过这两类，仅落其余定额项。
-    budget = compute_budget_lines(db, state)
-    _SKIP = {"各军军饷", "建筑产出", "建筑维护"}
-    for account in ("国库", "内库"):
-        for it in budget[account]["income"]:
-            if it["name"] in _SKIP:
-                continue
-            _income(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}入")
-        for it in budget[account]["expense"]:
-            if it["name"] in _SKIP:
-                continue
-            _expense(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}支")
-
-    # ── legacy 各军军饷（按优先级，先发当月；不足挂 arrears 累计万两）──
+    # ── substrate hub 顶层拨付：京运补 + 中央军饷优先占用月初国库 ──
     # substrate_hub 下旧「户部直扣国库发饷」全局路径退役；省份额由 province substrate，
     # 中央份额由 hub/outbound 后续路径承载，避免同一军饷从旧全局路双付。
     pay_source_cutover = db.is_army_pay_source_cutover_enabled()
@@ -877,7 +863,22 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 "morale_delta": new_morale - old_morale,
             })
 
-    elif db.fiscal_engine() == "legacy":
+    # ── 固定收支落账（税/皇庄/宗室/官俸/织造…全走唯一定额源 compute_budget_lines）──
+    # 军饷与建筑另有逐项落账逻辑（arrears/condition），故下面跳过这两类，仅落其余定额项。
+    budget = compute_budget_lines(db, state)
+    _SKIP = {"各军军饷", "建筑产出", "建筑维护"}
+    for account in ("国库", "内库"):
+        for it in budget[account]["income"]:
+            if it["name"] in _SKIP:
+                continue
+            _income(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}入")
+        for it in budget[account]["expense"]:
+            if it["name"] in _SKIP:
+                continue
+            _expense(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}支")
+
+    # ── legacy 各军军饷（按优先级，先发当月；不足挂 arrears 累计万两）──
+    if db.fiscal_engine() == "legacy":
         army_rows_raw = db.conn.execute(
             # #44 army_needed 需 manpower/salary_rate/owner_power（应发挂钩兵力派生）
             "SELECT id, name, manpower, salary_rate, owner_power, arrears, morale FROM armies"
