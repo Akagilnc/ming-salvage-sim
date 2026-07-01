@@ -1852,6 +1852,51 @@ def test_army_delta_owner_power_from_ming_clears_pay_source_arrears(fresh_db):
     assert settle["p"]["Due"]["军饷"] < before_due
 
 
+@pytest.mark.parametrize("field", ["self_funded_pay", "is_tusi"])
+def test_army_delta_rejects_ming_exempt_flag_before_pay_arrears_writeoff(fresh_db, field):
+    state = fresh_db.load_state()
+    event = SimpleNamespace(id="test", title="改隶")
+    before = fresh_db.conn.execute(
+        """
+        SELECT owner_power, pay_source_region, province_pay_share, central_pay_share,
+               is_tusi, self_funded_pay, province_pay_arrears, central_pay_arrears,
+               arrears
+        FROM armies
+        WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    assert before["owner_power"] == "ming"
+    assert before["arrears"] > 0
+
+    rejected = fresh_db.apply_army_deltas(
+        state,
+        event,
+        None,
+        "测试",
+        {"shaanxi_army": {field: 1}},
+        commit=False,
+    )
+
+    after = fresh_db.conn.execute(
+        """
+        SELECT owner_power, pay_source_region, province_pay_share, central_pay_share,
+               is_tusi, self_funded_pay, province_pay_arrears, central_pay_arrears,
+               arrears
+        FROM armies
+        WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    assert rejected and rejected[0]["rejected"] is True
+    assert "欠饷" in rejected[0]["reason"]
+    assert dict(after) == dict(before)
+    assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
+        _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
+    )
+    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+        _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
+    )
+
+
 def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(fresh_db):
     from ming_sim.flows import _apply_economy_list
 
