@@ -278,6 +278,32 @@ def test_army_pay_source_spine_seed_splits_arrears_and_reconciles_tusi(fresh_db)
     assert log["actor"] == "system"
 
 
+def test_self_funded_seed_arrears_log_preserves_fractional_delta(tmp_path):
+    content = GameContent.load()
+    content.armies["southwest_tusi"] = replace(
+        content.armies["southwest_tusi"],
+        arrears=4.5,
+    )
+    bind_content(content)
+    db = GameDB(str(tmp_path / "fractional-tusi.db"), content)
+    db.seed_static_data()
+    try:
+        log = db.conn.execute(
+            """
+            SELECT old_value, new_value, delta
+            FROM army_logs
+            WHERE army_id = 'southwest_tusi' AND field = 'arrears'
+            """
+        ).fetchone()
+        assert log is not None
+        assert log["old_value"] == "4.5"
+        assert log["new_value"] == "0.0"
+        assert log["delta"] == pytest.approx(-4.5)
+    finally:
+        db.conn.close()
+        bind_content(GameContent.load())
+
+
 def test_fresh_save_pay_source_prefers_content_army_fields(tmp_path):
     content = GameContent.load()
     content.armies["xuan_da"] = replace(
@@ -1292,6 +1318,9 @@ def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
+    state.metrics["国库"] = 5
+    db.save_state(state)
+    _set_all_settle_grants(db, 0)
     db.conn.execute(
         """
         UPDATE armies
@@ -1303,9 +1332,9 @@ def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
         """
         UPDATE armies
         SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
-            pay_source_region = 'shaanxi', province_pay_share = 0.65,
-            central_pay_share = 0.35, manpower = 10000, salary_rate = 10
-        WHERE id = 'shaanxi_army'
+            pay_source_region = 'shaanxi', province_pay_share = 0,
+            central_pay_share = 1, manpower = 10000, salary_rate = 10
+        WHERE id = 'guanning'
         """
     )
     db.conn.execute(
@@ -1324,7 +1353,7 @@ def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
         row["amount"] for row in substrate_budget["国库"]["expense"]
         if row["name"] == "各军军饷"
     )
-    assert substrate_pay == 0
+    assert substrate_pay == 5
 
     _disable_army_pay_source_cutover(db)
 
@@ -1373,7 +1402,7 @@ def test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub(fre
             row["amount"] for row in budget["国库"]["expense"]
             if row["name"] == "各军军饷"
         )
-        assert army_pay == 0
+        assert army_pay > 0
 
         flow_rows = flows_mod.apply_fixed_period_flows(reopened, state)
         assert not any(

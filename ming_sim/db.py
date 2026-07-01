@@ -2206,7 +2206,7 @@ class GameDB:
                         """,
                         (
                             seed_state.turn, seed_state.year, seed_state.period, army_id,
-                            str(old_arrears), -int(old_arrears),
+                            str(old_arrears), -old_arrears,
                             "自养核销：土司/自养军欠饷不并入朝廷饷源双累加器",
                         ),
                     )
