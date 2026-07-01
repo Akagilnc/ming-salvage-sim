@@ -93,6 +93,7 @@ module_scope:
     expect(
       parseModuleDeclaration(`## Module Declaration
 \`\`\`yaml
+# owner note
 module: "#fiscal"
 module_scope:
   - "foo#bar"
