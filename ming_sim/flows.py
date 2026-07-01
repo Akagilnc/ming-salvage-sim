@@ -641,15 +641,29 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         army_map = {str(r["id"]): r for r in army_rows_raw}
         ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
         ordered += [r for r in army_rows_raw if str(r["id"]) not in ARMY_SALARY_PRIORITY]
+        central_due_by_army = {
+            str(row["id"]): army_needed(row) * float(row["central_pay_share"] or 0)
+            for row in ordered
+        }
+        central_due_total = sum(max(0.0, due) for due in central_due_by_army.values())
+        central_capacity = min(
+            central_due_total,
+            max(0.0, float(state.metrics.get("国库", 0) or 0)),
+        )
+        central_pay_ratio = (
+            central_capacity / central_due_total
+            if central_due_total > 0
+            else 1.0
+        )
         for row in ordered:
             army_id = str(row["id"])
             name = str(row["name"])
             full_needed = army_needed(row)
-            needed = full_needed * float(row["central_pay_share"] or 0)
+            needed = max(0.0, central_due_by_army.get(army_id, 0.0))
             if needed <= 0:
                 continue
-            pay_current = 0
-            shortfall = needed
+            pay_current = min(needed, needed * central_pay_ratio)
+            shortfall = max(0.0, needed - pay_current)
             old_arrears = float(row["arrears"] or 0)
             old_morale = int(row["morale"])
 
