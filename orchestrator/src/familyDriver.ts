@@ -429,9 +429,18 @@ function readIssueBody(issue: number, repo: string, sh: Sh): string {
       "--repo",
       repo,
       "--json",
-      "number,body",
+      "number,body,author",
     ]);
-    const parsed = JSON.parse(raw) as { readonly body?: unknown };
+    const parsed = JSON.parse(raw) as {
+      readonly body?: unknown;
+      readonly author?: { readonly login?: unknown };
+    };
+    const repoOwner = repo.split("/", 1)[0]?.toLowerCase();
+    const authorLogin =
+      typeof parsed.author?.login === "string"
+        ? parsed.author.login.toLowerCase()
+        : undefined;
+    if (repoOwner === undefined || authorLogin !== repoOwner) return "";
     return typeof parsed.body === "string" ? parsed.body : "";
   } catch (err) {
     throw new Error(

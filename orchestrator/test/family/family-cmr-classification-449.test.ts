@@ -73,6 +73,20 @@ module_scope:
 \`\`\`
 `),
     ).toBeUndefined();
+    expect(
+      parseModuleDeclaration(`## Module Declaration
+
+No declaration fence is present in this section.
+
+## Example
+
+\`\`\`yaml
+module: unrelated-example
+module_scope:
+  - docs/example
+\`\`\`
+`),
+    ).toBeUndefined();
   });
 
   it("preserves hash characters inside quoted module declaration values", () => {

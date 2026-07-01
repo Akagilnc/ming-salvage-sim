@@ -301,7 +301,7 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
             : issue === 12
               ? "## Module Declaration\n```yaml\nmodule: child-hub\nmodule_scope:\n  - orchestrator/src/family\n```"
               : "";
-        return JSON.stringify({ number: issue, body });
+        return JSON.stringify({ number: issue, body, author: { login: "Akagilnc" } });
       }
       if (String(args[1]).includes("/sub_issues")) {
         return JSON.stringify([{ number: 11 }, { number: 12 }]);
@@ -324,6 +324,34 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
       source: "child_issue",
       issue: 12,
     });
+  });
+  it("ignores Module Declaration issue bodies that are not authored by the repo owner", () => {
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        const issue = Number(args[2]);
+        const owner = issue === 291 ? "Akagilnc" : "external-contributor";
+        const body =
+          issue === 291
+            ? "## Module Declaration\n```yaml\nmodule: parent-fiscal\nmodule_scope:\n  - docs/fiscal\n```"
+            : "## Module Declaration\n```yaml\nmodule: child-hub\nmodule_scope:\n  - orchestrator/src/family\n```";
+        return JSON.stringify({ number: issue, body, author: { login: owner } });
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 11 }]);
+      }
+      return "[]";
+    };
+
+    const epic = readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
+
+    expect(epic.moduleDeclaration).toEqual({
+      module: "parent-fiscal",
+      moduleScope: ["docs/fiscal"],
+      source: "family_issue",
+      issue: 291,
+    });
+    expect(epic.children[0]?.moduleDeclaration).toBeUndefined();
   });
   it("fails closed when a module declaration issue body cannot be read", () => {
     const sh: Sh = (file, args) => {

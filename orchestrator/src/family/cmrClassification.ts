@@ -200,7 +200,10 @@ export function parseModuleDeclaration(body: string): ModuleDeclaration | undefi
   const heading = headings[0];
   if (heading.index === undefined) return undefined;
   const afterHeading = body.slice(heading.index + heading[0].length);
-  const fence = /^[\s\S]*?```(?:ya?ml)\s*\n([\s\S]*?)\n```\s*/i.exec(afterHeading);
+  const nextHeading = /\r?\n#{1,6}\s+\S/.exec(afterHeading);
+  const section =
+    nextHeading === null ? afterHeading : afterHeading.slice(0, nextHeading.index);
+  const fence = /^[\s\S]*?```(?:ya?ml)\s*\n([\s\S]*?)\n```\s*/i.exec(section);
   if (fence === null) return undefined;
   return parseModuleDeclarationYaml(fence[1] ?? "");
 }
