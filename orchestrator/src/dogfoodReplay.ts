@@ -21,6 +21,7 @@ import type {
 } from "./family/types.js";
 import { findingIdentityKey } from "./findings.js";
 import {
+  applyTightRoutePolicy,
   cmrLegAccountingFailure,
   resolveRouteModels,
   type ModelRouteEnv,
@@ -103,6 +104,14 @@ function scenario(input: {
   readonly sourceStopSummary?: StopSummary;
   readonly sourceEvidence?: DogfoodReplayScenario["sourceEvidence"];
 }): DogfoodReplayScenario {
+  const sourceStopSummary =
+    input.source !== undefined && input.source !== "stop_summary"
+      ? input.sourceStopSummary ?? input.stopSummary
+      : input.sourceStopSummary;
+  const sourceEvidence =
+    input.source !== undefined && input.source !== "stop_summary"
+      ? input.sourceEvidence ?? { seam: input.source }
+      : input.sourceEvidence;
   return {
     id: input.id,
     issue: input.issue,
@@ -118,11 +127,11 @@ function scenario(input: {
       ? { metadata: input.stopSummary.metadata }
       : {}),
     ...(input.source !== undefined ? { source: input.source } : {}),
-    ...(input.sourceStopSummary !== undefined
-      ? { sourceStopSummary: input.sourceStopSummary }
+    ...(sourceStopSummary !== undefined
+      ? { sourceStopSummary }
       : {}),
-    ...(input.sourceEvidence !== undefined
-      ? { sourceEvidence: input.sourceEvidence }
+    ...(sourceEvidence !== undefined
+      ? { sourceEvidence }
       : {}),
   };
 }
@@ -218,18 +227,18 @@ function familyClassificationScenario(input: {
   });
 }
 
-function staticScenario(input: {
+function replayScenario(input: {
   readonly id: string;
   readonly issue: number;
   readonly title: string;
   readonly classification: DogfoodReplayClassification;
   readonly stopSummary: StopSummary;
   readonly stopReason?: StopReason;
-  readonly source?: DogfoodReplayScenario["source"];
+  readonly source: Exclude<DogfoodReplayScenario["source"], "stop_summary">;
   readonly sourceStopSummary?: StopSummary;
   readonly sourceEvidence?: DogfoodReplayScenario["sourceEvidence"];
 }): DogfoodReplayScenario {
-  return scenario({ ...input, source: input.source ?? "stop_summary" });
+  return scenario(input);
 }
 
 const REPLAY_WORKTREE: WorktreeHandle = {
@@ -1173,6 +1182,165 @@ async function closureContextMissingReplay(): Promise<SeamReplay> {
   };
 }
 
+function routeEnvMismatchReplay(): SeamReplay {
+  let failure = "";
+  try {
+    cmrLegAccountingFailure(
+      { successfulLegs: ["gpt-5.5"], skippedLegs: [{ slug: "agy", reason: "quota" }] },
+      {
+        ORCHESTRATOR_ROUTE: "claude-tight",
+        ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: '["gpt-5.5","agy"]',
+      },
+    );
+  } catch (err) {
+    failure = err instanceof Error ? err.message : String(err);
+  }
+  if (!failure.includes("unknown cmr review leg slug")) {
+    throw new Error("dogfood route env mismatch replay did not fail closed");
+  }
+  return {
+    stopSummary: contractDriftStopSummary({
+      summary: "CMR route env format mismatch",
+      repairHint: "repair JSON-vs-CSV route env serialization before rerun",
+    }),
+    sourceEvidence: {
+      seam: "model_route_cmr_leg_accounting",
+      envShape: "json-written-csv-read",
+      failure,
+    },
+  };
+}
+
+function startupRouteViolationReplay(): SeamReplay {
+  const route = resolveRouteModels("claude-tight", {
+    coder: "sonnet",
+  });
+  const decision = applyTightRoutePolicy(route, { interactive: false });
+  if (decision.kind !== "stop") {
+    throw new Error("dogfood startup route replay did not stop on tight violation");
+  }
+  return {
+    stopSummary: infraFailureStopSummary({
+      summary: "startup route resolution failed closed",
+      repairHint: "fix the active model route before dispatching workers",
+    }),
+    sourceEvidence: {
+      seam: "model_route_startup_policy",
+      routeName: route.routeName,
+      violationReason: decision.escalation.reason,
+      diagnosis: decision.escalation.diagnosis,
+    },
+  };
+}
+
+async function providerBlockingReplay(): Promise<SeamReplay> {
+  const backend = new DogfoodCmrFamilyBackend("provider-blocking-head", [], [
+    {
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: true,
+        successfulLegs: ["agy"],
+        skippedLegs: [
+          { slug: "opus", reason: "auth unavailable" },
+          { slug: "gpt-5.5", reason: "auth unavailable" },
+        ],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+      },
+    },
+  ]);
+  const result = await runVerifyCmr({
+    phase: "final",
+    familyBase: "family/376-provider",
+    familyBackend: backend,
+  });
+  const abort = backend.ledger.find((entry) => entry.status === "aborted");
+  if (result.ok || abort?.stopSummary?.reason !== "provider_degraded") {
+    throw new Error("dogfood provider blocking replay did not produce provider_degraded");
+  }
+  return {
+    stopSummary: abort.stopSummary,
+    sourceEvidence: {
+      seam: "family_verify_cmr_provider_floor",
+      status: "aborted",
+      dispatches: backend.dispatches,
+      successfulLegs: ["agy"],
+      skippedLegs: ["opus", "gpt-5.5"],
+    },
+  };
+}
+
+async function providerStrongLegPassReplay(): Promise<SeamReplay> {
+  const backend = new DogfoodCmrFamilyBackend("provider-pass-head", [], [
+    {
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: true,
+        successfulLegs: ["gpt-5.5"],
+        skippedLegs: [{ slug: "agy", reason: "provider quota unavailable" }],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+      },
+    },
+    {
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: true,
+        successfulLegs: ["gpt-5.5"],
+        skippedLegs: [{ slug: "agy", reason: "provider quota unavailable" }],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+      },
+    },
+    {
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: "family/433-provider",
+        status: "pr_opened",
+        pr: "pr://family/433-provider",
+        prHead: "provider-pass-head",
+      },
+    },
+  ]);
+  const result = await withRouteEnv(
+    { ORCHESTRATOR_ROUTE: "claude-tight" },
+    () =>
+      runVerifyCmr({
+        phase: "final",
+        familyBase: "family/433-provider",
+        familyBackend: backend,
+      }),
+  );
+  if (!result.ok) {
+    throw new Error("dogfood provider strong-leg replay did not pass");
+  }
+  return {
+    stopSummary: successStopSummary({
+      providerDegraded: [
+        {
+          provider: "agy",
+          leg: "agy",
+          reason: "provider quota unavailable",
+          blocking: false,
+          repairHint: "restore provider quota before selecting this route as required",
+        },
+      ],
+    }),
+    sourceEvidence: {
+      seam: "family_verify_cmr_provider_metadata",
+      status: "success",
+      routeName: "claude-tight",
+      dispatches: backend.dispatches,
+      successfulLegs: ["gpt-5.5"],
+      skippedLegs: ["agy"],
+    },
+  };
+}
+
 function uniqueSortedStopReasons(
   scenarios: ReadonlyArray<DogfoodReplayScenario>,
 ): ReadonlyArray<StopReason> {
@@ -1248,10 +1416,14 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   const moduleDeclarationSource = moduleDeclarationReplay();
   const legacyDispositionSource = legacyDispositionParserReplay();
   const routeAccountingSource = routeAccountingReplay();
+  const routeEnvMismatchSource = routeEnvMismatchReplay();
   const routeFreezeSource = await routeFreezeReplay();
+  const startupRouteViolationSource = startupRouteViolationReplay();
   const closureNegativeSource = await closureNegativeReplay();
   const closureContextMissingSource = await closureContextMissingReplay();
   const closurePositiveSource = await closurePositiveReplay();
+  const providerBlockingSource = await providerBlockingReplay();
+  const providerStrongLegPassSource = await providerStrongLegPassReplay();
   const currentHeadFamilySuccessSummary =
     await familyCurrentHeadSuccessStopSummary();
   const staleFamilyHeadStopSummary = await familyStaleHeadStopSummary();
@@ -1324,7 +1496,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   });
 
   const scenarios: DogfoodReplayScenario[] = [
-    staticScenario({
+    replayScenario({
       id: "307-continue-fixing-after-human-answer",
       issue: 307,
       title: "owner says continue fixing and the resumed run stays in the fix loop",
@@ -1337,7 +1509,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: answeredResumeReplay.stopSummary,
       sourceEvidence: answeredResumeReplay.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "307-local-progress-shape-changed",
       issue: 307,
       title: "finding shape changes with scoped implementation progress",
@@ -1350,7 +1522,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: changedShapeReplay.stopSummary,
       sourceEvidence: changedShapeReplay.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "307-reviewer-text-only-change",
       issue: 307,
       title: "reviewer wording changes without implementation progress",
@@ -1360,7 +1532,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: textOnlyNoProgressReplay.stopSummary,
       sourceEvidence: textOnlyNoProgressReplay.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "307-no-observable-progress",
       issue: 307,
       title: "worker claims attempted repair without scope-local diff/test/fixture movement",
@@ -1370,7 +1542,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: noObservableProgressReplay.stopSummary,
       sourceEvidence: noObservableProgressReplay.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "307-continue-fixing-targeted-reset",
       issue: 307,
       title: "continue-fixing resets only the target finding group",
@@ -1396,7 +1568,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       finding: crossModuleFinding,
       moduleContext,
     }),
-    staticScenario({
+    replayScenario({
       id: "287-module-declaration-fenced-yaml",
       issue: 287,
       title: "module declaration is accepted only from fenced YAML or run options",
@@ -1406,7 +1578,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: moduleDeclarationSource.stopSummary,
       sourceEvidence: moduleDeclarationSource.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "287-family-attribution-child-before-parent",
       issue: 287,
       title: "finding attribution uses child module before parent fallback",
@@ -1416,7 +1588,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: familyAttributionSource.stopSummary,
       sourceEvidence: familyAttributionSource.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "287-correctness-r3-legacy-disposition",
       issue: 287,
       title: "legacy disposition fields do not make a converged correctness pass malformed",
@@ -1426,7 +1598,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: legacyDispositionSource.stopSummary,
       sourceEvidence: legacyDispositionSource.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "287-correctness-final-legacy-disposition",
       issue: 287,
       title: "final correctness CMR normalizes legacy disposition into pass",
@@ -1440,7 +1612,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         legacyDispositionAccepted: true,
       },
     }),
-    staticScenario({
+    replayScenario({
       id: "287-stale-family-head-current-cmr-pass",
       issue: 287,
       title: "stale reported familyHead does not override current-head CMR pass",
@@ -1455,7 +1627,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         staleReportedHeadIgnored: true,
       },
     }),
-    staticScenario({
+    replayScenario({
       id: "287-coordinator-answer-reclassified",
       issue: 287,
       title: "coordinator-written escalation answer is replayed as evidence, not success",
@@ -1465,6 +1637,11 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         finding: specConflictFinding,
         reason: "peripheral coordinator answer requires fresh module/defer classification",
       }),
+      source: "family_cmr_classification",
+      sourceEvidence: {
+        seam: "family_cmr_classification",
+        coordinatorAnswerExecutable: false,
+      },
     }),
     familyClassificationScenario({
       id: "287-known-hub-loss-suppression",
@@ -1474,7 +1651,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       finding: hubLossFinding,
       moduleContext,
     }),
-    staticScenario({
+    replayScenario({
       id: "376-route-accounting-non-default",
       issue: 376,
       title: "non-default route accounting uses declared route legs",
@@ -1484,17 +1661,17 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: routeAccountingSource.stopSummary,
       sourceEvidence: routeAccountingSource.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "376-route-env-format-mismatch",
       issue: 376,
       title: "CMR leg env writer/reader mismatch fails closed",
       classification: "contract_drift",
-      stopSummary: contractDriftStopSummary({
-        summary: "CMR route env format mismatch",
-        repairHint: "repair JSON-vs-CSV route env serialization before rerun",
-      }),
+      stopSummary: routeEnvMismatchSource.stopSummary,
+      source: "family",
+      sourceStopSummary: routeEnvMismatchSource.stopSummary,
+      sourceEvidence: routeEnvMismatchSource.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "376-route-freeze-after-import",
       issue: 376,
       title: "route is frozen at invocation even if env changes after import",
@@ -1504,17 +1681,17 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: routeFreezeSource.stopSummary,
       sourceEvidence: routeFreezeSource.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "376-startup-route-tight-violation",
       issue: 376,
       title: "startup route violation is structured with repair hint",
       classification: "infra_failure",
-      stopSummary: infraFailureStopSummary({
-        summary: "startup route resolution failed closed",
-        repairHint: "fix the active model route before dispatching workers",
-      }),
+      stopSummary: startupRouteViolationSource.stopSummary,
+      source: "runner",
+      sourceStopSummary: startupRouteViolationSource.stopSummary,
+      sourceEvidence: startupRouteViolationSource.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "376-closure-context-negative",
       issue: 376,
       title: "active or duplicate prior finding dispositions cannot pass closure",
@@ -1524,7 +1701,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: closureNegativeSource.stopSummary,
       sourceEvidence: closureNegativeSource.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "376-closure-context-missing",
       issue: 376,
       title: "fresh reviewer missing prior finding context fails with structured drift",
@@ -1534,7 +1711,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: closureContextMissingSource.stopSummary,
       sourceEvidence: closureContextMissingSource.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "376-closure-context-positive",
       issue: 376,
       title: "S6 verifies prior finding closed and lets the run continue",
@@ -1544,7 +1721,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: closurePositiveSource.stopSummary,
       sourceEvidence: closurePositiveSource.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "376-owning-issue-still-red",
       issue: 376,
       title: "surface owned by a named child remains blocking",
@@ -1558,8 +1735,14 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         owningIssue: "#376",
         reason: "owning issue still has the named surface red",
       }),
+      source: "family_cmr_classification",
+      sourceEvidence: {
+        seam: "family_cmr_classification",
+        classification: "owning_issue_still_red",
+        owningIssue: "#376",
+      },
     }),
-    staticScenario({
+    replayScenario({
       id: "376-accepted-suppression-with-source",
       issue: 376,
       title: "accepted suppression with explicit source enters success metadata",
@@ -1575,55 +1758,44 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
           },
         ],
       }),
+      source: "family_cmr_classification",
+      sourceEvidence: {
+        seam: "finding_disposition_classification",
+        classification: "accepted_suppressed",
+        source: "#376 owner answer",
+      },
     }),
-    staticScenario({
+    replayScenario({
       id: "376-provider-degraded-nonblocking",
       issue: 376,
       title: "route-selected strong legs pass while a provider leg is degraded",
       classification: "provider_degraded",
-      stopSummary: successStopSummary({
-        providerDegraded: [
-          {
-            provider: "agy",
-            leg: "agy-tight",
-            reason: "provider auth unavailable",
-            blocking: false,
-            repairHint: "restore provider auth before requiring this leg",
-          },
-        ],
-      }),
+      stopSummary: providerStrongLegPassSource.stopSummary,
+      source: "family",
+      sourceStopSummary: providerStrongLegPassSource.stopSummary,
+      sourceEvidence: providerStrongLegPassSource.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "376-provider-degraded-blocking",
       issue: 376,
       title: "required route leg is unavailable",
       classification: "provider_degraded",
-      stopSummary: providerDegradedStopSummary({
-        provider: "agy",
-        leg: "agy-tight",
-        reason: "required route leg did not run",
-        blocking: true,
-        repairHint: "repair provider credentials or choose a route without that leg",
-      }),
+      stopSummary: providerBlockingSource.stopSummary,
+      source: "family",
+      sourceStopSummary: providerBlockingSource.stopSummary,
+      sourceEvidence: providerBlockingSource.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "433-provider-leg-skipped-strong-leg-pass",
       issue: 433,
       title: "skipped provider leg is metadata when selected strong leg converges",
       classification: "provider_degraded",
-      stopSummary: successStopSummary({
-        providerDegraded: [
-          {
-            provider: "agy",
-            leg: "agy",
-            reason: "provider quota unavailable",
-            blocking: false,
-            repairHint: "restore provider quota before selecting this route as required",
-          },
-        ],
-      }),
+      stopSummary: providerStrongLegPassSource.stopSummary,
+      source: "family",
+      sourceStopSummary: providerStrongLegPassSource.stopSummary,
+      sourceEvidence: providerStrongLegPassSource.sourceEvidence,
     }),
-    staticScenario({
+    replayScenario({
       id: "440-agent-brief-spec-conflict",
       issue: 440,
       title: "owner-authored Agent Brief conflict is classified as spec conflict",
@@ -1633,8 +1805,14 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         finding: specConflictFinding,
         reason: "Agent Brief contradicts acceptance criteria",
       }),
+      source: "runner",
+      sourceEvidence: {
+        seam: "runner_stop_reason_mapping",
+        classification: "spec_conflict",
+        sourceKind: "owner-authored-agent-brief",
+      },
     }),
-    staticScenario({
+    replayScenario({
       id: "440-module-not-found",
       issue: 440,
       title: "MODULE_NOT_FOUND is machine repairable infrastructure failure",
@@ -1643,8 +1821,14 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         summary: "MODULE_NOT_FOUND during worker startup",
         repairHint: "install or restore the missing module, then rerun",
       }),
+      source: "runner",
+      sourceEvidence: {
+        seam: "runner_stop_reason_mapping",
+        classification: "infra_failure",
+        errorCode: "MODULE_NOT_FOUND",
+      },
     }),
-    staticScenario({
+    replayScenario({
       id: "440-coder-trust-boundary",
       issue: 440,
       title: "non-owner issue context is data-only and cannot instruct coder/fixer/ship",
@@ -1654,8 +1838,13 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         finding: specConflictFinding,
         reason: "source authentication failed for executable instructions",
       }),
+      source: "runner",
+      sourceEvidence: {
+        seam: "runner_trust_boundary",
+        executableInstructionSourceAccepted: false,
+      },
     }),
-    staticScenario({
+    replayScenario({
       id: "440-escalation-answer-invalid",
       issue: 440,
       title: "blank, malformed, stale, or scope-mismatched answers do not unlock resume",
@@ -1665,8 +1854,13 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         finding: specConflictFinding,
         reason: "escalation answer is not executable for the paused step",
       }),
+      source: "runner",
+      sourceEvidence: {
+        seam: "runner_escalation_answer_gate",
+        executableAnswer: false,
+      },
     }),
-    staticScenario({
+    replayScenario({
       id: "405-ship-worker-malformed-after-final-cmr",
       issue: 405,
       title: "ship worker malformed after final CMR pass does not write shipped marker",
@@ -1690,8 +1884,14 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
           },
         },
       },
+      source: "family",
+      sourceEvidence: {
+        seam: "family_ship_contract",
+        finalCmrPassed: true,
+        shippedMarkerWritten: false,
+      },
     }),
-    staticScenario({
+    replayScenario({
       id: "405-module-not-found-final-verify",
       issue: 405,
       title: "final verification dependency failure is infrastructure, not product decision",
@@ -1702,8 +1902,14 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         reason: "final verify dependency missing",
         repairHint: "restore verification dependencies and rerun final verify",
       }),
+      source: "family",
+      sourceEvidence: {
+        seam: "family_verify_cmr",
+        classification: "infra_failure",
+        errorCode: "MODULE_NOT_FOUND",
+      },
     }),
-    staticScenario({
+    replayScenario({
       id: "376-ship-side-review-degraded",
       issue: 376,
       title: "ship-side extra review degradation is recorded with blocking metadata",
@@ -1715,8 +1921,14 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         blocking: false,
         repairHint: "restore ship-side review capability before making it required",
       }),
+      source: "family",
+      sourceEvidence: {
+        seam: "family_ship_review_metadata",
+        classification: "provider_degraded",
+        blocking: false,
+      },
     }),
-    staticScenario({
+    replayScenario({
       id: "family-admission-non-runnable-child",
       issue: 451,
       title: "non-runnable child skip remains visible in family admission summary",
@@ -1730,8 +1942,14 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
         owningIssue: "#445",
         reason: "family admission skipped a non-runnable child",
       }),
+      source: "family",
+      sourceEvidence: {
+        seam: "family_admission",
+        classification: "owning_issue_still_red",
+        owningIssue: "#445",
+      },
     }),
-    staticScenario({
+    replayScenario({
       id: "family-resume-already-done-child",
       issue: 451,
       title: "already completed child is skipped during family resume",

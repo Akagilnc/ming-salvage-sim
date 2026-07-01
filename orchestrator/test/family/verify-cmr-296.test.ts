@@ -233,6 +233,23 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       phase: "final",
       cmrPass: "completeness",
       reason: expect.stringContaining("floor"),
+      stopSummary: expect.objectContaining({
+        reason: "provider_degraded",
+        metadata: expect.objectContaining({
+          providerDegraded: expect.arrayContaining([
+            expect.objectContaining({
+              leg: "opus",
+              reason: "auth unavailable",
+              blocking: true,
+            }),
+            expect.objectContaining({
+              leg: "gpt-5.5",
+              reason: "auth unavailable",
+              blocking: true,
+            }),
+          ]),
+        }),
+      }),
     }));
   });
 
