@@ -391,7 +391,8 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
       warn.mockRestore();
     }
   });
-  it("accepts Module Declaration issue bodies from organization members", () => {
+  it("ignores Module Declaration issue bodies from organization members", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const sh: Sh = (file, args) => {
       expect(file).toBe("gh");
       if (args[0] === "issue" && args[1] === "view") {
@@ -415,20 +416,20 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
       return "[]";
     };
 
-    const epic = readFamilyEpic(291, "MingOrg/ming-salvage-sim", sh);
+    try {
+      const epic = readFamilyEpic(291, "MingOrg/ming-salvage-sim", sh);
 
-    expect(epic.moduleDeclaration).toEqual({
-      module: "parent-fiscal",
-      moduleScope: ["docs/fiscal"],
-      source: "family_issue",
-      issue: 291,
-    });
-    expect(epic.children[0]?.moduleDeclaration).toEqual({
-      module: "child-hub",
-      moduleScope: ["orchestrator/src/family"],
-      source: "child_issue",
-      issue: 11,
-    });
+      expect(epic.moduleDeclaration).toBeUndefined();
+      expect(epic.children[0]?.moduleDeclaration).toBeUndefined();
+      expect(warn.mock.calls.map((call) => String(call[0]))).toContain(
+        "family module declaration ignored for issue #291: author org-member is not trusted owner MingOrg",
+      );
+      expect(warn.mock.calls.map((call) => String(call[0]))).toContain(
+        "family module declaration ignored for issue #11: author org-member is not trusted owner MingOrg",
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
   it("fails closed when a module declaration issue body cannot be read", () => {
     const sh: Sh = (file, args) => {
