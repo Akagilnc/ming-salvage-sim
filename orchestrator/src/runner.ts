@@ -1878,10 +1878,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         //   (a) ready-for-agent label
         //   (b) no sub-issues (leaf slice, not a parent/epic)
         //   (c) all blocked_by dependencies are closed
-        // A gate violation throws immediately — the runner stops here, no
-        // worktree is prepared, no agent step is dispatched. Gate throws are
-        // intentionally NOT converted to an error handoff (they are a caller
-        // input fault, not a pipeline error); only the backend fetch is.
+        // A gate violation terminates as structured S8(error): the runner still
+        // stops before preparing a worktree or dispatching an agent step, but AFK
+        // callers get the unified terminal result / stop summary instead of a raw
+        // process error.
         //
         // NOTE: a `## Agent Brief` is deliberately NOT a gate (design decision —
         // a `to-issues` slice may not carry that section, and the tool must not be
@@ -1901,24 +1901,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // #2: a CLOSED issue is already done — admitting it would spin a coder on
           // a finished slice (the dogfood pulled closed game issues). Fail-closed,
           // like the other three gate conditions.
-          throw new Error(
+          return await errorTermination("S0", new Error(
             `S0 input gate: issue #${issueNumber} is CLOSED. ` +
               `Feed an open, ready-for-agent slice; a closed issue is already done.`,
-          );
+          ));
         }
 
         if (!meta.isReadyForAgent) {
-          throw new Error(
+          return await errorTermination("S0", new Error(
             `S0 input gate: issue #${issueNumber} is not labelled ready-for-agent. ` +
               `Triage the issue and apply the label before running the orchestrator.`,
-          );
+          ));
         }
 
         if (meta.hasSubIssues) {
-          throw new Error(
+          return await errorTermination("S0", new Error(
             `S0 input gate: issue #${issueNumber} is a parent issue (it has sub-issues). ` +
               `Feed a leaf slice issue, not a parent/epic.`,
-          );
+          ));
         }
 
         // #294 / ADR 0022 decision 6③: the blocked_by gate's OPEN set. In a
@@ -1941,10 +1941,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
         if (openBlockedBy.length > 0) {
           const blockers = openBlockedBy.map((n) => `#${n}`).join(", ");
-          throw new Error(
+          return await errorTermination("S0", new Error(
             `S0 input gate: issue #${issueNumber} is blocked by upstream issues that are still open: ${blockers}. ` +
               `Merge the upstream changes before running.`,
-          );
+          ));
         }
 
         break;

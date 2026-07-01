@@ -71,6 +71,7 @@ import {
   recordShipped,
 } from "./ledger.js";
 import { isFilledString } from "../shipOutcome.js";
+import { infraFailureStopSummary } from "../stopSummary.js";
 import type {
   FamilyBackend,
   FamilyVerifyResult,
@@ -261,6 +262,18 @@ async function readRequiredFamilyHead(
   } catch {
     return undefined;
   }
+}
+
+function describeShipPrState(ship: {
+  readonly branch?: string;
+  readonly status?: string;
+  readonly pr?: string;
+}): string {
+  return [
+    `branch=${isFilledString(ship.branch) ? ship.branch : "missing"}`,
+    `status=${isFilledString(ship.status) ? ship.status : "missing"}`,
+    `pr=${isFilledString(ship.pr) ? ship.pr : "missing"}`,
+  ].join(" ");
 }
 
 /**
@@ -685,6 +698,52 @@ export async function runVerifyCmr(
     ship.status !== "pr_opened" ||
     !isFilledString(ship.pr)
   ) {
+    const postShipFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      cmrPassedFamilyHeadAfter,
+    );
+    const shipPrState = describeShipPrState(ship);
+    const reason =
+      `family ship worker did not open a valid family PR: ${shipPrState}; ` +
+      `expected branch=${familyBase} status=pr_opened and a non-empty PR URL`;
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postShipFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: postShipFamilyHead,
+      stopSummary: infraFailureStopSummary({
+        summary: reason,
+        repairHint:
+          "repair the family ship worker result/PR state and rerun the final family barrier",
+        ship: {
+          ...(cmrPassedFamilyHeadAfter !== undefined
+            ? { latestVerifiedCmrHead: cmrPassedFamilyHeadAfter }
+            : {}),
+          ...(postShipFamilyHead !== undefined
+            ? { currentFamilyHead: postShipFamilyHead }
+            : {}),
+          shipPrState,
+        },
+        heads: {
+          ...(postShipFamilyHead !== undefined
+            ? { actualFamilyHead: postShipFamilyHead }
+            : {}),
+          ...(cmrPassedFamilyHeadAfter !== undefined
+            ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+            : {}),
+          sources: {
+            actualFamilyHead: "family head after ship contract failure",
+            verifiedCmrHead: "latest cmr_passed ledger row",
+          },
+        },
+      }),
+    });
     return INCOMPLETE_GATE;
   }
   const exactPostShipFamilyHead = await readRequiredFamilyHead(familyBackend, familyBase);

@@ -225,14 +225,17 @@ describe("#294 acceptance 2 — unblock is ledger-merged, incl. the child's own 
       issue: 291,
       children: [{ issue: 10, blockedBy: [] }],
     };
-    await expect(
-      runFamily({
-        epic,
-        familyBackend,
-        singleSliceBackend,
-        familyBase: "family/291-base",
-      }),
-    ).rejects.toThrow(/(?=.*#?999)(?=.*(?:blocked|upstream))/i);
+    const result = await runFamily({
+      epic,
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/291-base",
+    });
+
+    expect(result.status).toBe("incomplete");
+    expect(result.children).toEqual([{ issue: 10, status: "failed" }]);
+    expect(result.stopSummary.reason).toBe("owning_issue_still_red");
+    expect(result.stopSummary.summary).toContain("#10:failed");
   });
 });
 
