@@ -47,8 +47,11 @@ silently passing.
 
 `accepted_suppressed` is not a reviewer-created defer. Only use it when there is
 an explicit user decision, accepted ADR, or named issue acceptance text, and
-include `source`, `scope`, `reason`, `findingIdentity`, optional `targetModule`,
-and `boundedReopen`.
+include `source`, `scope`, `reason`, optional `targetModule`, and
+`boundedReopen`. `findingIdentity` is optional; omit it unless the runner gave
+you an exact identity key, because the runner derives it from category,
+location, and claim quote. `disposition.reason` is the canonical rationale;
+top-level `disposition_reason` may repeat it but is not required.
 
 When the runner supplies prior claimed-fixed findings for a fresh re-review,
 it exposes them at `$ORCHESTRATOR_FIX_FINDINGS_PATH` as JSON. Read that file,

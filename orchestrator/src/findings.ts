@@ -93,7 +93,8 @@ function isMatchingAcceptedSuppression(
 ): boolean {
   return (
     isAcceptedSuppression(finding.disposition) &&
-    finding.disposition.findingIdentity === key
+    (finding.disposition.findingIdentity === undefined ||
+      finding.disposition.findingIdentity === key)
   );
 }
 
@@ -110,7 +111,7 @@ function dispositionFromFinding(finding: Finding): FindingDisposition {
         : finding.action === "rejected"
           ? "rejected"
           : "wont_fix",
-    reason: finding.disposition_reason ?? "",
+    reason: finding.disposition_reason ?? acceptedSuppression?.reason ?? "",
     severity: finding.severity,
     reopenAttempts: 0,
     ...(acceptedSuppression !== undefined

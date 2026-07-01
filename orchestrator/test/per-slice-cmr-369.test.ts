@@ -1989,6 +1989,34 @@ describe("#369 finding identity and classification", () => {
     ]);
   });
 
+  it("derives accepted_suppressed rationale and finding identity when workers omit redundant fields", () => {
+    const suppressed: Finding = {
+      ...finding,
+      action: "wont_fix",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "issue #448 acceptance criteria",
+        scope: "same documented non-goal",
+        reason: "Accepted as outside this slice",
+        boundedReopen: "reopen on severity upgrade, new evidence, or wider scope",
+      },
+    };
+
+    expect(isValidFinding(suppressed)).toBe(true);
+    expect(classifyFindings([suppressed]).dispositions).toEqual([
+      {
+        identityKey: "correctness|src/runner.ts:120|missing full diff review",
+        status: "accepted_suppressed",
+        reason: "Accepted as outside this slice",
+        severity: "medium",
+        reopenAttempts: 0,
+        source: "issue #448 acceptance criteria",
+        scope: "same documented non-goal",
+        boundedReopen: "reopen on severity upgrade, new evidence, or wider scope",
+      },
+    ]);
+  });
+
   it("rejects critical/high findings unless they are fix-now", () => {
     expect(
       isValidFinding({

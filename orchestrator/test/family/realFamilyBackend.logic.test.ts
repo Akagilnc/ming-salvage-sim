@@ -30,6 +30,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   MERGER_SOUL,
   mergerOutcomeFromResult,
+  parseCmrOutcome,
   parseMergerOutcome,
   RealFamilyBackend,
   type RealFamilyBackendOptions,
@@ -858,6 +859,53 @@ describe("parseMergerOutcome (#291 pure)", () => {
       );
       expect(out.resolved).toBe(false);
       expect(out.reason).toContain("ambiguous");
+    });
+  });
+});
+
+describe("parseCmrOutcome accepted suppression contract", () => {
+  it("derives redundant accepted_suppressed finding fields from the finding payload", () => {
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: false,
+      reason: "accepted suppression remains",
+      successfulLegs: ["gpt-5.5"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      findings: [
+        {
+          severity: "medium",
+          category: "correctness",
+          claim_quote: "Known accepted gap",
+          location: "orchestrator/src/family/verifyCmr.ts:42",
+          suggested_fix: "keep the bounded suppression",
+          action: "wont_fix",
+          disposition: {
+            kind: "accepted_suppressed",
+            source: "#445 owner answer",
+            scope: "orchestrator family CMR",
+            reason: "Owner accepted this bounded risk.",
+            boundedReopen: "reopen if the same scope regresses",
+          },
+        },
+      ],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome).toMatchObject({
+      converged: false,
+      findings: [
+        expect.objectContaining({
+          disposition_reason: "Owner accepted this bounded risk.",
+          disposition: expect.objectContaining({
+            kind: "accepted_suppressed",
+            findingIdentity:
+              "correctness|orchestrator/src/family/verifycmr.ts:42|known accepted gap",
+          }),
+        }),
+      ],
     });
   });
 });

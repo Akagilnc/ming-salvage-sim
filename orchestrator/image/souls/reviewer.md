@@ -36,8 +36,11 @@ fields are: `same_module` needs `reason`; `owning_issue_still_red` needs
 `source` and `reason`; `infra_failure` needs `source` and `reason`.
 `accepted_suppressed` is terminal only when backed by an explicit user decision,
 accepted ADR, or named issue acceptance text; include source, scope, reason,
-`findingIdentity`, and `boundedReopen`. Do not invent an unsourced
-won't-fix.
+and `boundedReopen`. `findingIdentity` is optional; omit it unless the runner
+gave you an exact identity key, because the runner derives it from category,
+location, and claim quote. `disposition.reason` is the canonical rationale;
+top-level `disposition_reason` may repeat it but is not required. Do not invent
+an unsourced won't-fix.
 
 Snapshot files such as `.orchestrator-snapshot.json` are audit/resume artifacts,
 not execution input. Use runner-supplied environment variables, mounted files,

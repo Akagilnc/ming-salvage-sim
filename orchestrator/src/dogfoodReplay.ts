@@ -1194,7 +1194,7 @@ async function familyStaleHeadStopSummary(): Promise<StopSummary> {
   ).stopSummary;
 }
 
-async function familyAlreadyDoneStopSummary(): Promise<StopSummary> {
+async function familyAlreadyDoneReplay(): Promise<SeamReplay> {
   const familyBackend = new DogfoodFamilyBackend("family-done-head", [
     {
       childIssue: 451,
@@ -1214,10 +1214,18 @@ async function familyAlreadyDoneStopSummary(): Promise<StopSummary> {
     singleSliceBackend,
     familyBase: "family/445-base",
   });
-  if (singleSliceBackend.runStepCalls.length > 0) {
+  if (singleSliceBackend.dispatched.length > 0) {
     throw new Error("dogfood family already-done replay reran the child slice");
   }
-  return result.stopSummary;
+  return {
+    stopSummary: result.stopSummary,
+    sourceEvidence: {
+      seam: "family",
+      mechanism: "already_done_child_resume",
+      skippedChildIssue: 451,
+      childDispatches: singleSliceBackend.dispatched,
+    },
+  };
 }
 
 async function familyAdmissionSkippedReplay(): Promise<SeamReplay> {
@@ -1487,7 +1495,11 @@ async function familyClosureFailure(input: {
     readonly boundedReopen?: string;
   }>;
   readonly priorCmrFindingIdentityKeys?: readonly string[];
-}): Promise<{ readonly shape: string; readonly reason: string }> {
+}): Promise<{
+  readonly shape: string;
+  readonly reason: string;
+  readonly stopSummary: StopSummary;
+}> {
   const backend = new DogfoodCmrFamilyBackend(
     "closure-head",
     [],
@@ -1509,13 +1521,19 @@ async function familyClosureFailure(input: {
   const reason =
     backend.escalations[0]?.reason ??
     backend.ledger.find((entry) => entry.status === "aborted")?.reason;
+  const stopSummary = backend.ledger.find(
+    (entry) => entry.status === "aborted" && entry.stopSummary !== undefined,
+  )?.stopSummary;
   if (result.ok || reason === undefined) {
     throw new Error(`dogfood CMR closure replay ${input.shape} did not fail`);
+  }
+  if (stopSummary === undefined) {
+    throw new Error(`dogfood CMR closure replay ${input.shape} had no stop summary`);
   }
   if (backend.dispatches.some((dispatch) => dispatch.startsWith("ship:"))) {
     throw new Error(`dogfood CMR closure replay ${input.shape} shipped`);
   }
-  return { shape: input.shape, reason };
+  return { shape: input.shape, reason, stopSummary };
 }
 
 async function runnerClosureFailure(input: {
@@ -1608,10 +1626,7 @@ async function closureNegativeReplay(): Promise<SeamReplay> {
   }
   const failures = [...familyFailures, duplicateFailure];
   return {
-    stopSummary: contractDriftStopSummary({
-      summary: "closure contract rejected stale or duplicate dispositions",
-      repairHint: "provide one verified-closed disposition per claimed finding",
-    }),
+    stopSummary: familyFailures[0]!.stopSummary,
     sourceEvidence: {
       seam: "family_cmr_closure",
       runnerSeam: "runner_s6_closure_adjudication",
@@ -2117,7 +2132,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   const familyAdmissionSkippedSource = await familyAdmissionSkippedReplay();
   const trustBoundarySource = await runnerTrustBoundaryReplay();
   const staleFamilyHeadStopSummary = await familyStaleHeadStopSummary();
-  const familyAlreadyDoneSourceSummary = await familyAlreadyDoneStopSummary();
+  const familyAlreadyDoneSource = await familyAlreadyDoneReplay();
   const familyModule = {
     module: "orchestrator-family",
     moduleScope: ["orchestrator/src/family"],
@@ -2631,14 +2646,10 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 451,
       title: "already completed child is skipped during family resume",
       classification: "already_done",
-      stopSummary: familyAlreadyDoneSourceSummary,
+      stopSummary: familyAlreadyDoneSource.stopSummary,
       source: "family",
-      sourceStopSummary: familyAlreadyDoneSourceSummary,
-      sourceEvidence: {
-        seam: "family",
-        mechanism: "already_done_child_resume",
-        skippedChildIssue: 451,
-      },
+      sourceStopSummary: familyAlreadyDoneSource.stopSummary,
+      sourceEvidence: familyAlreadyDoneSource.sourceEvidence,
     }),
   ];
 

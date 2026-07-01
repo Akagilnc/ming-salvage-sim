@@ -164,6 +164,47 @@ describe("#449 family CMR finding classification", () => {
     });
   });
 
+  it("fails closed when the family fallback module scope does not cover the finding location", () => {
+    const scopedOutFinding: Finding = {
+      ...finding,
+      location: "orchestrator/src/family/verifyCmr.ts:42",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "military-state-machine",
+        reason: "claimed outside a docs-only family module",
+      },
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [scopedOutFinding],
+      moduleContext: buildFamilyModuleContext({
+        childModules: [],
+        familyModule: {
+          module: "fiscal",
+          moduleScope: ["docs/fiscal"],
+          source: "family_issue",
+          issue: 445,
+        },
+        undevelopedModules: [
+          {
+            module: "military-state-machine",
+            moduleScope: ["docs/military-state-machine.md"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
+      }),
+    });
+
+    expect(classified.blocking).toEqual([scopedOutFinding]);
+    expect(classified.deferred).toEqual([]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "same_module_still_red",
+      attribution: { method: "missing_module_context" },
+    });
+  });
+
   it("fails closed on cross-module defer when no module declaration establishes the family module", () => {
     const classified = classifyFamilyCmrFindings({
       familyIssue: 445,

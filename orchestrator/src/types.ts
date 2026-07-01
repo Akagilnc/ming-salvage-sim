@@ -188,7 +188,7 @@ export interface FindingDispositionEvidence {
   readonly source?: string;
   /** Required for accepted_suppressed. */
   readonly scope?: string;
-  /** Required for accepted_suppressed. */
+  /** Optional for accepted_suppressed; omitted values are derived from the finding. */
   readonly findingIdentity?: string;
   /** Required for accepted_suppressed bounded reopen. */
   readonly boundedReopen?: string;
