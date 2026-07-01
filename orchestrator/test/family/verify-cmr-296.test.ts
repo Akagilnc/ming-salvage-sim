@@ -1169,6 +1169,47 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     }));
   });
 
+  it("a cmr worker failed result for missing dependencies is recorded as infra_failure", async () => {
+    class FailedCmrBackend extends ThrowingDispatchBackend {
+      constructor() {
+        super("ship");
+      }
+      override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          this.currentFamilyHead = "head-after-cmr-worker";
+          return {
+            kind: "failed",
+            reason: "Error: Cannot find module 'missing-cmr-runtime'",
+          };
+        }
+        return super.dispatchWorker(spec, {
+          familyBase: "family/291-base",
+        });
+      }
+    }
+    const backend = new FailedCmrBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("Cannot find module 'missing-cmr-runtime'"),
+      familyHeadAfter: "head-after-cmr-worker",
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        repairHint: expect.stringContaining("install or restore"),
+      }),
+    }));
+  });
+
   it("a ship worker that throws on startup (after a converged cmr) ⇒ INCOMPLETE_GATE, abort recorded — never an escaped throw", async () => {
     const backend = new ThrowingDispatchBackend("ship");
     const result = await runVerifyCmr({
