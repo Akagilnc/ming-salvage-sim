@@ -8157,6 +8157,8 @@ class GameDB:
                 END,
                 terminal_state = event_triggers.terminal_state,
                 terminal_reason = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.terminal_reason
                     WHEN COALESCE(event_triggers.terminal_reason, '') = ''
                     THEN excluded.terminal_reason
                     ELSE event_triggers.terminal_reason

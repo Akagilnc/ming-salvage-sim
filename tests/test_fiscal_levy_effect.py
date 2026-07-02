@@ -370,6 +370,35 @@ def test_fiscal_levy_choice_row_rejection_controls_same_tick_effect(game):
     assert after["p"] == before["p"]
 
 
+def test_fiscal_levy_choice_resubmission_uses_latest_pending_label(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    before = _settle_payload(db, "shaanxi")
+    db.record_event_decision_choice(
+        state,
+        "liao_levy_rise_1631",
+        {"label": "已准"},
+    )
+    db.record_event_decision_choice(
+        state,
+        "liao_levy_rise_1631",
+        {"label": "已驳"},
+    )
+
+    apply_historical_fiscal_rates(state, db)
+
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("liao_levy_rise_1631",),
+    ).fetchone()
+    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "已驳"}
+    after = _settle_payload(db, "shaanxi")
+    assert after["p"] == before["p"]
+
+
 def test_fiscal_levy_pending_stop_choice_keeps_jiao_in_force_same_tick(game):
     db, state, content = game
     issues.bind_content(content)
