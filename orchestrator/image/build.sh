@@ -32,8 +32,7 @@ SKILLS_SRC="${SKILLS_SRC:-$HOME/.claude/skills}"
 # Reference list traced from:
 #   - ADR 0016 §spike 发现4 (the slice-dev skill group, line 40):
 #       tdd + codebase-design + diagnosing-bugs + improve-codebase-architecture
-#       + resolving-merge-conflicts  (+ `review`, which is a BUILTIN command, not
-#       a disk skill — nothing to bake; the route stays active in CLAUDE.md)
+#       + resolving-merge-conflicts + code-review
 #   - ADR 0026 (supersedes 0016's cmr/gstack exclusion): cmr/ship now bake too →
 #       ak-cross-m-review + gstack-ship
 # Internal-call closure (traced from each SKILL.md, must all be present or a chain
@@ -44,6 +43,7 @@ SKILLS_SRC="${SKILLS_SRC:-$HOME/.claude/skills}"
 #   ak-cross-m-review              → diagnosing-bugs (cmr non-trivial-fix path)
 #   ak-cmr-completeness            → ak-cross-m-review (ship-pre Step 5 lens entry; wraps engine)
 #   ak-cmr-correctness             → ak-cross-m-review (ship-pre Step 6 lens entry; wraps engine)
+#   code-review                    → leaf (the skill itself fans out review axes)
 #   codebase-design                → leaf
 #   resolving-merge-conflicts      → leaf
 #   grilling                       → leaf  (HITL design-tree walk; degrades to
@@ -57,6 +57,7 @@ SKILL_CLOSURE=(
   diagnosing-bugs
   improve-codebase-architecture
   resolving-merge-conflicts
+  code-review
   ak-cross-m-review
   ak-cmr-completeness
   ak-cmr-correctness
@@ -189,15 +190,12 @@ fi
 # copy above keeps the ~/.claude/skills/gstack/review/... absolute refs working).
 mkdir -p "$STAGE/skills/review"
 cp -RL "$GSTACK_SRC/review/." "$STAGE/skills/review/"
-# CRITICAL (CLAUDE.md ## Skill routing: per-slice review = the BUILTIN /review,
-# single-vendor, one pass; ADR 0016 发现4: gstack is NOT in the implementation
-# legs): gstack's review/ ships a SKILL.md (name: gstack-review). Baking it at the
-# top-level skills/review/ registers a `/review` DISK skill that SHADOWS the builtin
-# /review the coder must use — so the coder's `/review` resolved to gstack's
-# multi-specialist review (wrong). review-army only READS the data files here
-# (checklist.md / design-checklist.md / greptile-triage.md / TODOS-format.md /
-# specialists), never the SKILL.md, so DROP the SKILL.md (+ tmpl): the checklist
-# reads keep working AND /review stays the builtin.
+# CRITICAL: gstack's review/ ships a SKILL.md (name: gstack-review). Baking it at
+# the top-level skills/review/ registers an unrelated `/review` disk skill.
+# Per-slice review now routes to Matt `/code-review`, and gstack-ship's
+# review-army only READS the data files here (checklist.md / design-checklist.md /
+# greptile-triage.md / TODOS-format.md / specialists), never the SKILL.md. Drop
+# the SKILL.md (+ tmpl) so this helper-data copy cannot become an accidental skill.
 rm -f "$STAGE/skills/review/SKILL.md" "$STAGE/skills/review/SKILL.md.tmpl"
 # Exclude the 58M compiled discover helper — not in the ship closure.
 rm -f "$STAGE/skills/gstack/bin/gstack-global-discover" 2>/dev/null || true

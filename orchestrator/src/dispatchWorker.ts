@@ -15,7 +15,7 @@
  *     worker to the EXISTING backend methods (`runStep`/`resumeSession` for agent
  *     workers, `push` for the S7 ship worker) and wraps their returns into the
  *     discriminated {@link WorkerResult}. External behaviour is unchanged
- *     (regression green); the real worker dispatch (invoke `/tdd` / `/review` /
+ *     (regression green); the real worker dispatch (invoke `/tdd` / `/code-review` /
  *     `gstack-ship`) lands in #334/#336.
  *   - {@link workerResultToStep} — unwrap a `completed` {@link WorkerResult} back
  *     into the `{@link StepOutput} | {@link StepResult}` shape the existing runner
@@ -53,7 +53,7 @@ const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
 
 /**
  * The wiki skill each worker kind invokes (ADR 0026):
- *   coder/fix → `/tdd`, reviewer → `/review`, cmr → `ak-cross-m-review`,
+ *   coder/fix → `/tdd`, reviewer → `/code-review`, cmr → `ak-cross-m-review`,
  *   ship → `gstack-ship`, merge → none (may use no skill — US#9).
  *
  * #331 PREFACTOR: this is only the DECLARED routing on the spec (so #337's "coder
@@ -62,7 +62,7 @@ const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
  */
 const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
   coder: "/tdd",
-  reviewer: "/review",
+  reviewer: "/code-review",
   cmr: "ak-cross-m-review",
   ship: "gstack-ship",
   merge: undefined,
