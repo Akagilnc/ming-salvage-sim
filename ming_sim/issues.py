@@ -1445,6 +1445,7 @@ def fiscal_levy_memorial_estimates(state: GameState, db: GameDB) -> List[Dict[st
     if not rows:
         return []
     row_by_event_id = {str(row["event_id"]): row for row in rows}
+    terminal_records = _event_terminal_records(db)
     components = _region_fiscal_levy_components(db)
     army_gap, gap_basis, gap_unit = _current_army_gap(db)
     estimates: List[Dict[str, object]] = []
@@ -1453,6 +1454,8 @@ def fiscal_levy_memorial_estimates(state: GameState, db: GameDB) -> List[Dict[st
             continue
         row = row_by_event_id.get(ev.id)
         if row is None:
+            continue
+        if ev.id == _JIAO_LEVY_START_EVENT_ID and not _jiao_levy_in_force(terminal_records, state):
             continue
         added = _fiscal_levy_event_added_amount(ev.id, components)
         if added <= 0:
