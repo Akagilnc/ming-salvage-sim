@@ -16,7 +16,14 @@
   ── 前半段：pre_settle + 占位 context 同一外层 atomic；提交后保持已落 ──
   2. pre_settle(state, db, content=, registry=)   # 内层事务被外层 atomic 并入（flat 可重入）
      a. db.commit_pending_actions(...)            # 动作闸门：聊天暂存的结构化写动作批量落库（driver 路无暂存=no-op）
-     b. apply_fixed_period_flows(db, state)       # 月度财政 tick
+     b. apply_historical_fiscal_rates(state, db)  # #259 饷率事件前置：同 tick 置结局 + 改 settle.p
+        ↳ 仅处理 category="fiscal_levy" 的历史事件；shadow stub 的结局须经事件白名单归一
+          （辽饷升：{已准, 已驳}，默认已准），不可归一则 fail-loud。
+        ↳ set-to-target 写省级 `settle.p.{三饷应征, 起运定额}`，并持久化
+          `settle._meta.{正赋起运基线, 辽饷九厘基线}`；幂等、不逐月叠加。
+        ↳ 必须先于 `settle_province_tick`，让饷率当月生效；后置通用事件终态 pass
+          读到已 terminal 的饷率事件后自然跳过，防重复处理。
+     c. apply_fixed_period_flows(db, state)       # 月度财政 tick
         ↳ compute_budget_lines 的定额项（田赋/辽饷/盐税/商税/官俸/宫廷/…）
         ↳ 军饷按存档级 `fiscal_engine` 分流：
           - `legacy` 老档：保留旧「各军军饷」预算行 + 逐军从国库扣发；国库不足挂 `armies.arrears`。
@@ -37,17 +44,17 @@
           per-source 容器，**起运入国库 hub 仍不在此处落账**；
           fail-loud 但隔离（基座 bug 不掀翻本步固定财政，cmr S4 F4）。
         ⚠️ 我的 economy_moves 不要重复这些固定项！
-     c. apply_event_terminal_states(state, db)    # 事件终态写路径（候选读取本身只读）
+     d. apply_event_terminal_states(state, db)    # 事件终态写路径（候选读取本身只读）
         ↳ 声明了 trigger_end_* 且未 `open_window` 的事件，超过最晚时点会先记 `event_triggers.terminal_state=expired`
         ↳ 人物核心主体已永久死亡则记 obsolete；人物核心门已被玩家处理掉则记 avoided
         ↳ 该步与 pre_settle 外层事务合并提交；嵌套事务内不提前 commit，回滚时终态写入一并回滚
-     d. auto_trigger_seed_issues(state, db)       # 程序硬触发（必须在我产邸报前）
+     e. auto_trigger_seed_issues(state, db)       # 程序硬触发（必须在我产邸报前）
         ↳ trigger_gate 达标 + auto_trigger=True 的 seed event / historical event 先处理
         ↳ 已有终态或刚被上一步记成 expired 的事件退出候选 / 硬触发流，防止史实节点晚弹或重入
         ↳ situation 转 issue；node/ending 只记 event_triggers，并可落 effect_on_trigger
         ↳ 出现在本月候选清单 / 硬触发清单里供我推演引用
-     e. db.auto_submit_due_secret_orders(state)   # 到期密令转核议（原在 resolve_directives，已挪入此事务）
-     f. turn_phase = settling + save_state        # 同事务收尾：「前半段已完成」相位锚
+     f. db.auto_submit_due_secret_orders(state)   # 到期密令转核议（原在 resolve_directives，已挪入此事务）
+     g. turn_phase = settling + save_state        # 同事务收尾：「前半段已完成」相位锚
      幂等守门：相位已在 FRONT_HALF_DONE_PHASES（settling/awaiting_decision/…）时直接
      return，不二次落财政；崩在内部 = 全回滚 = 相位未变 = 重进干净重跑。
 
