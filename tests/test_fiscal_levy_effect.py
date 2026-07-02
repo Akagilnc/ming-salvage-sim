@@ -60,6 +60,52 @@ def test_liao_levy_rise_triggers_and_updates_shadow_settle_before_fiscal_tick(ga
     )
 
 
+def test_lian_levy_start_triggers_and_updates_shadow_settle_before_fiscal_tick(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1639
+    state.period = 1
+    db.save_state(state)
+
+    before = _settle_payload(db, "shaanxi")
+    seed_liao = before["p"]["三饷应征"]
+    seed_transport = before["p"]["起运定额"]
+    base_transport = max(0.0, seed_transport - seed_liao)
+    target_liao = seed_liao * 4.0 / 3.0
+    target_jiao = seed_liao * 7.0 / 13.0
+    target_lian = seed_liao * 73.0 / 52.0
+    target_sanxiang = target_liao + target_jiao + target_lian
+
+    pre_settle(state, db, content=content)
+
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason, source FROM event_triggers WHERE event_id=?",
+        ("lian_levy_start_1639",),
+    ).fetchone()
+    assert dict(row) == {
+        "terminal_state": "triggered",
+        "terminal_reason": "已准",
+        "source": "fiscal_levy_shadow",
+    }
+
+    after = _settle_payload(db, "shaanxi")
+    assert math.isclose(after["p"]["三饷应征"], target_sanxiang, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(
+        after["p"]["起运定额"],
+        base_transport + target_sanxiang,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+    assert math.isclose(
+        after["st"]["C_地方截留"],
+        (after["p"]["正赋应征"] + target_sanxiang)
+        * after["p"]["火耗率"]
+        * (1 - after["p"]["逋赋率"]),
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+
+
 def test_fiscal_levy_existing_terminal_reason_is_whitelist_validated(game):
     db, state, content = game
     issues.bind_content(content)
@@ -152,12 +198,13 @@ def test_jiao_levy_rises_then_stops_and_keeps_base_transport(game):
     apply_historical_fiscal_rates(state, db)
 
     after_stop = _settle_payload(db, "shaanxi")
+    expected_lian = after_stop["_meta"]["辽饷九厘基线"] * 73.0 / 52.0
     assert db.conn.execute(
         "SELECT terminal_reason FROM event_triggers WHERE event_id=?",
         ("jiao_levy_stop_1640",),
     ).fetchone()["terminal_reason"] == "已停"
-    assert math.isclose(after_stop["p"]["三饷应征"], expected_liao, rel_tol=1e-9, abs_tol=1e-9)
-    assert math.isclose(after_stop["p"]["起运定额"], base_transport + expected_liao, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(after_stop["p"]["三饷应征"], expected_liao + expected_lian, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(after_stop["p"]["起运定额"], base_transport + expected_liao + expected_lian, rel_tol=1e-9, abs_tol=1e-9)
     assert after_stop["p"]["起运定额"] >= after_stop["p"]["三饷应征"]
     assert after_stop["p"]["起运定额"] > 0
 
@@ -177,7 +224,8 @@ def test_jiao_levy_stop_rejected_keeps_levy_in_force(game):
     settle = _settle_payload(db, "shaanxi")
     expected_liao = settle["_meta"]["辽饷九厘基线"] * 4.0 / 3.0
     expected_jiao = settle["_meta"]["剿饷基线"]
-    assert math.isclose(settle["p"]["三饷应征"], expected_liao + expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
+    expected_lian = settle["_meta"]["辽饷九厘基线"] * 73.0 / 52.0
+    assert math.isclose(settle["p"]["三饷应征"], expected_liao + expected_jiao + expected_lian, rel_tol=1e-9, abs_tol=1e-9)
 
 
 def test_jiao_stop_is_obsolete_when_start_was_rejected(game):
@@ -210,6 +258,80 @@ def test_jiao_stop_definition_missing_fails_loud(game, monkeypatch):
 
     with pytest.raises(SettlementAbort, match="缺停征链 jiao_levy_stop_1640"):
         apply_historical_fiscal_rates(state, db)
+
+
+def test_lian_levy_targets_all_seeded_settles_without_compounding_or_clobbering_p(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1639
+    state.period = 1
+    db.save_state(state)
+
+    before_by_region = {}
+    for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
+        fiscal = json.loads(str(row["fiscal"] or "{}"))
+        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        if isinstance(settle, dict) and isinstance(settle.get("p"), dict):
+            before_by_region[str(row["id"])] = dict(settle["p"])
+    assert len(before_by_region) >= 17
+
+    applied = apply_historical_fiscal_rates(state, db)
+    assert "lian_levy_start_1639" in [item["id"] for item in applied]
+    first_by_region = {}
+    for region_id, before_p in before_by_region.items():
+        after = _settle_payload(db, region_id)
+        first_by_region[region_id] = dict(after["p"])
+        meta = after["_meta"]
+        seed_liao = meta["辽饷九厘基线"]
+        expected_sanxiang = seed_liao * 4.0 / 3.0 + meta["剿饷基线"] + seed_liao * 73.0 / 52.0
+        expected_transport = meta["正赋起运基线"] + expected_sanxiang
+        assert math.isclose(after["p"]["三饷应征"], expected_sanxiang, rel_tol=1e-9, abs_tol=1e-9)
+        assert math.isclose(after["p"]["起运定额"], expected_transport, rel_tol=1e-9, abs_tol=1e-9)
+        assert after["p"]["起运定额"] >= after["p"]["三饷应征"]
+        assert after["p"]["起运定额"] >= 0
+
+        preserved_keys = set(before_p) - {"三饷应征", "起运定额"}
+        for key in preserved_keys:
+            assert after["p"][key] == before_p[key]
+
+    apply_historical_fiscal_rates(state, db)
+    for region_id, first_p in first_by_region.items():
+        assert _settle_payload(db, region_id)["p"] == first_p
+
+
+def test_lian_levy_gate_waits_until_1639_and_needs_no_stop_event(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 12
+    db.save_state(state)
+
+    apply_historical_fiscal_rates(state, db)
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=?",
+        ("lian_levy_start_1639",),
+    ).fetchone() is None
+    after = _settle_payload(db, "shaanxi")
+    expected_sanxiang = after["_meta"]["辽饷九厘基线"] * 4.0 / 3.0 + after["_meta"]["剿饷基线"]
+    assert math.isclose(
+        after["p"]["三饷应征"],
+        expected_sanxiang,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+
+    state.year = 1639
+    state.period = 1
+    db.save_state(state)
+    applied = apply_historical_fiscal_rates(state, db)
+    assert [item["id"] for item in applied] == ["lian_levy_start_1639"]
+
+    terminalized = issues.apply_event_terminal_states(state, db)
+    assert all(item["id"] != "lian_levy_start_1639" for item in terminalized)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
+        ("lian_levy_start_1639",),
+    ).fetchone()[0] == 1
 
 
 def test_fiscal_levy_gate_waits_until_1631_and_generic_terminal_pass_skips_it(game):
