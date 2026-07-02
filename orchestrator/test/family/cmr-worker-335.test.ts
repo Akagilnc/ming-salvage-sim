@@ -66,6 +66,11 @@ import type { DispatchContext, WorkerSpec } from "../../src/types.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
 const DEFAULT_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
+const FROZEN_NORMAL_CMR_REVIEW_LEGS = [
+  { family: "codex", slug: "gpt-5.5" },
+  { family: "claude", slug: "opus" },
+  { family: "agy", slug: "agy" },
+] as const;
 const STRONG_LEGS = ["opus", "gpt-5.5"] as const;
 const EMPTY_CMR_CLOSURE = {
   claimedFixedFindingIdentityKeys: [],
@@ -556,6 +561,29 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
       })}</cmr>`,
     });
     expect(o.kind).toBe("escalate");
+  });
+
+  it("accounts worker verdict legs against the frozen worker route, not later process env", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const result = {
+      completionSignal: SIGNAL,
+      cmrReviewLegs: FROZEN_NORMAL_CMR_REVIEW_LEGS,
+      stdout: `<cmr>${JSON.stringify({
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...EMPTY_CMR_CLOSURE,
+      })}</cmr>`,
+    };
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+
+    const o = cmrOutcomeFromResult(result);
+
+    expect(o).toEqual({
+      kind: "verdict",
+      converged: true,
+      successfulLegs: DEFAULT_CMR_LEGS,
+      ...EMPTY_CMR_CLOSURE,
+    });
   });
 });
 
