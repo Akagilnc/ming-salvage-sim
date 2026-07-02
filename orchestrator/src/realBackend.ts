@@ -932,24 +932,43 @@ export function assertCompletionSignal(
  * validate; throws a clear error when the tag is missing (the caller turns that
  * into the runner's S8(error) edge, same as a malformed structured output).
  */
-export function extractCoderTag(stdout: string): unknown {
-  // Scan for ALL <coder>…</coder> blocks; the last one is the final iteration's
-  // result. `[\s\S]` so the body may span newlines; non-greedy so adjacent tags
-  // don't merge.
-  const re = /<coder>([\s\S]*?)<\/coder>/g;
+function extractTaggedJson(
+  stdout: string,
+  tag: "coder" | "review",
+  missingMessage: string,
+): unknown {
+  // Scan for ALL role tags; the last one is the final iteration's result.
+  // `[\s\S]` so the body may span newlines; non-greedy so adjacent tags don't
+  // merge.
+  const re = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "g");
   let last: string | undefined;
   for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) {
     last = m[1];
   }
   if (last === undefined) {
-    throw new Error(
-      "realBackend: coder step stdout carried no <coder>…</coder> tag — the " +
-        "coder must emit its structured result in a <coder> tag (maxIter>1 " +
-        "steps cannot use Sandcastle's typed output, which requires " +
-        "maxIterations:1).",
-    );
+    throw new Error(missingMessage);
   }
   return JSON.parse(stripJsonFence(last.trim()));
+}
+
+export function extractCoderTag(stdout: string): unknown {
+  return extractTaggedJson(
+    stdout,
+    "coder",
+    "realBackend: coder step stdout carried no <coder>…</coder> tag — the " +
+      "coder must emit its structured result in a <coder> tag (maxIter>1 " +
+      "steps cannot use Sandcastle's typed output, which requires " +
+      "maxIterations:1).",
+  );
+}
+
+function extractReviewerTag(stdout: string): unknown {
+  return extractTaggedJson(
+    stdout,
+    "review",
+    "realBackend: reviewer step stdout carried no <review>…</review> tag — " +
+      "the reviewer must emit its structured result in a <review> tag.",
+  );
 }
 
 /**
@@ -2370,14 +2389,17 @@ export class RealBackend implements Backend {
    */
   private rawOutputFor(
     result: { output?: unknown; stdout: string },
+    spec: StepSpec,
     typedOutputUsed: boolean,
     options?: AgentStepRunOptions,
   ): unknown {
     const sidecar = readWorkerOutcomeSidecar(options?.outcomeLanding?.path);
     if (sidecar !== undefined) return sidecar;
     if (typedOutputUsed) return result.output;
-    // Untyped coder path: structured result lives in a <coder> tag in stdout.
-    return extractCoderTag(result.stdout);
+    // Untyped compatibility path: structured result lives in the role tag.
+    return spec.role === "coder"
+      ? extractCoderTag(result.stdout)
+      : extractReviewerTag(result.stdout);
   }
 
   /**
@@ -2510,6 +2532,8 @@ export class RealBackend implements Backend {
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     await this.preflightToolchain(spec);
+    const typedOutputUsed =
+      spec.maxIter === 1 && options?.outcomeLanding === undefined;
     const result = await this.runAgentSandbox({
       name: `${spec.id}-${spec.role}`,
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -2527,18 +2551,17 @@ export class RealBackend implements Backend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // Structured output only on reviewer single-pass steps (Sandcastle
-      // requires maxIterations:1 with output); coder steps iterate (maxIter>1),
-      // so their structured result is collected from a <coder> tag in stdout
-      // (rawOutputFor) instead — Sandcastle's typed `output` is forbidden there.
-      ...(spec.maxIter === 1 ? { output: this.outputFor(spec) } : {}),
+      // Structured output only when Sandcastle should own tag parsing. When the
+      // runner supplied an outcome sidecar, do not pass `output`: Sandcastle
+      // would throw on a bad/missing compatibility tag before the backend can
+      // read the sidecar machine protocol.
+      ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
     });
     // #244 step-advance gate: the step only advances if the agent fired its
     // declared completionSignal. A complete-but-unsignaled run (e.g. maxIter hit
     // mid-work) throws here → S8(error), before any output is decoded.
     assertCompletionSignal(result, spec.completionSignal, `${spec.id}-${spec.role}`);
-    const typedOutputUsed = spec.maxIter === 1;
-    const raw = this.rawOutputFor(result, typedOutputUsed, options);
+    const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
     // #256 commit-truth: the coder's committed/commitsAdded is derived from the
     // REAL commits Sandcastle observed (result.commits), not the self-report.
     const gitCommitCount =
@@ -2569,6 +2592,7 @@ export class RealBackend implements Backend {
       spec.role === "coder" ? await this.worktreeHead(worktree) : undefined;
     await this.preflightToolchain(spec);
     try {
+      const typedOutputUsed = options?.outcomeLanding === undefined;
       const result = await this.runAgentSandbox({
         name: `${spec.id}-${spec.role}-resume`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -2583,14 +2607,11 @@ export class RealBackend implements Backend {
         branchStrategy: { type: "head" },
         resumeSession: sessionId,
         promptFile: join(this.opts.promptsDir, spec.promptFile),
-        // A resume ALWAYS runs maxIterations:1, so Sandcastle's typed `output`
-        // is valid for BOTH roles here (it only forbids maxIter>1). Pass it by
-        // role unconditionally — the old `spec.maxIter===1` gate left a resumed
-        // CODER step (spec.maxIter>1) with no `output`, so decodeOutput parsed
-        // `undefined` and threw a ZodError on every resumed coder step
-        // (integ-cmr 256 r1, F4). Typed output ⇒ read `result.output` directly
-        // for both roles (no <coder> stdout fallback needed at maxIter:1).
-        output: this.outputFor(spec),
+        // A resume runs maxIterations:1, so typed output is valid unless the
+        // outcome sidecar is mounted. With a sidecar, keep Sandcastle from
+        // pre-parsing the compatibility tag before rawOutputFor can read the
+        // runner-owned file.
+        ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
       });
       // #244 step-advance gate (resume path): a resumed step still only advances
       // on its declared completionSignal — an unsignaled resume throws → S8(error).
@@ -2609,7 +2630,7 @@ export class RealBackend implements Backend {
           : undefined;
       const output = this.decodeOutput(
         spec,
-        this.rawOutputFor(result, /*typedOutputUsed*/ true, options),
+        this.rawOutputFor(result, spec, typedOutputUsed, options),
         gitCommitCount,
       );
       return { output, sessionId: lastSessionId(result) ?? sessionId };
