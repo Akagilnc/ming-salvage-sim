@@ -5,8 +5,10 @@ import pytest
 
 from ming_sim.decree import advance_without_edict, pre_settle
 from ming_sim.exceptions import SettlementAbort
+from ming_sim.flows import army_needed
 from ming_sim.issues import apply_historical_fiscal_rates
 import ming_sim.issues as issues
+from ming_sim.models import Event
 from ming_sim.simulation import build_simulator_payload
 
 
@@ -600,6 +602,93 @@ def test_fiscal_levy_memorial_labels_cumulative_army_arrears_as_wanliang_not_mon
     assert estimate["national_army_gap_wanliang"]["unit"] == "万两"
     assert estimate["national_army_gap_wanliang"]["text"].endswith("万两")
     assert not estimate["national_army_gap_wanliang"]["text"].endswith("万两/月")
+
+
+def test_fiscal_levy_memorial_excludes_self_funded_tusi_from_army_gap(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    db.mark_event_triggered(
+        state,
+        "liao_levy_rise_1631",
+        source="test",
+        terminal_reason="已准",
+    )
+    db.conn.execute("UPDATE armies SET arrears = 0 WHERE owner_power = 'ming'")
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET arrears = 100, is_tusi = 1, self_funded_pay = 1
+        WHERE id = 'southwest_tusi'
+        """
+    )
+    db.conn.commit()
+
+    expected_monthly_due = sum(
+        float(army_needed(row))
+        for row in db.conn.execute(
+            """
+            SELECT *
+            FROM armies
+            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+            """
+        ).fetchall()
+    )
+
+    payload = build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
+
+    estimate = payload["fiscal_levy_memorial_estimates"][0]
+    assert estimate["army_gap_basis"] == "本月应发军饷"
+    assert estimate["national_army_gap_wanliang"]["unit"] == "万两/月"
+    assert estimate["national_army_gap_wanliang"]["midpoint"] == round(expected_monthly_due, 1)
+
+
+def test_fiscal_levy_expired_pending_choice_is_terminalized(game):
+    db, state, content = game
+    issues.bind_content(content)
+    event_id = "__test_expired_pending_fiscal_levy__"
+    ev = Event(
+        id=event_id,
+        title="测试过期饷率事件",
+        kind="财政",
+        category="fiscal_levy",
+        summary="x",
+        urgency=50,
+        severity=50,
+        credibility=50,
+        interests=[],
+        audiences=[],
+        trigger_year=1637,
+        trigger_month=1,
+        trigger_end_year=1637,
+        trigger_end_month=1,
+        terminal_reason_labels=["已准", "已驳"],
+        default_terminal_reason="已准",
+    )
+    content.events.append(ev)
+    try:
+        state.year = 1637
+        state.period = 2
+        db.save_state(state)
+        db.record_event_decision_choice(
+            state,
+            event_id,
+            {"label": "已准"},
+        )
+
+        applied = apply_historical_fiscal_rates(state, db)
+
+        row = db.conn.execute(
+            "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+            (event_id,),
+        ).fetchone()
+        assert row["terminal_state"] == "expired"
+        assert row["terminal_reason"] == "已准"
+        assert {"id": event_id, "title": ev.title, "terminal_state": "expired"} in applied
+    finally:
+        content.events.remove(ev)
 
 
 def test_fiscal_levy_memorial_prompt_contract_is_positive_p4():
