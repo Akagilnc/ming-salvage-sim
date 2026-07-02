@@ -65,6 +65,28 @@
     "event_type": "node"
   },
   {
+    "id": "liao_levy_rise_1631",
+    "title": "辽饷升至一分二厘",
+    "kind": "财政",
+    "category": "fiscal_levy",
+    "summary": "辽事经年，户部议将辽饷由万历末九厘旧额加至一分二厘，以济关宁、登莱与边镇急饷。准则边饷稍续而民间加派更重，驳则边军缺饷之患立逼。",
+    "urgency": 86,
+    "severity": 84,
+    "credibility": 92,
+    "interests": ["户部", "关宁军", "登莱", "士绅", "农民"],
+    "audiences": ["毕自严", "孙承宗", "韩爌"],
+    "resolve_condition": "皇帝准加辽饷或另开可靠财源，边镇当年饷源不致断裂",
+    "fail_condition": "辽饷加派被驳且无替代财源，关宁、登莱缺饷加剧，边镇军心动摇",
+    "trigger_year": 1631,
+    "trigger_month": 1,
+    "open_window": true,
+    "trigger_gate": {},
+    "terminal_reason_labels": ["已准", "已驳"],
+    "default_terminal_reason": "已准",
+    "event_type": "node",
+    "precondition": "历史既定：崇祯四年正月，辽饷由九厘旧额升至一分二厘；#259 shadow 阶段用史实默认「已准」，#260 落地后改由圣旨置结局。"
+  },
+  {
     "id": "kong_youde",
     "title": "孔有德吴桥兵变",
     "kind": "兵变",

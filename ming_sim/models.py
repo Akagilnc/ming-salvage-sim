@@ -448,9 +448,12 @@ class Event:
     precondition: str = ""  # 触发前提+改写口子人话说明，喂 simulator 由 LLM 据盘面判断是否改写/跳过（见 season_simulator.md 候选情势触发判定）
     event_type: str = "situation"  # situation=转 bar issue；node=只播报不转 issue；ending=交结局判定
     trigger_class: str = ""  # strategic_foreign=战略/外敌类：点名将按席位顶替，不因将领死亡作废
+    category: str = ""  # 事件机制分类；fiscal_levy 等特化确定性通道按此识别，不硬编 id
     person_core_subjects: List[str] = field(default_factory=list)  # 人物核心事件主体：这些人永久死亡→事件作废退候选
     trigger_gate: Dict[str, str] = field(default_factory=dict)  # seed 候选门槛：{metric: 比较式}，全满足才进候选
     auto_trigger: bool = False  # True=gate 达标即由程序硬立项，绕过 LLM 因果判定（不进候选池等 extractor 决定）
+    terminal_reason_labels: List[str] = field(default_factory=list)  # 封闭结局标签集；空=无专用白名单
+    default_terminal_reason: str = ""  # shadow / deterministic stub 默认结局，必须属于 terminal_reason_labels
     # 以下为可选「精调 issue 字段」：原 opening_crises 那种手调危机用，立项时 event_to_issue 优先读这些，
     # 缺省（0/空）则按 severity/kind 自动推导。合并 opening_crises → seed_events 后承接其手调值。
     bar_value: int = 0                                            # 0=自动推导
