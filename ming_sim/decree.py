@@ -38,7 +38,16 @@ from ming_sim.error_pack import (
 )
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.flows import apply_fixed_period_flows
-from ming_sim.issues import apply_event_terminal_states, apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies, sanitize_delta_shape, validate_delta_shape
+from ming_sim.issues import (
+    apply_event_terminal_states,
+    apply_historical_fiscal_rates,
+    apply_issue_inertia_and_ongoing,
+    apply_score_extraction,
+    auto_trigger_seed_issues,
+    clear_gated_legacies,
+    sanitize_delta_shape,
+    validate_delta_shape,
+)
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.memories import build_timeline, record_chapter_memory
@@ -913,6 +922,12 @@ def pre_settle(
         committed = db.commit_pending_actions(state, content=content, registry=registry)
         if committed:
             tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
+        fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
+        if fiscal_levies:
+            tlog(
+                f"[fiscal-levy] 本回合饷率事件前置落账 {len(fiscal_levies)} 条："
+                f"{[(t['id'], t.get('terminal_reason') or t['terminal_state']) for t in fiscal_levies]}"
+            )
         tlog("结算 1/4 固定月度财政 tick")
         if on_stage is not None:
             on_stage("固定月度财政入账")
