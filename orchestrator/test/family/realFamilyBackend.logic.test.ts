@@ -1525,4 +1525,20 @@ describe("RealFamilyBackend runtime file git excludes", () => {
 
     expect(readFileSync(excludePath, "utf8")).toBe(".orchestrator-outcome.json\r\n");
   });
+
+  it("treats CRLF exclude entries as existing lines in the CMR exclude helper too", () => {
+    class Probe extends RealFamilyBackend {
+      public excludeCmr(filename: string): void {
+        this.excludeFromGit(filename);
+      }
+    }
+    const repo = trackRepo();
+    const excludePath = join(repo, ".git", "info", "exclude");
+    writeFileSync(excludePath, ".cmr-route.json\r\n", "utf8");
+    const b = new Probe(opts(repo));
+
+    b.excludeCmr(".cmr-route.json");
+
+    expect(readFileSync(excludePath, "utf8")).toBe(".cmr-route.json\r\n");
+  });
 });

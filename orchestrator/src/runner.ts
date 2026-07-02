@@ -851,7 +851,7 @@ function lastNonTerminalStep(
 }
 
 function isLikelyGitSha(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{7,40}$/.test(value);
+  return typeof value === "string" && /^[0-9a-f]{7,64}$/.test(value);
 }
 
 function isRecoverableCoderProtocolFailure(
@@ -876,34 +876,39 @@ function protocolFailedLandedCoderStep(
   if (ledger.length < 2) return undefined;
   const last = ledger[ledger.length - 1]!;
   if (!isRecoverableCoderProtocolFailure(last)) return undefined;
-  for (let i = ledger.length - 2; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (entry.step === "S8") continue;
-    if (
-      (entry.step !== "S2" && entry.step !== "S5") ||
-      entry.output !== undefined ||
-      !isLikelyGitSha(entry.branchHEAD)
-    ) {
-      return undefined;
-    }
-    let previousHead: string | undefined;
-    for (let j = i - 1; j >= 0; j--) {
-      const head = ledger[j]!.branchHEAD;
-      if (isLikelyGitSha(head)) {
-        previousHead = head;
-        break;
-      }
-    }
-    if (previousHead === undefined || previousHead === entry.branchHEAD) {
-      return undefined;
-    }
-    return {
-      index: i,
-      step: entry.step,
-      output: { kind: "coder", committed: true, commitsAdded: 1 },
-    };
+
+  let i = ledger.length - 2;
+  while (i >= 0 && ledger[i]!.step === "S8") {
+    i--;
   }
-  return undefined;
+  if (i < 0) return undefined;
+
+  const entry = ledger[i]!;
+  if (
+    (entry.step !== "S2" && entry.step !== "S5") ||
+    entry.output !== undefined ||
+    !isLikelyGitSha(entry.branchHEAD)
+  ) {
+    return undefined;
+  }
+
+  let previousHead: string | undefined;
+  for (let j = i - 1; j >= 0; j--) {
+    if (ledger[j]!.step === "S8") continue;
+    const head = ledger[j]!.branchHEAD;
+    if (isLikelyGitSha(head)) {
+      previousHead = head;
+      break;
+    }
+  }
+  if (previousHead === undefined || previousHead === entry.branchHEAD) {
+    return undefined;
+  }
+  return {
+    index: i,
+    step: entry.step,
+    output: { kind: "coder", committed: true, commitsAdded: 1 },
+  };
 }
 
 function ledgerThroughRecoveredCoderOutput(

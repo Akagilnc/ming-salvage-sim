@@ -1329,7 +1329,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const dir = mkdtempSync(join(this.opts.ledgerDir, `worker-outcome-cmr-${pass}-`));
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
-    this.excludeFromGit(WORKER_OUTCOME_SANDBOX_FILE);
+    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_SANDBOX_FILE);
     return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
 
@@ -1350,7 +1350,7 @@ export class RealFamilyBackend implements FamilyBackend {
       } catch {
         // no exclude file yet
       }
-      if (!existing.split("\n").includes(filename)) {
+      if (!existing.split(/\r?\n/).includes(filename)) {
         mkdirSync(join(abs, ".."), { recursive: true });
         appendFileSync(
           abs,
