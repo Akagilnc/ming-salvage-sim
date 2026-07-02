@@ -432,7 +432,10 @@ def test_fiscal_levy_memorial_uses_stable_denominator_when_lost_region_breaks_la
     assert estimate["national_added_wanliang"]["midpoint"] == round(expected_added, 1)
 
 
-def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(game, monkeypatch):
+@pytest.mark.parametrize("bad_shape", ["land", "p", "st", "settle"])
+def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
+    game, monkeypatch, bad_shape
+):
     db, state, content = game
     issues.bind_content(content)
     state.year = 1637
@@ -447,7 +450,14 @@ def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(game,
         db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()["fiscal"]
     )
     fiscal = json.loads(original_shaanxi_fiscal)
-    fiscal["settle"]["st"]["官民田"] = []
+    if bad_shape == "land":
+        fiscal["settle"]["st"]["官民田"] = []
+    elif bad_shape == "p":
+        fiscal["settle"]["p"] = []
+    elif bad_shape == "st":
+        fiscal["settle"]["st"] = []
+    else:
+        fiscal["settle"] = []
     monkeypatch.setattr(issues, "tlog", lambda msg: None)
     db.conn.execute(
         "UPDATE regions SET fiscal = ? WHERE id = ?",
@@ -471,6 +481,44 @@ def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(game,
     restored = _settle_payload(db, "huguang")
     assert math.isclose(restored["_meta"]["剿饷基线"], expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
     assert math.isclose(restored["p"]["三饷应征"], expected_liao + expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
+
+
+def test_fiscal_levy_memorial_suppresses_share_estimate_without_complete_denominator(
+    game, monkeypatch
+):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1637
+    state.period = 1
+    db.save_state(state)
+    db.conn.execute(
+        "UPDATE regions SET controlled_by = ? WHERE id = ?",
+        ("houjin", "henan"),
+    )
+    db.conn.commit()
+    db.mark_event_triggered(
+        state,
+        "jiao_levy_start_1637",
+        source="test",
+        terminal_reason="已准",
+    )
+    fiscal = json.loads(
+        str(db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("henan",)).fetchone()["fiscal"])
+    )
+    fiscal["settle"]["st"] = []
+    msgs = []
+    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "henan"),
+    )
+    db.conn.commit()
+
+    payload = build_simulator_payload(state, db, "准户部议，开剿饷。", "")
+
+    assert any("[fiscal-levy] henan settle 解析失败" in msg for msg in msgs)
+    estimate_ids = {item["event_id"] for item in payload["fiscal_levy_memorial_estimates"]}
+    assert "jiao_levy_start_1637" not in estimate_ids
 
 
 def test_fiscal_levy_memorial_estimates_skip_malformed_region_fiscal(game, monkeypatch):
