@@ -1452,6 +1452,39 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     ).rejects.toThrow(/JSON|sidecar/i);
   });
 
+  it("wraps malformed reviewer sidecars as StructuredOutputError so the runner can use its bounded retry", async () => {
+    const backend = makeBackend();
+    const dir = mkdtempSync(join(tmpdir(), "worker-review-outcome-bad-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+    backend.agentResult = {
+      completionSignal: "REVIEWER_STEP_COMPLETE",
+      stdout: '<review>{"findings": []}</review>',
+      commits: [],
+      iterations: [{ sessionId: "sess-review-bad-sidecar" }],
+    } as Awaited<ReturnType<typeof sc.run>>;
+
+    await expect(
+      backend.runStep(
+        reviewerSpec,
+        {
+          branch: "feat/issue-496",
+          base: "main",
+          path: "/tmp/worktree/issue-496",
+        },
+        {
+          outcomeLanding: {
+            path: outcomePath,
+            sandboxPath: ".orchestrator-outcome.json",
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      name: "StructuredOutputError",
+      message: expect.stringContaining("reviewer outcome sidecar"),
+    });
+  });
+
   it("shares an in-flight toolchain preflight across concurrent agent dispatches", async () => {
     const backend = makeBackend();
     const preflightCalls: string[] = [];
