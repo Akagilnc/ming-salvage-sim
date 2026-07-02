@@ -220,6 +220,16 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             end = (trigger_end_year, trigger_end_month or 12)
             if end < start:
                 raise SystemExit(f"{filename}[{idx}] 事件窗口非法：最晚时点早于最早时点。")
+        terminal_reason_labels = (
+            string_list(item["terminal_reason_labels"], f"{filename}[{idx}].terminal_reason_labels")
+            if "terminal_reason_labels" in item else []
+        )
+        default_terminal_reason = str(item.get("default_terminal_reason") or "").strip()
+        if default_terminal_reason and default_terminal_reason not in terminal_reason_labels:
+            raise SystemExit(
+                f"{filename}[{idx}] default_terminal_reason={default_terminal_reason!r} "
+                "不在 terminal_reason_labels 白名单内。"
+            )
         gate_raw = item.get("trigger_gate") or {}
         if not isinstance(gate_raw, dict):
             raise SystemExit(f"{filename}[{idx}] trigger_gate 必须是对象（key→比较式）。")
@@ -262,12 +272,15 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 precondition=str(item.get("precondition") or ""),
                 event_type=event_type,
                 trigger_class=trigger_class,
+                category=str(item.get("category") or "").strip(),
                 person_core_subjects=(
                     string_list(item["person_core_subjects"], f"{filename}[{idx}].person_core_subjects")
                     if "person_core_subjects" in item else []
                 ),
                 trigger_gate=trigger_gate,
                 auto_trigger=bool(item.get("auto_trigger") or False),
+                terminal_reason_labels=terminal_reason_labels,
+                default_terminal_reason=default_terminal_reason,
                 bar_value=int(item.get("bar_value") or 0),
                 bar_good_meaning=str(item.get("bar_good_meaning") or ""),
                 bar_bad_meaning=str(item.get("bar_bad_meaning") or ""),

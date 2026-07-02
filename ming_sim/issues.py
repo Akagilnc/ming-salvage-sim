@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 import sqlite3
 from typing import Any, Dict, List, Optional
@@ -987,6 +988,217 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
                 "terminal_reason": str(r["terminal_reason"] or ""),
             }
     return records
+
+
+FISCAL_LEVY_EVENT_CATEGORY = "fiscal_levy"
+_LIAO_LEVY_RISE_EVENT_ID = "liao_levy_rise_1631"
+_LIAO_LEVY_RISE_FACTOR = 4.0 / 3.0
+_SETTLE_META_BASE_TRANSPORT_KEY = "正赋起运基线"
+_SETTLE_META_LIAO_SEED_KEY = "辽饷九厘基线"
+
+
+def _normalize_event_terminal_reason(ev: Event, raw: object) -> str:
+    label = re.sub(r"\s+", "", str(raw or ""))
+    if not label:
+        return ""
+    allowed = getattr(ev, "terminal_reason_labels", []) or []
+    for canonical in allowed:
+        if label == re.sub(r"\s+", "", canonical):
+            return canonical
+    return ""
+
+
+def _fiscal_levy_default_terminal_reason(ev: Event, state: GameState) -> str:
+    if not getattr(ev, "terminal_reason_labels", None):
+        raise SettlementAbort(
+            f"饷率事件 {ev.id} 缺 terminal_reason_labels 白名单",
+            turn=state.turn,
+            stage="fiscal_levy_config",
+        )
+    label = _normalize_event_terminal_reason(ev, getattr(ev, "default_terminal_reason", ""))
+    if not label:
+        raise SettlementAbort(
+            f"饷率事件 {ev.id} default_terminal_reason 不可归一",
+            turn=state.turn,
+            stage="fiscal_levy_config",
+        )
+    return label
+
+
+def _validate_existing_fiscal_levy_terminal_reason(
+    ev: Event,
+    record: Dict[str, str],
+    state: GameState,
+    db: GameDB,
+) -> None:
+    if record.get("terminal_state") != "triggered":
+        return
+    label = _normalize_event_terminal_reason(ev, record.get("terminal_reason"))
+    if not label:
+        allowed = "/".join(getattr(ev, "terminal_reason_labels", []) or [])
+        raise SettlementAbort(
+            f"饷率事件 {ev.id} 结局标签无法归一：{record.get('terminal_reason')!r}；"
+            f"合法标签：{allowed}",
+            turn=state.turn,
+            stage="fiscal_levy_config",
+        )
+    if label != record.get("terminal_reason"):
+        db.conn.execute(
+            "UPDATE event_triggers SET terminal_reason=? WHERE event_id=?",
+            (label, ev.id),
+        )
+        record["terminal_reason"] = label
+
+
+def _as_float(raw: object, *, ctx: str) -> float:
+    if isinstance(raw, bool):
+        raise ValueError(f"{ctx} 非数值：{raw!r}")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{ctx} 非数值：{raw!r}") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"{ctx} 非有限数值：{raw!r}")
+    return value
+
+
+def _fiscal_levy_liao_seed(meta: Dict[str, object], p: Dict[str, object], region_id: str) -> float:
+    if _SETTLE_META_LIAO_SEED_KEY in meta:
+        return _as_float(
+            meta[_SETTLE_META_LIAO_SEED_KEY],
+            ctx=f"{region_id}.settle._meta.{_SETTLE_META_LIAO_SEED_KEY}",
+        )
+    return _as_float(p.get("三饷应征"), ctx=f"{region_id}.settle.p.三饷应征")
+
+
+def _fiscal_levy_base_transport(
+    meta: Dict[str, object],
+    p: Dict[str, object],
+    liao_seed: float,
+    region_id: str,
+) -> float:
+    if _SETTLE_META_BASE_TRANSPORT_KEY in meta:
+        return max(
+            0.0,
+            _as_float(
+                meta[_SETTLE_META_BASE_TRANSPORT_KEY],
+                ctx=f"{region_id}.settle._meta.{_SETTLE_META_BASE_TRANSPORT_KEY}",
+            ),
+        )
+    seed_transport = _as_float(p.get("起运定额"), ctx=f"{region_id}.settle.p.起运定额")
+    return max(0.0, seed_transport - liao_seed)
+
+
+def _apply_liao_levy_targets(db: GameDB, terminal_records: Dict[str, Dict[str, str]]) -> int:
+    record = terminal_records.get(_LIAO_LEVY_RISE_EVENT_ID) or {}
+    liao_rise_approved = (
+        record.get("terminal_state") == "triggered"
+        and record.get("terminal_reason") == "已准"
+    )
+    touched = 0
+    for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
+        region_id = str(row["id"])
+        fiscal = json.loads(str(row["fiscal"] or "{}"))
+        if not isinstance(fiscal, dict):
+            continue
+        settle = fiscal.get("settle")
+        if not isinstance(settle, dict):
+            continue
+        p = settle.get("p")
+        if not isinstance(p, dict):
+            continue
+        meta_raw = settle.get("_meta") or {}
+        if not isinstance(meta_raw, dict):
+            raise ValueError(f"{region_id}.settle._meta 非字典")
+        meta = dict(meta_raw)
+        liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
+        base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
+        target_liao = liao_seed * (_LIAO_LEVY_RISE_FACTOR if liao_rise_approved else 1.0)
+        target_transport = base_transport + target_liao
+        next_p = dict(p)
+        next_p["三饷应征"] = target_liao
+        next_p["起运定额"] = target_transport
+        meta[_SETTLE_META_LIAO_SEED_KEY] = liao_seed
+        meta[_SETTLE_META_BASE_TRANSPORT_KEY] = base_transport
+        if next_p == p and meta == meta_raw:
+            continue
+        settle["p"] = next_p
+        settle["_meta"] = meta
+        db.conn.execute(
+            "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(fiscal, ensure_ascii=False), region_id),
+        )
+        touched += 1
+    return touched
+
+
+def apply_historical_fiscal_rates(
+    state: GameState,
+    db: GameDB,
+    *,
+    commit: bool = True,
+) -> List[Dict[str, object]]:
+    """饷率 effect 通道：同 tick 前置结局 stub + settle.p set-to-target。
+
+    #259 shadow 阶段只处理 category=fiscal_levy 的历史事件；结局值必须经事件自身
+    terminal_reason_labels 白名单归一。随后按事件账重算在征饷集并持久化省级
+    settle.p，保证后续 settle_tick 当月读到目标值且重复运行不叠加。
+    """
+    c = _ctx()
+    should_commit = commit and not db.conn.in_transaction
+    applied: List[Dict[str, object]] = []
+
+    def run_fiscal_levy_pass() -> None:
+        terminal_records = _event_terminal_records(db)
+        for ev in c.events:
+            if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+                continue
+            if ev.id in terminal_records:
+                _validate_existing_fiscal_levy_terminal_reason(
+                    ev,
+                    terminal_records[ev.id],
+                    state,
+                    db,
+                )
+            if ev.id not in terminal_records:
+                if _event_window_expired(ev, state):
+                    db.mark_event_expired(state, ev.id, commit=False)
+                    terminal_records[ev.id] = {
+                        "terminal_state": "expired",
+                        "terminal_reason": "过最晚触发时点仍未达成触发门",
+                    }
+                    applied.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
+                    continue
+                if not _event_window_open(ev, state):
+                    continue
+                if not _gate_passed(ev.trigger_gate, state.metrics, db):
+                    continue
+                label = _fiscal_levy_default_terminal_reason(ev, state)
+                db.mark_event_triggered(
+                    state,
+                    ev.id,
+                    source="fiscal_levy_shadow",
+                    terminal_reason=label,
+                    commit=False,
+                )
+                terminal_records[ev.id] = {
+                    "terminal_state": "triggered",
+                    "terminal_reason": label,
+                }
+                applied.append({
+                    "id": ev.id,
+                    "title": ev.title,
+                    "terminal_state": "triggered",
+                    "terminal_reason": label,
+                })
+        _apply_liao_levy_targets(db, terminal_records)
+
+    if should_commit:
+        with atomic(db):
+            run_fiscal_levy_pass()
+    else:
+        run_fiscal_levy_pass()
+    return applied
 
 
 _EVENT_GATE_KEY_RE = re.compile(r"^event\.([^.]+)\.(triggered|terminal_state|terminal_reason)$")
