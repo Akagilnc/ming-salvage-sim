@@ -1,6 +1,6 @@
 # 召对夜 = 一等容器 + 开放式故事账本；场是软切分；基座为故事服务
 
-Status: Proposed（2026-07-02 #470 grill 结晶；评审闸在 to-prd 之后）
+Status: Accepted（2026-07-02：本地 cmr 十轮收敛（codex xhigh + agy + Opus 4.8）+ 线上 bot 轮收敛，PR #510；2026-07-02 #470 grill 结晶）
 
 ## 决定
 
