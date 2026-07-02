@@ -698,7 +698,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-merger-"));
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
-    this.excludeShipFocusFromGit(WORKER_OUTCOME_SANDBOX_FILE);
+    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_SANDBOX_FILE);
     return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
 
@@ -1740,7 +1740,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-ship-"));
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
-    this.excludeShipFocusFromGit(WORKER_OUTCOME_SANDBOX_FILE);
+    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_SANDBOX_FILE);
     return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
 
@@ -1776,12 +1776,12 @@ export class RealFamilyBackend implements FamilyBackend {
         : "");
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, SHIP_FOCUS_FILENAME);
-    this.excludeShipFocusFromGit(SHIP_FOCUS_FILENAME);
+    this.excludeOptionalRuntimeFileFromGit(SHIP_FOCUS_FILENAME);
     writeFileSync(target, body, "utf8");
   }
 
-  /** Add the ship focus file to the worktree's local git excludes (never committed). */
-  protected excludeShipFocusFromGit(filename: string = SHIP_FOCUS_FILENAME): void {
+  /** Best-effort exclude for optional runtime files that must never be committed. */
+  protected excludeOptionalRuntimeFileFromGit(filename: string): void {
     try {
       const excludePath = join(
         this.sh("git", ["rev-parse", "--git-dir"], this.opts.workingRepo),
