@@ -993,8 +993,12 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
 FISCAL_LEVY_EVENT_CATEGORY = "fiscal_levy"
 _LIAO_LEVY_RISE_EVENT_ID = "liao_levy_rise_1631"
 _LIAO_LEVY_RISE_FACTOR = 4.0 / 3.0
+_JIAO_LEVY_START_EVENT_ID = "jiao_levy_start_1637"
+_JIAO_LEVY_STOP_EVENT_ID = "jiao_levy_stop_1640"
+_JIAO_LEVY_TO_LIAO_SEED_FACTOR = 7.0 / 13.0
 _SETTLE_META_BASE_TRANSPORT_KEY = "正赋起运基线"
 _SETTLE_META_LIAO_SEED_KEY = "辽饷九厘基线"
+_SETTLE_META_JIAO_SEED_KEY = "剿饷基线"
 
 
 def _normalize_event_terminal_reason(ev: Event, raw: object) -> str:
@@ -1089,12 +1093,67 @@ def _fiscal_levy_base_transport(
     return max(0.0, seed_transport - liao_seed)
 
 
-def _apply_liao_levy_targets(db: GameDB, terminal_records: Dict[str, Dict[str, str]]) -> int:
+def _fiscal_levy_event_by_id(event_id: str) -> Event | None:
+    return _ctx().event_by_id.get(event_id)
+
+
+def _fiscal_levy_started(
+    terminal_records: Dict[str, Dict[str, str]],
+    event_id: str,
+) -> bool:
+    record = terminal_records.get(event_id) or {}
+    return (
+        record.get("terminal_state") == "triggered"
+        and record.get("terminal_reason") == "已准"
+    )
+
+
+def _fiscal_levy_stopped(
+    terminal_records: Dict[str, Dict[str, str]],
+    event_id: str,
+) -> bool:
+    record = terminal_records.get(event_id) or {}
+    return (
+        record.get("terminal_state") == "triggered"
+        and record.get("terminal_reason") == "已停"
+    )
+
+
+def _fiscal_levy_jiao_seed(meta: Dict[str, object], liao_seed: float, region_id: str) -> float:
+    if _SETTLE_META_JIAO_SEED_KEY in meta:
+        return _as_float(
+            meta[_SETTLE_META_JIAO_SEED_KEY],
+            ctx=f"{region_id}.settle._meta.{_SETTLE_META_JIAO_SEED_KEY}",
+        )
+    return liao_seed * _JIAO_LEVY_TO_LIAO_SEED_FACTOR
+
+
+def _jiao_levy_in_force(terminal_records: Dict[str, Dict[str, str]], state: GameState) -> bool:
+    if _fiscal_levy_event_by_id(_JIAO_LEVY_START_EVENT_ID) is None:
+        return False
+    if _fiscal_levy_event_by_id(_JIAO_LEVY_STOP_EVENT_ID) is None:
+        raise SettlementAbort(
+            f"饷率事件 {_JIAO_LEVY_START_EVENT_ID} 已定义但缺停征链 {_JIAO_LEVY_STOP_EVENT_ID}",
+            turn=state.turn,
+            stage="fiscal_levy_config",
+        )
+    return (
+        _fiscal_levy_started(terminal_records, _JIAO_LEVY_START_EVENT_ID)
+        and not _fiscal_levy_stopped(terminal_records, _JIAO_LEVY_STOP_EVENT_ID)
+    )
+
+
+def _apply_fiscal_levy_targets(
+    db: GameDB,
+    state: GameState,
+    terminal_records: Dict[str, Dict[str, str]],
+) -> int:
     record = terminal_records.get(_LIAO_LEVY_RISE_EVENT_ID) or {}
     liao_rise_approved = (
         record.get("terminal_state") == "triggered"
         and record.get("terminal_reason") == "已准"
     )
+    jiao_in_force = _jiao_levy_in_force(terminal_records, state)
     touched = 0
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
         region_id = str(row["id"])
@@ -1112,13 +1171,17 @@ def _apply_liao_levy_targets(db: GameDB, terminal_records: Dict[str, Dict[str, s
             raise ValueError(f"{region_id}.settle._meta 非字典")
         meta = dict(meta_raw)
         liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
+        jiao_seed = _fiscal_levy_jiao_seed(meta, liao_seed, region_id)
         base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
         target_liao = liao_seed * (_LIAO_LEVY_RISE_FACTOR if liao_rise_approved else 1.0)
-        target_transport = base_transport + target_liao
+        target_jiao = jiao_seed if jiao_in_force else 0.0
+        target_three_levies = target_liao + target_jiao
+        target_transport = base_transport + target_three_levies
         next_p = dict(p)
-        next_p["三饷应征"] = target_liao
+        next_p["三饷应征"] = target_three_levies
         next_p["起运定额"] = target_transport
         meta[_SETTLE_META_LIAO_SEED_KEY] = liao_seed
+        meta[_SETTLE_META_JIAO_SEED_KEY] = jiao_seed
         meta[_SETTLE_META_BASE_TRANSPORT_KEY] = base_transport
         if next_p == p and meta == meta_raw:
             continue
@@ -1191,7 +1254,7 @@ def apply_historical_fiscal_rates(
                     "terminal_state": "triggered",
                     "terminal_reason": label,
                 })
-        _apply_liao_levy_targets(db, terminal_records)
+        _apply_fiscal_levy_targets(db, state, terminal_records)
 
     if should_commit:
         with atomic(db):
