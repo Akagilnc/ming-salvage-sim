@@ -153,6 +153,7 @@ class ResumeBackend implements Backend {
   readonly calls: string[] = [];
   readonly runStepIds: string[] = [];
   readonly ledgerWrites: PersistentLedgerEntry[] = [];
+  readonly commitCountsBetween = new Map<string, number>();
   /** Each resumeSession call: [stepId, sessionId]. */
   readonly resumeSessionCalls: Array<[string, string]> = [];
   prepareWorktreeCount = 0;
@@ -231,6 +232,15 @@ class ResumeBackend implements Backend {
       return { kind: "reviewer", findings: [] };
     }
     return { kind: "coder", committed: true, commitsAdded: 1 };
+  }
+
+  async countCommitsBetween(
+    _worktree: WorktreeHandle,
+    fromHead: string,
+    toHead: string,
+  ): Promise<number> {
+    this.calls.push(`countCommitsBetween(${fromHead}, ${toHead})`);
+    return this.commitCountsBetween.get(`${fromHead}..${toHead}`) ?? 1;
   }
 
   async push(worktree: WorktreeHandle): Promise<void> {
@@ -487,6 +497,83 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       committed: true,
       commitsAdded: 1,
     });
+  });
+
+  it("recovers the real landed coder commit count from persisted HEADs", async () => {
+    const beforeFixHead = "a".repeat(40);
+    const afterFixHead = "b".repeat(40);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeFixHead },
+        { ...entry("S1"), branchHEAD: beforeFixHead },
+        {
+          ...entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+          branchHEAD: beforeFixHead,
+        },
+        {
+          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
+          branchHEAD: beforeFixHead,
+        },
+        { ...entry("S4"), branchHEAD: beforeFixHead },
+        {
+          step: "S5",
+          sessionId: "session-s5-protocol-failed",
+          prompt_hash: "hash-S5",
+          branchHEAD: afterFixHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        { ...coderProtocolFailureS8(), branchHEAD: afterFixHead },
+      ],
+    });
+    backend.commitCountsBetween.set(`${beforeFixHead}..${afterFixHead}`, 3);
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.calls).toContain(
+      `countCommitsBetween(${beforeFixHead}, ${afterFixHead})`,
+    );
+    const s5 = result.stepLedger.find((e) => e.step === "S5");
+    expect(s5?.output).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 3,
+    });
+  });
+
+  it("does not recover a landed coder protocol failure when the git count is not positive", async () => {
+    const beforeBuildHead = "a".repeat(40);
+    const afterBuildHead = "b".repeat(40);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeBuildHead },
+        { ...entry("S1"), branchHEAD: beforeBuildHead },
+        {
+          step: "S2",
+          sessionId: "session-s2-protocol-failed",
+          prompt_hash: "hash-S2",
+          branchHEAD: afterBuildHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        { ...coderProtocolFailureS8(), branchHEAD: afterBuildHead },
+      ],
+    });
+    backend.commitCountsBetween.set(`${beforeBuildHead}..${afterBuildHead}`, 0);
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("error");
+    expect(backend.dispatchSpecs).toHaveLength(0);
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S8",
+    ]);
   });
 
   it("recovers a landed SHA-256 coder commit while skipping intervening S8 heads", async () => {

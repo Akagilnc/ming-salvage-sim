@@ -1073,6 +1073,20 @@ export interface Backend {
    */
   worktreeHead?(worktree: WorktreeHandle): Promise<string | undefined>;
   /**
+   * Optional git-truth helper for resume recovery.
+   *
+   * When a legacy coder worker landed commits but failed the old stdout outcome
+   * protocol, the runner can only recover the step if it can reconstruct the
+   * true commit count from two persisted HEADs. Backends that cannot provide
+   * this must leave the method absent; the runner will then report the original
+   * terminal error instead of synthesising a misleading success.
+   */
+  countCommitsBetween?(
+    worktree: WorktreeHandle,
+    fromHead: string,
+    toHead: string,
+  ): Promise<number>;
+  /**
    * Write one persisted ledger entry to the sibling state directory (#249).
    *
    * The `stateDir` is derived by the runner from the worktree path: it is a
