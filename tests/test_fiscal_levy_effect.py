@@ -399,6 +399,30 @@ def test_fiscal_levy_choice_resubmission_uses_latest_pending_label(game):
     assert after["p"] == before["p"]
 
 
+def test_fiscal_levy_pending_choice_label_is_canonicalized_for_db_consumers(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    db.record_event_decision_choice(
+        state,
+        "liao_levy_rise_1631",
+        {"label": "已 准"},
+    )
+
+    apply_historical_fiscal_rates(state, db)
+
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("liao_levy_rise_1631",),
+    ).fetchone()
+    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "已准"}
+    payload = build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
+    estimate_ids = {item["event_id"] for item in payload["fiscal_levy_memorial_estimates"]}
+    assert "liao_levy_rise_1631" in estimate_ids
+
+
 def test_fiscal_levy_pending_stop_choice_keeps_jiao_in_force_same_tick(game):
     db, state, content = game
     issues.bind_content(content)
