@@ -13,6 +13,7 @@ import type {
 } from "../../src/types.js";
 import type {
   FamilyBackend,
+  FamilyEscalation,
   FamilyLedgerEntry,
   FamilyVerifyRequest,
   FamilyVerifyResult,
@@ -649,7 +650,7 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
 
 describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R4)", () => {
   class EscalatingFamilyBackend implements FamilyBackend {
-    escalations: string[] = [];
+    escalations: FamilyEscalation[] = [];
     ledger: FamilyLedgerEntry[] = [];
     escalateOn: "cmr" | "ship";
     constructor(escalateOn: "cmr" | "ship") {
@@ -667,8 +668,8 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
     }
-    async escalateFamily(e: { reason: string }): Promise<void> {
-      this.escalations.push(e.reason);
+    async escalateFamily(e: FamilyEscalation): Promise<void> {
+      this.escalations.push(e);
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
       if (spec.kind === this.escalateOn) {
@@ -696,7 +697,7 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     });
     expect(res.ok).toBe(false);
     expect(be.escalations.length).toBe(1);
-    expect(be.escalations[0]).toContain("stuck");
+    expect(be.escalations[0]?.reason).toContain("stuck");
   });
 
   it("an escalated family ship worker → escalateFamily + ok:false", async () => {
@@ -708,6 +709,12 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     });
     expect(res.ok).toBe(false);
     expect(be.escalations.length).toBe(1);
+    expect(be.escalations[0]?.stopSummary).toMatchObject({
+      reason: "infra_failure",
+      metadata: {
+        ship: { shipPrState: "ship-worker-escalated" },
+      },
+    });
     expect(be.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
