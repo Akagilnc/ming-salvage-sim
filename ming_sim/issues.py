@@ -1078,7 +1078,7 @@ def _fiscal_levy_normalized_terminal_reason_or_abort(
     )
 
 
-def _validate_existing_fiscal_levy_terminal_reason(
+def _canonicalize_existing_fiscal_levy_terminal_reason(
     ev: Event,
     record: Dict[str, str],
     state: GameState,
@@ -1535,7 +1535,7 @@ def apply_historical_fiscal_rates(
             if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
                 continue
             if ev.id in terminal_records:
-                _validate_existing_fiscal_levy_terminal_reason(
+                _canonicalize_existing_fiscal_levy_terminal_reason(
                     ev,
                     terminal_records[ev.id],
                     state,
