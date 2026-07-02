@@ -1022,11 +1022,13 @@ _SETTLE_META_BASE_TRANSPORT_KEY = "正赋起运基线"
 _SETTLE_META_LIAO_SEED_KEY = "辽饷九厘基线"
 _SETTLE_META_JIAO_SEED_KEY = "剿饷基线"
 _SETTLE_META_LIAN_SEED_KEY = "练饷基线"
+_SETTLE_META_LAND_DENOMINATOR_KEY = "饷率田亩分母基线"
 _FISCAL_LEVY_PROVISIONAL_KEYS = {
     _SETTLE_META_BASE_TRANSPORT_KEY,
     _SETTLE_META_LIAO_SEED_KEY,
     _SETTLE_META_JIAO_SEED_KEY,
     _SETTLE_META_LIAN_SEED_KEY,
+    _SETTLE_META_LAND_DENOMINATOR_KEY,
 }
 _FISCAL_LEVY_PRESENTATION_INSTRUCTION = (
     "以奏疏口吻给出万两量级的加征估算与可补军费程度；"
@@ -1193,6 +1195,36 @@ def _fiscal_levy_land_share_amount(
     return max(0.0, land) / total_land * national_monthly
 
 
+def _fiscal_levy_land_denominator(
+    meta: Dict[str, object],
+    parsed_total_land: float,
+    *,
+    denominator_complete: bool,
+    region_id: str,
+) -> float:
+    if _SETTLE_META_LAND_DENOMINATOR_KEY in meta:
+        return _as_float(
+            meta[_SETTLE_META_LAND_DENOMINATOR_KEY],
+            ctx=f"{region_id}.settle._meta.{_SETTLE_META_LAND_DENOMINATOR_KEY}",
+        )
+    if denominator_complete:
+        return parsed_total_land
+    return 0.0
+
+
+def _fiscal_levy_share_seed(
+    meta: Dict[str, object],
+    key: str,
+    land: float,
+    total_land: float,
+    national_monthly: float,
+    region_id: str,
+) -> float:
+    if key in meta:
+        return _as_float(meta[key], ctx=f"{region_id}.settle._meta.{key}")
+    return _fiscal_levy_land_share_amount(land, total_land, national_monthly)
+
+
 def _fiscal_levy_mark_provisional(meta: Dict[str, object]) -> None:
     raw = meta.get("provisional", [])
     if isinstance(raw, list):
@@ -1231,10 +1263,12 @@ def _apply_fiscal_levy_targets(
     jiao_in_force = _jiao_levy_in_force(terminal_records, state)
     lian_levy_approved = _fiscal_levy_event_approved(terminal_records, _LIAN_LEVY_START_EVENT_ID)
     region_entries: List[Dict[str, object]] = []
+    denominator_complete = True
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
         region_id = str(row["id"])
         fiscal = _load_region_fiscal_for_fiscal_levy(region_id, row["fiscal"])
         if fiscal is None:
+            denominator_complete = False
             continue
         try:
             settle = fiscal.get("settle")
@@ -1252,6 +1286,7 @@ def _apply_fiscal_levy_targets(
             land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
             base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
         except ValueError as exc:
+            denominator_complete = False
             tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
             continue
         region_entries.append({
@@ -1276,15 +1311,29 @@ def _apply_fiscal_levy_targets(
         meta = item["meta"]
         liao_seed = float(item["liao_seed"])
         land = float(item["land"])
-        jiao_seed = _fiscal_levy_land_share_amount(
-            land,
+        land_denominator = _fiscal_levy_land_denominator(
+            meta,
             total_land,
-            _JIAO_LEVY_NATIONAL_MONTHLY,
+            denominator_complete=denominator_complete,
+            region_id=region_id,
         )
-        lian_seed = _fiscal_levy_land_share_amount(
+        has_jiao_seed = _SETTLE_META_JIAO_SEED_KEY in meta
+        has_lian_seed = _SETTLE_META_LIAN_SEED_KEY in meta
+        jiao_seed = _fiscal_levy_share_seed(
+            meta,
+            _SETTLE_META_JIAO_SEED_KEY,
             land,
-            total_land,
+            land_denominator,
+            _JIAO_LEVY_NATIONAL_MONTHLY,
+            region_id,
+        )
+        lian_seed = _fiscal_levy_share_seed(
+            meta,
+            _SETTLE_META_LIAN_SEED_KEY,
+            land,
+            land_denominator,
             _LIAN_LEVY_NATIONAL_MONTHLY,
+            region_id,
         )
         base_transport = float(item["base_transport"])
         target_liao = liao_seed * (_LIAO_LEVY_RISE_FACTOR if liao_rise_approved else 1.0)
@@ -1296,9 +1345,13 @@ def _apply_fiscal_levy_targets(
         next_p["三饷应征"] = target_sanxiang
         next_p["起运定额"] = target_transport
         meta[_SETTLE_META_LIAO_SEED_KEY] = liao_seed
-        meta[_SETTLE_META_JIAO_SEED_KEY] = jiao_seed
-        meta[_SETTLE_META_LIAN_SEED_KEY] = lian_seed
+        if has_jiao_seed or land_denominator > 0:
+            meta[_SETTLE_META_JIAO_SEED_KEY] = jiao_seed
+        if has_lian_seed or land_denominator > 0:
+            meta[_SETTLE_META_LIAN_SEED_KEY] = lian_seed
         meta[_SETTLE_META_BASE_TRANSPORT_KEY] = base_transport
+        if land_denominator > 0:
+            meta[_SETTLE_META_LAND_DENOMINATOR_KEY] = land_denominator
         _fiscal_levy_mark_provisional(meta)
         if next_p == p and meta == meta_raw:
             continue
@@ -1379,10 +1432,12 @@ def _region_fiscal_levy_components(db: GameDB) -> List[Dict[str, object]]:
     ).fetchall()
     total_land = 0.0
     parsed_rows: List[Dict[str, object]] = []
+    denominator_complete = True
     for row in rows:
         region_id = str(row["id"])
         fiscal = _load_region_fiscal_for_fiscal_levy(region_id, row["fiscal"])
         if fiscal is None:
+            denominator_complete = False
             continue
         try:
             settle = fiscal.get("settle")
@@ -1394,6 +1449,7 @@ def _region_fiscal_levy_components(db: GameDB) -> List[Dict[str, object]]:
                 continue
             land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
         except ValueError as exc:
+            denominator_complete = False
             tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
             continue
         total_land += max(0.0, land)
@@ -1419,19 +1475,31 @@ def _region_fiscal_levy_components(db: GameDB) -> List[Dict[str, object]]:
                 raise ValueError(f"{region_id}.settle._meta 非字典")
             meta = dict(meta_raw)
             liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
+            land_denominator = _fiscal_levy_land_denominator(
+                meta,
+                total_land,
+                denominator_complete=denominator_complete,
+                region_id=region_id,
+            )
+            jiao_seed = _fiscal_levy_share_seed(
+                meta,
+                _SETTLE_META_JIAO_SEED_KEY,
+                land,
+                land_denominator,
+                _JIAO_LEVY_NATIONAL_MONTHLY,
+                region_id,
+            )
+            lian_seed = _fiscal_levy_share_seed(
+                meta,
+                _SETTLE_META_LIAN_SEED_KEY,
+                land,
+                land_denominator,
+                _LIAN_LEVY_NATIONAL_MONTHLY,
+                region_id,
+            )
         except ValueError as exc:
             tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
             continue
-        jiao_seed = _fiscal_levy_land_share_amount(
-            land,
-            total_land,
-            _JIAO_LEVY_NATIONAL_MONTHLY,
-        )
-        lian_seed = _fiscal_levy_land_share_amount(
-            land,
-            total_land,
-            _LIAN_LEVY_NATIONAL_MONTHLY,
-        )
         components.append({
             "region_id": region_id,
             "region_name": str(row["name"]),
@@ -1542,6 +1610,10 @@ def apply_historical_fiscal_rates(
                     db,
                 )
             elif ev.id in pending_choice_records:
+                if not _event_window_open(ev, state):
+                    continue
+                if not _gate_passed(ev.trigger_gate, state.metrics, db):
+                    continue
                 record = pending_choice_records[ev.id]
                 label = _fiscal_levy_normalized_terminal_reason_or_abort(
                     ev,

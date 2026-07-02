@@ -40,6 +40,14 @@ def _settle_land_sum(db):
     return total
 
 
+def _settled_land_by_region(db):
+    land_by_region = {}
+    for region_id in _settled_region_ids(db):
+        settle = _settle_payload(db, region_id)
+        land_by_region[region_id] = max(0.0, float(settle["st"].get("官民田") or 0.0))
+    return land_by_region
+
+
 def _expected_land_share_levy(settle, national_monthly, total_land):
     land = max(0.0, float(settle["st"].get("官民田") or 0.0))
     if total_land <= 0:
@@ -334,6 +342,137 @@ def test_fiscal_levy_shadow_skips_bad_settle_shape_without_blocking_other_region
     assert huguang["p"]["三饷应征"] > before_huguang
 
 
+def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game, monkeypatch):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1637
+    state.period = 1
+    db.save_state(state)
+
+    total_land = _settle_land_sum(db)
+    huguang_before = _settle_payload(db, "huguang")
+    expected_jiao = _expected_land_share_levy(huguang_before, JIAO_NATIONAL_MONTHLY, total_land)
+    expected_lian = _expected_land_share_levy(huguang_before, LIAN_NATIONAL_MONTHLY, total_land)
+    expected_liao = huguang_before["p"]["三饷应征"] * 4.0 / 3.0
+
+    apply_historical_fiscal_rates(state, db)
+    state.year = 1639
+    state.period = 1
+    db.save_state(state)
+
+    fiscal = json.loads(
+        str(db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()["fiscal"])
+    )
+    fiscal["settle"]["st"]["官民田"] = []
+    msgs = []
+    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
+    )
+    db.conn.commit()
+
+    apply_historical_fiscal_rates(state, db)
+
+    assert any("[fiscal-levy] shaanxi settle 解析失败" in msg for msg in msgs)
+    huguang = _settle_payload(db, "huguang")
+    assert math.isclose(huguang["_meta"]["剿饷基线"], expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(huguang["_meta"]["练饷基线"], expected_lian, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(
+        huguang["p"]["三饷应征"],
+        expected_liao + expected_jiao + expected_lian,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+
+
+def test_fiscal_levy_memorial_uses_stable_denominator_when_lost_region_breaks_later(
+    game, monkeypatch
+):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1637
+    state.period = 1
+    db.save_state(state)
+
+    land_by_region = _settled_land_by_region(db)
+    db.conn.execute(
+        "UPDATE regions SET controlled_by = ? WHERE id = ?",
+        ("houjin", "henan"),
+    )
+    db.conn.commit()
+    expected_ming_land = sum(
+        land
+        for region_id, land in land_by_region.items()
+        if region_id != "henan"
+    )
+    expected_added = JIAO_NATIONAL_MONTHLY * expected_ming_land / sum(land_by_region.values())
+
+    pre_settle(state, db, content=content)
+    fiscal = json.loads(
+        str(db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("henan",)).fetchone()["fiscal"])
+    )
+    fiscal["settle"]["st"]["官民田"] = []
+    msgs = []
+    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "henan"),
+    )
+    db.conn.commit()
+
+    payload = build_simulator_payload(state, db, "准户部议，开剿饷。", "")
+
+    assert any("[fiscal-levy] henan settle 解析失败" in msg for msg in msgs)
+    estimate = next(
+        item
+        for item in payload["fiscal_levy_memorial_estimates"]
+        if item["event_id"] == "jiao_levy_start_1637"
+    )
+    assert estimate["national_added_wanliang"]["midpoint"] == round(expected_added, 1)
+
+
+def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(game, monkeypatch):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1637
+    state.period = 1
+    db.save_state(state)
+
+    total_land = _settle_land_sum(db)
+    huguang_before = _settle_payload(db, "huguang")
+    expected_jiao = _expected_land_share_levy(huguang_before, JIAO_NATIONAL_MONTHLY, total_land)
+    expected_liao = huguang_before["p"]["三饷应征"] * 4.0 / 3.0
+    original_shaanxi_fiscal = str(
+        db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()["fiscal"]
+    )
+    fiscal = json.loads(original_shaanxi_fiscal)
+    fiscal["settle"]["st"]["官民田"] = []
+    monkeypatch.setattr(issues, "tlog", lambda msg: None)
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
+    )
+    db.conn.commit()
+
+    apply_historical_fiscal_rates(state, db)
+
+    incomplete = _settle_payload(db, "huguang")
+    assert "剿饷基线" not in incomplete["_meta"]
+    assert math.isclose(incomplete["p"]["三饷应征"], expected_liao, rel_tol=1e-9, abs_tol=1e-9)
+
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (original_shaanxi_fiscal, "shaanxi"),
+    )
+    db.conn.commit()
+    apply_historical_fiscal_rates(state, db)
+
+    restored = _settle_payload(db, "huguang")
+    assert math.isclose(restored["_meta"]["剿饷基线"], expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(restored["p"]["三饷应征"], expected_liao + expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
+
+
 def test_fiscal_levy_memorial_estimates_skip_malformed_region_fiscal(game, monkeypatch):
     db, state, content = game
     issues.bind_content(content)
@@ -562,6 +701,43 @@ def test_fiscal_levy_pending_stop_choice_keeps_jiao_in_force_same_tick(game):
         rel_tol=1e-9,
         abs_tol=1e-9,
     )
+
+
+def test_fiscal_levy_pending_choice_waits_for_event_window(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 12
+    db.save_state(state)
+    before = _settle_payload(db, "shaanxi")
+    db.record_event_decision_choice(
+        state,
+        "lian_levy_start_1639",
+        {"label": "已准"},
+    )
+
+    apply_historical_fiscal_rates(state, db)
+
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("lian_levy_start_1639",),
+    ).fetchone()
+    assert dict(row) == {"terminal_state": "", "terminal_reason": "已准"}
+    after = _settle_payload(db, "shaanxi")
+    expected_sanxiang = after["_meta"]["辽饷九厘基线"] * 4.0 / 3.0 + after["_meta"]["剿饷基线"]
+    assert math.isclose(after["p"]["三饷应征"], expected_sanxiang, rel_tol=1e-9, abs_tol=1e-9)
+    assert before["p"]["三饷应征"] != after["p"]["三饷应征"]
+
+    state.year = 1639
+    state.period = 1
+    db.save_state(state)
+    apply_historical_fiscal_rates(state, db)
+
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("lian_levy_start_1639",),
+    ).fetchone()
+    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "已准"}
 
 
 def test_fiscal_levy_memorial_small_fractional_arrears_range_is_ordered(game):
