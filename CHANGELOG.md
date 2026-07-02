@@ -4,6 +4,23 @@
 
 ## [未发布]
 
+## [0.23.0.0] - 2026-07-02
+
+### 新增
+- **worker outcome sidecar 协议**：coder、reviewer、CMR、merger 与 ship worker 现在会优先通过 runner 注入的 `.orchestrator-outcome.json` 交换结构化结果，stdout tag 只作为旧 runner 兼容层保留。
+- **sidecar 落地文件隔离**：runner 会为 worker outcome 建立 state-dir landing file，并把 sandbox 内的 outcome 文件加入 git exclude，避免机器协议文件污染 slice diff。
+
+### 变更
+- **真实 backend 优先读机器协议**：当 outcome sidecar 挂载时，fresh reviewer 与 resume worker 不再让 Sandcastle typed output 先解析兼容 tag，避免有效 sidecar 被缺失或损坏的 stdout tag 短路。
+- **worker runtime 文件排除命名更通用**：family backend 的 ship focus、CMR route、merger outcome 与 family ship outcome git-exclude helper 改为通用 optional runtime file 语义。
+
+### 修复
+- **落地提交恢复更保守**：只在 terminal S8(error) 明确来自 legacy `<coder>` tag 缺失时，才把已推进 HEAD 的 S2/S5 视作已落地提交继续跑后续步骤；其它 contract failure 仍保持 error。
+- **恢复 ledger 保留合成输出**：protocol-failed landed commit 恢复时，会把合成的 coder output 写回继续使用的 prior ledger，避免后续 resume 缺少 S2/S5 输出真源。
+
+### 测试
+- 新增 worker outcome sidecar dispatch、malformed sidecar fail-closed、fresh/resume reviewer sidecar bypass、S2/S5 landed protocol recovery 与非恢复负例覆盖；ship 验证为 orchestrator typecheck 通过，Vitest `65 passed, 1 skipped`（`1097 passed, 1 skipped`），Codex review 通过。
+
 ## [0.22.0.0] - 2026-07-02
 
 ### 新增
