@@ -422,6 +422,22 @@ def test_fiscal_levy_memorial_small_fractional_arrears_range_is_ordered(game):
     assert gap_range["lower"] <= gap_range["midpoint"] <= gap_range["upper"]
 
 
+def test_fiscal_levy_memorial_suppresses_jiao_start_when_stopped_same_tick(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1640
+    state.period = 1
+    db.save_state(state)
+
+    pre_settle(state, db, content=content)
+
+    payload = build_simulator_payload(state, db, "准停剿饷。", "")
+    estimate_ids = {item["event_id"] for item in payload["fiscal_levy_memorial_estimates"]}
+    assert "jiao_levy_start_1637" not in estimate_ids
+    assert "jiao_levy_stop_1640" not in estimate_ids
+    assert {"liao_levy_rise_1631", "lian_levy_start_1639"} <= estimate_ids
+
+
 def test_liao_levy_targets_all_seeded_settles_without_compounding_or_clobbering_p(game):
     db, state, content = game
     issues.bind_content(content)
