@@ -244,6 +244,82 @@ def test_liao_levy_memorial_estimate_uses_collectible_ming_controlled_revenue(ga
     assert estimate["national_added_wanliang"]["midpoint"] != round(expected_nominal, 1)
 
 
+def test_fiscal_levy_shadow_skips_malformed_region_fiscal_without_blocking_fiscal_levy_pass(game, monkeypatch):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    before_huguang = _settle_payload(db, "huguang")["p"]["三饷应征"]
+    msgs = []
+    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
+    db.conn.execute("UPDATE regions SET fiscal = ? WHERE id = ?", ("{bad", "shaanxi"))
+    db.conn.commit()
+
+    apply_historical_fiscal_rates(state, db)
+
+    assert any("[fiscal-levy] shaanxi fiscal 解析失败" in msg for msg in msgs)
+    huguang = _settle_payload(db, "huguang")
+    assert huguang["p"]["三饷应征"] > before_huguang
+
+
+@pytest.mark.parametrize(
+    "bad_field,expected_log",
+    [
+        ("_meta", "shaanxi.settle._meta 非字典"),
+        ("land", "shaanxi.settle.st.官民田 非数值"),
+    ],
+)
+def test_fiscal_levy_shadow_skips_bad_settle_shape_without_blocking_other_regions(
+    game, monkeypatch, bad_field, expected_log
+):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    before_huguang = _settle_payload(db, "huguang")["p"]["三饷应征"]
+    fiscal = json.loads(
+        str(db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()["fiscal"])
+    )
+    if bad_field == "_meta":
+        fiscal["settle"]["_meta"] = ["bad"]
+    else:
+        fiscal["settle"]["st"]["官民田"] = []
+    msgs = []
+    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
+    )
+    db.conn.commit()
+
+    apply_historical_fiscal_rates(state, db)
+
+    assert any("[fiscal-levy] shaanxi settle 解析失败" in msg and expected_log in msg for msg in msgs)
+    huguang = _settle_payload(db, "huguang")
+    assert huguang["p"]["三饷应征"] > before_huguang
+
+
+def test_fiscal_levy_memorial_estimates_skip_malformed_region_fiscal(game, monkeypatch):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    msgs = []
+    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
+
+    pre_settle(state, db, content=content)
+    db.conn.execute("UPDATE regions SET fiscal = ? WHERE id = ?", ("[]", "shaanxi"))
+    db.conn.commit()
+    payload = build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
+
+    assert any("[fiscal-levy] shaanxi fiscal 非字典" in msg for msg in msgs)
+    estimate_ids = {item["event_id"] for item in payload["fiscal_levy_memorial_estimates"]}
+    assert "liao_levy_rise_1631" in estimate_ids
+
+
 def test_fiscal_levy_memorial_labels_cumulative_army_arrears_as_wanliang_not_monthly(game):
     db, state, content = game
     issues.bind_content(content)

@@ -1138,6 +1138,25 @@ def _fiscal_levy_base_transport(
     return max(0.0, seed_transport - liao_seed)
 
 
+def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> Optional[dict]:
+    if isinstance(raw_fiscal, dict):
+        return raw_fiscal
+    if raw_fiscal is None or raw_fiscal == "":
+        raw_fiscal = "{}"
+    elif not isinstance(raw_fiscal, (str, bytes, bytearray)):
+        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
+        return None
+    try:
+        fiscal = json.loads(raw_fiscal)
+    except (TypeError, ValueError) as exc:
+        tlog(f"[fiscal-levy] {region_id} fiscal 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
+        return None
+    if not isinstance(fiscal, dict):
+        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
+        return None
+    return fiscal
+
+
 def _fiscal_levy_event_by_id(event_id: str) -> Event | None:
     return _ctx().event_by_id.get(event_id)
 
@@ -1214,21 +1233,27 @@ def _apply_fiscal_levy_targets(
     region_entries: List[Dict[str, object]] = []
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
         region_id = str(row["id"])
-        fiscal = json.loads(str(row["fiscal"] or "{}"))
-        if not isinstance(fiscal, dict):
+        fiscal = _load_region_fiscal_for_fiscal_levy(region_id, row["fiscal"])
+        if fiscal is None:
             continue
-        settle = fiscal.get("settle")
-        if not isinstance(settle, dict):
+        try:
+            settle = fiscal.get("settle")
+            if not isinstance(settle, dict):
+                continue
+            p = settle.get("p")
+            st = settle.get("st")
+            if not isinstance(p, dict) or not isinstance(st, dict):
+                continue
+            meta_raw = settle.get("_meta") or {}
+            if not isinstance(meta_raw, dict):
+                raise ValueError(f"{region_id}.settle._meta 非字典")
+            meta = dict(meta_raw)
+            liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
+            land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
+            base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
+        except ValueError as exc:
+            tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
             continue
-        p = settle.get("p")
-        st = settle.get("st")
-        if not isinstance(p, dict) or not isinstance(st, dict):
-            continue
-        meta_raw = settle.get("_meta") or {}
-        if not isinstance(meta_raw, dict):
-            raise ValueError(f"{region_id}.settle._meta 非字典")
-        meta = dict(meta_raw)
-        liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
         region_entries.append({
             "region_id": region_id,
             "fiscal": fiscal,
@@ -1237,8 +1262,8 @@ def _apply_fiscal_levy_targets(
             "meta_raw": meta_raw,
             "meta": meta,
             "liao_seed": liao_seed,
-            "land": _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田"),
-            "base_transport": _fiscal_levy_base_transport(meta, p, liao_seed, region_id),
+            "land": land,
+            "base_transport": base_transport,
         })
     total_land = sum(max(0.0, float(item["land"])) for item in region_entries)
     touched = 0
@@ -1356,17 +1381,21 @@ def _region_fiscal_levy_components(db: GameDB) -> List[Dict[str, object]]:
     parsed_rows: List[Dict[str, object]] = []
     for row in rows:
         region_id = str(row["id"])
-        fiscal = json.loads(str(row["fiscal"] or "{}"))
-        if not isinstance(fiscal, dict):
+        fiscal = _load_region_fiscal_for_fiscal_levy(region_id, row["fiscal"])
+        if fiscal is None:
             continue
-        settle = fiscal.get("settle")
-        if not isinstance(settle, dict):
+        try:
+            settle = fiscal.get("settle")
+            if not isinstance(settle, dict):
+                continue
+            st = settle.get("st")
+            p = settle.get("p")
+            if not isinstance(st, dict) or not isinstance(p, dict):
+                continue
+            land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
+        except ValueError as exc:
+            tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
             continue
-        st = settle.get("st")
-        p = settle.get("p")
-        if not isinstance(st, dict) or not isinstance(p, dict):
-            continue
-        land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
         total_land += max(0.0, land)
         parsed_rows.append({
             "row": row,
@@ -1384,11 +1413,15 @@ def _region_fiscal_levy_components(db: GameDB) -> List[Dict[str, object]]:
         p = parsed["p"]
         land = float(parsed["land"])
         settle = parsed["settle"]
-        meta_raw = settle.get("_meta") or {}
-        if not isinstance(meta_raw, dict):
-            raise ValueError(f"{region_id}.settle._meta 非字典")
-        meta = dict(meta_raw)
-        liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
+        try:
+            meta_raw = settle.get("_meta") or {}
+            if not isinstance(meta_raw, dict):
+                raise ValueError(f"{region_id}.settle._meta 非字典")
+            meta = dict(meta_raw)
+            liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
+        except ValueError as exc:
+            tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
+            continue
         jiao_seed = _fiscal_levy_land_share_amount(
             land,
             total_land,
