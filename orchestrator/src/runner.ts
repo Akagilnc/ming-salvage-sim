@@ -861,20 +861,23 @@ function isLikelyGitSha(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{7,64}$/.test(value);
 }
 
+const CODER_STDOUT_MISSING_TAG_RE =
+  /\bcoder step stdout carried no <coder>[\s\S]*tag\b/i;
+const WORKER_STDOUT_MISSING_TAG_RE =
+  /\b(?:coder step stdout carried no <coder>|reviewer step stdout carried no <review>)[\s\S]*tag\b/i;
+
 function isRecoverableCoderProtocolFailure(
   entry: PersistentLedgerEntry,
 ): boolean {
   if (
     entry.step !== "S8" ||
     entry.handoffStatus !== "error" ||
-    entry.stopSummary?.reason !== "contract_drift"
+    entry.stopSummary === undefined
   ) {
     return false;
   }
 
-  return /\bcoder step stdout carried no <coder>[\s\S]*tag\b/i.test(
-    entry.stopSummary.summary,
-  );
+  return CODER_STDOUT_MISSING_TAG_RE.test(entry.stopSummary.summary);
 }
 
 function protocolFailedLandedCoderStep(
@@ -1656,7 +1659,8 @@ function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
   if (
     /contract|malformed|does not match|no valid result|off-contract|prior claimed-fixed finding|prior finding disposition/i.test(
       errorPackage.reason,
-    )
+    ) ||
+    WORKER_STDOUT_MISSING_TAG_RE.test(errorPackage.reason)
   ) {
     return contractDriftStopSummary({
       summary: errorPackage.reason,
