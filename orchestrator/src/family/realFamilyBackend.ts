@@ -2172,9 +2172,9 @@ const cmrFindingDispositionSchema = z
     boundedReopen: z.string().optional(),
   })
   .strict()
-	.superRefine((disposition, ctx) => {
-	  if (disposition.status !== "accepted_suppressed") return;
-	  for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
+  .superRefine((disposition, ctx) => {
+    if (disposition.status !== "accepted_suppressed") return;
+    for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
       if (disposition[field] === undefined || disposition[field].trim() === "") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -2182,28 +2182,28 @@ const cmrFindingDispositionSchema = z
           path: [field],
         });
       }
-	  }
-	  if (
-	    disposition.source !== undefined &&
-	    !hasExplicitAcceptedSuppressionSource(disposition.source)
-	  ) {
-	    ctx.addIssue({
-	      code: z.ZodIssueCode.custom,
-	      message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
-	      path: ["source"],
-	    });
-	  }
-	  if (
-	    disposition.boundedReopen !== undefined &&
-	    !hasBoundedReopenCondition(disposition.boundedReopen)
-	  ) {
-	    ctx.addIssue({
-	      code: z.ZodIssueCode.custom,
-	      message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
-	      path: ["boundedReopen"],
-	    });
-	  }
-	});
+    }
+    if (
+      disposition.source !== undefined &&
+      !hasExplicitAcceptedSuppressionSource(disposition.source)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
+        path: ["source"],
+      });
+    }
+    if (
+      disposition.boundedReopen !== undefined &&
+      !hasBoundedReopenCondition(disposition.boundedReopen)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
+        path: ["boundedReopen"],
+      });
+    }
+  });
 const cmrClosureSchema = {
   claimedFixedFindingIdentityKeys: z.array(nonEmpty),
   priorFindingDispositions: z.array(cmrFindingDispositionSchema),

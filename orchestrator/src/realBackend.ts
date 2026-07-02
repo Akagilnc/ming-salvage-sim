@@ -1612,8 +1612,8 @@ const priorFindingDispositionSchema = z.object({
   scope: z.string().optional(),
   boundedReopen: z.string().optional(),
 }).superRefine((disposition, ctx) => {
-	  if (disposition.status !== "accepted_suppressed") return;
-	  for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
+  if (disposition.status !== "accepted_suppressed") return;
+  for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
     if (disposition[field] === undefined || disposition[field].trim() === "") {
       ctx.addIssue({
         code: "custom",
@@ -1621,28 +1621,28 @@ const priorFindingDispositionSchema = z.object({
         message: `accepted_suppressed prior finding disposition requires ${field}`,
       });
     }
-	  }
-	  if (
-	    disposition.source !== undefined &&
-	    !hasExplicitAcceptedSuppressionSource(disposition.source)
-	  ) {
-	    ctx.addIssue({
-	      code: "custom",
-	      path: ["source"],
-	      message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
-	    });
-	  }
-	  if (
-	    disposition.boundedReopen !== undefined &&
-	    !hasBoundedReopenCondition(disposition.boundedReopen)
-	  ) {
-	    ctx.addIssue({
-	      code: "custom",
-	      path: ["boundedReopen"],
-	      message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
-	    });
-	  }
-	});
+  }
+  if (
+    disposition.source !== undefined &&
+    !hasExplicitAcceptedSuppressionSource(disposition.source)
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["source"],
+      message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
+    });
+  }
+  if (
+    disposition.boundedReopen !== undefined &&
+    !hasBoundedReopenCondition(disposition.boundedReopen)
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["boundedReopen"],
+      message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
+    });
+  }
+});
 const reviewerOutputSchema = z.object({
   findings: z.array(findingSchema),
   priorFindingDispositions: z.array(priorFindingDispositionSchema).optional(),
