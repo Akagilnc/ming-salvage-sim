@@ -22,15 +22,26 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+
+import * as sc from "@ai-hero/sandcastle";
 import {
   MERGER_SOUL,
   cmrOutcomeFromResult,
   mergerOutcomeFromResult,
+  type MergerAuth,
   parseCmrOutcome,
   parseMergerOutcome,
   RealFamilyBackend,
@@ -1119,6 +1130,44 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
   });
 });
 
+describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
+  it("removes the temporary outcome sidecar directory after parsing the merger result", async () => {
+    const repo = trackRepo();
+    const ledgerDir = mkdtempSync(join(tmpdir(), "merger-cleanup-ledger-"));
+    ledgerDirs.push(ledgerDir);
+    let outcomePathAtRun: string | undefined;
+    class CleanupBackend extends RealFamilyBackend {
+      public run(req: ConflictResolveRequest) {
+        return this.runMergerAgent(req);
+      }
+      protected override mountMergerAuth(): MergerAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override prepareMergerOutcomeLanding(): { path: string; sandboxPath: string } {
+        const landing = super.prepareMergerOutcomeLanding();
+        outcomePathAtRun = landing.path;
+        return landing;
+      }
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
+        writeFileSync(outcomePathAtRun, JSON.stringify({ resolved: true }), "utf8");
+        return {
+          completionSignal: "MERGER_STEP_COMPLETE",
+          stdout: "<merger>{}</merger>",
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const b = new CleanupBackend(opts(repo, { ledgerDir }));
+    const out = await b.run({ childIssue: 496, childBranch: "feat/child" });
+
+    expect(out.resolved).toBe(true);
+    expect(outcomePathAtRun).toBeDefined();
+    expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
+  });
+});
+
 // ═══════════════════════════ 5. runFamilyVerify ═════════════════════════════
 
 describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
@@ -1409,5 +1458,23 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
         escalationKind: "decision",
       },
     ]);
+  });
+});
+
+describe("RealFamilyBackend runtime file git excludes", () => {
+  it("treats CRLF exclude entries as existing lines instead of appending duplicates", () => {
+    class Probe extends RealFamilyBackend {
+      public exclude(filename: string): void {
+        this.excludeOptionalRuntimeFileFromGit(filename);
+      }
+    }
+    const repo = trackRepo();
+    const excludePath = join(repo, ".git", "info", "exclude");
+    writeFileSync(excludePath, ".orchestrator-outcome.json\r\n", "utf8");
+    const b = new Probe(opts(repo));
+
+    b.exclude(".orchestrator-outcome.json");
+
+    expect(readFileSync(excludePath, "utf8")).toBe(".orchestrator-outcome.json\r\n");
   });
 });
