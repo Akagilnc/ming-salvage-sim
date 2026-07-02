@@ -263,6 +263,23 @@ describe("#422 model route presets", () => {
     ).toBeUndefined();
   });
 
+  it("falls back to the active environment when CMR leg accounting receives null route input", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+
+    expect(() =>
+      cmrLegAccountingFailure(
+        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        null as never,
+      ),
+    ).not.toThrow();
+    expect(
+      cmrLegAccountingFailure(
+        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        null as never,
+      ),
+    ).toBeUndefined();
+  });
+
   it("feeds the resolved route into every worker spec model slot", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     vi.resetModules();

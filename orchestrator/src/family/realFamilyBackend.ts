@@ -1247,8 +1247,8 @@ export class RealFamilyBackend implements FamilyBackend {
     reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
   ): void {
     const ctx =
-      typeof ctxOrPass === "string" || ctxOrPass === undefined
-        ? { cmrPass: ctxOrPass }
+      typeof ctxOrPass === "string" || ctxOrPass === undefined || ctxOrPass === null
+        ? { cmrPass: ctxOrPass ?? undefined }
         : ctxOrPass;
     const body = JSON.stringify(
       {
