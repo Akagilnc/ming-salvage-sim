@@ -83,7 +83,11 @@ import {
   WORKER_IDLE_TIMEOUT_SECONDS,
   modelFamilyForSlug,
 } from "../realBackend.js";
-import { cmrLegAccountingFailure, modelForSlot } from "../modelRoutes.js";
+import {
+  cmrLegAccountingFailure,
+  modelForSlot,
+  type CmrLegAccountingRoute,
+} from "../modelRoutes.js";
 import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import { recordFamilyEscalated } from "./ledger.js";
 import {
@@ -1158,7 +1162,10 @@ export class RealFamilyBackend implements FamilyBackend {
         branchStrategy: { type: "head" },
         promptFile: join(this.opts.promptsDir, spec.promptFile),
       });
-      return cmrOutcomeFromResult(result);
+      return cmrOutcomeFromResult({
+        ...result,
+        cmrReviewLegs: frozenReviewLegs,
+      });
     } finally {
       this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
     }
@@ -2110,6 +2117,7 @@ export interface MergerAuth {
  */
 export function cmrOutcomeFromResult(result: {
   completionSignal?: string | string[];
+  cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
   stdout: string;
 }): CmrWorkerOutcome {
   const signal = result.completionSignal;
@@ -2129,7 +2137,7 @@ export function cmrOutcomeFromResult(result: {
         `cmr run is not trusted as a verdict — escalate, never a fabricated pass)`,
     };
   }
-  return parseCmrOutcome(result.stdout);
+  return parseCmrOutcome(result.stdout, result.cmrReviewLegs);
 }
 
 /** A trimmed, non-empty string at the schema layer (mirrors shipOutcome.ts). */
@@ -2390,7 +2398,10 @@ function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<strin
  * must NEVER read an ambiguous or off-contract run as a pass). Only the LAST
  * `<cmr>` tag is read (the worker may iterate).
  */
-export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
+export function parseCmrOutcome(
+  stdout: string,
+  routeOrEnv: CmrLegAccountingRoute = process.env,
+): CmrWorkerOutcome {
   const re = /<cmr>([\s\S]*?)<\/cmr>/g;
   let last: string | undefined;
   for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
@@ -2421,7 +2432,7 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
   }
   if (cmrConvergedSchema.safeParse(normalizedParsed).success) {
     const converged = cmrConvergedSchema.parse(normalizedParsed);
-    const legAccountingFailure = cmrLegAccountingFailure(converged);
+    const legAccountingFailure = cmrLegAccountingFailure(converged, routeOrEnv);
     if (legAccountingFailure !== undefined) {
       return {
         kind: "malformed",
@@ -2449,7 +2460,7 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
   }
   const red = cmrRedSchema.safeParse(normalizedParsed);
   if (red.success) {
-    const legAccountingFailure = cmrLegAccountingFailure(red.data);
+    const legAccountingFailure = cmrLegAccountingFailure(red.data, routeOrEnv);
     if (legAccountingFailure !== undefined) {
       return {
         kind: "malformed",

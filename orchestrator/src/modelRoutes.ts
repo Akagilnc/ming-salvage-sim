@@ -34,6 +34,12 @@ export type ModelRouteLegCollectionOverrides = Readonly<
   Partial<Record<ModelRouteLegCollection, ReadonlyArray<string>>>
 >;
 export type ModelRouteEnv = Readonly<Record<string, string | undefined>>;
+export type CmrLegAccountingRoute =
+  | ResolvedModelRoute
+  | ModelRouteEnv
+  | ReadonlyArray<{ readonly slug: string }>
+  | null
+  | undefined;
 
 export interface TightFamilyViolation {
   readonly slot: ModelRouteSlot | ModelRouteLegCollection;
@@ -464,15 +470,22 @@ function isResolvedModelRoute(value: unknown): value is ResolvedModelRoute {
   );
 }
 
+function isCmrLegArray(
+  value: CmrLegAccountingRoute,
+): value is ReadonlyArray<{ readonly slug: string }> {
+  return Array.isArray(value);
+}
+
 export function cmrLegAccountingFailure(
   input: {
     readonly successfulLegs: readonly string[];
     readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
   },
-  routeOrEnv: ResolvedModelRoute | ModelRouteEnv = process.env,
+  routeOrEnv: CmrLegAccountingRoute = process.env,
 ): string | undefined {
-  const declaredLegs =
-    isResolvedModelRoute(routeOrEnv)
+  const declaredLegs = isCmrLegArray(routeOrEnv)
+    ? routeOrEnv.map((leg) => leg.slug)
+    : isResolvedModelRoute(routeOrEnv)
       ? routeOrEnv.legCollections.cmrReview.map((leg) => leg.slug)
       : cmrReviewLegs(routeOrEnv ?? process.env).map((leg) => leg.slug);
   const declared = new Set(declaredLegs);
