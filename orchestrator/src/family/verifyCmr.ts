@@ -217,13 +217,12 @@ function providerDegradedFloorStopSummary(input: {
 }): StopSummary {
   const providerDegraded =
     input.skippedLegs !== undefined && input.skippedLegs.length > 0
-      ? input.skippedLegs.map((leg) => ({
-          provider: modelFamilyForCmrReviewLeg(leg.slug),
-          leg: leg.slug,
-          reason: leg.reason,
-          blocking: true,
-          repairHint: `restore provider availability for ${leg.slug} and rerun the CMR gate`,
-        }))
+      ? input.skippedLegs.map((leg) =>
+          skippedLegProviderDegradation(leg, {
+            blocking: true,
+            repairHint: `restore provider availability for ${leg.slug} and rerun the CMR gate`,
+          }),
+        )
       : [
           {
             reason: input.reason,
@@ -268,6 +267,23 @@ function providerForCmrLegSlug(slug: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function skippedLegProviderDegradation(
+  leg: { readonly slug: string; readonly reason: string },
+  input: {
+    readonly blocking: boolean;
+    readonly repairHint: string;
+  },
+) {
+  const provider = providerForCmrLegSlug(leg.slug);
+  return {
+    ...(provider !== undefined ? { provider } : {}),
+    leg: leg.slug,
+    reason: leg.reason,
+    blocking: input.blocking,
+    repairHint: input.repairHint,
+  };
 }
 
 export function providerDegradedWorkerFailureStopSummary(input: {
@@ -356,13 +372,12 @@ function providerDegradedPassStopSummary(input: {
           },
         }
       : {}),
-    providerDegraded: input.skippedLegs.map((leg) => ({
-      provider: modelFamilyForCmrReviewLeg(leg.slug),
-      leg: leg.slug,
-      reason: leg.reason,
-      blocking: false,
-      repairHint: `restore provider availability for ${leg.slug} before making this leg required`,
-    })),
+    providerDegraded: input.skippedLegs.map((leg) =>
+      skippedLegProviderDegradation(leg, {
+        blocking: false,
+        repairHint: `restore provider availability for ${leg.slug} before making this leg required`,
+      }),
+    ),
   });
 }
 
@@ -603,13 +618,12 @@ function familyCmrPassStopSummary(input: {
       : {}),
     ...(input.skippedLegs !== undefined && input.skippedLegs.length > 0
       ? {
-          providerDegraded: input.skippedLegs.map((leg) => ({
-            provider: modelFamilyForCmrReviewLeg(leg.slug),
-            leg: leg.slug,
-            reason: leg.reason,
-            blocking: false,
-            repairHint: `restore provider availability for ${leg.slug} before making this leg required`,
-          })),
+          providerDegraded: input.skippedLegs.map((leg) =>
+            skippedLegProviderDegradation(leg, {
+              blocking: false,
+              repairHint: `restore provider availability for ${leg.slug} before making this leg required`,
+            }),
+          ),
         }
       : {}),
   });
@@ -1441,9 +1455,13 @@ export async function runVerifyCmr(
         },
       },
     });
-    await familyBackend.escalateFamily?.({
+    if (familyBackend.escalateFamily === undefined) {
+      throw new Error("ship worker escalated but backend has no escalateFamily seam");
+    }
+    await familyBackend.escalateFamily({
       reason: escalationReason,
       familyHeadAfter: postShipFamilyHead,
+      stopSummary,
     });
     await recordDurableAbort(familyBackend, {
       phase,
