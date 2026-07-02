@@ -474,7 +474,7 @@ export function cmrLegAccountingFailure(
   const declaredLegs =
     isResolvedModelRoute(routeOrEnv)
       ? routeOrEnv.legCollections.cmrReview.map((leg) => leg.slug)
-      : cmrReviewLegs(routeOrEnv).map((leg) => leg.slug);
+      : cmrReviewLegs(routeOrEnv ?? process.env).map((leg) => leg.slug);
   const declared = new Set(declaredLegs);
   const undeclaredSuccessful = input.successfulLegs.filter((slug) => !declared.has(slug));
   if (undeclaredSuccessful.length > 0) {

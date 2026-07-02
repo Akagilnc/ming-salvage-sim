@@ -1009,6 +1009,10 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       const spec = cmrWorkerSpec("fresh", pass ?? "correctness");
       this.writeCmrRouteFile(pass, spec.cmrReviewLegs!);
     }
+    public routeFileFromNull(): void {
+      const spec = cmrWorkerSpec("fresh", "correctness");
+      this.writeCmrRouteFile(null as never, spec.cmrReviewLegs!);
+    }
     public routeFileFromSpec(
       pass: "completeness" | "correctness",
       spec: ReturnType<typeof cmrWorkerSpec>,
@@ -1171,6 +1175,28 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       { family: "claude", slug: "opus" },
       { family: "agy", slug: "agy" },
     ]);
+  });
+
+  it("treats null CMR route context as a legacy route-file write instead of crashing", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    expect(() => be.routeFileFromNull()).not.toThrow();
+    const route = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as {
+      pass: string;
+      reviewLegs: unknown;
+    };
+    expect(route.pass).toBe("legacy");
+    expect(route.reviewLegs).toEqual(cmrWorkerSpec("fresh", "correctness").cmrReviewLegs);
   });
 
   it("threads a human escalation answer into the CMR focus file", () => {
