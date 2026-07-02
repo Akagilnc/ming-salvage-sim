@@ -1293,6 +1293,43 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
+  it("prefers a runner-owned outcome sidecar over malformed coder stdout", async () => {
+    const backend = makeBackend();
+    const dir = mkdtempSync(join(tmpdir(), "worker-outcome-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ committed: true, commitsAdded: 1 }) + "\n",
+      "utf8",
+    );
+    backend.agentResult = {
+      completionSignal: "CODER_STEP_COMPLETE",
+      stdout: "<coder>not json</coder>\nCODER_STEP_COMPLETE",
+      commits: [{ sha: "abc123" }],
+      iterations: [{ sessionId: "sess-496" }],
+    } as Awaited<ReturnType<typeof sc.run>>;
+
+    const result = await backend.runStep(
+      coderSpec,
+      {
+        branch: "feat/issue-496",
+        base: "main",
+        path: "/tmp/worktree/issue-496",
+      },
+      {
+        outcomeLanding: {
+          path: outcomePath,
+          sandboxPath: ".orchestrator-outcome.json",
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
+      sessionId: "sess-496",
+    });
+  });
+
   it("shares an in-flight toolchain preflight across concurrent agent dispatches", async () => {
     const backend = makeBackend();
     const preflightCalls: string[] = [];

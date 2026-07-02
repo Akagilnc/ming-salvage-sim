@@ -107,6 +107,10 @@ import {
   shipOutcomeFromResult,
   type ShipWorkerOutcome,
 } from "./shipOutcome.js";
+import {
+  readWorkerOutcomeSidecar as readOutcomeSidecar,
+  stripJsonFence as stripOutcomeJsonFence,
+} from "./workerOutcomeSidecar.js";
 import type {
   AgentStepRunOptions,
   Backend,
@@ -551,8 +555,11 @@ export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
 export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
 /** S5 coder-fix worker path to runner-owned blocking findings JSON. */
 export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
+/** Worker path to the runner-owned machine outcome sidecar JSON. */
+export const SANDBOX_OUTCOME_PATH_ENV = "ORCHESTRATOR_OUTCOME_PATH";
 /** Optional ship-worker focus file read by the ship prompt before gstack-ship. */
 export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
+const WORKER_OUTCOME_SANDBOX_FILE = ".orchestrator-outcome.json";
 
 /**
  * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
@@ -946,14 +953,24 @@ export function extractCoderTag(stdout: string): unknown {
 }
 
 /**
+ * Read a runner-owned worker outcome sidecar.
+ *
+ * Missing/blank means "legacy worker did not write the new protocol file yet" and
+ * callers may fall back to their old stdout/typed-output path. A non-blank file is
+ * the machine protocol truth and must parse as JSON; malformed JSON throws rather
+ * than falling back to human-readable stdout.
+ */
+export function readWorkerOutcomeSidecar(path: string | undefined): unknown | undefined {
+  return readOutcomeSidecar(path);
+}
+
+/**
  * Unwrap a ```json … ``` (or bare ``` … ```) fenced code block to its inner
  * payload, mirroring Sandcastle's fence-aware tag extraction. Returns the input
  * unchanged when it is not fenced.
  */
 export function stripJsonFence(s: string): string {
-  const fence = /^```(?:json)?\s*\n?([\s\S]*?)\n?```$/;
-  const m = fence.exec(s.trim());
-  return m ? m[1].trim() : s;
+  return stripOutcomeJsonFence(s);
 }
 
 // ── coder commit truth from git (#256 truthification) ───────────────────────
@@ -2305,6 +2322,9 @@ export class RealBackend implements Backend {
       env[SANDBOX_FIX_FINDINGS_PATH_ENV] =
         options.fixFindingsLanding.sandboxPath;
     }
+    if (options?.outcomeLanding !== undefined) {
+      env[SANDBOX_OUTCOME_PATH_ENV] = options.outcomeLanding.sandboxPath;
+    }
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
       { hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR },
     ];
@@ -2313,6 +2333,12 @@ export class RealBackend implements Backend {
         hostPath: options.fixFindingsLanding.path,
         sandboxPath: options.fixFindingsLanding.sandboxPath,
         readonly: true,
+      });
+    }
+    if (options?.outcomeLanding !== undefined) {
+      mounts.push({
+        hostPath: options.outcomeLanding.path,
+        sandboxPath: options.outcomeLanding.sandboxPath,
       });
     }
     return {
@@ -2345,7 +2371,10 @@ export class RealBackend implements Backend {
   private rawOutputFor(
     result: { output?: unknown; stdout: string },
     typedOutputUsed: boolean,
+    options?: AgentStepRunOptions,
   ): unknown {
+    const sidecar = readWorkerOutcomeSidecar(options?.outcomeLanding?.path);
+    if (sidecar !== undefined) return sidecar;
     if (typedOutputUsed) return result.output;
     // Untyped coder path: structured result lives in a <coder> tag in stdout.
     return extractCoderTag(result.stdout);
@@ -2509,7 +2538,7 @@ export class RealBackend implements Backend {
     // mid-work) throws here → S8(error), before any output is decoded.
     assertCompletionSignal(result, spec.completionSignal, `${spec.id}-${spec.role}`);
     const typedOutputUsed = spec.maxIter === 1;
-    const raw = this.rawOutputFor(result, typedOutputUsed);
+    const raw = this.rawOutputFor(result, typedOutputUsed, options);
     // #256 commit-truth: the coder's committed/commitsAdded is derived from the
     // REAL commits Sandcastle observed (result.commits), not the self-report.
     const gitCommitCount =
@@ -2580,7 +2609,7 @@ export class RealBackend implements Backend {
           : undefined;
       const output = this.decodeOutput(
         spec,
-        this.rawOutputFor(result, /*typedOutputUsed*/ true),
+        this.rawOutputFor(result, /*typedOutputUsed*/ true, options),
         gitCommitCount,
       );
       return { output, sessionId: lastSessionId(result) ?? sessionId };
@@ -2762,11 +2791,12 @@ export class RealBackend implements Backend {
         };
       }
       this.syncShipFocusFile(ctx);
+      const outcomeLanding = this.prepareShipOutcomeLanding(ctx);
       const result = await sc.run({
         name: `${spec.id}-ship`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
-        sandbox: this.shipSandbox(auth),
+        sandbox: this.shipSandbox(auth, outcomeLanding),
         agent: agentForSlug(spec.model),
         // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
         // container (用户 note); maxIter is the within-worker budget. A genuine block
@@ -2777,7 +2807,10 @@ export class RealBackend implements Backend {
         branchStrategy: { type: "head" },
         promptFile: join(this.opts.promptsDir, spec.promptFile),
       });
-      return shipOutcomeFromResult(result);
+      return shipOutcomeFromResult({
+        ...result,
+        ...(outcomeLanding !== undefined ? { outcomePath: outcomeLanding.path } : {}),
+      });
     } finally {
       // Reclaim the per-call temp codex auth dir (online review r1, 3 bots):
       // best-effort — a failed cleanup must never mask the worker's outcome.
@@ -2815,8 +2848,24 @@ export class RealBackend implements Backend {
     writeFileSync(target, body, "utf8");
   }
 
+  protected prepareShipOutcomeLanding(
+    ctx: DispatchContext,
+  ): { path: string; sandboxPath: string } | undefined {
+    if (ctx.stateDir === undefined || ctx.worktree === undefined) return undefined;
+    mkdirSync(ctx.stateDir, { recursive: true });
+    const dir = mkdtempSync(join(ctx.stateDir, "worker-outcome-ship-"));
+    const path = join(dir, "outcome.json");
+    writeFileSync(path, "", "utf8");
+    this.excludeRuntimeFileFromGit(ctx.worktree.path, WORKER_OUTCOME_SANDBOX_FILE);
+    return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
+  }
+
   /** Add the generated ship focus file to local git excludes so it is never committed. */
   protected excludeShipFocusFromGit(worktreePath: string): void {
+    this.excludeRuntimeFileFromGit(worktreePath, SHIP_FOCUS_FILENAME);
+  }
+
+  protected excludeRuntimeFileFromGit(worktreePath: string, filename: string): void {
     try {
       const excludePath = this.sh(
         "git",
@@ -2832,12 +2881,12 @@ export class RealBackend implements Backend {
       } catch {
         // no exclude file yet
       }
-      if (!existing.split(/\r?\n/).includes(SHIP_FOCUS_FILENAME)) {
+      if (!existing.split(/\r?\n/).includes(filename)) {
         mkdirSync(join(abs, ".."), { recursive: true });
         appendFileSync(
           abs,
           (existing.endsWith("\n") || existing === "" ? "" : "\n") +
-            SHIP_FOCUS_FILENAME +
+            filename +
             "\n",
           "utf8",
         );
@@ -2856,8 +2905,11 @@ export class RealBackend implements Backend {
    * gh tokens THEN build the sandbox from the same auth (no double-gather).
    * `protected` so a unit test asserts the mounts + soul without a real container.
    */
-  protected shipSandbox(auth: ShipAuth): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(auth));
+  protected shipSandbox(
+    auth: ShipAuth,
+    outcomeLanding?: { path: string; sandboxPath: string },
+  ): sc.SandboxProvider {
+    return docker(this.shipSandboxConfig(auth, outcomeLanding));
   }
 
   /**
@@ -2940,7 +2992,10 @@ export class RealBackend implements Backend {
    * present (#336 cmr S336 r1), NO skills mount (the 2b image BAKES gstack-ship — a
    * runtime mount would SHADOW it, #334).
    */
-  protected shipSandboxConfig(auth: ShipAuth): {
+  protected shipSandboxConfig(
+    auth: ShipAuth,
+    outcomeLanding?: { path: string; sandboxPath: string },
+  ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
@@ -2962,10 +3017,19 @@ export class RealBackend implements Backend {
     // authenticates from GH_TOKEN. Set only when present (the pure seam stays
     // tolerant; the REQUIRE-gh gate is the runShipWorker preflight).
     if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
+    if (outcomeLanding !== undefined) {
+      env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
+    }
     const mounts: { hostPath: string; sandboxPath: string }[] = [];
     // #334: codex auth ONLY — baked skills win (no host skills mount).
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    if (outcomeLanding !== undefined) {
+      mounts.push({
+        hostPath: outcomeLanding.path,
+        sandboxPath: outcomeLanding.sandboxPath,
+      });
     }
     return { imageName: this.opts.imageName, env, mounts };
   }

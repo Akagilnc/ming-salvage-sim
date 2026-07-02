@@ -850,6 +850,46 @@ function lastNonTerminalStep(
   return undefined;
 }
 
+function isLikelyGitSha(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{7,40}$/.test(value);
+}
+
+function protocolFailedLandedCoderStep(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): { readonly index: number; readonly step: "S2" | "S5"; readonly output: StepOutput } | undefined {
+  if (ledger.length < 2) return undefined;
+  const last = ledger[ledger.length - 1]!;
+  if (last.step !== "S8" || last.handoffStatus !== "error") return undefined;
+  for (let i = ledger.length - 2; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.step === "S8") continue;
+    if (
+      (entry.step !== "S2" && entry.step !== "S5") ||
+      entry.output !== undefined ||
+      !isLikelyGitSha(entry.branchHEAD)
+    ) {
+      return undefined;
+    }
+    let previousHead: string | undefined;
+    for (let j = i - 1; j >= 0; j--) {
+      const head = ledger[j]!.branchHEAD;
+      if (isLikelyGitSha(head)) {
+        previousHead = head;
+        break;
+      }
+    }
+    if (previousHead === undefined || previousHead === entry.branchHEAD) {
+      return undefined;
+    }
+    return {
+      index: i,
+      step: entry.step,
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
+    };
+  }
+  return undefined;
+}
+
 function lastReviewerStep(
   ledger: ReadonlyArray<LedgerEntry>,
 ): StepId | undefined {
@@ -1250,6 +1290,32 @@ function planResume(
       lastOutput: agentEntry?.output,
       priorLedger: executableLedger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
     };
+  }
+
+  const landedProtocolFailure =
+    protocolFailedLandedCoderStep(executableLedger);
+  if (landedProtocolFailure !== undefined) {
+    const pendingBlockingFindings =
+      landedProtocolFailure.step === "S5"
+        ? adjudicatedBlockingFindingsForPersistedS4(executableLedger)
+        : undefined;
+    const decision = route({
+      from: landedProtocolFailure.step,
+      output: landedProtocolFailure.output,
+      ...(pendingBlockingFindings !== undefined
+        ? { pendingBlockingFindings }
+        : {}),
+    });
+    if (decision.kind !== "handoff") {
+      return {
+        resumeStep: decision.step,
+        lastOutput: landedProtocolFailure.output,
+        priorLedger: executableLedger.slice(
+          0,
+          landedProtocolFailure.index + 1,
+        ) as ReadonlyArray<LedgerEntry>,
+      };
+    }
   }
 
   // Case 3a: the prior run wrote a terminal S8 entry. Report its TRUE status
@@ -2602,6 +2668,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           }
           const shipResult = await dispatchWorker(backend, shipSpec, {
             worktree,
+            stateDir,
             ...(escalationAnswerForStep !== undefined
               ? { escalationAnswer: escalationAnswerForStep }
               : {}),

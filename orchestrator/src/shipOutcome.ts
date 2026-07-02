@@ -18,6 +18,7 @@
  */
 
 import { z } from "zod";
+import { readWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
 
 /**
  * The classified outcome of a ship WORKER's run (#336). One of:
@@ -104,6 +105,7 @@ const failedSchema = z
  */
 export function shipOutcomeFromResult(result: {
   completionSignal?: string | string[];
+  outcomePath?: string;
   stdout: string;
 }): ShipWorkerOutcome {
   const signal = result.completionSignal;
@@ -121,6 +123,19 @@ export function shipOutcomeFromResult(result: {
       diagnosis:
         `expected "${SHIP_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
         `ship run is not trusted as a delivery — escalate, never a fabricated PR)`,
+    };
+  }
+  try {
+    const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
+    if (sidecar !== undefined) {
+      return parseShipOutcome(`<ship>${JSON.stringify(sidecar)}</ship>`);
+    }
+  } catch (err) {
+    return {
+      kind: "malformed",
+      reason:
+        `ship worker outcome sidecar was not valid JSON: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
     };
   }
   return parseShipOutcome(result.stdout);

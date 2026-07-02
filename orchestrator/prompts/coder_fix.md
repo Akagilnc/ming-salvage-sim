@@ -31,8 +31,10 @@ Do not use `.orchestrator-snapshot.json` as execution input.
 
 ## Required output
 
-When you are done (or are escalating), emit EXACTLY ONE `<coder>` tag on its own,
-containing a single JSON object, then print the completion signal on its own line.
+When you are done (or are escalating), write the single JSON object to
+`$ORCHESTRATOR_OUTCOME_PATH` when that env var is set. Then, for compatibility
+with older runners, emit EXACTLY ONE `<coder>` tag on its own containing the same
+single JSON object, and print the completion signal on its own line.
 
 Success:
 
