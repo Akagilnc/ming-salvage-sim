@@ -299,6 +299,67 @@ def test_lian_levy_targets_all_seeded_settles_without_compounding_or_clobbering_
         assert _settle_payload(db, region_id)["p"] == first_p
 
 
+def test_lost_seeded_province_keeps_current_levy_rate_and_uses_it_on_restore(game):
+    db, state, content = game
+    issues.bind_content(content)
+    region_id = "henan"
+    db.conn.execute(
+        "UPDATE regions SET controlled_by = ? WHERE id = ?",
+        ("houjin", region_id),
+    )
+    db.conn.commit()
+    state.year = 1639
+    state.period = 1
+    db.save_state(state)
+
+    lost_before = _settle_payload(db, region_id)
+    lost_opening_st = dict(lost_before["st"])
+    stale_sanxiang = lost_before["p"]["三饷应征"]
+
+    apply_historical_fiscal_rates(state, db)
+
+    lost_after_rate = _settle_payload(db, region_id)
+    meta = lost_after_rate["_meta"]
+    expected_sanxiang = (
+        meta["辽饷九厘基线"] * 4.0 / 3.0
+        + meta["剿饷基线"]
+        + meta["辽饷九厘基线"] * 73.0 / 52.0
+    )
+    assert lost_after_rate["p"]["三饷应征"] != stale_sanxiang
+    assert math.isclose(
+        lost_after_rate["p"]["三饷应征"],
+        expected_sanxiang,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+    assert math.isclose(
+        lost_after_rate["p"]["起运定额"],
+        meta["正赋起运基线"] + expected_sanxiang,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+
+    lost_tick_outcomes = db.settle_ming_province_substrate_ticks()
+    assert region_id not in {item.region_id for item in lost_tick_outcomes}
+    assert _settle_payload(db, region_id)["st"] == lost_opening_st
+
+    db.conn.execute(
+        "UPDATE regions SET controlled_by = ? WHERE id = ?",
+        ("ming", region_id),
+    )
+    db.conn.commit()
+    restored_tick_outcomes = db.settle_ming_province_substrate_ticks()
+    restored = next(item for item in restored_tick_outcomes if item.region_id == region_id)
+    assert restored.error is None
+    assert restored.result is not None
+    assert math.isclose(
+        restored.result.breakdown["三饷火耗"],
+        expected_sanxiang * lost_after_rate["p"]["火耗率"],
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+
+
 def test_lian_levy_gate_waits_until_1639_and_needs_no_stop_event(game):
     db, state, content = game
     issues.bind_content(content)
