@@ -65,7 +65,7 @@ import type {
 import type { VerifyCmrPhase } from "./verifyCmr.js";
 
 function filled(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
+  if (value == null) return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
 }

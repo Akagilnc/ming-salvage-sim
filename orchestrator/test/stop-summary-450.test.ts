@@ -138,10 +138,35 @@ describe("stop summary vocabulary (#450)", () => {
         finding: FINDING,
         evidence: {
           kind: "owning_issue_still_red",
+          owningIssue: null,
           reason: "the owning issue still lacks a surface",
-        } as FindingDispositionEvidence,
+        } as unknown as FindingDispositionEvidence,
       }),
     ).toThrow(/owningIssue/i);
+
+    expect(() =>
+      stopSummaryFromFindingDispositionEvidence({
+        finding: FINDING,
+        evidence: {
+          kind: "cross_module",
+          targetModule: null,
+          reason: "belongs elsewhere",
+        } as unknown as FindingDispositionEvidence,
+      }),
+    ).toThrow(/targetModule/i);
+
+    expect(() =>
+      stopSummaryFromFindingDispositionEvidence({
+        finding: FINDING,
+        evidence: {
+          kind: "accepted_suppressed",
+          source: null,
+          scope: null,
+          boundedReopen: null,
+          reason: "the owning issue still lacks a surface",
+        } as unknown as FindingDispositionEvidence,
+      }),
+    ).toThrow(/source.*scope.*boundedReopen/i);
 
     expect(() =>
       stopSummaryFromFindingDispositionEvidence({

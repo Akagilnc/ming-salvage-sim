@@ -684,6 +684,40 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     });
   });
 
+  it("success stop summary ignores null ledger head metadata instead of crashing", async () => {
+    const familyBackend = new FakeFamilyBackend();
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      if (input.phase === "final") {
+        await input.familyBackend.appendFamilyLedger({
+          status: "cmr_passed",
+          event: "cmr_passed",
+          phase: "final",
+          cmrPass: "correctness",
+          familyHeadAfter: null as never,
+        });
+      }
+      return { ok: true, ran: true };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr,
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.stopSummary.metadata?.heads).toEqual({
+      reportedFamilyHead: "+10",
+      actualFamilyHead: "+10",
+      sources: {
+        reportedFamilyHead: "FamilyRunResult.familyHead",
+        actualFamilyHead: "family runner current head",
+      },
+    });
+  });
+
   it("success stop summary preserves material final CMR metadata from the ledger", async () => {
     class FreshHeadFamilyBackend extends FakeFamilyBackend {
       async readFamilyHead(): Promise<string> {

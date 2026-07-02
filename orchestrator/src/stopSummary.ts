@@ -248,7 +248,7 @@ export function stopSummaryFromFindingDispositionEvidence(input: {
     field: string,
     kind: string,
   ): string => {
-    if (value === undefined || value.trim() === "") {
+    if (value == null || value.trim() === "") {
       throw new Error(`${kind} disposition evidence requires ${field}`);
     }
     return value;
@@ -300,13 +300,13 @@ export function stopSummaryFromFindingDispositionEvidence(input: {
     case "accepted_suppressed":
       {
         const missing = [
-          evidence.source === undefined || evidence.source.trim() === ""
+          evidence.source == null || evidence.source.trim() === ""
             ? "source"
             : undefined,
-          evidence.scope === undefined || evidence.scope.trim() === ""
+          evidence.scope == null || evidence.scope.trim() === ""
             ? "scope"
             : undefined,
-          evidence.boundedReopen === undefined || evidence.boundedReopen.trim() === ""
+          evidence.boundedReopen == null || evidence.boundedReopen.trim() === ""
             ? "boundedReopen"
             : undefined,
         ].filter((field): field is string => field !== undefined);
