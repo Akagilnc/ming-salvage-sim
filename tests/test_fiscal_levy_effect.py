@@ -172,6 +172,24 @@ def test_liao_levy_memorial_estimate_payload_is_diegetic_national_scope(game):
         assert forbidden not in rendered
 
 
+def test_fiscal_levy_memorial_estimate_skips_rejected_positive_levy(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    db.mark_event_triggered(
+        state,
+        "liao_levy_rise_1631",
+        source="test",
+        terminal_reason="已驳",
+    )
+
+    payload = build_simulator_payload(state, db, "驳回加辽饷之议。", "")
+
+    assert payload["fiscal_levy_memorial_estimates"] == []
+
+
 def test_liao_levy_memorial_estimate_uses_collectible_ming_controlled_revenue(game):
     db, state, content = game
     issues.bind_content(content)

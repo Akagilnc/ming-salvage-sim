@@ -1338,6 +1338,8 @@ def fiscal_levy_memorial_estimates(state: GameState, db: GameDB) -> List[Dict[st
         added = _fiscal_levy_event_added_amount(ev.id, components)
         if added <= 0:
             continue
+        if str(row["terminal_reason"] or "") != "已准":
+            continue
         coverage_cheng, coverage_text = _fiscal_levy_coverage_text(added, army_gap, gap_basis)
         estimates.append({
             "event_id": ev.id,
