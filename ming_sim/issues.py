@@ -1432,7 +1432,11 @@ def _fiscal_levy_coverage_text(monthly_added: float, gap: float, basis: str) -> 
 
 def _current_army_gap(db: GameDB) -> tuple[float, str, str]:
     rows = db.conn.execute(
-        "SELECT * FROM armies WHERE owner_power='ming'"
+        """
+        SELECT *
+        FROM armies
+        WHERE owner_power='ming' AND is_tusi=0 AND self_funded_pay=0
+        """
     ).fetchall()
     arrears = sum(float(row["arrears"] or 0.0) for row in rows)
     if arrears > 0:
@@ -1629,33 +1633,36 @@ def apply_historical_fiscal_rates(
                     db,
                 )
             elif ev.id in pending_choice_records:
-                if not _event_window_open(ev, state):
+                if _event_window_expired(ev, state):
+                    pass
+                elif not _event_window_open(ev, state):
                     continue
-                if not _gate_passed(ev.trigger_gate, state.metrics, db):
+                elif not _gate_passed(ev.trigger_gate, state.metrics, db):
                     continue
-                record = pending_choice_records[ev.id]
-                label = _fiscal_levy_normalized_terminal_reason_or_abort(
-                    ev,
-                    record.get("terminal_reason"),
-                    state,
-                )
-                db.mark_event_triggered(
-                    state,
-                    ev.id,
-                    source=record.get("source") or "fiscal_levy_shadow",
-                    terminal_reason=label,
-                    commit=False,
-                )
-                terminal_records[ev.id] = {
-                    "terminal_state": "triggered",
-                    "terminal_reason": label,
-                }
-                applied.append({
-                    "id": ev.id,
-                    "title": ev.title,
-                    "terminal_state": "triggered",
-                    "terminal_reason": label,
-                })
+                else:
+                    record = pending_choice_records[ev.id]
+                    label = _fiscal_levy_normalized_terminal_reason_or_abort(
+                        ev,
+                        record.get("terminal_reason"),
+                        state,
+                    )
+                    db.mark_event_triggered(
+                        state,
+                        ev.id,
+                        source=record.get("source") or "fiscal_levy_shadow",
+                        terminal_reason=label,
+                        commit=False,
+                    )
+                    terminal_records[ev.id] = {
+                        "terminal_state": "triggered",
+                        "terminal_reason": label,
+                    }
+                    applied.append({
+                        "id": ev.id,
+                        "title": ev.title,
+                        "terminal_state": "triggered",
+                        "terminal_reason": label,
+                    })
             if ev.id not in terminal_records:
                 if _event_window_expired(ev, state):
                     db.mark_event_expired(state, ev.id, commit=False)
