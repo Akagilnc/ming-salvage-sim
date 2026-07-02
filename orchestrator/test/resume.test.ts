@@ -299,6 +299,17 @@ class DispatchRecordingResumeBackend extends ResumeBackend {
   }
 }
 
+class MissingCoderTagBackend extends ResumeBackend {
+  override async runStep(spec: StepSpec): Promise<StepOutput> {
+    if (spec.id === "S2") {
+      throw new Error(
+        "realBackend: coder step stdout carried no <coder>…</coder> tag — the coder must emit its structured result in a <coder> tag.",
+      );
+    }
+    return super.runStep(spec);
+  }
+}
+
 // ─── AC: fresh run is unaffected (no residue) ────────────────────────────────
 
 describe("fresh run (no residue) is unchanged (#255)", () => {
@@ -326,6 +337,15 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
 
     // The resume check is the first Backend interaction (before the S0 gate).
     expect(backend.calls[0]).toBe("findResumeState(255)");
+  });
+
+  it("classifies missing coder tag errors as contract drift", async () => {
+    const backend = new MissingCoderTagBackend();
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.stopSummary.reason).toBe("contract_drift");
   });
 });
 
@@ -496,6 +516,52 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       kind: "coder",
       committed: true,
       commitsAdded: 1,
+    });
+  });
+
+  it("recovers a real no-tag coder failure even when legacy stop summary classified it as infra", async () => {
+    const beforeBuildHead = "a".repeat(40);
+    const afterBuildHead = "b".repeat(40);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeBuildHead },
+        { ...entry("S1"), branchHEAD: beforeBuildHead },
+        {
+          step: "S2",
+          sessionId: "session-s2-real-notag-protocol-failed",
+          prompt_hash: "hash-S2",
+          branchHEAD: afterBuildHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        {
+          step: "S8",
+          handoffStatus: "error",
+          stopSummary: {
+            reason: "infra_failure",
+            summary:
+              "realBackend: coder step stdout carried no <coder>…</coder> tag — the coder must emit its structured result in a <coder> tag.",
+            repairHint: "inspect S2 and rerun after repairing the cause",
+          },
+          branchHEAD: afterBuildHead,
+          sessionId: "session-s8",
+          prompt_hash: "hash-S8",
+          ts: "2026-07-02T00:00:01.000Z",
+        },
+      ],
+    });
+    backend.commitCountsBetween.set(`${beforeBuildHead}..${afterBuildHead}`, 2);
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S3");
+    const s2 = result.stepLedger.find((e) => e.step === "S2");
+    expect(s2?.output).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 2,
     });
   });
 
