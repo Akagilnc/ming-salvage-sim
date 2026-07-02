@@ -3300,7 +3300,7 @@ describe("#369 legacy S5 landing file", () => {
       host: "codex",
       session: "fresh",
       contextRetention: "clean",
-      skill: "/review",
+      skill: "/code-review",
       promptFile: "reviewer_review.md",
       completionSignal: "REVIEWER_STEP_COMPLETE",
       maxIter: 1,

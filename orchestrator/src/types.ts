@@ -398,7 +398,7 @@ export interface StepResult {
  * Which kind of work a worker performs. Drives the {@link WorkerResult} payload
  * discriminant and (later slices) which skill is invoked:
  *   - `coder`    → invoke `/tdd` (S2 implement / S5 fix), resume across rounds.
- *   - `reviewer` → invoke `/review` (S3/S6 per-slice review), fresh each round.
+ *   - `reviewer` → invoke `/code-review` (S3/S6 per-slice review), fresh each round.
  *   - `cmr`      → invoke `ak-cross-m-review` (family integrated cmr), fresh.
  *   - `ship`     → invoke `gstack-ship` (S7 / family PR).
  *   - `merge`    → family-layer merge (may use NO skill — ADR 0026); B 段, no A-段
@@ -1036,7 +1036,7 @@ export interface Backend {
    * (`runStep`/`resumeSession` for agent workers, `push` for the S7 ship worker),
    * so external behaviour is unchanged (regression green) and every existing fake
    * Backend keeps working without change. The real worker dispatch (invoke
-   * `/tdd` / `/review` / `gstack-ship`) lands in #334/#336. The legacy methods
+   * `/tdd` / `/code-review` / `gstack-ship`) lands in #334/#336. The legacy methods
    * stay on the seam during the transition.
    *
    * OPTIONAL on the interface during the prefactor so the existing zero-container
