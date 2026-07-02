@@ -1470,7 +1470,7 @@ export async function runVerifyCmr(
     });
     return { ok: false, ran: true };
   }
-  if (shipResult.kind !== "completed" || shipResult.output.kind !== "ship") {
+  if (shipResult.kind !== "completed" || shipResult.output?.kind !== "ship") {
     // The ship worker ran but returned no valid result (crash / malformed / hard
     // command failure) at the terminal 止于-PR gate. Persist a durable `aborted`
     // event (online review r3, codex P2): without it a resume sees neither a shipped

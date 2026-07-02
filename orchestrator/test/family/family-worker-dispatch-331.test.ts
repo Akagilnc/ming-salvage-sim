@@ -554,6 +554,33 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
 
+  it("a null ship worker payload ⇒ INCOMPLETE_GATE + durable aborted(final), not a TypeError", async () => {
+    const backend = new RecordingFamilyBackend(
+      {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+        },
+      },
+      { kind: "completed", output: null as never },
+    );
+
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: backend,
+    });
+
+    expect(res).toEqual({ ok: false, ran: true });
+    const aborts = backend.ledger.filter((e) => e.status === "aborted");
+    expect(aborts).toHaveLength(1);
+    expect(aborts[0]?.reason).toMatch(/returned no valid result/i);
+    expect(aborts[0]?.stopSummary?.reason).toBe("contract_drift");
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+  });
+
   it("an off-contract ship success writes durable aborted(final) with ship/head summary", async () => {
     const backend = new RecordingFamilyBackend(
       {
