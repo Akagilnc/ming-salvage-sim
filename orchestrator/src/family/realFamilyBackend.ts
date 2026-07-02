@@ -675,18 +675,22 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       const outcomeLanding = this.prepareMergerOutcomeLanding();
-      const result = await sc.run({
-        name: `merger-resolve-${req.childIssue}`,
-        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-        cwd: this.opts.workingRepo,
-        sandbox: this.mergerSandbox(auth, outcomeLanding),
-        agent: agentForSlug(mergerModel()),
-        maxIterations: 1,
-        completionSignal: MERGER_COMPLETION_SIGNAL,
-        branchStrategy: { type: "head" }, // commit the resolved merge in place
-        promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
-      });
-      return mergerOutcomeFromResult({ ...result, outcomePath: outcomeLanding.path });
+      try {
+        const result = await this.runAgentSandbox({
+          name: `merger-resolve-${req.childIssue}`,
+          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+          cwd: this.opts.workingRepo,
+          sandbox: this.mergerSandbox(auth, outcomeLanding),
+          agent: agentForSlug(mergerModel()),
+          maxIterations: 1,
+          completionSignal: MERGER_COMPLETION_SIGNAL,
+          branchStrategy: { type: "head" }, // commit the resolved merge in place
+          promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
+        });
+        return mergerOutcomeFromResult({ ...result, outcomePath: outcomeLanding.path });
+      } finally {
+        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
+      }
     } finally {
       this.cleanupTempAuthDirs([auth.codexAuthDir]);
     }
@@ -1173,34 +1177,44 @@ export class RealFamilyBackend implements FamilyBackend {
       this.writeCmrFocusFile(ctx);
       this.writeCmrRouteFile(ctx, frozenReviewLegs);
       const outcomeLanding = this.prepareCmrOutcomeLanding(ctx);
-      const result = await sc.run({
-        name: "family-cmr",
-        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-        cwd: this.opts.workingRepo,
-        sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding),
-        // Derive the model from the spec via the shared validated seam (cmr S336 r7
-        // symmetry): resolve the worker's slug through the same registry as the
-        // single-slice + family ship paths — no constant that could silently drift
-        // from the spec the runner declares.
-        agent: this.agentForSpec(spec),
-        // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
-        // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
-        // sequencing and accounting.
-        maxIterations: spec.maxIter,
-        completionSignal: spec.completionSignal,
-        // On the resident family base — the worker COMMITS its cross-slice fixes
-        // here (`head` keeps it in place, no detached temp checkout).
-        branchStrategy: { type: "head" },
-        promptFile: join(this.opts.promptsDir, spec.promptFile),
-      });
-      return cmrOutcomeFromResult({
-        ...result,
-        cmrReviewLegs: frozenReviewLegs,
-        outcomePath: outcomeLanding.path,
-      });
+      try {
+        const result = await this.runAgentSandbox({
+          name: "family-cmr",
+          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+          cwd: this.opts.workingRepo,
+          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding),
+          // Derive the model from the spec via the shared validated seam (cmr S336 r7
+          // symmetry): resolve the worker's slug through the same registry as the
+          // single-slice + family ship paths — no constant that could silently drift
+          // from the spec the runner declares.
+          agent: this.agentForSpec(spec),
+          // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
+          // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
+          // sequencing and accounting.
+          maxIterations: spec.maxIter,
+          completionSignal: spec.completionSignal,
+          // On the resident family base — the worker COMMITS its cross-slice fixes
+          // here (`head` keeps it in place, no detached temp checkout).
+          branchStrategy: { type: "head" },
+          promptFile: join(this.opts.promptsDir, spec.promptFile),
+        });
+        return cmrOutcomeFromResult({
+          ...result,
+          cmrReviewLegs: frozenReviewLegs,
+          outcomePath: outcomeLanding.path,
+        });
+      } finally {
+        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
+      }
     } finally {
       this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
     }
+  }
+
+  protected async runAgentSandbox(
+    options: Parameters<typeof sc.run>[0],
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    return await sc.run(options);
   }
 
   /**
@@ -1696,11 +1710,15 @@ export class RealFamilyBackend implements FamilyBackend {
       // worktree) and BEFORE the container so the worker can read it.
       this.writeShipFocusFile(ctx);
       const outcomeLanding = this.prepareFamilyShipOutcomeLanding();
-      const result = await this.shipContainerRun(spec, auth, outcomeLanding);
-      return shipOutcomeFromResult({
-        ...result,
-        outcomePath: outcomeLanding.path,
-      });
+      try {
+        const result = await this.shipContainerRun(spec, auth, outcomeLanding);
+        return shipOutcomeFromResult({
+          ...result,
+          outcomePath: outcomeLanding.path,
+        });
+      } finally {
+        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
+      }
     } finally {
       this.cleanupTempAuthDirs([auth.codexAuthDir]);
     }
@@ -1797,7 +1815,7 @@ export class RealFamilyBackend implements FamilyBackend {
       } catch {
         // no exclude file yet
       }
-      if (!existing.split("\n").includes(filename)) {
+      if (!existing.split(/\r?\n/).includes(filename)) {
         mkdirSync(join(abs, ".."), { recursive: true });
         appendFileSync(
           abs,

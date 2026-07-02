@@ -2813,25 +2813,35 @@ export class RealBackend implements Backend {
       }
       this.syncShipFocusFile(ctx);
       const outcomeLanding = this.prepareShipOutcomeLanding(ctx);
-      const result = await sc.run({
-        name: `${spec.id}-ship`,
-        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-        cwd: worktree.path,
-        sandbox: this.shipSandbox(auth, outcomeLanding),
-        agent: agentForSlug(spec.model),
-        // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
-        // container (用户 note); maxIter is the within-worker budget. A genuine block
-        // is the worker's `<ship>` escalate verdict, not the iteration limit.
-        maxIterations: spec.maxIter,
-        completionSignal: spec.completionSignal,
-        // Commit the VERSION/CHANGELOG bump + push on the resident branch in place.
-        branchStrategy: { type: "head" },
-        promptFile: join(this.opts.promptsDir, spec.promptFile),
-      });
-      return shipOutcomeFromResult({
-        ...result,
-        ...(outcomeLanding !== undefined ? { outcomePath: outcomeLanding.path } : {}),
-      });
+      try {
+        const result = await this.runAgentSandbox({
+          name: `${spec.id}-ship`,
+          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+          cwd: worktree.path,
+          sandbox: this.shipSandbox(auth, outcomeLanding),
+          agent: agentForSlug(spec.model),
+          // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
+          // container (用户 note); maxIter is the within-worker budget. A genuine block
+          // is the worker's `<ship>` escalate verdict, not the iteration limit.
+          maxIterations: spec.maxIter,
+          completionSignal: spec.completionSignal,
+          // Commit the VERSION/CHANGELOG bump + push on the resident branch in place.
+          branchStrategy: { type: "head" },
+          promptFile: join(this.opts.promptsDir, spec.promptFile),
+        });
+        return shipOutcomeFromResult({
+          ...result,
+          ...(outcomeLanding !== undefined ? { outcomePath: outcomeLanding.path } : {}),
+        });
+      } finally {
+        if (outcomeLanding !== undefined) {
+          try {
+            rmSync(join(outcomeLanding.path, ".."), { recursive: true, force: true });
+          } catch {
+            // best-effort: the run already returned/threw.
+          }
+        }
+      }
     } finally {
       // Reclaim the per-call temp codex auth dir (online review r1, 3 bots):
       // best-effort — a failed cleanup must never mask the worker's outcome.
