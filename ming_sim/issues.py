@@ -1159,7 +1159,7 @@ def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> O
     return fiscal
 
 
-def _fiscal_levy_event_by_id(event_id: str) -> Event | None:
+def _fiscal_levy_event_by_id(event_id: str) -> Optional[Event]:
     return _ctx().event_by_id.get(event_id)
 
 
