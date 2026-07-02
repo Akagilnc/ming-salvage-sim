@@ -1271,13 +1271,17 @@ def _apply_fiscal_levy_targets(
             denominator_complete = False
             continue
         try:
+            if "settle" not in fiscal:
+                continue
             settle = fiscal.get("settle")
             if not isinstance(settle, dict):
-                continue
+                raise ValueError(f"{region_id}.settle 非字典")
             p = settle.get("p")
             st = settle.get("st")
-            if not isinstance(p, dict) or not isinstance(st, dict):
-                continue
+            if not isinstance(p, dict):
+                raise ValueError(f"{region_id}.settle.p 非字典")
+            if not isinstance(st, dict):
+                raise ValueError(f"{region_id}.settle.st 非字典")
             meta_raw = settle.get("_meta") or {}
             if not isinstance(meta_raw, dict):
                 raise ValueError(f"{region_id}.settle._meta 非字典")
@@ -1440,13 +1444,17 @@ def _region_fiscal_levy_components(db: GameDB) -> List[Dict[str, object]]:
             denominator_complete = False
             continue
         try:
+            if "settle" not in fiscal:
+                continue
             settle = fiscal.get("settle")
             if not isinstance(settle, dict):
-                continue
+                raise ValueError(f"{region_id}.settle 非字典")
             st = settle.get("st")
             p = settle.get("p")
-            if not isinstance(st, dict) or not isinstance(p, dict):
-                continue
+            if not isinstance(st, dict):
+                raise ValueError(f"{region_id}.settle.st 非字典")
+            if not isinstance(p, dict):
+                raise ValueError(f"{region_id}.settle.p 非字典")
             land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
         except ValueError as exc:
             denominator_complete = False
