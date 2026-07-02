@@ -382,6 +382,13 @@ function isExecutableEscalationAnswerSource(
   return value === undefined || value === "human" || value === "resume_input";
 }
 
+function isExecutableContinueFixingSource(
+  value: unknown,
+): value is
+  | Extract<ContinueFixingEvent["source"], "human" | "resume_input"> {
+  return value === "human" || value === "resume_input";
+}
+
 function isStringArray(value: unknown): value is ReadonlyArray<string> {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
@@ -491,7 +498,7 @@ function isContinueFixingEntry(
     entry.output === undefined &&
     raw.verdict === undefined &&
     entry.intent === "continue_fixing" &&
-    isExecutableEscalationAnswerSource(entry.source) &&
+    isExecutableContinueFixingSource(entry.source) &&
     typeof entry.ts === "string" &&
     entry.ts.trim().length > 0 &&
     (entry.reason === undefined || typeof entry.reason === "string") &&

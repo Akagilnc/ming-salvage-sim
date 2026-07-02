@@ -1205,6 +1205,59 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     ]);
   });
 
+  it("does not treat source-less continue-fixing bookkeeping as an executable human resume", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "runner_bookkeeping",
+          intent: "continue_fixing",
+          findingIdentityKey: blockingKey,
+          findingScope: { identityKeys: [blockingKey] },
+          ts: "2026-07-01T00:00:02.000Z",
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend([], resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatched).toEqual([]);
+  });
+
   it("does not reopen an S4 decision escalation for stale or scope-mismatched continue-fixing bookkeeping", async () => {
     const resumeState: ResumeState = {
       worktree: WORKTREE,

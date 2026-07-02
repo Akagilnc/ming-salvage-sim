@@ -1855,6 +1855,122 @@ module_scope:
     });
   });
 
+  it("preserves accepted suppression and skipped-leg metadata on cross-module CMR pass rows", async () => {
+    const crossModuleFinding: Finding = {
+      ...finding,
+      severity: "medium",
+      claim_quote: "military state machine follow-up belongs to another module",
+      location: "docs/military-state-machine.md:1",
+      action: "defer",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "military-state-machine",
+        reason: "outside the declared fiscal family module",
+      },
+    };
+    const suppressedFindingBase: Finding = {
+      ...finding,
+      severity: "medium",
+      claim_quote: "family ledger audit note is accepted as bounded out of scope",
+      location: "orchestrator/src/family/ledger.ts:1",
+      action: "wont_fix",
+      disposition_reason: "accepted family ledger audit suppression",
+    };
+    const suppressedFindingIdentity = findingIdentityKey(suppressedFindingBase);
+    const suppressedFinding: Finding = {
+      ...suppressedFindingBase,
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "#445",
+        scope: "#445 / orchestrator/src/family accepted ledger audit note only",
+        reason: "accepted family ledger audit suppression",
+        findingIdentity: suppressedFindingIdentity,
+        boundedReopen: "reopen on severity escalation, new evidence, or #287-owned local integration scope",
+      },
+    };
+    const backend = new CmrFindingBackend({
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: false,
+        reason: "only nonblocking family CMR findings remain",
+        successfulLegs: ["opus", "agy"],
+        skippedLegs: [{ slug: "gpt-5.5", reason: "codex quota unavailable" }],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        findings: [crossModuleFinding, suppressedFinding],
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/445-base",
+      familyBackend: backend,
+      familyIssue: 445,
+      moduleContext: {
+        currentModules: [
+          {
+            module: "fiscal",
+            moduleScope: ["orchestrator/src/family"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
+        childModules: [],
+        fallbackModule: {
+          module: "fiscal",
+          moduleScope: ["orchestrator/src/family"],
+          source: "family_issue",
+          issue: 445,
+        },
+        undevelopedModules: [
+          {
+            module: "military-state-machine",
+            moduleScope: ["docs/military-state-machine.md"],
+            source: "run_option",
+          },
+        ],
+        acceptedSuppressionSources: [
+          {
+            source: "#445",
+            scope: "#445 / orchestrator/src/family accepted ledger audit note only",
+            reason: "accepted family ledger audit suppression",
+            findingIdentity: suppressedFindingIdentity,
+            boundedReopen:
+              "reopen on severity escalation, new evidence, or #287-owned local integration scope",
+          },
+        ],
+      },
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.ledger[0]).toMatchObject({
+      status: "cmr_passed",
+      cmrPass: "completeness",
+      stopSummary: {
+        reason: "cross_module_defer",
+        targetModule: "military-state-machine",
+        metadata: {
+          acceptedSuppressions: [
+            expect.objectContaining({
+              source: "#445",
+              scope: expect.stringContaining("orchestrator/src/family"),
+              findingIdentity: expect.stringMatching(/family ledger audit note/i),
+              boundedReopen: expect.stringMatching(/severity escalat/i),
+            }),
+          ],
+          providerDegraded: [
+            expect.objectContaining({
+              leg: "gpt-5.5",
+              reason: "codex quota unavailable",
+              blocking: false,
+            }),
+          ],
+        },
+      },
+    });
+  });
+
   it("shipped summary preserves material CMR disposition over later head-only success", async () => {
     const crossModuleFinding: Finding = {
       ...finding,
