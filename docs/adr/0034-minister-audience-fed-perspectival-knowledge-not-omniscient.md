@@ -1,6 +1,6 @@
 # 大臣召对喂「角色见闻」（perspectival），永不喂全知盘面
 
-Status: 草案（grill-with-docs 2026-07-01 结晶；待评审）
+Status: Accepted（2026-07-02：本地 cmr 3 轮收敛（codex+agy+Opus4.8）+ 线上 bot 评审收敛，PR #495）
 
 ## 决定
 

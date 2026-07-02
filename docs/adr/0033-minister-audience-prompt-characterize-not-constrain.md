@@ -1,6 +1,6 @@
 # 大臣召对 prompt = 客观特征化，不做形式约束、不做输出守门
 
-Status: 草案（grill-with-docs 2026-07-01 结晶；待评审）
+Status: Accepted（2026-07-02：本地 cmr 3 轮收敛（codex+agy+Opus4.8）+ 线上 bot 评审收敛，PR #495）
 
 ## 决定
 
