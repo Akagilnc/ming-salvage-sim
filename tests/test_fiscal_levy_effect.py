@@ -10,6 +10,10 @@ import ming_sim.issues as issues
 from ming_sim.simulation import build_simulator_payload
 
 
+JIAO_NATIONAL_MONTHLY = 280.0 / 12.0
+LIAN_NATIONAL_MONTHLY = 730.0 / 12.0
+
+
 def _settle_payload(db, region_id):
     row = db.conn.execute(
         "SELECT fiscal FROM regions WHERE id = ?",
@@ -26,6 +30,21 @@ def _settled_region_ids(db):
         if isinstance(settle, dict) and isinstance(settle.get("p"), dict):
             ids.append(str(row["id"]))
     return ids
+
+
+def _settle_land_sum(db):
+    total = 0.0
+    for region_id in _settled_region_ids(db):
+        settle = _settle_payload(db, region_id)
+        total += max(0.0, float(settle["st"].get("官民田") or 0.0))
+    return total
+
+
+def _expected_land_share_levy(settle, national_monthly, total_land):
+    land = max(0.0, float(settle["st"].get("官民田") or 0.0))
+    if total_land <= 0:
+        return 0.0
+    return national_monthly * land / total_land
 
 
 def test_liao_levy_rise_triggers_and_updates_shadow_settle_before_fiscal_tick(game):
@@ -125,7 +144,7 @@ def test_fiscal_levy_shadow_capstone_golden_all_seeded_provinces(
         if expect_jiao_in_force:
             expected_sanxiang += meta["剿饷基线"]
         if expect_lian_in_force:
-            expected_sanxiang += seed_liao * 73.0 / 52.0
+            expected_sanxiang += meta["练饷基线"]
         assert math.isclose(
             settle["p"]["三饷应征"],
             expected_sanxiang,
@@ -267,9 +286,10 @@ def test_lian_levy_start_triggers_and_updates_shadow_settle_before_fiscal_tick(g
     seed_liao = before["p"]["三饷应征"]
     seed_transport = before["p"]["起运定额"]
     base_transport = max(0.0, seed_transport - seed_liao)
+    total_land = _settle_land_sum(db)
     target_liao = seed_liao * 4.0 / 3.0
-    target_jiao = seed_liao * 7.0 / 13.0
-    target_lian = seed_liao * 73.0 / 52.0
+    target_jiao = _expected_land_share_levy(before, JIAO_NATIONAL_MONTHLY, total_land)
+    target_lian = _expected_land_share_levy(before, LIAN_NATIONAL_MONTHLY, total_land)
     target_sanxiang = target_liao + target_jiao + target_lian
 
     pre_settle(state, db, content=content)
@@ -394,7 +414,7 @@ def test_jiao_levy_rises_then_stops_and_keeps_base_transport(game):
     apply_historical_fiscal_rates(state, db)
 
     after_stop = _settle_payload(db, "shaanxi")
-    expected_lian = after_stop["_meta"]["辽饷九厘基线"] * 73.0 / 52.0
+    expected_lian = after_stop["_meta"]["练饷基线"]
     assert db.conn.execute(
         "SELECT terminal_reason FROM event_triggers WHERE event_id=?",
         ("jiao_levy_stop_1640",),
@@ -420,7 +440,7 @@ def test_jiao_levy_stop_rejected_keeps_levy_in_force(game):
     settle = _settle_payload(db, "shaanxi")
     expected_liao = settle["_meta"]["辽饷九厘基线"] * 4.0 / 3.0
     expected_jiao = settle["_meta"]["剿饷基线"]
-    expected_lian = settle["_meta"]["辽饷九厘基线"] * 73.0 / 52.0
+    expected_lian = settle["_meta"]["练饷基线"]
     assert math.isclose(settle["p"]["三饷应征"], expected_liao + expected_jiao + expected_lian, rel_tol=1e-9, abs_tol=1e-9)
 
 
@@ -479,7 +499,7 @@ def test_lian_levy_targets_all_seeded_settles_without_compounding_or_clobbering_
         first_by_region[region_id] = dict(after["p"])
         meta = after["_meta"]
         seed_liao = meta["辽饷九厘基线"]
-        expected_sanxiang = seed_liao * 4.0 / 3.0 + meta["剿饷基线"] + seed_liao * 73.0 / 52.0
+        expected_sanxiang = seed_liao * 4.0 / 3.0 + meta["剿饷基线"] + meta["练饷基线"]
         expected_transport = meta["正赋起运基线"] + expected_sanxiang
         assert math.isclose(after["p"]["三饷应征"], expected_sanxiang, rel_tol=1e-9, abs_tol=1e-9)
         assert math.isclose(after["p"]["起运定额"], expected_transport, rel_tol=1e-9, abs_tol=1e-9)
@@ -493,6 +513,35 @@ def test_lian_levy_targets_all_seeded_settles_without_compounding_or_clobbering_
     apply_historical_fiscal_rates(state, db)
     for region_id, first_p in first_by_region.items():
         assert _settle_payload(db, region_id)["p"] == first_p
+
+
+def test_fiscal_levy_components_are_land_share_calibrated_and_marked_provisional(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1639
+    state.period = 1
+    db.save_state(state)
+    total_land = _settle_land_sum(db)
+
+    apply_historical_fiscal_rates(state, db)
+
+    required_provisional = {"辽饷九厘基线", "剿饷基线", "练饷基线", "正赋起运基线"}
+    for region_id in _settled_region_ids(db):
+        settle = _settle_payload(db, region_id)
+        meta = settle["_meta"]
+        assert math.isclose(
+            meta["剿饷基线"],
+            _expected_land_share_levy(settle, JIAO_NATIONAL_MONTHLY, total_land),
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ), region_id
+        assert math.isclose(
+            meta["练饷基线"],
+            _expected_land_share_levy(settle, LIAN_NATIONAL_MONTHLY, total_land),
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ), region_id
+        assert required_provisional <= set(meta.get("provisional", [])), region_id
 
 
 def test_lost_seeded_province_keeps_current_levy_rate_and_uses_it_on_restore(game):
@@ -519,7 +568,7 @@ def test_lost_seeded_province_keeps_current_levy_rate_and_uses_it_on_restore(gam
     expected_sanxiang = (
         meta["辽饷九厘基线"] * 4.0 / 3.0
         + meta["剿饷基线"]
-        + meta["辽饷九厘基线"] * 73.0 / 52.0
+        + meta["练饷基线"]
     )
     assert lost_after_rate["p"]["三饷应征"] != stale_sanxiang
     assert math.isclose(

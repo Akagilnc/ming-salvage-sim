@@ -997,11 +997,18 @@ _LIAN_LEVY_START_EVENT_ID = "lian_levy_start_1639"
 _LIAO_LEVY_RISE_FACTOR = 4.0 / 3.0
 _JIAO_LEVY_START_EVENT_ID = "jiao_levy_start_1637"
 _JIAO_LEVY_STOP_EVENT_ID = "jiao_levy_stop_1640"
-_JIAO_LEVY_TO_LIAO_SEED_FACTOR = 7.0 / 13.0
-_LIAN_LEVY_FACTOR_FROM_LIAO_SEED = 73.0 / 52.0
+_JIAO_LEVY_NATIONAL_MONTHLY = 280.0 / 12.0
+_LIAN_LEVY_NATIONAL_MONTHLY = 730.0 / 12.0
 _SETTLE_META_BASE_TRANSPORT_KEY = "正赋起运基线"
 _SETTLE_META_LIAO_SEED_KEY = "辽饷九厘基线"
 _SETTLE_META_JIAO_SEED_KEY = "剿饷基线"
+_SETTLE_META_LIAN_SEED_KEY = "练饷基线"
+_FISCAL_LEVY_PROVISIONAL_KEYS = {
+    _SETTLE_META_BASE_TRANSPORT_KEY,
+    _SETTLE_META_LIAO_SEED_KEY,
+    _SETTLE_META_JIAO_SEED_KEY,
+    _SETTLE_META_LIAN_SEED_KEY,
+}
 _FISCAL_LEVY_PRESENTATION_INSTRUCTION = (
     "以奏疏口吻给出万两量级的加征估算与可补军费程度；"
     "可写史实加征语和各省约略分解。"
@@ -1126,13 +1133,28 @@ def _fiscal_levy_stopped(
     )
 
 
-def _fiscal_levy_jiao_seed(meta: Dict[str, object], liao_seed: float, region_id: str) -> float:
-    if _SETTLE_META_JIAO_SEED_KEY in meta:
-        return _as_float(
-            meta[_SETTLE_META_JIAO_SEED_KEY],
-            ctx=f"{region_id}.settle._meta.{_SETTLE_META_JIAO_SEED_KEY}",
-        )
-    return liao_seed * _JIAO_LEVY_TO_LIAO_SEED_FACTOR
+def _fiscal_levy_land_share_amount(
+    land: float,
+    total_land: float,
+    national_monthly: float,
+) -> float:
+    if total_land <= 0:
+        return 0.0
+    return max(0.0, land) / total_land * national_monthly
+
+
+def _fiscal_levy_mark_provisional(meta: Dict[str, object]) -> None:
+    raw = meta.get("provisional", [])
+    if isinstance(raw, list):
+        provisional = [str(item) for item in raw]
+    else:
+        provisional = []
+    seen = set(provisional)
+    for key in sorted(_FISCAL_LEVY_PROVISIONAL_KEYS):
+        if key not in seen:
+            provisional.append(key)
+            seen.add(key)
+    meta["provisional"] = provisional
 
 
 def _jiao_levy_in_force(terminal_records: Dict[str, Dict[str, str]], state: GameState) -> bool:
@@ -1158,7 +1180,7 @@ def _apply_fiscal_levy_targets(
     liao_rise_approved = _fiscal_levy_event_approved(terminal_records, _LIAO_LEVY_RISE_EVENT_ID)
     jiao_in_force = _jiao_levy_in_force(terminal_records, state)
     lian_levy_approved = _fiscal_levy_event_approved(terminal_records, _LIAN_LEVY_START_EVENT_ID)
-    touched = 0
+    region_entries: List[Dict[str, object]] = []
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
         region_id = str(row["id"])
         fiscal = json.loads(str(row["fiscal"] or "{}"))
@@ -1168,18 +1190,50 @@ def _apply_fiscal_levy_targets(
         if not isinstance(settle, dict):
             continue
         p = settle.get("p")
-        if not isinstance(p, dict):
+        st = settle.get("st")
+        if not isinstance(p, dict) or not isinstance(st, dict):
             continue
         meta_raw = settle.get("_meta") or {}
         if not isinstance(meta_raw, dict):
             raise ValueError(f"{region_id}.settle._meta 非字典")
         meta = dict(meta_raw)
         liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
-        jiao_seed = _fiscal_levy_jiao_seed(meta, liao_seed, region_id)
-        base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
+        region_entries.append({
+            "region_id": region_id,
+            "fiscal": fiscal,
+            "settle": settle,
+            "p": p,
+            "meta_raw": meta_raw,
+            "meta": meta,
+            "liao_seed": liao_seed,
+            "land": _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田"),
+            "base_transport": _fiscal_levy_base_transport(meta, p, liao_seed, region_id),
+        })
+    total_land = sum(max(0.0, float(item["land"])) for item in region_entries)
+    touched = 0
+    for item in region_entries:
+        region_id = str(item["region_id"])
+        fiscal = item["fiscal"]
+        settle = item["settle"]
+        p = item["p"]
+        meta_raw = item["meta_raw"]
+        meta = item["meta"]
+        liao_seed = float(item["liao_seed"])
+        land = float(item["land"])
+        jiao_seed = _fiscal_levy_land_share_amount(
+            land,
+            total_land,
+            _JIAO_LEVY_NATIONAL_MONTHLY,
+        )
+        lian_seed = _fiscal_levy_land_share_amount(
+            land,
+            total_land,
+            _LIAN_LEVY_NATIONAL_MONTHLY,
+        )
+        base_transport = float(item["base_transport"])
         target_liao = liao_seed * (_LIAO_LEVY_RISE_FACTOR if liao_rise_approved else 1.0)
         target_jiao = jiao_seed if jiao_in_force else 0.0
-        target_lian = liao_seed * _LIAN_LEVY_FACTOR_FROM_LIAO_SEED if lian_levy_approved else 0.0
+        target_lian = lian_seed if lian_levy_approved else 0.0
         target_sanxiang = target_liao + target_jiao + target_lian
         target_transport = base_transport + target_sanxiang
         next_p = dict(p)
@@ -1187,7 +1241,9 @@ def _apply_fiscal_levy_targets(
         next_p["起运定额"] = target_transport
         meta[_SETTLE_META_LIAO_SEED_KEY] = liao_seed
         meta[_SETTLE_META_JIAO_SEED_KEY] = jiao_seed
+        meta[_SETTLE_META_LIAN_SEED_KEY] = lian_seed
         meta[_SETTLE_META_BASE_TRANSPORT_KEY] = base_transport
+        _fiscal_levy_mark_provisional(meta)
         if next_p == p and meta == meta_raw:
             continue
         settle["p"] = next_p
@@ -1260,10 +1316,12 @@ def _current_army_gap(db: GameDB) -> tuple[float, str, str]:
 
 
 def _region_fiscal_levy_components(db: GameDB) -> List[Dict[str, object]]:
-    components: List[Dict[str, object]] = []
-    for row in db.conn.execute(
-        "SELECT id, name, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
-    ).fetchall():
+    rows = db.conn.execute(
+        "SELECT id, name, controlled_by, fiscal FROM regions ORDER BY id"
+    ).fetchall()
+    total_land = 0.0
+    parsed_rows: List[Dict[str, object]] = []
+    for row in rows:
         region_id = str(row["id"])
         fiscal = json.loads(str(row["fiscal"] or "{}"))
         if not isinstance(fiscal, dict):
@@ -1271,21 +1329,49 @@ def _region_fiscal_levy_components(db: GameDB) -> List[Dict[str, object]]:
         settle = fiscal.get("settle")
         if not isinstance(settle, dict):
             continue
+        st = settle.get("st")
         p = settle.get("p")
-        if not isinstance(p, dict):
+        if not isinstance(st, dict) or not isinstance(p, dict):
             continue
+        land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
+        total_land += max(0.0, land)
+        parsed_rows.append({
+            "row": row,
+            "fiscal": fiscal,
+            "settle": settle,
+            "p": p,
+            "land": land,
+        })
+    components: List[Dict[str, object]] = []
+    for parsed in parsed_rows:
+        row = parsed["row"]
+        if str(row["controlled_by"]) != "ming":
+            continue
+        region_id = str(row["id"])
+        p = parsed["p"]
+        land = float(parsed["land"])
+        settle = parsed["settle"]
         meta_raw = settle.get("_meta") or {}
         if not isinstance(meta_raw, dict):
             raise ValueError(f"{region_id}.settle._meta 非字典")
         meta = dict(meta_raw)
         liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
-        jiao_seed = _fiscal_levy_jiao_seed(meta, liao_seed, region_id)
+        jiao_seed = _fiscal_levy_land_share_amount(
+            land,
+            total_land,
+            _JIAO_LEVY_NATIONAL_MONTHLY,
+        )
+        lian_seed = _fiscal_levy_land_share_amount(
+            land,
+            total_land,
+            _LIAN_LEVY_NATIONAL_MONTHLY,
+        )
         components.append({
             "region_id": region_id,
             "region_name": str(row["name"]),
             "liao_seed": liao_seed,
             "jiao_seed": jiao_seed,
-            "lian_seed": liao_seed * _LIAN_LEVY_FACTOR_FROM_LIAO_SEED,
+            "lian_seed": lian_seed,
         })
     return components
 

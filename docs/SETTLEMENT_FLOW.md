@@ -20,7 +20,8 @@
         ↳ 仅处理 category="fiscal_levy" 的历史事件；shadow stub 的结局须经事件白名单归一
           （辽饷升/剿饷开征：{已准, 已驳}，剿饷议停：{已停, 仍征}），不可归一则 fail-loud。
         ↳ set-to-target 写省级 `settle.p.{三饷应征, 起运定额}`，并持久化
-          `settle._meta.{正赋起运基线, 辽饷九厘基线, 剿饷基线}`；幂等、不逐月叠加。
+          `settle._meta.{正赋起运基线, 辽饷九厘基线, 剿饷基线, 练饷基线}`；
+          幂等、不逐月叠加。
         ↳ 必须先于 `settle_province_tick`，让饷率当月生效；后置通用事件终态 pass
           读到已 terminal 的饷率事件后自然跳过，防重复处理。
      c. apply_fixed_period_flows(db, state)       # 月度财政 tick
