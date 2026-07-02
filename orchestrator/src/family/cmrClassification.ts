@@ -447,7 +447,7 @@ function suppressionScopeMatchesContext(input: {
   if (containsNormalized(scope, attributedDeclaration.module)) return true;
   if (
     attributedDeclaration.issue !== undefined &&
-    scope.includes(`#${attributedDeclaration.issue}`)
+    containsNormalized(scope, `#${attributedDeclaration.issue}`)
   ) {
     return true;
   }

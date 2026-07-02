@@ -406,7 +406,14 @@ function isFindingRepairScope(
 }
 
 function stripLocationLine(value: string): string {
-  return value.replace(/:\d+(?::\d+)?$/, "");
+  const withoutLineColumn = value
+    .trim()
+    .replace(/:\d+(?::\d+)?(?::[^:/\\]+)?$/, "");
+  const withoutSymbol = withoutLineColumn.replace(/:[^:/\\]+$/, "").trim();
+  if (/^[A-Za-z]$/.test(withoutSymbol) && /^[A-Za-z]:$/.test(withoutLineColumn)) {
+    return `${withoutSymbol}:`;
+  }
+  return withoutSymbol;
 }
 
 function locationScopeMatches(scope: string, location: string): boolean {
