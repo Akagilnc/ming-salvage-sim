@@ -1,5 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 
+/** Worker-visible path for the runner-owned machine outcome sidecar. */
+export const WORKER_OUTCOME_SANDBOX_FILE = ".orchestrator-outcome.json";
+
 /**
  * Unwrap a ```json … ``` (or bare ``` … ```) fenced code block to its inner
  * payload, mirroring Sandcastle's fence-aware tag extraction.
