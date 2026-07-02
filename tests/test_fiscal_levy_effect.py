@@ -7,6 +7,7 @@ from ming_sim.decree import pre_settle
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_historical_fiscal_rates
 import ming_sim.issues as issues
+from ming_sim.simulation import build_simulator_payload
 
 
 def _settle_payload(db, region_id):
@@ -15,6 +16,16 @@ def _settle_payload(db, region_id):
         (region_id,),
     ).fetchone()
     return json.loads(str(row["fiscal"] or "{}"))["settle"]
+
+
+def _settled_region_ids(db):
+    ids = []
+    for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
+        fiscal = json.loads(str(row["fiscal"] or "{}"))
+        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        if isinstance(settle, dict) and isinstance(settle.get("p"), dict):
+            ids.append(str(row["id"]))
+    return ids
 
 
 def test_liao_levy_rise_triggers_and_updates_shadow_settle_before_fiscal_tick(game):
@@ -58,6 +69,119 @@ def test_liao_levy_rise_triggers_and_updates_shadow_settle_before_fiscal_tick(ga
         rel_tol=1e-9,
         abs_tol=1e-9,
     )
+
+
+@pytest.mark.parametrize(
+    "year,expected_event_ids,expect_jiao_in_force,expect_lian_in_force",
+    [
+        (1631, {"liao_levy_rise_1631"}, False, False),
+        (1637, {"liao_levy_rise_1631", "jiao_levy_start_1637"}, True, False),
+        (1639, {"liao_levy_rise_1631", "jiao_levy_start_1637", "lian_levy_start_1639"}, True, True),
+        (
+            1640,
+            {
+                "liao_levy_rise_1631",
+                "jiao_levy_start_1637",
+                "lian_levy_start_1639",
+                "jiao_levy_stop_1640",
+            },
+            False,
+            True,
+        ),
+    ],
+)
+def test_fiscal_levy_shadow_capstone_golden_all_seeded_provinces(
+    game, year, expected_event_ids, expect_jiao_in_force, expect_lian_in_force
+):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = year
+    state.period = 1
+    db.save_state(state)
+    region_ids = _settled_region_ids(db)
+    assert len(region_ids) == 17
+
+    pre_settle(state, db, content=content)
+
+    triggered_ids = {
+        str(row["event_id"])
+        for row in db.conn.execute(
+            "SELECT event_id FROM event_triggers WHERE turn=? AND terminal_state='triggered'",
+            (state.turn,),
+        ).fetchall()
+    }
+    assert expected_event_ids <= triggered_ids
+    if year == 1640:
+        assert db.conn.execute(
+            "SELECT terminal_reason FROM event_triggers WHERE event_id=?",
+            ("jiao_levy_stop_1640",),
+        ).fetchone()["terminal_reason"] == "已停"
+
+    for region_id in region_ids:
+        settle = _settle_payload(db, region_id)
+        meta = settle["_meta"]
+        seed_liao = meta["辽饷九厘基线"]
+        expected_sanxiang = seed_liao * 4.0 / 3.0
+        if expect_jiao_in_force:
+            expected_sanxiang += meta["剿饷基线"]
+        if expect_lian_in_force:
+            expected_sanxiang += seed_liao * 73.0 / 52.0
+        assert math.isclose(
+            settle["p"]["三饷应征"],
+            expected_sanxiang,
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ), region_id
+        assert math.isclose(
+            settle["p"]["起运定额"],
+            meta["正赋起运基线"] + expected_sanxiang,
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ), region_id
+        assert settle["p"]["起运定额"] >= settle["p"]["三饷应征"]
+        assert settle["p"]["起运定额"] >= 0
+
+
+def test_liao_levy_memorial_estimate_payload_is_diegetic_national_scope(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+
+    pre_settle(state, db, content=content)
+
+    payload = build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
+    estimates = payload["fiscal_levy_memorial_estimates"]
+    assert len(estimates) == 1
+    estimate = estimates[0]
+
+    assert estimate["event_id"] == "liao_levy_rise_1631"
+    assert estimate["scope"] == "国总口径"
+    assert estimate["national_added_wanliang"]["unit"] == "万两/月"
+    assert (
+        estimate["national_added_wanliang"]["lower"]
+        <= estimate["national_added_wanliang"]["midpoint"]
+        <= estimate["national_added_wanliang"]["upper"]
+    )
+    assert "万两" in estimate["national_added_wanliang"]["text"]
+    assert "可补军费" in estimate["army_gap_coverage_text"]
+
+    rendered = json.dumps(estimates, ensure_ascii=False)
+    for forbidden in ("4/3", "7/13", "73/52", "rate", "参数", "loyalty", "ability"):
+        assert forbidden not in rendered
+
+
+def test_fiscal_levy_memorial_prompt_contract_is_positive_p4():
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[1] / "content/prompts/season_simulator.md").read_text(
+        encoding="utf-8"
+    )
+    assert "fiscal_levy_memorial_estimates" in text
+    assert "以奏疏口吻" in text
+    assert "国总万两量级加征估算" in text
+    assert "可补军费" in text
 
 
 def test_lian_levy_start_triggers_and_updates_shadow_settle_before_fiscal_tick(game):

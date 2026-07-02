@@ -31,6 +31,7 @@ from ming_sim.flows import (
     _apply_economy_list,
     _apply_faction_dict,
     _apply_metric_dict,
+    army_needed,
     _strict_int,
 )
 from ming_sim.models import Event, GameState, effect_dict_has_work, is_vassal_prince, loads_effect_dict
@@ -1001,6 +1002,10 @@ _LIAN_LEVY_FACTOR_FROM_LIAO_SEED = 73.0 / 52.0
 _SETTLE_META_BASE_TRANSPORT_KEY = "正赋起运基线"
 _SETTLE_META_LIAO_SEED_KEY = "辽饷九厘基线"
 _SETTLE_META_JIAO_SEED_KEY = "剿饷基线"
+_FISCAL_LEVY_PRESENTATION_INSTRUCTION = (
+    "以奏疏口吻给出万两量级的加征估算与可补军费程度；"
+    "可写史实加征语和各省约略分解。"
+)
 
 
 def _normalize_event_terminal_reason(ev: Event, raw: object) -> str:
@@ -1193,6 +1198,159 @@ def _apply_fiscal_levy_targets(
         )
         touched += 1
     return touched
+
+
+def _round_half_up(value: float, step: float) -> float:
+    if step <= 0:
+        return value
+    return math.floor(value / step + 0.5) * step
+
+
+def _wanliang_range(amount: float) -> Dict[str, object]:
+    value = max(0.0, float(amount))
+    lower = _round_half_up(value * 0.9, 1.0)
+    upper = _round_half_up(value * 1.1, 1.0)
+    midpoint = round(value, 1)
+    if upper < lower:
+        upper = lower
+    if value > 0 and upper == lower:
+        upper = round(lower + 1.0, 1)
+    return {
+        "lower": round(lower, 1),
+        "midpoint": midpoint,
+        "upper": round(upper, 1),
+        "unit": "万两/月",
+        "text": f"约{lower:g}至{upper:g}万两/月",
+    }
+
+
+def _plain_wanliang_approx(amount: float) -> str:
+    value = max(0.0, float(amount))
+    if value <= 0:
+        return "无明显缺口"
+    if value < 10:
+        return "不足十万两"
+    step = 5.0 if value < 20 else 10.0
+    rounded = max(step, _round_half_up(value, step))
+    return f"约{rounded:g}万两"
+
+
+def _fiscal_levy_coverage_text(monthly_added: float, gap: float, basis: str) -> tuple[float, str]:
+    if gap <= 0:
+        return 0.0, "军费缺口暂不显，新增饷源可作缓冲"
+    coverage_cheng = round(max(0.0, monthly_added) / gap * 10.0, 1)
+    if coverage_cheng < 0.5:
+        coverage = "不足半成"
+    elif coverage_cheng < 1.0:
+        coverage = "约半成"
+    else:
+        coverage = f"约{coverage_cheng:g}成"
+    return coverage_cheng, f"按{basis}{_plain_wanliang_approx(gap)}估，可补军费{coverage}"
+
+
+def _current_army_gap(db: GameDB) -> tuple[float, str]:
+    rows = db.conn.execute(
+        "SELECT * FROM armies WHERE owner_power='ming'"
+    ).fetchall()
+    arrears = sum(float(row["arrears"] or 0.0) for row in rows)
+    if arrears > 0:
+        return arrears, "全军累计欠饷"
+    monthly_due = sum(float(army_needed(row)) for row in rows)
+    return monthly_due, "本月应发军饷"
+
+
+def _region_fiscal_levy_components(db: GameDB) -> List[Dict[str, object]]:
+    components: List[Dict[str, object]] = []
+    for row in db.conn.execute("SELECT id, name, fiscal FROM regions ORDER BY id").fetchall():
+        region_id = str(row["id"])
+        fiscal = json.loads(str(row["fiscal"] or "{}"))
+        if not isinstance(fiscal, dict):
+            continue
+        settle = fiscal.get("settle")
+        if not isinstance(settle, dict):
+            continue
+        p = settle.get("p")
+        if not isinstance(p, dict):
+            continue
+        meta_raw = settle.get("_meta") or {}
+        if not isinstance(meta_raw, dict):
+            raise ValueError(f"{region_id}.settle._meta 非字典")
+        meta = dict(meta_raw)
+        liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
+        jiao_seed = _fiscal_levy_jiao_seed(meta, liao_seed, region_id)
+        components.append({
+            "region_id": region_id,
+            "region_name": str(row["name"]),
+            "liao_seed": liao_seed,
+            "jiao_seed": jiao_seed,
+            "lian_seed": liao_seed * _LIAN_LEVY_FACTOR_FROM_LIAO_SEED,
+        })
+    return components
+
+
+def _fiscal_levy_event_added_amount(event_id: str, components: List[Dict[str, object]]) -> float:
+    total = 0.0
+    for item in components:
+        liao_seed = float(item["liao_seed"])
+        jiao_seed = float(item["jiao_seed"])
+        lian_seed = float(item["lian_seed"])
+        if event_id == _LIAO_LEVY_RISE_EVENT_ID:
+            total += liao_seed * (_LIAO_LEVY_RISE_FACTOR - 1.0)
+        elif event_id == _JIAO_LEVY_START_EVENT_ID:
+            total += jiao_seed
+        elif event_id == _LIAN_LEVY_START_EVENT_ID:
+            total += lian_seed
+        elif event_id == _JIAO_LEVY_STOP_EVENT_ID:
+            total -= jiao_seed
+    return total
+
+
+def fiscal_levy_memorial_estimates(state: GameState, db: GameDB) -> List[Dict[str, object]]:
+    """Return court-facing levy estimates for fiscal events resolved this turn.
+
+    This is the #259 shadow/#260 seam: callers read event outcomes from the same
+    event ledger regardless of whether the terminal reason came from the current
+    shadow stub (`source=fiscal_levy_shadow`) or a future real edict route.
+    """
+    c = _ctx()
+    rows = db.conn.execute(
+        """
+        SELECT event_id, terminal_reason, source
+        FROM event_triggers
+        WHERE turn=? AND terminal_state='triggered'
+        """,
+        (state.turn,),
+    ).fetchall()
+    if not rows:
+        return []
+    row_by_event_id = {str(row["event_id"]): row for row in rows}
+    components = _region_fiscal_levy_components(db)
+    army_gap, gap_basis = _current_army_gap(db)
+    estimates: List[Dict[str, object]] = []
+    for ev in c.events:
+        if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+            continue
+        row = row_by_event_id.get(ev.id)
+        if row is None:
+            continue
+        added = _fiscal_levy_event_added_amount(ev.id, components)
+        if added <= 0:
+            continue
+        coverage_cheng, coverage_text = _fiscal_levy_coverage_text(added, army_gap, gap_basis)
+        estimates.append({
+            "event_id": ev.id,
+            "event_title": ev.title,
+            "terminal_reason": str(row["terminal_reason"] or ""),
+            "source": str(row["source"] or ""),
+            "scope": "国总口径",
+            "presentation_instruction": _FISCAL_LEVY_PRESENTATION_INSTRUCTION,
+            "national_added_wanliang": _wanliang_range(added),
+            "national_army_gap_wanliang": _wanliang_range(army_gap),
+            "army_gap_basis": gap_basis,
+            "army_gap_coverage_cheng": coverage_cheng,
+            "army_gap_coverage_text": coverage_text,
+        })
+    return estimates
 
 
 def apply_historical_fiscal_rates(
