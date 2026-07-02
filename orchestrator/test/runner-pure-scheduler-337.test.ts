@@ -247,6 +247,8 @@ describe("#337 review-decomposition wording: runner owns per-slice review, integ
     expect(reviewerSoul).toMatch(/\/code-review/);
     expect(reviewerSoul).not.toMatch(/builtin `\/review`/i);
     expect(reviewerSoul).toMatch(/Standards \+ Spec|two-axis|fixed-point/i);
+    expect(reviewerSoul).toMatch(/origin\/main/);
+    expect(reviewerSoul).toMatch(/otherwise use `main`/i);
   });
 
   it("the reviewer soul names ak-cross-m-review only as the family-layer review", () => {
@@ -262,6 +264,7 @@ describe("#337 review-decomposition wording: runner owns per-slice review, integ
 
   it("the CLAUDE.md ## Skill routing keeps runner-visible per-slice review/fix and integrated cmr separate", () => {
     expect(skillRouting).toMatch(/\/code-review/);
+    expect(skillRouting).toMatch(/origin\/main/);
     expect(skillRouting).toMatch(/runner/i);
     expect(skillRouting).toMatch(/reviewer/i);
     expect(skillRouting).toMatch(/ak-cross-m-review/);
