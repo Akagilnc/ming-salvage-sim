@@ -273,15 +273,20 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const normalizedContainsCache = new Map<string, RegExp>();
+
 function containsNormalized(haystack: string, needle: string | undefined): boolean {
   const normalizedHaystack = normalizedEvidenceText(haystack);
   const normalizedNeedle = normalizedEvidenceText(needle);
   if (normalizedNeedle.length === 0) return false;
-  const boundary = String.raw`(?:^|[\s/.,:;()[\]])`;
-  const tailBoundary = String.raw`(?:$|[\s/.,:;()[\]])`;
-  return new RegExp(
-    `${boundary}${escapeRegExp(normalizedNeedle)}${tailBoundary}`,
-  ).test(normalizedHaystack);
+  let re = normalizedContainsCache.get(normalizedNeedle);
+  if (re === undefined) {
+    const boundary = String.raw`(?:^|[\s/.,:;()[\]])`;
+    const tailBoundary = String.raw`(?:$|[\s/.,:;()[\]])`;
+    re = new RegExp(`${boundary}${escapeRegExp(normalizedNeedle)}${tailBoundary}`);
+    normalizedContainsCache.set(normalizedNeedle, re);
+  }
+  return re.test(normalizedHaystack);
 }
 
 function locationPath(location: string): string {
