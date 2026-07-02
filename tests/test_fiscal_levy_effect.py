@@ -121,6 +121,97 @@ def test_liao_levy_targets_all_seeded_settles_without_compounding_or_clobbering_
         assert _settle_payload(db, region_id)["p"] == first_p
 
 
+def test_jiao_levy_rises_then_stops_and_keeps_base_transport(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1637
+    state.period = 1
+    db.save_state(state)
+
+    before = _settle_payload(db, "shaanxi")
+    seed_liao = before["p"]["三饷应征"]
+    seed_transport = before["p"]["起运定额"]
+    base_transport = max(0.0, seed_transport - seed_liao)
+
+    apply_historical_fiscal_rates(state, db)
+
+    after_rise = _settle_payload(db, "shaanxi")
+    meta = after_rise["_meta"]
+    expected_liao = meta["辽饷九厘基线"] * 4.0 / 3.0
+    expected_jiao = meta["剿饷基线"]
+    assert db.conn.execute(
+        "SELECT terminal_reason FROM event_triggers WHERE event_id=?",
+        ("jiao_levy_start_1637",),
+    ).fetchone()["terminal_reason"] == "已准"
+    assert math.isclose(after_rise["p"]["三饷应征"], expected_liao + expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(after_rise["p"]["起运定额"], base_transport + expected_liao + expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
+
+    state.year = 1640
+    state.period = 1
+    db.save_state(state)
+    apply_historical_fiscal_rates(state, db)
+
+    after_stop = _settle_payload(db, "shaanxi")
+    assert db.conn.execute(
+        "SELECT terminal_reason FROM event_triggers WHERE event_id=?",
+        ("jiao_levy_stop_1640",),
+    ).fetchone()["terminal_reason"] == "已停"
+    assert math.isclose(after_stop["p"]["三饷应征"], expected_liao, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(after_stop["p"]["起运定额"], base_transport + expected_liao, rel_tol=1e-9, abs_tol=1e-9)
+    assert after_stop["p"]["起运定额"] >= after_stop["p"]["三饷应征"]
+    assert after_stop["p"]["起运定额"] > 0
+
+
+def test_jiao_levy_stop_rejected_keeps_levy_in_force(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1640
+    state.period = 1
+    db.save_state(state)
+    db.mark_event_triggered(state, "jiao_levy_start_1637", source="test", terminal_reason="已准", commit=False)
+    db.mark_event_triggered(state, "jiao_levy_stop_1640", source="test", terminal_reason="仍征", commit=False)
+    db.conn.commit()
+
+    apply_historical_fiscal_rates(state, db)
+
+    settle = _settle_payload(db, "shaanxi")
+    expected_liao = settle["_meta"]["辽饷九厘基线"] * 4.0 / 3.0
+    expected_jiao = settle["_meta"]["剿饷基线"]
+    assert math.isclose(settle["p"]["三饷应征"], expected_liao + expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
+
+
+def test_jiao_stop_is_obsolete_when_start_was_rejected(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1640
+    state.period = 1
+    db.save_state(state)
+    db.mark_event_triggered(state, "jiao_levy_start_1637", source="test", terminal_reason="已驳")
+
+    terminalized = issues.apply_event_terminal_states(state, db)
+
+    assert any(item["id"] == "jiao_levy_stop_1640" and item["terminal_state"] == "obsolete" for item in terminalized)
+    row = db.conn.execute(
+        "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+        ("jiao_levy_stop_1640",),
+    ).fetchone()
+    assert row["terminal_state"] == "obsolete"
+
+
+def test_jiao_stop_definition_missing_fails_loud(game, monkeypatch):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1637
+    state.period = 1
+    db.save_state(state)
+    event_by_id = dict(content.event_by_id)
+    event_by_id.pop("jiao_levy_stop_1640", None)
+    monkeypatch.setattr(content, "event_by_id", event_by_id)
+
+    with pytest.raises(SettlementAbort, match="缺停征链 jiao_levy_stop_1640"):
+        apply_historical_fiscal_rates(state, db)
+
+
 def test_fiscal_levy_gate_waits_until_1631_and_generic_terminal_pass_skips_it(game):
     db, state, content = game
     issues.bind_content(content)
