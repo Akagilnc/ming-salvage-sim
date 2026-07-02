@@ -8003,7 +8003,9 @@ class GameDB:
 
     def _event_terminal_upgrade_assignments(self, *, fill_triggered_reason: bool = False) -> str:
         reason_fill = ""
+        pending_reason_expr = "COALESCE(NULLIF(event_triggers.terminal_reason, ''), excluded.terminal_reason)"
         if fill_triggered_reason:
+            pending_reason_expr = "COALESCE(NULLIF(excluded.terminal_reason, ''), event_triggers.terminal_reason)"
             reason_fill = """
                     WHEN event_triggers.terminal_state = 'triggered'
                       AND COALESCE(event_triggers.terminal_reason, '') = ''
@@ -8038,7 +8040,7 @@ class GameDB:
                 END,
                 terminal_reason = CASE
                     WHEN COALESCE(event_triggers.terminal_state, '') = ''
-                    THEN COALESCE(NULLIF(event_triggers.terminal_reason, ''), excluded.terminal_reason)
+                    THEN {pending_reason_expr}
 {reason_fill}                    ELSE event_triggers.terminal_reason
                 END
         """
@@ -8157,6 +8159,8 @@ class GameDB:
                 END,
                 terminal_state = event_triggers.terminal_state,
                 terminal_reason = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.terminal_reason
                     WHEN COALESCE(event_triggers.terminal_reason, '') = ''
                     THEN excluded.terminal_reason
                     ELSE event_triggers.terminal_reason

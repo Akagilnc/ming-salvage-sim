@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 import sqlite3
 from typing import Any, Dict, List, Optional
@@ -30,6 +31,7 @@ from ming_sim.flows import (
     _apply_economy_list,
     _apply_faction_dict,
     _apply_metric_dict,
+    army_needed,
     _strict_int,
 )
 from ming_sim.models import Event, GameState, effect_dict_has_work, is_vassal_prince, loads_effect_dict
@@ -987,6 +989,719 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
                 "terminal_reason": str(r["terminal_reason"] or ""),
             }
     return records
+
+
+def _event_pending_choice_records(db: GameDB) -> Dict[str, Dict[str, str]]:
+    records: Dict[str, Dict[str, str]] = {}
+    for r in db.conn.execute(
+        """
+        SELECT event_id, terminal_state, terminal_reason, source
+        FROM event_triggers
+        WHERE COALESCE(terminal_state, '') = ''
+          AND COALESCE(terminal_reason, '') != ''
+        """
+    ).fetchall():
+        if r["event_id"]:
+            records[str(r["event_id"])] = {
+                "terminal_state": "",
+                "terminal_reason": str(r["terminal_reason"] or ""),
+                "source": str(r["source"] or ""),
+            }
+    return records
+
+
+FISCAL_LEVY_EVENT_CATEGORY = "fiscal_levy"
+_LIAO_LEVY_RISE_EVENT_ID = "liao_levy_rise_1631"
+_LIAN_LEVY_START_EVENT_ID = "lian_levy_start_1639"
+_LIAO_LEVY_RISE_FACTOR = 4.0 / 3.0
+_JIAO_LEVY_START_EVENT_ID = "jiao_levy_start_1637"
+_JIAO_LEVY_STOP_EVENT_ID = "jiao_levy_stop_1640"
+_JIAO_LEVY_NATIONAL_MONTHLY = 280.0 / 12.0
+_LIAN_LEVY_NATIONAL_MONTHLY = 730.0 / 12.0
+_SETTLE_META_BASE_TRANSPORT_KEY = "正赋起运基线"
+_SETTLE_META_LIAO_SEED_KEY = "辽饷九厘基线"
+_SETTLE_META_JIAO_SEED_KEY = "剿饷基线"
+_SETTLE_META_LIAN_SEED_KEY = "练饷基线"
+_SETTLE_META_LAND_DENOMINATOR_KEY = "饷率田亩分母基线"
+_FISCAL_LEVY_PROVISIONAL_KEYS = {
+    _SETTLE_META_BASE_TRANSPORT_KEY,
+    _SETTLE_META_LIAO_SEED_KEY,
+    _SETTLE_META_JIAO_SEED_KEY,
+    _SETTLE_META_LIAN_SEED_KEY,
+    _SETTLE_META_LAND_DENOMINATOR_KEY,
+}
+_FISCAL_LEVY_PRESENTATION_INSTRUCTION = (
+    "以奏疏口吻给出万两量级的加征估算与可补军费程度；"
+    "可写史实加征语和各省约略分解。"
+)
+
+
+def _normalize_event_terminal_reason(ev: Event, raw: object) -> str:
+    label = re.sub(r"\s+", "", str(raw or ""))
+    if not label:
+        return ""
+    allowed = getattr(ev, "terminal_reason_labels", []) or []
+    for canonical in allowed:
+        if label == re.sub(r"\s+", "", canonical):
+            return canonical
+    return ""
+
+
+def _fiscal_levy_default_terminal_reason(ev: Event, state: GameState) -> str:
+    if not getattr(ev, "terminal_reason_labels", None):
+        raise SettlementAbort(
+            f"饷率事件 {ev.id} 缺 terminal_reason_labels 白名单",
+            turn=state.turn,
+            stage="fiscal_levy_config",
+        )
+    label = _normalize_event_terminal_reason(ev, getattr(ev, "default_terminal_reason", ""))
+    if not label:
+        raise SettlementAbort(
+            f"饷率事件 {ev.id} default_terminal_reason 不可归一",
+            turn=state.turn,
+            stage="fiscal_levy_config",
+        )
+    return label
+
+
+def _fiscal_levy_normalized_terminal_reason_or_abort(
+    ev: Event,
+    raw: object,
+    state: GameState,
+) -> str:
+    label = _normalize_event_terminal_reason(ev, raw)
+    if label:
+        return label
+    allowed = "/".join(getattr(ev, "terminal_reason_labels", []) or [])
+    raise SettlementAbort(
+        f"饷率事件 {ev.id} 结局标签无法归一：{raw!r}；合法标签：{allowed}",
+        turn=state.turn,
+        stage="fiscal_levy_config",
+    )
+
+
+def _canonicalize_existing_fiscal_levy_terminal_reason(
+    ev: Event,
+    record: Dict[str, str],
+    state: GameState,
+    db: GameDB,
+) -> None:
+    if record.get("terminal_state") != "triggered":
+        return
+    label = _fiscal_levy_normalized_terminal_reason_or_abort(
+        ev,
+        record.get("terminal_reason"),
+        state,
+    )
+    if label != record.get("terminal_reason"):
+        db.conn.execute(
+            "UPDATE event_triggers SET terminal_reason=? WHERE event_id=?",
+            (label, ev.id),
+        )
+        record["terminal_reason"] = label
+
+
+def _as_float(raw: object, *, ctx: str) -> float:
+    if isinstance(raw, bool):
+        raise ValueError(f"{ctx} 非数值：{raw!r}")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{ctx} 非数值：{raw!r}") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"{ctx} 非有限数值：{raw!r}")
+    return value
+
+
+def _fiscal_levy_liao_seed(meta: Dict[str, object], p: Dict[str, object], region_id: str) -> float:
+    if _SETTLE_META_LIAO_SEED_KEY in meta:
+        return _as_float(
+            meta[_SETTLE_META_LIAO_SEED_KEY],
+            ctx=f"{region_id}.settle._meta.{_SETTLE_META_LIAO_SEED_KEY}",
+        )
+    return _as_float(p.get("三饷应征"), ctx=f"{region_id}.settle.p.三饷应征")
+
+
+def _fiscal_levy_base_transport(
+    meta: Dict[str, object],
+    p: Dict[str, object],
+    liao_seed: float,
+    region_id: str,
+) -> float:
+    if _SETTLE_META_BASE_TRANSPORT_KEY in meta:
+        return max(
+            0.0,
+            _as_float(
+                meta[_SETTLE_META_BASE_TRANSPORT_KEY],
+                ctx=f"{region_id}.settle._meta.{_SETTLE_META_BASE_TRANSPORT_KEY}",
+            ),
+        )
+    seed_transport = _as_float(p.get("起运定额"), ctx=f"{region_id}.settle.p.起运定额")
+    return max(0.0, seed_transport - liao_seed)
+
+
+def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> Optional[dict]:
+    if isinstance(raw_fiscal, dict):
+        return raw_fiscal
+    if raw_fiscal is None or raw_fiscal == "":
+        raw_fiscal = "{}"
+    elif not isinstance(raw_fiscal, (str, bytes, bytearray)):
+        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
+        return None
+    try:
+        fiscal = json.loads(raw_fiscal)
+    except (TypeError, ValueError) as exc:
+        tlog(f"[fiscal-levy] {region_id} fiscal 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
+        return None
+    if not isinstance(fiscal, dict):
+        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
+        return None
+    return fiscal
+
+
+def _fiscal_levy_event_by_id(event_id: str) -> Optional[Event]:
+    return _ctx().event_by_id.get(event_id)
+
+
+def _fiscal_levy_event_approved(
+    terminal_records: Dict[str, Dict[str, str]],
+    event_id: str,
+) -> bool:
+    record = terminal_records.get(event_id) or {}
+    return (
+        record.get("terminal_state") == "triggered"
+        and record.get("terminal_reason") == "已准"
+    )
+
+
+def _fiscal_levy_stopped(
+    terminal_records: Dict[str, Dict[str, str]],
+    event_id: str,
+) -> bool:
+    record = terminal_records.get(event_id) or {}
+    return (
+        record.get("terminal_state") == "triggered"
+        and record.get("terminal_reason") == "已停"
+    )
+
+
+def _fiscal_levy_land_share_amount(
+    land: float,
+    total_land: float,
+    national_monthly: float,
+) -> float:
+    if total_land <= 0:
+        return 0.0
+    return max(0.0, land) / total_land * national_monthly
+
+
+def _fiscal_levy_land_denominator(
+    meta: Dict[str, object],
+    parsed_total_land: float,
+    *,
+    denominator_complete: bool,
+    region_id: str,
+) -> float:
+    if _SETTLE_META_LAND_DENOMINATOR_KEY in meta:
+        return _as_float(
+            meta[_SETTLE_META_LAND_DENOMINATOR_KEY],
+            ctx=f"{region_id}.settle._meta.{_SETTLE_META_LAND_DENOMINATOR_KEY}",
+        )
+    if denominator_complete:
+        return parsed_total_land
+    return 0.0
+
+
+def _fiscal_levy_share_seed(
+    meta: Dict[str, object],
+    key: str,
+    land: float,
+    total_land: float,
+    national_monthly: float,
+    region_id: str,
+) -> float:
+    if key in meta:
+        return _as_float(meta[key], ctx=f"{region_id}.settle._meta.{key}")
+    return _fiscal_levy_land_share_amount(land, total_land, national_monthly)
+
+
+def _validate_fiscal_levy_share_meta(meta: Dict[str, object], region_id: str) -> None:
+    for key in (
+        _SETTLE_META_JIAO_SEED_KEY,
+        _SETTLE_META_LIAN_SEED_KEY,
+        _SETTLE_META_LAND_DENOMINATOR_KEY,
+    ):
+        if key in meta:
+            _as_float(meta[key], ctx=f"{region_id}.settle._meta.{key}")
+
+
+def _fiscal_levy_mark_provisional(meta: Dict[str, object]) -> None:
+    raw = meta.get("provisional", [])
+    if isinstance(raw, list):
+        provisional = [str(item) for item in raw]
+    else:
+        provisional = []
+    seen = set(provisional)
+    for key in sorted(_FISCAL_LEVY_PROVISIONAL_KEYS):
+        if key not in seen:
+            provisional.append(key)
+            seen.add(key)
+    meta["provisional"] = provisional
+
+
+def _jiao_levy_in_force(terminal_records: Dict[str, Dict[str, str]], state: GameState) -> bool:
+    if _fiscal_levy_event_by_id(_JIAO_LEVY_START_EVENT_ID) is None:
+        return False
+    if _fiscal_levy_event_by_id(_JIAO_LEVY_STOP_EVENT_ID) is None:
+        raise SettlementAbort(
+            f"饷率事件 {_JIAO_LEVY_START_EVENT_ID} 已定义但缺停征链 {_JIAO_LEVY_STOP_EVENT_ID}",
+            turn=state.turn,
+            stage="fiscal_levy_config",
+        )
+    return (
+        _fiscal_levy_event_approved(terminal_records, _JIAO_LEVY_START_EVENT_ID)
+        and not _fiscal_levy_stopped(terminal_records, _JIAO_LEVY_STOP_EVENT_ID)
+    )
+
+
+def _apply_fiscal_levy_targets(
+    db: GameDB,
+    state: GameState,
+    terminal_records: Dict[str, Dict[str, str]],
+) -> int:
+    liao_rise_approved = _fiscal_levy_event_approved(terminal_records, _LIAO_LEVY_RISE_EVENT_ID)
+    jiao_in_force = _jiao_levy_in_force(terminal_records, state)
+    lian_levy_approved = _fiscal_levy_event_approved(terminal_records, _LIAN_LEVY_START_EVENT_ID)
+    region_entries: List[Dict[str, object]] = []
+    denominator_complete = True
+    for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
+        region_id = str(row["id"])
+        fiscal = _load_region_fiscal_for_fiscal_levy(region_id, row["fiscal"])
+        if fiscal is None:
+            denominator_complete = False
+            continue
+        try:
+            if "settle" not in fiscal:
+                continue
+            settle = fiscal.get("settle")
+            if not isinstance(settle, dict):
+                raise ValueError(f"{region_id}.settle 非字典")
+            p = settle.get("p")
+            st = settle.get("st")
+            if not isinstance(p, dict):
+                raise ValueError(f"{region_id}.settle.p 非字典")
+            if not isinstance(st, dict):
+                raise ValueError(f"{region_id}.settle.st 非字典")
+            meta_raw = settle.get("_meta") or {}
+            if not isinstance(meta_raw, dict):
+                raise ValueError(f"{region_id}.settle._meta 非字典")
+            meta = dict(meta_raw)
+            liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
+            land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
+            base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
+            _validate_fiscal_levy_share_meta(meta, region_id)
+        except ValueError as exc:
+            denominator_complete = False
+            tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
+            continue
+        region_entries.append({
+            "region_id": region_id,
+            "fiscal": fiscal,
+            "settle": settle,
+            "p": p,
+            "meta_raw": meta_raw,
+            "meta": meta,
+            "liao_seed": liao_seed,
+            "land": land,
+            "base_transport": base_transport,
+        })
+    total_land = sum(max(0.0, float(item["land"])) for item in region_entries)
+    touched = 0
+    for item in region_entries:
+        region_id = str(item["region_id"])
+        fiscal = item["fiscal"]
+        settle = item["settle"]
+        p = item["p"]
+        meta_raw = item["meta_raw"]
+        meta = item["meta"]
+        liao_seed = float(item["liao_seed"])
+        land = float(item["land"])
+        land_denominator = _fiscal_levy_land_denominator(
+            meta,
+            total_land,
+            denominator_complete=denominator_complete,
+            region_id=region_id,
+        )
+        has_jiao_seed = _SETTLE_META_JIAO_SEED_KEY in meta
+        has_lian_seed = _SETTLE_META_LIAN_SEED_KEY in meta
+        jiao_seed = _fiscal_levy_share_seed(
+            meta,
+            _SETTLE_META_JIAO_SEED_KEY,
+            land,
+            land_denominator,
+            _JIAO_LEVY_NATIONAL_MONTHLY,
+            region_id,
+        )
+        lian_seed = _fiscal_levy_share_seed(
+            meta,
+            _SETTLE_META_LIAN_SEED_KEY,
+            land,
+            land_denominator,
+            _LIAN_LEVY_NATIONAL_MONTHLY,
+            region_id,
+        )
+        base_transport = float(item["base_transport"])
+        target_liao = liao_seed * (_LIAO_LEVY_RISE_FACTOR if liao_rise_approved else 1.0)
+        target_jiao = jiao_seed if jiao_in_force else 0.0
+        target_lian = lian_seed if lian_levy_approved else 0.0
+        target_sanxiang = target_liao + target_jiao + target_lian
+        target_transport = base_transport + target_sanxiang
+        next_p = dict(p)
+        next_p["三饷应征"] = target_sanxiang
+        next_p["起运定额"] = target_transport
+        meta[_SETTLE_META_LIAO_SEED_KEY] = liao_seed
+        if has_jiao_seed or land_denominator > 0:
+            meta[_SETTLE_META_JIAO_SEED_KEY] = jiao_seed
+        if has_lian_seed or land_denominator > 0:
+            meta[_SETTLE_META_LIAN_SEED_KEY] = lian_seed
+        meta[_SETTLE_META_BASE_TRANSPORT_KEY] = base_transport
+        if land_denominator > 0:
+            meta[_SETTLE_META_LAND_DENOMINATOR_KEY] = land_denominator
+        _fiscal_levy_mark_provisional(meta)
+        if next_p == p and meta == meta_raw:
+            continue
+        settle["p"] = next_p
+        settle["_meta"] = meta
+        db.conn.execute(
+            "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(fiscal, ensure_ascii=False), region_id),
+        )
+        touched += 1
+    return touched
+
+
+def _round_half_up(value: float, step: float) -> float:
+    if step <= 0:
+        return value
+    return math.floor(value / step + 0.5) * step
+
+
+def _wanliang_range(amount: float, *, unit: str = "万两/月") -> Dict[str, object]:
+    value = max(0.0, float(amount))
+    lower = _round_half_up(value * 0.9, 1.0)
+    upper = _round_half_up(value * 1.1, 1.0)
+    midpoint = round(value, 1)
+    lower = min(lower, midpoint)
+    upper = max(upper, midpoint)
+    if upper < lower:
+        upper = lower
+    if value > 0 and upper == lower:
+        upper = round(lower + 1.0, 1)
+    return {
+        "lower": round(lower, 1),
+        "midpoint": midpoint,
+        "upper": round(upper, 1),
+        "unit": unit,
+        "text": f"约{lower:g}至{upper:g}{unit}",
+    }
+
+
+def _plain_wanliang_approx(amount: float) -> str:
+    value = max(0.0, float(amount))
+    if value <= 0:
+        return "无明显缺口"
+    if value < 10:
+        return "不足十万两"
+    step = 5.0 if value < 20 else 10.0
+    rounded = max(step, _round_half_up(value, step))
+    return f"约{rounded:g}万两"
+
+
+def _fiscal_levy_coverage_text(monthly_added: float, gap: float, basis: str) -> tuple[float, str]:
+    if gap <= 0:
+        return 0.0, "军费缺口暂不显，新增饷源可作缓冲"
+    coverage_cheng = round(max(0.0, monthly_added) / gap * 10.0, 1)
+    if coverage_cheng < 0.5:
+        coverage = "不足半成"
+    elif coverage_cheng < 1.0:
+        coverage = "约半成"
+    else:
+        coverage = f"约{coverage_cheng:g}成"
+    return coverage_cheng, f"按{basis}{_plain_wanliang_approx(gap)}估，可补军费{coverage}"
+
+
+def _current_army_gap(db: GameDB) -> tuple[float, str, str]:
+    rows = db.conn.execute(
+        """
+        SELECT *
+        FROM armies
+        WHERE owner_power='ming' AND is_tusi=0 AND self_funded_pay=0
+        """
+    ).fetchall()
+    arrears = sum(float(row["arrears"] or 0.0) for row in rows)
+    if arrears > 0:
+        return arrears, "全军累计欠饷", "万两"
+    monthly_due = sum(float(army_needed(row)) for row in rows)
+    return monthly_due, "本月应发军饷", "万两/月"
+
+
+def _region_fiscal_levy_components(db: GameDB) -> List[Dict[str, object]]:
+    rows = db.conn.execute(
+        "SELECT id, name, controlled_by, fiscal FROM regions ORDER BY id"
+    ).fetchall()
+    total_land = 0.0
+    parsed_rows: List[Dict[str, object]] = []
+    denominator_complete = True
+    for row in rows:
+        region_id = str(row["id"])
+        fiscal = _load_region_fiscal_for_fiscal_levy(region_id, row["fiscal"])
+        if fiscal is None:
+            denominator_complete = False
+            continue
+        try:
+            if "settle" not in fiscal:
+                continue
+            settle = fiscal.get("settle")
+            if not isinstance(settle, dict):
+                raise ValueError(f"{region_id}.settle 非字典")
+            st = settle.get("st")
+            p = settle.get("p")
+            if not isinstance(st, dict):
+                raise ValueError(f"{region_id}.settle.st 非字典")
+            if not isinstance(p, dict):
+                raise ValueError(f"{region_id}.settle.p 非字典")
+            land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
+        except ValueError as exc:
+            denominator_complete = False
+            tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
+            continue
+        total_land += max(0.0, land)
+        parsed_rows.append({
+            "row": row,
+            "fiscal": fiscal,
+            "settle": settle,
+            "p": p,
+            "land": land,
+        })
+    components: List[Dict[str, object]] = []
+    for parsed in parsed_rows:
+        row = parsed["row"]
+        if str(row["controlled_by"]) != "ming":
+            continue
+        region_id = str(row["id"])
+        p = parsed["p"]
+        land = float(parsed["land"])
+        settle = parsed["settle"]
+        try:
+            meta_raw = settle.get("_meta") or {}
+            if not isinstance(meta_raw, dict):
+                raise ValueError(f"{region_id}.settle._meta 非字典")
+            meta = dict(meta_raw)
+            liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
+            land_denominator = _fiscal_levy_land_denominator(
+                meta,
+                total_land,
+                denominator_complete=denominator_complete,
+                region_id=region_id,
+            )
+            jiao_seed = _fiscal_levy_share_seed(
+                meta,
+                _SETTLE_META_JIAO_SEED_KEY,
+                land,
+                land_denominator,
+                _JIAO_LEVY_NATIONAL_MONTHLY,
+                region_id,
+            )
+            lian_seed = _fiscal_levy_share_seed(
+                meta,
+                _SETTLE_META_LIAN_SEED_KEY,
+                land,
+                land_denominator,
+                _LIAN_LEVY_NATIONAL_MONTHLY,
+                region_id,
+            )
+        except ValueError as exc:
+            tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
+            continue
+        components.append({
+            "region_id": region_id,
+            "region_name": str(row["name"]),
+            "liao_seed": liao_seed,
+            "jiao_seed": jiao_seed,
+            "lian_seed": lian_seed,
+        })
+    return components
+
+
+def _fiscal_levy_event_added_amount(event_id: str, components: List[Dict[str, object]]) -> float:
+    total = 0.0
+    for item in components:
+        liao_seed = float(item["liao_seed"])
+        jiao_seed = float(item["jiao_seed"])
+        lian_seed = float(item["lian_seed"])
+        if event_id == _LIAO_LEVY_RISE_EVENT_ID:
+            total += liao_seed * (_LIAO_LEVY_RISE_FACTOR - 1.0)
+        elif event_id == _JIAO_LEVY_START_EVENT_ID:
+            total += jiao_seed
+        elif event_id == _LIAN_LEVY_START_EVENT_ID:
+            total += lian_seed
+        elif event_id == _JIAO_LEVY_STOP_EVENT_ID:
+            total -= jiao_seed
+    return total
+
+
+def fiscal_levy_memorial_estimates(state: GameState, db: GameDB) -> List[Dict[str, object]]:
+    """Return court-facing levy estimates for fiscal events resolved this turn.
+
+    This is the #259 shadow/#260 seam: callers read event outcomes from the same
+    event ledger regardless of whether the terminal reason came from the current
+    shadow stub (`source=fiscal_levy_shadow`) or a future real edict route.
+    """
+    c = _ctx()
+    rows = db.conn.execute(
+        """
+        SELECT event_id, terminal_reason, source
+        FROM event_triggers
+        WHERE turn=? AND terminal_state='triggered'
+        """,
+        (state.turn,),
+    ).fetchall()
+    if not rows:
+        return []
+    row_by_event_id = {str(row["event_id"]): row for row in rows}
+    terminal_records = _event_terminal_records(db)
+    components = _region_fiscal_levy_components(db)
+    army_gap, gap_basis, gap_unit = _current_army_gap(db)
+    estimates: List[Dict[str, object]] = []
+    for ev in c.events:
+        if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+            continue
+        row = row_by_event_id.get(ev.id)
+        if row is None:
+            continue
+        if ev.id == _JIAO_LEVY_START_EVENT_ID and not _jiao_levy_in_force(terminal_records, state):
+            continue
+        added = _fiscal_levy_event_added_amount(ev.id, components)
+        if added <= 0:
+            continue
+        if str(row["terminal_reason"] or "") != "已准":
+            continue
+        coverage_cheng, coverage_text = _fiscal_levy_coverage_text(added, army_gap, gap_basis)
+        estimates.append({
+            "event_id": ev.id,
+            "event_title": ev.title,
+            "terminal_reason": str(row["terminal_reason"] or ""),
+            "source": str(row["source"] or ""),
+            "scope": "国总口径",
+            "presentation_instruction": _FISCAL_LEVY_PRESENTATION_INSTRUCTION,
+            "national_added_wanliang": _wanliang_range(added),
+            "national_army_gap_wanliang": _wanliang_range(army_gap, unit=gap_unit),
+            "army_gap_basis": gap_basis,
+            "army_gap_coverage_cheng": coverage_cheng,
+            "army_gap_coverage_text": coverage_text,
+        })
+    return estimates
+
+
+def apply_historical_fiscal_rates(
+    state: GameState,
+    db: GameDB,
+    *,
+    commit: bool = True,
+) -> List[Dict[str, object]]:
+    """饷率 effect 通道：同 tick 前置结局 stub + settle.p set-to-target。
+
+    #259 shadow 阶段只处理 category=fiscal_levy 的历史事件；结局值必须经事件自身
+    terminal_reason_labels 白名单归一。随后按事件账重算在征饷集并持久化省级
+    settle.p，保证后续 settle_tick 当月读到目标值且重复运行不叠加。
+    """
+    c = _ctx()
+    should_commit = commit and not db.conn.in_transaction
+    applied: List[Dict[str, object]] = []
+
+    def run_fiscal_levy_pass() -> None:
+        terminal_records = _event_terminal_records(db)
+        pending_choice_records = _event_pending_choice_records(db)
+        for ev in c.events:
+            if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+                continue
+            if ev.id in terminal_records:
+                _canonicalize_existing_fiscal_levy_terminal_reason(
+                    ev,
+                    terminal_records[ev.id],
+                    state,
+                    db,
+                )
+            elif ev.id in pending_choice_records:
+                if _event_window_expired(ev, state):
+                    pass
+                elif not _event_window_open(ev, state):
+                    continue
+                elif not _gate_passed(ev.trigger_gate, state.metrics, db):
+                    continue
+                else:
+                    record = pending_choice_records[ev.id]
+                    label = _fiscal_levy_normalized_terminal_reason_or_abort(
+                        ev,
+                        record.get("terminal_reason"),
+                        state,
+                    )
+                    db.mark_event_triggered(
+                        state,
+                        ev.id,
+                        source=record.get("source") or "fiscal_levy_shadow",
+                        terminal_reason=label,
+                        commit=False,
+                    )
+                    terminal_records[ev.id] = {
+                        "terminal_state": "triggered",
+                        "terminal_reason": label,
+                    }
+                    applied.append({
+                        "id": ev.id,
+                        "title": ev.title,
+                        "terminal_state": "triggered",
+                        "terminal_reason": label,
+                    })
+            if ev.id not in terminal_records:
+                if _event_window_expired(ev, state):
+                    db.mark_event_expired(state, ev.id, commit=False)
+                    terminal_records[ev.id] = {
+                        "terminal_state": "expired",
+                        "terminal_reason": "过最晚触发时点仍未达成触发门",
+                    }
+                    applied.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
+                    continue
+                if not _event_window_open(ev, state):
+                    continue
+                if not _gate_passed(ev.trigger_gate, state.metrics, db):
+                    continue
+                label = _fiscal_levy_default_terminal_reason(ev, state)
+                db.mark_event_triggered(
+                    state,
+                    ev.id,
+                    source="fiscal_levy_shadow",
+                    terminal_reason=label,
+                    commit=False,
+                )
+                terminal_records[ev.id] = {
+                    "terminal_state": "triggered",
+                    "terminal_reason": label,
+                }
+                applied.append({
+                    "id": ev.id,
+                    "title": ev.title,
+                    "terminal_state": "triggered",
+                    "terminal_reason": label,
+                })
+        _apply_fiscal_levy_targets(db, state, terminal_records)
+
+    if should_commit:
+        with atomic(db):
+            run_fiscal_levy_pass()
+    else:
+        run_fiscal_levy_pass()
+    return applied
 
 
 _EVENT_GATE_KEY_RE = re.compile(r"^event\.([^.]+)\.(triggered|terminal_state|terminal_reason)$")
