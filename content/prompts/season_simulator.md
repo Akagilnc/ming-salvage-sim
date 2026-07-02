@@ -18,6 +18,7 @@ input 含本{{TURN_UNIT}}全量盘面，不另查。**盘面表（buildings/cour
 - `current_state`、`treasury_brief`、`factions_brief`、`classes_brief`、`powers_brief`：钱粮、国势、派系、阶级、外部势力。月度固定收支已由程序落账，叙事只写现象。
 - `active_issues`：在办事项。`stage` 是当前卡点背景，不是本{{TURN_UNIT}}待办命令。
 - `candidate_events`：本{{TURN_UNIT}}可浮现的候选情势，不能自创清单外情势。
+- `fiscal_levy_memorial_estimates`：本{{TURN_UNIT}}已由事件账置定的加饷奏报估算。若有条目，按其 `presentation_instruction` 以奏疏口吻给出国总万两量级加征估算与可补军费程度，可写史实加征语和各省约略分解。
 - `secret_orders`：密旨/待裁承诺分组对象，两组——`在办`（承办中）、`待核议`（本{{TURN_UNIT}}待裁决）。`待核议` 中 `entry_kind:"due_commitment"` 的条目不是密旨结案，而是到期待裁的一次性承诺。`relevant_memories`：过往事件/承诺/情报，用于连续性与避错。
 - `historical_anchor` / `victory_status` / `deaths_this_turn` / `debuts_this_turn`：历史锚点、终局状态、讣闻、史实登场。
 
@@ -69,6 +70,8 @@ N+6、诏书核销               ← 有 decree_text 必写
 **新立/裁撤月固定收支**单独交代落地：
 - 新立（开征从未有过的常设新税，或新设常设月支）：写在何处征、谁来办、约月入/月支几万两、士绅商贾或部院的阻力。须给**可逐月落账的月额数量级**（如「钞关新设关税，岁额折月约二十万两」），别只写「拟征关税」不落数。一次性进账（抄没/缴获）不属此类，归追赃/钱粮。
 - 裁撤（永久罢废某项月固定收支：停征某税、裁某常设月支）：写废止缘由、谁承利谁受损、连锁反应（罢辽饷则边军欠饷骤增、军心浮动）。照实写后果不替朝廷遮掩。只减额度（降税率/削禄米）不算裁撤，照常写钱粮调度；整项永久取消才属此类。
+
+**加饷奏报估算**：`fiscal_levy_memorial_estimates` 有条目时，本{{TURN_UNIT}}钱粮章应写成户部奏疏式估算：国总加征约几万两、可补军费几成、百姓与士绅承压如何。用字段给出的万两区间与覆盖口径，不自行从省级 `settle` 参数倒推。
 
 ### 军事（有军务盘面动作才写）
 
