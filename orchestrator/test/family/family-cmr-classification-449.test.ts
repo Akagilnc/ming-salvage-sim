@@ -1064,6 +1064,50 @@ describe("#449 family CMR finding classification", () => {
     });
   });
 
+  it("fails closed when accepted suppression scope only prefix-matches the issue number", () => {
+    const prefixIssueFinding: Finding = {
+      ...finding,
+      action: "wont_fix",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "#4450",
+        scope: "#4450",
+        reason: "Owner accepted only issue 4450",
+        findingIdentity: findingIdentityKey(finding),
+        boundedReopen: "reopen on different issue",
+      },
+    };
+    const acceptedSource = {
+      source: "#4450",
+      scope: "#4450",
+      reason: "Owner accepted only issue 4450",
+      findingIdentity: findingIdentityKey(finding),
+      boundedReopen: "reopen on different issue",
+    };
+
+    const classified = classifyFamilyCmrFindings({
+      familyIssue: 445,
+      findings: [prefixIssueFinding],
+      moduleContext: buildFamilyModuleContext({
+        childModules: [],
+        familyModule: {
+          module: "orchestrator-family",
+          moduleScope: ["orchestrator/src/family"],
+          source: "family_issue",
+          issue: 445,
+        },
+        acceptedSuppressionSources: [acceptedSource],
+      }),
+    });
+
+    expect(classified.blocking).toEqual([prefixIssueFinding]);
+    expect(classified.dispositions).toEqual([]);
+    expect(classified.results[0]).toMatchObject({
+      classification: "same_module_still_red",
+      attribution: { method: "family_module", module: "orchestrator-family" },
+    });
+  });
+
   it("fails closed when a prior accepted suppression has stale module scope", () => {
     const currentFinding: Finding = {
       ...finding,

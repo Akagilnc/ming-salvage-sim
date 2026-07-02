@@ -1608,6 +1608,91 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     expect(backend.dispatched).toEqual([]);
   });
 
+  it("matches broad file scope against path-line-symbol findings", async () => {
+    const fileScopedFinding: Finding = {
+      severity: "high",
+      category: "correctness",
+      claim_quote: "stripLocationLine(value)",
+      location: "orchestrator/src/runner.ts:410:runPass",
+      suggested_fix: "match file scope against path:line:symbol findings",
+      action: "fix_now",
+    };
+    const fileScopedFindingKey = findingIdentityKey(fileScopedFinding);
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        {
+          step: "S2",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding] } },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [fileScopedFinding],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [fileScopedFinding],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "runner_bookkeeping",
+          intent: "continue_fixing",
+          findingScope: { locations: ["orchestrator/src/runner.ts"] },
+          source: "resume_input",
+          ts: "2026-07-01T00:00:04.000Z",
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship"]);
+  });
+
   it("uses broad file scope when it maps to one active finding lineage", async () => {
     const fileScopedFinding: Finding = {
       severity: "high",
