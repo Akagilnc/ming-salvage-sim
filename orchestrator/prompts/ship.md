@@ -20,8 +20,10 @@ rerun clears it.
 
 ## Required output
 
-Emit a single `<ship>` tag on its own line, then print the completion signal on its
-own line as the final line.
+Write the single JSON object to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
+set. Then, for compatibility with older runners, emit a single `<ship>` tag on its
+own line containing the same single JSON object, and print the completion signal
+on its own line as the final line.
 
 PR opened:
 

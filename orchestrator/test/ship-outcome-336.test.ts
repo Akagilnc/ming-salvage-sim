@@ -15,6 +15,10 @@
  * (mirrors #335's parseCmrOutcome / cmrOutcomeFromResult).
  */
 
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -271,6 +275,70 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
 // ═══════════════════ shipOutcomeFromResult (completion-signal gate) ═══════════════════
 
 describe("#336 shipOutcomeFromResult — completion-signal gate (mirrors the cmr/merger gate)", () => {
+  it("prefers a runner-owned outcome sidecar over malformed ship stdout", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ship-outcome-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ status: "pushed", branch: "feat/issue-496" }) + "\n",
+      "utf8",
+    );
+
+    const o = shipOutcomeFromResult({
+      completionSignal: SHIP_COMPLETION_SIGNAL,
+      stdout: "<ship>not json</ship>\nSHIP_STEP_COMPLETE",
+      outcomePath,
+    });
+
+    expect(o).toEqual({
+      kind: "shipped",
+      status: "pushed",
+      branch: "feat/issue-496",
+    });
+  });
+
+  it("parses sidecar payloads directly when free-form text contains a ship tag delimiter", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ship-outcome-delimiter-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        failed: {
+          reason: "tests red",
+          diagnosis: "log quoted the literal </ship> delimiter",
+        },
+      }) + "\n",
+      "utf8",
+    );
+
+    const o = shipOutcomeFromResult({
+      completionSignal: SHIP_COMPLETION_SIGNAL,
+      stdout: "<ship>not json</ship>\nSHIP_STEP_COMPLETE",
+      outcomePath,
+    });
+
+    expect(o).toEqual({
+      kind: "failed",
+      reason: "tests red",
+      diagnosis: "log quoted the literal </ship> delimiter",
+    });
+  });
+
+  it("fails closed instead of falling back to stdout when the ship outcome sidecar is malformed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ship-outcome-bad-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+
+    const o = shipOutcomeFromResult({
+      completionSignal: SHIP_COMPLETION_SIGNAL,
+      stdout: '<ship>{"status": "pushed", "branch": "feat/fallback"}</ship>',
+      outcomePath,
+    });
+
+    expect(o.kind).toBe("malformed");
+    if (o.kind === "malformed") expect(o.reason).toContain("sidecar");
+  });
+
   it("a signaled shipped run ⇒ a shipped outcome", () => {
     const o = shipOutcomeFromResult({
       completionSignal: SHIP_COMPLETION_SIGNAL,

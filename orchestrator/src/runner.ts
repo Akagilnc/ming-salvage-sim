@@ -280,6 +280,13 @@ interface ResumePlan {
   readonly priorLedger: ReadonlyArray<LedgerEntry>;
 }
 
+interface LandedCoderProtocolFailure {
+  readonly index: number;
+  readonly step: "S2" | "S5";
+  readonly previousHead: string;
+  readonly branchHead: string;
+}
+
 function isValidStepId(value: unknown): value is StepId {
   return (
     value === "S0" ||
@@ -848,6 +855,150 @@ function lastNonTerminalStep(
     if (ledger[i]!.step !== "S8") return ledger[i]!.step;
   }
   return undefined;
+}
+
+function isLikelyGitSha(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{7,64}$/.test(value);
+}
+
+const CODER_STDOUT_MISSING_TAG_RE =
+  /\bcoder step stdout carried no <coder>[\s\S]*tag\b/i;
+const WORKER_STDOUT_MISSING_TAG_RE =
+  /\b(?:coder step stdout carried no <coder>|reviewer step stdout carried no <review>)[\s\S]*tag\b/i;
+
+function isRecoverableCoderProtocolFailure(
+  entry: PersistentLedgerEntry,
+): boolean {
+  if (
+    entry.step !== "S8" ||
+    entry.handoffStatus !== "error" ||
+    entry.stopSummary === undefined
+  ) {
+    return false;
+  }
+
+  return CODER_STDOUT_MISSING_TAG_RE.test(entry.stopSummary.summary);
+}
+
+function protocolFailedLandedCoderStep(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): LandedCoderProtocolFailure | undefined {
+  if (ledger.length < 2) return undefined;
+  const last = ledger[ledger.length - 1]!;
+  if (!isRecoverableCoderProtocolFailure(last)) return undefined;
+
+  let i = ledger.length - 2;
+  while (i >= 0 && ledger[i]!.step === "S8") {
+    i--;
+  }
+  if (i < 0) return undefined;
+
+  const entry = ledger[i]!;
+  if (
+    (entry.step !== "S2" && entry.step !== "S5") ||
+    entry.output !== undefined ||
+    !isLikelyGitSha(entry.branchHEAD)
+  ) {
+    return undefined;
+  }
+
+  let previousHead: string | undefined;
+  for (let j = i - 1; j >= 0; j--) {
+    if (ledger[j]!.step === "S8") continue;
+    const head = ledger[j]!.branchHEAD;
+    if (isLikelyGitSha(head)) {
+      previousHead = head;
+      break;
+    }
+  }
+  if (previousHead === undefined || previousHead === entry.branchHEAD) {
+    return undefined;
+  }
+  return {
+    index: i,
+    step: entry.step,
+    previousHead,
+    branchHead: entry.branchHEAD,
+  };
+}
+
+function ledgerThroughRecoveredCoderOutput(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+  landedProtocolFailure: {
+    readonly index: number;
+    readonly output: StepOutput;
+  },
+): ReadonlyArray<LedgerEntry> {
+  return ledger
+    .slice(0, landedProtocolFailure.index + 1)
+    .map((entry, index) =>
+      index === landedProtocolFailure.index
+        ? { ...entry, output: landedProtocolFailure.output }
+        : entry,
+    ) as ReadonlyArray<LedgerEntry>;
+}
+
+async function planRecoveredLandedCoderProtocolFailure(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+  worktree: WorktreeHandle,
+  backend: Backend,
+): Promise<ResumePlan | undefined> {
+  const executableLedger = executableLedgerEntries(ledger);
+  const landedProtocolFailure =
+    protocolFailedLandedCoderStep(executableLedger);
+  if (
+    landedProtocolFailure === undefined ||
+    backend.countCommitsBetween === undefined
+  ) {
+    return undefined;
+  }
+
+  let commitsAdded: number;
+  try {
+    commitsAdded = await backend.countCommitsBetween(
+      worktree,
+      landedProtocolFailure.previousHead,
+      landedProtocolFailure.branchHead,
+    );
+  } catch {
+    return undefined;
+  }
+
+  if (!Number.isInteger(commitsAdded) || commitsAdded <= 0) {
+    return undefined;
+  }
+
+  const output: StepOutput = {
+    kind: "coder",
+    committed: true,
+    commitsAdded,
+  };
+  const pendingBlockingFindings =
+    landedProtocolFailure.step === "S5"
+      ? adjudicatedBlockingFindingsForPersistedS4(executableLedger)
+      : undefined;
+  const decision = route({
+    from: landedProtocolFailure.step,
+    output,
+    ...(pendingBlockingFindings !== undefined
+      ? { pendingBlockingFindings }
+      : {}),
+  });
+  if (decision.kind === "handoff") {
+    return undefined;
+  }
+
+  return {
+    resumeStep: decision.step,
+    lastOutput: output,
+    priorLedger: ledgerThroughRecoveredCoderOutput(
+      executableLedger,
+      {
+        index: landedProtocolFailure.index,
+        output,
+      },
+    ),
+  };
 }
 
 function lastReviewerStep(
@@ -1508,7 +1659,8 @@ function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
   if (
     /contract|malformed|does not match|no valid result|off-contract|prior claimed-fixed finding|prior finding disposition/i.test(
       errorPackage.reason,
-    )
+    ) ||
+    WORKER_STDOUT_MISSING_TAG_RE.test(errorPackage.reason)
   ) {
     return contractDriftStopSummary({
       summary: errorPackage.reason,
@@ -2137,7 +2289,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
       resumeLedger = [...resumeLedger, repairIntentEntry];
     }
-    const plan = planResume(resumeLedger);
+    const plan =
+      (await planRecoveredLandedCoderProtocolFailure(
+        resumeLedger,
+        worktree,
+        backend,
+      )) ?? planResume(resumeLedger);
 
     // Seed the in-memory ledger with prior progress so committed work is
     // preserved and the prior steps are NOT re-run.
@@ -2602,6 +2759,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           }
           const shipResult = await dispatchWorker(backend, shipSpec, {
             worktree,
+            stateDir,
             ...(escalationAnswerForStep !== undefined
               ? { escalationAnswer: escalationAnswerForStep }
               : {}),
