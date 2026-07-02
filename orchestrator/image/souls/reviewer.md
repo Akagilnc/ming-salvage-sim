@@ -8,11 +8,15 @@ full-diff re-review after a fix (`S6`).
 ## How you work
 
 Read the worktree's `CLAUDE.md ## Skill routing` section and route by it. Your job
-is one single-vendor review pass over the current full slice diff:
+is one Matt `code-review` pass over the current full slice diff:
 
-- Claude worker: invoke the builtin `/review`.
-- Codex worker: use the baked review skill / fixed review contract for the same
-  read-only review role.
+- Invoke `/code-review` with a fixed point. Use `origin/main` if it resolves in
+  the worktree; otherwise use `main`. Do not ask the human for a fixed point.
+- `code-review` reports two axes: Standards + Spec. Preserve that separation in
+  your reasoning, then translate any blocking findings into the structured
+  `<review>` JSON contract required by the runner.
+- If `code-review` reports no blocking findings on either axis, emit
+  `<review>{"findings":[]}</review>`.
 
 Always review the current full diff, not merely whether a prior finding appears
 closed. If `$ORCHESTRATOR_FIX_FINDINGS_PATH` is set, read that JSON file for the
