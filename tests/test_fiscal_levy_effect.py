@@ -346,6 +346,82 @@ def test_fiscal_levy_existing_terminal_reason_is_whitelist_validated(game):
     assert after["p"] == before["p"]
 
 
+def test_fiscal_levy_choice_row_rejection_controls_same_tick_effect(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    before = _settle_payload(db, "shaanxi")
+    db.record_event_decision_choice(
+        state,
+        "liao_levy_rise_1631",
+        {"label": "已驳"},
+    )
+
+    apply_historical_fiscal_rates(state, db)
+
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("liao_levy_rise_1631",),
+    ).fetchone()
+    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "已驳"}
+    after = _settle_payload(db, "shaanxi")
+    assert after["p"] == before["p"]
+
+
+def test_fiscal_levy_pending_stop_choice_keeps_jiao_in_force_same_tick(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1640
+    state.period = 1
+    db.save_state(state)
+    db.mark_event_triggered(state, "jiao_levy_start_1637", source="test", terminal_reason="已准")
+    db.record_event_decision_choice(
+        state,
+        "jiao_levy_stop_1640",
+        {"label": "仍征"},
+    )
+
+    apply_historical_fiscal_rates(state, db)
+
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("jiao_levy_stop_1640",),
+    ).fetchone()
+    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "仍征"}
+    settle = _settle_payload(db, "shaanxi")
+    expected_liao = settle["_meta"]["辽饷九厘基线"] * 4.0 / 3.0
+    expected_jiao = settle["_meta"]["剿饷基线"]
+    expected_lian = settle["_meta"]["练饷基线"]
+    assert math.isclose(
+        settle["p"]["三饷应征"],
+        expected_liao + expected_jiao + expected_lian,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+
+
+def test_fiscal_levy_memorial_small_fractional_arrears_range_is_ordered(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+
+    pre_settle(state, db, content=content)
+    db.conn.execute("UPDATE armies SET arrears = 0 WHERE owner_power = 'ming'")
+    db.conn.execute(
+        "UPDATE armies SET arrears = 0.6 WHERE id = (SELECT id FROM armies WHERE owner_power = 'ming' LIMIT 1)"
+    )
+    db.conn.commit()
+
+    payload = build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
+    estimate = payload["fiscal_levy_memorial_estimates"][0]
+    gap_range = estimate["national_army_gap_wanliang"]
+    assert gap_range["lower"] <= gap_range["midpoint"] <= gap_range["upper"]
+
+
 def test_liao_levy_targets_all_seeded_settles_without_compounding_or_clobbering_p(game):
     db, state, content = game
     issues.bind_content(content)
