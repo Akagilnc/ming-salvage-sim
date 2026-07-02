@@ -369,6 +369,53 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     const s2 = result.stepLedger.find((e) => e.step === "S2");
     expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
   });
+
+  it("recovers a landed S5 commit when stdout outcome parsing wrote S8(error)", async () => {
+    const beforeFixHead = "a".repeat(40);
+    const afterFixHead = "b".repeat(40);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeFixHead },
+        { ...entry("S1"), branchHEAD: beforeFixHead },
+        {
+          ...entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+          branchHEAD: beforeFixHead,
+        },
+        {
+          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
+          branchHEAD: beforeFixHead,
+        },
+        { ...entry("S4"), branchHEAD: beforeFixHead },
+        {
+          step: "S5",
+          sessionId: "session-s5-protocol-failed",
+          prompt_hash: "hash-S5",
+          branchHEAD: afterFixHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        { ...s8("error"), branchHEAD: afterFixHead },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S6");
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S5",
+      "S6",
+      "S4",
+      "S7",
+      "S8",
+    ]);
+  });
 });
 
 describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication", () => {

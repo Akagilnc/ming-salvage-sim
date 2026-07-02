@@ -50,6 +50,7 @@ import type {
 
 const FIX_FINDINGS_LANDING_FILE = ".orchestrator-fix-findings.json";
 const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
+const WORKER_OUTCOME_SANDBOX_FILE = ".orchestrator-outcome.json";
 
 /**
  * The wiki skill each worker kind invokes (ADR 0026):
@@ -152,6 +153,35 @@ function writeFixFindingsLandingFile(
     path: landingPath,
     sandboxPath: FIX_FINDINGS_LANDING_FILE,
     cleanup: ctx.stateDir === undefined,
+  };
+}
+
+function writeWorkerOutcomeLandingFile(
+  spec: WorkerSpec,
+  ctx: DispatchContext,
+):
+  | {
+      path: string;
+      sandboxPath: string;
+    }
+  | undefined {
+  if (
+    (spec.kind !== "coder" && spec.kind !== "reviewer") ||
+    ctx.stateDir === undefined ||
+    ctx.worktree === undefined ||
+    !existsSync(ctx.worktree.path)
+  ) {
+    return undefined;
+  }
+  mkdirSync(ctx.stateDir, { recursive: true });
+  const outcomeDir = join(ctx.stateDir, `worker-outcome-${spec.id}`);
+  mkdirSync(outcomeDir, { recursive: true });
+  const landingPath = join(outcomeDir, "outcome.json");
+  writeFileSync(landingPath, "", "utf8");
+  ensureGitExcluded(ctx.worktree.path, WORKER_OUTCOME_SANDBOX_FILE);
+  return {
+    path: landingPath,
+    sandboxPath: WORKER_OUTCOME_SANDBOX_FILE,
   };
 }
 
@@ -282,19 +312,27 @@ export async function legacyDispatchWorker(
           },
         }
       : undefined;
+  const outcomeLanding = writeWorkerOutcomeLandingFile(spec, ctx);
+  const runOptions =
+    fixFindingsOptions !== undefined || outcomeLanding !== undefined
+      ? {
+          ...(fixFindingsOptions ?? {}),
+          ...(outcomeLanding !== undefined ? { outcomeLanding } : {}),
+        }
+      : undefined;
   try {
     if (ctx.resumeSessionId !== undefined) {
       ret = await backend.resumeSession(
         stepSpec,
         ctx.worktree,
         ctx.resumeSessionId,
-        fixFindingsOptions,
+        runOptions,
       );
     } else {
       ret = await backend.runStep(
         stepSpec,
         ctx.worktree,
-        fixFindingsOptions,
+        runOptions,
       );
     }
   } finally {

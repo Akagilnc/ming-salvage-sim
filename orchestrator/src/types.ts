@@ -1095,9 +1095,18 @@ export interface FixFindingsLandingFile {
   readonly sandboxPath: string;
 }
 
+/** Runner-owned worker outcome sidecar made visible inside the worker sandbox. */
+export interface WorkerOutcomeLandingFile {
+  /** Host path to the runner-owned JSON file. */
+  readonly path: string;
+  /** Path where the worker sees the file inside the sandbox repo. */
+  readonly sandboxPath: string;
+}
+
 /** Optional agent-step execution metadata consumed by real sandboxes. */
 export interface AgentStepRunOptions {
   readonly fixFindingsLanding?: FixFindingsLandingFile;
+  readonly outcomeLanding?: WorkerOutcomeLandingFile;
 }
 
 // ──────────────────────────── run result ────────────────────────────

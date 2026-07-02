@@ -15,6 +15,10 @@
  * (mirrors #335's parseCmrOutcome / cmrOutcomeFromResult).
  */
 
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -271,6 +275,28 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
 // ═══════════════════ shipOutcomeFromResult (completion-signal gate) ═══════════════════
 
 describe("#336 shipOutcomeFromResult — completion-signal gate (mirrors the cmr/merger gate)", () => {
+  it("prefers a runner-owned outcome sidecar over malformed ship stdout", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ship-outcome-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ status: "pushed", branch: "feat/issue-496" }) + "\n",
+      "utf8",
+    );
+
+    const o = shipOutcomeFromResult({
+      completionSignal: SHIP_COMPLETION_SIGNAL,
+      stdout: "<ship>not json</ship>\nSHIP_STEP_COMPLETE",
+      outcomePath,
+    });
+
+    expect(o).toEqual({
+      kind: "shipped",
+      status: "pushed",
+      branch: "feat/issue-496",
+    });
+  });
+
   it("a signaled shipped run ⇒ a shipped outcome", () => {
     const o = shipOutcomeFromResult({
       completionSignal: SHIP_COMPLETION_SIGNAL,

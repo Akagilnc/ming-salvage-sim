@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   MERGER_SOUL,
+  cmrOutcomeFromResult,
   mergerOutcomeFromResult,
   parseCmrOutcome,
   parseMergerOutcome,
@@ -864,6 +865,42 @@ describe("parseMergerOutcome (#291 pure)", () => {
 });
 
 describe("parseCmrOutcome accepted suppression contract", () => {
+  it("prefers a runner-owned outcome sidecar over malformed cmr stdout", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        converged: true,
+        successfulLegs: ["gpt-5.5"],
+        skippedLegs: [
+          { slug: "opus", reason: "not configured for this test" },
+          { slug: "agy", reason: "not configured for this test" },
+        ],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+      }) + "\n",
+      "utf8",
+    );
+
+    const outcome = cmrOutcomeFromResult({
+      completionSignal: "CMR_STEP_COMPLETE",
+      stdout: "<cmr>not json</cmr>\nCMR_STEP_COMPLETE",
+      outcomePath,
+      cmrReviewLegs: [
+        { family: "claude", slug: "opus" },
+        { family: "codex", slug: "gpt-5.5" },
+        { family: "gemini", slug: "agy" },
+      ],
+    });
+
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: true,
+      successfulLegs: ["gpt-5.5"],
+    });
+  });
+
   it("derives redundant accepted_suppressed finding fields from the finding payload", () => {
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: false,
@@ -1004,6 +1041,24 @@ describe("parseCmrOutcome accepted suppression contract", () => {
 });
 
 describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
+  it("prefers a runner-owned outcome sidecar over malformed merger stdout", () => {
+    const dir = mkdtempSync(join(tmpdir(), "merger-outcome-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ resolved: true, tradeoffs: "preserved both sides" }) + "\n",
+      "utf8",
+    );
+
+    expect(
+      mergerOutcomeFromResult({
+        completionSignal: "MERGER_STEP_COMPLETE",
+        stdout: "<merger>not json</merger>\nMERGER_STEP_COMPLETE",
+        outcomePath,
+      }),
+    ).toEqual({ resolved: true });
+  });
+
   it("a signaled run delegates to parseMergerOutcome (resolved)", () => {
     expect(
       mergerOutcomeFromResult({

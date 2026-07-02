@@ -12,9 +12,11 @@ not in this prompt.
 
 ## Required output
 
-When the review has converged (or you must escalate), emit a single `<cmr>` tag on
-its own line containing a single JSON object, then print the completion signal on
-its own line as the final line.
+When the review has converged (or you must escalate), write the single JSON
+object to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is set. Then, for
+compatibility with older runners, emit a single `<cmr>` tag on its own line
+containing the same single JSON object, and print the completion signal on its own
+line as the final line.
 
 Converged:
 
