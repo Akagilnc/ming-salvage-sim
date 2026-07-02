@@ -69,7 +69,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 | `to-issues` | B 立项 | PRD 切薄垂直切片子 issue（tracer bullet）+ 依赖序 |
 | `implement` | C 实现（逐片，各开新 session）| umbrella：按 PRD/issue 实现，约定 seam 调 `/tdd` → typecheck/单测/全量 → baseline commit → 单评 → fix commits；自治/编排器内联流程，不直接 invoke umbrella |
 | `tdd` | C 实现（被 implement 调）| 红绿重构；**代码级实现在这现场长**；never refactor while RED |
-| `code-review` | C 实现·收尾 | Matt 单评：固定点 diff 的 Standards + Spec 两轴 review；取代旧内置 `/review` 作为 canonical 收尾评审。它评 `fixed-point...HEAD`，所以手动/单 session implement 也要在 baseline commit 后跑；编排器里由 runner 派 `/code-review` reviewer worker 跑，coder worker 不自启 review |
+| `code-review` | C 实现·收尾 | Matt 单评：固定点 diff 的 Standards + Spec 两轴 review；取代旧内置 `/review` 作为 canonical 收尾评审。它评 `fixed-point...HEAD`，所以手动/单 session implement 也要在 baseline commit 后跑；编排器里由 runner 派 `/code-review` reviewer worker 跑，coder worker 不自启 review；reviewer soul 固定传 `origin/main`（不存在则 `main`），不让 AFK worker 停下来问 fixed point |
 | `diagnosing-bugs` | C 旁路（硬 bug）| 硬 bug / 性能 regression 调查（旧名 `diagnose`）|
 | `improve-codebase-architecture` | 保养 | 据 CONTEXT + ADR 找深挖/重构，产出回 A 当新想法 |
 | `triage` | 入口匝道（非主线）| **外来** issue（你没创建的）走五态状态机、贴标签、发 agent brief |
