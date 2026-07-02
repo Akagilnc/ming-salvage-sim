@@ -992,10 +992,12 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
 
 FISCAL_LEVY_EVENT_CATEGORY = "fiscal_levy"
 _LIAO_LEVY_RISE_EVENT_ID = "liao_levy_rise_1631"
+_LIAN_LEVY_START_EVENT_ID = "lian_levy_start_1639"
 _LIAO_LEVY_RISE_FACTOR = 4.0 / 3.0
 _JIAO_LEVY_START_EVENT_ID = "jiao_levy_start_1637"
 _JIAO_LEVY_STOP_EVENT_ID = "jiao_levy_stop_1640"
 _JIAO_LEVY_TO_LIAO_SEED_FACTOR = 7.0 / 13.0
+_LIAN_LEVY_FACTOR_FROM_LIAO_SEED = 73.0 / 52.0
 _SETTLE_META_BASE_TRANSPORT_KEY = "正赋起运基线"
 _SETTLE_META_LIAO_SEED_KEY = "辽饷九厘基线"
 _SETTLE_META_JIAO_SEED_KEY = "剿饷基线"
@@ -1097,7 +1099,7 @@ def _fiscal_levy_event_by_id(event_id: str) -> Event | None:
     return _ctx().event_by_id.get(event_id)
 
 
-def _fiscal_levy_started(
+def _fiscal_levy_event_approved(
     terminal_records: Dict[str, Dict[str, str]],
     event_id: str,
 ) -> bool:
@@ -1138,7 +1140,7 @@ def _jiao_levy_in_force(terminal_records: Dict[str, Dict[str, str]], state: Game
             stage="fiscal_levy_config",
         )
     return (
-        _fiscal_levy_started(terminal_records, _JIAO_LEVY_START_EVENT_ID)
+        _fiscal_levy_event_approved(terminal_records, _JIAO_LEVY_START_EVENT_ID)
         and not _fiscal_levy_stopped(terminal_records, _JIAO_LEVY_STOP_EVENT_ID)
     )
 
@@ -1148,12 +1150,9 @@ def _apply_fiscal_levy_targets(
     state: GameState,
     terminal_records: Dict[str, Dict[str, str]],
 ) -> int:
-    record = terminal_records.get(_LIAO_LEVY_RISE_EVENT_ID) or {}
-    liao_rise_approved = (
-        record.get("terminal_state") == "triggered"
-        and record.get("terminal_reason") == "已准"
-    )
+    liao_rise_approved = _fiscal_levy_event_approved(terminal_records, _LIAO_LEVY_RISE_EVENT_ID)
     jiao_in_force = _jiao_levy_in_force(terminal_records, state)
+    lian_levy_approved = _fiscal_levy_event_approved(terminal_records, _LIAN_LEVY_START_EVENT_ID)
     touched = 0
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
         region_id = str(row["id"])
@@ -1175,10 +1174,11 @@ def _apply_fiscal_levy_targets(
         base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
         target_liao = liao_seed * (_LIAO_LEVY_RISE_FACTOR if liao_rise_approved else 1.0)
         target_jiao = jiao_seed if jiao_in_force else 0.0
-        target_three_levies = target_liao + target_jiao
-        target_transport = base_transport + target_three_levies
+        target_lian = liao_seed * _LIAN_LEVY_FACTOR_FROM_LIAO_SEED if lian_levy_approved else 0.0
+        target_sanxiang = target_liao + target_jiao + target_lian
+        target_transport = base_transport + target_sanxiang
         next_p = dict(p)
-        next_p["三饷应征"] = target_three_levies
+        next_p["三饷应征"] = target_sanxiang
         next_p["起运定额"] = target_transport
         meta[_SETTLE_META_LIAO_SEED_KEY] = liao_seed
         meta[_SETTLE_META_JIAO_SEED_KEY] = jiao_seed
