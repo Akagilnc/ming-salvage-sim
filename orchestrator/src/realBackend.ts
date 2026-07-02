@@ -107,6 +107,11 @@ import {
   shipOutcomeFromResult,
   type ShipWorkerOutcome,
 } from "./shipOutcome.js";
+import {
+  WORKER_OUTCOME_SANDBOX_FILE,
+  readWorkerOutcomeSidecar as readOutcomeSidecar,
+  stripJsonFence as stripOutcomeJsonFence,
+} from "./workerOutcomeSidecar.js";
 import type {
   AgentStepRunOptions,
   Backend,
@@ -551,6 +556,8 @@ export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
 export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
 /** S5 coder-fix worker path to runner-owned blocking findings JSON. */
 export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
+/** Worker path to the runner-owned machine outcome sidecar JSON. */
+export const SANDBOX_OUTCOME_PATH_ENV = "ORCHESTRATOR_OUTCOME_PATH";
 /** Optional ship-worker focus file read by the ship prompt before gstack-ship. */
 export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
 
@@ -925,24 +932,55 @@ export function assertCompletionSignal(
  * validate; throws a clear error when the tag is missing (the caller turns that
  * into the runner's S8(error) edge, same as a malformed structured output).
  */
-export function extractCoderTag(stdout: string): unknown {
-  // Scan for ALL <coder>…</coder> blocks; the last one is the final iteration's
-  // result. `[\s\S]` so the body may span newlines; non-greedy so adjacent tags
-  // don't merge.
-  const re = /<coder>([\s\S]*?)<\/coder>/g;
+function extractTaggedJson(
+  stdout: string,
+  tag: "coder" | "review",
+  missingMessage: string,
+): unknown {
+  // Scan for ALL role tags; the last one is the final iteration's result.
+  // `[\s\S]` so the body may span newlines; non-greedy so adjacent tags don't
+  // merge.
+  const re = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "g");
   let last: string | undefined;
   for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) {
     last = m[1];
   }
   if (last === undefined) {
-    throw new Error(
-      "realBackend: coder step stdout carried no <coder>…</coder> tag — the " +
-        "coder must emit its structured result in a <coder> tag (maxIter>1 " +
-        "steps cannot use Sandcastle's typed output, which requires " +
-        "maxIterations:1).",
-    );
+    throw new Error(missingMessage);
   }
   return JSON.parse(stripJsonFence(last.trim()));
+}
+
+export function extractCoderTag(stdout: string): unknown {
+  return extractTaggedJson(
+    stdout,
+    "coder",
+    "realBackend: coder step stdout carried no <coder>…</coder> tag — the " +
+      "coder must emit its structured result in a <coder> tag (maxIter>1 " +
+      "steps cannot use Sandcastle's typed output, which requires " +
+      "maxIterations:1).",
+  );
+}
+
+function extractReviewerTag(stdout: string): unknown {
+  return extractTaggedJson(
+    stdout,
+    "review",
+    "realBackend: reviewer step stdout carried no <review>…</review> tag — " +
+      "the reviewer must emit its structured result in a <review> tag.",
+  );
+}
+
+/**
+ * Read a runner-owned worker outcome sidecar.
+ *
+ * Missing/blank means "legacy worker did not write the new protocol file yet" and
+ * callers may fall back to their old stdout/typed-output path. A non-blank file is
+ * the machine protocol truth and must parse as JSON; malformed JSON throws rather
+ * than falling back to human-readable stdout.
+ */
+export function readWorkerOutcomeSidecar(path: string | undefined): unknown | undefined {
+  return readOutcomeSidecar(path);
 }
 
 /**
@@ -951,9 +989,7 @@ export function extractCoderTag(stdout: string): unknown {
  * unchanged when it is not fenced.
  */
 export function stripJsonFence(s: string): string {
-  const fence = /^```(?:json)?\s*\n?([\s\S]*?)\n?```$/;
-  const m = fence.exec(s.trim());
-  return m ? m[1].trim() : s;
+  return stripOutcomeJsonFence(s);
 }
 
 // ── coder commit truth from git (#256 truthification) ───────────────────────
@@ -2305,6 +2341,9 @@ export class RealBackend implements Backend {
       env[SANDBOX_FIX_FINDINGS_PATH_ENV] =
         options.fixFindingsLanding.sandboxPath;
     }
+    if (options?.outcomeLanding !== undefined) {
+      env[SANDBOX_OUTCOME_PATH_ENV] = options.outcomeLanding.sandboxPath;
+    }
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
       { hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR },
     ];
@@ -2313,6 +2352,12 @@ export class RealBackend implements Backend {
         hostPath: options.fixFindingsLanding.path,
         sandboxPath: options.fixFindingsLanding.sandboxPath,
         readonly: true,
+      });
+    }
+    if (options?.outcomeLanding !== undefined) {
+      mounts.push({
+        hostPath: options.outcomeLanding.path,
+        sandboxPath: options.outcomeLanding.sandboxPath,
       });
     }
     return {
@@ -2344,11 +2389,30 @@ export class RealBackend implements Backend {
    */
   private rawOutputFor(
     result: { output?: unknown; stdout: string },
+    spec: StepSpec,
     typedOutputUsed: boolean,
+    options?: AgentStepRunOptions,
   ): unknown {
+    let sidecar: unknown | undefined;
+    try {
+      sidecar = readWorkerOutcomeSidecar(options?.outcomeLanding?.path);
+    } catch (err) {
+      if (spec.role === "reviewer") {
+        const wrapped = new Error(
+          `StructuredOutputError: reviewer outcome sidecar was not valid JSON: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+        wrapped.name = "StructuredOutputError";
+        throw wrapped;
+      }
+      throw err;
+    }
+    if (sidecar !== undefined) return sidecar;
     if (typedOutputUsed) return result.output;
-    // Untyped coder path: structured result lives in a <coder> tag in stdout.
-    return extractCoderTag(result.stdout);
+    // Untyped compatibility path: structured result lives in the role tag.
+    return spec.role === "coder"
+      ? extractCoderTag(result.stdout)
+      : extractReviewerTag(result.stdout);
   }
 
   /**
@@ -2453,17 +2517,29 @@ export class RealBackend implements Backend {
     );
   }
 
+  async countCommitsBetween(
+    worktree: WorktreeHandle,
+    fromHead: string,
+    toHead: string,
+  ): Promise<number> {
+    return this.countCommitsInRange(worktree, `${fromHead}..${toHead}`);
+  }
+
   private countCommitsSince(worktree: WorktreeHandle, fromHead: string): number {
+    return this.countCommitsInRange(worktree, `${fromHead}..HEAD`);
+  }
+
+  private countCommitsInRange(worktree: WorktreeHandle, range: string): number {
     const raw = this.sh(
       "git",
-      ["rev-list", "--count", `${fromHead}..HEAD`],
+      ["rev-list", "--count", range],
       worktree.path,
     );
     const count = Number.parseInt(raw, 10);
     if (!Number.isInteger(count) || count < 0) {
       throw new Error(
         `realBackend: git rev-list returned invalid commit count "${raw}" ` +
-          `for ${fromHead}..HEAD in ${worktree.path}`,
+          `for ${range} in ${worktree.path}`,
       );
     }
     return count;
@@ -2481,6 +2557,8 @@ export class RealBackend implements Backend {
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     await this.preflightToolchain(spec);
+    const typedOutputUsed =
+      spec.maxIter === 1 && options?.outcomeLanding === undefined;
     const result = await this.runAgentSandbox({
       name: `${spec.id}-${spec.role}`,
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -2498,18 +2576,17 @@ export class RealBackend implements Backend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // Structured output only on reviewer single-pass steps (Sandcastle
-      // requires maxIterations:1 with output); coder steps iterate (maxIter>1),
-      // so their structured result is collected from a <coder> tag in stdout
-      // (rawOutputFor) instead — Sandcastle's typed `output` is forbidden there.
-      ...(spec.maxIter === 1 ? { output: this.outputFor(spec) } : {}),
+      // Structured output only when Sandcastle should own tag parsing. When the
+      // runner supplied an outcome sidecar, do not pass `output`: Sandcastle
+      // would throw on a bad/missing compatibility tag before the backend can
+      // read the sidecar machine protocol.
+      ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
     });
     // #244 step-advance gate: the step only advances if the agent fired its
     // declared completionSignal. A complete-but-unsignaled run (e.g. maxIter hit
     // mid-work) throws here → S8(error), before any output is decoded.
     assertCompletionSignal(result, spec.completionSignal, `${spec.id}-${spec.role}`);
-    const typedOutputUsed = spec.maxIter === 1;
-    const raw = this.rawOutputFor(result, typedOutputUsed);
+    const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
     // #256 commit-truth: the coder's committed/commitsAdded is derived from the
     // REAL commits Sandcastle observed (result.commits), not the self-report.
     const gitCommitCount =
@@ -2540,6 +2617,7 @@ export class RealBackend implements Backend {
       spec.role === "coder" ? await this.worktreeHead(worktree) : undefined;
     await this.preflightToolchain(spec);
     try {
+      const typedOutputUsed = options?.outcomeLanding === undefined;
       const result = await this.runAgentSandbox({
         name: `${spec.id}-${spec.role}-resume`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -2554,14 +2632,11 @@ export class RealBackend implements Backend {
         branchStrategy: { type: "head" },
         resumeSession: sessionId,
         promptFile: join(this.opts.promptsDir, spec.promptFile),
-        // A resume ALWAYS runs maxIterations:1, so Sandcastle's typed `output`
-        // is valid for BOTH roles here (it only forbids maxIter>1). Pass it by
-        // role unconditionally — the old `spec.maxIter===1` gate left a resumed
-        // CODER step (spec.maxIter>1) with no `output`, so decodeOutput parsed
-        // `undefined` and threw a ZodError on every resumed coder step
-        // (integ-cmr 256 r1, F4). Typed output ⇒ read `result.output` directly
-        // for both roles (no <coder> stdout fallback needed at maxIter:1).
-        output: this.outputFor(spec),
+        // A resume runs maxIterations:1, so typed output is valid unless the
+        // outcome sidecar is mounted. With a sidecar, keep Sandcastle from
+        // pre-parsing the compatibility tag before rawOutputFor can read the
+        // runner-owned file.
+        ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
       });
       // #244 step-advance gate (resume path): a resumed step still only advances
       // on its declared completionSignal — an unsignaled resume throws → S8(error).
@@ -2580,7 +2655,7 @@ export class RealBackend implements Backend {
           : undefined;
       const output = this.decodeOutput(
         spec,
-        this.rawOutputFor(result, /*typedOutputUsed*/ true),
+        this.rawOutputFor(result, spec, typedOutputUsed, options),
         gitCommitCount,
       );
       return { output, sessionId: lastSessionId(result) ?? sessionId };
@@ -2762,22 +2837,36 @@ export class RealBackend implements Backend {
         };
       }
       this.syncShipFocusFile(ctx);
-      const result = await sc.run({
-        name: `${spec.id}-ship`,
-        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-        cwd: worktree.path,
-        sandbox: this.shipSandbox(auth),
-        agent: agentForSlug(spec.model),
-        // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
-        // container (用户 note); maxIter is the within-worker budget. A genuine block
-        // is the worker's `<ship>` escalate verdict, not the iteration limit.
-        maxIterations: spec.maxIter,
-        completionSignal: spec.completionSignal,
-        // Commit the VERSION/CHANGELOG bump + push on the resident branch in place.
-        branchStrategy: { type: "head" },
-        promptFile: join(this.opts.promptsDir, spec.promptFile),
-      });
-      return shipOutcomeFromResult(result);
+      const outcomeLanding = this.prepareShipOutcomeLanding(ctx);
+      try {
+        const result = await this.runAgentSandbox({
+          name: `${spec.id}-ship`,
+          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+          cwd: worktree.path,
+          sandbox: this.shipSandbox(auth, outcomeLanding),
+          agent: agentForSlug(spec.model),
+          // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
+          // container (用户 note); maxIter is the within-worker budget. A genuine block
+          // is the worker's `<ship>` escalate verdict, not the iteration limit.
+          maxIterations: spec.maxIter,
+          completionSignal: spec.completionSignal,
+          // Commit the VERSION/CHANGELOG bump + push on the resident branch in place.
+          branchStrategy: { type: "head" },
+          promptFile: join(this.opts.promptsDir, spec.promptFile),
+        });
+        return shipOutcomeFromResult({
+          ...result,
+          ...(outcomeLanding !== undefined ? { outcomePath: outcomeLanding.path } : {}),
+        });
+      } finally {
+        if (outcomeLanding !== undefined) {
+          try {
+            rmSync(join(outcomeLanding.path, ".."), { recursive: true, force: true });
+          } catch {
+            // best-effort: the run already returned/threw.
+          }
+        }
+      }
     } finally {
       // Reclaim the per-call temp codex auth dir (online review r1, 3 bots):
       // best-effort — a failed cleanup must never mask the worker's outcome.
@@ -2815,8 +2904,24 @@ export class RealBackend implements Backend {
     writeFileSync(target, body, "utf8");
   }
 
+  protected prepareShipOutcomeLanding(
+    ctx: DispatchContext,
+  ): { path: string; sandboxPath: string } | undefined {
+    if (ctx.stateDir === undefined || ctx.worktree === undefined) return undefined;
+    mkdirSync(ctx.stateDir, { recursive: true });
+    const dir = mkdtempSync(join(ctx.stateDir, "worker-outcome-ship-"));
+    const path = join(dir, "outcome.json");
+    writeFileSync(path, "", "utf8");
+    this.excludeRuntimeFileFromGit(ctx.worktree.path, WORKER_OUTCOME_SANDBOX_FILE);
+    return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
+  }
+
   /** Add the generated ship focus file to local git excludes so it is never committed. */
   protected excludeShipFocusFromGit(worktreePath: string): void {
+    this.excludeRuntimeFileFromGit(worktreePath, SHIP_FOCUS_FILENAME);
+  }
+
+  protected excludeRuntimeFileFromGit(worktreePath: string, filename: string): void {
     try {
       const excludePath = this.sh(
         "git",
@@ -2832,12 +2937,12 @@ export class RealBackend implements Backend {
       } catch {
         // no exclude file yet
       }
-      if (!existing.split(/\r?\n/).includes(SHIP_FOCUS_FILENAME)) {
+      if (!existing.split(/\r?\n/).includes(filename)) {
         mkdirSync(join(abs, ".."), { recursive: true });
         appendFileSync(
           abs,
           (existing.endsWith("\n") || existing === "" ? "" : "\n") +
-            SHIP_FOCUS_FILENAME +
+            filename +
             "\n",
           "utf8",
         );
@@ -2856,8 +2961,11 @@ export class RealBackend implements Backend {
    * gh tokens THEN build the sandbox from the same auth (no double-gather).
    * `protected` so a unit test asserts the mounts + soul without a real container.
    */
-  protected shipSandbox(auth: ShipAuth): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(auth));
+  protected shipSandbox(
+    auth: ShipAuth,
+    outcomeLanding?: { path: string; sandboxPath: string },
+  ): sc.SandboxProvider {
+    return docker(this.shipSandboxConfig(auth, outcomeLanding));
   }
 
   /**
@@ -2940,7 +3048,10 @@ export class RealBackend implements Backend {
    * present (#336 cmr S336 r1), NO skills mount (the 2b image BAKES gstack-ship — a
    * runtime mount would SHADOW it, #334).
    */
-  protected shipSandboxConfig(auth: ShipAuth): {
+  protected shipSandboxConfig(
+    auth: ShipAuth,
+    outcomeLanding?: { path: string; sandboxPath: string },
+  ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
@@ -2962,10 +3073,19 @@ export class RealBackend implements Backend {
     // authenticates from GH_TOKEN. Set only when present (the pure seam stays
     // tolerant; the REQUIRE-gh gate is the runShipWorker preflight).
     if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
+    if (outcomeLanding !== undefined) {
+      env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
+    }
     const mounts: { hostPath: string; sandboxPath: string }[] = [];
     // #334: codex auth ONLY — baked skills win (no host skills mount).
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    if (outcomeLanding !== undefined) {
+      mounts.push({
+        hostPath: outcomeLanding.path,
+        sandboxPath: outcomeLanding.sandboxPath,
+      });
     }
     return { imageName: this.opts.imageName, env, mounts };
   }

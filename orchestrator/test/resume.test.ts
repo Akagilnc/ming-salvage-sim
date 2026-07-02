@@ -100,6 +100,31 @@ function s8(handoffStatus: "success" | "escalate" | "error"): PersistentLedgerEn
   };
 }
 
+function coderProtocolFailureS8(): PersistentLedgerEntry {
+  return {
+    ...s8("error"),
+    stopSummary: {
+      reason: "contract_drift",
+      summary:
+        "realBackend: coder step stdout carried no <coder>...</coder> tag - the coder must emit its structured result in a <coder> tag.",
+      repairHint:
+        "Inspect the landed commit and resume from the next step if HEAD advanced.",
+    },
+  };
+}
+
+function malformedCoderPayloadFailureS8(): PersistentLedgerEntry {
+  return {
+    ...s8("error"),
+    stopSummary: {
+      reason: "contract_drift",
+      summary:
+        "realBackend: coder must emit its structured result in a <coder> tag; the payload was malformed.",
+      repairHint: "Fix the malformed coder payload instead of fabricating a landed coder output.",
+    },
+  };
+}
+
 function escalationAnswer(
   forStep: StepId,
   answer: string,
@@ -128,6 +153,7 @@ class ResumeBackend implements Backend {
   readonly calls: string[] = [];
   readonly runStepIds: string[] = [];
   readonly ledgerWrites: PersistentLedgerEntry[] = [];
+  readonly commitCountsBetween = new Map<string, number>();
   /** Each resumeSession call: [stepId, sessionId]. */
   readonly resumeSessionCalls: Array<[string, string]> = [];
   prepareWorktreeCount = 0;
@@ -208,6 +234,15 @@ class ResumeBackend implements Backend {
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
 
+  async countCommitsBetween(
+    _worktree: WorktreeHandle,
+    fromHead: string,
+    toHead: string,
+  ): Promise<number> {
+    this.calls.push(`countCommitsBetween(${fromHead}, ${toHead})`);
+    return this.commitCountsBetween.get(`${fromHead}..${toHead}`) ?? 1;
+  }
+
   async push(worktree: WorktreeHandle): Promise<void> {
     this.calls.push(`push(${worktree.branch})`);
     this.pushCount += 1;
@@ -264,6 +299,17 @@ class DispatchRecordingResumeBackend extends ResumeBackend {
   }
 }
 
+class MissingCoderTagBackend extends ResumeBackend {
+  override async runStep(spec: StepSpec): Promise<StepOutput> {
+    if (spec.id === "S2") {
+      throw new Error(
+        "realBackend: coder step stdout carried no <coder>…</coder> tag — the coder must emit its structured result in a <coder> tag.",
+      );
+    }
+    return super.runStep(spec);
+  }
+}
+
 // ─── AC: fresh run is unaffected (no residue) ────────────────────────────────
 
 describe("fresh run (no residue) is unchanged (#255)", () => {
@@ -291,6 +337,15 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
 
     // The resume check is the first Backend interaction (before the S0 gate).
     expect(backend.calls[0]).toBe("findResumeState(255)");
+  });
+
+  it("classifies missing coder tag errors as contract drift", async () => {
+    const backend = new MissingCoderTagBackend();
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.stopSummary.reason).toBe("contract_drift");
   });
 });
 
@@ -368,6 +423,332 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     // The preserved S2 entry still carries its committed output.
     const s2 = result.stepLedger.find((e) => e.step === "S2");
     expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
+  });
+
+  it("recovers a landed S5 commit when stdout outcome parsing wrote S8(error)", async () => {
+    const beforeFixHead = "a".repeat(40);
+    const afterFixHead = "b".repeat(40);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeFixHead },
+        { ...entry("S1"), branchHEAD: beforeFixHead },
+        {
+          ...entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+          branchHEAD: beforeFixHead,
+        },
+        {
+          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
+          branchHEAD: beforeFixHead,
+        },
+        { ...entry("S4"), branchHEAD: beforeFixHead },
+        {
+          step: "S5",
+          sessionId: "session-s5-protocol-failed",
+          prompt_hash: "hash-S5",
+          branchHEAD: afterFixHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        { ...coderProtocolFailureS8(), branchHEAD: afterFixHead },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S6");
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S5",
+      "S6",
+      "S4",
+      "S7",
+      "S8",
+    ]);
+    const s5 = result.stepLedger.find((e) => e.step === "S5");
+    expect(s5?.output).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+    });
+  });
+
+  it("recovers a landed S2 commit when stdout outcome parsing wrote S8(error)", async () => {
+    const beforeBuildHead = "a".repeat(40);
+    const afterBuildHead = "b".repeat(40);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeBuildHead },
+        { ...entry("S1"), branchHEAD: beforeBuildHead },
+        {
+          step: "S2",
+          sessionId: "session-s2-protocol-failed",
+          prompt_hash: "hash-S2",
+          branchHEAD: afterBuildHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        { ...coderProtocolFailureS8(), branchHEAD: afterBuildHead },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S3");
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S7",
+      "S8",
+    ]);
+    const s2 = result.stepLedger.find((e) => e.step === "S2");
+    expect(s2?.output).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+    });
+  });
+
+  it("recovers a real no-tag coder failure even when legacy stop summary classified it as infra", async () => {
+    const beforeBuildHead = "a".repeat(40);
+    const afterBuildHead = "b".repeat(40);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeBuildHead },
+        { ...entry("S1"), branchHEAD: beforeBuildHead },
+        {
+          step: "S2",
+          sessionId: "session-s2-real-notag-protocol-failed",
+          prompt_hash: "hash-S2",
+          branchHEAD: afterBuildHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        {
+          step: "S8",
+          handoffStatus: "error",
+          stopSummary: {
+            reason: "infra_failure",
+            summary:
+              "realBackend: coder step stdout carried no <coder>…</coder> tag — the coder must emit its structured result in a <coder> tag.",
+            repairHint: "inspect S2 and rerun after repairing the cause",
+          },
+          branchHEAD: afterBuildHead,
+          sessionId: "session-s8",
+          prompt_hash: "hash-S8",
+          ts: "2026-07-02T00:00:01.000Z",
+        },
+      ],
+    });
+    backend.commitCountsBetween.set(`${beforeBuildHead}..${afterBuildHead}`, 2);
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S3");
+    const s2 = result.stepLedger.find((e) => e.step === "S2");
+    expect(s2?.output).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 2,
+    });
+  });
+
+  it("recovers the real landed coder commit count from persisted HEADs", async () => {
+    const beforeFixHead = "a".repeat(40);
+    const afterFixHead = "b".repeat(40);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeFixHead },
+        { ...entry("S1"), branchHEAD: beforeFixHead },
+        {
+          ...entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+          branchHEAD: beforeFixHead,
+        },
+        {
+          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
+          branchHEAD: beforeFixHead,
+        },
+        { ...entry("S4"), branchHEAD: beforeFixHead },
+        {
+          step: "S5",
+          sessionId: "session-s5-protocol-failed",
+          prompt_hash: "hash-S5",
+          branchHEAD: afterFixHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        { ...coderProtocolFailureS8(), branchHEAD: afterFixHead },
+      ],
+    });
+    backend.commitCountsBetween.set(`${beforeFixHead}..${afterFixHead}`, 3);
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.calls).toContain(
+      `countCommitsBetween(${beforeFixHead}, ${afterFixHead})`,
+    );
+    const s5 = result.stepLedger.find((e) => e.step === "S5");
+    expect(s5?.output).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 3,
+    });
+  });
+
+  it("does not recover a landed coder protocol failure when the git count is not positive", async () => {
+    const beforeBuildHead = "a".repeat(40);
+    const afterBuildHead = "b".repeat(40);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeBuildHead },
+        { ...entry("S1"), branchHEAD: beforeBuildHead },
+        {
+          step: "S2",
+          sessionId: "session-s2-protocol-failed",
+          prompt_hash: "hash-S2",
+          branchHEAD: afterBuildHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        { ...coderProtocolFailureS8(), branchHEAD: afterBuildHead },
+      ],
+    });
+    backend.commitCountsBetween.set(`${beforeBuildHead}..${afterBuildHead}`, 0);
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("error");
+    expect(backend.dispatchSpecs).toHaveLength(0);
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S8",
+    ]);
+  });
+
+  it("recovers a landed SHA-256 coder commit while skipping intervening S8 heads", async () => {
+    const beforeBuildHead = "a".repeat(64);
+    const afterBuildHead = "b".repeat(64);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeBuildHead },
+        { ...entry("S1"), branchHEAD: beforeBuildHead },
+        { ...s8("error"), branchHEAD: afterBuildHead },
+        {
+          step: "S2",
+          sessionId: "session-s2-sha256-protocol-failed",
+          prompt_hash: "hash-S2",
+          branchHEAD: afterBuildHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        { ...coderProtocolFailureS8(), branchHEAD: afterBuildHead },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S3");
+    const s2 = result.stepLedger.find((e) => e.step === "S2");
+    expect(s2?.output).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+    });
+  });
+
+  it("does not recover unrelated terminal S8 errors even when HEAD advanced", async () => {
+    const beforeBuildHead = "a".repeat(40);
+    const afterBuildHead = "b".repeat(40);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeBuildHead },
+        { ...entry("S1"), branchHEAD: beforeBuildHead },
+        {
+          step: "S2",
+          sessionId: "session-s2-unrelated-error",
+          prompt_hash: "hash-S2",
+          branchHEAD: afterBuildHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        {
+          ...s8("error"),
+          branchHEAD: afterBuildHead,
+          stopSummary: {
+            reason: "contract_drift",
+            summary: "coder output failed commit-truth reconciliation",
+            repairHint: "Re-run the coder step or inspect the contract failure.",
+          },
+        },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("error");
+    expect(backend.dispatchSpecs).toHaveLength(0);
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S8",
+    ]);
+    expect(result.stopSummary?.summary).toBe(
+      "coder output failed commit-truth reconciliation",
+    );
+  });
+
+  it("does not recover malformed coder payload failures that merely mention the <coder> tag", async () => {
+    const beforeBuildHead = "a".repeat(40);
+    const afterBuildHead = "b".repeat(40);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeBuildHead },
+        { ...entry("S1"), branchHEAD: beforeBuildHead },
+        {
+          step: "S2",
+          sessionId: "session-s2-malformed-payload",
+          prompt_hash: "hash-S2",
+          branchHEAD: afterBuildHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        { ...malformedCoderPayloadFailureS8(), branchHEAD: afterBuildHead },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("error");
+    expect(backend.dispatchSpecs).toHaveLength(0);
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S8",
+    ]);
+    expect(result.stopSummary?.summary).toContain("payload was malformed");
   });
 });
 

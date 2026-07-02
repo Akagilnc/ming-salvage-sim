@@ -20,8 +20,10 @@ Do not run the correctness gate in this worker.
 ## Required output
 
 When the completeness gate has converged (or you must escalate), emit a single
-`<cmr>` tag on its own line containing a single JSON object, then print the
-completion signal on its own line as the final line.
+JSON object to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is set. Then, for
+compatibility with older runners, emit a single `<cmr>` tag on its own line
+containing the same single JSON object, and print the completion signal on its
+own line as the final line.
 
 Converged:
 

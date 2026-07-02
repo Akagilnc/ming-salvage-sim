@@ -41,6 +41,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as sc from "@ai-hero/sandcastle";
 import {
   CMR_ROUTE_FILENAME,
   CMR_FOCUS_FILENAME,
@@ -1434,6 +1435,63 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     // The finally reclaimed BOTH per-run dirs even though sc.run never ran.
     expect(existsSync(codexDir)).toBe(false);
     expect(existsSync(agyDir)).toBe(false);
+  });
+
+  it("the successful container path removes the temporary outcome sidecar directory", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    let outcomePathAtRun: string | undefined;
+    class OutcomeCleanupBackend extends RealFamilyBackend {
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+        return this.runCmrWorker(spec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
+        const landing = super.prepareCmrOutcomeLanding(ctx);
+        outcomePathAtRun = landing.path;
+        return landing;
+      }
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
+        writeFileSync(
+          outcomePathAtRun,
+          JSON.stringify({
+            escalate: { reason: "review unavailable", diagnosis: "synthetic test verdict" },
+          }),
+          "utf8",
+        );
+        return {
+          completionSignal: "CMR_STEP_COMPLETE",
+          stdout: "<cmr>{}</cmr>",
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const be = new OutcomeCleanupBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-outcome-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
+
+    expect(outcome.kind).toBe("escalate");
+    expect(outcomePathAtRun).toBeDefined();
+    expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
   });
 });
 
