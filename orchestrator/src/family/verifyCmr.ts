@@ -741,10 +741,13 @@ function latestFamilyCmrDispositions(
     };
   }>,
 ): ReadonlyArray<FindingDisposition> | undefined {
-  return [...ledger]
-    .reverse()
-    .find((entry) => entry.cmrFindingClassification?.dispositions !== undefined)
-    ?.cmrFindingClassification?.dispositions;
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.cmrFindingClassification?.dispositions !== undefined) {
+      return entry.cmrFindingClassification.dispositions;
+    }
+  }
+  return undefined;
 }
 
 function cmrClosureFailureReason(input: {
@@ -1674,15 +1677,20 @@ export async function runVerifyCmr(
       ? { providerDegraded: ship.degradedReviews }
       : {}),
   });
-  const materialCmrSummary = [...(await familyBackend.readFamilyLedger())]
-    .reverse()
-    .find(
-      (entry) =>
-        entry.status === "cmr_passed" &&
-        entry.familyHeadAfter === cmrPassedFamilyHeadAfter &&
-        entry.stopSummary !== undefined &&
-        isMaterialCmrStopSummary(entry.stopSummary),
-    )?.stopSummary;
+  const ledger = await familyBackend.readFamilyLedger();
+  let materialCmrSummary: StopSummary | undefined;
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.status === "cmr_passed" &&
+      entry.familyHeadAfter === cmrPassedFamilyHeadAfter &&
+      entry.stopSummary !== undefined &&
+      isMaterialCmrStopSummary(entry.stopSummary)
+    ) {
+      materialCmrSummary = entry.stopSummary;
+      break;
+    }
+  }
   const shippedStopSummary =
     materialCmrSummary !== undefined
       ? {
