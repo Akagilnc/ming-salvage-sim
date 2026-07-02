@@ -172,6 +172,60 @@ def test_liao_levy_memorial_estimate_payload_is_diegetic_national_scope(game):
         assert forbidden not in rendered
 
 
+def test_liao_levy_memorial_estimate_uses_collectible_ming_controlled_revenue(game):
+    db, state, content = game
+    issues.bind_content(content)
+    lost_region_id = "henan"
+    db.conn.execute(
+        "UPDATE regions SET controlled_by = ? WHERE id = ?",
+        ("houjin", lost_region_id),
+    )
+    db.conn.commit()
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+
+    pre_settle(state, db, content=content)
+
+    expected_collectible = 0.0
+    expected_nominal = 0.0
+    for row in db.conn.execute("SELECT id, controlled_by, fiscal FROM regions ORDER BY id").fetchall():
+        fiscal = json.loads(str(row["fiscal"] or "{}"))
+        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        meta = settle.get("_meta") if isinstance(settle, dict) else None
+        if not isinstance(meta, dict) or "辽饷九厘基线" not in meta:
+            continue
+        liao_rise = float(meta["辽饷九厘基线"]) * (4.0 / 3.0 - 1.0)
+        expected_nominal += liao_rise
+        if str(row["controlled_by"]) == "ming":
+            expected_collectible += liao_rise
+    assert expected_collectible < expected_nominal
+
+    payload = build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
+    estimate = payload["fiscal_levy_memorial_estimates"][0]
+    assert estimate["national_added_wanliang"]["midpoint"] == round(expected_collectible, 1)
+    assert estimate["national_added_wanliang"]["midpoint"] != round(expected_nominal, 1)
+
+
+def test_fiscal_levy_memorial_labels_cumulative_army_arrears_as_wanliang_not_monthly(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+
+    pre_settle(state, db, content=content)
+    db.conn.execute("UPDATE armies SET arrears = 100 WHERE owner_power = 'ming'")
+    db.conn.commit()
+
+    payload = build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
+    estimate = payload["fiscal_levy_memorial_estimates"][0]
+    assert estimate["army_gap_basis"] == "全军累计欠饷"
+    assert estimate["national_army_gap_wanliang"]["unit"] == "万两"
+    assert estimate["national_army_gap_wanliang"]["text"].endswith("万两")
+    assert not estimate["national_army_gap_wanliang"]["text"].endswith("万两/月")
+
+
 def test_fiscal_levy_memorial_prompt_contract_is_positive_p4():
     from pathlib import Path
 

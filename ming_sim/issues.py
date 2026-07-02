@@ -1206,7 +1206,7 @@ def _round_half_up(value: float, step: float) -> float:
     return math.floor(value / step + 0.5) * step
 
 
-def _wanliang_range(amount: float) -> Dict[str, object]:
+def _wanliang_range(amount: float, *, unit: str = "万两/月") -> Dict[str, object]:
     value = max(0.0, float(amount))
     lower = _round_half_up(value * 0.9, 1.0)
     upper = _round_half_up(value * 1.1, 1.0)
@@ -1219,8 +1219,8 @@ def _wanliang_range(amount: float) -> Dict[str, object]:
         "lower": round(lower, 1),
         "midpoint": midpoint,
         "upper": round(upper, 1),
-        "unit": "万两/月",
-        "text": f"约{lower:g}至{upper:g}万两/月",
+        "unit": unit,
+        "text": f"约{lower:g}至{upper:g}{unit}",
     }
 
 
@@ -1248,20 +1248,22 @@ def _fiscal_levy_coverage_text(monthly_added: float, gap: float, basis: str) -> 
     return coverage_cheng, f"按{basis}{_plain_wanliang_approx(gap)}估，可补军费{coverage}"
 
 
-def _current_army_gap(db: GameDB) -> tuple[float, str]:
+def _current_army_gap(db: GameDB) -> tuple[float, str, str]:
     rows = db.conn.execute(
         "SELECT * FROM armies WHERE owner_power='ming'"
     ).fetchall()
     arrears = sum(float(row["arrears"] or 0.0) for row in rows)
     if arrears > 0:
-        return arrears, "全军累计欠饷"
+        return arrears, "全军累计欠饷", "万两"
     monthly_due = sum(float(army_needed(row)) for row in rows)
-    return monthly_due, "本月应发军饷"
+    return monthly_due, "本月应发军饷", "万两/月"
 
 
 def _region_fiscal_levy_components(db: GameDB) -> List[Dict[str, object]]:
     components: List[Dict[str, object]] = []
-    for row in db.conn.execute("SELECT id, name, fiscal FROM regions ORDER BY id").fetchall():
+    for row in db.conn.execute(
+        "SELECT id, name, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
+    ).fetchall():
         region_id = str(row["id"])
         fiscal = json.loads(str(row["fiscal"] or "{}"))
         if not isinstance(fiscal, dict):
@@ -1325,7 +1327,7 @@ def fiscal_levy_memorial_estimates(state: GameState, db: GameDB) -> List[Dict[st
         return []
     row_by_event_id = {str(row["event_id"]): row for row in rows}
     components = _region_fiscal_levy_components(db)
-    army_gap, gap_basis = _current_army_gap(db)
+    army_gap, gap_basis, gap_unit = _current_army_gap(db)
     estimates: List[Dict[str, object]] = []
     for ev in c.events:
         if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
@@ -1345,7 +1347,7 @@ def fiscal_levy_memorial_estimates(state: GameState, db: GameDB) -> List[Dict[st
             "scope": "国总口径",
             "presentation_instruction": _FISCAL_LEVY_PRESENTATION_INSTRUCTION,
             "national_added_wanliang": _wanliang_range(added),
-            "national_army_gap_wanliang": _wanliang_range(army_gap),
+            "national_army_gap_wanliang": _wanliang_range(army_gap, unit=gap_unit),
             "army_gap_basis": gap_basis,
             "army_gap_coverage_cheng": coverage_cheng,
             "army_gap_coverage_text": coverage_text,
