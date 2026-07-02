@@ -178,6 +178,12 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
         # 先 discard 确保 commit 时 directive pending 为空（codex r5 F2）。
         db.discard_pending_directives(state.turn)
         db.commit_pending_actions(state, content=content, registry=registry)
+        fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
+        if fiscal_levies:
+            tlog(
+                f"[fiscal-levy] 本回合饷率事件前置落账 {len(fiscal_levies)} 条："
+                f"{[(t['id'], t.get('terminal_reason') or t['terminal_state']) for t in fiscal_levies]}"
+            )
         apply_fixed_period_flows(db, state)
         message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
         db.record_log(state, message)

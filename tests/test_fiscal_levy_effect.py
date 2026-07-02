@@ -3,7 +3,7 @@ import math
 
 import pytest
 
-from ming_sim.decree import pre_settle
+from ming_sim.decree import advance_without_edict, pre_settle
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_historical_fiscal_rates
 import ming_sim.issues as issues
@@ -80,6 +80,39 @@ def test_liao_levy_rise_triggers_and_updates_shadow_settle_before_fiscal_tick(ga
         rel_tol=1e-9,
         abs_tol=1e-9,
     )
+    assert math.isclose(
+        after["st"]["C_地方截留"],
+        (after["p"]["正赋应征"] + target_liao)
+        * after["p"]["火耗率"]
+        * (1 - after["p"]["逋赋率"]),
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+
+
+def test_liao_levy_rise_triggers_on_no_edict_advance_before_fiscal_tick(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    before = _settle_payload(db, "shaanxi")
+    seed_liao = before["p"]["三饷应征"]
+    target_liao = seed_liao * 4.0 / 3.0
+
+    advance_without_edict(state, db, content=content)
+
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason, source FROM event_triggers WHERE event_id=?",
+        ("liao_levy_rise_1631",),
+    ).fetchone()
+    assert dict(row) == {
+        "terminal_state": "triggered",
+        "terminal_reason": "已准",
+        "source": "fiscal_levy_shadow",
+    }
+    after = _settle_payload(db, "shaanxi")
+    assert math.isclose(after["p"]["三饷应征"], target_liao, rel_tol=1e-9, abs_tol=1e-9)
     assert math.isclose(
         after["st"]["C_地方截留"],
         (after["p"]["正赋应征"] + target_liao)
