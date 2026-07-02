@@ -280,6 +280,13 @@ interface ResumePlan {
   readonly priorLedger: ReadonlyArray<LedgerEntry>;
 }
 
+interface LandedCoderProtocolFailure {
+  readonly index: number;
+  readonly step: "S2" | "S5";
+  readonly previousHead: string;
+  readonly branchHead: string;
+}
+
 function isValidStepId(value: unknown): value is StepId {
   return (
     value === "S0" ||
@@ -872,7 +879,7 @@ function isRecoverableCoderProtocolFailure(
 
 function protocolFailedLandedCoderStep(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
-): { readonly index: number; readonly step: "S2" | "S5"; readonly output: StepOutput } | undefined {
+): LandedCoderProtocolFailure | undefined {
   if (ledger.length < 2) return undefined;
   const last = ledger[ledger.length - 1]!;
   if (!isRecoverableCoderProtocolFailure(last)) return undefined;
@@ -907,7 +914,8 @@ function protocolFailedLandedCoderStep(
   return {
     index: i,
     step: entry.step,
-    output: { kind: "coder", committed: true, commitsAdded: 1 },
+    previousHead,
+    branchHead: entry.branchHEAD,
   };
 }
 
@@ -925,6 +933,69 @@ function ledgerThroughRecoveredCoderOutput(
         ? { ...entry, output: landedProtocolFailure.output }
         : entry,
     ) as ReadonlyArray<LedgerEntry>;
+}
+
+async function planRecoveredLandedCoderProtocolFailure(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+  worktree: WorktreeHandle,
+  backend: Backend,
+): Promise<ResumePlan | undefined> {
+  const executableLedger = executableLedgerEntries(ledger);
+  const landedProtocolFailure =
+    protocolFailedLandedCoderStep(executableLedger);
+  if (
+    landedProtocolFailure === undefined ||
+    backend.countCommitsBetween === undefined
+  ) {
+    return undefined;
+  }
+
+  let commitsAdded: number;
+  try {
+    commitsAdded = await backend.countCommitsBetween(
+      worktree,
+      landedProtocolFailure.previousHead,
+      landedProtocolFailure.branchHead,
+    );
+  } catch {
+    return undefined;
+  }
+
+  if (!Number.isInteger(commitsAdded) || commitsAdded <= 0) {
+    return undefined;
+  }
+
+  const output: StepOutput = {
+    kind: "coder",
+    committed: true,
+    commitsAdded,
+  };
+  const pendingBlockingFindings =
+    landedProtocolFailure.step === "S5"
+      ? adjudicatedBlockingFindingsForPersistedS4(executableLedger)
+      : undefined;
+  const decision = route({
+    from: landedProtocolFailure.step,
+    output,
+    ...(pendingBlockingFindings !== undefined
+      ? { pendingBlockingFindings }
+      : {}),
+  });
+  if (decision.kind === "handoff") {
+    return undefined;
+  }
+
+  return {
+    resumeStep: decision.step,
+    lastOutput: output,
+    priorLedger: ledgerThroughRecoveredCoderOutput(
+      executableLedger,
+      {
+        index: landedProtocolFailure.index,
+        output,
+      },
+    ),
+  };
 }
 
 function lastReviewerStep(
@@ -1327,32 +1398,6 @@ function planResume(
       lastOutput: agentEntry?.output,
       priorLedger: executableLedger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
     };
-  }
-
-  const landedProtocolFailure =
-    protocolFailedLandedCoderStep(executableLedger);
-  if (landedProtocolFailure !== undefined) {
-    const pendingBlockingFindings =
-      landedProtocolFailure.step === "S5"
-        ? adjudicatedBlockingFindingsForPersistedS4(executableLedger)
-        : undefined;
-    const decision = route({
-      from: landedProtocolFailure.step,
-      output: landedProtocolFailure.output,
-      ...(pendingBlockingFindings !== undefined
-        ? { pendingBlockingFindings }
-        : {}),
-    });
-    if (decision.kind !== "handoff") {
-      return {
-        resumeStep: decision.step,
-        lastOutput: landedProtocolFailure.output,
-        priorLedger: ledgerThroughRecoveredCoderOutput(
-          executableLedger,
-          landedProtocolFailure,
-        ),
-      };
-    }
   }
 
   // Case 3a: the prior run wrote a terminal S8 entry. Report its TRUE status
@@ -2240,7 +2285,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
       resumeLedger = [...resumeLedger, repairIntentEntry];
     }
-    const plan = planResume(resumeLedger);
+    const plan =
+      (await planRecoveredLandedCoderProtocolFailure(
+        resumeLedger,
+        worktree,
+        backend,
+      )) ?? planResume(resumeLedger);
 
     // Seed the in-memory ledger with prior progress so committed work is
     // preserved and the prior steps are NOT re-run.

@@ -2517,17 +2517,29 @@ export class RealBackend implements Backend {
     );
   }
 
+  async countCommitsBetween(
+    worktree: WorktreeHandle,
+    fromHead: string,
+    toHead: string,
+  ): Promise<number> {
+    return this.countCommitsInRange(worktree, `${fromHead}..${toHead}`);
+  }
+
   private countCommitsSince(worktree: WorktreeHandle, fromHead: string): number {
+    return this.countCommitsInRange(worktree, `${fromHead}..HEAD`);
+  }
+
+  private countCommitsInRange(worktree: WorktreeHandle, range: string): number {
     const raw = this.sh(
       "git",
-      ["rev-list", "--count", `${fromHead}..HEAD`],
+      ["rev-list", "--count", range],
       worktree.path,
     );
     const count = Number.parseInt(raw, 10);
     if (!Number.isInteger(count) || count < 0) {
       throw new Error(
         `realBackend: git rev-list returned invalid commit count "${raw}" ` +
-          `for ${fromHead}..HEAD in ${worktree.path}`,
+          `for ${range} in ${worktree.path}`,
       );
     }
     return count;
