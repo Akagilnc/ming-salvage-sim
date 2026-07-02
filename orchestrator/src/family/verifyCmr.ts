@@ -570,22 +570,6 @@ function familyCmrPassStopSummary(input: {
   readonly familyHeadAfter?: string;
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
 }): StopSummary | undefined {
-  const crossModule = input.classification?.results.find(
-    (result) => result.classification === "cross_module_defer",
-  );
-  const finding = input.classification?.deferred[0];
-  if (
-    crossModule !== undefined &&
-    finding !== undefined &&
-    crossModule.targetModule !== undefined
-  ) {
-    return stopReasonForFindingDisposition({
-      kind: "cross_module",
-      finding,
-      targetModule: crossModule.targetModule,
-      reason: crossModule.reason,
-    });
-  }
   const acceptedSuppressions = input.classification?.dispositions
     .filter(hasAcceptedSuppressionAuthority)
     .map((disposition) => ({
@@ -595,16 +579,7 @@ function familyCmrPassStopSummary(input: {
       findingIdentity: disposition.identityKey,
       boundedReopen: disposition.boundedReopen!,
     }));
-  if (
-    (acceptedSuppressions === undefined || acceptedSuppressions.length === 0) &&
-    (input.skippedLegs === undefined || input.skippedLegs.length === 0)
-  ) {
-    return providerDegradedPassStopSummary({
-      familyHeadAfter: input.familyHeadAfter,
-      skippedLegs: input.skippedLegs,
-    });
-  }
-  return successStopSummary({
+  const materialPassSummary = successStopSummary({
     ...(input.familyHeadAfter !== undefined
       ? {
           heads: {
@@ -627,6 +602,35 @@ function familyCmrPassStopSummary(input: {
         }
       : {}),
   });
+  const crossModule = input.classification?.results.find(
+    (result) => result.classification === "cross_module_defer",
+  );
+  const finding = input.classification?.deferred[0];
+  if (
+    crossModule !== undefined &&
+    finding !== undefined &&
+    crossModule.targetModule !== undefined
+  ) {
+    const crossModuleSummary = stopReasonForFindingDisposition({
+      kind: "cross_module",
+      finding,
+      targetModule: crossModule.targetModule,
+      reason: crossModule.reason,
+    });
+    return materialPassSummary.metadata !== undefined
+      ? { ...crossModuleSummary, metadata: materialPassSummary.metadata }
+      : crossModuleSummary;
+  }
+  if (
+    (acceptedSuppressions === undefined || acceptedSuppressions.length === 0) &&
+    (input.skippedLegs === undefined || input.skippedLegs.length === 0)
+  ) {
+    return providerDegradedPassStopSummary({
+      familyHeadAfter: input.familyHeadAfter,
+      skippedLegs: input.skippedLegs,
+    });
+  }
+  return materialPassSummary;
 }
 
 function isMaterialCmrStopSummary(stopSummary: StopSummary): boolean {
