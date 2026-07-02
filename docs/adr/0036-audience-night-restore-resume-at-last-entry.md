@@ -1,6 +1,6 @@
 # 召对夜 restore = 回到最后一条持久化对话轮续夜；落账即史实；丢失回话给重试不重打
 
-Status: Proposed（2026-07-02 #470 grill 结晶；评审闸在 to-prd 之后）
+Status: Accepted（2026-07-02：本地 cmr 十轮收敛（codex xhigh + agy + Opus 4.8）+ 线上 bot 轮收敛，PR #510；2026-07-02 #470 grill 结晶）
 
 ## 决定
 

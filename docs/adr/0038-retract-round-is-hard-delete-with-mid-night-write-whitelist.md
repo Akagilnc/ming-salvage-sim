@@ -1,6 +1,6 @@
 # 撤回本轮 = 逆转该轮全部效果；夜内直写真实盘面走可枚举白名单
 
-Status: Proposed（2026-07-02 #470 grill 结晶；评审闸在 to-prd 之后；cmr R1 修订：真删→效果逆转）
+Status: Accepted（2026-07-02：本地 cmr 十轮收敛（codex xhigh + agy + Opus 4.8）+ 线上 bot 轮收敛，PR #510；2026-07-02 #470 grill 结晶；cmr R1 修订：真删→效果逆转）
 
 ## 决定
 

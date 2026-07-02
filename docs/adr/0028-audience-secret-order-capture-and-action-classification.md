@@ -1,6 +1,6 @@
 # 召对密令捕获与动作分类：显式按钮权威路由 + 对话上下文取正文 + 确定性 no-op 任免丢弃
 
-Status: Proposed（2026-06-23，grill #354 结晶；评审闸在 to-prd 之后，本 ADR 尚未评审）
+Status: Accepted（2026-07-02：随 #470 设计闸一并评审——本地 cmr 十轮收敛（codex xhigh + agy + Opus 4.8）+ 线上 bot 轮收敛，PR #510；含 cmr R1 暂存感知 no-op、R2 对冲双向对称、R8 排除字段捕获修订；2026-06-23 grill #354 结晶）
 
 ## 背景
 

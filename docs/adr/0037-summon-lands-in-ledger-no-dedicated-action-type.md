@@ -1,6 +1,6 @@
 # 皇帝发起召对：入账即入机制，不另立 summon 动作类型
 
-Status: Proposed（2026-07-02 #470 grill 结晶，了结 #468 分叉；评审闸在 to-prd 之后）
+Status: Accepted（2026-07-02：本地 cmr 十轮收敛（codex xhigh + agy + Opus 4.8）+ 线上 bot 轮收敛，PR #510；2026-07-02 #470 grill 结晶，了结 #468 分叉）
 
 ## 决定
 
