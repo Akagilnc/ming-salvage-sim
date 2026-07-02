@@ -113,6 +113,18 @@ function coderProtocolFailureS8(): PersistentLedgerEntry {
   };
 }
 
+function malformedCoderPayloadFailureS8(): PersistentLedgerEntry {
+  return {
+    ...s8("error"),
+    stopSummary: {
+      reason: "contract_drift",
+      summary:
+        "realBackend: coder must emit its structured result in a <coder> tag; the payload was malformed.",
+      repairHint: "Fix the malformed coder payload instead of fabricating a landed coder output.",
+    },
+  };
+}
+
 function escalationAnswer(
   forStep: StepId,
   answer: string,
@@ -518,6 +530,39 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     expect(result.stopSummary?.summary).toBe(
       "coder output failed commit-truth reconciliation",
     );
+  });
+
+  it("does not recover malformed coder payload failures that merely mention the <coder> tag", async () => {
+    const beforeBuildHead = "a".repeat(40);
+    const afterBuildHead = "b".repeat(40);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeBuildHead },
+        { ...entry("S1"), branchHEAD: beforeBuildHead },
+        {
+          step: "S2",
+          sessionId: "session-s2-malformed-payload",
+          prompt_hash: "hash-S2",
+          branchHEAD: afterBuildHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        { ...malformedCoderPayloadFailureS8(), branchHEAD: afterBuildHead },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("error");
+    expect(backend.dispatchSpecs).toHaveLength(0);
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S8",
+    ]);
+    expect(result.stopSummary?.summary).toContain("payload was malformed");
   });
 });
 

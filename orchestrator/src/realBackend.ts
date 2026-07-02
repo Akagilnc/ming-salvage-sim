@@ -2393,7 +2393,20 @@ export class RealBackend implements Backend {
     typedOutputUsed: boolean,
     options?: AgentStepRunOptions,
   ): unknown {
-    const sidecar = readWorkerOutcomeSidecar(options?.outcomeLanding?.path);
+    let sidecar: unknown | undefined;
+    try {
+      sidecar = readWorkerOutcomeSidecar(options?.outcomeLanding?.path);
+    } catch (err) {
+      if (spec.role === "reviewer") {
+        const wrapped = new Error(
+          `StructuredOutputError: reviewer outcome sidecar was not valid JSON: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+        wrapped.name = "StructuredOutputError";
+        throw wrapped;
+      }
+      throw err;
+    }
     if (sidecar !== undefined) return sidecar;
     if (typedOutputUsed) return result.output;
     // Untyped compatibility path: structured result lives in the role tag.

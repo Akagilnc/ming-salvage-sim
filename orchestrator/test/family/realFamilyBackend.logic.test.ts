@@ -912,6 +912,33 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
+  it("parses cmr sidecar payloads directly when free-form text contains a cmr tag delimiter", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-delimiter-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        escalate: {
+          reason: "review unavailable",
+          diagnosis: "diagnosis quoted the literal </cmr> delimiter",
+        },
+      }) + "\n",
+      "utf8",
+    );
+
+    const outcome = cmrOutcomeFromResult({
+      completionSignal: "CMR_STEP_COMPLETE",
+      stdout: "<cmr>not json</cmr>\nCMR_STEP_COMPLETE",
+      outcomePath,
+    });
+
+    expect(outcome).toEqual({
+      kind: "escalate",
+      reason: "review unavailable",
+      diagnosis: "diagnosis quoted the literal </cmr> delimiter",
+    });
+  });
+
   it("fails closed instead of falling back to stdout when the cmr outcome sidecar is malformed", () => {
     const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-bad-"));
     const outcomePath = join(dir, "outcome.json");
@@ -1075,6 +1102,27 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
     writeFileSync(
       outcomePath,
       JSON.stringify({ resolved: true, tradeoffs: "preserved both sides" }) + "\n",
+      "utf8",
+    );
+
+    expect(
+      mergerOutcomeFromResult({
+        completionSignal: "MERGER_STEP_COMPLETE",
+        stdout: "<merger>not json</merger>\nMERGER_STEP_COMPLETE",
+        outcomePath,
+      }),
+    ).toEqual({ resolved: true });
+  });
+
+  it("parses merger sidecar payloads directly when free-form text contains a merger tag delimiter", () => {
+    const dir = mkdtempSync(join(tmpdir(), "merger-outcome-delimiter-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        resolved: true,
+        tradeoffs: "resolution notes quoted the literal </merger> delimiter",
+      }) + "\n",
       "utf8",
     );
 

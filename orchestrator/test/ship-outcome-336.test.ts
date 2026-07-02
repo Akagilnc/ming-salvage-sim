@@ -297,6 +297,33 @@ describe("#336 shipOutcomeFromResult — completion-signal gate (mirrors the cmr
     });
   });
 
+  it("parses sidecar payloads directly when free-form text contains a ship tag delimiter", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ship-outcome-delimiter-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        failed: {
+          reason: "tests red",
+          diagnosis: "log quoted the literal </ship> delimiter",
+        },
+      }) + "\n",
+      "utf8",
+    );
+
+    const o = shipOutcomeFromResult({
+      completionSignal: SHIP_COMPLETION_SIGNAL,
+      stdout: "<ship>not json</ship>\nSHIP_STEP_COMPLETE",
+      outcomePath,
+    });
+
+    expect(o).toEqual({
+      kind: "failed",
+      reason: "tests red",
+      diagnosis: "log quoted the literal </ship> delimiter",
+    });
+  });
+
   it("fails closed instead of falling back to stdout when the ship outcome sidecar is malformed", () => {
     const dir = mkdtempSync(join(tmpdir(), "ship-outcome-bad-"));
     const outcomePath = join(dir, "outcome.json");

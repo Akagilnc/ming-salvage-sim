@@ -865,7 +865,7 @@ function isRecoverableCoderProtocolFailure(
     return false;
   }
 
-  return /\bcoder step stdout carried no <coder>[\s\S]*tag\b|structured result in a <coder> tag/i.test(
+  return /\bcoder step stdout carried no <coder>[\s\S]*tag\b/i.test(
     entry.stopSummary.summary,
   );
 }

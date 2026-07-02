@@ -2243,9 +2243,10 @@ export function cmrOutcomeFromResult(result: {
   try {
     const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
     if (sidecar !== undefined) {
-      return parseCmrOutcome(
-        `<cmr>${JSON.stringify(sidecar)}</cmr>`,
-        result.cmrReviewLegs,
+      return classifyCmrOutcomePayload(
+        sidecar,
+        result.cmrReviewLegs ?? process.env,
+        "cmr worker outcome sidecar",
       );
     }
   } catch (err) {
@@ -2533,11 +2534,19 @@ export function parseCmrOutcome(
   } catch {
     return { kind: "malformed", reason: "cmr worker <cmr> tag was not valid JSON" };
   }
+  return classifyCmrOutcomePayload(parsed, routeOrEnv, "cmr worker <cmr> tag");
+}
+
+function classifyCmrOutcomePayload(
+  parsed: unknown,
+  routeOrEnv: CmrLegAccountingRoute,
+  source: string,
+): CmrWorkerOutcome {
   // `JSON.parse` succeeds on bare literals (`null` / `true` / `5`); the strict
   // schemas reject every non-object, but guard explicitly so the malformed
   // message stays specific (mirrors parseShipOutcome / parseMergerOutcome).
   if (!isJsonRecord(parsed)) {
-    return { kind: "malformed", reason: "cmr worker <cmr> tag was not a JSON object" };
+    return { kind: "malformed", reason: `${source} was not a JSON object` };
   }
   const normalizedParsed = normalizeKnownCmrAliases(parsed);
   // Escalate FIRST — a model-stuck worker never carries a usable verdict.
@@ -2608,7 +2617,7 @@ export function parseCmrOutcome(
   return {
     kind: "malformed",
     reason:
-      "cmr worker <cmr> tag matched no valid shape (expected one of: " +
+      `${source} matched no valid shape (expected one of: ` +
       "{converged:true,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions}, " +
       "{converged:false,reason,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions}, " +
       "{escalate:{reason,diagnosis}} — non-empty strings, no extra keys)",
@@ -2654,7 +2663,7 @@ export function mergerOutcomeFromResult(result: {
   try {
     const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
     if (sidecar !== undefined) {
-      return parseMergerOutcome(`<merger>${JSON.stringify(sidecar)}</merger>`);
+      return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
     }
   } catch (err) {
     return {
@@ -2718,11 +2727,18 @@ export function parseMergerOutcome(stdout: string): {
   } catch {
     return { resolved: false, reason: "merger agent <merger> tag was not valid JSON" };
   }
+  return classifyMergerOutcomePayload(parsed, "merger agent <merger> tag");
+}
+
+function classifyMergerOutcomePayload(
+  parsed: unknown,
+  source: string,
+): { resolved: boolean; reason?: string } {
   // `JSON.parse` succeeds on the bare literals `null` / `true` / `5` / `"x"`; the
   // strict schemas reject every non-object, but guard explicitly so the message
   // stays specific (agy R1: a non-object must never crash or coerce to resolved).
   if (parsed === null || typeof parsed !== "object") {
-    return { resolved: false, reason: "merger agent <merger> tag was not a JSON object" };
+    return { resolved: false, reason: `${source} was not a JSON object` };
   }
   if (mergerResolvedSchema.safeParse(parsed).success) {
     return { resolved: true };
