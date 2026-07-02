@@ -688,6 +688,38 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     }
   }
 
+  class ShipEscalatesWithoutEscalateSeamBackend implements FamilyBackend {
+    ledger: FamilyLedgerEntry[] = [];
+    async mergeChildIntoFamilyBase(): Promise<never> {
+      throw new Error("not used");
+    }
+    async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+      this.ledger.push(entry);
+    }
+    async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+      return this.ledger;
+    }
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      if (spec.kind === "cmr") {
+        return {
+          kind: "completed",
+          output: {
+            kind: "cmr",
+            converged: true,
+            successfulLegs: ["opus", "gpt-5.5", "agy"],
+          },
+        };
+      }
+      return {
+        kind: "escalated",
+        escalation: { reason: "stuck", diagnosis: "needs human" },
+      };
+    }
+  }
+
   it("an escalated cmr worker → escalateFamily + ok:false (not a bare INCOMPLETE_GATE)", async () => {
     const be = new EscalatingFamilyBackend("cmr");
     const res = await runVerifyCmr({
@@ -723,6 +755,29 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
       stopSummary: expect.objectContaining({
         reason: "infra_failure",
         summary: expect.stringContaining("family ship worker escalated"),
+      }),
+    }));
+  });
+
+  it("an escalated family ship worker still writes durable abort when no escalateFamily seam exists", async () => {
+    const be = new ShipEscalatesWithoutEscalateSeamBackend();
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: be,
+    });
+
+    expect(res.ok).toBe(false);
+    expect(be.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      reason: expect.stringContaining("family ship worker escalated"),
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        metadata: expect.objectContaining({
+          ship: { shipPrState: "ship-worker-escalated" },
+        }),
       }),
     }));
   });

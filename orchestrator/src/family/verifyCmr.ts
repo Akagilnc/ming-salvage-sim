@@ -1455,14 +1455,13 @@ export async function runVerifyCmr(
         },
       },
     });
-    if (familyBackend.escalateFamily === undefined) {
-      throw new Error("ship worker escalated but backend has no escalateFamily seam");
+    if (familyBackend.escalateFamily !== undefined) {
+      await familyBackend.escalateFamily({
+        reason: escalationReason,
+        familyHeadAfter: postShipFamilyHead,
+        stopSummary,
+      });
     }
-    await familyBackend.escalateFamily({
-      reason: escalationReason,
-      familyHeadAfter: postShipFamilyHead,
-      stopSummary,
-    });
     await recordDurableAbort(familyBackend, {
       phase,
       reason,
