@@ -137,7 +137,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     // The reviewer is fresh/clean; a clean review is classified by S4 before S7.
     expect(backend.dispatched).toEqual([
       "S2:coder:coder:fresh:retain:/tdd",
-      "S3:reviewer:reviewer:fresh:clean:/review",
+      "S3:reviewer:reviewer:fresh:clean:/code-review",
       "S7:ship:coder:fresh:clean:gstack-ship",
     ]);
   });
@@ -352,7 +352,7 @@ describe("#331 stepSpecToWorkerSpec — builds the worker spec from a StepSpec",
     expect(w.contextRetention).toBe("retain");
   });
 
-  it("maps a reviewer StepSpec to a reviewer worker (fresh, clean eyes, invoke /review)", () => {
+  it("maps a reviewer StepSpec to a reviewer worker (fresh, clean eyes, invoke /code-review)", () => {
     // dispatchWorker.ts stays generic (it serves the family layer's reviewer/cmr
     // kinds too); the role→reviewer mapping is independent of the single-slice
     // StepId set, so any valid id stands in here.
@@ -361,7 +361,7 @@ describe("#331 stepSpecToWorkerSpec — builds the worker spec from a StepSpec",
     expect(w.kind).toBe("reviewer");
     expect(w.session).toBe("fresh");
     expect(w.contextRetention).toBe("clean");
-    expect(w.skill).toBe("/review");
+    expect(w.skill).toBe("/code-review");
   });
 });
 
