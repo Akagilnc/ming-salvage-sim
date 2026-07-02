@@ -114,24 +114,43 @@ const COMPLIANT_META: IssueMeta = {
   openBlockedBy: [],
 };
 
+async function expectS0GateError(
+  meta: IssueMeta,
+  messagePattern: RegExp,
+  input?: Partial<Parameters<typeof runOrchestrator>[0]>,
+): Promise<{ reason: string; backend: GateTestBackend }> {
+  const backend = new GateTestBackend(meta);
+  const issueNumber = input?.issueNumber ?? 248;
+  const result = await runOrchestrator({
+    ...input,
+    issueNumber,
+    backend,
+  });
+
+  expect(result.status).toBe("error");
+  expect(result.errorPackage?.failedStep).toBe("S0");
+  expect(result.errorPackage?.reason).toMatch(messagePattern);
+  expect(result.stopSummary.reason).toBe("infra_failure");
+  expect(result.stopSummary.summary).toMatch(messagePattern);
+  expect(result.stopSummary.repairHint).toMatch(/S0/);
+  expect(result.stepLedger.map((entry) => entry.step)).toEqual(["S0", "S8"]);
+  expect(result.stepLedger.at(-1)?.stopSummary).toEqual(result.stopSummary);
+  expect(backend.calls).toEqual([`fetchIssueMeta(${issueNumber})`]);
+
+  return { reason: result.errorPackage?.reason ?? "", backend };
+}
+
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Reject cases — three distinct non-compliant IssueMeta shapes
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("S0 input gate — reject cases (#248)", () => {
-  it("(a) non-rfa: rejects and stops at S0 with a clear error", async () => {
-    const backend = new GateTestBackend({
-      ...COMPLIANT_META,
-      isReadyForAgent: false,
-    });
-
-    await expect(
-      runOrchestrator({ issueNumber: 248, backend }),
-    ).rejects.toThrow(/ready-for-agent/i);
-
-    // Gate must fire exactly once (fetchIssueMeta) with no downstream calls.
-    expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
+  it("(a) non-rfa: returns a structured S0 terminal error", async () => {
+    await expectS0GateError(
+      { ...COMPLIANT_META, isReadyForAgent: false },
+      /ready-for-agent/i,
+    );
   });
 
   it("(b) no Agent Brief: PASSES S0 — a slice need not carry the brief (design: to-issues 切片未必有这段; 工具不能这么死板; coder 读整个 issue)", async () => {
@@ -156,59 +175,29 @@ describe("S0 input gate — reject cases (#248)", () => {
     expect(backend.calls.length).toBeGreaterThan(1); // not stopped at the gate
   });
 
-  it("(closed) issue is CLOSED: rejects and stops at S0 (#2 — a done slice must not run a coder)", async () => {
-    const backend = new GateTestBackend({
-      ...COMPLIANT_META,
-      isClosed: true,
-    });
-
-    await expect(
-      runOrchestrator({ issueNumber: 248, backend }),
-    ).rejects.toThrow(/closed/i);
-
-    // Fail-closed at the gate — no worktree, no coder dispatched.
-    expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
+  it("(closed) issue is CLOSED: returns a structured S0 terminal error (#2 — a done slice must not run a coder)", async () => {
+    await expectS0GateError({ ...COMPLIANT_META, isClosed: true }, /closed/i);
   });
 
-  it("(c) parent issue (has sub-issues): rejects and stops at S0 with a clear error", async () => {
-    const backend = new GateTestBackend({
-      ...COMPLIANT_META,
-      hasSubIssues: true,
-    });
-
-    await expect(
-      runOrchestrator({ issueNumber: 248, backend }),
-    ).rejects.toThrow(/leaf|sub.?issue|child/i);
-
-    expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
+  it("(c) parent issue (has sub-issues): returns a structured S0 terminal error", async () => {
+    await expectS0GateError(
+      { ...COMPLIANT_META, hasSubIssues: true },
+      /leaf|sub.?issue|child/i,
+    );
   });
 
-  it("(d) open blocked_by: rejects at S0 naming the blocking issue number AND 'blocked'/'upstream'", async () => {
-    const backend = new GateTestBackend({
-      ...COMPLIANT_META,
-      openBlockedBy: [247],
-    });
-
-    // Single assertion: error must simultaneously name the blocking issue AND
-    // carry 'blocked'/'upstream' semantics — ensures both are present together.
-    await expect(
-      runOrchestrator({ issueNumber: 248, backend }),
-    ).rejects.toThrow(/(?=.*#?247)(?=.*(?:blocked|upstream))/i);
-
-    expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
+  it("(d) open blocked_by: returns a structured S0 terminal error naming the blocking issue number AND 'blocked'/'upstream'", async () => {
+    await expectS0GateError(
+      { ...COMPLIANT_META, openBlockedBy: [247] },
+      /(?=.*#?247)(?=.*(?:blocked|upstream))/i,
+    );
   });
 
   it("(d) open blocked_by (multiple): error names all blocking issues AND 'blocked'/'upstream'", async () => {
-    const backend = new GateTestBackend({
-      ...COMPLIANT_META,
-      openBlockedBy: [100, 200],
-    });
-
-    await expect(
-      runOrchestrator({ issueNumber: 248, backend }),
-    ).rejects.toThrow(/(?=.*#?100)(?=.*#?200)(?=.*(?:blocked|upstream))/i);
-
-    expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
+    await expectS0GateError(
+      { ...COMPLIANT_META, openBlockedBy: [100, 200] },
+      /(?=.*#?100)(?=.*#?200)(?=.*(?:blocked|upstream))/i,
+    );
   });
 
   it("each reject case produces a DIFFERENT error message (distinguishable)", async () => {
@@ -220,14 +209,10 @@ describe("S0 input gate — reject cases (#248)", () => {
 
     const messages: string[] = [];
     for (const [, meta] of cases) {
-      const b = new GateTestBackend(meta);
-      let msg = "";
-      try {
-        await runOrchestrator({ issueNumber: 1, backend: b });
-      } catch (e) {
-        msg = (e as Error).message;
-      }
-      messages.push(msg);
+      const { reason } = await expectS0GateError(meta, /S0 input gate/i, {
+        issueNumber: 1,
+      });
+      messages.push(reason);
     }
 
     // All three messages are non-empty and mutually distinct.
@@ -346,22 +331,16 @@ describe("S0 gate — #294 family-mode ledger-merged blocked_by (decision 6③)"
     expect(result.status).toBe("success");
   });
 
-  it("family mode: an open blocker NOT in mergedBlockers (external dependency) is STILL rejected at S0", async () => {
+  it("family mode: an open blocker NOT in mergedBlockers (external dependency) returns a structured S0 terminal error", async () => {
     // Decision 6③ soundness guard: #999 is an EXTERNAL open blocker the commander
     // never ledger-merged, so it is absent from mergedBlockers. The family-mode
     // gate must NOT blanket-skip the blocked_by check — #999 stays a genuine open
     // blocker. (#247 IS ledger-merged and excused; #999 is not and rejects.)
-    const backend = new GateTestBackend({
-      ...COMPLIANT_META,
-      openBlockedBy: [247, 999],
-    });
-    await expect(
-      runOrchestrator({
-        issueNumber: 248,
-        backend,
-        family: { ...FAMILY, mergedBlockers: [247] },
-      }),
-    ).rejects.toThrow(/(?=.*#?999)(?=.*(?:blocked|upstream))/i);
+    const { backend } = await expectS0GateError(
+      { ...COMPLIANT_META, openBlockedBy: [247, 999] },
+      /(?=.*#?999)(?=.*(?:blocked|upstream))/i,
+      { family: { ...FAMILY, mergedBlockers: [247] } },
+    );
     // Stopped at S0 — nothing downstream ran (the external blocker rejected it).
     expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
   });
@@ -370,20 +349,11 @@ describe("S0 gate — #294 family-mode ledger-merged blocked_by (decision 6③)"
     // Sharper guard: when #247 is excused but #999 rejects, the thrown message
     // must name #999 and NOT #247 — the excused blocker is gone from openBlockedBy,
     // not merely outnumbered.
-    const backend = new GateTestBackend({
-      ...COMPLIANT_META,
-      openBlockedBy: [247, 999],
-    });
-    let msg = "";
-    try {
-      await runOrchestrator({
-        issueNumber: 248,
-        backend,
-        family: { ...FAMILY, mergedBlockers: [247] },
-      });
-    } catch (e) {
-      msg = (e as Error).message;
-    }
+    const { reason: msg } = await expectS0GateError(
+      { ...COMPLIANT_META, openBlockedBy: [247, 999] },
+      /#?999/,
+      { family: { ...FAMILY, mergedBlockers: [247] } },
+    );
     expect(msg).toMatch(/#?999/);
     expect(msg).not.toMatch(/#247/);
   });

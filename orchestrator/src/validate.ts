@@ -17,10 +17,13 @@ import type {
   CoderOutput,
   Escalation,
   Finding,
+  FindingDispositionEvidence,
   PriorFindingDisposition,
+  RepairEvidence,
   ReviewerOutput,
   StepOutput,
 } from "./types.js";
+import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
 
 /** Exact severity enum (no whitespace / case drift tolerated). */
 const SEVERITIES: ReadonlySet<string> = new Set([
@@ -42,6 +45,7 @@ const PRIOR_FINDING_DISPOSITIONS: ReadonlySet<string> = new Set([
   "still-active",
   "verified-closed",
   "unable-to-assess",
+  "accepted_suppressed",
 ]);
 
 /** Required string fields on a Finding (PRD #244 contract). */
@@ -51,6 +55,15 @@ const FINDING_STRING_FIELDS = [
   "location",
   "suggested_fix",
 ] as const;
+
+const DISPOSITION_KINDS: ReadonlySet<string> = new Set([
+  "same_module",
+  "cross_module",
+  "spec_conflict",
+  "infra_failure",
+  "owning_issue_still_red",
+  "accepted_suppressed",
+]);
 
 /**
  * Type-only string guard (intentionally does NOT reject `""`): a Finding's
@@ -66,6 +79,108 @@ function isString(v: unknown): v is string {
 /** A genuinely non-empty string (rejects "" and whitespace-only). */
 function isFilledString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
+}
+
+function optionalString(v: unknown): boolean {
+  return v === undefined || isString(v);
+}
+
+function acceptedSuppressionAuthorityFromRecord(
+  obj: Record<string, unknown>,
+): boolean {
+  return hasAcceptedSuppressionAuthority({
+    source: typeof obj.source === "string" ? obj.source : undefined,
+    scope: typeof obj.scope === "string" ? obj.scope : undefined,
+    reason: typeof obj.reason === "string" ? obj.reason : undefined,
+    boundedReopen:
+      typeof obj.boundedReopen === "string" ? obj.boundedReopen : undefined,
+  });
+}
+
+function isStringArray(v: unknown): v is ReadonlyArray<string> {
+  return Array.isArray(v) && v.every(isString);
+}
+
+function isFilledStringArray(v: unknown): v is ReadonlyArray<string> {
+  return Array.isArray(v) && v.every(isFilledString);
+}
+
+function isValidFindingRepairScope(v: unknown): boolean {
+  if (v == null || typeof v !== "object" || Array.isArray(v)) return false;
+  const obj = v as Record<string, unknown>;
+  return (
+    (obj.identityKeys === undefined || isStringArray(obj.identityKeys)) &&
+    (obj.locations === undefined || isStringArray(obj.locations)) &&
+    (obj.categories === undefined || isStringArray(obj.categories)) &&
+    (obj.findingGroup === undefined || isString(obj.findingGroup)) &&
+    (obj.reviewContext === undefined || isString(obj.reviewContext)) &&
+    (obj.featureArea === undefined || isString(obj.featureArea))
+  );
+}
+
+function isValidRepairEvidence(v: unknown): v is RepairEvidence {
+  if (v == null || typeof v !== "object" || Array.isArray(v)) return false;
+  const obj = v as Record<string, unknown>;
+  if (!isValidFindingRepairScope(obj.findingScope)) return false;
+  if (
+    obj.changedFiles !== undefined &&
+    !isFilledStringArray(obj.changedFiles)
+  ) {
+    return false;
+  }
+  if (obj.tests !== undefined && !isFilledStringArray(obj.tests)) return false;
+  if (obj.fixtures !== undefined && !isFilledStringArray(obj.fixtures)) {
+    return false;
+  }
+  if (obj.patchSummary !== undefined && !isFilledString(obj.patchSummary)) {
+    return false;
+  }
+  return (
+    (Array.isArray(obj.changedFiles) && obj.changedFiles.length > 0) ||
+    (Array.isArray(obj.tests) && obj.tests.length > 0) ||
+    (Array.isArray(obj.fixtures) && obj.fixtures.length > 0)
+  );
+}
+
+function isValidDispositionEvidence(
+  d: unknown,
+): d is FindingDispositionEvidence {
+  if (d == null || typeof d !== "object") return false;
+  const obj = d as Record<string, unknown>;
+  if (typeof obj.kind !== "string" || !DISPOSITION_KINDS.has(obj.kind)) {
+    return false;
+  }
+  if (!isFilledString(obj.reason)) return false;
+  if (
+    !optionalString(obj.targetModule) ||
+    !optionalString(obj.owningIssue) ||
+    !optionalString(obj.missingSurface) ||
+    !optionalString(obj.nextStep) ||
+    !optionalString(obj.source) ||
+    !optionalString(obj.scope) ||
+    !optionalString(obj.findingIdentity) ||
+    !optionalString(obj.boundedReopen)
+  ) {
+    return false;
+  }
+  switch (obj.kind) {
+    case "cross_module":
+      return isFilledString(obj.targetModule);
+    case "owning_issue_still_red":
+      return (
+        isFilledString(obj.owningIssue) &&
+        isFilledString(obj.missingSurface) &&
+        isFilledString(obj.nextStep)
+      );
+    case "accepted_suppressed":
+      return acceptedSuppressionAuthorityFromRecord(obj);
+    case "spec_conflict":
+    case "infra_failure":
+      return isFilledString(obj.source);
+    case "same_module":
+      return true;
+  }
+  return false;
 }
 
 /**
@@ -134,7 +249,12 @@ export function isValidFinding(f: unknown): f is Finding {
   }
   if (
     (obj.action === "wont_fix" || obj.action === "rejected") &&
-    !isFilledString(obj.disposition_reason)
+    !(
+      isFilledString(obj.disposition_reason) ||
+      (isValidDispositionEvidence(obj.disposition) &&
+        obj.disposition.kind === "accepted_suppressed" &&
+        isFilledString(obj.disposition.reason))
+    )
   ) {
     return false;
   }
@@ -145,10 +265,24 @@ export function isValidFinding(f: unknown): f is Finding {
     return false;
   }
   if (
+    obj.disposition !== undefined &&
+    !isValidDispositionEvidence(obj.disposition)
+  ) {
+    return false;
+  }
+  if (
     (obj.severity === "critical" || obj.severity === "high") &&
     obj.action !== "fix_now"
   ) {
     return false;
+  }
+  if (obj.action === "defer") {
+    if (!isValidDispositionEvidence(obj.disposition)) return false;
+    if (obj.disposition.kind === "accepted_suppressed") return false;
+  }
+  if (obj.action === "wont_fix" || obj.action === "rejected") {
+    if (!isValidDispositionEvidence(obj.disposition)) return false;
+    if (obj.disposition.kind !== "accepted_suppressed") return false;
   }
   for (const field of FINDING_STRING_FIELDS) {
     if (!isString(obj[field])) return false;
@@ -169,6 +303,9 @@ export function isValidPriorFindingDisposition(
     return false;
   }
   if (obj.reason !== undefined && !isString(obj.reason)) return false;
+  if (obj.status === "accepted_suppressed") {
+    return acceptedSuppressionAuthorityFromRecord(obj);
+  }
   return true;
 }
 
@@ -219,6 +356,12 @@ export function isValidCoderOutput(o: StepOutput | undefined): o is CoderOutput 
     typeof c.commitsAdded !== "number" ||
     !Number.isInteger(c.commitsAdded) ||
     c.commitsAdded < 0
+  ) {
+    return false;
+  }
+  if (
+    c.repairEvidence !== undefined &&
+    !isValidRepairEvidence(c.repairEvidence)
   ) {
     return false;
   }

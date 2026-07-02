@@ -13,6 +13,9 @@
  * fill behaviour in, not re-shape these.
  */
 
+import type { FamilyModuleContext } from "./family/cmrClassification.js";
+import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
+
 // ───────────────────────────── step identifiers ─────────────────────────────
 
 /**
@@ -109,7 +112,7 @@ export interface StepSpec {
    * orchestrator gives up": the orchestrator only stops when the MODEL emits an
    * `escalate` signal (US#18/US#19), never by counting iterations/rounds.
    *
-   * v0.1: the runner does NOT enforce maxIter (lazy field — see STEP_SPECS).
+   * v0.1: the runner does NOT enforce maxIter (lazy field on worker specs).
    * When #256 wires Sandcastle, maxIter MUST be implemented with exactly this
    * semantics (within-step retry budget) and MUST NOT degrade into a
    * "count-to-N-then-give-up" fix-loop cap, which would violate US#18.
@@ -150,20 +153,57 @@ export interface Finding {
   readonly suggested_fix: string;
   /**
    * P0/P1 ⇒ always `fix_now`; P2/P3 reviewer judges fix_now vs defer.
-   * `wont_fix` / `rejected` are explicit ADR0030 suppression dispositions:
-   * they must carry a rationale and never suppress a material severity upgrade.
+   * `wont_fix` / `rejected` are accepted suppression carriers and must include
+   * an `accepted_suppressed` disposition with source, scope, rationale, and
+   * bounded reopen conditions.
    */
   readonly action: "fix_now" | "defer" | "wont_fix" | "rejected";
   /** Required when action is `wont_fix` or `rejected`; optional otherwise. */
   readonly disposition_reason?: string;
+  /** Machine-verifiable classification evidence for defer/suppression outcomes. */
+  readonly disposition?: FindingDispositionEvidence;
+}
+
+export type FindingDispositionKind =
+  | "same_module"
+  | "cross_module"
+  | "spec_conflict"
+  | "infra_failure"
+  | "owning_issue_still_red"
+  | "accepted_suppressed";
+
+export interface FindingDispositionEvidence {
+  readonly kind: FindingDispositionKind;
+  /** Why this classification applies. Required for every disposition kind. */
+  readonly reason: string;
+  /** Required for cross-module defer; optional target for accepted suppression. */
+  readonly targetModule?: string;
+  /** Required for owning_issue_still_red. */
+  readonly owningIssue?: string;
+  /** Required for owning_issue_still_red. */
+  readonly missingSurface?: string;
+  /** Required for owning_issue_still_red. */
+  readonly nextStep?: string;
+  /** Required for accepted_suppressed and spec/infra audit trails. */
+  readonly source?: string;
+  /** Required for accepted_suppressed. */
+  readonly scope?: string;
+  /** Optional for accepted_suppressed; omitted values are derived from the finding. */
+  readonly findingIdentity?: string;
+  /** Required for accepted_suppressed bounded reopen. */
+  readonly boundedReopen?: string;
 }
 
 export interface FindingDisposition {
   readonly identityKey: string;
-  readonly status: "unrepaired" | "wont_fix" | "rejected";
+  readonly status: "unrepaired" | "wont_fix" | "rejected" | "accepted_suppressed";
   readonly reason: string;
   readonly severity: Finding["severity"];
   readonly reopenAttempts: number;
+  readonly source?: string;
+  readonly scope?: string;
+  readonly targetModule?: string;
+  readonly boundedReopen?: string;
   /** One same-severity fresh-review dispute is allowed before suppression resumes. */
   readonly disputeAttempts?: number;
 }
@@ -172,10 +212,21 @@ export interface FindingDisposition {
 export interface PriorFindingDisposition {
   /** Stable key produced by `findingIdentityKey` for the prior claimed-fixed finding. */
   readonly identityKey: string;
-  /** ADR0030's explicit closure buckets; absence is never closure. */
-  readonly status: "still-active" | "verified-closed" | "unable-to-assess";
+  /**
+   * ADR0030's explicit closure buckets; absence is never closure.
+   * `accepted_suppressed` is terminal only when the reviewer supplies the
+   * source/scope/bounded reopen fields below.
+   */
+  readonly status:
+    | "still-active"
+    | "verified-closed"
+    | "unable-to-assess"
+    | "accepted_suppressed";
   /** Optional reviewer rationale for audit/debugging. */
   readonly reason?: string;
+  readonly source?: string;
+  readonly scope?: string;
+  readonly boundedReopen?: string;
 }
 
 /** Output of a coder step (S2/S5). 0 commits ⇒ committed:false (not a miss). */
@@ -183,6 +234,11 @@ export interface CoderOutput {
   readonly kind: "coder";
   readonly committed: boolean;
   readonly commitsAdded: number;
+  /**
+   * Optional scoped proof that the fix worker changed implementation, tests, or
+   * fixtures for an active finding. Generic "I tried" is not progress.
+   */
+  readonly repairEvidence?: RepairEvidence;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
 }
@@ -208,8 +264,12 @@ export type EscalationKind = "decision" | "failure";
 /**
  * Append-only human answer event for a paused decision escalation (#439).
  *
- * Minimal JSONL shape:
+ * Minimal JSONL shape for recording the answer:
  * `{ "step":"S4", "event":"escalation_answered", "forStep":"S4", "answer":"..." }`
+ * If the answer means "continue fixing" after an S4 no-progress decision, it is
+ * executable only when it also carries `findingIdentityKey` or a `findingScope`
+ * that matches the active finding; unscoped continue answers stay paused rather
+ * than guessing which finding to reopen.
  *
  * It intentionally remains a ledger row, not an edit to the prior S8 boundary.
  */
@@ -218,11 +278,63 @@ export interface EscalationAnswerPayload {
   readonly forStep?: StepId;
   readonly answer: string;
   readonly note?: string;
+  /** Source of the answer row when known; omitted on legacy rows. */
+  readonly source?: "human" | "coordinator" | "peripheral" | "resume_input";
+  /** Optional exact finding identity targeted by a run-state repair answer. */
+  readonly findingIdentityKey?: string;
+  /** Optional finding scope targeted by a run-state repair answer. */
+  readonly findingScope?: FindingRepairScope;
 }
 
 export interface EscalationAnswerEvent extends EscalationAnswerPayload {
   readonly forStep: StepId;
 }
+
+/** Scope carried by runner bookkeeping events that target active findings. */
+export interface FindingRepairScope {
+  /** Exact runner identity keys for the finding lineage, when available. */
+  readonly identityKeys?: ReadonlyArray<string>;
+  /** Broader path/location scope; only used when it maps to one active finding. */
+  readonly locations?: ReadonlyArray<string>;
+  /** Broader category scope; only used when it maps to one active finding. */
+  readonly categories?: ReadonlyArray<string>;
+  /** Optional durable grouping label from a review thread / finding group. */
+  readonly findingGroup?: string;
+  /** Optional review-context label from the coordinator. */
+  readonly reviewContext?: string;
+  /** Optional feature/module area label from the coordinator. */
+  readonly featureArea?: string;
+}
+
+/** Observable implementation/test movement a coder claims for a specific finding scope. */
+export interface RepairEvidence {
+  /** The active finding scope this movement is meant to close. */
+  readonly findingScope: FindingRepairScope;
+  /** Files whose implementation diff changed for this finding. */
+  readonly changedFiles?: ReadonlyArray<string>;
+  /** Test commands or test files added/changed for this finding. */
+  readonly tests?: ReadonlyArray<string>;
+  /** Fixtures/transcripts added or changed for this finding. */
+  readonly fixtures?: ReadonlyArray<string>;
+  /** Human-readable patch summary; accepted only with another concrete signal. */
+  readonly patchSummary?: string;
+}
+
+/**
+ * Append-only runner bookkeeping event. It is ledger truth, but not reviewer
+ * output and not a step adjudication.
+ */
+export interface ContinueFixingEvent {
+  readonly event: "runner_bookkeeping";
+  readonly intent: "continue_fixing";
+  readonly findingIdentityKey?: string;
+  readonly findingScope?: FindingRepairScope;
+  readonly source: "human" | "coordinator" | "peripheral" | "resume_input";
+  readonly ts: string;
+  readonly reason?: string;
+}
+
+export type LedgerBookkeepingEvent = EscalationAnswerEvent | ContinueFixingEvent;
 
 /**
  * The structured output of any worker step.
@@ -329,6 +441,11 @@ export type WorkerSessionMode = "fresh" | "resume";
  */
 export type WorkerContextRetention = "retain" | "clean";
 
+export interface WorkerCmrReviewLeg {
+  readonly family: string;
+  readonly slug: string;
+}
+
 /**
  * The declarative spec of one worker step — what the runner hands the dispatch
  * seam so the dispatch decision is EXPLICIT and ASSERTABLE (US#16/#18/#19).
@@ -377,6 +494,8 @@ export interface WorkerSpec {
   readonly maxIter: number;
   /** Short model slug the runtime maps to a baked-in CLI (PRD #244). */
   readonly model: string;
+  /** Frozen route-selected CMR review legs for this worker invocation. */
+  readonly cmrReviewLegs?: ReadonlyArray<WorkerCmrReviewLeg>;
   /** Soul to inject (`coder` full discipline / `READ-ONLY` reviewer). */
   readonly soul: StepSoul;
   /** Project tool-chain the image declares (US #29). */
@@ -452,6 +571,14 @@ export interface DispatchContext {
    * dispatched only after completeness passes.
    */
   readonly cmrPass?: "completeness" | "correctness";
+  /** FAMILY cmr worker only: parsed module declarations supplied by the runner. */
+  readonly moduleContext?: FamilyModuleContext;
+  /**
+   * FAMILY cmr worker only: runner-owned prior finding identity keys that the
+   * worker is allowed to adjudicate as claimed-fixed. A worker may not invent
+   * closure keys outside this protected set.
+   */
+  readonly priorCmrFindingIdentityKeys?: ReadonlyArray<string>;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */
@@ -465,11 +592,10 @@ export type CoderResult = CoderOutput;
 export type ReviewerResult = ReviewerOutput;
 
 /**
- * A family integrated-cmr worker's output (#335). A BARE verdict is correct here
- * (PRD #330 R2): the consumer `verifyCmr.ts` reads `converged`; a `red` verdict
- * does NOT drive a fix-loop at this layer, so no findings array is required. (=
- * existing {@link IntegratedCmrResult}, re-exported via family/types — kept as a
- * separate `kind` payload in the union below.)
+ * A family integrated-cmr worker's output (#335/#449). The consumer
+ * `verifyCmr.ts` reads `converged`, and when the worker supplies structured
+ * findings it classifies defers/suppressions against the declared family module
+ * context before deciding whether the pass can proceed.
  */
 export interface CmrResult {
   readonly kind: "cmr";
@@ -487,6 +613,8 @@ export interface CmrResult {
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   /** Explicit closure disposition for claimed-fixed integrated CMR findings. */
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
+  /** Structured CMR findings for family-level defer/suppression classification. */
+  readonly findings?: readonly Finding[];
   // NOTE: a STUCK cmr worker is the WorkerResult-level `{kind:"escalated"}` case,
   // NOT an `escalate` field on this `completed` payload (codex cmr R3b finding: a
   // payload-level escalate would be silently ignored by the verifyCmr consumer,
@@ -513,6 +641,8 @@ export interface ShipResult {
   readonly prHead?: string;
   /** A short status string (e.g. "pushed" | "pr_opened"). Values: #336. */
   readonly status: string;
+  /** Nonblocking ship-side review degradation metadata, if gstack-ship reports it. */
+  readonly degradedReviews?: ReadonlyArray<ProviderDegradationSummary>;
   // NOTE: a ship worker that STOPS for a human (gstack-ship STOP/HITL) is the
   // WorkerResult-level `{kind:"escalated"}` case (PRD #330 R2), NOT an `escalate`
   // field on this `completed` payload — a `completed ShipResult` means a PR opened
@@ -564,7 +694,15 @@ export type WorkerOutput =
 export type WorkerResult =
   | { readonly kind: "completed"; readonly output: WorkerOutput; readonly sessionId?: string }
   | { readonly kind: "failed"; readonly reason: string; readonly sessionId?: string }
-  | { readonly kind: "malformed"; readonly reason: string; readonly sessionId?: string }
+  | {
+      readonly kind: "malformed";
+      readonly reason: string;
+      readonly sessionId?: string;
+      readonly cmrLegAccountingPayload?: {
+        readonly successfulLegs?: readonly string[];
+        readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+      };
+    }
   | {
       readonly kind: "escalated";
       readonly escalation: Escalation;
@@ -621,6 +759,8 @@ export interface IssueSnapshot {
   readonly comments: ReadonlyArray<string>;
   /** Author login aligned by index with `comments`, when available. */
   readonly commentAuthorLogins?: ReadonlyArray<string>;
+  /** Repo owner login used to authenticate executable issue instructions. */
+  readonly trustedOwnerLogin?: string;
   readonly agentBrief: string;
   readonly nativeMeta?: IssueSnapshotMeta;
 }
@@ -643,22 +783,42 @@ export interface LedgerEntry {
   readonly step: StepId;
   /** Structured output for agent steps; undefined for runner-action steps. */
   readonly output?: StepOutput;
-  /** Append-only event marker for non-step ledger facts (#439). */
-  readonly event?: EscalationAnswerEvent["event"];
+  /** Append-only event marker for non-step ledger facts (#439 / #446). */
+  readonly event?: LedgerBookkeepingEvent["event"];
   /** Step this answer reopens when `event === "escalation_answered"` (#439). */
   readonly forStep?: StepId;
   /** Human answer payload when `event === "escalation_answered"` (#439). */
   readonly answer?: string;
   /** Optional human note attached to an escalation answer (#439). */
   readonly note?: string;
+  /** Runner repair intent when `event === "runner_bookkeeping"` (#446). */
+  readonly intent?: ContinueFixingEvent["intent"];
+  /** Exact finding identity targeted by a continue-fixing bookkeeping event. */
+  readonly findingIdentityKey?: string;
+  /** Active finding scope targeted by a continue-fixing bookkeeping event. */
+  readonly findingScope?: FindingRepairScope;
+  /** Source of a bookkeeping event, when recorded. */
+  readonly source?: LedgerBookkeepingEvent["source"];
+  /** Timestamp for a bookkeeping event, when recorded. */
+  readonly ts?: string;
+  /** Optional reason for a bookkeeping event. */
+  readonly reason?: string;
   /**
    * Runner-owned ADR0030 finding dispositions after an S4 classification.
    *
    * S4 is the durable review/fix boundary. Persisting dispositions here lets a
-   * resumed run replay wont-fix/rejected suppressions and bounded severity
+   * resumed run replay accepted suppressions and bounded severity
    * reopens instead of reclassifying from only the last reviewer payload.
    */
   readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
+  /**
+   * Runner-observed implementation/test paths that actually moved during a coder
+   * step. Persisted so resume replay can evaluate repairEvidence with the same
+   * evidence live S4 used.
+   */
+  readonly repairMovementPaths?: ReadonlyArray<string>;
+  /** Runner-owned terminal stop reason summary (#450). */
+  readonly stopSummary?: StopSummary;
 }
 
 /**
@@ -988,6 +1148,11 @@ export interface RunInput {
   readonly issueNumber: number;
   readonly backend: Backend;
   /**
+   * Current invocation repair intent. This has higher priority than durable
+   * ledger bookkeeping when resuming a paused S4 decision escalation.
+   */
+  readonly repairIntent?: ContinueFixingEvent;
+  /**
    * Family-run context (ADR 0022 decision 2). Present ⇒ this is a CHILD slice of
    * a family run (family base + no-op push). Absent ⇒ a standalone single-slice
    * run (the v0.1 behaviour — base=main, S7 pushes).
@@ -1024,6 +1189,8 @@ export interface RunResult {
   readonly errorPackage?: ErrorPackage;
   /** The step ledger — anti-skip + resume truth. */
   readonly stepLedger: ReadonlyArray<LedgerEntry>;
+  /** Unified run-level stop reason summary (#450). */
+  readonly stopSummary: StopSummary;
   /**
    * Reviewer findings with action:'defer' collected at S4 (PRD #244 US#25).
    * Present on success handoff so the caller can surface them (e.g. as a

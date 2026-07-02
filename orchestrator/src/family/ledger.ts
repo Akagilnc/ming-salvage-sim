@@ -19,6 +19,12 @@
  */
 
 import type { EscalationAnswerPayload, EscalationKind } from "../types.js";
+import {
+  infraFailureStopSummary,
+  successStopSummary,
+  type StopSummary,
+} from "../stopSummary.js";
+import type { FamilyCmrClassification } from "./cmrClassification.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -67,6 +73,10 @@ export interface AbortedRecord {
   readonly reason?: string;
   /** The family base HEAD at the time the barrier failed (for triage + baseline). */
   readonly familyHeadAfter?: string;
+  /** Family CMR finding classification audit trail (#449). */
+  readonly cmrFindingClassification?: FamilyCmrClassification;
+  /** Unified stop reason summary (#450). */
+  readonly stopSummary?: StopSummary;
 }
 
 /**
@@ -81,6 +91,8 @@ export interface ShippedRecord {
   readonly pr: string;
   /** The family base HEAD covered by the terminal ship / PR. */
   readonly familyHeadAfter: string;
+  /** Unified stop reason summary (#450). */
+  readonly stopSummary?: StopSummary;
 }
 
 /** The fields for a green integrated CMR pass audit event (#419). */
@@ -90,6 +102,10 @@ export interface CmrPassedRecord {
   readonly familyHeadAfter?: string;
   /** Resolved route fingerprint for the CMR worker and declared review legs. */
   readonly routeFingerprint?: string;
+  /** Family CMR finding classification audit trail (#449). */
+  readonly cmrFindingClassification?: FamilyCmrClassification;
+  /** Unified stop reason summary (#450). */
+  readonly stopSummary?: StopSummary;
 }
 
 /** A PHASE-LEVEL family escalation marker (#439). */
@@ -98,12 +114,22 @@ export interface FamilyEscalatedRecord {
   readonly phase?: "wave" | "final";
   readonly reason?: string;
   readonly familyHeadAfter?: string;
+  /** Unified stop reason summary (#450). */
+  readonly stopSummary?: StopSummary;
 }
 
 /** A PHASE-LEVEL append-only answer to a prior family decision escalation (#439). */
 export interface FamilyEscalationAnswerRecord {
   readonly answer: string;
+  readonly source: "human" | "resume_input";
   readonly note?: string;
+}
+
+/** A production-admission child skip audit row (#450/#451). */
+export interface AdmissionSkippedRecord {
+  readonly issue: number;
+  readonly reason: string;
+  readonly message: string;
 }
 
 /**
@@ -178,6 +204,21 @@ export async function recordAborted(
       cmrPass: record.cmrPass,
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
+      cmrFindingClassification: record.cmrFindingClassification,
+      stopSummary:
+        record.stopSummary ??
+        infraFailureStopSummary({
+          summary: record.reason ?? "family barrier aborted",
+          repairHint: "inspect this aborted ledger row, repair the barrier, and rerun",
+          ...(record.familyHeadAfter !== undefined
+            ? {
+                heads: {
+                  actualFamilyHead: record.familyHeadAfter,
+                  sources: { actualFamilyHead: "family aborted ledger row" },
+                },
+              }
+            : {}),
+        }),
     }) as FamilyLedgerEntry,
   );
 }
@@ -195,6 +236,19 @@ export async function recordCmrPassed(
       cmrPass: record.cmrPass,
       familyHeadAfter: record.familyHeadAfter,
       routeFingerprint: record.routeFingerprint,
+      cmrFindingClassification: record.cmrFindingClassification,
+      stopSummary:
+        record.stopSummary ??
+        successStopSummary(
+          record.familyHeadAfter !== undefined
+            ? {
+                heads: {
+                  verifiedCmrHead: record.familyHeadAfter,
+                  sources: { verifiedCmrHead: "cmr_passed ledger row" },
+                },
+              }
+            : undefined,
+        ),
     }) as FamilyLedgerEntry,
   );
 }
@@ -212,6 +266,20 @@ export async function recordFamilyEscalated(
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
       escalationKind: record.escalationKind,
+      stopSummary:
+        record.stopSummary ??
+        infraFailureStopSummary({
+          summary: record.reason ?? "family run escalated",
+          repairHint: "inspect this escalation row and repair before rerun",
+          ...(record.familyHeadAfter !== undefined
+            ? {
+                heads: {
+                  actualFamilyHead: record.familyHeadAfter,
+                  sources: { actualFamilyHead: "family escalation ledger row" },
+                },
+              }
+            : {}),
+        }),
     }) as FamilyLedgerEntry,
   );
 }
@@ -231,7 +299,28 @@ export async function recordFamilyEscalationAnswered(
       event: "escalation_answered",
       phase: "final",
       answer,
+      source: record.source,
       note: record.note,
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/** Append one production-admission skip audit row. */
+export async function recordAdmissionSkipped(
+  backend: FamilyBackend,
+  record: AdmissionSkippedRecord,
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      childIssue: record.issue,
+      status: "admission_skipped",
+      event: "admission_skipped",
+      phase: "wave",
+      reason: record.reason,
+      message: record.message,
+      stopSummary: successStopSummary({
+        admissionSkipped: [record],
+      }),
     }) as FamilyLedgerEntry,
   );
 }
@@ -243,6 +332,9 @@ function isValidFamilyAnswer(entry: FamilyLedgerEntry): boolean {
     entry.phase === "final" &&
     typeof entry.answer === "string" &&
     entry.answer.trim().length > 0 &&
+    (entry.source === undefined ||
+      entry.source === "human" ||
+      entry.source === "resume_input") &&
     (entry.note === undefined || typeof entry.note === "string")
   );
 }
@@ -265,6 +357,7 @@ function familyAnswerPayload(entry: FamilyLedgerEntry): EscalationAnswerPayload 
   return {
     event: "escalation_answered",
     answer: entry.answer!,
+    source: (entry.source ?? "human") as "human" | "resume_input",
     ...(entry.note !== undefined ? { note: entry.note } : {}),
   };
 }
@@ -380,6 +473,14 @@ export async function recordShipped(
       phase: "final",
       pr,
       familyHeadAfter,
+      stopSummary:
+        record.stopSummary ??
+        successStopSummary({
+          heads: {
+            actualFamilyHead: familyHeadAfter,
+            sources: { actualFamilyHead: "shipped ledger row" },
+          },
+        }),
     }) as FamilyLedgerEntry,
   );
 }
@@ -415,7 +516,13 @@ export function familyShippedRecordForHead(
       isValidFamilyShipped(e) && e.familyHeadAfter === familyHeadAfter,
   );
   if (shipped === undefined) return undefined;
-  return { pr: shipped.pr, familyHeadAfter: shipped.familyHeadAfter };
+  return {
+    pr: shipped.pr,
+    familyHeadAfter: shipped.familyHeadAfter,
+    ...(shipped.stopSummary !== undefined
+      ? { stopSummary: shipped.stopSummary }
+      : {}),
+  };
 }
 
 /**

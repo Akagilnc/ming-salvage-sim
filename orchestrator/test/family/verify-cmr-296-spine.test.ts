@@ -20,10 +20,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import {
-  recordFamilyEscalated,
-  recordFamilyEscalationAnswered,
-} from "../../src/family/ledger.js";
+import { recordFamilyEscalated } from "../../src/family/ledger.js";
 import { runFamily } from "../../src/family/runner.js";
 import type {
   Backend,
@@ -151,6 +148,7 @@ class CapableFamilyBackend implements FamilyBackend {
       phase: "final",
       reason: esc.reason,
       familyHeadAfter: esc.familyHeadAfter,
+      stopSummary: esc.stopSummary,
     });
   }
 }
@@ -248,16 +246,22 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
     expect(backend.cmrCalls).toEqual([
       { familyBase: "family/291-base", cmrPass: "completeness" },
     ]);
-    // Escalate续跑 (#298) carrying the cross-slice-seam reason; NO PR.
-    expect(backend.escalations).toHaveLength(1);
-    expect(backend.escalations[0]?.reason).toContain("阈值口径");
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("阈值口径"),
+      stopSummary: expect.objectContaining({ reason: "contract_drift" }),
+    }));
     expect(backend.prCalls).toEqual([]);
     // Observably verify_failed at the final phase.
     expect(result.status).toBe("verify_failed");
     expect(result.failedPhase).toBe("final");
   });
 
-  it("CMR decision escalation is a family-ledger pause: no answer stays paused, appended answer reopens", async () => {
+  it("CMR completed/not-converged is a machine abort, not a decision pause", async () => {
     let cmrCalls = 0;
     const seenAnswers: IntegratedCmrRequest["escalationAnswer"][] = [];
     const backend = new CapableFamilyBackend({
@@ -285,39 +289,22 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
     expect(first.status).toBe("verify_failed");
     expect(backend.ledger).toContainEqual(
       expect.objectContaining({
-        status: "escalated",
-        event: "escalated",
+        status: "aborted",
+        event: "aborted",
         phase: "final",
-        escalationKind: "decision",
+        cmrPass: "completeness",
         familyHeadAfter: "+295",
         reason: expect.stringContaining("same-class findings"),
+        stopSummary: expect.objectContaining({ reason: "contract_drift" }),
       }),
     );
     const callsAfterFirst = cmrCalls;
 
-    const unanswered = await runFamily(input);
+    const rerun = await runFamily(input);
 
-    expect(unanswered.status).toBe("escalated");
-    expect(cmrCalls).toBe(callsAfterFirst);
-
-    await recordFamilyEscalationAnswered(backend, {
-      answer: "continue-same-class",
-    });
-    const answered = await runFamily(input);
-
-    expect(answered.status).toBe("success");
+    expect(rerun.status).toBe("success");
     expect(cmrCalls).toBeGreaterThan(callsAfterFirst);
-    expect(seenAnswers).toEqual([
-      undefined,
-      {
-        event: "escalation_answered",
-        answer: "continue-same-class",
-      },
-      {
-        event: "escalation_answered",
-        answer: "continue-same-class",
-      },
-    ]);
+    expect(seenAnswers).toEqual([undefined, undefined, undefined]);
     expect(backend.prCalls).toHaveLength(1);
   });
 });
@@ -450,6 +437,22 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
         phase: "final",
         pr: "pr://family/291-base",
         familyHeadAfter: "ship-head",
+        stopSummary: {
+          reason: "success",
+          summary: "run completed successfully",
+          metadata: {
+            heads: {
+              reportedFamilyHead: "ship-head",
+              actualFamilyHead: "ship-head",
+              verifiedCmrHead: "verified-cmr-head",
+              sources: {
+                reportedFamilyHead: "ship worker reported prHead",
+                actualFamilyHead: "family head after ship worker",
+                verifiedCmrHead: "latest cmr_passed ledger row",
+              },
+            },
+          },
+        },
       },
     );
     const result = await runFamily({
@@ -474,7 +477,10 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
     expect(backend.ledger.filter((e) => e.status === "shipped")).toHaveLength(1);
     // Honest: every child is ledger-merged ⇒ already delivered = success.
     expect(result.status).toBe("success");
-    expect(result.children.every((c) => c.status === "merged")).toBe(true);
+    expect(result.children.every((c) => c.status === "already_done")).toBe(true);
+    expect(result.stopSummary.metadata?.heads?.verifiedCmrHead).toBe(
+      "verified-cmr-head",
+    );
   });
 
   it("a current-head shipped marker whose PR no longer verifies fails closed", async () => {
@@ -514,16 +520,16 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
         expectedHead: "ship-head",
       },
     ]);
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "escalated",
       event: "escalated",
       phase: "final",
       escalationKind: "failure",
       reason: "family shipped marker no longer verifies: PR is CLOSED but must be OPEN",
       familyHeadAfter: "ship-head",
-    });
+    }));
     expect(result.status).toBe("escalated");
-    expect(result.children.every((c) => c.status === "merged")).toBe(true);
+    expect(result.children.every((c) => c.status === "already_done")).toBe(true);
   });
 
   it("a current-head shipped marker fails closed when the backend cannot re-verify the PR", async () => {
@@ -555,7 +561,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
     expect(backend.verifyCalls.map((v) => v.phase)).not.toContain("final");
     expect(backend.cmrCalls).toEqual([]);
     expect(backend.prCalls).toEqual([]);
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "escalated",
       event: "escalated",
       phase: "final",
@@ -563,7 +569,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
       reason:
         "family ledger contains a shipped marker but this backend cannot verify the PR still covers the current family HEAD",
       familyHeadAfter: "ship-head",
-    });
+    }));
     expect(result.status).toBe("escalated");
   });
 
@@ -591,14 +597,14 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
     expect(backend.cmrCalls).toEqual([]);
     expect(backend.prCalls).toEqual([]);
     expect(backend.ledger.filter((e) => e.status === "shipped")).toHaveLength(1);
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "escalated",
       event: "escalated",
       phase: "final",
       escalationKind: "failure",
       reason: "family reconcile found the live family-base HEAD inconsistent with the ledger",
       familyHeadAfter: "ship-head",
-    });
+    }));
     expect(result.status).toBe("escalated");
     expect(result.children.every((c) => c.status === "merged")).toBe(true);
   });
@@ -625,14 +631,14 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
     expect(backend.cmrCalls).toEqual([]);
     expect(backend.prCalls).toEqual([]);
     expect(backend.ledger.filter((e) => e.status === "shipped")).toHaveLength(1);
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "escalated",
       event: "escalated",
       phase: "final",
       escalationKind: "failure",
       reason:
         "family ledger contains a legacy shipped marker without familyHeadAfter; cannot prove which family HEAD the prior PR covered",
-    });
+    }));
     expect(result.status).toBe("escalated");
   });
 
@@ -700,13 +706,13 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
     expect(backend.cmrCalls).toEqual([]);
     expect(backend.prCalls).toEqual([]);
     expect(backend.ledger.filter((e) => e.status === "shipped")).toHaveLength(1);
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "escalated",
       event: "escalated",
       phase: "final",
       escalationKind: "failure",
       reason: "family ledger contains a shipped marker but current family HEAD could not be resolved",
-    });
+    }));
     expect(result.status).toBe("escalated");
   });
 
@@ -740,13 +746,13 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
     expect(backend.cmrCalls.map((c) => c.cmrPass)).toEqual(["completeness", "correctness"]);
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
     expect(backend.ledger.filter((e) => e.status === "shipped")).toHaveLength(2);
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "shipped",
       event: "shipped",
       phase: "final",
       pr: "pr://family/291-base",
       familyHeadAfter: "new-head",
-    });
+    }));
     expect(result.status).toBe("success");
   });
 });

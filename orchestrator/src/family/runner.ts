@@ -28,6 +28,7 @@ import {
   applyRuntimeTightRoutePolicy,
   printableRouteLineup,
   resolveActiveModelRoute,
+  type ResolvedModelRoute,
 } from "../modelRoutes.js";
 import type { Backend } from "../types.js";
 import { assertAcyclic, selectWave } from "./commander.js";
@@ -38,21 +39,145 @@ import {
   hasUnboundLegacyShippedMarker,
   isMergedAccountingEntry,
   mergedSet,
+  recordAdmissionSkipped,
   recordFamilyEscalated,
   recordMerged,
 } from "./ledger.js";
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import { runVerifyCmr } from "./verifyCmr.js";
+import { buildFamilyModuleContext } from "./cmrClassification.js";
+import {
+  infraFailureStopSummary,
+  successStopSummary,
+  type StopSummary,
+} from "../stopSummary.js";
 import type {
   ChildSlice,
   FamilyBackend,
   FamilyChildResult,
+  FamilyLedgerEntry,
   FamilyRunInput,
   FamilyRunResult,
   FamilyRunStatus,
+  IntegratedCmrPass,
 } from "./types.js";
 import type { VerifyCmrPhase } from "./verifyCmr.js";
+
+function filled(value: string | undefined): string | undefined {
+  if (value == null) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function familyHeadMetadata(input: {
+  readonly reportedFamilyHead?: string;
+  readonly actualFamilyHead?: string;
+  readonly actualFamilyHeadSource?: string;
+  readonly verifiedCmrHead?: string;
+}): StopSummary["metadata"] | undefined {
+  const reportedFamilyHead = filled(input.reportedFamilyHead);
+  const actualFamilyHead = filled(input.actualFamilyHead);
+  const verifiedCmrHead = filled(input.verifiedCmrHead);
+  if (
+    reportedFamilyHead === undefined &&
+    actualFamilyHead === undefined &&
+    verifiedCmrHead === undefined
+  ) {
+    return undefined;
+  }
+  const sources: Record<string, string> = {};
+  if (reportedFamilyHead !== undefined) {
+    sources.reportedFamilyHead = "FamilyRunResult.familyHead";
+  }
+  if (actualFamilyHead !== undefined) {
+    sources.actualFamilyHead =
+      input.actualFamilyHeadSource ?? "family runner current head";
+  }
+  if (verifiedCmrHead !== undefined) {
+    sources.verifiedCmrHead = "latest cmr_passed ledger row";
+  }
+  return {
+    heads: {
+      ...(reportedFamilyHead !== undefined ? { reportedFamilyHead } : {}),
+      ...(actualFamilyHead !== undefined ? { actualFamilyHead } : {}),
+      ...(verifiedCmrHead !== undefined ? { verifiedCmrHead } : {}),
+      sources,
+    },
+  };
+}
+
+function familyStopSummary(input: {
+  readonly status: FamilyRunStatus;
+  readonly failedPhase?: VerifyCmrPhase;
+  readonly familyHead?: string;
+  readonly headMetadata?: StopSummary["metadata"];
+  readonly barrierStopSummary?: StopSummary;
+  readonly familyBase: string;
+  readonly children: ReadonlyArray<FamilyChildResult>;
+  readonly escalationReason?: string;
+  readonly admissionSkipped?: ReadonlyArray<{
+    readonly issue: number;
+    readonly reason: string;
+    readonly message: string;
+  }>;
+  readonly alreadyDone?: ReadonlyArray<{
+    readonly issue: number;
+    readonly status: "merged" | "shipped" | "completed";
+    readonly source: string;
+  }>;
+}): StopSummary {
+  const metadata =
+    input.headMetadata ??
+    familyHeadMetadata({
+      reportedFamilyHead: input.familyHead,
+      actualFamilyHead: input.familyHead,
+    });
+  if (input.status === "success") {
+    const hasMetadata =
+      metadata?.heads !== undefined ||
+      (input.admissionSkipped?.length ?? 0) > 0 ||
+      (input.alreadyDone?.length ?? 0) > 0;
+    return successStopSummary(
+      hasMetadata
+        ? {
+            ...(metadata?.heads !== undefined ? { heads: metadata.heads } : {}),
+            ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
+              ? { admissionSkipped: input.admissionSkipped }
+              : {}),
+            ...(input.alreadyDone !== undefined && input.alreadyDone.length > 0
+              ? { alreadyDone: input.alreadyDone }
+              : {}),
+          }
+        : undefined,
+    );
+  }
+  if (input.status === "verify_failed") {
+    if (input.barrierStopSummary !== undefined) return input.barrierStopSummary;
+    return infraFailureStopSummary({
+      summary: `family ${input.failedPhase ?? "unknown"} verify/cmr barrier failed`,
+      repairHint: "inspect the family ledger aborted entry, repair the failing barrier, and rerun",
+      ...(metadata?.heads !== undefined ? { heads: metadata.heads } : {}),
+    });
+  }
+  if (input.status === "incomplete") {
+    const blocked = input.children
+      .filter((child) => child.status !== "merged" && child.status !== "already_done")
+      .map((child) => `#${child.issue}:${child.status}`)
+      .join(", ");
+    return {
+      reason: "owning_issue_still_red",
+      summary: `family run is incomplete; unmerged children: ${blocked}`,
+      repairHint: "repair or complete the listed child slices and rerun the family",
+    };
+  }
+  return {
+    reason: "infra_failure",
+    summary: input.escalationReason ?? "family run escalated",
+    repairHint: "inspect the family ledger escalation entry and repair before rerun",
+    ...(metadata !== undefined ? { metadata } : {}),
+  };
+}
 
 /**
  * Run a child slice through the reused single-slice runner in FAMILY MODE.
@@ -134,6 +259,136 @@ async function readCurrentFamilyHead(
   }
 }
 
+function latestVerifiedCmrHead(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+): string | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.status === "cmr_passed" &&
+      entry.event === "cmr_passed" &&
+      entry.phase === "final" &&
+      filled(entry.familyHeadAfter) !== undefined
+    ) {
+      return filled(entry.familyHeadAfter);
+    }
+  }
+  return undefined;
+}
+
+function pendingPriorCmrFindingIdentityKeysByPass(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+): Partial<Record<IntegratedCmrPass, ReadonlyArray<string>>> {
+  const keysByPass: Partial<Record<IntegratedCmrPass, string[]>> = {};
+  const closedPasses = new Set<string>();
+  const processedPasses = new Set<string>();
+  for (let index = ledger.length - 1; index >= 0; index--) {
+    const entry = ledger[index]!;
+    if (entry.status === "shipped") break;
+    if (entry.status === "cmr_passed") {
+      if (entry.cmrPass === undefined) break;
+      closedPasses.add(entry.cmrPass);
+      continue;
+    }
+    if (entry.status !== "aborted" || entry.cmrFindingClassification === undefined) {
+      continue;
+    }
+    if (
+      entry.cmrPass !== undefined &&
+      (closedPasses.has(entry.cmrPass) || processedPasses.has(entry.cmrPass))
+    ) {
+      continue;
+    }
+    const pass = entry.cmrPass;
+    if (pass === undefined) continue;
+    processedPasses.add(pass);
+    const keys = keysByPass[pass] ?? [];
+    const seen = new Set(keys);
+    for (const result of entry.cmrFindingClassification.results) {
+      if (
+        result.classification === "cross_module_defer" ||
+        result.classification === "accepted_suppressed" ||
+        result.classification === "not_converged"
+      ) {
+        continue;
+      }
+      if (!seen.has(result.identityKey)) {
+        seen.add(result.identityKey);
+        keys.push(result.identityKey);
+      }
+    }
+    keysByPass[pass] = keys;
+  }
+  return Object.fromEntries(
+    Object.entries(keysByPass).map(([pass, values]) => [pass, values]),
+  ) as Partial<Record<IntegratedCmrPass, ReadonlyArray<string>>>;
+}
+
+function latestAbortedStopSummary(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  phase: VerifyCmrPhase | undefined,
+  minIndex = 0,
+): StopSummary | undefined {
+  for (let i = ledger.length - 1; i >= minIndex; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.status === "aborted" &&
+      (phase === undefined || entry.phase === phase) &&
+      entry.stopSummary !== undefined
+    ) {
+      return entry.stopSummary;
+    }
+  }
+  return undefined;
+}
+
+function isMaterialCmrStopSummary(stopSummary: StopSummary): boolean {
+  if (stopSummary.reason !== "success") return true;
+  const metadata = stopSummary.metadata;
+  return (
+    (metadata?.acceptedSuppressions?.length ?? 0) > 0 ||
+    (metadata?.providerDegraded?.length ?? 0) > 0
+  );
+}
+
+function latestSuccessfulFinalCmrStopSummary(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  minIndex = 0,
+): StopSummary | undefined {
+  for (let i = ledger.length - 1; i >= minIndex; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.status === "cmr_passed" &&
+      entry.event === "cmr_passed" &&
+      entry.phase === "final" &&
+      entry.stopSummary !== undefined &&
+      isMaterialCmrStopSummary(entry.stopSummary)
+    ) {
+      return entry.stopSummary;
+    }
+  }
+  return undefined;
+}
+
+function latestSuccessfulFinalShippedStopSummary(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  minIndex = 0,
+): StopSummary | undefined {
+  for (let i = ledger.length - 1; i >= minIndex; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.status === "shipped" &&
+      entry.event === "shipped" &&
+      entry.phase === "final" &&
+      entry.stopSummary !== undefined &&
+      isMaterialCmrStopSummary(entry.stopSummary)
+    ) {
+      return entry.stopSummary;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Derive the child issue numbers whose merge into the family base was LLM-resolved
  * (#291 缺口 1), read from the DURABLE family ledger — the only truth that survives
@@ -171,27 +426,76 @@ async function llmResolvedChildren(
 export async function runFamily(
   input: FamilyRunInput,
 ): Promise<FamilyRunResult> {
-  const modelRoute = resolveActiveModelRoute();
+  let modelRoute: ResolvedModelRoute;
+  try {
+    modelRoute = resolveActiveModelRoute();
+  } catch (err) {
+    const reason =
+      err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
+    const children = input.epic.children.map((child) => ({
+      issue: child.issue,
+      status: "skipped" as const,
+    }));
+    return {
+      status: "escalated",
+      familyBase: input.familyBase,
+      escalation: {
+        reason: "startup route failure",
+        diagnosis: reason,
+      },
+      stopSummary: infraFailureStopSummary({
+        summary: `startup route failure: ${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`,
+        repairHint: "repair the family runner route environment before rerun",
+      }),
+      children,
+      ...(input.epic.admissionSkipped !== undefined &&
+      input.epic.admissionSkipped.length > 0
+        ? { admissionSkipped: input.epic.admissionSkipped }
+        : {}),
+    };
+  }
   const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
     interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
     warn: (message) => console.warn(`[orchestrator:family] ${message}`),
   });
   if (routePolicy.kind === "stop") {
+    const children = input.epic.children.map((child) => ({
+      issue: child.issue,
+      status: "skipped" as const,
+    }));
     return {
       status: "escalated",
       familyBase: input.familyBase,
       escalation: routePolicy.escalation,
-      children: input.epic.children.map((child) => ({
-        issue: child.issue,
-        status: "skipped",
-      })),
+      stopSummary: familyStopSummary({
+        status: "escalated",
+        familyBase: input.familyBase,
+        children,
+        escalationReason: `${routePolicy.escalation.reason}: ${routePolicy.escalation.diagnosis}`,
+      }),
+      children,
     };
   }
   console.info(
     `[orchestrator:family] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
   );
   const { familyBackend, singleSliceBackend, familyBase } = input;
-  const initialFamilyLedger = await familyBackend.readFamilyLedger();
+  let initialFamilyLedger = await familyBackend.readFamilyLedger();
+  for (const skipped of input.epic.admissionSkipped ?? []) {
+    const alreadyRecorded = initialFamilyLedger.some(
+      (entry) =>
+        entry.status === "admission_skipped" &&
+        entry.event === "admission_skipped" &&
+        entry.childIssue === skipped.issue &&
+        entry.reason === skipped.reason,
+    );
+    if (!alreadyRecorded) {
+      await recordAdmissionSkipped(familyBackend, skipped);
+    }
+  }
+  if ((input.epic.admissionSkipped?.length ?? 0) > 0) {
+    initialFamilyLedger = await familyBackend.readFamilyLedger();
+  }
   const priorEscalation = familyEscalationState(initialFamilyLedger);
   if (priorEscalation !== undefined) {
     const { escalation, answer } = priorEscalation;
@@ -216,6 +520,23 @@ export async function runFamily(
                 ? "Prior family escalation kind is missing or invalid; append-only answers only reopen decision escalations."
               : "Prior family decision escalation has no later valid escalation_answered ledger event.",
         },
+        stopSummary: familyStopSummary({
+          status: "escalated",
+          familyBase,
+          familyHead:
+            typeof escalation.familyHeadAfter === "string" &&
+            escalation.familyHeadAfter.trim().length > 0
+              ? escalation.familyHeadAfter
+              : undefined,
+          children: input.epic.children.map((child) => ({
+            issue: child.issue,
+            status: ledgerMerged.has(child.issue) ? "merged" : "skipped",
+          })),
+          escalationReason:
+            typeof escalation.reason === "string" && escalation.reason.trim().length > 0
+              ? escalation.reason
+              : "family escalation is not answered",
+        }),
         children: input.epic.children.map((child) => ({
           issue: child.issue,
           status: ledgerMerged.has(child.issue) ? "merged" : "skipped",
@@ -250,6 +571,20 @@ export async function runFamily(
   // admission per `assertExternalBlockersCleared`, online R1 #1 — NOT relied upon at
   // S0). Invariant for the run (epic.children is fixed), so computed once.
   const familyChildIssues = new Set(epic.children.map((c) => c.issue));
+  const moduleContext = buildFamilyModuleContext({
+    childModules: epic.children.map((child) => child.moduleDeclaration),
+    familyModule: epic.moduleDeclaration,
+    runOptionModule: input.moduleDeclaration,
+    undevelopedModules: input.undevelopedModules,
+    acceptedSuppressionSources: input.acceptedSuppressionSources,
+  });
+  const declaredModuleContext =
+    moduleContext.currentModules.length > 0 ||
+    moduleContext.childModules.length > 0 ||
+    (moduleContext.undevelopedModules?.length ?? 0) > 0 ||
+    (moduleContext.acceptedSuppressionSources?.length ?? 0) > 0
+      ? moduleContext
+      : undefined;
   // The verify-cmr hook: the injected impl (#296 / tests) or the #293 no-op module
   // default. The spine's call sites + fail-fast on `ok===false` are identical
   // either way (ADR 0022 decision 3④/⑤/⑥; acceptance-4 seam boundary).
@@ -278,29 +613,101 @@ export async function runFamily(
   // guard honesty for the failure + #294/#298 paths.
   const finalize = async (
     verifyFailedPhase?: VerifyCmrPhase,
+    barrierLedgerStartIndex = 0,
   ): Promise<FamilyRunResult> => {
     const recorded = new Set(childResults.map((c) => c.issue));
     const ledgerMerged = await currentMerged(familyBackend);
+    const familyLedger = await familyBackend.readFamilyLedger();
     const extra: FamilyChildResult[] = epic.children
       .filter((c) => !recorded.has(c.issue))
       .map((c) =>
         ledgerMerged.has(c.issue)
-          ? { issue: c.issue, status: "merged" as const }
+          ? { issue: c.issue, status: "already_done" as const }
           : { issue: c.issue, status: "skipped" as const },
       );
     const children = [...childResults, ...extra];
     const status: FamilyRunStatus =
       verifyFailedPhase !== undefined
         ? "verify_failed"
-        : children.every((c) => c.status === "merged")
+        : children.every((c) => c.status === "merged" || c.status === "already_done")
           ? "success"
           : "incomplete";
+    const actualFamilyHead = await readCurrentFamilyHead(familyBackend, familyBase);
+    const headMetadata = familyHeadMetadata({
+      reportedFamilyHead: familyHead,
+      actualFamilyHead: actualFamilyHead ?? familyHead,
+      actualFamilyHeadSource:
+        actualFamilyHead !== undefined
+          ? "familyBackend.readFamilyHead"
+          : "family runner current head",
+      verifiedCmrHead: latestVerifiedCmrHead(familyLedger),
+    });
+    const barrierStopSummary =
+      status === "verify_failed"
+        ? (latestAbortedStopSummary(
+            familyLedger,
+            verifyFailedPhase,
+            barrierLedgerStartIndex,
+          ) ??
+          latestAbortedStopSummary(familyLedger, undefined, barrierLedgerStartIndex))
+        : undefined;
+    const alreadyDone = extra
+      .filter((child) => child.status === "already_done")
+      .map((child) => ({
+        issue: child.issue,
+        status: "merged" as const,
+        source: "family child already_done result",
+      }));
+    const allChildrenAlreadyDone =
+      status === "success" &&
+      childResults.length === 0 &&
+      children.length > 0 &&
+      alreadyDone.length === children.length;
+    const computedStopSummary = familyStopSummary({
+      status,
+      failedPhase: verifyFailedPhase,
+      familyBase,
+      familyHead,
+      headMetadata,
+      barrierStopSummary,
+      children,
+      admissionSkipped: epic.admissionSkipped,
+      alreadyDone,
+    });
+    const materialSuccessStopSummary =
+      status === "success"
+        ? (latestSuccessfulFinalShippedStopSummary(
+            familyLedger,
+            barrierLedgerStartIndex,
+          ) ??
+          latestSuccessfulFinalCmrStopSummary(familyLedger, barrierLedgerStartIndex))
+        : undefined;
+    const resultStopSummary =
+      materialSuccessStopSummary !== undefined
+        ? {
+            ...materialSuccessStopSummary,
+            metadata: {
+              ...(materialSuccessStopSummary.metadata ?? {}),
+              ...(computedStopSummary.metadata ?? {}),
+            },
+          }
+        : computedStopSummary;
     return {
       status,
       ...(verifyFailedPhase !== undefined ? { failedPhase: verifyFailedPhase } : {}),
       familyBase,
       familyHead,
+      stopSummary: allChildrenAlreadyDone
+        ? {
+            ...resultStopSummary,
+            reason: "already_done",
+            summary: "family resume found every child already merged and skipped rerun",
+          }
+        : resultStopSummary,
       children,
+      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
     };
   };
 
@@ -340,7 +747,20 @@ export async function runFamily(
         reason: "family reconcile found the live family-base HEAD inconsistent with the ledger",
         familyHeadAfter: plan.liveHead,
       });
-      return { status: "escalated", familyBase, familyHead, children };
+      return {
+        status: "escalated",
+        familyBase,
+        familyHead,
+        stopSummary: familyStopSummary({
+          status: "escalated",
+          familyBase,
+          familyHead,
+          children,
+          escalationReason:
+            "family reconcile found the live family-base HEAD inconsistent with the ledger",
+        }),
+        children,
+      };
     }
     // Append each reconcile補账条 (status:"merged" + event:"reconciled") through
     // the ledger seam so the wave loop's `currentMerged` counts it (codex R3) and
@@ -480,6 +900,10 @@ export async function runFamily(
       // (reconcile's baseline read covers the abort). `familyHead` is the head after
       // this wave's last merge — undefined only if nothing merged this run.
       familyHeadAfter: familyHead,
+      familyIssue: epic.issue,
+      ...(declaredModuleContext !== undefined
+        ? { moduleContext: declaredModuleContext }
+        : {}),
     });
     if (!waveVerify.ok) {
       // Fail-fast (decision 3④): do not排下一波. #296's red wave lands here; the
@@ -513,6 +937,7 @@ export async function runFamily(
   // / PR attempt. But an older shipped marker for a different head must NOT hide a
   // later live-base advance; that new head needs a fresh final barrier / ship.
   const preFinalLedger = await familyBackend.readFamilyLedger();
+  const preFinalLedgerLength = preFinalLedger.length;
   const preFinalFamilyHead =
     familyHead ?? (await readCurrentFamilyHead(familyBackend, familyBase));
   const shippedRecord = familyShippedRecordForHead(
@@ -523,7 +948,7 @@ export async function runFamily(
     const ledgerMerged = await currentMerged(familyBackend);
     const children: FamilyChildResult[] = epic.children.map((c) =>
       ledgerMerged.has(c.issue)
-        ? { issue: c.issue, status: "merged" as const }
+        ? { issue: c.issue, status: "already_done" as const }
         : { issue: c.issue, status: "skipped" as const },
     );
     if (familyBackend.verifyFamilyShippedPr === undefined) {
@@ -534,7 +959,20 @@ export async function runFamily(
           "family ledger contains a shipped marker but this backend cannot verify the PR still covers the current family HEAD",
         familyHeadAfter: preFinalFamilyHead,
       });
-      return { status: "escalated", familyBase, familyHead: preFinalFamilyHead, children };
+      return {
+        status: "escalated",
+        familyBase,
+        familyHead: preFinalFamilyHead,
+        stopSummary: familyStopSummary({
+          status: "escalated",
+          familyBase,
+          familyHead: preFinalFamilyHead,
+          children,
+          escalationReason:
+            "family ledger contains a shipped marker but this backend cannot verify the PR still covers the current family HEAD",
+        }),
+        children,
+      };
     }
     const shippedPr = await familyBackend.verifyFamilyShippedPr({
       pr: shippedRecord.pr,
@@ -548,10 +986,53 @@ export async function runFamily(
         reason: `family shipped marker no longer verifies: ${shippedPr.reason}`,
         familyHeadAfter: preFinalFamilyHead,
       });
-      return { status: "escalated", familyBase, familyHead: preFinalFamilyHead, children };
+      return {
+        status: "escalated",
+        familyBase,
+        familyHead: preFinalFamilyHead,
+        stopSummary: familyStopSummary({
+          status: "escalated",
+          familyBase,
+          familyHead: preFinalFamilyHead,
+          children,
+          escalationReason: `family shipped marker no longer verifies: ${shippedPr.reason}`,
+        }),
+        children,
+      };
     }
     familyHead = preFinalFamilyHead;
-    return await finalize();
+    const shippedVerifiedCmrHead =
+      shippedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
+      preFinalFamilyHead;
+    const alreadyDoneSummary: StopSummary = {
+      reason: "already_done",
+      summary: "family run already shipped for the current family HEAD",
+      metadata: {
+        heads: {
+          actualFamilyHead: preFinalFamilyHead,
+          reportedFamilyHead: shippedRecord.familyHeadAfter,
+          verifiedCmrHead: shippedVerifiedCmrHead,
+          sources: {
+            actualFamilyHead: "current family head",
+            reportedFamilyHead: "shipped ledger row",
+            verifiedCmrHead:
+              shippedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead !== undefined
+                ? "shipped ledger stop summary"
+                : "shipped ledger row",
+          },
+        },
+      },
+    };
+    return {
+      status: "success",
+      familyBase,
+      familyHead,
+      stopSummary: alreadyDoneSummary,
+      children,
+      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
+    };
   }
   if (
     hasUnboundLegacyShippedMarker(preFinalLedger) ||
@@ -572,7 +1053,22 @@ export async function runFamily(
           : "family ledger contains a legacy shipped marker without familyHeadAfter; cannot prove which family HEAD the prior PR covered",
       familyHeadAfter: preFinalFamilyHead,
     });
-    return { status: "escalated", familyBase, familyHead: preFinalFamilyHead, children };
+    return {
+      status: "escalated",
+      familyBase,
+      familyHead: preFinalFamilyHead,
+      stopSummary: familyStopSummary({
+        status: "escalated",
+        familyBase,
+        familyHead: preFinalFamilyHead,
+        children,
+        escalationReason:
+          preFinalFamilyHead === undefined && hasBoundShippedMarker(preFinalLedger)
+            ? "family ledger contains a shipped marker but current family HEAD could not be resolved"
+            : "family ledger contains a legacy shipped marker without familyHeadAfter; cannot prove which family HEAD the prior PR covered",
+      }),
+      children,
+    };
   }
 
   // ── verify-cmr hook: end-of-run barrier (#293 no-op seam, #296 fills) ─────────
@@ -589,9 +1085,19 @@ export async function runFamily(
     // touched. The wave barrier is verify-only (no cmr), so only the final call
     // needs it; an empty list ⇒ the cmr request omits the field.
     llmResolvedChildren: await llmResolvedChildren(familyBackend),
+    ...(() => {
+      const priorKeysByPass = pendingPriorCmrFindingIdentityKeysByPass(preFinalLedger);
+      return Object.keys(priorKeysByPass).length > 0
+        ? { priorCmrFindingIdentityKeysByPass: priorKeysByPass }
+        : {};
+    })(),
     ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     // #291 缺口 2: the abort-time head for a RED final verify's durable aborted entry.
     familyHeadAfter: familyHead,
+    familyIssue: epic.issue,
+    ...(declaredModuleContext !== undefined
+      ? { moduleContext: declaredModuleContext }
+      : {}),
   });
   if (!finalVerify.ok) {
     // #296's failing integrated cmr lands here. #293 no-op never trips it. The
@@ -599,10 +1105,10 @@ export async function runFamily(
     // "final"` so a red final verify is OBSERVABLY distinct from success — the
     // caller / PR step must NOT ship it (decision 3⑤ "不静默吞"); the family base +
     // ledger are left for triage.
-    return await finalize("final");
+    return await finalize("final", preFinalLedgerLength);
   }
 
   // Every barrier passed. finalize() derives "success" only if EVERY child
   // merged, else "incomplete" (a child failed / stayed blocked — not shippable).
-  return await finalize();
+  return await finalize(undefined, preFinalLedgerLength);
 }

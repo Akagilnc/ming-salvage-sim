@@ -200,7 +200,7 @@ describe("#337 runner-visible per-slice review/fix worker dispatch", () => {
   });
 
   it("the build worker spec carries the iterative maxIter (>1) and retains implementation context", async () => {
-    // Assert on the spec the RUNNER ACTUALLY DISPATCHES (STEP_SPECS.S2 → the build
+    // Assert on the spec the RUNNER ACTUALLY DISPATCHES (S2 worker spec → the build
     // worker). S2 keeps the implementation-step iterative budget and retained
     // context, while ADR 0030 dispatches per-slice review/fix as visible S3/S5/S6
     // worker steps. This is a NORMAL fresh dispatch (NOT the crash/escalate resume

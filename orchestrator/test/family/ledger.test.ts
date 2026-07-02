@@ -17,9 +17,11 @@ import { describe, expect, it } from "vitest";
 import {
   cmrPassAlreadyPassed,
   familyAlreadyShipped,
+  familyEscalationState,
   hasBoundShippedMarker,
   hasUnboundLegacyShippedMarker,
   mergedSet,
+  recordAdmissionSkipped,
   recordCmrPassed,
   recordMerged,
   recordShipped,
@@ -63,17 +65,55 @@ describe("family-ledger.recordMerged (#293 seam 3)", () => {
   });
 });
 
+describe("family-ledger.recordAdmissionSkipped", () => {
+  it("appends durable admission-skip audit rows without marking the child merged", async () => {
+    const backend = new FakeFamilyBackend();
+
+    await recordAdmissionSkipped(backend, {
+      issue: 12,
+      reason: "not_ready_for_agent",
+      message: "family admission skipped child #12: missing ready-for-agent label",
+    });
+
+    expect(backend.appended).toMatchObject([
+      {
+        childIssue: 12,
+        status: "admission_skipped",
+        event: "admission_skipped",
+        phase: "wave",
+        reason: "not_ready_for_agent",
+        message: "family admission skipped child #12: missing ready-for-agent label",
+        stopSummary: {
+          reason: "success",
+          metadata: {
+            admissionSkipped: [
+              {
+                issue: 12,
+                reason: "not_ready_for_agent",
+                message:
+                  "family admission skipped child #12: missing ready-for-agent label",
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    expect(mergedSet(backend.appended)).toEqual(new Set());
+  });
+});
+
 describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r3, codex P1)", () => {
   it("recordShipped appends the terminal marker with the shipped family HEAD", async () => {
     const backend = new FakeFamilyBackend();
     await recordShipped(backend, { pr: "https://gh/pr/352", familyHeadAfter: "head-1" });
-    expect(backend.appended).toEqual([
+    expect(backend.appended).toMatchObject([
       {
         status: "shipped",
         event: "shipped",
         phase: "final",
         pr: "https://gh/pr/352",
         familyHeadAfter: "head-1",
+        stopSummary: { reason: "success" },
       },
     ]);
   });
@@ -174,7 +214,7 @@ describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guar
       familyHeadAfter: "head-1",
       routeFingerprint: "route:v1",
     });
-    expect(backend.appended).toEqual([
+    expect(backend.appended).toMatchObject([
       {
         status: "cmr_passed",
         event: "cmr_passed",
@@ -182,6 +222,7 @@ describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guar
         cmrPass: "completeness",
         familyHeadAfter: "head-1",
         routeFingerprint: "route:v1",
+        stopSummary: { reason: "success" },
       },
     ]);
   });
@@ -275,6 +316,32 @@ describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guar
         { cmrPass: "completeness", familyHeadAfter: "head-1", routeFingerprint: "route:v1" },
       ),
     ).toBe(false);
+  });
+});
+
+describe("family-ledger.familyEscalationState", () => {
+  it("accepts legacy escalation_answered rows without source as human answers", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        escalationKind: "decision",
+        reason: "needs human decision",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "Continue the family flow.",
+      },
+    ];
+
+    expect(familyEscalationState(entries)?.answer).toEqual({
+      event: "escalation_answered",
+      answer: "Continue the family flow.",
+      source: "human",
+    });
   });
 });
 

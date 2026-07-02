@@ -151,9 +151,9 @@ describe("spine reconcile — branch ② ancestor-confirmed (no double-merge)", 
     expect(
       familyBackend.ledger.find((e) => e.childIssue === 11 && e.event === "reconciled"),
     ).toMatchObject({ childIssue: 11, status: "merged", event: "reconciled", childHead: "c11" });
-    // Both children end merged → success.
+    // Both children were already proven by ledger/reconcile truth in this run.
     expect(result.status).toBe("success");
-    expect(result.children.every((c) => c.status === "merged")).toBe(true);
+    expect(result.children.every((c) => c.status === "already_done")).toBe(true);
   });
 });
 

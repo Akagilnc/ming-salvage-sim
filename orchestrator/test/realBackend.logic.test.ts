@@ -26,6 +26,7 @@ import {
   buildAuthPaths,
   buildIssueMeta,
   buildIssueSnapshot,
+  checkExecutableInstructionSource,
   checkBranchHeadConsistency,
   classifyResumeError,
   cutRefFor,
@@ -60,7 +61,7 @@ import {
   type GhBlockedBy,
   type GhIssueJson,
 } from "../src/realBackend.js";
-import type { StepSpec } from "../src/types.js";
+import type { RepairEvidence, StepSpec } from "../src/types.js";
 import type * as sc from "@ai-hero/sandcastle";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
 // brief); S1's `extractAgentBrief` is the surviving brief reader.
@@ -212,6 +213,36 @@ describe("realBackend gh parsing", () => {
         "Akagilnc",
       ),
     ).toBe("");
+  });
+
+  it("checkExecutableInstructionSource rejects non-owner executable issue instructions with a structured summary", () => {
+    const rejected = checkExecutableInstructionSource({
+      sourceKind: "issue comment",
+      instructionKind: "Agent Brief",
+      trustedAuthor: "Akagilnc",
+      candidateAuthor: "drive-by",
+    });
+
+    expect(rejected.accepted).toBe(false);
+    expect(rejected.stopSummary).toMatchObject({
+      reason: "spec_conflict",
+      repairHint: expect.stringContaining("repo-owner-authored Agent Brief"),
+    });
+    expect(rejected.evidence).toMatchObject({
+      seam: "source_auth",
+      trustedAuthor: "Akagilnc",
+      rejectedAuthor: "drive-by",
+      executableInstructionSourceAccepted: false,
+    });
+
+    expect(
+      checkExecutableInstructionSource({
+        sourceKind: "issue body",
+        instructionKind: "Agent Brief",
+        trustedAuthor: "Akagilnc",
+        candidateAuthor: "akagilnc",
+      }).accepted,
+    ).toBe(true);
   });
 
   it("extractAgentBrief also accepts API-style user.login author carriers", () => {
@@ -935,10 +966,20 @@ describe("realBackend promptsDirError (F4)", () => {
         "coder_fix.md",
         "reviewer_review.md",
         "ship.md",
+        "integrated_cmr_completeness.md",
+        "integrated_cmr_correctness.md",
       ]),
     );
     // No duplicates.
     expect(new Set(files).size).toBe(files.length);
+  });
+
+  it("prompt inventory is route-independent and does not call shipWorkerSpec during module setup", () => {
+    const src = readFileSync(
+      fileURLToPath(new URL("../src/realBackend.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(src).not.toContain("shipWorkerSpec().promptFile");
   });
 
   it("promptsDirError reports a dir missing ship.md as invalid (integ-cmr int-r1 C-3)", () => {
@@ -1001,6 +1042,157 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
           promptsDir: "/definitely/not/a/real/dir/xyz",
         }),
     ).toThrow(/does not exist/);
+  });
+});
+
+describe("RealBackend reviewer output contract", () => {
+  class DecodeOnlyBackend extends RealBackend {
+    protected override cloneDirExists(): boolean {
+      return true;
+    }
+    protected override sh(file: string, args: string[]): string {
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+        return ".git";
+      }
+      throw new Error(`unexpected shell call: ${file} ${args.join(" ")}`);
+    }
+  }
+
+  const reviewerSpec: StepSpec = {
+    id: "S6",
+    role: "reviewer",
+    promptFile: "reviewer_review.md",
+    model: "gpt-5.5",
+    completionSignal: "REVIEWER_STEP_COMPLETE",
+    maxIter: 1,
+    soul: "READ-ONLY",
+    toolchain: ["node", "typescript"],
+  };
+  const coderSpec: StepSpec = {
+    id: "S5",
+    role: "coder",
+    promptFile: "coder_fix.md",
+    model: "sonnet",
+    completionSignal: "CODER_STEP_COMPLETE",
+    maxIter: 5,
+    soul: "coder",
+    toolchain: ["node", "typescript"],
+  };
+
+  it("rejects accepted_suppressed prior dispositions without a reviewer reason", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 445,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "prompts"),
+    });
+
+    expect(() =>
+      (
+        backend as unknown as {
+          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+        }
+      ).decodeOutput(
+        reviewerSpec,
+        {
+          findings: [],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|orchestrator/src/x.ts:1|accepted",
+              status: "accepted_suppressed",
+              source: "#445 owner answer",
+              scope: "runner review/fix loop",
+              boundedReopen: "reopen if the same finding recurs in this scope",
+            },
+          ],
+        },
+        undefined,
+      ),
+    ).toThrow(/accepted_suppressed prior finding disposition requires reason/);
+  });
+
+  it("normalizes accepted_suppressed findings with canonical disposition reason first", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 445,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "prompts"),
+    });
+
+    const decoded = (
+      backend as unknown as {
+        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): {
+          findings?: ReadonlyArray<{ disposition_reason?: string }>;
+        };
+      }
+    ).decodeOutput(
+      reviewerSpec,
+      {
+        findings: [
+          {
+            severity: "medium",
+            category: "correctness",
+            claim_quote: "Known accepted gap",
+            location: "orchestrator/src/runner.ts:42",
+            suggested_fix: "keep the bounded suppression",
+            action: "wont_fix",
+            disposition_reason: "legacy fallback should not win",
+            disposition: {
+              kind: "accepted_suppressed",
+              source: "#445 owner answer",
+              scope: "runner review/fix loop",
+              reason: "Owner accepted this bounded risk.",
+              boundedReopen: "reopen if the same finding recurs in this scope",
+            },
+          },
+        ],
+        priorFindingDispositions: [],
+      },
+      undefined,
+    );
+
+    expect(decoded.findings?.[0]?.disposition_reason).toBe(
+      "Owner accepted this bounded risk.",
+    );
+  });
+
+  it("rejects repair evidence that only self-reports a patch summary", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 445,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "prompts"),
+    });
+
+    expect(() =>
+      (
+        backend as unknown as {
+          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+        }
+      ).decodeOutput(
+        coderSpec,
+        {
+          committed: true,
+          commitsAdded: 1,
+          repairEvidence: {
+            findingScope: {
+              identityKeys: ["correctness|orchestrator/src/x.ts:1|bug"],
+            },
+            patchSummary: "updated the fix",
+          },
+        },
+        1,
+      ),
+    ).toThrow(/repairEvidence.*changedFiles.*tests.*fixtures/i);
   });
 });
 
@@ -1415,6 +1607,27 @@ describe("realBackend reconcileCoderCommits", () => {
       committed: false,
       commitsAdded: 0,
       escalate: { reason: "blocked", diagnosis: "design gap" },
+    });
+  });
+
+  it("preserves repairEvidence while deriving commit truth from git", () => {
+    const repairEvidence: RepairEvidence = {
+      findingScope: {
+        identityKeys: ["correctness|src/x.ts:1|active bug"],
+      },
+      changedFiles: ["src/x.ts"],
+      tests: ["npm test -- src/x.test.ts"],
+    };
+
+    const out = reconcileCoderCommits(
+      { committed: true, commitsAdded: 1, repairEvidence },
+      1,
+    );
+
+    expect(out).toEqual({
+      committed: true,
+      commitsAdded: 1,
+      repairEvidence,
     });
   });
 

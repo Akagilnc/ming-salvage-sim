@@ -33,7 +33,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { modelForSlot } from "./modelRoutes.js";
+import { modelForSlot, type ResolvedModelRoute } from "./modelRoutes.js";
 import type {
   Backend,
   DispatchContext,
@@ -195,7 +195,9 @@ export function stepSpecToWorkerSpec(
  * `gstack-ship`, no longer an inline `git push`). #331 prefactor: the legacy
  * wrapper forwards it to `backend.push`; #336 makes it invoke `gstack-ship`.
  */
-export function shipWorkerSpec(): WorkerSpec {
+export const SHIP_PROMPT_FILE = "ship.md";
+
+export function shipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S7",
     kind: "ship",
@@ -204,14 +206,14 @@ export function shipWorkerSpec(): WorkerSpec {
     session: "fresh",
     contextRetention: "clean",
     skill: SKILL_FOR_KIND.ship,
-    promptFile: "ship.md",
+    promptFile: SHIP_PROMPT_FILE,
     completionSignal: "SHIP_STEP_COMPLETE",
     // A WRITE/coder ship worker must self-rerun gstack-ship's rerun-able failures
     // (ship.md: "rerun it yourself") → an iterative budget like coder/fix (runner
-    // STEP_SPECS use 5), NOT a single-pass reviewer's 1 (#336 cmr r6). The completion
+    // runner worker specs use 5), NOT a single-pass reviewer's 1 (#336 cmr r6). The completion
     // signal stops the loop early on a clean ship; the <ship> parser reads the LAST tag.
     maxIter: 5,
-    model: modelForSlot("ship"),
+    model: route?.slots.ship ?? modelForSlot("ship"),
     soul: "coder",
     toolchain: [],
   };

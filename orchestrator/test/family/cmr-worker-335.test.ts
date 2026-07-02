@@ -59,12 +59,18 @@ import {
   SPAWNED_WORKER_ENV,
 } from "../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
+import { cmrLegAccountingFailure } from "../../src/modelRoutes.js";
 import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
 import type { DispatchContext, WorkerSpec } from "../../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
 const DEFAULT_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
+const FROZEN_NORMAL_CMR_REVIEW_LEGS = [
+  { family: "codex", slug: "gpt-5.5" },
+  { family: "claude", slug: "opus" },
+  { family: "agy", slug: "agy" },
+] as const;
 const STRONG_LEGS = ["opus", "gpt-5.5"] as const;
 const EMPTY_CMR_CLOSURE = {
   claimedFixedFindingIdentityKeys: [],
@@ -225,6 +231,63 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         expect(o.priorFindingDispositions).toEqual([
           {
             identityKey: "correctness|src/x.ts:1|closed",
+            status: "verified-closed",
+          },
+        ]);
+      }
+    });
+
+    it("normalizes the known priorFindingDispositions[].disposition alias to status", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          claimedFixedFindingIdentityKeys: [
+            "correctness|src/family/verifyCmr.ts:1|closed",
+          ],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|src/family/verifyCmr.ts:1|closed",
+              disposition: "verified-closed",
+            },
+          ],
+        })}</cmr>`,
+      );
+
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.priorFindingDispositions).toEqual([
+          {
+            identityKey: "correctness|src/family/verifyCmr.ts:1|closed",
+            status: "verified-closed",
+          },
+        ]);
+      }
+    });
+
+    it("normalizes mixed priorFindingDispositions status plus legacy disposition", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          claimedFixedFindingIdentityKeys: [
+            "correctness|src/family/verifyCmr.ts:1|closed",
+          ],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|src/family/verifyCmr.ts:1|closed",
+              status: "verified-closed",
+              disposition: "verified-closed",
+            },
+          ],
+        })}</cmr>`,
+      );
+
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.priorFindingDispositions).toEqual([
+          {
+            identityKey: "correctness|src/family/verifyCmr.ts:1|closed",
             status: "verified-closed",
           },
         ]);
@@ -428,7 +491,34 @@ describe("integrated CMR pass prompt closure contract", () => {
       expect(prompt).toContain("priorFindingDispositions");
       expect(prompt).toMatch(/empty arrays/i);
     });
+
+    it(`${promptName} not-converged example accounts for every declared leg`, () => {
+      const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
+      const examples = [...prompt.matchAll(/<cmr>(\{[^\n]*"converged": false[^\n]*\})<\/cmr>/g)];
+
+      expect(examples.length).toBeGreaterThan(0);
+      for (const [, rawJson] of examples) {
+        const output = JSON.parse(rawJson) as {
+          readonly successfulLegs: readonly string[];
+          readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+        };
+
+        expect(cmrLegAccountingFailure(output)).toBeUndefined();
+      }
+    });
   }
+
+  it("integrated completeness prompt keeps undeveloped targets out of issue-body YAML", () => {
+    const prompt = readFileSync(
+      join(realPromptsDir, "integrated_cmr_completeness.md"),
+      "utf8",
+    );
+
+    expect(prompt).toContain("module_scope");
+    expect(prompt).toContain("runner-supplied metadata");
+    expect(prompt).toContain("not issue-body prose or extra YAML");
+    expect(prompt).toContain("Do not infer");
+  });
 });
 
 // ═══════════════════════ 2. cmrOutcomeFromResult (signal gate) ═══════════════════════
@@ -471,6 +561,29 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
       })}</cmr>`,
     });
     expect(o.kind).toBe("escalate");
+  });
+
+  it("accounts worker verdict legs against the frozen worker route, not later process env", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const result = {
+      completionSignal: SIGNAL,
+      cmrReviewLegs: FROZEN_NORMAL_CMR_REVIEW_LEGS,
+      stdout: `<cmr>${JSON.stringify({
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...EMPTY_CMR_CLOSURE,
+      })}</cmr>`,
+    };
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+
+    const o = cmrOutcomeFromResult(result);
+
+    expect(o).toEqual({
+      kind: "verdict",
+      converged: true,
+      successfulLegs: DEFAULT_CMR_LEGS,
+      ...EMPTY_CMR_CLOSURE,
+    });
   });
 });
 
@@ -618,12 +731,15 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable dir)", () => {
   /** Expose the protected pure config seam + a canned-auth path. */
   class ConfigBackend extends RealFamilyBackend {
-    public config(auth: CmrAuth): {
+    public config(
+      auth: CmrAuth,
+      spec: ReturnType<typeof cmrWorkerSpec> = cmrWorkerSpec(),
+    ): {
       imageName: string;
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
-      return this.cmrSandboxConfig(auth);
+      return this.cmrSandboxConfig(auth, spec.cmrReviewLegs!);
     }
   }
 
@@ -719,6 +835,20 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
   it("exports the route-selected CMR leg collection to the worker", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const cfg = cfgBackend().config(auth);
+    const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
+
+    expect(legs).toEqual([
+      { family: "codex", slug: "gpt-5.5" },
+      { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy" },
+    ]);
+  });
+
+  it("exports frozen CMR legs from the worker spec, not later route env", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const spec = cmrWorkerSpec("fresh", "correctness");
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const cfg = cfgBackend().config(auth, spec);
     const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
 
     expect(legs).toEqual([
@@ -904,7 +1034,18 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       this.writeCmrFocusFile(ctx as never);
     }
     public routeFile(pass: "completeness" | "correctness" | undefined): void {
-      this.writeCmrRouteFile(pass);
+      const spec = cmrWorkerSpec("fresh", pass ?? "correctness");
+      this.writeCmrRouteFile(pass, spec.cmrReviewLegs!);
+    }
+    public routeFileFromNull(): void {
+      const spec = cmrWorkerSpec("fresh", "correctness");
+      this.writeCmrRouteFile(null as never, spec.cmrReviewLegs!);
+    }
+    public routeFileFromSpec(
+      pass: "completeness" | "correctness",
+      spec: ReturnType<typeof cmrWorkerSpec>,
+    ): void {
+      this.writeCmrRouteFile(pass, spec.cmrReviewLegs!);
     }
   }
 
@@ -1034,6 +1175,56 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     });
     const exclude = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
     expect(exclude.split("\n")).toContain(CMR_ROUTE_FILENAME);
+  });
+
+  it("freezes CMR review legs from the worker spec, not later route env", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const spec = cmrWorkerSpec("fresh", "correctness");
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    be.routeFileFromSpec("correctness", spec);
+
+    const route = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as {
+      reviewLegs: unknown;
+    };
+    expect(route.reviewLegs).toEqual([
+      { family: "codex", slug: "gpt-5.5" },
+      { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy" },
+    ]);
+  });
+
+  it("treats null CMR route context as a legacy route-file write instead of crashing", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    expect(() => be.routeFileFromNull()).not.toThrow();
+    const route = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as {
+      pass: string;
+      reviewLegs: unknown;
+    };
+    expect(route.pass).toBe("legacy");
+    expect(route.reviewLegs).toEqual(cmrWorkerSpec("fresh", "correctness").cmrReviewLegs);
   });
 
   it("threads a human escalation answer into the CMR focus file", () => {

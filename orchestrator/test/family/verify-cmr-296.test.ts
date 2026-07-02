@@ -163,6 +163,39 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
     expect(backend.cmrCalls).toEqual([]);
     expect(backend.prCalls).toEqual([]);
   });
+
+  it("MODULE_NOT_FOUND verify failures persist a machine repair hint on the family ledger", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({
+        ok: false,
+        errorPackage: {
+          reason: "Error: Cannot find module 'tsx'",
+        },
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-before-final-verify",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "aborted",
+        event: "aborted",
+        phase: "final",
+        reason: "Error: Cannot find module 'tsx'",
+        familyHeadAfter: "head-before-final-verify",
+        stopSummary: expect.objectContaining({
+          reason: "infra_failure",
+          repairHint: expect.stringContaining("install or restore"),
+        }),
+      }),
+    );
+  });
 });
 
 describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)", () => {
@@ -224,16 +257,32 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.escalations[0]?.reason).toContain("floor");
-    expect(backend.escalations[0]?.reason).toContain("agy");
+    expect(backend.escalations).toEqual([]);
     expect(backend.prCalls).toEqual([]);
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
       phase: "final",
       cmrPass: "completeness",
       reason: expect.stringContaining("floor"),
-    });
+      stopSummary: expect.objectContaining({
+        reason: "provider_degraded",
+        metadata: expect.objectContaining({
+          providerDegraded: expect.arrayContaining([
+            expect.objectContaining({
+              leg: "opus",
+              reason: "auth unavailable",
+              blocking: true,
+            }),
+            expect.objectContaining({
+              leg: "gpt-5.5",
+              reason: "auth unavailable",
+              blocking: true,
+            }),
+          ]),
+        }),
+      }),
+    }));
   });
 
   it("rejects route-undeclared strong legs before applying the CMR floor", async () => {
@@ -255,16 +304,43 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
 
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.prCalls).toEqual([]);
-    expect(backend.escalations[0]?.reason).toContain("not declared");
-    expect(backend.escalations[0]?.reason).toContain("opus");
-    expect(backend.ledger).toContainEqual({
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
       phase: "final",
       cmrPass: "completeness",
       familyHeadAfter: "head-1",
       reason: expect.stringContaining("not declared"),
-    });
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        repairHint: expect.stringContaining("leg accounting payload"),
+        metadata: expect.objectContaining({
+          routeAccounting: expect.objectContaining({
+            declaredLegs: ["gpt-5.5", "agy"],
+            successfulLegs: ["agy", "opus"],
+            skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
+            routeFingerprint: expect.any(String),
+            routeArtifact: expect.objectContaining({
+              path: ".cmr-route.json",
+              content: expect.objectContaining({
+                legCollections: expect.objectContaining({
+                  cmrReview: expect.arrayContaining([
+                    expect.objectContaining({ slug: "gpt-5.5" }),
+                    expect.objectContaining({ slug: "agy" }),
+                  ]),
+                }),
+              }),
+            }),
+            actualPayload: expect.objectContaining({
+              successfulLegs: ["agy", "opus"],
+              skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
+            }),
+            repairHint: expect.stringContaining("undeclared legs"),
+          }),
+        }),
+      }),
+    }));
   });
 
   it("fingerprints the resolved route without re-throwing an already accepted tight-route violation", async () => {
@@ -325,29 +401,75 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     // online review r2 (codex P1): a durable `shipped` terminal marker is persisted
     // carrying the family PR URL, so a resume sees the family is already delivered
     // and the spine's guard does not re-run the barrier / re-ship.
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_passed",
       event: "cmr_passed",
       phase: "final",
       cmrPass: "completeness",
       familyHeadAfter: "head-1",
       routeFingerprint: currentRouteFingerprint(),
-    });
-    expect(backend.ledger).toContainEqual({
+    }));
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_passed",
       event: "cmr_passed",
       phase: "final",
       cmrPass: "correctness",
       familyHeadAfter: "head-1",
       routeFingerprint: currentRouteFingerprint(),
-    });
-    expect(backend.ledger).toContainEqual({
+    }));
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "shipped",
       event: "shipped",
       phase: "final",
       pr: "pr://family/291-base",
       familyHeadAfter: "head-1",
+      stopSummary: expect.objectContaining({
+        reason: "success",
+        metadata: {
+          heads: {
+            reportedFamilyHead: "head-1",
+            actualFamilyHead: "head-1",
+            verifiedCmrHead: "head-1",
+            sources: {
+              reportedFamilyHead: "ship worker reported prHead",
+              actualFamilyHead: "family head after ship worker",
+              verifiedCmrHead: "latest cmr_passed ledger row",
+            },
+          },
+        },
+      }),
+    }));
+  });
+
+  it("rejects converged CMR when runner-protected prior findings are not explicitly claimed fixed", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
     });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+      priorCmrFindingIdentityKeys: ["medium|completeness|prior claim|scope"],
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.prCalls).toEqual([]);
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      familyHeadAfter: "head-1",
+      reason: expect.stringContaining("were not explicitly claimed fixed"),
+      stopSummary: expect.objectContaining({
+        reason: "contract_drift",
+        repairHint: expect.stringContaining("claimed-fixed closure payload"),
+      }),
+    }));
   });
 
   it("resume skips a CMR pass that already passed for the current family HEAD", async () => {
@@ -491,14 +613,69 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.cmrCalls).toEqual([]);
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
       phase: "final",
       reason:
         "family ship worker opened a PR, but the current family HEAD could not be resolved; refusing to persist a stale shipped marker",
       familyHeadAfter: "head-1",
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        repairHint: expect.stringContaining("resolve the current family HEAD"),
+        metadata: {
+          heads: expect.objectContaining({
+            verifiedCmrHead: "head-1",
+          }),
+          ship: expect.objectContaining({
+            latestVerifiedCmrHead: "head-1",
+            reportedFamilyHead: "head-1",
+            shipPrState: "current-family-head-unresolved",
+          }),
+        },
+      }),
+    }));
+  });
+
+  it("does not persist a shipped marker when the opened PR head differs from the current family HEAD", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
+      pr: (req) => ({ url: `pr://${req.familyBase}`, prHead: "stale-pr-head" }),
     });
+    backend.currentFamilyHead = "current-family-head";
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "verified-cmr-head",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      familyHeadAfter: "current-family-head",
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        repairHint: expect.stringContaining("repair the family ship worker PR head"),
+        metadata: {
+          heads: expect.objectContaining({
+            actualFamilyHead: "current-family-head",
+            verifiedCmrHead: "current-family-head",
+          }),
+          ship: expect.objectContaining({
+            latestVerifiedCmrHead: "current-family-head",
+            currentFamilyHead: "current-family-head",
+            reportedFamilyHead: "stale-pr-head",
+            shipPrState: "pr-head-mismatch",
+          }),
+        },
+      }),
+    }));
   });
 
   it("resume reruns a CMR pass when the family HEAD advanced after the pass marker", async () => {
@@ -620,29 +797,29 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-1",
     });
     expect(result).toEqual({ ok: true, ran: true });
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_passed",
       event: "cmr_passed",
       phase: "final",
       cmrPass: "completeness",
       familyHeadAfter: "head-1",
       routeFingerprint: currentRouteFingerprint(),
-    });
-    expect(backend.ledger).toContainEqual({
+    }));
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_passed",
       event: "cmr_passed",
       phase: "final",
       cmrPass: "correctness",
       familyHeadAfter: "head-1",
       routeFingerprint: currentRouteFingerprint(),
-    });
-    expect(backend.ledger).toContainEqual({
+    }));
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "shipped",
       event: "shipped",
       phase: "final",
       pr: "pr://family/291-base",
       familyHeadAfter: "head-1",
-    });
+    }));
   });
 
   it("records the post-CMR-worker family HEAD and uses it for the next pass resume guard", async () => {
@@ -676,14 +853,14 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.cmrCalls).toEqual([
       { familyBase: "family/291-base", cmrPass: "completeness" },
     ]);
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_passed",
       event: "cmr_passed",
       phase: "final",
       cmrPass: "completeness",
       familyHeadAfter: "head-after-cmr-fix",
       routeFingerprint: currentRouteFingerprint(),
-    });
+    }));
     expect(
       backend.ledger.filter(
         (e) => e.status === "cmr_passed" && e.cmrPass === "correctness",
@@ -735,10 +912,18 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     // verify_failed (止于 PR is NOT reached).
     expect(result.ok).toBe(false);
     expect(result.ran).toBe(true);
-    // Escalate续跑 (#298): #296 only CALLS the escalate seam, carrying the cmr
-    // non-convergence reason.
-    expect(backend.escalations).toHaveLength(1);
-    expect(backend.escalations[0]?.reason).toContain("mismatch");
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("mismatch"),
+      stopSummary: expect.objectContaining({
+        reason: "contract_drift",
+        summary: expect.stringContaining("mismatch"),
+      }),
+    }));
     // No PR while cmr is unresolved.
     expect(backend.prCalls).toEqual([]);
   });
@@ -795,7 +980,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]?.reason).toContain("completeness cmr");
     expect(backend.escalations[0]?.familyHeadAfter).toBe("head-after-cmr-worker-fix");
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
       phase: "final",
@@ -803,7 +988,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       reason:
         "completeness cmr needs human review — review workers disagreed on whether the pass can converge",
       familyHeadAfter: "head-after-cmr-worker-fix",
-    });
+    }));
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
 
@@ -973,7 +1158,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/cmr worker threw on startup/i);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/no such ref/i);
     expect(backend.aborted[0]?.familyHeadAfter).toBe("head-after-cmr-worker");
-    expect(backend.ledger).toContainEqual({
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
       phase: "final",
@@ -981,7 +1166,48 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       reason:
         "family integrated cmr completeness worker failed: family cmr worker threw on startup: cmr worker: git checkout family/291-base failed (no such ref)",
       familyHeadAfter: "head-after-cmr-worker",
+    }));
+  });
+
+  it("a cmr worker failed result for missing dependencies is recorded as infra_failure", async () => {
+    class FailedCmrBackend extends ThrowingDispatchBackend {
+      constructor() {
+        super("ship");
+      }
+      override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          this.currentFamilyHead = "head-after-cmr-worker";
+          return {
+            kind: "failed",
+            reason: "Error: Cannot find module 'missing-cmr-runtime'",
+          };
+        }
+        return super.dispatchWorker(spec, {
+          familyBase: "family/291-base",
+        });
+      }
+    }
+    const backend = new FailedCmrBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
     });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("Cannot find module 'missing-cmr-runtime'"),
+      familyHeadAfter: "head-after-cmr-worker",
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        repairHint: expect.stringContaining("install or restore"),
+      }),
+    }));
   });
 
   it("a ship worker that throws on startup (after a converged cmr) ⇒ INCOMPLETE_GATE, abort recorded — never an escaped throw", async () => {
@@ -994,5 +1220,46 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/ship worker threw on startup/i);
+  });
+
+  it("a ship worker failed result for push/auth infra is recorded as infra_failure", async () => {
+    class FailedShipBackend extends ThrowingDispatchBackend {
+      constructor() {
+        super("cmr");
+      }
+      override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: true,
+              successfulLegs: ["opus", "gpt-5.5", "agy"],
+            },
+          };
+        }
+        this.currentFamilyHead = "head-after-ship-worker";
+        return { kind: "failed", reason: "git push authentication failed" };
+      }
+    }
+    const backend = new FailedShipBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      reason: expect.stringContaining("git push authentication failed"),
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        repairHint: expect.stringContaining("ship worker infrastructure"),
+      }),
+    }));
   });
 });

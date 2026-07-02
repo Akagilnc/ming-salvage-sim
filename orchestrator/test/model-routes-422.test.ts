@@ -185,7 +185,7 @@ describe("#422 model route presets", () => {
 
     const overridden = activeModelRoute({
       ORCHESTRATOR_ROUTE: "normal",
-      ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: "gpt-5.5,opus",
+      ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: '"gpt-5.5", \'opus\'',
     });
 
     expect(overridden.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
@@ -227,21 +227,75 @@ describe("#422 model route presets", () => {
     ).toMatch(/duplicate skipped legs.*agy/i);
   });
 
+  it("does not treat shallow route-shaped objects as resolved routes", () => {
+    const malformedRoute = {
+      slots: {},
+      legCollections: { cmrReview: "gpt-5.5,opus,agy" },
+      tightFamilyViolations: "none",
+    };
+
+    expect(
+      cmrLegAccountingFailure(
+        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        malformedRoute as never,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("does not throw on null nested route-shaped properties", () => {
+    const malformedRoute = {
+      slots: null,
+      legCollections: null,
+      tightFamilyViolations: [],
+    };
+
+    expect(() =>
+      cmrLegAccountingFailure(
+        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        malformedRoute as never,
+      ),
+    ).not.toThrow();
+    expect(
+      cmrLegAccountingFailure(
+        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        malformedRoute as never,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("falls back to the active environment when CMR leg accounting receives null route input", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+
+    expect(() =>
+      cmrLegAccountingFailure(
+        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        null as never,
+      ),
+    ).not.toThrow();
+    expect(
+      cmrLegAccountingFailure(
+        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        null as never,
+      ),
+    ).toBeUndefined();
+  });
+
   it("feeds the resolved route into every worker spec model slot", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     vi.resetModules();
 
-    const { STEP_SPECS } = await import("../src/runner.js");
+    const { stepSpecsForEnv } = await import("../src/runner.js");
     const { shipWorkerSpec } = await import("../src/dispatchWorker.js");
     const { cmrWorkerSpec, familyShipWorkerSpec } = await import(
       "../src/family/dispatchFamilyWorker.js"
     );
     const { mergerModel } = await import("../src/family/realFamilyBackend.js");
 
-    expect(STEP_SPECS.S2.model).toBe("gpt-5.5");
-    expect(STEP_SPECS.S3.model).toBe("gpt-5.5");
-    expect(STEP_SPECS.S5.model).toBe("gpt-5.5");
-    expect(STEP_SPECS.S6.model).toBe("gpt-5.5");
+    const stepSpecs = stepSpecsForEnv();
+    expect(stepSpecs.S2.model).toBe("gpt-5.5");
+    expect(stepSpecs.S3.model).toBe("gpt-5.5");
+    expect(stepSpecs.S5.model).toBe("gpt-5.5");
+    expect(stepSpecs.S6.model).toBe("gpt-5.5");
     expect(shipWorkerSpec().model).toBe("gpt-5.5");
     expect(cmrWorkerSpec("fresh", "completeness").model).toBe("gpt-5.5");
     expect(cmrWorkerSpec("fresh", "correctness").model).toBe("gpt-5.5");

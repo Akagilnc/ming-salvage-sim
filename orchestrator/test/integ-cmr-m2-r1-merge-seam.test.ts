@@ -342,6 +342,7 @@ describe("Finding 2: malformed-escalate-terminated run reports error on re-feed 
           event: "escalation_answered",
           forStep: "S2",
           answer: "continue after product decision",
+          source: "human",
         },
       ],
     };
@@ -413,6 +414,10 @@ describe("normal-handoff S8 writeLedger throw persists a tagged error S8 (#252 â
     const s8Writes = backend.written.filter((e) => e.step === "S8");
     expect(s8Writes.length).toBeGreaterThan(0);
     for (const w of s8Writes) expect(w.handoffStatus).toBe("error");
+    expect(s8Writes.at(-1)?.stopSummary).toMatchObject({
+      reason: "infra_failure",
+      summary: expect.stringContaining("writeLedger(S8) failed"),
+    });
   });
 
   it("RESUME: re-feeding a success-handoff-with-S8-write-fault ledger reports ERROR, not SUCCESS", async () => {

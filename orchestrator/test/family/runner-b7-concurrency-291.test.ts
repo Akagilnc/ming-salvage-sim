@@ -124,10 +124,10 @@ describe("#291 B7 — concurrent wave fan-out", () => {
     expect(fb.mergeOrder).toEqual([10, 11, 12]);
   });
 
-  it("a child whose single-slice run THROWS still fails the whole run (fail-closed)", async () => {
-    // 11's own S0 rejects (an externally-blocked child slipped to runChild). Even
-    // concurrently, the rejection must propagate as a runFamily throw — not be
-    // swallowed by allSettled.
+  it("a child whose single-slice S0 gate fails leaves the family incomplete", async () => {
+    // 11's own S0 rejects its input (an externally-blocked child slipped to
+    // runChild). S0 gate failures are now structured single-slice terminal errors,
+    // so the family records that child as failed instead of seeing a raw throw.
     class ThrowingChildBackend extends LatentChildBackend {
       override async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
         const meta = await super.fetchIssueMeta(issueNumber);
@@ -143,15 +143,20 @@ describe("#291 B7 — concurrent wave fan-out", () => {
         { issue: 11, blockedBy: [] },
       ],
     };
-    await expect(
-      runFamily({
-        epic,
-        familyBackend: fb,
-        singleSliceBackend: ssb,
-        familyBase: "family/291-base",
-      }),
-    ).rejects.toThrow(/(?=.*#?999)(?=.*(?:blocked|upstream))/i);
-    // Nothing was merged — the thrown wave is fail-closed before any merge.
-    expect(fb.mergeOrder).toEqual([]);
+    const result = await runFamily({
+      epic,
+      familyBackend: fb,
+      singleSliceBackend: ssb,
+      familyBase: "family/291-base",
+    });
+
+    expect(result.status).toBe("incomplete");
+    expect(result.children).toEqual([
+      { issue: 10, status: "merged", branch: "feat/child-10" },
+      { issue: 11, status: "failed", branch: undefined },
+    ]);
+    expect(result.stopSummary.reason).toBe("owning_issue_still_red");
+    expect(result.stopSummary.summary).toContain("#11:failed");
+    expect(fb.mergeOrder).toEqual([10]);
   });
 });

@@ -66,8 +66,17 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 
+import {
+  hasBoundedReopenCondition,
+  hasExplicitAcceptedSuppressionSource,
+} from "./acceptedSuppression.js";
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
+import { findingIdentityKey } from "./findings.js";
+import {
+  sourceAuthFailureStopSummary,
+  type StopSummary,
+} from "./stopSummary.js";
 import {
   agentForSlug,
   CODER_CODEX_SLUG,
@@ -92,10 +101,9 @@ export {
   type ModelProviderFactory,
   type ModelSlugRegistryEntry,
 };
-import { legacyDispatchWorker, shipWorkerSpec } from "./dispatchWorker.js";
-import { STEP_SPECS } from "./runner.js";
+import { legacyDispatchWorker, SHIP_PROMPT_FILE } from "./dispatchWorker.js";
+import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
-  SHIP_COMPLETION_SIGNAL,
   shipOutcomeFromResult,
   type ShipWorkerOutcome,
 } from "./shipOutcome.js";
@@ -114,6 +122,7 @@ import type {
   StepResult,
   StepSoul,
   StepSpec,
+  RepairEvidence,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -214,20 +223,6 @@ function repoOwnerLogin(repo: string): string {
   return repo.split("/", 1)[0] ?? "";
 }
 
-function isTrustedBriefAuthor(
-  carrier: {
-    readonly author?: { readonly login?: string | null } | null;
-    readonly user?: { readonly login?: string | null } | null;
-  } | null | undefined,
-  ownerLogin: string,
-): boolean {
-  const normalizedOwner = ownerLogin.trim().toLowerCase();
-  return (
-    normalizedOwner !== "" &&
-    actorLogin(carrier).trim().toLowerCase() === normalizedOwner
-  );
-}
-
 /**
  * Extract the latest trusted `## Agent Brief` from the issue body/comments. Only
  * repo-owner-authored carriers count; among those, later comments supersede
@@ -241,19 +236,75 @@ export function extractAgentBrief(json: GhIssueJson, ownerLogin: string): string
   // (a re-issued brief supersedes the original) — the body only stands when no
   // comment carries a brief.
   const carriers = [
-    { text: json.body ?? "", author: json },
-    ...(json.comments ?? []).map((c) => ({ text: c.body ?? "", author: c })),
+    { text: json.body ?? "", author: json, sourceKind: "issue body" },
+    ...(json.comments ?? []).map((c) => ({
+      text: c.body ?? "",
+      author: c,
+      sourceKind: "issue comment",
+    })),
   ];
   let brief = "";
   for (const carrier of carriers) {
-    if (
-      carrier.text.includes(AGENT_BRIEF_HEADING) &&
-      isTrustedBriefAuthor(carrier.author, ownerLogin)
-    ) {
+    if (!carrier.text.includes(AGENT_BRIEF_HEADING)) continue;
+    const sourceCheck = checkExecutableInstructionSource({
+      sourceKind: carrier.sourceKind,
+      instructionKind: "Agent Brief",
+      trustedAuthor: ownerLogin,
+      candidateAuthor: actorLogin(carrier.author),
+    });
+    if (sourceCheck.accepted) {
       brief = carrier.text;
     }
   }
   return brief;
+}
+
+export interface ExecutableInstructionSourceCheck {
+  readonly accepted: boolean;
+  readonly stopSummary?: StopSummary;
+  readonly evidence: {
+    readonly seam: "source_auth";
+    readonly sourceKind: string;
+    readonly instructionKind: string;
+    readonly trustedAuthor: string;
+    readonly candidateAuthor: string;
+    readonly rejectedAuthor?: string;
+    readonly executableInstructionSourceAccepted: boolean;
+  };
+}
+
+export function checkExecutableInstructionSource(input: {
+  readonly sourceKind: string;
+  readonly instructionKind: string;
+  readonly trustedAuthor: string;
+  readonly candidateAuthor: string;
+}): ExecutableInstructionSourceCheck {
+  const trusted = input.trustedAuthor.trim();
+  const candidate = input.candidateAuthor.trim();
+  const accepted =
+    trusted.length > 0 && candidate.toLowerCase() === trusted.toLowerCase();
+  return {
+    accepted,
+    ...(accepted
+      ? {}
+      : {
+          stopSummary: sourceAuthFailureStopSummary({
+            instructionKind: input.instructionKind,
+            rejectedAuthor: candidate,
+            trustedAuthor: trusted,
+            sourceKind: input.sourceKind,
+          }),
+        }),
+    evidence: {
+      seam: "source_auth",
+      sourceKind: input.sourceKind,
+      instructionKind: input.instructionKind,
+      trustedAuthor: trusted,
+      candidateAuthor: candidate,
+      ...(!accepted ? { rejectedAuthor: candidate } : {}),
+      executableInstructionSourceAccepted: accepted,
+    },
+  };
 }
 
 /**
@@ -342,6 +393,7 @@ export function buildIssueSnapshot(
     bodyAuthorLogin: actorLogin(json),
     comments: (json.comments ?? []).map((c) => c.body ?? ""),
     commentAuthorLogins: (json.comments ?? []).map((c) => actorLogin(c)),
+    trustedOwnerLogin: ownerLogin,
     agentBrief: extractAgentBrief(json, ownerLogin),
     nativeMeta: buildIssueSnapshotMeta(json, blockedBy, subIssueCount),
   };
@@ -736,7 +788,7 @@ export function checkOwnGitDir(
  * throws → the runner's S8(error) edge, never a silently-mis-souled run.
  *
  * Why this closes the finding: previously `spec.soul` was declared in the
- * StepSpec contract and populated in STEP_SPECS but NEVER consumed by the real
+ * StepSpec contract and populated in per-run worker specs but NEVER consumed by the real
  * Backend (`grep spec.soul` = no hit) — a dead contract field. Now it is read
  * and asserted at the step's run-setup, so the v0.1 "role 决定注哪份 soul"
  * selection is realised and the field can no longer drift unnoticed.
@@ -911,6 +963,7 @@ export interface SelfReportedCoder {
   readonly committed: boolean;
   readonly commitsAdded: number;
   readonly escalate?: { readonly reason: string; readonly diagnosis: string };
+  readonly repairEvidence?: RepairEvidence;
 }
 
 /**
@@ -961,7 +1014,13 @@ export function reconcileCoderCommits(
         `contract violation → S8(error).`,
     );
   }
-  const base = { committed, commitsAdded: gitCommitCount };
+  const base = {
+    committed,
+    commitsAdded: gitCommitCount,
+    ...(selfReported.repairEvidence !== undefined
+      ? { repairEvidence: selfReported.repairEvidence }
+      : {}),
+  };
   return selfReported.escalate !== undefined
     ? { ...base, escalate: selfReported.escalate }
     : base;
@@ -1286,17 +1345,17 @@ export function attributeFailure(
  * so all must exist under `promptsDir` or the real path cannot run end-to-end
  * (#256 AC "对一个真叶子 issue 端到端跑通").
  *
- * integ-cmr int-r1 (C-3): DERIVED from the actual worker specs — STEP_SPECS
- * (S2/S3/S5/S6 agent workers) + shipWorkerSpec() (S7 ship, ship.md) — rather
- * than a hand-maintained literal. The hand-kept list omitted ship.md, so
- * promptsDir validation passed yet S7 crashed at run time looking for the absent
- * prompt. By reading the prompt off every dispatched spec, a new/changed worker
- * step can never silently drift out of the validation list again. De-duped.
+ * Route-independent prompt inventory: prompt validation must not import a
+ * route-bearing StepSpec snapshot, because model routes are resolved per run.
+ * Keep this derived from the worker prompt-file constants plus the S7 ship spec.
  */
 export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
-  ...new Set(
-    [...Object.values(STEP_SPECS), shipWorkerSpec()].map((s) => s.promptFile),
-  ),
+  ...new Set([
+    ...Object.values(WORKER_PROMPT_FILES),
+    SHIP_PROMPT_FILE,
+    "integrated_cmr_completeness.md",
+    "integrated_cmr_correctness.md",
+  ]),
 ];
 
 /**
@@ -1426,6 +1485,60 @@ export interface RealBackendOptions {
 }
 
 /** zod schema for the reviewer step's structured output (route() consumes it). */
+const findingDispositionSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("same_module"),
+    reason: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("cross_module"),
+    targetModule: z.string().min(1),
+    reason: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("spec_conflict"),
+    source: z.string().min(1),
+    reason: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("infra_failure"),
+    source: z.string().min(1),
+    reason: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("owning_issue_still_red"),
+    owningIssue: z.string().min(1),
+    missingSurface: z.string().min(1),
+    nextStep: z.string().min(1),
+    reason: z.string().min(1),
+  }),
+  z
+    .object({
+      kind: z.literal("accepted_suppressed"),
+      source: z.string().min(1),
+      scope: z.string().min(1),
+      reason: z.string().min(1),
+      findingIdentity: z.string().min(1).optional(),
+      targetModule: z.string().min(1).optional(),
+      boundedReopen: z.string().min(1),
+    })
+    .superRefine((disposition, ctx) => {
+      if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["source"],
+          message: "accepted_suppressed requires explicit user/ADR/issue source",
+        });
+      }
+      if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["boundedReopen"],
+          message: "accepted_suppressed requires bounded reopen condition",
+        });
+      }
+    }),
+]);
 const findingSchema = z.object({
   severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
   category: z.string(),
@@ -1434,11 +1547,101 @@ const findingSchema = z.object({
   suggested_fix: z.string(),
   action: z.enum(["fix_now", "defer", "wont_fix", "rejected"]),
   disposition_reason: z.string().optional(),
+  disposition: findingDispositionSchema.optional(),
+}).superRefine((finding, ctx) => {
+  if (
+    (finding.severity === "critical" || finding.severity === "high") &&
+    finding.action !== "fix_now"
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["action"],
+      message: "critical/high findings must be fix_now",
+    });
+  }
+  if (
+    (finding.action === "wont_fix" || finding.action === "rejected") &&
+    ((!finding.disposition_reason && !finding.disposition?.reason) ||
+      finding.disposition?.kind !== "accepted_suppressed")
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["disposition"],
+      message: "suppressed findings require accepted_suppressed disposition",
+    });
+  }
+  if (
+    finding.action === "defer" &&
+    (finding.disposition === undefined ||
+      finding.disposition.kind === "accepted_suppressed")
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["disposition"],
+      message: "deferred findings require a non-suppression disposition",
+    });
+  }
 });
+function normalizeReviewerFinding(finding: Finding): Finding {
+  if (
+    (finding.action !== "wont_fix" && finding.action !== "rejected") ||
+    finding.disposition?.kind !== "accepted_suppressed"
+  ) {
+    return finding;
+  }
+  return {
+    ...finding,
+    disposition_reason: finding.disposition.reason ?? finding.disposition_reason,
+    disposition: {
+      ...finding.disposition,
+      findingIdentity:
+        finding.disposition.findingIdentity ?? findingIdentityKey(finding),
+    },
+  };
+}
 const priorFindingDispositionSchema = z.object({
   identityKey: z.string().min(1),
-  status: z.enum(["still-active", "verified-closed", "unable-to-assess"]),
+  status: z.enum([
+    "still-active",
+    "verified-closed",
+    "unable-to-assess",
+    "accepted_suppressed",
+  ]),
   reason: z.string().optional(),
+  source: z.string().optional(),
+  scope: z.string().optional(),
+  boundedReopen: z.string().optional(),
+}).superRefine((disposition, ctx) => {
+  if (disposition.status !== "accepted_suppressed") return;
+  for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
+    if (disposition[field] === undefined || disposition[field].trim() === "") {
+      ctx.addIssue({
+        code: "custom",
+        path: [field],
+        message: `accepted_suppressed prior finding disposition requires ${field}`,
+      });
+    }
+  }
+  if (
+    disposition.source !== undefined &&
+    !hasExplicitAcceptedSuppressionSource(disposition.source)
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["source"],
+      message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
+    });
+  }
+  if (
+    disposition.boundedReopen !== undefined &&
+    !hasBoundedReopenCondition(disposition.boundedReopen)
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["boundedReopen"],
+      message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
+    });
+  }
 });
 const reviewerOutputSchema = z.object({
   findings: z.array(findingSchema),
@@ -1447,9 +1650,42 @@ const reviewerOutputSchema = z.object({
     .object({ reason: z.string(), diagnosis: z.string() })
     .optional(),
 });
+const findingRepairScopeSchema = z
+  .object({
+    identityKeys: z.array(z.string()).optional(),
+    locations: z.array(z.string()).optional(),
+    categories: z.array(z.string()).optional(),
+    findingGroup: z.string().optional(),
+    reviewContext: z.string().optional(),
+    featureArea: z.string().optional(),
+  })
+  .strict();
+const repairEvidenceSchema = z
+  .object({
+    findingScope: findingRepairScopeSchema,
+    changedFiles: z.array(z.string().min(1)).optional(),
+    tests: z.array(z.string().min(1)).optional(),
+    fixtures: z.array(z.string().min(1)).optional(),
+    patchSummary: z.string().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      (value.changedFiles?.length ?? 0) === 0 &&
+      (value.tests?.length ?? 0) === 0 &&
+      (value.fixtures?.length ?? 0) === 0
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "repairEvidence requires changedFiles, tests, or fixtures; patchSummary alone is not concrete repair evidence",
+      });
+    }
+  })
+  .strict();
 const coderOutputSchema = z.object({
   committed: z.boolean(),
   commitsAdded: z.number().int().nonnegative(),
+  repairEvidence: repairEvidenceSchema.optional(),
   escalate: z
     .object({ reason: z.string(), diagnosis: z.string() })
     .optional(),
@@ -2141,7 +2377,9 @@ export class RealBackend implements Backend {
   ): StepOutput {
     if (spec.role === "reviewer") {
       const r = reviewerOutputSchema.parse(raw);
-      const findings: Finding[] = r.findings.map((f) => ({ ...f }));
+      const findings: Finding[] = r.findings.map((f) =>
+        normalizeReviewerFinding({ ...f }),
+      );
       return {
         kind: "reviewer",
         findings,
@@ -2163,17 +2401,23 @@ export class RealBackend implements Backend {
       );
     }
     const out = reconcileCoderCommits(c, gitCommitCount);
+    const repairEvidence =
+      out.repairEvidence !== undefined
+        ? { repairEvidence: out.repairEvidence }
+        : {};
     return out.escalate
       ? {
           kind: "coder",
           committed: out.committed,
           commitsAdded: out.commitsAdded,
+          ...repairEvidence,
           escalate: out.escalate,
         }
       : {
           kind: "coder",
           committed: out.committed,
           commitsAdded: out.commitsAdded,
+          ...repairEvidence,
         };
   }
 
