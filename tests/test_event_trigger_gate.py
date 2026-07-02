@@ -451,6 +451,21 @@ def test_load_event_fail_loud_on_bad_gate_key(monkeypatch):
         content_mod.load_event_content("x.json")
 
 
+def test_load_event_rejects_default_terminal_reason_outside_labels(monkeypatch):
+    """default_terminal_reason 必须来自 terminal_reason_labels 白名单。"""
+    import pytest
+    import ming_sim.content as content_mod
+    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+            "urgency": 1, "severity": 1, "credibility": 1,
+            "interests": [], "audiences": [],
+            "open_window": True,
+            "terminal_reason_labels": ["已准"],
+            "default_terminal_reason": "已驳"}]
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    with pytest.raises(SystemExit, match="default_terminal_reason"):
+        content_mod.load_event_content("x.json")
+
+
 def test_load_event_requires_latest_or_open_window(monkeypatch):
     """历史锚定事件必须显式声明最晚时点或 open_window，漏填不许隐式永不过期。"""
     import pytest
