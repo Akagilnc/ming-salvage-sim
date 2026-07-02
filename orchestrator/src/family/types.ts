@@ -18,15 +18,23 @@ import type {
   DispatchContext,
   Escalation,
   EscalationAnswerPayload,
+  Finding,
   PriorFindingDisposition,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
 import type {
+  AcceptedSuppressionSource,
+  FamilyCmrClassification,
+  FamilyModuleContext,
+  SourcedModuleDeclaration,
+} from "./cmrClassification.js";
+import type {
   VerifyCmrInput,
   VerifyCmrPhase,
   VerifyCmrResult,
 } from "./verifyCmr.js";
+import type { StopSummary } from "../stopSummary.js";
 
 /** The two runner-visible integrated CMR gates (#419). */
 export type IntegratedCmrPass = "completeness" | "correctness";
@@ -51,6 +59,8 @@ export interface ChildSlice {
    * base. #293 reads these as the single source of truth — no LLM inference.
    */
   readonly blockedBy: ReadonlyArray<number>;
+  /** Structured module declaration parsed from the child issue body (#449). */
+  readonly moduleDeclaration?: SourcedModuleDeclaration;
 }
 
 /**
@@ -65,6 +75,16 @@ export interface FamilyEpic {
   readonly issue: number;
   /** The already-cut child slices (native sub-issues + explicit blocked_by). */
   readonly children: ReadonlyArray<ChildSlice>;
+  /** Structured module declaration parsed from the parent/family issue body (#449). */
+  readonly moduleDeclaration?: SourcedModuleDeclaration;
+  /** Children excluded at production admission before scheduling, kept for summary audit. */
+  readonly admissionSkipped?: ReadonlyArray<FamilyAdmissionSkippedChild>;
+}
+
+export interface FamilyAdmissionSkippedChild {
+  readonly issue: number;
+  readonly reason: string;
+  readonly message: string;
 }
 
 // ─────────────────────────── family ledger ───────────────────────────
@@ -118,6 +138,8 @@ export interface FamilyLedgerEntry {
    *   - `"escalation_answered"` — a PHASE-LEVEL append-only human answer event
    *     (#439). It reopens a prior decision escalation without editing/deleting
    *     that prior row. NOT counted as merged.
+   *   - `"admission_skipped"` — production admission skipped a child before wave
+   *     scheduling; durable audit only, not an unblock fact.
    */
   readonly status:
     | "merged"
@@ -125,7 +147,8 @@ export interface FamilyLedgerEntry {
     | "shipped"
     | "cmr_passed"
     | "escalated"
-    | "escalation_answered";
+    | "escalation_answered"
+    | "admission_skipped";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -143,6 +166,8 @@ export interface FamilyLedgerEntry {
    *     escalation bucket (#439).
    *   - `"escalation_answered"` — paired with `status:"escalation_answered"`; an
    *     append-only human answer to a prior decision escalation (#439).
+   *   - `"admission_skipped"` — paired with `status:"admission_skipped"`; records
+   *     production admission skips before scheduling.
    * Not the unblock truth (that is `status`); the tag is for observability.
    */
   readonly event?:
@@ -151,7 +176,8 @@ export interface FamilyLedgerEntry {
     | "shipped"
     | "cmr_passed"
     | "escalated"
-    | "escalation_answered";
+    | "escalation_answered"
+    | "admission_skipped";
   /**
    * Which phase this PHASE-LEVEL event belongs to. Set on `aborted` entries and
    * on `cmr_passed` audit entries; `merged` / `reconciled` entries omit it because
@@ -165,6 +191,8 @@ export interface FamilyLedgerEntry {
    * failures; `escalated` rows use it for answerable family decision pauses.
    */
   readonly reason?: string;
+  /** Admission-skip diagnostic message, when status/event is admission_skipped. */
+  readonly message?: string;
   /** The child branch that was merged (full schema, #298). */
   readonly childBranch?: string;
   /** The child branch HEAD commit that was merged (the ancestor reconcile checks). */
@@ -184,6 +212,8 @@ export interface FamilyLedgerEntry {
    * active worker/reviewer route match; old rows without this fail closed.
    */
   readonly routeFingerprint?: string;
+  /** Family CMR finding classification audit trail (#449). */
+  readonly cmrFindingClassification?: FamilyCmrClassification;
   /**
    * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
    * ran, #295) rather than land as a clean deterministic merge? Forwarded by the
@@ -205,8 +235,12 @@ export interface FamilyLedgerEntry {
   readonly escalationKind?: "decision" | "failure";
   /** Human answer payload when `event === "escalation_answered"` (#439). */
   readonly answer?: string;
+  /** Required executable source for answer rows. */
+  readonly source?: "human" | "resume_input" | "coordinator" | "peripheral";
   /** Optional human note attached to an escalation answer (#439). */
   readonly note?: string;
+  /** Unified run-level/family-level stop reason summary (#450). */
+  readonly stopSummary?: StopSummary;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────
@@ -497,6 +531,14 @@ export interface IntegratedCmrRequest {
   readonly llmResolvedChildren?: readonly number[];
   /** Human answer that reopened a prior family decision escalation (#439). */
   readonly escalationAnswer?: EscalationAnswerPayload;
+  /** Parsed module context supplied by the runner; the worker must not invent it. */
+  readonly moduleContext?: FamilyModuleContext;
+  /**
+   * Runner-owned prior finding identity keys that this CMR worker may adjudicate
+   * as claimed-fixed. Claimed-fixed keys outside this set are stale/self-claimed
+   * closure and must fail closed at the family gate.
+   */
+  readonly priorCmrFindingIdentityKeys?: readonly string[];
 }
 
 /** The integrated-cmr outcome (the load-bearing cross-slice-seam gate). */
@@ -513,6 +555,8 @@ export interface IntegratedCmrResult {
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   /** Explicit disposition for claimed-fixed integrated CMR findings. */
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
+  /** Structured findings to classify at the family gate (#449). */
+  readonly findings?: readonly Finding[];
 }
 
 /** What opening the family PR needs (decision 4, 止于 PR). */
@@ -576,6 +620,8 @@ export interface FamilyEscalation {
   readonly reason: string;
   /** Family base HEAD at the pause point, when known. */
   readonly familyHeadAfter?: string;
+  /** Unified stop reason summary for this pause, when the caller can classify it. */
+  readonly stopSummary?: StopSummary;
 }
 
 /** What the merger needs to merge one child branch into the family base. */
@@ -665,6 +711,22 @@ export interface FamilyRunInput {
    */
   readonly familyBase: string;
   /**
+   * Explicit family-run module boundary override (#449), lowest-priority after
+   * child issue and parent/family issue declarations.
+   */
+  readonly moduleDeclaration?: SourcedModuleDeclaration;
+  /**
+   * Runner/run-option/route declared modules intentionally outside the current
+   * family surface. CMR may defer to these targets; issue-body YAML must not
+   * invent them.
+   */
+  readonly undevelopedModules?: ReadonlyArray<SourcedModuleDeclaration>;
+  /**
+   * Explicitly trusted accepted-suppression records supplied by runner/run-option
+   * context. Reviewers may cite these, but cannot self-author suppressions.
+   */
+  readonly acceptedSuppressionSources?: ReadonlyArray<AcceptedSuppressionSource>;
+  /**
    * The verify-cmr hook (ADR 0022 decision 3④/⑤/⑥) — the family verify (per-wave
    * fail-fast) + end-of-run integrated cmr. Optional: defaults to the #293 no-op
    * {@link runVerifyCmr} module export. #296 fills the module body OR injects a
@@ -716,13 +778,21 @@ export interface FamilyRunInput {
  *   So `"ran"` is the seam state #295 needs; #293 only ever transits through it.
  * - `"merged"` — the child's reviewed branch is merged into the family base (a
  *   `status:"merged"` ledger entry exists, decision 5).
+ * - `"already_done"` — this invocation skipped the child because the durable
+ *   family ledger already proved it merged/shipped/completed in an earlier run.
  * - `"failed"` — the child's single-slice run did not reach success (it cannot
  *   merge); recorded honestly rather than silently dropped.
  * - `"skipped"` — the child was never schedulable (a blocker never merged, so it
  *   stayed blocked when the wave loop terminated). Recorded so the family result
  *   accounts for every child (#294's richer wave/cycle logic refines this).
  */
-export type FamilyChildStatus = "ran" | "merged" | "skipped" | "failed";
+export type FamilyChildStatus =
+  | "ran"
+  | "merged"
+  | "already_done"
+  | "resumed"
+  | "skipped"
+  | "failed";
 
 /** Per-child outcome record in the family result. */
 export interface FamilyChildResult {
@@ -781,6 +851,10 @@ export interface FamilyRunResult {
   readonly familyHead?: string;
   /** Structured startup/escalation reason when status is `"escalated"`. */
   readonly escalation?: Escalation;
+  /** Unified family-level stop reason summary (#450). */
+  readonly stopSummary: StopSummary;
   /** Per-child outcomes, in execution order. */
   readonly children: ReadonlyArray<FamilyChildResult>;
+  /** Non-runnable children excluded before wave scheduling, if any. */
+  readonly admissionSkipped?: ReadonlyArray<FamilyAdmissionSkippedChild>;
 }

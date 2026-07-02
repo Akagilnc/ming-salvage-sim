@@ -30,6 +30,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   MERGER_SOUL,
   mergerOutcomeFromResult,
+  parseCmrOutcome,
   parseMergerOutcome,
   RealFamilyBackend,
   type RealFamilyBackendOptions,
@@ -862,6 +863,146 @@ describe("parseMergerOutcome (#291 pure)", () => {
   });
 });
 
+describe("parseCmrOutcome accepted suppression contract", () => {
+  it("derives redundant accepted_suppressed finding fields from the finding payload", () => {
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: false,
+      reason: "accepted suppression remains",
+      successfulLegs: ["gpt-5.5"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      findings: [
+        {
+          severity: "medium",
+          category: "correctness",
+          claim_quote: "Known accepted gap",
+          location: "orchestrator/src/family/verifyCmr.ts:42",
+          suggested_fix: "keep the bounded suppression",
+          action: "wont_fix",
+          disposition: {
+            kind: "accepted_suppressed",
+            source: "#445 owner answer",
+            scope: "orchestrator family CMR",
+            reason: "Owner accepted this bounded risk.",
+            boundedReopen: "reopen if the same scope regresses",
+          },
+        },
+      ],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome).toMatchObject({
+      converged: false,
+      findings: [
+        expect.objectContaining({
+          disposition_reason: "Owner accepted this bounded risk.",
+          disposition: expect.objectContaining({
+            kind: "accepted_suppressed",
+            findingIdentity:
+              "correctness|orchestrator/src/family/verifycmr.ts:42|known accepted gap",
+          }),
+        }),
+      ],
+    });
+  });
+
+  it("normalizes accepted_suppressed findings with canonical disposition reason first", () => {
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: false,
+      reason: "accepted suppression remains",
+      successfulLegs: ["gpt-5.5"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      findings: [
+        {
+          severity: "medium",
+          category: "correctness",
+          claim_quote: "Known accepted gap",
+          location: "orchestrator/src/family/verifyCmr.ts:42",
+          suggested_fix: "keep the bounded suppression",
+          action: "wont_fix",
+          disposition_reason: "legacy fallback should not win",
+          disposition: {
+            kind: "accepted_suppressed",
+            source: "#445 owner answer",
+            scope: "orchestrator family CMR",
+            reason: "Owner accepted this bounded risk.",
+            boundedReopen: "reopen if the same scope regresses",
+          },
+        },
+      ],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome.findings?.[0]?.disposition_reason).toBe(
+      "Owner accepted this bounded risk.",
+    );
+  });
+
+  it("rejects accepted_suppressed prior dispositions that omit reason", () => {
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: true,
+      successfulLegs: ["gpt-5.5"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|accepted"],
+      priorFindingDispositions: [
+        {
+          identityKey: "correctness|src/x.ts:1|accepted",
+          status: "accepted_suppressed",
+          source: "#445 owner answer",
+          scope: "runner review/fix loop",
+          boundedReopen: "reopen if the same scope regresses",
+        },
+      ],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome).toMatchObject({
+      kind: "malformed",
+      reason: expect.stringContaining(
+        "cmr worker <cmr> tag matched no valid shape",
+      ),
+    });
+  });
+
+  it("strips legacy disposition aliases even when status is already present", () => {
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: true,
+      successfulLegs: ["gpt-5.5"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|accepted"],
+      priorFindingDispositions: [
+        {
+          identityKey: "correctness|src/x.ts:1|accepted",
+          status: "verified-closed",
+          disposition: "accepted_suppressed",
+        },
+      ],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome).toMatchObject({
+      converged: true,
+      priorFindingDispositions: [
+        {
+          identityKey: "correctness|src/x.ts:1|accepted",
+          status: "verified-closed",
+        },
+      ],
+    });
+  });
+});
+
 describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
   it("a signaled run delegates to parseMergerOutcome (resolved)", () => {
     expect(
@@ -1085,13 +1226,17 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
   it("persists a durable family-ledger decision escalation readable back", async () => {
     const b = new RealFamilyBackend(opts(trackRepo()));
     await b.escalateFamily({ reason: "integrated cmr did not converge: field mismatch" });
-    expect(await b.readFamilyLedger()).toEqual([
+    expect(await b.readFamilyLedger()).toMatchObject([
       {
         status: "escalated",
         event: "escalated",
         phase: "final",
         reason: "integrated cmr did not converge: field mismatch",
         escalationKind: "decision",
+        stopSummary: {
+          reason: "infra_failure",
+          repairHint: "inspect this escalation row and repair before rerun",
+        },
       },
     ]);
     const recs = await b.readEscalations();
@@ -1140,6 +1285,7 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
       event: "escalation_answered",
       phase: "final",
       answer: "continue-after-legacy-pause",
+      source: "human",
     });
 
     expect(familyEscalationState(await b.readFamilyLedger())).toMatchObject({
@@ -1147,6 +1293,7 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
       answer: {
         event: "escalation_answered",
         answer: "continue-after-legacy-pause",
+        source: "human",
       },
     });
   });

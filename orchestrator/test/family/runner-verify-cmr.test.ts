@@ -17,7 +17,10 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { classifyFamilyCmrFindings } from "../../src/family/cmrClassification.js";
 import { runFamily } from "../../src/family/runner.js";
+import { findingIdentityKey } from "../../src/findings.js";
+import type { Finding } from "../../src/types.js";
 import type {
   Backend,
   IssueMeta,
@@ -116,6 +119,473 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(result.failedPhase).toBeUndefined();
   });
 
+  it("passes run-option undeveloped modules into the final CMR module context", async () => {
+    const calls: VerifyCmrInput[] = [];
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      calls.push(input);
+      return { ok: true, ran: false };
+    };
+
+    await runFamily({
+      epic: {
+        issue: 293,
+        moduleDeclaration: {
+          module: "orchestrator-family",
+          moduleScope: ["orchestrator/src/family"],
+          source: "family_issue",
+          issue: 293,
+        },
+        children: [{ issue: 10, blockedBy: [] }],
+      },
+      familyBackend: new FakeFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      undevelopedModules: [
+        {
+          module: "military-state-machine",
+          moduleScope: ["docs/military-state-machine.md"],
+          source: "run_option",
+        },
+      ],
+      verifyCmr,
+    });
+
+    expect(calls.at(-1)?.moduleContext).toMatchObject({
+      undevelopedModules: [
+        {
+          module: "military-state-machine",
+          moduleScope: ["docs/military-state-machine.md"],
+          source: "run_option",
+        },
+      ],
+    });
+  });
+
+  it("passes run-option accepted suppression sources into the final CMR module context", async () => {
+    const calls: VerifyCmrInput[] = [];
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      calls.push(input);
+      return { ok: true, ran: false };
+    };
+    const acceptedSource = {
+      source: "#445",
+      scope: "orchestrator/src/family",
+      reason: "Owner accepted this exact finding for the family CMR scope",
+      findingIdentity:
+        "correctness|orchestrator/src/family/verifyCmr.ts:42|accepted source",
+      boundedReopen: "reopen on different scope, higher severity, or new evidence",
+    };
+
+    await runFamily({
+      epic: {
+        issue: 445,
+        moduleDeclaration: {
+          module: "orchestrator-family",
+          moduleScope: ["orchestrator/src/family"],
+          source: "family_issue",
+          issue: 445,
+        },
+        children: [{ issue: 10, blockedBy: [] }],
+      },
+      familyBackend: new FakeFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/445-base",
+      acceptedSuppressionSources: [acceptedSource],
+      verifyCmr,
+    });
+
+    expect(calls.at(-1)?.moduleContext?.acceptedSuppressionSources).toEqual([
+      acceptedSource,
+    ]);
+  });
+
+  it("passes suppression-only module context into the final CMR hook", async () => {
+    const calls: VerifyCmrInput[] = [];
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      calls.push(input);
+      return { ok: true, ran: false };
+    };
+    const acceptedSource = {
+      source: "#445",
+      scope: "orchestrator/src/family",
+      reason: "Owner accepted this exact finding for the family CMR scope",
+      findingIdentity:
+        "correctness|orchestrator/src/family/verifyCmr.ts:42|accepted source",
+      boundedReopen: "reopen on different scope, higher severity, or new evidence",
+    };
+
+    await runFamily({
+      epic: epicWith(10),
+      familyBackend: new FakeFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/445-base",
+      acceptedSuppressionSources: [acceptedSource],
+      verifyCmr,
+    });
+
+    expect(calls.at(-1)?.moduleContext).toMatchObject({
+      currentModules: [],
+      childModules: [],
+      acceptedSuppressionSources: [acceptedSource],
+    });
+  });
+
+  it("passes undeveloped-module-only context into the final CMR hook", async () => {
+    const calls: VerifyCmrInput[] = [];
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      calls.push(input);
+      return { ok: true, ran: false };
+    };
+
+    await runFamily({
+      epic: epicWith(10),
+      familyBackend: new FakeFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/445-base",
+      undevelopedModules: [
+        {
+          module: "route-accounting",
+          moduleScope: ["orchestrator/src/modelRoutes.ts"],
+          source: "run_option",
+        },
+      ],
+      verifyCmr,
+    });
+
+    expect(calls.at(-1)?.moduleContext).toMatchObject({
+      currentModules: [],
+      childModules: [],
+      undevelopedModules: [
+        {
+          module: "route-accounting",
+          moduleScope: ["orchestrator/src/modelRoutes.ts"],
+          source: "run_option",
+        },
+      ],
+    });
+  });
+
+  it("keeps pending correctness CMR finding keys across a newer unrelated completeness pass", async () => {
+    const priorKey =
+      "correctness|orchestrator/src/family/verifycmr.ts:42|correctness blocker";
+    const calls: VerifyCmrInput[] = [];
+    class PreSeededFamilyBackend extends FakeFamilyBackend {
+      constructor() {
+        super();
+        this.ledger.push(
+          { childIssue: 10, status: "merged" },
+          {
+            status: "aborted",
+            event: "aborted",
+            phase: "final",
+            cmrPass: "correctness",
+            cmrFindingClassification: {
+              blocking: [],
+              deferred: [],
+              dispositions: [],
+              moduleContext: {
+                currentModules: [],
+                childModules: [],
+                undevelopedModules: [],
+              },
+              results: [
+                {
+                  identityKey: priorKey,
+                  classification: "same_module_still_red",
+                  attribution: { method: "family_module", issue: 293 },
+                  reason: "correctness blocker remains open",
+                },
+              ],
+            },
+          },
+          {
+            status: "cmr_passed",
+            event: "cmr_passed",
+            phase: "final",
+            cmrPass: "completeness",
+            familyHeadAfter: "family-head",
+          },
+        );
+      }
+    }
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      calls.push(input);
+      return { ok: true, ran: true };
+    };
+
+    await runFamily({
+      epic: epicWith(10),
+      familyBackend: new PreSeededFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr,
+    });
+
+    expect((calls.at(-1) as VerifyCmrInput & {
+      priorCmrFindingIdentityKeysByPass?: { correctness?: readonly string[] };
+    })?.priorCmrFindingIdentityKeysByPass?.correctness).toEqual([priorKey]);
+    expect(calls.at(-1)?.priorCmrFindingIdentityKeys).toBeUndefined();
+  });
+
+  it("keeps only the newest aborted finding set for a CMR pass", async () => {
+    const oldKey =
+      "correctness|orchestrator/src/family/verifycmr.ts:41|old blocker";
+    const newKey =
+      "correctness|orchestrator/src/family/verifycmr.ts:42|new blocker";
+    const newerKey =
+      "correctness|orchestrator/src/family/verifycmr.ts:43|newer blocker";
+    const calls: VerifyCmrInput[] = [];
+    class PreSeededFamilyBackend extends FakeFamilyBackend {
+      constructor() {
+        super();
+        this.ledger.push(
+          { childIssue: 10, status: "merged" },
+          {
+            status: "aborted",
+            event: "aborted",
+            phase: "final",
+            cmrPass: "correctness",
+            cmrFindingClassification: {
+              blocking: [],
+              deferred: [],
+              dispositions: [],
+              moduleContext: {
+                currentModules: [],
+                childModules: [],
+                undevelopedModules: [],
+              },
+              results: [
+                {
+                  identityKey: oldKey,
+                  classification: "same_module_still_red",
+                  attribution: { method: "family_module", issue: 293 },
+                  reason: "old blocker from an earlier aborted attempt",
+                },
+              ],
+            },
+          },
+          {
+            status: "aborted",
+            event: "aborted",
+            phase: "final",
+            cmrPass: "correctness",
+            cmrFindingClassification: {
+              blocking: [],
+              deferred: [],
+              dispositions: [],
+              moduleContext: {
+                currentModules: [],
+                childModules: [],
+                undevelopedModules: [],
+              },
+              results: [
+                {
+                  identityKey: newKey,
+                  classification: "same_module_still_red",
+                  attribution: { method: "family_module", issue: 293 },
+                  reason: "new blocker remains open",
+                },
+                {
+                  identityKey: newerKey,
+                  classification: "same_module_still_red",
+                  attribution: { method: "family_module", issue: 293 },
+                  reason: "newer blocker remains open",
+                },
+              ],
+            },
+          },
+        );
+      }
+    }
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      calls.push(input);
+      return { ok: true, ran: true };
+    };
+
+    await runFamily({
+      epic: epicWith(10),
+      familyBackend: new PreSeededFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr,
+    });
+
+    expect((calls.at(-1) as VerifyCmrInput & {
+      priorCmrFindingIdentityKeysByPass?: { correctness?: readonly string[] };
+    })?.priorCmrFindingIdentityKeysByPass?.correctness).toEqual([newKey, newerKey]);
+  });
+
+  it("passes the known #287 hub-loss accepted suppression through production CMR context", async () => {
+    const classified: ReturnType<typeof classifyFamilyCmrFindings>[] = [];
+    const acceptedScope =
+      "#287 hub-loss / central C_ accounts finding only; not #287 local integration or stub-contract failures";
+    const acceptedReason =
+      "#287 ADR0023 D9 central transport-loss C_ accounts are accepted as #261/ADR0021 hub implementation scope";
+    const boundedReopen =
+      "reopen if severity escalates, new evidence changes the scope, or the finding targets #287-owned local integration/stub contract behavior";
+    const hubLossFinding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote:
+        "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
+      location: "docs/adr/0023.md:D9",
+      suggested_fix: "do not block #287 on the accepted #261/ADR0021 hub implementation",
+      action: "wont_fix",
+      disposition_reason: acceptedReason,
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "#303",
+        scope: acceptedScope,
+        reason: acceptedReason,
+        targetModule: "#261/ADR0021 hub implementation",
+        boundedReopen,
+      },
+    };
+    const acceptedSource = {
+      source: "#303",
+      scope: acceptedScope,
+      reason: acceptedReason,
+      findingIdentity: findingIdentityKey(hubLossFinding),
+      boundedReopen,
+    };
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      if (input.phase === "final") {
+        classified.push(
+          classifyFamilyCmrFindings({
+            familyIssue: 287,
+            findings: [hubLossFinding],
+            moduleContext: input.moduleContext,
+          }),
+        );
+      }
+      return { ok: true, ran: false };
+    };
+
+    await runFamily({
+      epic: {
+        issue: 287,
+        moduleDeclaration: {
+          module: "fiscal",
+          moduleScope: ["docs/adr/0023.md"],
+          source: "family_issue",
+          issue: 287,
+        },
+        children: [{ issue: 10, blockedBy: [] }],
+      },
+      familyBackend: new FakeFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/287-base",
+      acceptedSuppressionSources: [acceptedSource],
+      verifyCmr,
+    });
+
+    expect(classified).toHaveLength(1);
+    expect(classified[0]?.blocking).toEqual([]);
+    expect(classified[0]?.results[0]).toMatchObject({
+      classification: "accepted_suppressed",
+      source: "#303",
+      targetModule: "#261/ADR0021 hub implementation",
+    });
+  });
+
+  it("keeps production admission skips visible in the success stop summary", async () => {
+    const familyBackend = new FakeFamilyBackend();
+    const result = await runFamily({
+      epic: {
+        ...epicWith(10),
+        admissionSkipped: [
+          {
+            issue: 12,
+            reason: "not_ready_for_agent",
+            message: "family admission skipped child #12: missing ready-for-agent label",
+          },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr: async () => ({ ok: true, ran: false }),
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.admissionSkipped).toEqual([
+      {
+        issue: 12,
+        reason: "not_ready_for_agent",
+        message: "family admission skipped child #12: missing ready-for-agent label",
+      },
+    ]);
+    expect(result.stopSummary.metadata?.admissionSkipped).toEqual(result.admissionSkipped);
+    expect(familyBackend.ledger).toContainEqual(
+      expect.objectContaining({
+        childIssue: 12,
+        status: "admission_skipped",
+        event: "admission_skipped",
+        reason: "not_ready_for_agent",
+      }),
+    );
+  });
+
+  it("verify_failed ignores earlier success summaries when no aborted barrier row exists", async () => {
+    const familyBackend = new FakeFamilyBackend();
+    const result = await runFamily({
+      epic: {
+        ...epicWith(10),
+        admissionSkipped: [
+          {
+            issue: 12,
+            reason: "not_ready_for_agent",
+            message: "family admission skipped child #12: missing ready-for-agent label",
+          },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr: async (input) =>
+        input.phase === "final" ? { ok: false, ran: true } : { ok: true, ran: true },
+    });
+
+    expect(result.status).toBe("verify_failed");
+    expect(result.stopSummary.reason).toBe("infra_failure");
+    expect(result.stopSummary.summary).toMatch(/final verify\/cmr barrier failed/);
+  });
+
+  it("verify_failed does not reuse stale aborted rows from before the current final barrier", async () => {
+    class PreSeededFamilyBackend extends FakeFamilyBackend {
+      constructor() {
+        super();
+        this.ledger.push(
+          { childIssue: 10, status: "merged" },
+          {
+            status: "aborted",
+            event: "aborted",
+            phase: "final",
+            stopSummary: {
+              reason: "same_module_still_red",
+              summary: "old CMR blocker",
+              repairHint: "old repair hint",
+            },
+          },
+        );
+      }
+    }
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend: new PreSeededFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr: async (input) =>
+        input.phase === "final" ? { ok: false, ran: true } : { ok: true, ran: true },
+    });
+
+    expect(result.status).toBe("verify_failed");
+    expect(result.stopSummary.reason).toBe("infra_failure");
+    expect(result.stopSummary.summary).toMatch(/final verify\/cmr barrier failed/);
+    expect(result.stopSummary.summary).not.toContain("old CMR blocker");
+  });
+
   it("FAIL-FAST: a red wave verify aborts the loop (no end-of-run call, no further waves)", async () => {
     const phases: string[] = [];
     // Two waves (11 blocked_by 10). The wave verify returns ok:false on the FIRST
@@ -173,6 +643,190 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(result.children.map((c) => c.status)).toEqual(["merged", "merged"]);
   });
 
+  it("final stop summary keeps reported, current, and latest verified CMR heads distinct", async () => {
+    class FreshHeadFamilyBackend extends FakeFamilyBackend {
+      async readFamilyHead(): Promise<string> {
+        return "current-head";
+      }
+    }
+    const familyBackend = new FreshHeadFamilyBackend();
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      if (input.phase === "final") {
+        await input.familyBackend.appendFamilyLedger({
+          status: "cmr_passed",
+          event: "cmr_passed",
+          phase: "final",
+          cmrPass: "correctness",
+          familyHeadAfter: "current-head",
+        });
+      }
+      return { ok: true, ran: true };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr,
+    });
+
+    expect(result.familyHead).toBe("+10");
+    expect(result.stopSummary.metadata?.heads).toEqual({
+      reportedFamilyHead: "+10",
+      actualFamilyHead: "current-head",
+      verifiedCmrHead: "current-head",
+      sources: {
+        reportedFamilyHead: "FamilyRunResult.familyHead",
+        actualFamilyHead: "familyBackend.readFamilyHead",
+        verifiedCmrHead: "latest cmr_passed ledger row",
+      },
+    });
+  });
+
+  it("success stop summary ignores null ledger head metadata instead of crashing", async () => {
+    const familyBackend = new FakeFamilyBackend();
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      if (input.phase === "final") {
+        await input.familyBackend.appendFamilyLedger({
+          status: "cmr_passed",
+          event: "cmr_passed",
+          phase: "final",
+          cmrPass: "correctness",
+          familyHeadAfter: null as never,
+        });
+      }
+      return { ok: true, ran: true };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr,
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.stopSummary.metadata?.heads).toEqual({
+      reportedFamilyHead: "+10",
+      actualFamilyHead: "+10",
+      sources: {
+        reportedFamilyHead: "FamilyRunResult.familyHead",
+        actualFamilyHead: "family runner current head",
+      },
+    });
+  });
+
+  it("success stop summary preserves material final CMR metadata from the ledger", async () => {
+    class FreshHeadFamilyBackend extends FakeFamilyBackend {
+      async readFamilyHead(): Promise<string> {
+        return "current-head";
+      }
+    }
+    const familyBackend = new FreshHeadFamilyBackend();
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      if (input.phase === "final") {
+        await input.familyBackend.appendFamilyLedger({
+          status: "cmr_passed",
+          event: "cmr_passed",
+          phase: "final",
+          cmrPass: "correctness",
+          familyHeadAfter: "current-head",
+          stopSummary: {
+            reason: "success",
+            summary: "run completed successfully",
+            metadata: {
+              acceptedSuppressions: [
+                {
+                  source: "issue #448 acceptance criteria",
+                  scope: "same claimed-fixed finding",
+                  reason: "owner accepted this bounded nonblocking case",
+                  findingIdentity: "correctness|src/family.ts:1|bounded case",
+                  boundedReopen: "reopen if severity increases or scope changes",
+                },
+              ],
+            },
+          },
+        });
+      }
+      return { ok: true, ran: true };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr,
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.stopSummary.metadata?.acceptedSuppressions).toEqual([
+      {
+        source: "issue #448 acceptance criteria",
+        scope: "same claimed-fixed finding",
+        reason: "owner accepted this bounded nonblocking case",
+        findingIdentity: "correctness|src/family.ts:1|bounded case",
+        boundedReopen: "reopen if severity increases or scope changes",
+      },
+    ]);
+    expect(result.stopSummary.metadata?.heads?.verifiedCmrHead).toBe("current-head");
+  });
+
+  it("success stop summary preserves material shipped metadata from the ledger", async () => {
+    class FreshHeadFamilyBackend extends FakeFamilyBackend {
+      async readFamilyHead(): Promise<string> {
+        return "current-head";
+      }
+    }
+    const familyBackend = new FreshHeadFamilyBackend();
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      if (input.phase === "final") {
+        await input.familyBackend.appendFamilyLedger({
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr: "https://github.com/Akagilnc/ming-salvage-sim/pull/999",
+          familyHeadAfter: "current-head",
+          stopSummary: {
+            reason: "success",
+            summary: "run completed successfully",
+            metadata: {
+              providerDegraded: [
+                {
+                  provider: "sourcery",
+                  leg: "sourcery",
+                  reason: "diff larger than review limit",
+                  blocking: false,
+                },
+              ],
+            },
+          },
+        });
+      }
+      return { ok: true, ran: true };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr,
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.stopSummary.metadata?.providerDegraded).toEqual([
+      {
+        provider: "sourcery",
+        leg: "sourcery",
+        reason: "diff larger than review limit",
+        blocking: false,
+      },
+    ]);
+  });
+
   it("defaults to the #293 no-op hook when none is injected (ok, ran:false)", async () => {
     // No verifyCmr in the input → the spine uses the module no-op, which is ok, so
     // the run completes normally (covered by spine.test.ts; here we assert the
@@ -218,12 +872,43 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(familyBackend.ledger).toEqual([]);
   });
 
-  it("LEDGER-AWARE finalize: a child already merged in the ledger is reported 'merged', not 'skipped'", async () => {
+  it("INCOMPLETE summary excludes children already merged in the family ledger", async () => {
+    class OneChildFailsBackend extends ChildBackend {
+      override async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: false, commitsAdded: 0 };
+        }
+        return { kind: "reviewer", findings: [] };
+      }
+    }
+    class PreSeededFamilyBackend extends FakeFamilyBackend {
+      constructor() {
+        super();
+        this.ledger.push({ childIssue: 10, status: "merged" });
+      }
+    }
+
+    const result = await runFamily({
+      epic: epicWith(10, 11),
+      familyBackend: new PreSeededFamilyBackend(),
+      singleSliceBackend: new OneChildFailsBackend(),
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("incomplete");
+    expect(result.children).toEqual([
+      { issue: 11, status: "failed" },
+      { issue: 10, status: "already_done" },
+    ]);
+    expect(result.stopSummary.summary).toContain("#11:failed");
+    expect(result.stopSummary.summary).not.toContain("#10:already_done");
+  });
+
+  it("LEDGER-AWARE finalize: a child already merged in the ledger is reported already_done, not skipped", async () => {
     // Pre-seed the family ledger with child 10 already merged (e.g. a prior
     // invocation — #298's resume truth). The commander excludes 10 (already
-    // merged), so it is never run THIS invocation; finalize must report it
-    // "merged" (FamilyChildStatus contract: "merged" ⇔ a merged ledger entry
-    // exists), NOT "skipped".
+    // merged), so it is never run THIS invocation; finalize must report it as
+    // already_done, NOT "skipped".
     class PreSeededFamilyBackend extends FakeFamilyBackend {
       constructor() {
         super();
@@ -240,7 +925,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     // Only 11 actually runs + merges this invocation; 10 is already-merged truth.
     expect(familyBackend.merges.map((m) => m.childIssue)).toEqual([11]);
     const byIssue = new Map(result.children.map((c) => [c.issue, c.status]));
-    expect(byIssue.get(10)).toBe("merged"); // from the ledger, not "skipped"
+    expect(byIssue.get(10)).toBe("already_done"); // from the ledger, not "skipped"
     expect(byIssue.get(11)).toBe("merged");
     // Every child merged (one via ledger, one this run) → "success".
     expect(result.status).toBe("success");

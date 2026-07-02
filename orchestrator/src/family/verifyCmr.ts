@@ -48,6 +48,11 @@
  */
 
 import {
+  classifyFamilyCmrFindings,
+  type FamilyCmrClassification,
+  type FamilyModuleContext,
+} from "./cmrClassification.js";
+import {
   cmrWorkerSpec,
   dispatchFamilyWorker,
   familyShipWorkerSpec,
@@ -56,9 +61,13 @@ import {
   cmrLegAccountingFailure,
   modelRouteFingerprint,
   resolveActiveModelRoute,
+  type ResolvedModelRoute,
 } from "../modelRoutes.js";
+import { hasAcceptedSuppressionAuthority } from "../acceptedSuppression.js";
+import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
 import { modelIsStrongLeg } from "../realBackend.js";
-import type { EscalationAnswerPayload } from "../types.js";
+import type { EscalationAnswerPayload, FindingDisposition } from "../types.js";
+import { findingIdentityKey } from "../findings.js";
 import {
   cmrPassAlreadyPassed,
   recordAborted as recordDurableAbort,
@@ -66,6 +75,13 @@ import {
   recordShipped,
 } from "./ledger.js";
 import { isFilledString } from "../shipOutcome.js";
+import {
+  contractDriftStopSummary,
+  infraFailureStopSummary,
+  successStopSummary,
+  stopReasonForFindingDisposition,
+  type StopSummary,
+} from "../stopSummary.js";
 import type {
   FamilyBackend,
   FamilyVerifyResult,
@@ -117,8 +133,22 @@ export interface VerifyCmrInput {
    * ledger entry's `familyHeadAfter`, so reconcile's "read末条 familyHeadAfter"
    * baseline covers an abort. Absent ⇒ no merge landed yet (a fresh run's first
    * barrier); the durable entry omits the head.
-   */
+  */
   readonly familyHeadAfter?: string;
+  /** Parent/family issue number, used for issue-specific accepted suppressions. */
+  readonly familyIssue?: number;
+  /** Parsed module declarations for family-CMR defer classification (#449). */
+  readonly moduleContext?: FamilyModuleContext;
+  /**
+   * Runner-owned prior finding identity keys that the integrated CMR worker may
+   * close. If a worker claims fixed keys without this protected context, or
+   * claims keys outside it, the family gate fails closed.
+   */
+  readonly priorCmrFindingIdentityKeys?: readonly string[];
+  /** Pass-scoped prior finding identity keys; preferred over the legacy flat set. */
+  readonly priorCmrFindingIdentityKeysByPass?: Partial<
+    Record<IntegratedCmrPass, readonly string[]>
+  >;
 }
 
 /** The verify-cmr hook result. */
@@ -181,18 +211,639 @@ function cmrFloorFailureReason(input: {
   );
 }
 
+function providerDegradedFloorStopSummary(input: {
+  readonly reason: string;
+  readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+}): StopSummary {
+  const providerDegraded =
+    input.skippedLegs !== undefined && input.skippedLegs.length > 0
+      ? input.skippedLegs.map((leg) =>
+          skippedLegProviderDegradation(leg, {
+            blocking: true,
+            repairHint: `restore provider availability for ${leg.slug} and rerun the CMR gate`,
+          }),
+        )
+      : [
+          {
+            reason: input.reason,
+            blocking: true,
+            repairHint: "restore a route-selected strong CMR provider leg and rerun the gate",
+          },
+        ];
+
+  return {
+    reason: "provider_degraded",
+    summary: input.reason,
+    repairHint: "restore the required CMR provider leg coverage and rerun",
+    metadata: { providerDegraded },
+  };
+}
+
+interface CmrRouteLegEvidence {
+  readonly slug: string;
+  readonly family?: string;
+}
+
+function cmrRouteLegEvidence(leg: unknown): CmrRouteLegEvidence | undefined {
+  if (typeof leg === "string") {
+    const slug = leg.trim();
+    return slug.length > 0 ? { slug } : undefined;
+  }
+  if (leg === null || typeof leg !== "object") return undefined;
+  const candidate = leg as { readonly slug?: unknown; readonly family?: unknown };
+  const slug = typeof candidate.slug === "string" ? candidate.slug.trim() : "";
+  if (slug.length === 0) return undefined;
+  return {
+    slug,
+    ...(typeof candidate.family === "string"
+      ? { family: candidate.family.trim().toLowerCase() }
+      : {}),
+  };
+}
+
+function providerForCmrLegSlug(slug: string): string | undefined {
+  try {
+    return modelFamilyForCmrReviewLeg(slug);
+  } catch {
+    return undefined;
+  }
+}
+
+function skippedLegProviderDegradation(
+  leg: { readonly slug: string; readonly reason: string },
+  input: {
+    readonly blocking: boolean;
+    readonly repairHint: string;
+  },
+) {
+  const provider = providerForCmrLegSlug(leg.slug);
+  return {
+    ...(provider !== undefined ? { provider } : {}),
+    leg: leg.slug,
+    reason: leg.reason,
+    blocking: input.blocking,
+    repairHint: input.repairHint,
+  };
+}
+
+export function providerDegradedWorkerFailureStopSummary(input: {
+  readonly reason: string;
+  readonly resolvedRoute: ResolvedModelRoute;
+}): StopSummary | undefined {
+  if (
+    !/\b(provider|auth|authentication|quota|rate limit|transport)\b/i.test(
+      input.reason,
+    )
+  ) {
+    return undefined;
+  }
+  const normalizedReason = input.reason.toLowerCase();
+  const matchedLegs = input.resolvedRoute.legCollections.cmrReview
+    .map((leg) => cmrRouteLegEvidence(leg))
+    .filter((leg): leg is CmrRouteLegEvidence => {
+      if (leg === undefined) return false;
+      return (
+        normalizedReason.includes(leg.slug.toLowerCase()) ||
+        (leg.family !== undefined && normalizedReason.includes(leg.family))
+      );
+    });
+  const providerDegraded =
+    matchedLegs.length > 0
+      ? matchedLegs.map((leg) => {
+          const provider = providerForCmrLegSlug(leg.slug);
+          return {
+            ...(provider !== undefined ? { provider } : {}),
+            leg: leg.slug,
+            reason: input.reason,
+            blocking: true,
+            repairHint: `restore provider availability for ${leg.slug} and rerun the CMR gate`,
+          };
+        })
+      : [
+          {
+            reason: input.reason,
+            blocking: true,
+            repairHint:
+              "restore the failing CMR provider transport/auth/quota path and rerun the gate",
+          },
+        ];
+  return {
+    reason: "provider_degraded",
+    summary: input.reason,
+    repairHint:
+      "restore provider authentication/quota/transport for the CMR worker and rerun",
+    metadata: { providerDegraded },
+  };
+}
+
+function cmrWorkerFailedStopSummary(input: {
+  readonly reason: string;
+  readonly resolvedRoute: ResolvedModelRoute;
+}): StopSummary | undefined {
+  const providerSummary = providerDegradedWorkerFailureStopSummary(input);
+  if (providerSummary !== undefined) return providerSummary;
+  if (
+    /\b(MODULE_NOT_FOUND|Cannot find module|dependency|build|test|toolchain)\b/i.test(
+      input.reason,
+    )
+  ) {
+    return infraFailureStopSummary({
+      summary: input.reason,
+      repairHint:
+        "install or restore the missing CMR worker dependency/runtime, rebuild if needed, then rerun the CMR gate",
+    });
+  }
+  return undefined;
+}
+
+function providerDegradedPassStopSummary(input: {
+  readonly familyHeadAfter?: string;
+  readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+}): StopSummary | undefined {
+  if (input.skippedLegs === undefined || input.skippedLegs.length === 0) {
+    return undefined;
+  }
+  return successStopSummary({
+    ...(input.familyHeadAfter !== undefined
+      ? {
+          heads: {
+            verifiedCmrHead: input.familyHeadAfter,
+            sources: { verifiedCmrHead: "cmr_passed ledger row" },
+          },
+        }
+      : {}),
+    providerDegraded: input.skippedLegs.map((leg) =>
+      skippedLegProviderDegradation(leg, {
+        blocking: false,
+        repairHint: `restore provider availability for ${leg.slug} before making this leg required`,
+      }),
+    ),
+  });
+}
+
+function shipWorkerContractDriftStopSummary(input: {
+  readonly reason: string;
+  readonly latestVerifiedCmrHead?: string;
+  readonly currentFamilyHead?: string;
+  readonly reportedFamilyHead?: string;
+  readonly shipPrState: string;
+}): StopSummary {
+  return contractDriftStopSummary({
+    summary: input.reason,
+    repairHint:
+      "preserve the latest verified CMR head and rerun ship after repairing the worker contract",
+    ship: {
+      ...(input.latestVerifiedCmrHead !== undefined
+        ? { latestVerifiedCmrHead: input.latestVerifiedCmrHead }
+        : {}),
+      ...(input.currentFamilyHead !== undefined
+        ? { currentFamilyHead: input.currentFamilyHead }
+        : {}),
+      ...(input.reportedFamilyHead !== undefined
+        ? { reportedFamilyHead: input.reportedFamilyHead }
+        : {}),
+      shipPrState: input.shipPrState,
+    },
+    heads: {
+      ...(input.currentFamilyHead !== undefined
+        ? { actualFamilyHead: input.currentFamilyHead }
+        : {}),
+      ...(input.reportedFamilyHead !== undefined
+        ? { reportedFamilyHead: input.reportedFamilyHead }
+        : {}),
+      ...(input.latestVerifiedCmrHead !== undefined
+        ? { verifiedCmrHead: input.latestVerifiedCmrHead }
+        : {}),
+      sources: {
+        actualFamilyHead: "family head after ship worker contract drift",
+        reportedFamilyHead: "ship worker reported state",
+        verifiedCmrHead: "latest cmr_passed ledger row",
+      },
+    },
+  });
+}
+
+function shipWorkerFailedStopSummary(input: {
+  readonly reason: string;
+  readonly latestVerifiedCmrHead?: string;
+  readonly currentFamilyHead?: string;
+  readonly reportedFamilyHead?: string;
+  readonly shipPrState: string;
+}): StopSummary {
+  if (
+    /\b(auth|permission|push|transport|network|MODULE_NOT_FOUND|Cannot find module|dependency|build|test|toolchain|git)\b/i.test(
+      input.reason,
+    )
+  ) {
+    return infraFailureStopSummary({
+      summary: input.reason,
+      repairHint:
+        "repair the family ship worker infrastructure/auth/toolchain failure and rerun the final family barrier",
+      ship: {
+        ...(input.latestVerifiedCmrHead !== undefined
+          ? { latestVerifiedCmrHead: input.latestVerifiedCmrHead }
+          : {}),
+        ...(input.currentFamilyHead !== undefined
+          ? { currentFamilyHead: input.currentFamilyHead }
+          : {}),
+        ...(input.reportedFamilyHead !== undefined
+          ? { reportedFamilyHead: input.reportedFamilyHead }
+          : {}),
+        shipPrState: input.shipPrState,
+      },
+      heads: {
+        ...(input.currentFamilyHead !== undefined
+          ? { actualFamilyHead: input.currentFamilyHead }
+          : {}),
+        ...(input.latestVerifiedCmrHead !== undefined
+          ? { verifiedCmrHead: input.latestVerifiedCmrHead }
+          : {}),
+        sources: {
+          actualFamilyHead: "family head after ship worker failure",
+          verifiedCmrHead: "latest cmr_passed ledger row",
+        },
+      },
+    });
+  }
+  return shipWorkerContractDriftStopSummary(input);
+}
+
+function familyCmrBlockingStopSummary(
+  classification: FamilyCmrClassification,
+  fallbackReason: string,
+): StopSummary {
+  const blockingClassifications = new Set([
+    "same_module_still_red",
+    "owning_issue_still_red",
+    "spec_conflict",
+    "infra_failure",
+  ]);
+  const result =
+    classification.results.find(
+      (item) =>
+        item.classification === "owning_issue_still_red" ||
+        item.classification === "spec_conflict" ||
+        item.classification === "infra_failure",
+    ) ??
+    classification.results.find((item) =>
+      blockingClassifications.has(item.classification),
+    );
+  const finding =
+    result !== undefined
+      ? classification.blocking.find(
+          (item) => findingIdentityKey(item) === result.identityKey,
+        )
+      : undefined;
+  if (result?.classification === "same_module_still_red") {
+    if (finding !== undefined) {
+      return stopReasonForFindingDisposition({
+        kind: "same_module",
+        finding,
+        reason: result.reason || fallbackReason,
+      });
+    }
+    return {
+      reason: "same_module_still_red",
+      summary: result.reason || fallbackReason,
+      repairHint: "fix the same-module family CMR finding and rerun",
+    };
+  }
+  if (result?.classification === "owning_issue_still_red") {
+    if (finding !== undefined && result.owningIssue !== undefined) {
+      return stopReasonForFindingDisposition({
+        kind: "owning_issue_still_red",
+        finding,
+        owningIssue: result.owningIssue,
+        missingSurface: result.missingSurface,
+        nextStep: result.nextStep,
+        reason: result.reason || fallbackReason,
+      });
+    }
+    return {
+      reason: "owning_issue_still_red",
+      summary: result.reason || fallbackReason,
+      ...(result.owningIssue !== undefined ? { owningIssue: result.owningIssue } : {}),
+      ...(result.missingSurface !== undefined
+        ? { missingSurface: result.missingSurface }
+        : {}),
+      ...(result.nextStep !== undefined ? { nextStep: result.nextStep } : {}),
+      repairHint: "close the owning issue surface before rerun",
+    };
+  }
+  if (result?.classification === "spec_conflict") {
+    if (finding !== undefined) {
+      return stopReasonForFindingDisposition({
+        kind: "spec_conflict",
+        finding,
+        reason: result.reason || fallbackReason,
+      });
+    }
+    return {
+      reason: "spec_conflict",
+      summary: result.reason || fallbackReason,
+      repairHint: "resolve the specification conflict and rerun",
+    };
+  }
+  if (result?.classification === "infra_failure") {
+    if (finding !== undefined) {
+      return stopReasonForFindingDisposition({
+        kind: "infra_failure",
+        finding,
+        reason: result.reason || fallbackReason,
+        repairHint: "repair the infrastructure failure and rerun the family CMR gate",
+      });
+    }
+    return infraFailureStopSummary({
+      summary: result.reason || fallbackReason,
+      repairHint: "repair the infrastructure failure and rerun the family CMR gate",
+    });
+  }
+  return {
+    reason: "same_module_still_red",
+    summary: fallbackReason,
+    repairHint: "fix the blocking family CMR finding and rerun",
+  };
+}
+
+function familyCmrPassStopSummary(input: {
+  readonly classification?: FamilyCmrClassification;
+  readonly familyHeadAfter?: string;
+  readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+}): StopSummary | undefined {
+  const acceptedSuppressions = input.classification?.dispositions
+    .filter(hasAcceptedSuppressionAuthority)
+    .map((disposition) => ({
+      source: disposition.source!,
+      scope: disposition.scope!,
+      reason: disposition.reason!,
+      findingIdentity: disposition.identityKey,
+      boundedReopen: disposition.boundedReopen!,
+    }));
+  const materialPassSummary = successStopSummary({
+    ...(input.familyHeadAfter !== undefined
+      ? {
+          heads: {
+            verifiedCmrHead: input.familyHeadAfter,
+            sources: { verifiedCmrHead: "cmr_passed ledger row" },
+          },
+        }
+      : {}),
+    ...(acceptedSuppressions !== undefined && acceptedSuppressions.length > 0
+      ? { acceptedSuppressions }
+      : {}),
+    ...(input.skippedLegs !== undefined && input.skippedLegs.length > 0
+      ? {
+          providerDegraded: input.skippedLegs.map((leg) =>
+            skippedLegProviderDegradation(leg, {
+              blocking: false,
+              repairHint: `restore provider availability for ${leg.slug} before making this leg required`,
+            }),
+          ),
+        }
+      : {}),
+  });
+  const crossModule = input.classification?.results.find(
+    (result) => result.classification === "cross_module_defer",
+  );
+  const finding = input.classification?.deferred[0];
+  if (
+    crossModule !== undefined &&
+    finding !== undefined &&
+    crossModule.targetModule !== undefined
+  ) {
+    const crossModuleSummary = stopReasonForFindingDisposition({
+      kind: "cross_module",
+      finding,
+      targetModule: crossModule.targetModule,
+      reason: crossModule.reason,
+    });
+    return materialPassSummary.metadata !== undefined
+      ? { ...crossModuleSummary, metadata: materialPassSummary.metadata }
+      : crossModuleSummary;
+  }
+  if (
+    (acceptedSuppressions === undefined || acceptedSuppressions.length === 0) &&
+    (input.skippedLegs === undefined || input.skippedLegs.length === 0)
+  ) {
+    return providerDegradedPassStopSummary({
+      familyHeadAfter: input.familyHeadAfter,
+      skippedLegs: input.skippedLegs,
+    });
+  }
+  return materialPassSummary;
+}
+
+function isMaterialCmrStopSummary(stopSummary: StopSummary): boolean {
+  if (stopSummary.reason !== "success") return true;
+  const metadata = stopSummary.metadata;
+  return (
+    (metadata?.acceptedSuppressions?.length ?? 0) > 0 ||
+    (metadata?.providerDegraded?.length ?? 0) > 0
+  );
+}
+
+function familyVerifyFailureStopSummary(reason: string): StopSummary {
+  if (/MODULE_NOT_FOUND|Cannot find module/i.test(reason)) {
+    return infraFailureStopSummary({
+      summary: reason,
+      repairHint:
+        "install or restore the missing verification dependency, rebuild if needed, then rerun family verify",
+    });
+  }
+  return infraFailureStopSummary({
+    summary: reason,
+    repairHint:
+      "inspect the family verify failure, repair the failing toolchain command, and rerun",
+  });
+}
+
+function notConvergedStopSummary(reason: string): StopSummary {
+  return {
+    reason: "contract_drift",
+    summary: `integrated CMR did not converge: ${reason}`,
+    repairHint: "continue the CMR fix loop until the pass converges",
+  };
+}
+
+function cmrEscalationStopSummary(reason: string): StopSummary {
+  return {
+    reason: "spec_conflict",
+    summary: reason,
+    repairHint:
+      "resolve the CMR worker's design/specification conflict and rerun the family CMR gate",
+  };
+}
+
+function legAccountingFailureStopSummary(input: {
+  readonly reason: string;
+  readonly resolvedRoute: ResolvedModelRoute;
+  readonly routeFingerprint: string;
+  readonly successfulLegs: readonly string[];
+  readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+}): StopSummary {
+  return infraFailureStopSummary({
+    summary: input.reason,
+    repairHint:
+      "repair the CMR worker leg accounting payload so it matches the active route, then rerun the family CMR gate",
+    routeAccounting: {
+      declaredLegs: input.resolvedRoute.legCollections.cmrReview.map((leg) => leg.slug),
+      successfulLegs: input.successfulLegs,
+      skippedLegs: input.skippedLegs ?? [],
+      routeFingerprint: input.routeFingerprint,
+      routeArtifact: {
+        path: ".cmr-route.json",
+        content: {
+          legCollections: {
+            cmrReview: input.resolvedRoute.legCollections.cmrReview.map((leg) => ({
+              slug: leg.slug,
+              family: leg.family,
+            })),
+          },
+        },
+      },
+      actualPayload: {
+        successfulLegs: input.successfulLegs,
+        ...(input.skippedLegs !== undefined ? { skippedLegs: input.skippedLegs } : {}),
+      },
+      repairHint:
+        "every active-route CMR leg must appear exactly once as successful or skipped; undeclared legs must be removed from the worker verdict",
+    },
+  });
+}
+
+function trustedAcceptedSuppressionDisposition(
+  disposition: {
+    readonly identityKey: string;
+    readonly status: string;
+    readonly reason?: string;
+    readonly source?: string;
+    readonly scope?: string;
+    readonly boundedReopen?: string;
+  },
+  moduleContext: FamilyModuleContext | undefined,
+): boolean {
+  if (
+    disposition.status !== "accepted_suppressed" ||
+    !hasAcceptedSuppressionAuthority(disposition)
+  ) {
+    return false;
+  }
+  return (moduleContext?.acceptedSuppressionSources ?? []).some(
+    (source) =>
+      source.source === disposition.source &&
+      source.scope === disposition.scope &&
+      source.reason === disposition.reason &&
+      source.boundedReopen === disposition.boundedReopen &&
+      source.findingIdentity === disposition.identityKey,
+  );
+}
+
+function latestFamilyCmrDispositions(
+  ledger: ReadonlyArray<{
+    readonly cmrFindingClassification?: {
+      readonly dispositions: ReadonlyArray<FindingDisposition>;
+    };
+  }>,
+): ReadonlyArray<FindingDisposition> | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.cmrFindingClassification?.dispositions !== undefined) {
+      return entry.cmrFindingClassification.dispositions;
+    }
+  }
+  return undefined;
+}
+
 function cmrClosureFailureReason(input: {
   readonly pass: IntegratedCmrPass;
+  readonly moduleContext?: FamilyModuleContext;
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
+  readonly protectedPriorFindingIdentityKeys?: readonly string[];
   readonly priorFindingDispositions?: readonly {
     readonly identityKey: string;
     readonly status: string;
+    readonly reason?: string;
+    readonly source?: string;
+    readonly scope?: string;
+    readonly boundedReopen?: string;
   }[];
 }): string | undefined {
   const claimed = input.claimedFixedFindingIdentityKeys ?? [];
   const priorDispositions = input.priorFindingDispositions ?? [];
+  if (claimed.length > 0 && input.protectedPriorFindingIdentityKeys === undefined) {
+    return (
+      `integrated cmr ${input.pass} closure_context_missing: worker claimed fixed ` +
+      `prior findings but the runner supplied no protected prior finding identity set`
+    );
+  }
+  const protectedPriorKeys = input.protectedPriorFindingIdentityKeys;
+  const protectedKeys =
+    protectedPriorKeys !== undefined ? new Set(protectedPriorKeys) : undefined;
+  if (protectedKeys !== undefined && protectedPriorKeys !== undefined) {
+    const staleClaims = claimed.filter((key) => !protectedKeys.has(key));
+    if (staleClaims.length > 0) {
+      return (
+        `integrated cmr ${input.pass} closure failed: claimed-fixed keys outside ` +
+        `the runner-supplied prior finding set: ${staleClaims.join(", ")}`
+      );
+    }
+    const claimedSet = new Set(claimed);
+    const unclaimedPriorKeys = protectedPriorKeys.filter((key) => !claimedSet.has(key));
+    if (unclaimedPriorKeys.length > 0) {
+      return (
+        `integrated cmr ${input.pass} closure failed: runner-supplied prior ` +
+        `findings were not explicitly claimed fixed: ${unclaimedPriorKeys.join(", ")}`
+      );
+    }
+  }
+  const dispositionKeys = priorDispositions.map((d) => d.identityKey);
+  const duplicateDispositions = dispositionKeys.filter(
+    (key, index, keys) => keys.indexOf(key) !== index,
+  );
+  if (duplicateDispositions.length > 0) {
+    return (
+      `integrated cmr ${input.pass} closure failed: duplicate prior finding ` +
+      `dispositions for ${[...new Set(duplicateDispositions)].join(", ")}`
+    );
+  }
+  const malformedAcceptedSuppressions = priorDispositions
+    .filter(
+      (disposition) =>
+        disposition.status === "accepted_suppressed" &&
+        !trustedAcceptedSuppressionDisposition(disposition, input.moduleContext),
+    )
+    .map((disposition) => disposition.identityKey);
+  if (malformedAcceptedSuppressions.length > 0) {
+    return (
+      `integrated cmr ${input.pass} closure failed: accepted_suppressed ` +
+      `dispositions missing source/scope/boundedReopen for ${malformedAcceptedSuppressions.join(", ")}`
+    );
+  }
+  const suppressedProtectedPriorKeys =
+    protectedKeys === undefined
+      ? []
+      : priorDispositions
+          .filter(
+            (disposition) =>
+              disposition.status === "accepted_suppressed" &&
+              protectedKeys.has(disposition.identityKey),
+          )
+          .map((disposition) => disposition.identityKey);
+  if (suppressedProtectedPriorKeys.length > 0) {
+    return (
+      `integrated cmr ${input.pass} closure failed: runner-protected prior ` +
+      `findings cannot be closed by accepted_suppressed: ${suppressedProtectedPriorKeys.join(", ")}`
+    );
+  }
   const stillOpen = priorDispositions
-    .filter((disposition) => disposition.status !== "verified-closed")
+    .filter(
+      (disposition) =>
+        disposition.status !== "verified-closed" &&
+        !(
+          disposition.status === "accepted_suppressed" &&
+          trustedAcceptedSuppressionDisposition(disposition, input.moduleContext)
+        ),
+    )
     .map((disposition) => disposition.identityKey);
   if (stillOpen.length > 0) {
     return (
@@ -254,6 +905,18 @@ async function readRequiredFamilyHead(
   }
 }
 
+function describeShipPrState(ship: {
+  readonly branch?: string;
+  readonly status?: string;
+  readonly pr?: string;
+}): string {
+  return [
+    `branch=${isFilledString(ship.branch) ? ship.branch : "missing"}`,
+    `status=${isFilledString(ship.status) ? ship.status : "missing"}`,
+    `pr=${isFilledString(ship.pr) ? ship.pr : "missing"}`,
+  ].join(" ");
+}
+
 /**
  * Dispatch a family worker, converting ANY thrown STARTUP error into a documented
  * gate result instead of letting it escape verifyCmr (cmr S336 r8 — startup/error
@@ -291,6 +954,10 @@ async function runIntegratedCmrPass(input: {
   readonly llmResolvedChildren?: readonly number[];
   readonly escalationAnswer?: EscalationAnswerPayload;
   readonly familyHeadAfter?: string;
+  readonly familyIssue?: number;
+  readonly moduleContext?: FamilyModuleContext;
+  readonly priorCmrFindingIdentityKeys?: readonly string[];
+  readonly resolvedRoute: ResolvedModelRoute;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -299,8 +966,12 @@ async function runIntegratedCmrPass(input: {
     llmResolvedChildren,
     escalationAnswer,
     familyHeadAfter,
+    familyIssue,
+    moduleContext,
+    resolvedRoute,
+    priorCmrFindingIdentityKeys,
   } = input;
-  const routeFingerprint = modelRouteFingerprint(resolveActiveModelRoute());
+  const routeFingerprint = modelRouteFingerprint(resolvedRoute);
   const resolvedFamilyHeadAfter = await readPostCmrFamilyHead(
     familyBackend,
     familyBase,
@@ -320,7 +991,7 @@ async function runIntegratedCmrPass(input: {
   }
   const cmrResult = await dispatchOrAbort(
     familyBackend,
-    cmrWorkerSpec("fresh", pass),
+    cmrWorkerSpec("fresh", pass, resolvedRoute),
     {
       familyBase,
       cmrPass: pass,
@@ -328,6 +999,10 @@ async function runIntegratedCmrPass(input: {
         ? { llmResolvedChildren }
         : {}),
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
+      ...(moduleContext !== undefined ? { moduleContext } : {}),
+      ...(priorCmrFindingIdentityKeys !== undefined
+        ? { priorCmrFindingIdentityKeys }
+        : {}),
     },
   );
   const postWorkerFamilyHead = await readPostCmrFamilyHead(
@@ -337,15 +1012,18 @@ async function runIntegratedCmrPass(input: {
   );
   if (cmrResult.kind === "escalated") {
     const reason = `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`;
+    const stopSummary = cmrEscalationStopSummary(reason);
     await recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
+      stopSummary,
     });
     await familyBackend.escalateFamily?.({
       reason,
       familyHeadAfter: postWorkerFamilyHead,
+      stopSummary,
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
@@ -353,7 +1031,26 @@ async function runIntegratedCmrPass(input: {
     const reason =
       cmrResult.kind === "failed"
         ? `family integrated cmr ${pass} worker failed: ${cmrResult.reason}`
-        : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
+        : cmrResult.kind === "malformed"
+          ? `family integrated cmr ${pass} worker malformed: ${cmrResult.reason}`
+          : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
+    const stopSummary =
+      cmrResult.kind === "failed"
+        ? cmrWorkerFailedStopSummary({
+            reason,
+            resolvedRoute,
+          })
+        : cmrResult.kind === "malformed" &&
+            cmrResult.cmrLegAccountingPayload !== undefined
+        ? legAccountingFailureStopSummary({
+            reason,
+            resolvedRoute,
+            routeFingerprint,
+            successfulLegs:
+              cmrResult.cmrLegAccountingPayload.successfulLegs ?? [],
+            skippedLegs: cmrResult.cmrLegAccountingPayload.skippedLegs,
+          })
+        : undefined;
     await familyBackend.recordAborted?.({
       phase: "final",
       cmrPass: pass,
@@ -366,10 +1063,55 @@ async function runIntegratedCmrPass(input: {
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
+      ...(stopSummary !== undefined ? { stopSummary } : {}),
     });
     return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
   }
-  if (!cmrResult.output.converged) {
+  let cmrFindingClassification: FamilyCmrClassification | undefined;
+  if (
+    cmrResult.output.findings !== undefined &&
+    cmrResult.output.findings.length > 0
+  ) {
+    const priorDispositions = latestFamilyCmrDispositions(
+      await familyBackend.readFamilyLedger(),
+    );
+    cmrFindingClassification = classifyFamilyCmrFindings({
+      familyIssue: familyIssue ?? 0,
+      findings: cmrResult.output.findings,
+      moduleContext: moduleContext ?? { currentModules: [], childModules: [] },
+      ...(priorDispositions !== undefined ? { priorDispositions } : {}),
+    });
+    if (cmrFindingClassification.blocking.length > 0) {
+      const reason =
+        `integrated cmr ${pass} found blocking family-scope findings: ` +
+        cmrFindingClassification.results
+          .filter(
+            (result) =>
+              result.classification !== "cross_module_defer" &&
+              result.classification !== "accepted_suppressed",
+          )
+          .map((result) => `${result.classification}:${result.identityKey}`)
+          .join(", ");
+      await recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        cmrFindingClassification,
+        stopSummary: familyCmrBlockingStopSummary(
+          cmrFindingClassification,
+          reason,
+        ),
+      });
+      return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+    }
+  }
+  if (
+    !cmrResult.output.converged &&
+    (cmrFindingClassification === undefined ||
+      (cmrFindingClassification.deferred.length === 0 &&
+        cmrFindingClassification.dispositions.length === 0))
+  ) {
     const reason =
       cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
     await recordDurableAbort(familyBackend, {
@@ -377,17 +1119,35 @@ async function runIntegratedCmrPass(input: {
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
-    });
-    await familyBackend.escalateFamily?.({
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
+      cmrFindingClassification: {
+        blocking: [],
+        deferred: [],
+        dispositions: [],
+        results: [
+          {
+            identityKey: `not_converged|${pass}`,
+            classification: "not_converged",
+            attribution: { method: "reviewer_disposition" },
+            reason,
+          },
+        ],
+        moduleContext: {
+          currentModules: [],
+          childModules: [],
+          undevelopedModules: [],
+        },
+      },
+      stopSummary: notConvergedStopSummary(reason),
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
-  const legAccountingFailure = cmrLegAccountingFailure({
-    successfulLegs: cmrResult.output.successfulLegs ?? [],
-    skippedLegs: cmrResult.output.skippedLegs,
-  });
+  const legAccountingFailure = cmrLegAccountingFailure(
+    {
+      successfulLegs: cmrResult.output.successfulLegs ?? [],
+      skippedLegs: cmrResult.output.skippedLegs,
+    },
+    resolvedRoute,
+  );
   if (legAccountingFailure !== undefined) {
     const reason = `integrated cmr ${pass} leg accounting failed: ${legAccountingFailure}`;
     await recordDurableAbort(familyBackend, {
@@ -395,10 +1155,13 @@ async function runIntegratedCmrPass(input: {
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
-    });
-    await familyBackend.escalateFamily?.({
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: legAccountingFailureStopSummary({
+        reason,
+        resolvedRoute,
+        routeFingerprint,
+        successfulLegs: cmrResult.output.successfulLegs ?? [],
+        skippedLegs: cmrResult.output.skippedLegs,
+      }),
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
@@ -413,17 +1176,19 @@ async function runIntegratedCmrPass(input: {
       cmrPass: pass,
       reason: floorFailure,
       familyHeadAfter: postWorkerFamilyHead,
-    });
-    await familyBackend.escalateFamily?.({
-      reason: floorFailure,
-      familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: providerDegradedFloorStopSummary({
+        reason: floorFailure,
+        skippedLegs: cmrResult.output.skippedLegs,
+      }),
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   const closureFailure = cmrClosureFailureReason({
     pass,
+    moduleContext,
     claimedFixedFindingIdentityKeys:
       cmrResult.output.claimedFixedFindingIdentityKeys,
+    protectedPriorFindingIdentityKeys: priorCmrFindingIdentityKeys,
     priorFindingDispositions: cmrResult.output.priorFindingDispositions,
   });
   if (closureFailure !== undefined) {
@@ -432,10 +1197,11 @@ async function runIntegratedCmrPass(input: {
       cmrPass: pass,
       reason: closureFailure,
       familyHeadAfter: postWorkerFamilyHead,
-    });
-    await familyBackend.escalateFamily?.({
-      reason: closureFailure,
-      familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: contractDriftStopSummary({
+        summary: closureFailure,
+        repairHint:
+          "repair the integrated CMR claimed-fixed closure payload and rerun the family barrier",
+      }),
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
@@ -443,6 +1209,12 @@ async function runIntegratedCmrPass(input: {
     cmrPass: pass,
     familyHeadAfter: postWorkerFamilyHead,
     routeFingerprint,
+    cmrFindingClassification,
+    stopSummary: familyCmrPassStopSummary({
+      classification: cmrFindingClassification,
+      familyHeadAfter: postWorkerFamilyHead,
+      skippedLegs: cmrResult.output.skippedLegs,
+    }),
   });
   return { result: { ok: true, ran: true }, familyHeadAfter: postWorkerFamilyHead };
 }
@@ -468,6 +1240,10 @@ export async function runVerifyCmr(
     llmResolvedChildren,
     escalationAnswer,
     familyHeadAfter,
+    familyIssue,
+    moduleContext,
+    priorCmrFindingIdentityKeys,
+    priorCmrFindingIdentityKeysByPass,
   } = input;
 
   // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
@@ -488,7 +1264,12 @@ export async function runVerifyCmr(
     });
     // (b) PHASE-LEVEL DURABLE ledger entry (#291 缺口 2): so the abort reaches the
     //     ledger reconcile reads末条 familyHeadAfter from, not only the seam array.
-    await recordDurableAbort(familyBackend, { phase, reason, familyHeadAfter });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter,
+      stopSummary: familyVerifyFailureStopSummary(reason),
+    });
     return { ok: false, ran: true };
   }
 
@@ -515,10 +1296,38 @@ export async function runVerifyCmr(
   ) {
     return INCOMPLETE_GATE;
   }
+  let resolvedRoute: ResolvedModelRoute;
+  try {
+    resolvedRoute = resolveActiveModelRoute();
+  } catch (err) {
+    const reason =
+      err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
+    const stopSummary = infraFailureStopSummary({
+      summary: `startup route failure: ${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`,
+      repairHint: "repair the CMR route environment and rerun the family barrier",
+    });
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter,
+      stopSummary,
+    });
+    return { ok: false, ran: true };
+  }
 
   // #419: Step5 completeness and Step6 correctness are two runner-dispatched
   // CMR worker passes. Correctness is structurally unreachable unless the
   // completeness worker returns a green terminal verdict.
+  const priorKeysForPass = (
+    pass: IntegratedCmrPass,
+  ): readonly string[] | undefined =>
+    priorCmrFindingIdentityKeysByPass?.[pass] ?? priorCmrFindingIdentityKeys;
   const completeness = await runIntegratedCmrPass({
     pass: "completeness",
     familyBackend,
@@ -526,6 +1335,10 @@ export async function runVerifyCmr(
     llmResolvedChildren,
     escalationAnswer,
     familyHeadAfter,
+    familyIssue,
+    moduleContext,
+    priorCmrFindingIdentityKeys: priorKeysForPass("completeness"),
+    resolvedRoute,
   });
   if (!completeness.result.ok) return completeness.result;
 
@@ -536,6 +1349,10 @@ export async function runVerifyCmr(
     llmResolvedChildren,
     escalationAnswer,
     familyHeadAfter: completeness.familyHeadAfter,
+    familyIssue,
+    moduleContext,
+    priorCmrFindingIdentityKeys: priorKeysForPass("correctness"),
+    resolvedRoute,
   });
   if (!correctness.result.ok) return correctness.result;
   const cmrPassedFamilyHeadAfter = correctness.familyHeadAfter;
@@ -556,11 +1373,51 @@ export async function runVerifyCmr(
     familyBackend.dispatchWorker === undefined &&
     familyBackend.openFamilyPr === undefined
   ) {
+    const reason =
+      "family ship worker unavailable after converged CMR: backend has neither dispatchWorker nor openFamilyPr";
+    const postCmrFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      cmrPassedFamilyHeadAfter,
+    );
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postCmrFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: postCmrFamilyHead,
+      stopSummary: infraFailureStopSummary({
+        summary: `${reason}; the terminal PR gate cannot open a PR`,
+        repairHint:
+          "provide the family ship worker dispatch seam or legacy openFamilyPr capability, then rerun the final family barrier",
+        ship: {
+          latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
+          currentFamilyHead: postCmrFamilyHead,
+          shipPrState: "ship-capability-missing",
+        },
+        heads: {
+          ...(postCmrFamilyHead !== undefined
+            ? { actualFamilyHead: postCmrFamilyHead }
+            : {}),
+          ...(cmrPassedFamilyHeadAfter !== undefined
+            ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+            : {}),
+          sources: {
+            actualFamilyHead: "family head after CMR before missing ship capability",
+            verifiedCmrHead: "latest cmr_passed ledger row",
+          },
+        },
+      }),
+    });
     return INCOMPLETE_GATE;
   }
   const shipResult = await dispatchOrAbort(
     familyBackend,
-    familyShipWorkerSpec(),
+    familyShipWorkerSpec(resolvedRoute),
     {
       familyBase,
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
@@ -577,13 +1434,50 @@ export async function runVerifyCmr(
       familyBase,
       cmrPassedFamilyHeadAfter,
     );
-    await familyBackend.escalateFamily?.({
-      reason: `${shipResult.escalation.reason} — ${shipResult.escalation.diagnosis}`,
+    const escalationReason =
+      `${shipResult.escalation.reason} — ${shipResult.escalation.diagnosis}`;
+    const reason = `family ship worker escalated: ${escalationReason}`;
+    const stopSummary = infraFailureStopSummary({
+      summary: reason,
+      repairHint: "answer or repair the family ship worker escalation, then rerun",
+      ship: {
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { latestVerifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        ...(postShipFamilyHead !== undefined
+          ? { currentFamilyHead: postShipFamilyHead }
+          : {}),
+        shipPrState: "ship-worker-escalated",
+      },
+      heads: {
+        ...(postShipFamilyHead !== undefined
+          ? { actualFamilyHead: postShipFamilyHead }
+          : {}),
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        sources: {
+          actualFamilyHead: "family head after ship worker escalation",
+          verifiedCmrHead: "latest cmr_passed ledger row",
+        },
+      },
+    });
+    if (familyBackend.escalateFamily !== undefined) {
+      await familyBackend.escalateFamily({
+        reason: escalationReason,
+        familyHeadAfter: postShipFamilyHead,
+        stopSummary,
+      });
+    }
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
       familyHeadAfter: postShipFamilyHead,
+      stopSummary,
     });
     return { ok: false, ran: true };
   }
-  if (shipResult.kind !== "completed" || shipResult.output.kind !== "ship") {
+  if (shipResult.kind !== "completed" || shipResult.output?.kind !== "ship") {
     // The ship worker ran but returned no valid result (crash / malformed / hard
     // command failure) at the terminal 止于-PR gate. Persist a durable `aborted`
     // event (online review r3, codex P2): without it a resume sees neither a shipped
@@ -608,6 +1502,14 @@ export async function runVerifyCmr(
       phase,
       reason,
       familyHeadAfter: postShipFamilyHead,
+      stopSummary: shipWorkerFailedStopSummary({
+        reason,
+        latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
+        currentFamilyHead: postShipFamilyHead,
+        reportedFamilyHead: cmrPassedFamilyHeadAfter,
+        shipPrState:
+          shipResult.kind === "failed" ? "worker-failed" : "not-written",
+      }),
     });
     return INCOMPLETE_GATE;
   }
@@ -628,6 +1530,52 @@ export async function runVerifyCmr(
     ship.status !== "pr_opened" ||
     !isFilledString(ship.pr)
   ) {
+    const postShipFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      cmrPassedFamilyHeadAfter,
+    );
+    const shipPrState = describeShipPrState(ship);
+    const reason =
+      `family ship worker did not open a valid family PR: ${shipPrState}; ` +
+      `expected branch=${familyBase} status=pr_opened and a non-empty PR URL`;
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postShipFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: postShipFamilyHead,
+      stopSummary: infraFailureStopSummary({
+        summary: reason,
+        repairHint:
+          "repair the family ship worker result/PR state and rerun the final family barrier",
+        ship: {
+          ...(cmrPassedFamilyHeadAfter !== undefined
+            ? { latestVerifiedCmrHead: cmrPassedFamilyHeadAfter }
+            : {}),
+          ...(postShipFamilyHead !== undefined
+            ? { currentFamilyHead: postShipFamilyHead }
+            : {}),
+          shipPrState,
+        },
+        heads: {
+          ...(postShipFamilyHead !== undefined
+            ? { actualFamilyHead: postShipFamilyHead }
+            : {}),
+          ...(cmrPassedFamilyHeadAfter !== undefined
+            ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+            : {}),
+          sources: {
+            actualFamilyHead: "family head after ship contract failure",
+            verifiedCmrHead: "latest cmr_passed ledger row",
+          },
+        },
+      }),
+    });
     return INCOMPLETE_GATE;
   }
   const exactPostShipFamilyHead = await readRequiredFamilyHead(familyBackend, familyBase);
@@ -644,6 +1592,28 @@ export async function runVerifyCmr(
       phase,
       reason,
       familyHeadAfter: cmrPassedFamilyHeadAfter,
+      stopSummary: infraFailureStopSummary({
+        summary: reason,
+        repairHint:
+          "resolve the current family HEAD, verify the family PR still points at it, and rerun the final family barrier",
+        ship: {
+          ...(cmrPassedFamilyHeadAfter !== undefined
+            ? {
+                latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
+                reportedFamilyHead: cmrPassedFamilyHeadAfter,
+              }
+            : {}),
+          shipPrState: "current-family-head-unresolved",
+        },
+        heads: {
+          ...(cmrPassedFamilyHeadAfter !== undefined
+            ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+            : {}),
+          sources: {
+            verifiedCmrHead: "latest cmr_passed ledger row",
+          },
+        },
+      }),
     });
     return INCOMPLETE_GATE;
   }
@@ -661,6 +1631,25 @@ export async function runVerifyCmr(
       phase,
       reason,
       familyHeadAfter: exactPostShipFamilyHead,
+      stopSummary: infraFailureStopSummary({
+        summary: reason,
+        repairHint:
+          "repair the family ship worker PR head binding and rerun the final family barrier",
+        ship: {
+          latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
+          currentFamilyHead: exactPostShipFamilyHead,
+          reportedFamilyHead: ship.prHead,
+          shipPrState: "pr-head-mismatch",
+        },
+        heads: {
+          actualFamilyHead: exactPostShipFamilyHead,
+          verifiedCmrHead: cmrPassedFamilyHeadAfter,
+          sources: {
+            actualFamilyHead: "family head after ship worker",
+            verifiedCmrHead: "latest cmr_passed ledger row",
+          },
+        },
+      }),
     });
     return INCOMPLETE_GATE;
   }
@@ -674,9 +1663,52 @@ export async function runVerifyCmr(
   // bump / PR attempt). Writing a `shipped` ledger entry makes the delivery durable
   // resume truth: the spine's `familyAlreadyShipped` guard short-circuits the barrier
   // only when the current family HEAD still equals this shipped head.
+  const shippedHeadsSummary = {
+    reportedFamilyHead: ship.prHead,
+    actualFamilyHead: exactPostShipFamilyHead,
+    ...(cmrPassedFamilyHeadAfter !== undefined
+      ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+      : {}),
+    sources: {
+      reportedFamilyHead: "ship worker reported prHead",
+      actualFamilyHead: "family head after ship worker",
+      verifiedCmrHead: "latest cmr_passed ledger row",
+    },
+  };
+  const shippedSuccessSummary = successStopSummary({
+    heads: shippedHeadsSummary,
+    ...(ship.degradedReviews !== undefined && ship.degradedReviews.length > 0
+      ? { providerDegraded: ship.degradedReviews }
+      : {}),
+  });
+  const ledger = await familyBackend.readFamilyLedger();
+  let materialCmrSummary: StopSummary | undefined;
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.status === "cmr_passed" &&
+      entry.familyHeadAfter === cmrPassedFamilyHeadAfter &&
+      entry.stopSummary !== undefined &&
+      isMaterialCmrStopSummary(entry.stopSummary)
+    ) {
+      materialCmrSummary = entry.stopSummary;
+      break;
+    }
+  }
+  const shippedStopSummary =
+    materialCmrSummary !== undefined
+      ? {
+          ...materialCmrSummary,
+          metadata: {
+            ...(materialCmrSummary.metadata ?? {}),
+            ...(shippedSuccessSummary.metadata ?? {}),
+          },
+        }
+      : shippedSuccessSummary;
   await recordShipped(familyBackend, {
     pr: ship.pr,
     familyHeadAfter: exactPostShipFamilyHead,
+    stopSummary: shippedStopSummary,
   });
   return { ok: true, ran: true };
 }

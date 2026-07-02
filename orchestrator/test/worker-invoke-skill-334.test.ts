@@ -187,6 +187,9 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(fix).toMatch(/\/home\/agent\/\.orchestrator\/souls\/coder\.md/);
     expect(fix).toMatch(/fix-findings path/i);
     expect(fix).toMatch(/escalationAnswer/i);
+    expect(fix).toMatch(
+      /repairEvidence[\s\S]*findingScope[\s\S]*changedFiles[\s\S]*(tests|fixtures|patchSummary)/i,
+    );
     expect(fix).not.toMatch(/sibling ledger|legacy compatibility fallback|Prefer the sibling ledger/is);
 
     const review = read("reviewer_review.md");
@@ -268,6 +271,52 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(read("integrated_cmr_completeness.md")).toMatch(/CMR_STEP_COMPLETE/);
     expect(read("integrated_cmr_correctness.md")).toMatch(/<cmr>/);
     expect(read("integrated_cmr_correctness.md")).toMatch(/CMR_STEP_COMPLETE/);
+  });
+
+  it("reviewer and integrated-cmr prompts document every parser-required blocking/defer disposition field", () => {
+    const files = [
+      read("reviewer_review.md"),
+      read("integrated_cmr.md"),
+      read("integrated_cmr_completeness.md"),
+      read("integrated_cmr_correctness.md"),
+      readSoul("reviewer.md"),
+    ];
+
+    for (const text of files) {
+      expect(text).toMatch(/cross_module[\s\S]*targetModule[\s\S]*reason/i);
+      expect(text).toMatch(
+        /owning_issue_still_red[\s\S]*owningIssue[\s\S]*missingSurface[\s\S]*nextStep[\s\S]*reason/i,
+      );
+      expect(text).toMatch(/spec_conflict[\s\S]*source[\s\S]*reason/i);
+      expect(text).toMatch(/infra_failure[\s\S]*source[\s\S]*reason/i);
+    }
+  });
+
+  it("standalone reviewer prompt and soul do not advertise accepted_suppressed as supported output", () => {
+    for (const text of [read("reviewer_review.md"), readSoul("reviewer.md")]) {
+      expect(text).toMatch(/do not emit `accepted_suppressed`/i);
+      expect(text).not.toMatch(
+        /accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen[\s\S]*(findingIdentity|finding identity)[\s\S]*optional/i,
+      );
+      expect(text).not.toMatch(
+        /priorFindingDispositions[\s\S]*accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen/i,
+      );
+    }
+  });
+
+  it("integrated-cmr prompts include accepted_suppressed terminal closure metadata", () => {
+    for (const text of [
+      read("integrated_cmr.md"),
+      read("integrated_cmr_completeness.md"),
+      read("integrated_cmr_correctness.md"),
+    ]) {
+      expect(text).toMatch(
+        /accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen[\s\S]*(findingIdentity|finding identity)[\s\S]*optional/i,
+      );
+      expect(text).toMatch(
+        /priorFindingDispositions[\s\S]*accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen/i,
+      );
+    }
   });
 });
 

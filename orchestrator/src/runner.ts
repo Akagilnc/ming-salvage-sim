@@ -34,6 +34,9 @@
  *   reaching for `runStep` / `resumeSession` / `push` directly.
  */
 
+import { execFileSync } from "node:child_process";
+
+import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
 import { route } from "./route.js";
 import {
   adjudicatePriorClaimedFixedFindings,
@@ -45,6 +48,7 @@ import {
 // instead of reaching for runStep/resumeSession/push directly.
 import {
   dispatchWorker,
+  SHIP_PROMPT_FILE,
   shipWorkerSpec,
   stepSpecToWorkerSpec,
   workerResultToStep,
@@ -65,8 +69,17 @@ import {
   isValidEscalation,
   isValidStepOutput,
 } from "./validate.js";
+import {
+  contractDriftStopSummary,
+  infraFailureStopSummary,
+  stopSummaryFromFindingDispositionEvidence,
+  successStopSummary,
+  type AcceptedSuppressionSummary,
+  type StopSummary,
+} from "./stopSummary.js";
 import type {
   Backend,
+  ContinueFixingEvent,
   ErrorPackage,
   Escalation,
   EscalationAnswerEvent,
@@ -78,6 +91,7 @@ import type {
   IssueSnapshot,
   LedgerEntry,
   PersistentLedgerEntry,
+  RepairEvidence,
   ResumeState,
   RunInput,
   RunResult,
@@ -190,6 +204,10 @@ function buildPersistentEntry(opts: {
   escalationKind?: EscalationKind;
   /** ADR0030 S4 classification state, persisted for resume replay. */
   findingDispositions?: ReadonlyArray<FindingDisposition>;
+  /** Runner-observed files changed by a coder step, for resume replay. */
+  repairMovementPaths?: ReadonlyArray<string>;
+  /** Terminal stop reason summary (#450). */
+  stopSummary?: StopSummary;
 }): PersistentLedgerEntry {
   let entry: PersistentLedgerEntry = {
     step: opts.step,
@@ -212,6 +230,12 @@ function buildPersistentEntry(opts: {
   }
   if (opts.findingDispositions !== undefined) {
     entry = { ...entry, findingDispositions: opts.findingDispositions };
+  }
+  if (opts.repairMovementPaths !== undefined) {
+    entry = { ...entry, repairMovementPaths: opts.repairMovementPaths };
+  }
+  if (opts.stopSummary !== undefined) {
+    entry = { ...entry, stopSummary: opts.stopSummary };
   }
   return entry;
 }
@@ -251,6 +275,7 @@ interface ResumePlan {
   readonly resumeStep: StepId;
   readonly resumeSessionId?: string;
   readonly escalationAnswer?: EscalationAnswerEvent;
+  readonly continueFixingRepair?: ContinueFixingRepair;
   readonly lastOutput?: StepOutput;
   readonly priorLedger: ReadonlyArray<LedgerEntry>;
 }
@@ -272,12 +297,20 @@ function isValidStepId(value: unknown): value is StepId {
 function isEscalationAnswerEntry(
   entry: LedgerEntry,
 ): entry is LedgerEntry & EscalationAnswerEvent {
+  const raw = entry as unknown as Record<string, unknown>;
   return (
     entry.event === "escalation_answered" &&
+    entry.output === undefined &&
+    raw.verdict === undefined &&
     isValidStepId(entry.forStep) &&
     typeof entry.answer === "string" &&
     entry.answer.trim().length > 0 &&
-    (entry.note === undefined || typeof entry.note === "string")
+    (entry.note === undefined || typeof entry.note === "string") &&
+    (entry.source === undefined || isBookkeepingSource(entry.source)) &&
+    (entry.findingIdentityKey === undefined ||
+      typeof entry.findingIdentityKey === "string") &&
+    (entry.findingScope === undefined ||
+      isFindingRepairScope(entry.findingScope))
   );
 }
 
@@ -289,13 +322,24 @@ function answerPayload(
     forStep: entry.forStep,
     answer: entry.answer,
     ...(entry.note !== undefined ? { note: entry.note } : {}),
+    source: entry.source ?? "human",
+    ...(entry.findingIdentityKey !== undefined
+      ? { findingIdentityKey: entry.findingIdentityKey }
+      : {}),
+    ...(entry.findingScope !== undefined
+      ? { findingScope: entry.findingScope }
+      : {}),
   };
+}
+
+function isBookkeepingEntry(entry: LedgerEntry): boolean {
+  return entry.event !== undefined;
 }
 
 function executableLedgerEntries(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
 ): ReadonlyArray<PersistentLedgerEntry> {
-  return ledger.filter((entry) => entry.event !== "escalation_answered");
+  return ledger.filter((entry) => !isBookkeepingEntry(entry));
 }
 
 function latestAnswerAfter(
@@ -305,9 +349,450 @@ function latestAnswerAfter(
 ): EscalationAnswerEvent | undefined {
   for (let i = ledger.length - 1; i > index; i--) {
     const entry = ledger[i]!;
-    if (isEscalationAnswerEntry(entry) && entry.forStep === forStep) {
+    if (
+      isEscalationAnswerEntry(entry) &&
+      entry.forStep === forStep &&
+      isExecutableEscalationAnswerSource(entry.source)
+    ) {
       return answerPayload(entry);
     }
+  }
+  return undefined;
+}
+
+function normaliseScopePart(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function isBookkeepingSource(
+  value: unknown,
+): value is ContinueFixingEvent["source"] {
+  return (
+    value === "human" ||
+    value === "coordinator" ||
+    value === "peripheral" ||
+    value === "resume_input"
+  );
+}
+
+function isExecutableEscalationAnswerSource(
+  value: unknown,
+): value is
+  | Extract<ContinueFixingEvent["source"], "human" | "resume_input"> {
+  return value === undefined || value === "human" || value === "resume_input";
+}
+
+function isExecutableContinueFixingSource(
+  value: unknown,
+): value is
+  | Extract<ContinueFixingEvent["source"], "human" | "resume_input"> {
+  return value === "human" || value === "resume_input";
+}
+
+function isStringArray(value: unknown): value is ReadonlyArray<string> {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isFindingRepairScope(
+  value: unknown,
+): value is NonNullable<ContinueFixingEvent["findingScope"]> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const scope = value as Record<string, unknown>;
+  return (
+    (scope.identityKeys === undefined || isStringArray(scope.identityKeys)) &&
+    (scope.locations === undefined || isStringArray(scope.locations)) &&
+    (scope.categories === undefined || isStringArray(scope.categories)) &&
+    (scope.findingGroup === undefined ||
+      typeof scope.findingGroup === "string") &&
+    (scope.reviewContext === undefined ||
+      typeof scope.reviewContext === "string") &&
+    (scope.featureArea === undefined || typeof scope.featureArea === "string")
+  );
+}
+
+function stripLocationLine(value: string): string {
+  const withoutLineColumn = value
+    .trim()
+    .replace(/:\d+(?::\d+)?(?::[^:/\\]+)?$/, "");
+  const withoutSymbol = withoutLineColumn.replace(/:[^:/\\]+$/, "").trim();
+  if (/^[A-Za-z]$/.test(withoutSymbol) && /^[A-Za-z]:$/.test(withoutLineColumn)) {
+    return `${withoutSymbol}:`;
+  }
+  return withoutSymbol;
+}
+
+function locationScopeMatches(scope: string, location: string): boolean {
+  const normalisedScope = normaliseScopePart(stripLocationLine(scope));
+  const normalisedLocation = normaliseScopePart(location);
+  const normalisedLocationPath = normaliseScopePart(stripLocationLine(location));
+  if (
+    normalisedScope === normalisedLocation ||
+    normalisedScope === normalisedLocationPath
+  ) {
+    return true;
+  }
+  return (
+    normalisedLocationPath.startsWith(`${normalisedScope}/`) ||
+    normalisedLocationPath.endsWith(`/${normalisedScope}`) ||
+    normalisedLocationPath.includes(`/${normalisedScope}/`)
+  );
+}
+
+function textScopeMatches(scope: string, values: ReadonlyArray<string>): boolean {
+  const normalisedScope = normaliseScopePart(scope);
+  return values.some((value) => normaliseScopePart(value) === normalisedScope);
+}
+
+function findingMatchesBroadScope(
+  finding: Finding,
+  key: string,
+  scope: NonNullable<ContinueFixingEvent["findingScope"]>,
+): boolean {
+  const locationScopes = scope.locations ?? [];
+  const categoryScopes = scope.categories ?? [];
+  const groupScope = scope.findingGroup;
+  const contextScope = scope.reviewContext;
+  const featureScope = scope.featureArea;
+  const textualValues = [finding.category, finding.claim_quote, key];
+
+  const locationMatches =
+    locationScopes.length === 0 ||
+    locationScopes.some((location) =>
+      locationScopeMatches(location, finding.location),
+    );
+  const categoryMatches =
+    categoryScopes.length === 0 ||
+    categoryScopes.some((category) =>
+      textScopeMatches(category, [finding.category]),
+    );
+  const groupMatches =
+    groupScope === undefined ||
+    locationScopeMatches(groupScope, finding.location) ||
+    textScopeMatches(groupScope, textualValues);
+  const contextMatches =
+    contextScope === undefined ||
+    locationScopeMatches(contextScope, finding.location) ||
+    textScopeMatches(contextScope, textualValues);
+  const featureMatches =
+    featureScope === undefined ||
+    locationScopeMatches(featureScope, finding.location) ||
+    textScopeMatches(featureScope, textualValues);
+
+  return (
+    locationMatches &&
+    categoryMatches &&
+    groupMatches &&
+    contextMatches &&
+    featureMatches
+  );
+}
+
+function isContinueFixingEntry(
+  entry: LedgerEntry,
+): entry is LedgerEntry & ContinueFixingEvent {
+  const raw = entry as unknown as Record<string, unknown>;
+  return (
+    entry.event === "runner_bookkeeping" &&
+    entry.output === undefined &&
+    raw.verdict === undefined &&
+    entry.intent === "continue_fixing" &&
+    isExecutableContinueFixingSource(entry.source) &&
+    typeof entry.ts === "string" &&
+    entry.ts.trim().length > 0 &&
+    (entry.reason === undefined || typeof entry.reason === "string") &&
+    (entry.findingIdentityKey === undefined ||
+      typeof entry.findingIdentityKey === "string") &&
+    (entry.findingScope === undefined ||
+      isFindingRepairScope(entry.findingScope))
+  );
+}
+
+function answerMapsToContinueFixing(answer: EscalationAnswerEvent): boolean {
+  const text = answer.answer.trim().toLowerCase();
+  return (
+    text.includes("continue") ||
+    text.includes("继续修") ||
+    text.includes("继续改") ||
+    text.includes("接着修")
+  );
+}
+
+function matchingContinueFixingKeys(
+  event: ContinueFixingEvent,
+  activeFindings: ReadonlyArray<Finding>,
+  activeIdentityKeys: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  const exactKeys = new Set<string>();
+  const addKey = (key: string | undefined) => {
+    if (key !== undefined && key.trim().length > 0) exactKeys.add(key);
+  };
+  addKey(event.findingIdentityKey);
+  for (const key of event.findingScope?.identityKeys ?? []) addKey(key);
+
+  const exactMatches = activeIdentityKeys.filter((key) => exactKeys.has(key));
+  if (exactMatches.length > 0) return exactMatches;
+
+  const scope = event.findingScope;
+  if (scope === undefined) return [];
+  const hasBroadScope =
+    (scope.locations?.length ?? 0) > 0 ||
+    (scope.categories?.length ?? 0) > 0 ||
+    (scope.findingGroup?.trim().length ?? 0) > 0 ||
+    (scope.reviewContext?.trim().length ?? 0) > 0 ||
+    (scope.featureArea?.trim().length ?? 0) > 0;
+  if (!hasBroadScope) return [];
+
+  const broadMatches = activeFindings
+    .map((finding, index) => ({ finding, key: activeIdentityKeys[index] }))
+    .filter(({ finding, key }) => {
+      if (key === undefined) return false;
+      return findingMatchesBroadScope(finding, key, scope);
+    })
+    .map(({ key }) => key!);
+
+  // Broad module/file scopes must not reset sibling findings together. Without
+  // a durable exact identity/group key, only a single active match is safe.
+  return broadMatches.length === 1 ? broadMatches : [];
+}
+
+function normalizeGitPath(path: string): string | undefined {
+  const trimmed = path.trim();
+  if (trimmed.length === 0) return undefined;
+  const renameTarget = trimmed.includes(" -> ")
+    ? trimmed.slice(trimmed.lastIndexOf(" -> ") + 4)
+    : trimmed;
+  const unquoted =
+    renameTarget.startsWith('"') && renameTarget.endsWith('"')
+      ? renameTarget.slice(1, -1)
+      : renameTarget;
+  const normalized = unquoted.trim().replace(/\\/g, "/");
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeRepairEvidencePath(path: string): string | undefined {
+  const normalized = normalizeGitPath(path);
+  if (normalized === undefined) return undefined;
+  if (/\s/.test(normalized)) return undefined;
+  return normalized.includes("/") || /\.[A-Za-z0-9]+$/.test(normalized)
+    ? normalized
+    : undefined;
+}
+
+function gitOutputLines(
+  worktree: WorktreeHandle | undefined,
+  args: ReadonlyArray<string>,
+): string[] {
+  if (worktree === undefined) return [];
+  try {
+    return execFileSync("git", ["-C", worktree.path, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function gitHead(worktree: WorktreeHandle | undefined): string | undefined {
+  return gitOutputLines(worktree, ["rev-parse", "HEAD"])[0];
+}
+
+function actualRepairMovementPaths(
+  worktree: WorktreeHandle | undefined,
+  sinceHead?: string,
+): ReadonlyArray<string> {
+  if (worktree === undefined) return [];
+  const paths = new Set<string>();
+  const add = (path: string | undefined): void => {
+    if (path !== undefined) paths.add(path);
+  };
+
+  if (sinceHead !== undefined) {
+    for (const line of gitOutputLines(worktree, [
+      "diff",
+      "--name-only",
+      `${sinceHead}..HEAD`,
+    ])) {
+      add(normalizeGitPath(line));
+    }
+  }
+  for (const line of gitOutputLines(worktree, ["status", "--porcelain"])) {
+    add(normalizeGitPath(line.length > 3 ? line.slice(3) : line));
+  }
+
+  return [...paths];
+}
+
+function repairEvidenceMatchesKey(
+  evidence: RepairEvidence | undefined,
+  actualChangedPaths: ReadonlyArray<string>,
+  finding: Finding,
+  identityKey: string,
+  activeFindings: ReadonlyArray<Finding>,
+  activeIdentityKeys: ReadonlyArray<string>,
+): boolean {
+  if (evidence === undefined || actualChangedPaths.length === 0) {
+    return false;
+  }
+  const matchingKeys = matchingContinueFixingKeys(
+    {
+      event: "runner_bookkeeping",
+      intent: "continue_fixing",
+      source: "resume_input",
+      ts: "repair-evidence",
+      findingScope: evidence.findingScope,
+    },
+    activeFindings,
+    activeIdentityKeys,
+  );
+  if (!matchingKeys.includes(identityKey)) return false;
+  const declaredChangedPaths = [
+    ...(evidence.changedFiles ?? []).map(normalizeGitPath),
+    ...(evidence.fixtures ?? []).map(normalizeGitPath),
+    ...(evidence.tests ?? []).map(normalizeRepairEvidencePath),
+  ].filter((path): path is string => path !== undefined);
+  const scopedActualMovement = actualChangedPaths.some((path) =>
+    locationScopeMatches(path, finding.location),
+  );
+  const declaredActualMovement =
+    declaredChangedPaths.length > 0 &&
+    declaredChangedPaths.some((declared) =>
+      actualChangedPaths.some(
+        (actual) =>
+          actual === declared ||
+          locationScopeMatches(actual, declared) ||
+          locationScopeMatches(declared, actual),
+      ),
+    );
+  if (!scopedActualMovement && !declaredActualMovement) return false;
+  return (
+    declaredChangedPaths.length === 0 ||
+    declaredActualMovement ||
+    declaredChangedPaths.some((path) => locationScopeMatches(path, finding.location))
+  );
+}
+
+const FINDING_SEVERITY_RANK: Readonly<Record<Finding["severity"], number>> = {
+  clarity: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+  critical: 4,
+};
+
+function sameFindingLineage(a: Finding, b: Finding): boolean {
+  return a.category === b.category && a.location === b.location;
+}
+
+function reviewerObservedProgress(input: {
+  readonly previousBlockingFindings: ReadonlyArray<Finding>;
+  readonly previousBlockingIdentityKeys: ReadonlyArray<string>;
+  readonly currentBlockingFindings: ReadonlyArray<Finding>;
+  readonly currentBlockingIdentityKeys: ReadonlyArray<string>;
+  readonly previousFinding: Finding;
+  readonly previousIdentityKey: string;
+  readonly previousNoProgressCount: number;
+}): boolean {
+  const currentBySameKey = input.currentBlockingFindings.find(
+    (finding) => findingIdentityKey(finding) === input.previousIdentityKey,
+  );
+  if (
+    currentBySameKey !== undefined &&
+    FINDING_SEVERITY_RANK[currentBySameKey.severity] <
+      FINDING_SEVERITY_RANK[input.previousFinding.severity]
+  ) {
+    return true;
+  }
+
+  return input.currentBlockingFindings.some(
+    (finding) =>
+      sameFindingLineage(input.previousFinding, finding) &&
+      FINDING_SEVERITY_RANK[finding.severity] <
+        FINDING_SEVERITY_RANK[input.previousFinding.severity],
+  );
+}
+
+interface LatestCoderRepair {
+  readonly repairEvidence?: RepairEvidence;
+  readonly repairMovementPaths: ReadonlyArray<string>;
+}
+
+function latestCoderRepair(ledger: ReadonlyArray<LedgerEntry>): LatestCoderRepair {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    const output = entry.output;
+    if (output?.kind === "coder") {
+      return {
+        repairEvidence: output.repairEvidence,
+        repairMovementPaths: entry.repairMovementPaths ?? [],
+      };
+    }
+  }
+  return { repairMovementPaths: [] };
+}
+
+interface ContinueFixingRepair {
+  readonly event: ContinueFixingEvent | EscalationAnswerEvent;
+  readonly matchingIdentityKeys: ReadonlyArray<string>;
+}
+
+function continueRepairFromEvent(
+  event: ContinueFixingEvent,
+  replay: Pick<S4AdjudicationReplay, "blocking" | "blockingIdentityKeys">,
+): ContinueFixingRepair | undefined {
+  const matchingIdentityKeys = matchingContinueFixingKeys(
+    event,
+    replay.blocking,
+    replay.blockingIdentityKeys,
+  );
+  if (matchingIdentityKeys.length === 0) return undefined;
+  return { event, matchingIdentityKeys };
+}
+
+function continueRepairFromAnswer(
+  answer: EscalationAnswerEvent | undefined,
+  replay: Pick<S4AdjudicationReplay, "blocking" | "blockingIdentityKeys">,
+): ContinueFixingRepair | undefined {
+  if (answer === undefined || !answerMapsToContinueFixing(answer)) {
+    return undefined;
+  }
+  const source = answer.source;
+  if (!isExecutableEscalationAnswerSource(source)) return undefined;
+  const matchingIdentityKeys = matchingContinueFixingKeys(
+    {
+      event: "runner_bookkeeping",
+      intent: "continue_fixing",
+      source,
+      ts: "answer-scope-only",
+      ...(answer.findingIdentityKey !== undefined
+        ? { findingIdentityKey: answer.findingIdentityKey }
+        : {}),
+      ...(answer.findingScope !== undefined
+        ? { findingScope: answer.findingScope }
+        : {}),
+    },
+    replay.blocking,
+    replay.blockingIdentityKeys,
+  );
+  if (matchingIdentityKeys.length === 0) return undefined;
+  return { event: answer, matchingIdentityKeys };
+}
+
+function latestContinueFixingAfter(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+  index: number,
+  replay: Pick<S4AdjudicationReplay, "blocking" | "blockingIdentityKeys">,
+): ContinueFixingRepair | undefined {
+  for (let i = ledger.length - 1; i > index; i--) {
+    const entry = ledger[i]!;
+    if (!isContinueFixingEntry(entry)) continue;
+    const repair = continueRepairFromEvent(entry, replay);
+    if (repair !== undefined) return repair;
   }
   return undefined;
 }
@@ -393,10 +878,16 @@ function replayS4AdjudicationState(
   const noProgressCounts = new Map<string, number>();
   let lastReviewerOutputForS4: StepOutput | undefined;
   let lastReviewerStepForS4: StepId | undefined;
+  let lastCoderRepairEvidenceForS4: RepairEvidence | undefined;
+  let lastCoderActualRepairPathsForS4: ReadonlyArray<string> = [];
 
   for (const entry of ledger) {
-    if (entry.event === "escalation_answered") {
+    if (isBookkeepingEntry(entry)) {
       continue;
+    }
+    if (entry.output?.kind === "coder") {
+      lastCoderRepairEvidenceForS4 = entry.output.repairEvidence;
+      lastCoderActualRepairPathsForS4 = entry.repairMovementPaths ?? [];
     }
     if (entry.output?.kind === "reviewer") {
       lastReviewerOutputForS4 = entry.output;
@@ -411,8 +902,10 @@ function replayS4AdjudicationState(
       lastReviewerOutputForS4.findings,
       findingDispositions,
     );
+    const reviewerBlocking = [...classification.blocking];
+    const reviewerBlockingIdentityKeys = reviewerBlocking.map(findingIdentityKey);
     let blocking = [...classification.blocking];
-    let blockingIdentityKeys = [...classification.blockingIdentityKeys];
+    let blockingIdentityKeys = blocking.map(findingIdentityKey);
     findingDispositions = [
       ...(entry.findingDispositions ?? classification.dispositions),
     ];
@@ -432,12 +925,39 @@ function replayS4AdjudicationState(
       const seenBlocking = new Set(blockingIdentityKeys);
       for (const finding of adjudication.stillOpen) {
         const key = findingIdentityKey(finding);
+        const previousFinding =
+          pendingBlockingFindings[
+            pendingBlockingFindingIdentityKeys.indexOf(key)
+          ] ?? finding;
+        const observedReviewerProgress = reviewerObservedProgress({
+          previousBlockingFindings: pendingBlockingFindings,
+          previousBlockingIdentityKeys: pendingBlockingFindingIdentityKeys,
+          currentBlockingFindings: reviewerBlocking,
+          currentBlockingIdentityKeys: reviewerBlockingIdentityKeys,
+          previousFinding,
+          previousIdentityKey: key,
+          previousNoProgressCount: noProgressCounts.get(key) ?? 0,
+        });
         if (!seenBlocking.has(key)) {
           blocking.push(finding);
           blockingIdentityKeys.push(key);
           seenBlocking.add(key);
         }
-        noProgressCounts.set(key, (noProgressCounts.get(key) ?? 0) + 1);
+        if (
+          repairEvidenceMatchesKey(
+            lastCoderRepairEvidenceForS4,
+            lastCoderActualRepairPathsForS4,
+            finding,
+            key,
+            pendingBlockingFindings,
+            pendingBlockingFindingIdentityKeys,
+          ) ||
+          observedReviewerProgress
+        ) {
+          noProgressCounts.set(key, 0);
+        } else {
+          noProgressCounts.set(key, (noProgressCounts.get(key) ?? 0) + 1);
+        }
       }
     }
 
@@ -497,6 +1017,7 @@ function adjudicatedBlockingFindingsForPersistedS4(
  */
 function planResume(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
+  repairIntent?: ContinueFixingEvent,
 ): ResumePlan {
   if (ledger.length === 0) {
     return { resumeStep: "S0", priorLedger: [] };
@@ -534,11 +1055,22 @@ function planResume(
     }
 
     const decisionStep = lastNonTerminalStep(executableLedger);
+    const replayedS4 = replayS4AdjudicationState(executableLedger);
     const answer =
       decisionStep !== undefined
         ? latestAnswerAfter(ledger, lastEntryIndex, decisionStep)
         : undefined;
-    if (answer === undefined || decisionStep === undefined) {
+    const continueFixingRepair =
+      decisionStep === "S4"
+        ? repairIntent !== undefined
+          ? continueRepairFromEvent(repairIntent, replayedS4)
+          : latestContinueFixingAfter(ledger, lastEntryIndex, replayedS4) ??
+            continueRepairFromAnswer(answer, replayedS4)
+        : undefined;
+    if (
+      decisionStep === undefined ||
+      (answer === undefined && continueFixingRepair === undefined)
+    ) {
       return {
         terminalStatus: "escalate",
         resumeStep: "S8",
@@ -548,9 +1080,21 @@ function planResume(
     }
 
     if (decisionStep === "S4") {
+      if (continueFixingRepair === undefined) {
+        return {
+          terminalStatus: "escalate",
+          resumeStep: "S8",
+          lastOutput: agentEntry?.output,
+          priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+        };
+      }
       return {
         resumeStep: "S5",
-        escalationAnswer: answer,
+        escalationAnswer:
+          answer !== undefined && answerMapsToContinueFixing(answer)
+            ? answer
+            : undefined,
+        continueFixingRepair,
         lastOutput: agentEntry?.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
       };
@@ -872,8 +1416,12 @@ export function stepSpecsForEnv(
   return stepSpecsForRoute(resolveActiveModelRoute(env));
 }
 
-export const STEP_SPECS: Readonly<Record<WorkerStepId, StepSpec>> =
-  stepSpecsForEnv();
+export const WORKER_PROMPT_FILES: Readonly<Record<WorkerStepId, string>> = {
+  S2: "coder_implement.md",
+  S3: "reviewer_review.md",
+  S5: "coder_fix.md",
+  S6: "reviewer_review.md",
+};
 
 /**
  * Synthesise a human-readable reason string for route()-detected error edges
@@ -899,6 +1447,125 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function acceptedSuppressionsFromDispositions(
+  dispositions: ReadonlyArray<FindingDisposition>,
+): AcceptedSuppressionSummary[] {
+  return dispositions.flatMap((disposition) => {
+    if (
+      disposition.status !== "accepted_suppressed" ||
+      !hasAcceptedSuppressionAuthority(disposition) ||
+      disposition.source === undefined ||
+      disposition.scope === undefined ||
+      disposition.boundedReopen === undefined
+    ) {
+      return [];
+    }
+    return [
+      {
+        source: disposition.source,
+        scope: disposition.scope,
+        reason: disposition.reason,
+        findingIdentity: disposition.identityKey,
+        boundedReopen: disposition.boundedReopen,
+      },
+    ];
+  });
+}
+
+function successSummaryForCurrentState(input: {
+  readonly deferredFindings: ReadonlyArray<Finding>;
+  readonly findingDispositions: ReadonlyArray<FindingDisposition>;
+}): StopSummary {
+  const crossModuleFinding = input.deferredFindings.find(
+    (finding) => finding.disposition?.kind === "cross_module",
+  );
+  if (crossModuleFinding?.disposition !== undefined) {
+    return stopSummaryFromFindingDispositionEvidence({
+      finding: crossModuleFinding,
+      evidence: crossModuleFinding.disposition,
+    });
+  }
+  const acceptedSuppressions = acceptedSuppressionsFromDispositions(
+    input.findingDispositions,
+  );
+  return successStopSummary(
+    acceptedSuppressions.length > 0 ? { acceptedSuppressions } : undefined,
+  );
+}
+
+function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
+  const repairHint = /MODULE_NOT_FOUND|Cannot find module/i.test(errorPackage.reason)
+    ? `install or restore the missing module for ${errorPackage.failedStep}, then rerun`
+    : `inspect ${errorPackage.failedStep} and rerun after repairing the cause`;
+  if (/source authentication failed/i.test(errorPackage.reason)) {
+    return {
+      reason: "spec_conflict",
+      summary: errorPackage.reason,
+      repairHint:
+        "move executable instructions into a repo-owner-authored Agent Brief, accepted issue body, ADR, or runner Agent Brief, then rerun",
+    };
+  }
+  if (
+    /contract|malformed|does not match|no valid result|off-contract|prior claimed-fixed finding|prior finding disposition/i.test(
+      errorPackage.reason,
+    )
+  ) {
+    return contractDriftStopSummary({
+      summary: errorPackage.reason,
+      repairHint,
+    });
+  }
+  return infraFailureStopSummary({
+    summary: errorPackage.reason,
+    repairHint,
+  });
+}
+
+function untrustedExecutableInstructionSummary(
+  _snapshot: IssueSnapshot,
+): StopSummary | undefined {
+  // Non-owner Agent Brief headings are ordinary issue/comment text. Only the
+  // structured IssueSnapshot.agentBrief field is executable runner input.
+  return undefined;
+}
+
+function stopSummaryForEscalation(escalation: Escalation): StopSummary {
+  const reason = `${escalation.reason}: ${escalation.diagnosis}`;
+  if (/review\/fix loop made no progress/i.test(escalation.reason)) {
+    return {
+      reason: "same_module_still_red",
+      summary: reason,
+      repairHint: "repair the same-module finding or change the implementation strategy before rerun",
+    };
+  }
+  return {
+    reason: "spec_conflict",
+    summary: reason,
+    repairHint: "answer the decision escalation and rerun",
+  };
+}
+
+function stopSummaryForStartupRouteFailure(escalation: Escalation): StopSummary {
+  const reason =
+    `${escalation.reason}: ${escalation.diagnosis}; ` +
+    `route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ` +
+    `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`;
+  return infraFailureStopSummary({
+    summary: reason,
+    repairHint: "fix the active model route or route env overrides before dispatching workers",
+  });
+}
+
+function latestLedgerStopSummary(
+  ledger: ReadonlyArray<LedgerEntry>,
+): StopSummary | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const stopSummary = ledger[i]!.stopSummary;
+    if (stopSummary !== undefined) return stopSummary;
+  }
+  return undefined;
+}
+
 function isReviewerStructuredOutputError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return (
@@ -912,19 +1579,38 @@ function isReviewerStructuredOutputError(err: unknown): boolean {
 
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
-  const modelRoute = resolveActiveModelRoute();
+  let modelRoute: ResolvedModelRoute;
+  try {
+    modelRoute = resolveActiveModelRoute();
+  } catch (err) {
+    const reason =
+      err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
+    const stopSummary = stopSummaryForStartupRouteFailure({
+      reason: "startup route failure",
+      diagnosis: `${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`,
+    });
+    return {
+      status: "error",
+      errorPackage: { failedStep: "S0", reason },
+      stepLedger: [{ step: "S8", stopSummary }],
+      stopSummary,
+      deferredFindings: [],
+    };
+  }
   const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
     interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
     warn: (message) => console.warn(`[orchestrator] ${message}`),
   });
   if (routePolicy.kind === "stop") {
+    const stopSummary = stopSummaryForStartupRouteFailure(routePolicy.escalation);
     return {
       status: "escalate",
       errorPackage: {
         failedStep: "S0",
         reason: `${routePolicy.escalation.reason}: ${routePolicy.escalation.diagnosis}`,
       },
-      stepLedger: [{ step: "S8" }],
+      stepLedger: [{ step: "S8", stopSummary }],
+      stopSummary,
       deferredFindings: [],
     };
   }
@@ -953,6 +1639,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let pendingBlockingFindingIdentityKeys: string[] = [];
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerStepId: StepId | undefined;
+  let lastCoderRepairEvidence: RepairEvidence | undefined;
+  let lastCoderActualRepairPaths: ReadonlyArray<string> = [];
   const noProgressByFindingIdentityKey = new Map<string, number>();
 
   function seedClassificationFromReviewerOutput(
@@ -964,8 +1652,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       reviewerOutput.findings,
       findingDispositions,
     );
+    const reviewerBlocking = [...classification.blocking];
+    const reviewerBlockingIdentityKeys = reviewerBlocking.map(findingIdentityKey);
     let blocking = [...classification.blocking];
-    let blockingIdentityKeys = [...classification.blockingIdentityKeys];
+    let blockingIdentityKeys = blocking.map(findingIdentityKey);
     findingDispositions = [...classification.dispositions];
     const noProgressIdentityKeys: string[] = [];
 
@@ -981,14 +1671,41 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       const seenBlocking = new Set(blockingIdentityKeys);
       for (const finding of adjudication.stillOpen) {
         const key = findingIdentityKey(finding);
+        const previousFinding =
+          pendingBlockingFindings[
+            pendingBlockingFindingIdentityKeys.indexOf(key)
+          ] ?? finding;
+        const observedReviewerProgress = reviewerObservedProgress({
+          previousBlockingFindings: pendingBlockingFindings,
+          previousBlockingIdentityKeys: pendingBlockingFindingIdentityKeys,
+          currentBlockingFindings: reviewerBlocking,
+          currentBlockingIdentityKeys: reviewerBlockingIdentityKeys,
+          previousFinding,
+          previousIdentityKey: key,
+          previousNoProgressCount: noProgressByFindingIdentityKey.get(key) ?? 0,
+        });
         if (!seenBlocking.has(key)) {
           blocking.push(finding);
           blockingIdentityKeys.push(key);
           seenBlocking.add(key);
         }
-        const count = (noProgressByFindingIdentityKey.get(key) ?? 0) + 1;
-        noProgressByFindingIdentityKey.set(key, count);
-        if (count >= 2) noProgressIdentityKeys.push(key);
+        if (
+          repairEvidenceMatchesKey(
+            lastCoderRepairEvidence,
+            lastCoderActualRepairPaths,
+            finding,
+            key,
+            pendingBlockingFindings,
+            pendingBlockingFindingIdentityKeys,
+          ) ||
+          observedReviewerProgress
+        ) {
+          noProgressByFindingIdentityKey.set(key, 0);
+        } else {
+          const count = (noProgressByFindingIdentityKey.get(key) ?? 0) + 1;
+          noProgressByFindingIdentityKey.set(key, count);
+          if (count >= 2) noProgressIdentityKeys.push(key);
+        }
       }
     }
 
@@ -1079,6 +1796,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     stepSessionId?: string,
     findingDispositions?: ReadonlyArray<FindingDisposition>,
     escalationKind?: EscalationKind,
+    stopSummary?: StopSummary,
+    repairMovementPaths?: ReadonlyArray<string>,
   ): Promise<void> {
     const ph = await hashPrompt(promptFile, s, backend);
     const branchHEAD = await resolveBranchHEAD();
@@ -1092,6 +1811,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       handoffStatus,
       escalationKind,
       findingDispositions,
+      repairMovementPaths,
+      stopSummary,
     });
 
     if (stateDir === undefined) {
@@ -1139,6 +1860,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     stepSessionId?: string,
     findingDispositions?: ReadonlyArray<FindingDisposition>,
     escalationKind?: EscalationKind,
+    stopSummary?: StopSummary,
+    repairMovementPaths?: ReadonlyArray<string>,
   ): Promise<void> {
     try {
       await emitLedger(
@@ -1149,6 +1872,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         stepSessionId,
         findingDispositions,
         escalationKind,
+        stopSummary,
+        repairMovementPaths,
       );
     } catch {
       // Swallow: error termination must not be derailed by a ledger I/O fault.
@@ -1183,6 +1908,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       recordInMemory?: boolean;
       output?: StepOutput;
       findingDispositions?: ReadonlyArray<FindingDisposition>;
+      repairMovementPaths?: ReadonlyArray<string>;
+      stopSummary?: StopSummary;
     },
   ): Promise<RunResult> {
     // integ-cmr base r2 (D): split the two concerns the old single
@@ -1207,6 +1934,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       reason,
       branchHead: worktree?.branch,
     };
+    const stopSummary = opts?.stopSummary ?? stopSummaryForErrorPackage(errorPackage);
 
     // Record the failing step. The in-memory push is skipped when the caller
     // already pushed it (recordInMemory:false) or it is S8 itself; the
@@ -1220,6 +1948,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           ...(opts?.findingDispositions !== undefined
             ? { findingDispositions: opts.findingDispositions }
             : {}),
+          ...(opts?.repairMovementPaths !== undefined
+            ? { repairMovementPaths: opts.repairMovementPaths }
+            : {}),
         });
       }
       await persistBestEffort(
@@ -1229,6 +1960,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         undefined,
         undefined,
         opts?.findingDispositions,
+        undefined,
+        undefined,
+        opts?.repairMovementPaths,
       );
     }
 
@@ -1240,8 +1974,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // step — reporting a spurious success). The in-memory entry stays untagged,
     // matching the normal handoff path (only the disk ledger is the resume truth;
     // the in-memory ledger is the live result).
-    ledger.push({ step: "S8" });
-    await persistBestEffort("S8", undefined, undefined, "error");
+    ledger.push({ step: "S8", stopSummary });
+    await persistBestEffort(
+      "S8",
+      undefined,
+      undefined,
+      "error",
+      undefined,
+      undefined,
+      undefined,
+      stopSummary,
+    );
 
     // An error abort returns whatever deferred findings were already collected
     // (typically none before S4). ADR 0030 keeps per-slice review/fix work in
@@ -1251,6 +1994,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       status: "error",
       errorPackage,
       stepLedger: ledger,
+      stopSummary,
       deferredFindings,
     };
   }
@@ -1279,6 +2023,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     sessionId?: string,
     escalationKind: EscalationKind = "decision",
   ): Promise<RunResult> {
+    const stopSummary = stopSummaryForEscalation(escalation);
     if (failedStep !== "S8") {
       ledger.push({ step: failedStep });
       // Persist the failing step carrying its REAL worker session id (5th arg —
@@ -1293,10 +2038,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // ship promptFile only for S7 keeps every other failing step's persist
       // unchanged (promptFile undefined → step-name hash, as before).
       const failedPromptFile =
-        failedStep === "S7" ? shipWorkerSpec().promptFile : undefined;
+        failedStep === "S7" ? SHIP_PROMPT_FILE : undefined;
       await persistBestEffort(failedStep, undefined, failedPromptFile, undefined, sessionId);
     }
-    ledger.push({ step: "S8" });
+    ledger.push({ step: "S8", stopSummary });
     await persistBestEffort(
       "S8",
       undefined,
@@ -1305,6 +2050,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       undefined,
       undefined,
       escalationKind,
+      stopSummary,
     );
     return {
       status: "escalate",
@@ -1316,6 +2062,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         branchHead: worktree?.branch,
       },
       stepLedger: ledger,
+      stopSummary,
       deferredFindings,
     };
   }
@@ -1359,11 +2106,38 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let resumedEscalationAnswer: EscalationAnswerEvent | undefined;
 
   if (resumeState !== undefined && resumeState.ledger.length > 0) {
-    const plan = planResume(resumeState.ledger);
-
     // Reuse the resident worktree (NO re-cut) and fix the sibling stateDir.
     worktree = resumeState.worktree;
     stateDir = resumeState.stateDir;
+    let resumeLedger = resumeState.ledger;
+    if (input.repairIntent !== undefined) {
+      const repairIntentEntry: PersistentLedgerEntry = {
+        step: "S4",
+        event: input.repairIntent.event,
+        intent: input.repairIntent.intent,
+        source: input.repairIntent.source,
+        ts: input.repairIntent.ts,
+        ...(input.repairIntent.findingIdentityKey !== undefined
+          ? { findingIdentityKey: input.repairIntent.findingIdentityKey }
+          : {}),
+        ...(input.repairIntent.findingScope !== undefined
+          ? { findingScope: input.repairIntent.findingScope }
+          : {}),
+        ...(input.repairIntent.reason !== undefined
+          ? { reason: input.repairIntent.reason }
+          : {}),
+        sessionId,
+        prompt_hash: await hashPrompt(undefined, "S4", backend),
+        branchHEAD: await resolveBranchHEAD(),
+      };
+      try {
+        await backend.writeLedger(repairIntentEntry, stateDir);
+      } catch (err) {
+        return await errorTermination("S4", err);
+      }
+      resumeLedger = [...resumeLedger, repairIntentEntry];
+    }
+    const plan = planResume(resumeLedger);
 
     // Seed the in-memory ledger with prior progress so committed work is
     // preserved and the prior steps are NOT re-run.
@@ -1384,7 +2158,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const [key, count] of replayedS4.noProgressCounts) {
       noProgressByFindingIdentityKey.set(key, count);
     }
+    for (const key of plan.continueFixingRepair?.matchingIdentityKeys ?? []) {
+      noProgressByFindingIdentityKey.delete(key);
+    }
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
+    const latestRepair = latestCoderRepair(plan.priorLedger);
+    lastCoderRepairEvidence = latestRepair.repairEvidence;
+    lastCoderActualRepairPaths = latestRepair.repairMovementPaths;
 
     if (plan.terminalStatus !== undefined) {
       // The prior run already reached a terminal handoff that is NOT being
@@ -1401,17 +2181,32 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason,
           branchHead: worktree.branch,
         };
+        const stopSummary =
+          latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
         return {
           status: "error",
           errorPackage,
           stepLedger: ledger,
+          stopSummary,
           deferredFindings,
         };
       }
+      const stopSummary: StopSummary =
+        plan.terminalStatus === "success"
+          ? {
+              reason: "already_done",
+              summary: "prior run already reached a success handoff",
+            }
+          : latestLedgerStopSummary(ledger) ?? {
+              reason: "spec_conflict",
+              summary: "prior run is paused at an unanswered escalation",
+              repairHint: "answer the escalation and rerun",
+            };
       return {
         status: plan.terminalStatus,
         branch: plan.terminalStatus === "success" ? worktree.branch : undefined,
         stepLedger: ledger,
+        stopSummary,
         deferredFindings,
       };
     }
@@ -1462,10 +2257,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         //   (a) ready-for-agent label
         //   (b) no sub-issues (leaf slice, not a parent/epic)
         //   (c) all blocked_by dependencies are closed
-        // A gate violation throws immediately — the runner stops here, no
-        // worktree is prepared, no agent step is dispatched. Gate throws are
-        // intentionally NOT converted to an error handoff (they are a caller
-        // input fault, not a pipeline error); only the backend fetch is.
+        // A gate violation terminates as structured S8(error): the runner still
+        // stops before preparing a worktree or dispatching an agent step, but AFK
+        // callers get the unified terminal result / stop summary instead of a raw
+        // process error.
         //
         // NOTE: a `## Agent Brief` is deliberately NOT a gate (design decision —
         // a `to-issues` slice may not carry that section, and the tool must not be
@@ -1485,24 +2280,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // #2: a CLOSED issue is already done — admitting it would spin a coder on
           // a finished slice (the dogfood pulled closed game issues). Fail-closed,
           // like the other three gate conditions.
-          throw new Error(
+          return await errorTermination("S0", new Error(
             `S0 input gate: issue #${issueNumber} is CLOSED. ` +
               `Feed an open, ready-for-agent slice; a closed issue is already done.`,
-          );
+          ));
         }
 
         if (!meta.isReadyForAgent) {
-          throw new Error(
+          return await errorTermination("S0", new Error(
             `S0 input gate: issue #${issueNumber} is not labelled ready-for-agent. ` +
               `Triage the issue and apply the label before running the orchestrator.`,
-          );
+          ));
         }
 
         if (meta.hasSubIssues) {
-          throw new Error(
+          return await errorTermination("S0", new Error(
             `S0 input gate: issue #${issueNumber} is a parent issue (it has sub-issues). ` +
               `Feed a leaf slice issue, not a parent/epic.`,
-          );
+          ));
         }
 
         // #294 / ADR 0022 decision 6③: the blocked_by gate's OPEN set. In a
@@ -1525,10 +2320,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
         if (openBlockedBy.length > 0) {
           const blockers = openBlockedBy.map((n) => `#${n}`).join(", ");
-          throw new Error(
+          return await errorTermination("S0", new Error(
             `S0 input gate: issue #${issueNumber} is blocked by upstream issues that are still open: ${blockers}. ` +
               `Merge the upstream changes before running.`,
-          );
+          ));
         }
 
         break;
@@ -1562,6 +2357,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // writeSnapshot failure can persist its error termination to the ledger
         // (#3: error paths must persist, not vanish on resume).
         stateDir = deriveStateDir(worktree.path, issueNumber);
+        const sourceAuthFailure = untrustedExecutableInstructionSummary(snapshot);
+        if (sourceAuthFailure !== undefined) {
+          return await errorTermination(
+            "S1",
+            new Error(`source authentication failed: ${sourceAuthFailure.summary}`),
+            { stopSummary: sourceAuthFailure },
+          );
+        }
         try {
           await backend.writeSnapshot(worktree, snapshot);
         } catch (err) {
@@ -1585,6 +2388,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
         promptFile = stepSpecs[step].promptFile;
         const expectedKind = stepSpecs[step].role;
+        const coderHeadBeforeStep =
+          expectedKind === "coder" ? gitHead(worktree) : undefined;
         try {
           let resumeSessionId: string | undefined;
           if (resumeFor !== undefined && resumeFor.step === step) {
@@ -1726,6 +2531,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           break;
         }
         lastOutput = output;
+        if (output.kind === "coder") {
+          lastCoderRepairEvidence = output.repairEvidence;
+          lastCoderActualRepairPaths = actualRepairMovementPaths(
+            worktree,
+            coderHeadBeforeStep,
+          );
+        }
         if (step === "S3" || step === "S6") lastReviewerStepId = step;
         break;
       }
@@ -1779,7 +2591,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // contract, types.ts:"promptFile CONTENT is hashed into the ledger") — NOT
           // the degraded step-name hash (`name:<sha("S7")>`) the missing assignment
           // produced. The escalateTermination path below ALSO uses it (resume truth).
-          const shipSpec = shipWorkerSpec();
+          const shipSpec = shipWorkerSpec(routePolicy.route);
           promptFile = shipSpec.promptFile;
           const escalationAnswerForStep =
             resumedEscalationAnswer?.forStep === "S7"
@@ -1880,6 +2692,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     const stepFindingDispositions =
       step === "S4" ? findingDispositions : undefined;
+    const stepRepairMovementPaths =
+      output?.kind === "coder" ? lastCoderActualRepairPaths : undefined;
 
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).
@@ -1888,6 +2702,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ...(output !== undefined ? { output } : {}),
       ...(stepFindingDispositions !== undefined
         ? { findingDispositions: stepFindingDispositions }
+        : {}),
+      ...(stepRepairMovementPaths !== undefined
+        ? { repairMovementPaths: stepRepairMovementPaths }
         : {}),
     });
     // #6: a writeLedger failure here is a backend-call exception → it must
@@ -1904,6 +2721,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         undefined,
         stepSessionId,
         stepFindingDispositions,
+        undefined,
+        undefined,
+        stepRepairMovementPaths,
       );
     } catch (err) {
       // integ-cmr base r2 (D): the step is already in the in-memory ledger
@@ -1917,6 +2737,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         recordInMemory: false,
         output,
         findingDispositions: stepFindingDispositions,
+        repairMovementPaths: stepRepairMovementPaths,
       });
     }
 
@@ -1934,7 +2755,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     });
 
     if (decision.kind === "handoff") {
-      ledger.push({ step: "S8" });
+      const handoffStopSummary: StopSummary =
+        decision.status === "success"
+          ? successSummaryForCurrentState({ deferredFindings, findingDispositions })
+          : decision.status === "error"
+            ? stopSummaryForErrorPackage({
+                failedStep: step,
+                reason: buildErrorReason(step, lastOutput),
+                branchHead: worktree?.branch,
+              })
+            : stopSummaryForEscalation(
+                escalateOf(lastOutput) ?? {
+                  reason: "run escalated",
+                  diagnosis: `step ${step} routed to an escalate handoff`,
+                },
+              );
+      ledger.push({ step: "S8", stopSummary: handoffStopSummary });
       // #249: persist the S8 handoff entry too.
       // #6 / integ-cmr base r2 (E): a writeLedger failure on the S8 entry →
       // S8(error), not a raw rejection. (deferredFindings stays whatever was
@@ -1951,6 +2787,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           undefined,
           undefined,
           escalationKindForHandoff(decision.status, lastOutput),
+          handoffStopSummary,
         );
       } catch (err) {
         // integ-cmr base r2 (E): the failing operation here is the S8 handoff
@@ -1970,18 +2807,29 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // Mirror the error paths (errorTermination / no-progress bail): best-
         // effort persist a TAGGED 'error' S8 so the disk carries the true
         // terminal status and a re-feed reports ERROR via planResume Case 3a.
-        // persistBestEffort swallows a secondary write fault — we already return
-        // status:error, a second ledger fault must not mask the original cause.
-        await persistBestEffort("S8", undefined, undefined, "error");
         const errorPackage: ErrorPackage = {
           failedStep: "S8",
           reason: `writeLedger(S8) failed while persisting the handoff entry: ${cause}`,
           branchHead: worktree?.branch,
         };
+        const stopSummary = stopSummaryForErrorPackage(errorPackage);
+        // persistBestEffort swallows a secondary write fault — we already return
+        // status:error, a second ledger fault must not mask the original cause.
+        await persistBestEffort(
+          "S8",
+          undefined,
+          undefined,
+          "error",
+          undefined,
+          undefined,
+          undefined,
+          stopSummary,
+        );
         return {
           status: "error",
           errorPackage,
           stepLedger: ledger,
+          stopSummary,
           deferredFindings,
         };
       }
@@ -1999,6 +2847,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           status: "error",
           errorPackage,
           stepLedger: ledger,
+          stopSummary: handoffStopSummary,
           deferredFindings,
         };
       }
@@ -2007,6 +2856,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         status: decision.status,
         branch: decision.status === "success" ? worktree?.branch : undefined,
         stepLedger: ledger,
+        stopSummary: handoffStopSummary,
         deferredFindings,
       };
     }

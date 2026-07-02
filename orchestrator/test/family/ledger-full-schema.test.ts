@@ -86,13 +86,17 @@ describe("recordAborted — PHASE-LEVEL verify/cmr failure event (#291 缺口 2)
       reason: "tsc: TS2345 cross-slice",
       familyHeadAfter: "baseX",
     });
-    expect(backend.appended).toEqual([
+    expect(backend.appended).toMatchObject([
       {
         status: "aborted",
         event: "aborted",
         phase: "wave",
         reason: "tsc: TS2345 cross-slice",
         familyHeadAfter: "baseX",
+        stopSummary: {
+          reason: "infra_failure",
+          repairHint: "inspect this aborted ledger row, repair the barrier, and rerun",
+        },
       },
     ]);
     // PHASE-LEVEL: an abort is not a single child's failure → no childIssue.
@@ -102,7 +106,15 @@ describe("recordAborted — PHASE-LEVEL verify/cmr failure event (#291 缺口 2)
   it("omits undefined optional fields (reason / familyHeadAfter)", async () => {
     const backend = new FakeFamilyBackend();
     await recordAborted(backend, { phase: "final" });
-    expect(backend.appended[0]).toEqual({ status: "aborted", event: "aborted", phase: "final" });
+    expect(backend.appended[0]).toMatchObject({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      stopSummary: {
+        reason: "infra_failure",
+        repairHint: "inspect this aborted ledger row, repair the barrier, and rerun",
+      },
+    });
     expect("reason" in backend.appended[0]!).toBe(false);
     expect("familyHeadAfter" in backend.appended[0]!).toBe(false);
   });
@@ -128,10 +140,11 @@ describe("#439 family escalation answer events", () => {
     });
     await recordFamilyEscalationAnswered(backend, {
       answer: "continue-same-class",
+      source: "human",
       note: "human approved another pass",
     });
 
-    expect(backend.appended).toEqual([
+    expect(backend.appended).toMatchObject([
       {
         status: "escalated",
         event: "escalated",
@@ -139,12 +152,17 @@ describe("#439 family escalation answer events", () => {
         reason: "cmr needs human disposition",
         familyHeadAfter: "baseZ",
         escalationKind: "decision",
+        stopSummary: {
+          reason: "infra_failure",
+          repairHint: "inspect this escalation row and repair before rerun",
+        },
       },
       {
         status: "escalation_answered",
         event: "escalation_answered",
         phase: "final",
         answer: "continue-same-class",
+        source: "human",
         note: "human approved another pass",
       },
     ]);
@@ -152,6 +170,7 @@ describe("#439 family escalation answer events", () => {
       answer: {
         event: "escalation_answered",
         answer: "continue-same-class",
+        source: "human",
         note: "human approved another pass",
       },
       escalation: { escalationKind: "decision" },
@@ -162,7 +181,10 @@ describe("#439 family escalation answer events", () => {
     const backend = new FakeFamilyBackend();
 
     await expect(
-      recordFamilyEscalationAnswered(backend, { answer: "   " }),
+      recordFamilyEscalationAnswered(backend, {
+        answer: "   ",
+        source: "human",
+      }),
     ).rejects.toThrow("family escalation answer must be a non-empty string");
 
     expect(backend.appended).toEqual([]);
@@ -180,6 +202,7 @@ describe("#439 family escalation answer events", () => {
         event: "escalation_answered",
         phase: "final",
         answer: "continue-old",
+        source: "human",
       },
       {
         status: "escalation_answered",
@@ -192,6 +215,7 @@ describe("#439 family escalation answer events", () => {
         event: "escalation_answered",
         phase: "final",
         answer: "continue-latest",
+        source: "human",
         note: "latest human answer wins",
       },
     ];
@@ -201,6 +225,7 @@ describe("#439 family escalation answer events", () => {
       answer: {
         event: "escalation_answered",
         answer: "continue-latest",
+        source: "human",
         note: "latest human answer wins",
       },
     });
@@ -251,7 +276,10 @@ describe("#439 family escalation answer events", () => {
       escalationKind: "failure",
       reason: "family base diverged from ledger",
     });
-    await recordFamilyEscalationAnswered(backend, { answer: "try-anyway" });
+    await recordFamilyEscalationAnswered(backend, {
+      answer: "try-anyway",
+      source: "human",
+    });
 
     expect(familyEscalationState(backend.appended)).toEqual({
       escalation: backend.appended[0],

@@ -40,10 +40,16 @@ import { RealBackend } from "./realBackend.js";
 import { parseBlockedBy, type GhBlockedBy } from "./realBackend.js";
 import { RealFamilyBackend } from "./family/realFamilyBackend.js";
 import { runFamily } from "./family/runner.js";
+import {
+  parseModuleDeclaration,
+  sourcedModuleDeclaration,
+  type SourcedModuleDeclaration,
+} from "./family/cmrClassification.js";
 import type { Backend } from "./types.js";
 import type {
   ChildSlice,
   FamilyBackend,
+  FamilyAdmissionSkippedChild,
   FamilyEpic,
   FamilyRunInput,
   FamilyRunResult,
@@ -190,12 +196,27 @@ export function buildFamilyEpic(
   epicIssue: number,
   childNumbers: ReadonlyArray<number>,
   blockedByByChild: ReadonlyMap<number, ReadonlyArray<GhBlockedBy>>,
+  moduleDeclarations: {
+    readonly family?: SourcedModuleDeclaration;
+    readonly children?: ReadonlyMap<number, SourcedModuleDeclaration>;
+  } = {},
+  admissionSkipped: ReadonlyArray<FamilyAdmissionSkippedChild> = [],
 ): FamilyEpic {
   const children: ChildSlice[] = childNumbers.map((issue) => ({
     issue,
     blockedBy: (blockedByByChild.get(issue) ?? []).map((b) => b.number),
+    ...(moduleDeclarations.children?.get(issue) !== undefined
+      ? { moduleDeclaration: moduleDeclarations.children.get(issue)! }
+      : {}),
   }));
-  return { issue: epicIssue, children };
+  return {
+    issue: epicIssue,
+    children,
+    ...(moduleDeclarations.family !== undefined
+      ? { moduleDeclaration: moduleDeclarations.family }
+      : {}),
+    ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
+  };
 }
 
 /** A family child blocked by an EXTERNAL (non-family) issue still open at admission. */
@@ -370,7 +391,8 @@ const defaultSh: Sh = (file, args) =>
  * before the single-slice S0 gate would abort the whole family run.
  */
 export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyEpic {
-  const childNumbers = readChildNumbers(epicIssue, repo, sh);
+  const admission = readSubIssueAdmission(epicIssue, repo, sh);
+  const childNumbers = [...admission.admitted];
   const blockedByByChild = new Map<number, GhBlockedBy[]>();
   for (const child of childNumbers) {
     const depRaw = sh("gh", [
@@ -379,11 +401,125 @@ export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyE
     ]);
     blockedByByChild.set(child, parseBlockedBy(JSON.parse(depRaw)));
   }
+  const moduleDeclarations = readFamilyModuleDeclarations(
+    epicIssue,
+    childNumbers,
+    repo,
+    sh,
+  );
   // Family-admission gate (online R1 #1): fail-closed up front if any EXTERNAL blocker
   // is still open — runs on the initial admission AND on every resume refetch, so a
   // re-opened external blocker re-rejects on re-entry.
   assertExternalBlockersCleared(childNumbers, blockedByByChild);
-  return buildFamilyEpic(epicIssue, childNumbers, blockedByByChild);
+  return buildFamilyEpic(
+    epicIssue,
+    childNumbers,
+    blockedByByChild,
+    moduleDeclarations,
+    admissionSkippedChildren(admission),
+  );
+}
+
+function readIssueBody(issue: number, repo: string, sh: Sh): string {
+  try {
+    const raw = sh("gh", [
+      "issue",
+      "view",
+      String(issue),
+      "--repo",
+      repo,
+      "--json",
+      "number,body,author",
+    ]);
+    const parsedValue: unknown = JSON.parse(raw);
+    if (
+      parsedValue === null ||
+      typeof parsedValue !== "object" ||
+      Array.isArray(parsedValue)
+    ) {
+      throw new Error(`unexpected gh issue payload for #${issue}`);
+    }
+    const parsed = parsedValue as {
+      readonly body?: unknown;
+      readonly author?: { readonly login?: unknown };
+    };
+    const repoOwnerLogin = repo.split("/", 1)[0];
+    const repoOwner = repoOwnerLogin?.toLowerCase();
+    const authorLogin =
+      typeof parsed.author?.login === "string"
+        ? parsed.author.login.toLowerCase()
+        : undefined;
+    const body = typeof parsed.body === "string" ? parsed.body : "";
+    if (repoOwner === undefined || authorLogin !== repoOwner) {
+      const declaration = body.length > 0 ? parseModuleDeclaration(body) : undefined;
+      if (declaration !== undefined) {
+        if (isTrustedIssueAssociation(readIssueAuthorAssociation(issue, repo, sh))) {
+          return body;
+        }
+        console.warn(
+          `family module declaration ignored for issue #${issue}: author ${
+            typeof parsed.author?.login === "string" ? parsed.author.login : "<unknown>"
+          } is not trusted owner ${repoOwnerLogin ?? "<unknown>"}`,
+        );
+      }
+      return "";
+    }
+    return body;
+  } catch (err) {
+    throw new Error(
+      `readIssueBody: failed to read issue #${issue} body from ${repo}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
+
+function readIssueAuthorAssociation(issue: number, repo: string, sh: Sh): string {
+  try {
+    return sh("gh", [
+      "api",
+      `repos/${repo}/issues/${issue}`,
+      "--jq",
+      ".author_association",
+    ]).trim();
+  } catch (err) {
+    throw new Error(
+      `failed to read issue #${issue} author association from ${repo}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
+
+function isTrustedIssueAssociation(association: string): boolean {
+  const upper = association.trim().toUpperCase();
+  return upper === "OWNER";
+}
+
+function readFamilyModuleDeclarations(
+  epicIssue: number,
+  childNumbers: ReadonlyArray<number>,
+  repo: string,
+  sh: Sh,
+): {
+  readonly family?: SourcedModuleDeclaration;
+  readonly children: ReadonlyMap<number, SourcedModuleDeclaration>;
+} {
+  const family = sourcedModuleDeclaration(
+    parseModuleDeclaration(readIssueBody(epicIssue, repo, sh)),
+    "family_issue",
+    epicIssue,
+  );
+  const children = new Map<number, SourcedModuleDeclaration>();
+  for (const child of childNumbers) {
+    const declaration = sourcedModuleDeclaration(
+      parseModuleDeclaration(readIssueBody(child, repo, sh)),
+      "child_issue",
+      child,
+    );
+    if (declaration !== undefined) children.set(child, declaration);
+  }
+  return { ...(family !== undefined ? { family } : {}), children };
 }
 
 /**
@@ -393,7 +529,7 @@ export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyE
  * over `[]` is vacuously true) → a final verify/cmr on a base with no slices → an
  * empty PR. Reject it at admission with a concrete message.
  */
-function readChildNumbers(epicIssue: number, repo: string, sh: Sh): number[] {
+function readSubIssueAdmission(epicIssue: number, repo: string, sh: Sh): SubIssueAdmission {
   const allSubIssueNodes: unknown[] = [];
   for (let page = 1; ; page += 1) {
     const subRaw = sh("gh", [
@@ -415,7 +551,17 @@ function readChildNumbers(epicIssue: number, repo: string, sh: Sh): number[] {
         `(not an epic, native sub-issues are empty, or all children were skipped) — nothing to orchestrate`,
     );
   }
-  return childNumbers;
+  return admission;
+}
+
+function admissionSkippedChildren(
+  admission: SubIssueAdmission,
+): ReadonlyArray<FamilyAdmissionSkippedChild> {
+  return admission.skipped.map((child) => ({
+    issue: child.issue,
+    reason: child.reason,
+    message: child.message,
+  }));
 }
 
 // ════════════════════════════════════════════════════════════════════════════

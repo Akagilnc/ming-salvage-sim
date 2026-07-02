@@ -10,6 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { findingIdentityKey } from "../../src/findings.js";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
 import type {
   FamilyBackend,
@@ -22,6 +23,7 @@ import type {
 } from "../../src/family/types.js";
 import type {
   DispatchContext,
+  Finding,
   WorkerResult,
   WorkerSpec,
 } from "../../src/types.js";
@@ -31,6 +33,7 @@ interface DispatchRecord {
   readonly kind: WorkerSpec["kind"];
   readonly session: WorkerSpec["session"];
   readonly cmrPass?: DispatchContext["cmrPass"];
+  readonly priorCmrFindingIdentityKeys?: readonly string[];
 }
 
 /**
@@ -78,7 +81,12 @@ class SchedulerFamilyBackend implements FamilyBackend {
   }
 
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-    this.dispatches.push({ kind: spec.kind, session: spec.session, cmrPass: ctx.cmrPass });
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      cmrPass: ctx.cmrPass,
+      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
+    });
     if (spec.kind === "cmr") {
       return (
         this.script.cmr?.() ?? {
@@ -151,7 +159,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
-  it("cmr worker COMPLETED but NOT converged (no escalate) ⇒ fail-safe escalateFamily with the reason, ok:false, NO ship", async () => {
+  it("cmr worker COMPLETED but NOT converged (no escalate) ⇒ machine abort with the reason, ok:false, NO ship", async () => {
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({
         kind: "completed",
@@ -164,8 +172,13 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
       familyBackend: backend,
     });
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.escalations).toHaveLength(1);
-    expect(backend.escalations[0]?.reason).toContain("contract drift");
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      reason: expect.stringContaining("contract drift"),
+      stopSummary: expect.objectContaining({ reason: "contract_drift" }),
+    }));
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
@@ -186,10 +199,91 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
       phase: "final",
       familyBase: "family/291-base",
       familyBackend: backend,
+      priorCmrFindingIdentityKeys: ["correctness|src/x.ts:1|fake closure"],
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.escalations[0]?.reason).toMatch(/missing explicit disposition/i);
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      reason: expect.stringMatching(/missing explicit disposition/i),
+      stopSummary: expect.objectContaining({
+        reason: "contract_drift",
+        repairHint: expect.stringContaining("claimed-fixed closure payload"),
+      }),
+    }));
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
+  });
+
+  it("converged cmr cannot self-claim stale prior keys without runner closure context", async () => {
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: ["correctness|stale.ts:1|not supplied by runner"],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|stale.ts:1|not supplied by runner",
+              status: "verified-closed",
+            },
+          ],
+        },
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      reason: expect.stringMatching(/closure_context_missing/i),
+    }));
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
+  });
+
+  it("converged cmr rejects claimed-fixed keys outside the runner closure context", async () => {
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: ["correctness|stale.ts:1|not supplied by runner"],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|stale.ts:1|not supplied by runner",
+              status: "verified-closed",
+            },
+          ],
+        },
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      priorCmrFindingIdentityKeys: ["correctness|src/x.ts:1|real closure"],
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      reason: expect.stringMatching(/outside the runner-supplied/i),
+    }));
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
@@ -219,7 +313,12 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.escalations[0]?.reason).toMatch(/not verified closed/i);
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      reason: expect.stringMatching(/were not explicitly claimed fixed|not verified closed/i),
+    }));
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
@@ -246,10 +345,294 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
       phase: "final",
       familyBase: "family/291-base",
       familyBackend: backend,
+      priorCmrFindingIdentityKeys: ["correctness|src/x.ts:1|real closure"],
     });
 
     expect(result).toEqual({ ok: true, ran: true });
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);
+  });
+
+  it("blocking family CMR stop summary selects a blocking result, not an earlier suppression", async () => {
+    const suppressed: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "accepted hub-loss gap",
+      location: "orchestrator/src/family/verifyCmr.ts:1",
+      suggested_fix: "accepted by issue scope",
+      action: "wont_fix",
+      disposition_reason: "accepted by issue scope",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "issue #448 acceptance criteria",
+        scope: "#448 family integrated CMR",
+        reason: "accepted by issue scope",
+        findingIdentity:
+          "correctness|orchestrator/src/family/verifycmr.ts:1|accepted hub-loss gap",
+        boundedReopen: "reopen on higher severity or different scope",
+      },
+    };
+    const blocker: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "ADR conflicts with implementation",
+      location: "orchestrator/src/family/verifyCmr.ts:2",
+      suggested_fix: "resolve the accepted contract conflict",
+      action: "defer",
+      disposition: {
+        kind: "spec_conflict",
+        source: "ADR 0030",
+        reason: "ADR and implementation require different CMR outcomes.",
+      },
+    };
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: false,
+          reason: "has blocking findings",
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+          findings: [suppressed, blocker],
+        },
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyIssue: 448,
+      moduleContext: {
+        currentModules: [
+          {
+            module: "family-cmr",
+            moduleScope: ["orchestrator/src/family/verifyCmr.ts"],
+            source: "family_issue",
+            issue: 448,
+          },
+        ],
+        childModules: [],
+        acceptedSuppressionSources: [
+          {
+            source: "issue #448 acceptance criteria",
+            scope: "#448 family integrated CMR",
+            reason: "accepted by issue scope",
+            findingIdentity:
+              "correctness|orchestrator/src/family/verifycmr.ts:1|accepted hub-loss gap",
+            boundedReopen: "reopen on higher severity or different scope",
+          },
+        ],
+      },
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      cmrFindingClassification: expect.objectContaining({
+        results: expect.arrayContaining([
+          expect.objectContaining({
+            identityKey:
+              "correctness|orchestrator/src/family/verifycmr.ts:1|accepted hub-loss gap",
+            classification: "accepted_suppressed",
+          }),
+        ]),
+      }),
+      stopSummary: expect.objectContaining({
+        reason: "spec_conflict",
+        finding: blocker,
+      }),
+    }));
+    const aborted = backend.ledger.find((entry) => entry.status === "aborted");
+    expect(aborted?.reason).toContain("spec_conflict");
+    expect(aborted?.reason).not.toContain("accepted_suppressed");
+  });
+
+  it("fails closed when prior accepted_suppressed closure lacks a trusted suppression source", async () => {
+    const priorKey = "correctness|src/x.ts:1|accepted without trusted source";
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [priorKey],
+          priorFindingDispositions: [
+            {
+              identityKey: priorKey,
+              status: "accepted_suppressed",
+              source: "#999",
+              scope: "untrusted reviewer-created suppression",
+              reason: "reviewer says accepted",
+              boundedReopen: "reopen on higher severity",
+            },
+          ],
+        },
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      priorCmrFindingIdentityKeys: [priorKey],
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      stopSummary: expect.objectContaining({
+        reason: "contract_drift",
+        summary: expect.stringContaining("accepted_suppressed"),
+      }),
+    }));
+    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(["cmr"]);
+  });
+
+  it("fails closed when a runner-protected prior blocker is closed by accepted_suppressed", async () => {
+    const priorKey = "correctness|src/x.ts:1|protected blocker";
+    const trustedSuppression = {
+      source: "issue #445 acceptance criteria",
+      scope: "#445 family integrated CMR",
+      reason: "accepted by parent issue",
+      findingIdentity: priorKey,
+      boundedReopen: "reopen on higher severity",
+    };
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [priorKey],
+          priorFindingDispositions: [
+            {
+              identityKey: priorKey,
+              status: "accepted_suppressed",
+              source: trustedSuppression.source,
+              scope: trustedSuppression.scope,
+              reason: trustedSuppression.reason,
+              boundedReopen: trustedSuppression.boundedReopen,
+            },
+          ],
+        },
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      priorCmrFindingIdentityKeys: [priorKey],
+      moduleContext: {
+        currentModules: [],
+        childModules: [],
+        acceptedSuppressionSources: [trustedSuppression],
+      },
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      reason: expect.stringContaining("cannot be closed by accepted_suppressed"),
+      stopSummary: expect.objectContaining({
+        reason: "contract_drift",
+      }),
+    }));
+    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(["cmr"]);
+  });
+
+  it("threads prior family CMR dispositions from the ledger into finding classification", async () => {
+    const finding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "stateful suppression should not reopen forever",
+      location: "orchestrator/src/family/verifyCmr.ts:77",
+      suggested_fix: "honor prior family CMR dispositions",
+      action: "fix_now",
+    };
+    const identityKey = findingIdentityKey(finding);
+    const trustedSuppression = {
+      source: "issue #445 acceptance criteria",
+      scope: "#445 family integrated CMR",
+      reason: "accepted by parent issue",
+      findingIdentity: identityKey,
+      boundedReopen: "reopen on higher severity",
+    };
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: false,
+          reason: "same finding reappeared",
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+          findings: [finding],
+        },
+      }),
+    });
+    backend.ledger.push({
+      status: "cmr_passed",
+      event: "cmr_passed",
+      phase: "final",
+      cmrPass: "completeness",
+      cmrFindingClassification: {
+        blocking: [],
+        deferred: [],
+        results: [],
+        dispositions: [
+          {
+            identityKey,
+            status: "accepted_suppressed",
+            reason: trustedSuppression.reason,
+            severity: "medium",
+            reopenAttempts: 0,
+            disputeAttempts: 1,
+            source: trustedSuppression.source,
+            scope: trustedSuppression.scope,
+            boundedReopen: trustedSuppression.boundedReopen,
+          },
+        ],
+        moduleContext: {
+          currentModules: [],
+          childModules: [],
+          undevelopedModules: [],
+        },
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      moduleContext: {
+        currentModules: [
+          {
+            module: "family-cmr",
+            moduleScope: ["orchestrator/src/family/verifyCmr.ts"],
+            source: "family_issue",
+            issue: 445,
+          },
+        ],
+        childModules: [],
+        acceptedSuppressionSources: [trustedSuppression],
+      },
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual([
+      "cmr",
+      "cmr",
+      "ship",
+    ]);
   });
 
   it("cmr worker MALFORMED / crash ⇒ recordAborted + INCOMPLETE_GATE (ok:false), NO ship", async () => {
@@ -320,5 +703,7 @@ describe("the verifyCmr seam keeps cmr pass outcomes at the WorkerResult boundar
     expect(src).not.toMatch(/familyCoderFixWorkerSpec/);
     // No resume-session plumbing for the cmr worker.
     expect(src).not.toMatch(/resumeSessionId:/);
+    // Provider-degradation matching must tolerate dirty route legs without family.
+    expect(src).not.toMatch(/leg\.family\.toLowerCase\(\)/);
   });
 });

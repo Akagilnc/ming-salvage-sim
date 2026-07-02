@@ -34,6 +34,12 @@ export type ModelRouteLegCollectionOverrides = Readonly<
   Partial<Record<ModelRouteLegCollection, ReadonlyArray<string>>>
 >;
 export type ModelRouteEnv = Readonly<Record<string, string | undefined>>;
+export type CmrLegAccountingRoute =
+  | ResolvedModelRoute
+  | ModelRouteEnv
+  | ReadonlyArray<{ readonly slug: string }>
+  | null
+  | undefined;
 
 export interface TightFamilyViolation {
   readonly slot: ModelRouteSlot | ModelRouteLegCollection;
@@ -335,9 +341,15 @@ export function routeLegCollectionOverridesFromEnv(
   for (const collection of MODEL_ROUTE_LEG_COLLECTIONS) {
     const value = env[ENV_BY_LEG_COLLECTION[collection]]?.trim();
     if (value !== undefined && value !== "") {
+      if (value.startsWith("[") || value.startsWith("{")) {
+        throw new Error(
+          `${ENV_BY_LEG_COLLECTION[collection]} must be comma-separated CMR leg slugs, not JSON; ` +
+            "repair_hint: rewrite the route env as CSV, for example gpt-5.5,agy",
+        );
+      }
       overrides[collection] = value
         .split(",")
-        .map((slug) => slug.trim())
+        .map((slug) => slug.trim().replace(/^["']|["']$/g, ""))
         .filter((slug) => slug !== "");
     }
   }
@@ -443,14 +455,39 @@ export function cmrReviewLegs(
   return resolveActiveModelRoute(env).legCollections.cmrReview;
 }
 
+function isResolvedModelRoute(value: unknown): value is ResolvedModelRoute {
+  if (value === null || typeof value !== "object") return false;
+  const candidate = value as Partial<ResolvedModelRoute>;
+  return (
+    candidate.slots !== undefined &&
+    candidate.slots !== null &&
+    typeof candidate.slots === "object" &&
+    candidate.legCollections !== undefined &&
+    candidate.legCollections !== null &&
+    typeof candidate.legCollections === "object" &&
+    Array.isArray(candidate.legCollections.cmrReview) &&
+    Array.isArray(candidate.tightFamilyViolations)
+  );
+}
+
+function isCmrLegArray(
+  value: CmrLegAccountingRoute,
+): value is ReadonlyArray<{ readonly slug: string }> {
+  return Array.isArray(value);
+}
+
 export function cmrLegAccountingFailure(
   input: {
     readonly successfulLegs: readonly string[];
     readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
   },
-  env: ModelRouteEnv = process.env,
+  routeOrEnv: CmrLegAccountingRoute = process.env,
 ): string | undefined {
-  const declaredLegs = cmrReviewLegs(env).map((leg) => leg.slug);
+  const declaredLegs = isCmrLegArray(routeOrEnv)
+    ? routeOrEnv.map((leg) => leg.slug)
+    : isResolvedModelRoute(routeOrEnv)
+      ? routeOrEnv.legCollections.cmrReview.map((leg) => leg.slug)
+      : cmrReviewLegs(routeOrEnv ?? process.env).map((leg) => leg.slug);
   const declared = new Set(declaredLegs);
   const undeclaredSuccessful = input.successfulLegs.filter((slug) => !declared.has(slug));
   if (undeclaredSuccessful.length > 0) {

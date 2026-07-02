@@ -271,9 +271,39 @@ describe("#291 assertExternalBlockersCleared — family-admission external-block
 });
 
 describe("#291 readFamilyEpic (injected gh sh)", () => {
+  it("uses only gh issue view JSON fields supported by the real CLI", () => {
+    const issueViewFields: string[] = [];
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        issueViewFields.push(String(args[6]));
+        return JSON.stringify({
+          number: Number(args[2]),
+          body: "",
+          author: { login: "Akagilnc" },
+        });
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 11 }]);
+      }
+      return "[]";
+    };
+
+    readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
+
+    expect(issueViewFields).toEqual(["number,body,author", "number,body,author"]);
+  });
+
   it("reads sub-issues + each child's blocked_by and builds the epic", () => {
     const sh: Sh = (file, args) => {
       expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        return JSON.stringify({
+          number: Number(args[2]),
+          body: "",
+          author: { login: "Akagilnc" },
+        });
+      }
       if (String(args[1]).includes("/sub_issues")) {
         return JSON.stringify([{ number: 11 }, { number: 12 }]);
       }
@@ -290,11 +320,157 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
       ],
     });
   });
+  it("parses parent and child Module Declaration issue bodies into the FamilyEpic", () => {
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        const issue = Number(args[2]);
+        const body =
+          issue === 291
+            ? "## Module Declaration\n```yaml\nmodule: parent-fiscal\nmodule_scope:\n  - docs/fiscal\n```"
+            : issue === 12
+              ? "## Module Declaration\n```yaml\nmodule: child-hub\nmodule_scope:\n  - orchestrator/src/family\n```"
+              : "";
+        return JSON.stringify({ number: issue, body, author: { login: "Akagilnc" } });
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 11 }, { number: 12 }]);
+      }
+      return "[]";
+    };
+
+    const epic = readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
+
+    expect(epic.moduleDeclaration).toEqual({
+      module: "parent-fiscal",
+      moduleScope: ["docs/fiscal"],
+      source: "family_issue",
+      issue: 291,
+    });
+    expect(epic.children[0]?.moduleDeclaration).toBeUndefined();
+    expect(epic.children[1]?.moduleDeclaration).toEqual({
+      module: "child-hub",
+      moduleScope: ["orchestrator/src/family"],
+      source: "child_issue",
+      issue: 12,
+    });
+  });
+  it("ignores Module Declaration issue bodies that are not authored by the repo owner", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        const issue = Number(args[2]);
+        const owner = issue === 291 ? "Akagilnc" : "external-contributor";
+        const body =
+          issue === 291
+            ? "## Module Declaration\n```yaml\nmodule: parent-fiscal\nmodule_scope:\n  - docs/fiscal\n```"
+            : "## Module Declaration\n```yaml\nmodule: child-hub\nmodule_scope:\n  - orchestrator/src/family\n```";
+        return JSON.stringify({ number: issue, body, author: { login: owner } });
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 11 }]);
+      }
+      return "[]";
+    };
+
+    try {
+      const epic = readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
+
+      expect(epic.moduleDeclaration).toEqual({
+        module: "parent-fiscal",
+        moduleScope: ["docs/fiscal"],
+        source: "family_issue",
+        issue: 291,
+      });
+      expect(epic.children[0]?.moduleDeclaration).toBeUndefined();
+      expect(warn.mock.calls.map((call) => String(call[0]))).toContain(
+        "family module declaration ignored for issue #11: author external-contributor is not trusted owner Akagilnc",
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+  it("ignores Module Declaration issue bodies from organization members", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        const issue = Number(args[2]);
+        const body =
+          issue === 291
+            ? "## Module Declaration\n```yaml\nmodule: parent-fiscal\nmodule_scope:\n  - docs/fiscal\n```"
+            : "## Module Declaration\n```yaml\nmodule: child-hub\nmodule_scope:\n  - orchestrator/src/family\n```";
+        return JSON.stringify({
+          number: issue,
+          body,
+          author: { login: "org-member" },
+        });
+      }
+      if (String(args[1]).match(/repos\/MingOrg\/ming-salvage-sim\/issues\/\d+$/)) {
+        return "member";
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 11 }]);
+      }
+      return "[]";
+    };
+
+    try {
+      const epic = readFamilyEpic(291, "MingOrg/ming-salvage-sim", sh);
+
+      expect(epic.moduleDeclaration).toBeUndefined();
+      expect(epic.children[0]?.moduleDeclaration).toBeUndefined();
+      expect(warn.mock.calls.map((call) => String(call[0]))).toContain(
+        "family module declaration ignored for issue #291: author org-member is not trusted owner MingOrg",
+      );
+      expect(warn.mock.calls.map((call) => String(call[0]))).toContain(
+        "family module declaration ignored for issue #11: author org-member is not trusted owner MingOrg",
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+  it("fails closed when a module declaration issue body cannot be read", () => {
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        throw new Error(`gh failed for #${args[2]}`);
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 11 }]);
+      }
+      return "[]";
+    };
+
+    expect(() => readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh)).toThrow(
+      /failed to read issue #291 body/i,
+    );
+  });
+  it("fails closed when gh issue view returns a non-object payload", () => {
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        return "null";
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 11 }]);
+      }
+      return "[]";
+    };
+
+    expect(() => readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh)).toThrow(
+      /unexpected gh issue payload/i,
+    );
+  });
   it("admits only OPEN ready-for-agent leaf children, logs every skipped non-runnable child, and continues", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const sh: Sh = (file, args) => {
         expect(file).toBe("gh");
+        if (args[0] === "issue" && args[1] === "view") {
+          return JSON.stringify({ number: Number(args[2]), body: "" });
+        }
         if (String(args[1]).includes("/sub_issues")) {
           return JSON.stringify([
             {
@@ -342,6 +518,9 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
     const subIssueCalls: string[] = [];
     const sh: Sh = (file, args) => {
       expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        return JSON.stringify({ number: Number(args[2]), body: "" });
+      }
       if (String(args[1]).includes("/sub_issues")) {
         subIssueCalls.push(String(args[1]));
         const page = Number(/[?&]page=(\d+)/.exec(String(args[1]))?.[1] ?? "1");

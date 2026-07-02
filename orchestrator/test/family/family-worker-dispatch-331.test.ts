@@ -13,6 +13,7 @@ import type {
 } from "../../src/types.js";
 import type {
   FamilyBackend,
+  FamilyEscalation,
   FamilyLedgerEntry,
   FamilyVerifyRequest,
   FamilyVerifyResult,
@@ -453,11 +454,76 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
       return this.ledger;
     }
+    async readFamilyHead(): Promise<string> {
+      return "head-1";
+    }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
       return spec.kind === "cmr" ? this.cmrOut : this.shipOut;
+    }
+  }
+
+  class NoShipCapabilityAfterCmrBackend implements FamilyBackend {
+    readonly ledger: FamilyLedgerEntry[] = [];
+    readonly aborted: FamilyLedgerEntry[] = [];
+    async mergeChildIntoFamilyBase(): Promise<never> {
+      throw new Error("not used");
+    }
+    async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+      this.ledger.push(entry);
+    }
+    async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+      return this.ledger;
+    }
+    async readFamilyHead(): Promise<string> {
+      return "head-after-cmr";
+    }
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async runIntegratedCmr(): Promise<IntegratedCmrResult> {
+      return { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
+    }
+  }
+
+  class PrHeadMismatchRecordingBackend implements FamilyBackend {
+    readonly ledger: FamilyLedgerEntry[] = [];
+    private shipDispatched = false;
+    async mergeChildIntoFamilyBase(): Promise<never> {
+      throw new Error("not used");
+    }
+    async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+      this.ledger.push(entry);
+    }
+    async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+      return this.ledger;
+    }
+    async readFamilyHead(): Promise<string> {
+      return this.shipDispatched ? "post-ship-head" : "cmr-head";
+    }
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      if (spec.kind === "cmr") {
+        return {
+          kind: "completed",
+          output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] },
+        };
+      }
+      this.shipDispatched = true;
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: "feat/445",
+          status: "pr_opened",
+          pr: "https://gh/pr/445",
+          prHead: "stale-pr-head",
+        },
+      };
     }
   }
 
@@ -487,11 +553,132 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     expect(aborts[0]?.phase).toBe("final");
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
+
+  it("a null ship worker payload ⇒ INCOMPLETE_GATE + durable aborted(final), not a TypeError", async () => {
+    const backend = new RecordingFamilyBackend(
+      {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+        },
+      },
+      { kind: "completed", output: null as never },
+    );
+
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: backend,
+    });
+
+    expect(res).toEqual({ ok: false, ran: true });
+    const aborts = backend.ledger.filter((e) => e.status === "aborted");
+    expect(aborts).toHaveLength(1);
+    expect(aborts[0]?.reason).toMatch(/returned no valid result/i);
+    expect(aborts[0]?.stopSummary?.reason).toBe("contract_drift");
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+  });
+
+  it("an off-contract ship success writes durable aborted(final) with ship/head summary", async () => {
+    const backend = new RecordingFamilyBackend(
+      {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+        },
+      },
+      {
+        kind: "completed",
+        output: { kind: "ship", branch: "feat/330", status: "pushed" },
+      },
+    );
+
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: backend,
+    });
+
+    expect(res).toEqual({ ok: false, ran: true });
+    const aborts = backend.ledger.filter((e) => e.status === "aborted");
+    expect(aborts).toHaveLength(1);
+    expect(aborts[0]?.phase).toBe("final");
+    expect(aborts[0]?.reason).toMatch(/did not open a valid family PR/i);
+    expect(aborts[0]?.familyHeadAfter).toBe("head-1");
+    expect(aborts[0]?.stopSummary?.reason).toBe("infra_failure");
+    expect(aborts[0]?.stopSummary?.repairHint).toMatch(/rerun/i);
+    expect(aborts[0]?.stopSummary?.metadata?.ship).toEqual({
+      latestVerifiedCmrHead: "head-1",
+      currentFamilyHead: "head-1",
+      shipPrState: "branch=feat/330 status=pushed pr=missing",
+    });
+    expect(aborts[0]?.stopSummary?.metadata?.heads).toEqual({
+      actualFamilyHead: "head-1",
+      verifiedCmrHead: "head-1",
+      sources: {
+        actualFamilyHead: "family head after ship contract failure",
+        verifiedCmrHead: "latest cmr_passed ledger row",
+      },
+    });
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+  });
+
+  it("no ship capability after converged cmr writes durable aborted(final) over stale success", async () => {
+    const backend = new NoShipCapabilityAfterCmrBackend();
+
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/445",
+      familyBackend: backend,
+    });
+
+    expect(res).toEqual({ ok: false, ran: true });
+    expect(backend.ledger.filter((e) => e.status === "cmr_passed")).toHaveLength(2);
+    const latest = backend.ledger.at(-1);
+    expect(latest?.status).toBe("aborted");
+    expect(latest?.phase).toBe("final");
+    expect(latest?.reason).toMatch(/family ship worker unavailable/i);
+    expect(latest?.stopSummary?.reason).toBe("infra_failure");
+    expect(latest?.stopSummary?.summary).toMatch(/PR/i);
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+  });
+
+  it("PR-head mismatch records latest verified CMR head separately from post-ship head", async () => {
+    const backend = new PrHeadMismatchRecordingBackend();
+
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/445",
+      familyBackend: backend,
+    });
+
+    expect(res).toEqual({ ok: false, ran: true });
+    const abort = backend.ledger.find((e) => e.status === "aborted");
+    expect(abort?.stopSummary?.metadata?.ship).toEqual({
+      latestVerifiedCmrHead: "cmr-head",
+      currentFamilyHead: "post-ship-head",
+      reportedFamilyHead: "stale-pr-head",
+      shipPrState: "pr-head-mismatch",
+    });
+    expect(abort?.stopSummary?.metadata?.heads).toEqual({
+      actualFamilyHead: "post-ship-head",
+      verifiedCmrHead: "cmr-head",
+      sources: {
+        actualFamilyHead: "family head after ship worker",
+        verifiedCmrHead: "latest cmr_passed ledger row",
+      },
+    });
+  });
 });
 
 describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R4)", () => {
   class EscalatingFamilyBackend implements FamilyBackend {
-    escalations: string[] = [];
+    escalations: FamilyEscalation[] = [];
+    ledger: FamilyLedgerEntry[] = [];
     escalateOn: "cmr" | "ship";
     constructor(escalateOn: "cmr" | "ship") {
       this.escalateOn = escalateOn;
@@ -499,15 +686,17 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
-    async appendFamilyLedger(): Promise<void> {}
-    async readFamilyLedger(): Promise<[]> {
-      return [];
+    async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+      this.ledger.push(entry);
+    }
+    async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+      return this.ledger;
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
     }
-    async escalateFamily(e: { reason: string }): Promise<void> {
-      this.escalations.push(e.reason);
+    async escalateFamily(e: FamilyEscalation): Promise<void> {
+      this.escalations.push(e);
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
       if (spec.kind === this.escalateOn) {
@@ -526,6 +715,38 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     }
   }
 
+  class ShipEscalatesWithoutEscalateSeamBackend implements FamilyBackend {
+    ledger: FamilyLedgerEntry[] = [];
+    async mergeChildIntoFamilyBase(): Promise<never> {
+      throw new Error("not used");
+    }
+    async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+      this.ledger.push(entry);
+    }
+    async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+      return this.ledger;
+    }
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      if (spec.kind === "cmr") {
+        return {
+          kind: "completed",
+          output: {
+            kind: "cmr",
+            converged: true,
+            successfulLegs: ["opus", "gpt-5.5", "agy"],
+          },
+        };
+      }
+      return {
+        kind: "escalated",
+        escalation: { reason: "stuck", diagnosis: "needs human" },
+      };
+    }
+  }
+
   it("an escalated cmr worker → escalateFamily + ok:false (not a bare INCOMPLETE_GATE)", async () => {
     const be = new EscalatingFamilyBackend("cmr");
     const res = await runVerifyCmr({
@@ -535,7 +756,7 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     });
     expect(res.ok).toBe(false);
     expect(be.escalations.length).toBe(1);
-    expect(be.escalations[0]).toContain("stuck");
+    expect(be.escalations[0]?.reason).toContain("stuck");
   });
 
   it("an escalated family ship worker → escalateFamily + ok:false", async () => {
@@ -547,6 +768,45 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     });
     expect(res.ok).toBe(false);
     expect(be.escalations.length).toBe(1);
+    expect(be.escalations[0]?.stopSummary).toMatchObject({
+      reason: "infra_failure",
+      metadata: {
+        ship: { shipPrState: "ship-worker-escalated" },
+      },
+    });
+    expect(be.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      reason: expect.stringContaining("family ship worker escalated"),
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        summary: expect.stringContaining("family ship worker escalated"),
+      }),
+    }));
+  });
+
+  it("an escalated family ship worker still writes durable abort when no escalateFamily seam exists", async () => {
+    const be = new ShipEscalatesWithoutEscalateSeamBackend();
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: be,
+    });
+
+    expect(res.ok).toBe(false);
+    expect(be.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      reason: expect.stringContaining("family ship worker escalated"),
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        metadata: expect.objectContaining({
+          ship: { shipPrState: "ship-worker-escalated" },
+        }),
+      }),
+    }));
   });
 });
 

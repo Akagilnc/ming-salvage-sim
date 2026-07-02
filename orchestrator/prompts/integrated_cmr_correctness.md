@@ -30,6 +30,13 @@ Converged:
 CMR_STEP_COMPLETE
 ```
 
+Not converged:
+
+```text
+<cmr>{"converged": false, "reason": "<short>", "successfulLegs": ["opus", "gpt-5.5"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "findings": [{"severity": "medium", "category": "correctness", "claim_quote": "<stable claim>", "location": "<file-or-scope>", "suggested_fix": "<next step>", "action": "defer", "disposition": {"kind": "same_module", "reason": "<why this is still in the family module>"}}]}</cmr>
+CMR_STEP_COMPLETE
+```
+
 Escalation:
 
 ```text
@@ -51,7 +58,26 @@ Rules:
   `priorFindingDispositions` are REQUIRED. Use empty arrays only when no
   claimed-fixed findings occurred in the CMR loop. If a prior claimed-fixed
   finding exists, include its stable identity key and an explicit disposition:
-  `still-active`, `verified-closed`, or `unable-to-assess`.
-- Do not emit `{"converged": false}` as a normal outcome.
+  `still-active`, `verified-closed`, `unable-to-assess`, or
+  `accepted_suppressed`. `accepted_suppressed` requires `source`, `scope`,
+  `reason`, and `boundedReopen`.
+- On any not-converged verdict, `reason`, `successfulLegs`,
+  `claimedFixedFindingIdentityKeys`, and `priorFindingDispositions` are REQUIRED;
+  `findings` is optional but must use reviewer finding shape when present.
+- For `findings[].disposition.kind`, use exactly one of `same_module`,
+  `cross_module`, `spec_conflict`, `infra_failure`,
+  `owning_issue_still_red`, or `accepted_suppressed`. Only `cross_module`
+  defer may pass without a fix, and only when `.cmr-focus.md` /
+  `.cmr-route.json` contain parsed module context supporting it. Do not infer
+  module boundaries from titles, prose, or logs. Parser-required fields:
+  `same_module` needs `reason`; `cross_module` needs `targetModule` and
+  `reason`; `owning_issue_still_red` needs `owningIssue`, `missingSurface`,
+  `nextStep`, and `reason`; `spec_conflict` needs `source` and `reason`;
+  `infra_failure` needs `source` and `reason`.
+- `accepted_suppressed` requires an explicit user/ADR/issue source, matching
+  scope, reason, and `boundedReopen`. `findingIdentity` is optional; omit it
+  unless a prior finding key was provided, because the runner derives it from
+  category, location, and claim quote. `disposition.reason` is the canonical
+  rationale; top-level `disposition_reason` may repeat it but is not required.
 - Emit the `<cmr>` tag LAST; if you iterate, the LAST tag is the one that counts.
 - Always print `CMR_STEP_COMPLETE` on its own line at the very end.

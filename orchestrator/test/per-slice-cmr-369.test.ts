@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { legacyDispatchWorker } from "../src/dispatchWorker.js";
@@ -10,7 +11,10 @@ import {
 } from "../src/findings.js";
 import { route } from "../src/route.js";
 import { runOrchestrator } from "../src/runner.js";
-import { isValidFinding } from "../src/validate.js";
+import {
+  isValidFinding,
+  isValidPriorFindingDisposition,
+} from "../src/validate.js";
 import type {
   Backend,
   DispatchContext,
@@ -32,16 +36,51 @@ const WORKTREE: WorktreeHandle = {
   path: "/resident/worktrees/issue-369",
 };
 
+function makeGitWorktree(): WorktreeHandle {
+  const path = mkdtempSync(join(tmpdir(), "runner-progress-"));
+  execFileSync("git", ["init", "-b", "main"], {
+    cwd: path,
+    stdio: "ignore",
+  });
+  writeFileSync(join(path, "README.md"), "base\n", "utf8");
+  execFileSync("git", ["add", "."], { cwd: path, stdio: "ignore" });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "-m",
+      "base",
+    ],
+    { cwd: path, stdio: "ignore" },
+  );
+  execFileSync("git", ["checkout", "-b", WORKTREE.branch], {
+    cwd: path,
+    stdio: "ignore",
+  });
+  return { ...WORKTREE, path };
+}
+
 class RetryReviewBackend implements Backend {
   readonly dispatched: string[] = [];
   readonly specs: WorkerSpec[] = [];
   readonly ctxs: DispatchContext[] = [];
   readonly ledgerWrites: PersistentLedgerEntry[] = [];
   reviewerAttempts = 0;
+  coderAttempts = 0;
 
   constructor(
     private readonly reviewerResults: ReadonlyArray<WorkerResult>,
     private readonly resumeState?: ResumeState,
+    private readonly coderOutputs: ReadonlyArray<StepOutput> = [],
+    private readonly worktree: WorktreeHandle = WORKTREE,
+    private readonly onCoderDispatch?: (
+      attempt: number,
+      worktree: WorktreeHandle,
+    ) => void,
   ) {}
 
   async findResumeState(): Promise<ResumeState | undefined> {
@@ -64,7 +103,7 @@ class RetryReviewBackend implements Backend {
     return { number: issueNumber, body: "body", comments: [], agentBrief: "" };
   }
   async prepareWorktree(): Promise<WorktreeHandle> {
-    return WORKTREE;
+    return this.worktree;
   }
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
@@ -80,6 +119,15 @@ class RetryReviewBackend implements Backend {
     this.dispatched.push(`${spec.id}:${spec.kind}`);
     this.specs.push(spec);
     this.ctxs.push(ctx);
+    if (spec.kind === "coder" && spec.id === "S5") {
+      const attempt = this.coderAttempts;
+      const scripted = this.coderOutputs[this.coderAttempts];
+      this.coderAttempts += 1;
+      this.onCoderDispatch?.(attempt, this.worktree);
+      if (scripted !== undefined) {
+        return { kind: "completed", output: scripted };
+      }
+    }
     if (spec.kind === "coder") {
       return {
         kind: "completed",
@@ -93,7 +141,7 @@ class RetryReviewBackend implements Backend {
     }
     return {
       kind: "completed",
-      output: { kind: "ship", branch: WORKTREE.branch, status: "pushed" },
+      output: { kind: "ship", branch: this.worktree.branch, status: "pushed" },
     };
   }
 }
@@ -171,6 +219,11 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
       location: "src/runner.ts:11",
       suggested_fix: "file follow-up",
       action: "defer",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "follow-up tracker",
+        reason: "This is intentionally outside the current slice runner module.",
+      },
     };
     const backend = new RetryReviewBackend([
       { kind: "completed", output: { kind: "reviewer", findings: [blocking, deferred] } },
@@ -341,6 +394,15 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       suggested_fix: "do not reopen without a material severity upgrade",
       action: "wont_fix",
       disposition_reason: "Accepted as out of scope for this slice",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "issue #428 acceptance criteria",
+        scope: "out-of-scope accepted risk",
+        reason: "Accepted as out of scope for this slice",
+        findingIdentity:
+          "correctness|src/runner.ts:736|accepted risk remains same severity",
+        boundedReopen: "reopen on material severity upgrade",
+      },
     };
     const acceptedRiskKey =
       "correctness|src/runner.ts:736|accepted risk remains same severity";
@@ -356,6 +418,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           findings: [{ ...acceptedRisk, action: "fix_now" }],
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "verified-closed" },
+            {
+              identityKey: acceptedRiskKey,
+              status: "still-active",
+              reason: "reviewer-only suppression must be repaired",
+            },
           ],
         },
       },
@@ -384,16 +451,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S7:ship",
     ]);
     const firstS4Write = backend.ledgerWrites.find((entry) => entry.step === "S4");
-    expect(firstS4Write?.findingDispositions).toEqual([
-      {
-        identityKey:
-          "correctness|src/runner.ts:736|accepted risk remains same severity",
-        status: "wont_fix",
-        reason: "Accepted as out of scope for this slice",
-        severity: "medium",
-        reopenAttempts: 0,
-      },
-    ]);
+    expect(firstS4Write?.findingDispositions).toEqual([]);
   });
 
   it("bounds repeated still-active findings instead of looping forever", async () => {
@@ -441,6 +499,1423 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         escalationKind: "decision",
       }),
     );
+  });
+
+  it("requires observable scope-local repair evidence before counting a still-active round as progress", async () => {
+    const scopedEvidence = {
+      kind: "coder" as const,
+      committed: true,
+      commitsAdded: 1,
+      repairEvidence: {
+        findingScope: {
+          identityKeys: [blockingKey],
+          locations: ["src/runner.ts"],
+        },
+        changedFiles: ["src/runner.ts"],
+        tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+      },
+    };
+    const worktree = makeGitWorktree();
+    const backend = new RetryReviewBackend(
+      [
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      undefined,
+      [scopedEvidence, scopedEvidence, scopedEvidence],
+      worktree,
+      (attempt, wt) => {
+        const srcDir = join(wt.path, "src");
+        mkdirSync(srcDir, { recursive: true });
+        writeFileSync(
+          join(srcDir, "runner.ts"),
+          `export const attempt = ${attempt};\n`,
+          "utf8",
+        );
+        execFileSync("git", ["add", "src/runner.ts"], {
+          cwd: wt.path,
+          stdio: "ignore",
+        });
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            `fix attempt ${attempt}`,
+          ],
+          { cwd: wt.path, stdio: "ignore" },
+        );
+      },
+    );
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
+  it("counts scoped test-file repair evidence as observable progress", async () => {
+    const scopedTestEvidence = {
+      kind: "coder" as const,
+      committed: true,
+      commitsAdded: 1,
+      repairEvidence: {
+        findingScope: { identityKeys: [blockingKey] },
+        tests: ["test/per-slice-cmr-369.test.ts"],
+      },
+    };
+    const worktree = makeGitWorktree();
+    const backend = new RetryReviewBackend(
+      [
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      undefined,
+      [scopedTestEvidence, scopedTestEvidence, scopedTestEvidence],
+      worktree,
+      (attempt, wt) => {
+        const testDir = join(wt.path, "test");
+        mkdirSync(testDir, { recursive: true });
+        writeFileSync(
+          join(testDir, "per-slice-cmr-369.test.ts"),
+          `export const attempt = ${attempt};\n`,
+          "utf8",
+        );
+        execFileSync("git", ["add", "test/per-slice-cmr-369.test.ts"], {
+          cwd: wt.path,
+          stdio: "ignore",
+        });
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            `test evidence ${attempt}`,
+          ],
+          { cwd: wt.path, stdio: "ignore" },
+        );
+      },
+    );
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
+  it("does not treat command-valued tests repair evidence as declared changed paths", async () => {
+    const commandOnlyTestEvidence = {
+      kind: "coder" as const,
+      committed: true,
+      commitsAdded: 1,
+      repairEvidence: {
+        findingScope: { identityKeys: [blockingKey] },
+        tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+      },
+    };
+    const worktree = makeGitWorktree();
+    const backend = new RetryReviewBackend(
+      [
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      undefined,
+      [commandOnlyTestEvidence, commandOnlyTestEvidence, commandOnlyTestEvidence],
+      worktree,
+      (attempt, wt) => {
+        const srcDir = join(wt.path, "src");
+        mkdirSync(srcDir, { recursive: true });
+        writeFileSync(
+          join(srcDir, "runner.ts"),
+          `export const attempt = ${attempt};\n`,
+          "utf8",
+        );
+        execFileSync("git", ["add", "src/runner.ts"], {
+          cwd: wt.path,
+          stdio: "ignore",
+        });
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            `source movement ${attempt}`,
+          ],
+          { cwd: wt.path, stdio: "ignore" },
+        );
+      },
+    );
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
+  it("restores resume repair movement paths before judging still-active no-progress", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-427",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: {
+            kind: "coder",
+            committed: true,
+            commitsAdded: 1,
+            repairEvidence: {
+              findingScope: { identityKeys: [blockingKey] },
+              changedFiles: ["src/runner.ts"],
+              tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+            },
+          },
+          repairMovementPaths: ["src/runner.ts"],
+        },
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
+  it.each([
+    {
+      name: "severity decreases",
+      initial: [{ ...blocking, severity: "high" as const }],
+      firstAfterFix: [{ ...blocking, severity: "medium" as const }],
+      firstDispositions: [
+        { identityKey: blockingKey, status: "still-active" as const },
+      ],
+      secondAfterFix: [{ ...blocking, severity: "medium" as const }],
+      secondDispositions: [
+        { identityKey: blockingKey, status: "still-active" as const },
+      ],
+      finalDispositions: [
+        { identityKey: blockingKey, status: "verified-closed" as const },
+      ],
+    },
+  ])("counts reviewer-observed progress when $name", async (sample) => {
+    const backend = new RetryReviewBackend([
+      { kind: "completed", output: { kind: "reviewer", findings: sample.initial } },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: sample.firstAfterFix,
+          priorFindingDispositions: sample.firstDispositions,
+        },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: sample.secondAfterFix,
+          priorFindingDispositions: sample.secondDispositions,
+        },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: sample.finalDispositions,
+        },
+      },
+    ]);
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("success");
+    expect(result.errorPackage).toBeUndefined();
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
+  it("does not count reviewer claim narrowing as implementation progress", async () => {
+    const originalFinding = {
+      ...blocking,
+      claim_quote: "module parser leaves inline yaml accepted in invalid declarations",
+    };
+    const firstNarrowedFinding = {
+      ...blocking,
+      claim_quote: "inline yaml accepted",
+    };
+    const secondNarrowedFinding = {
+      ...blocking,
+      claim_quote: "yaml accepted",
+    };
+    const originalKey = findingIdentityKey(originalFinding);
+    const firstNarrowedKey = findingIdentityKey(firstNarrowedFinding);
+
+    const backend = new RetryReviewBackend([
+      { kind: "completed", output: { kind: "reviewer", findings: [originalFinding] } },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [firstNarrowedFinding],
+          priorFindingDispositions: [
+            { identityKey: originalKey, status: "still-active" },
+          ],
+        },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [secondNarrowedFinding],
+          priorFindingDispositions: [
+            { identityKey: originalKey, status: "still-active" },
+            { identityKey: firstNarrowedKey, status: "still-active" },
+          ],
+        },
+      },
+    ]);
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary.reason).toBe("same_module_still_red");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+    ]);
+  });
+
+  it("does not count omitted still-active prior findings as blocking-count progress", async () => {
+    const primaryFinding = {
+      ...blocking,
+      claim_quote: "primary blocker stays active through dispositions",
+    };
+    const secondaryFinding = {
+      ...blocking,
+      claim_quote: "secondary blocker remains in reviewer findings",
+      location: "src/secondary.ts:1",
+    };
+    const primaryKey = findingIdentityKey(primaryFinding);
+    const secondaryKey = findingIdentityKey(secondaryFinding);
+
+    const backend = new RetryReviewBackend([
+      {
+        kind: "completed",
+        output: { kind: "reviewer", findings: [primaryFinding, secondaryFinding] },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [{ ...secondaryFinding, severity: "medium" }],
+          priorFindingDispositions: [
+            { identityKey: primaryKey, status: "still-active" },
+            { identityKey: secondaryKey, status: "still-active" },
+          ],
+        },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [{ ...secondaryFinding, severity: "low" }],
+          priorFindingDispositions: [
+            { identityKey: primaryKey, status: "still-active" },
+            { identityKey: secondaryKey, status: "still-active" },
+          ],
+        },
+      },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: primaryKey, status: "verified-closed" },
+            { identityKey: secondaryKey, status: "verified-closed" },
+          ],
+        },
+      },
+    ]);
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary.reason).toBe("same_module_still_red");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+    ]);
+  });
+
+  it("continues fixing after a scoped continue-fixing bookkeeping event resets no-progress state", async () => {
+    const continueFixingEvent = {
+      step: "S4",
+      event: "runner_bookkeeping",
+      intent: "continue_fixing",
+      findingIdentityKey: blockingKey,
+      findingScope: { identityKeys: [blockingKey] },
+      source: "resume_input",
+      ts: "2026-07-01T00:00:00.000Z",
+      reason: "human explicitly instructed the runner to keep fixing this active finding",
+    } as unknown as PersistentLedgerEntry;
+    expect(continueFixingEvent).not.toHaveProperty("output");
+    expect(continueFixingEvent).not.toHaveProperty("verdict");
+
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        continueFixingEvent,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S5:coder",
+      "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
+  it("uses current run continue-fixing input even when no durable continue event exists", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({
+      issueNumber: 446,
+      backend,
+      repairIntent: {
+        event: "runner_bookkeeping",
+        intent: "continue_fixing",
+        findingIdentityKey: blockingKey,
+        source: "resume_input",
+        ts: "2026-07-01T00:00:01.000Z",
+      },
+    });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
+  it("does not treat source-less continue-fixing bookkeeping as an executable human resume", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "runner_bookkeeping",
+          intent: "continue_fixing",
+          findingIdentityKey: blockingKey,
+          findingScope: { identityKeys: [blockingKey] },
+          ts: "2026-07-01T00:00:02.000Z",
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend([], resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatched).toEqual([]);
+  });
+
+  it("does not reopen an S4 decision escalation for stale or scope-mismatched continue-fixing bookkeeping", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "runner_bookkeeping",
+          intent: "continue_fixing",
+          findingIdentityKey: blockingKey,
+          findingScope: { identityKeys: [blockingKey] },
+          source: "coordinator",
+          ts: "2026-07-01T00:00:02.000Z",
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend([], resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatched).toEqual([]);
+  });
+
+  it("ignores malformed finding scopes on resume bookkeeping without throwing", async () => {
+    const baseLedger = [
+      { step: "S0" },
+      { step: "S1" },
+      { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+      { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+      { step: "S4" },
+      { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+      {
+        step: "S6",
+        output: {
+          kind: "reviewer",
+          findings: [blocking],
+          priorFindingDispositions: [
+            { identityKey: blockingKey, status: "still-active" },
+          ],
+        },
+      },
+      { step: "S4" },
+      { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+      {
+        step: "S6",
+        output: {
+          kind: "reviewer",
+          findings: [blocking],
+          priorFindingDispositions: [
+            { identityKey: blockingKey, status: "still-active" },
+          ],
+        },
+      },
+      { step: "S4" },
+      { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+    ] as const;
+    const malformedEvents = [
+      {
+        step: "S4",
+        event: "runner_bookkeeping",
+        intent: "continue_fixing",
+        findingScope: { identityKeys: "not-an-array" },
+        source: "resume_input",
+        ts: "2026-07-01T00:00:03.000Z",
+      },
+      {
+        step: "S4",
+        event: "escalation_answered",
+        forStep: "S4",
+        answer: "继续修",
+        source: "human",
+        findingScope: { locations: [7] },
+      },
+    ];
+
+    for (const event of malformedEvents) {
+      const backend = new RetryReviewBackend([], {
+        worktree: WORKTREE,
+        stateDir: "/resident/worktrees/.ledger-446",
+        ledger: [...baseLedger, event] as ReadonlyArray<PersistentLedgerEntry>,
+      });
+
+      const result = await runOrchestrator({ issueNumber: 446, backend });
+
+      expect(result.status).toBe("escalate");
+      expect(backend.dispatched).toEqual([]);
+    }
+  });
+
+  it("does not map unscoped escalation answers to continue-fixing repair intent", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [blocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "escalation_answered",
+          forStep: "S4",
+          answer: "继续修",
+          source: "human",
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend([], resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatched).toEqual([]);
+  });
+
+  it("preserves a persisted terminal error stop summary on already-done re-feed", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446-error",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: false, commitsAdded: 0 } },
+        {
+          step: "S8",
+          handoffStatus: "error",
+          stopSummary: {
+            reason: "contract_drift",
+            summary: "persisted malformed coder output",
+            repairHint: "repair the coder contract and rerun",
+          },
+        },
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend([], resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.stopSummary).toMatchObject({
+      reason: "contract_drift",
+      summary: "persisted malformed coder output",
+    });
+    expect(backend.dispatched).toEqual([]);
+  });
+
+  it("maps scoped human or resume-input escalation answers to the matching active S4 finding only", async () => {
+    for (const source of ["human", "resume_input"] as const) {
+      const resumeState: ResumeState = {
+        worktree: WORKTREE,
+        stateDir: `/resident/worktrees/.ledger-446-${source}`,
+        ledger: [
+          { step: "S0" },
+          { step: "S1" },
+          { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+          { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+          { step: "S4" },
+          { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+          {
+            step: "S6",
+            output: {
+              kind: "reviewer",
+              findings: [blocking],
+              priorFindingDispositions: [
+                { identityKey: blockingKey, status: "still-active" },
+              ],
+            },
+          },
+          { step: "S4" },
+          { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+          {
+            step: "S6",
+            output: {
+              kind: "reviewer",
+              findings: [blocking],
+              priorFindingDispositions: [
+                { identityKey: blockingKey, status: "still-active" },
+              ],
+            },
+          },
+          { step: "S4" },
+          { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+          {
+            step: "S4",
+            event: "escalation_answered",
+            forStep: "S4",
+            answer: "继续修",
+            source,
+            findingScope: { identityKeys: [blockingKey] },
+          } as unknown as PersistentLedgerEntry,
+        ] as ReadonlyArray<PersistentLedgerEntry>,
+      };
+      const backend = new RetryReviewBackend(
+        [
+          {
+            kind: "completed",
+            output: {
+              kind: "reviewer",
+              findings: [],
+              priorFindingDispositions: [
+                { identityKey: blockingKey, status: "verified-closed" },
+              ],
+            },
+          },
+        ],
+        resumeState,
+      );
+
+      const result = await runOrchestrator({ issueNumber: 446, backend });
+
+      expect(result.status).toBe("success");
+      expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship"]);
+    }
+  });
+
+  it("does not treat scoped coordinator or peripheral escalation answers as executable continue-fixing input", async () => {
+    for (const source of ["coordinator", "peripheral"] as const) {
+      const resumeState: ResumeState = {
+        worktree: WORKTREE,
+        stateDir: `/resident/worktrees/.ledger-446-${source}`,
+        ledger: [
+          { step: "S0" },
+          { step: "S1" },
+          { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+          { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+          { step: "S4" },
+          { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+          {
+            step: "S6",
+            output: {
+              kind: "reviewer",
+              findings: [blocking],
+              priorFindingDispositions: [
+                { identityKey: blockingKey, status: "still-active" },
+              ],
+            },
+          },
+          { step: "S4" },
+          { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+          {
+            step: "S4",
+            event: "escalation_answered",
+            forStep: "S4",
+            answer: "继续修",
+            source,
+            findingScope: { identityKeys: [blockingKey] },
+          } as unknown as PersistentLedgerEntry,
+        ] as ReadonlyArray<PersistentLedgerEntry>,
+      };
+      const backend = new RetryReviewBackend([], resumeState);
+
+      const result = await runOrchestrator({ issueNumber: 446, backend });
+
+      expect(result.status).toBe("escalate");
+      expect(backend.dispatched).toEqual([]);
+    }
+  });
+
+  it("matches broad file scope against path-line findings without resetting sibling findings", async () => {
+    const runnerFinding: Finding = {
+      severity: "high",
+      category: "correctness",
+      claim_quote: "locations.has(normaliseScopePart(finding.location))",
+      location: "orchestrator/src/runner.ts:380",
+      suggested_fix: "match file scope against path:line findings",
+      action: "fix_now",
+    };
+    const runnerFindingKey =
+      "correctness|orchestrator/src/runner.ts:380|locations.has(normalisescopepart(finding.location))";
+    const siblingFinding: Finding = {
+      severity: "high",
+      category: "correctness",
+      claim_quote: "matchingIdentityKeys: replay.blockingIdentityKeys",
+      location: "orchestrator/src/runner.ts:421",
+      suggested_fix: "require scoped answers",
+      action: "fix_now",
+    };
+    const siblingFindingKey =
+      "correctness|orchestrator/src/runner.ts:421|matchingidentitykeys: replay.blockingidentitykeys";
+
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        {
+          step: "S2",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S3",
+          output: { kind: "reviewer", findings: [runnerFinding, siblingFinding] },
+        },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [runnerFinding, siblingFinding],
+            priorFindingDispositions: [
+              { identityKey: runnerFindingKey, status: "still-active" },
+              { identityKey: siblingFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [runnerFinding, siblingFinding],
+            priorFindingDispositions: [
+              { identityKey: runnerFindingKey, status: "still-active" },
+              { identityKey: siblingFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "runner_bookkeeping",
+          intent: "continue_fixing",
+          findingScope: { locations: ["orchestrator/src/runner.ts"] },
+          source: "resume_input",
+          ts: "2026-07-01T00:00:03.000Z",
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend([], resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatched).toEqual([]);
+  });
+
+  it("matches broad file scope against path-line-symbol findings", async () => {
+    const fileScopedFinding: Finding = {
+      severity: "high",
+      category: "correctness",
+      claim_quote: "stripLocationLine(value)",
+      location: "orchestrator/src/runner.ts:410:runPass",
+      suggested_fix: "match file scope against path:line:symbol findings",
+      action: "fix_now",
+    };
+    const fileScopedFindingKey = findingIdentityKey(fileScopedFinding);
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        {
+          step: "S2",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding] } },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [fileScopedFinding],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [fileScopedFinding],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "runner_bookkeeping",
+          intent: "continue_fixing",
+          findingScope: { locations: ["orchestrator/src/runner.ts"] },
+          source: "resume_input",
+          ts: "2026-07-01T00:00:04.000Z",
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship"]);
+  });
+
+  it("uses broad file scope when it maps to one active finding lineage", async () => {
+    const fileScopedFinding: Finding = {
+      severity: "high",
+      category: "correctness",
+      claim_quote: "locations.has(normaliseScopePart(finding.location))",
+      location: "orchestrator/src/runner.ts:380",
+      suggested_fix: "match file scope against path:line findings",
+      action: "fix_now",
+    };
+    const fileScopedFindingKey =
+      "correctness|orchestrator/src/runner.ts:380|locations.has(normalisescopepart(finding.location))";
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        {
+          step: "S2",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding] } },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [fileScopedFinding],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [fileScopedFinding],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "runner_bookkeeping",
+          intent: "continue_fixing",
+          findingScope: { locations: ["orchestrator/src/runner.ts"] },
+          source: "resume_input",
+          ts: "2026-07-01T00:00:04.000Z",
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship"]);
+  });
+
+  it("matches nested directory scope segments to active finding locations", async () => {
+    const fileScopedFinding: Finding = {
+      severity: "high",
+      category: "correctness",
+      claim_quote: "locations.has(normaliseScopePart(finding.location))",
+      location: "orchestrator/src/runner.ts:380",
+      suggested_fix: "match nested directory scope against path:line findings",
+      action: "fix_now",
+    };
+    const fileScopedFindingKey =
+      "correctness|orchestrator/src/runner.ts:380|locations.has(normalisescopepart(finding.location))";
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        {
+          step: "S2",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding] } },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [fileScopedFinding],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        {
+          step: "S5",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        },
+        {
+          step: "S6",
+          output: {
+            kind: "reviewer",
+            findings: [fileScopedFinding],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "still-active" },
+            ],
+          },
+        },
+        { step: "S4" },
+        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        {
+          step: "S4",
+          event: "runner_bookkeeping",
+          intent: "continue_fixing",
+          findingScope: { locations: ["src"] },
+          source: "resume_input",
+          ts: "2026-07-01T00:00:04.000Z",
+        } as unknown as PersistentLedgerEntry,
+      ] as ReadonlyArray<PersistentLedgerEntry>,
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: fileScopedFindingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship"]);
   });
 });
 
@@ -533,6 +2008,7 @@ describe("#369 runner resume/retry review fixes", () => {
           event: "escalation_answered",
           forStep: "S5",
           answer: "continue after human answer",
+          source: "human",
         },
       ] as ReadonlyArray<PersistentLedgerEntry>,
     };
@@ -671,6 +2147,8 @@ describe("#369 runner resume/retry review fixes", () => {
       action: "fix_now",
     };
     const blockingKey = "correctness|src/runner.ts:970|fix this first";
+    const acceptedRiskKey =
+      "correctness|src/runner.ts:971|accepted risk survives resume";
     const acceptedRisk: Finding = {
       severity: "medium",
       category: "Correctness",
@@ -679,15 +2157,24 @@ describe("#369 runner resume/retry review fixes", () => {
       suggested_fix: "do not reopen at the same severity",
       action: "wont_fix",
       disposition_reason: "Accepted outside this slice",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "issue #369 resume fixture",
+        scope: "accepted risk survives resume",
+        reason: "Accepted outside this slice",
+        findingIdentity: acceptedRiskKey,
+        boundedReopen: "reopen on material severity upgrade",
+      },
     };
-    const acceptedRiskKey =
-      "correctness|src/runner.ts:971|accepted risk survives resume";
     const acceptedRiskDisposition = {
       identityKey: acceptedRiskKey,
-      status: "wont_fix" as const,
+      status: "accepted_suppressed" as const,
       reason: "Accepted outside this slice",
       severity: "medium" as const,
       reopenAttempts: 0,
+      source: "issue #369 resume fixture",
+      scope: "accepted risk survives resume",
+      boundedReopen: "reopen on material severity upgrade",
     };
     const resumeState: ResumeState = {
       worktree: WORKTREE,
@@ -712,6 +2199,11 @@ describe("#369 runner resume/retry review fixes", () => {
             findings: [{ ...acceptedRisk, action: "fix_now" }],
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "verified-closed" },
+              {
+                identityKey: acceptedRiskKey,
+                status: "still-active",
+                reason: "reviewer-only suppression must be repaired",
+              },
             ],
           },
         },
@@ -749,6 +2241,11 @@ describe("#369 runner resume/retry review fixes", () => {
       location: "src/runner.ts:926",
       suggested_fix: "surface the deferred finding",
       action: "defer",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "follow-up tracker",
+        reason: "Terminal resume should preserve valid cross-module defers.",
+      },
     };
     const resumeState: ResumeState = {
       worktree: WORKTREE,
@@ -876,6 +2373,14 @@ describe("#369 finding identity and classification", () => {
     suggested_fix: "review current full diff",
     action: "fix_now",
   };
+  const findingKey = "correctness|src/runner.ts:120|missing full diff review";
+  const acceptedSource = {
+    source: "issue #448 acceptance criteria",
+    scope: "same documented non-goal",
+    reason: "Accepted as outside this slice",
+    findingIdentity: findingKey,
+    boundedReopen: "reopen on severity upgrade, new evidence, or wider scope",
+  };
 
   it("uses a normalized category/location/claim identity key, not an object hash", () => {
     const sameFindingDifferentWording: Finding = {
@@ -920,38 +2425,109 @@ describe("#369 finding identity and classification", () => {
   });
 
   it("persists wont-fix and rejected dispositions with identity and rationale", () => {
-    const classification = classifyFindings([
-      {
+    const first: Finding = {
         ...finding,
         action: "wont_fix",
-        disposition_reason: "Accepted as outside this slice",
-      },
-      {
+        disposition_reason: "legacy fallback should not win",
+        disposition: {
+          kind: "accepted_suppressed",
+          ...acceptedSource,
+        },
+      };
+    const secondSource = {
+      source: "ADR 0030 accepted scope",
+      scope: "existing invariant",
+      reason: "The claim is false on the current full diff",
+      findingIdentity:
+        "correctness|src/runner.ts:120|already covered by existing invariant",
+      boundedReopen: "reopen if reviewer shows new failing evidence",
+    };
+    const second: Finding = {
         ...finding,
         claim_quote: "  Already covered by existing invariant ",
         action: "rejected",
         disposition_reason: "The claim is false on the current full diff",
-      },
-    ]);
+        disposition: {
+          kind: "accepted_suppressed",
+          ...secondSource,
+        },
+      };
+    const classification = classifyFindings([first, second], [], {
+      acceptedSuppressionSources: [acceptedSource, secondSource],
+    });
 
     expect(classification.deferred).toEqual([]);
     expect(classification.dispositions).toEqual([
       {
-        identityKey: "correctness|src/runner.ts:120|missing full diff review",
-        status: "wont_fix",
+        identityKey: findingKey,
+        status: "accepted_suppressed",
         reason: "Accepted as outside this slice",
         severity: "medium",
         reopenAttempts: 0,
+        source: acceptedSource.source,
+        scope: acceptedSource.scope,
+        boundedReopen: acceptedSource.boundedReopen,
       },
       {
         identityKey:
           "correctness|src/runner.ts:120|already covered by existing invariant",
-        status: "rejected",
+        status: "accepted_suppressed",
         reason: "The claim is false on the current full diff",
         severity: "medium",
         reopenAttempts: 0,
+        source: secondSource.source,
+        scope: secondSource.scope,
+        boundedReopen: secondSource.boundedReopen,
       },
     ]);
+  });
+
+  it("derives accepted_suppressed rationale and finding identity when workers omit redundant fields", () => {
+    const suppressed: Finding = {
+      ...finding,
+      action: "wont_fix",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: acceptedSource.source,
+        scope: acceptedSource.scope,
+        reason: acceptedSource.reason,
+        boundedReopen: acceptedSource.boundedReopen,
+      },
+    };
+
+    expect(isValidFinding(suppressed)).toBe(true);
+    expect(
+      classifyFindings([suppressed], [], {
+        acceptedSuppressionSources: [acceptedSource],
+      }).dispositions,
+    ).toEqual([
+      {
+        identityKey: findingKey,
+        status: "accepted_suppressed",
+        reason: acceptedSource.reason,
+        severity: "medium",
+        reopenAttempts: 0,
+        source: acceptedSource.source,
+        scope: acceptedSource.scope,
+        boundedReopen: acceptedSource.boundedReopen,
+      },
+    ]);
+  });
+
+  it("does not let reviewer text fabricate an accepted suppression", () => {
+    const suppressed: Finding = {
+      ...finding,
+      action: "wont_fix",
+      disposition: {
+        kind: "accepted_suppressed",
+        ...acceptedSource,
+      },
+    };
+
+    const classification = classifyFindings([suppressed]);
+
+    expect(classification.blocking).toEqual([suppressed]);
+    expect(classification.dispositions).toEqual([]);
   });
 
   it("rejects critical/high findings unless they are fix-now", () => {
@@ -979,7 +2555,390 @@ describe("#369 finding identity and classification", () => {
     ).toBe(true);
   });
 
+  it("keeps same-module defer blocking instead of letting S4 pass", () => {
+    const sameModuleDefer: Finding = {
+      ...finding,
+      action: "defer",
+      disposition: {
+        kind: "same_module",
+        reason: "The finding is inside the current runner/reviewer contract.",
+      },
+    };
+
+    const classification = classifyFindings([sameModuleDefer]);
+
+    expect(classification.blocking).toEqual([sameModuleDefer]);
+    expect(classification.deferred).toEqual([]);
+    expect(
+      route({
+        from: "S4",
+        output: { kind: "reviewer", findings: [sameModuleDefer] },
+      }),
+    ).toEqual({ kind: "next", step: "S5" });
+  });
+
+  it("allows only well-scoped cross-module defer to pass through deferred", () => {
+    const crossModuleDefer: Finding = {
+      ...finding,
+      action: "defer",
+      disposition: {
+        kind: "cross_module",
+        targetModule: "family integrated CMR",
+        reason: "Requires the separate family-level CMR worker, not this slice runner.",
+      },
+    };
+
+    const classification = classifyFindings([crossModuleDefer]);
+
+    expect(classification.blocking).toEqual([]);
+    expect(classification.deferred).toEqual([crossModuleDefer]);
+    expect(
+      route({
+        from: "S4",
+        output: { kind: "reviewer", findings: [crossModuleDefer] },
+      }),
+    ).toEqual({ kind: "next", step: "S7" });
+    expect(
+      isValidFinding({
+        ...crossModuleDefer,
+        disposition: { kind: "cross_module", reason: "missing target" },
+      }),
+    ).toBe(false);
+  });
+
+  it("records owning-issue still-red defer as blocking with the target surface", () => {
+    const stillRed: Finding = {
+      ...finding,
+      action: "defer",
+      disposition: {
+        kind: "owning_issue_still_red",
+        owningIssue: "#446",
+        missingSurface: "runner resume route still lacks continue-fixing replay",
+        nextStep: "continue the #446 fix loop",
+        reason: "The gap is in this family/module and remains unclosed.",
+      },
+    };
+
+    const classification = classifyFindings([stillRed]);
+
+    expect(classification.blocking).toEqual([stillRed]);
+    expect(classification.deferred).toEqual([]);
+    expect(isValidFinding(stillRed)).toBe(true);
+    expect(
+      isValidFinding({
+        ...stillRed,
+        disposition: {
+          kind: "owning_issue_still_red",
+          owningIssue: "#446",
+          reason: "missing required fields",
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("classifies spec conflicts and infra failures separately but fail-closed", () => {
+    const specConflict: Finding = {
+      ...finding,
+      action: "defer",
+      disposition: {
+        kind: "spec_conflict",
+        source: "ADR 0030 conflicts with issue #448",
+        reason: "Two accepted contracts require different S4 outcomes.",
+      },
+    };
+    const infraFailure: Finding = {
+      ...finding,
+      claim_quote: "gh auth failed",
+      action: "defer",
+      disposition: {
+        kind: "infra_failure",
+        source: "gh issue view",
+        reason: "The runner cannot fetch issue truth.",
+      },
+    };
+
+    const classification = classifyFindings([specConflict, infraFailure]);
+
+    expect(classification.blocking).toEqual([specConflict, infraFailure]);
+    expect(classification.deferred).toEqual([]);
+    expect(isValidFinding(specConflict)).toBe(true);
+    expect(isValidFinding(infraFailure)).toBe(true);
+  });
+
+  it("requires sourced accepted suppression and reopens it when evidence exceeds the bound", () => {
+    const acceptedSuppressed: Finding = {
+      ...finding,
+      action: "wont_fix",
+      disposition_reason: "Accepted by issue text as out of scope",
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "issue #448 acceptance criteria",
+        scope: "cross-module target already tracked",
+        reason: "Accepted by issue text as out of scope",
+        findingIdentity: findingIdentityKey(finding),
+        targetModule: "family integrated CMR",
+        boundedReopen: "reopen on higher severity, new evidence, or different scope",
+      },
+    };
+
+    const acceptedSuppressions = [
+      {
+        source: "issue #448 acceptance criteria",
+        scope: "cross-module target already tracked",
+        reason: "Accepted by issue text as out of scope",
+        findingIdentity: findingIdentityKey(finding),
+        boundedReopen: "reopen on higher severity, new evidence, or different scope",
+      },
+    ];
+    const suppressed = classifyFindings([acceptedSuppressed], [], {
+      acceptedSuppressionSources: acceptedSuppressions,
+    });
+
+    expect(suppressed.blocking).toEqual([]);
+    expect(suppressed.dispositions).toEqual([
+      {
+        identityKey: findingIdentityKey(finding),
+        status: "accepted_suppressed",
+        reason: "Accepted by issue text as out of scope",
+        severity: "medium",
+        reopenAttempts: 0,
+        source: "issue #448 acceptance criteria",
+        scope: "cross-module target already tracked",
+        targetModule: "family integrated CMR",
+        boundedReopen: "reopen on higher severity, new evidence, or different scope",
+      },
+    ]);
+    expect(
+      isValidFinding({
+        ...acceptedSuppressed,
+        disposition: {
+          kind: "accepted_suppressed",
+          source: "issue #448 acceptance criteria",
+          reason: "missing scope, identity, and reopen condition",
+        },
+      }),
+    ).toBe(false);
+
+    const reopened = classifyFindings(
+      [{ ...finding, severity: "high", action: "fix_now" }],
+      suppressed.dispositions,
+      { acceptedSuppressionSources: acceptedSuppressions },
+    );
+
+    expect(reopened.blocking).toEqual([
+      { ...finding, severity: "high", action: "fix_now" },
+    ]);
+    expect(reopened.dispositions[0]).toMatchObject({
+      status: "accepted_suppressed",
+      severity: "high",
+      reopenAttempts: 1,
+    });
+  });
+
+  it("treats accepted_suppressed prior claimed-fixed dispositions as terminal closure", () => {
+    const key = findingIdentityKey(finding);
+
+    const adjudication = adjudicatePriorClaimedFixedFindings({
+      priorFindings: [finding],
+      priorIdentityKeys: [key],
+      acceptedSuppressionSources: [
+        {
+          source: "issue #448 acceptance criteria",
+          scope: "same claimed-fixed finding",
+          reason: "accepted by the owner for this bounded scope",
+          findingIdentity: key,
+          boundedReopen: "reopen on higher severity or different scope",
+        },
+      ],
+      review: {
+        kind: "reviewer",
+        findings: [],
+        priorFindingDispositions: [
+          {
+            identityKey: key,
+            status: "accepted_suppressed",
+            source: "issue #448 acceptance criteria",
+            scope: "same claimed-fixed finding",
+            reason: "accepted by the owner for this bounded scope",
+            boundedReopen: "reopen on higher severity or different scope",
+          },
+        ],
+      },
+    });
+
+    expect(adjudication.stillOpen).toEqual([]);
+    expect(adjudication.verifiedClosedIdentityKeys).toEqual([key]);
+  });
+
+  it("keeps high prior claimed-fixed findings open even with accepted_suppressed disposition", () => {
+    const highFinding: Finding = {
+      ...finding,
+      severity: "high",
+      action: "fix_now",
+    };
+    const key = findingIdentityKey(highFinding);
+
+    const adjudication = adjudicatePriorClaimedFixedFindings({
+      priorFindings: [highFinding],
+      priorIdentityKeys: [key],
+      acceptedSuppressionSources: [
+        {
+          source: "issue #448 acceptance criteria",
+          scope: "same claimed-fixed finding",
+          reason: "accepted by the owner for this bounded scope",
+          findingIdentity: key,
+          boundedReopen: "reopen on higher severity or different scope",
+        },
+      ],
+      review: {
+        kind: "reviewer",
+        findings: [],
+        priorFindingDispositions: [
+          {
+            identityKey: key,
+            status: "accepted_suppressed",
+            source: "issue #448 acceptance criteria",
+            scope: "same claimed-fixed finding",
+            reason: "accepted by the owner for this bounded scope",
+            boundedReopen: "reopen on higher severity or different scope",
+          },
+        ],
+      },
+    });
+
+    expect(adjudication.stillOpen).toEqual([highFinding]);
+    expect(adjudication.verifiedClosedIdentityKeys).toEqual([]);
+  });
+
+  it("does not treat reviewer-created accepted_suppressed prior dispositions as terminal closure", () => {
+    const key = findingIdentityKey(finding);
+
+    const adjudication = adjudicatePriorClaimedFixedFindings({
+      priorFindings: [finding],
+      priorIdentityKeys: [key],
+      review: {
+        kind: "reviewer",
+        findings: [],
+        priorFindingDispositions: [
+          {
+            identityKey: key,
+            status: "accepted_suppressed",
+            source: "reviewer judgement",
+            scope: "same claimed-fixed finding",
+            reason: "the reviewer decided this is acceptable",
+            boundedReopen: "maybe reconsider later",
+          },
+        ],
+      },
+    });
+
+    expect(adjudication.stillOpen).toEqual([finding]);
+    expect(adjudication.verifiedClosedIdentityKeys).toEqual([]);
+  });
+
+  it("requires accepted_suppressed prior dispositions to carry the suppression reason", () => {
+    const baseDisposition = {
+      identityKey: "correctness|src/runner.ts:427|accepted by owner",
+      status: "accepted_suppressed" as const,
+      source: "#427 owner answer",
+      scope: "runner review/fix loop",
+      boundedReopen: "reopen if the same runner path regresses",
+    };
+
+    expect(isValidPriorFindingDisposition(baseDisposition)).toBe(false);
+    expect(
+      isValidPriorFindingDisposition({
+        ...baseDisposition,
+        reason: "Owner accepted this bounded risk.",
+      }),
+    ).toBe(true);
+    expect(
+      isValidPriorFindingDisposition({
+        ...baseDisposition,
+        source: "reviewer judgement",
+        reason: "Reviewer accepted this bounded risk.",
+      }),
+    ).toBe(false);
+    expect(
+      isValidPriorFindingDisposition({
+        ...baseDisposition,
+        reason: "Owner accepted this bounded risk.",
+        boundedReopen: "maybe later",
+      }),
+    ).toBe(false);
+    expect(
+      isValidPriorFindingDisposition({
+        ...baseDisposition,
+        source: { issue: "#427" },
+        reason: "Owner accepted this bounded risk.",
+      }),
+    ).toBe(false);
+  });
+
+  it("fails closed when prior dispositions lack sourced accepted-suppression evidence", () => {
+    const priorDispositions = [
+      {
+        identityKey: findingIdentityKey(finding),
+        status: "wont_fix" as const,
+        reason: "legacy unsourced acceptance",
+        severity: "medium" as const,
+        reopenAttempts: 0,
+        disputeAttempts: 1,
+      },
+      {
+        identityKey: findingIdentityKey({
+          ...finding,
+          claim_quote: "legacy rejected finding",
+        }),
+        status: "rejected" as const,
+        reason: "legacy unsourced rejection",
+        severity: "medium" as const,
+        reopenAttempts: 0,
+        disputeAttempts: 1,
+      },
+      {
+        identityKey: findingIdentityKey({
+          ...finding,
+          claim_quote: "incomplete accepted suppression",
+        }),
+        status: "accepted_suppressed" as const,
+        reason: "missing source/scope/bounded reopen",
+        severity: "medium" as const,
+        reopenAttempts: 0,
+        disputeAttempts: 1,
+        source: "issue #448",
+      },
+    ];
+    const findings = [
+      { ...finding, action: "fix_now" as const },
+      {
+        ...finding,
+        claim_quote: "legacy rejected finding",
+        action: "fix_now" as const,
+      },
+      {
+        ...finding,
+        claim_quote: "incomplete accepted suppression",
+        action: "fix_now" as const,
+      },
+    ];
+
+    const classification = classifyFindings(findings, priorDispositions);
+
+    expect(classification.blocking).toEqual(findings);
+    expect(classification.deferred).toEqual([]);
+  });
+
   it("reopens a suppressed finding on severity upgrade but caps reopen attempts at four", () => {
+    const acceptedSuppressionSources = [
+      {
+        source: "issue #448 acceptance criteria",
+        scope: "same finding identity",
+        reason: "previously accepted risk",
+        findingIdentity: findingIdentityKey(finding),
+        boundedReopen: "reopen on severity upgrade",
+      },
+    ];
     const classification = classifyFindings(
       [
         {
@@ -991,22 +2950,29 @@ describe("#369 finding identity and classification", () => {
       [
         {
           identityKey: findingIdentityKey(finding),
-          status: "wont_fix",
+          status: "accepted_suppressed",
           reason: "previously accepted risk",
           severity: "medium",
           reopenAttempts: 3,
+          source: "issue #448 acceptance criteria",
+          scope: "same finding identity",
+          boundedReopen: "reopen on severity upgrade",
         },
       ],
+      { acceptedSuppressionSources },
     );
 
     expect(classification.blocking).toHaveLength(1);
     expect(classification.dispositions).toEqual([
       {
         identityKey: findingIdentityKey(finding),
-        status: "wont_fix",
+        status: "accepted_suppressed",
         reason: "previously accepted risk",
         severity: "high",
         reopenAttempts: 4,
+        source: "issue #448 acceptance criteria",
+        scope: "same finding identity",
+        boundedReopen: "reopen on severity upgrade",
       },
     ]);
 
@@ -1019,6 +2985,7 @@ describe("#369 finding identity and classification", () => {
         },
       ],
       classification.dispositions,
+      { acceptedSuppressionSources },
     );
 
     expect(capped.blocking).toEqual([
@@ -1033,6 +3000,15 @@ describe("#369 finding identity and classification", () => {
   });
 
   it("allows one same-severity dispute of a suppressed finding, then suppresses repeats", () => {
+    const acceptedSuppressionSources = [
+      {
+        source: "issue #448 acceptance criteria",
+        scope: "same finding identity",
+        reason: "previously accepted risk",
+        findingIdentity: findingIdentityKey(finding),
+        boundedReopen: "reopen on same-severity dispute once",
+      },
+    ];
     const disputed = classifyFindings(
       [
         {
@@ -1044,12 +3020,16 @@ describe("#369 finding identity and classification", () => {
       [
         {
           identityKey: findingIdentityKey(finding),
-          status: "wont_fix",
+          status: "accepted_suppressed",
           reason: "previously accepted risk",
           severity: "medium",
           reopenAttempts: 0,
+          source: "issue #448 acceptance criteria",
+          scope: "same finding identity",
+          boundedReopen: "reopen on same-severity dispute once",
         },
       ],
+      { acceptedSuppressionSources },
     );
 
     expect(disputed.blocking).toEqual([
@@ -1062,10 +3042,13 @@ describe("#369 finding identity and classification", () => {
     expect(disputed.dispositions).toEqual([
       {
         identityKey: findingIdentityKey(finding),
-        status: "wont_fix",
+        status: "accepted_suppressed",
         reason: "previously accepted risk",
         severity: "medium",
         reopenAttempts: 0,
+        source: "issue #448 acceptance criteria",
+        scope: "same finding identity",
+        boundedReopen: "reopen on same-severity dispute once",
         disputeAttempts: 1,
       },
     ]);
@@ -1079,6 +3062,7 @@ describe("#369 finding identity and classification", () => {
         },
       ],
       disputed.dispositions,
+      { acceptedSuppressionSources },
     );
 
     expect(repeated.blocking).toEqual([]);
@@ -1163,6 +3147,7 @@ describe("#369 legacy S5 landing file", () => {
         forStep: "S4",
         answer: "continue-same-class",
         note: "human approved another targeted fix round",
+        source: "human",
       },
     });
 
@@ -1175,6 +3160,7 @@ describe("#369 legacy S5 landing file", () => {
         forStep: "S4",
         answer: "continue-same-class",
         note: "human approved another targeted fix round",
+        source: "human",
       },
     });
     expect(JSON.parse(readFileSync(join(worktree.path, ".orchestrator-fix-findings.json"), "utf8"))).toEqual({

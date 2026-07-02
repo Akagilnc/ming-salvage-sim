@@ -88,6 +88,9 @@ class FakeFamilyBackend implements FamilyBackend {
   async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
     return this.ledger;
   }
+  async readFamilyHead(_familyBase: string): Promise<string> {
+    return this.head;
+  }
 }
 
 function epicWith(...childIssues: number[]): FamilyEpic {
@@ -128,6 +131,41 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     ]);
     // A complete clean run is observably "success" (#293 no-op verify passes).
     expect(result.status).toBe("success");
+  });
+
+  it("already-shipped resume reports already_done instead of a generic success summary", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "pr://family/293-base",
+        familyHeadAfter: "family-base-0",
+      },
+    );
+    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.stopSummary).toMatchObject({
+      reason: "already_done",
+      summary: "family run already shipped for the current family HEAD",
+      metadata: {
+        heads: expect.objectContaining({
+          actualFamilyHead: "family-base-0",
+        }),
+      },
+    });
+    expect(singleSliceBackend.prepareBases).toEqual([]);
   });
 
   it("each child is cut from the FAMILY base (not main) and does NOT push remotely", async () => {
@@ -212,19 +250,12 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
     expect(result.children.map((c) => c.status)).toEqual(["merged", "merged"]);
   });
 
-  it("a child that FAILS its own S0 rfa gate makes the whole family run REJECT (gate throw propagates), not a fabricated merge", async () => {
-    // One child is not ready-for-agent → its single-slice S0 gate THROWS (a caller
-    // input fault, same as the single-slice contract — not converted to a returned
-    // "failed" RunResult). #293 thinnest: the spine does not catch that throw, so it
-    // propagates out and the whole runFamily rejects. The spine never fabricates a
-    // partial merge for the bad child. (A child that fails LATER — e.g. review never
-    // approves — returns a non-success RunResult and IS recorded "failed"; only S0
-    // gate violations throw. Catching gate throws into a per-child "failed" is a
-    // downstream choice, not #293.)
+  it("a child that FAILS its own S0 rfa gate makes the family run incomplete, not a fabricated merge", async () => {
+    // One child is not ready-for-agent → its single-slice S0 gate returns a
+    // structured terminal error. The family spine records that child as failed and
+    // returns an incomplete family result; it never fabricates a merge for it.
     class GateRejectChildBackend extends ChildBackend {
       override async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
-        // Child 11 is NOT ready-for-agent (isReadyForAgent:false) → its S0 gate
-        // throws on the rfa check (the assertion below matches /ready-for-agent/i).
         return {
           number: issueNumber,
           isReadyForAgent: issueNumber !== 11,
@@ -237,17 +268,52 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
     const singleSliceBackend = new GateRejectChildBackend();
     const familyBackend = new FakeFamilyBackend();
 
-    // Child 11's gate throws inside runOrchestrator. #293 thinnest: the spine
-    // lets that S0-gate throw propagate (it is a caller input fault, same as the
-    // single-slice contract — a malformed wave is not silently swallowed). The
-    // family run rejects rather than fabricating a partial merge.
-    await expect(
-      runFamily({
-        epic: epicWith(10, 11),
-        familyBackend,
-        singleSliceBackend,
-        familyBase: "family/293-base",
-      }),
-    ).rejects.toThrow(/ready-for-agent/i);
+    const result = await runFamily({
+      epic: epicWith(10, 11),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("incomplete");
+    expect(result.children).toEqual([
+      { issue: 10, status: "merged", branch: "feat/child-10" },
+      { issue: 11, status: "failed", branch: undefined },
+    ]);
+    expect(result.stopSummary.reason).toBe("owning_issue_still_red");
+    expect(result.stopSummary.summary).toContain("#11:failed");
+  });
+
+  it("verify_failed family result preserves the barrier stop summary from the ledger", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+      verifyCmr: async ({ familyBackend: backend }) => {
+        await backend.appendFamilyLedger({
+          status: "aborted",
+          event: "aborted",
+          phase: "final",
+          reason: "same-module CMR finding still red",
+          familyHeadAfter: "head-after-cmr",
+          stopSummary: {
+            reason: "same_module_still_red",
+            summary: "same-module CMR finding still red",
+            repairHint: "continue the family CMR fix loop",
+          },
+        });
+        return { ok: false, ran: true };
+      },
+    });
+
+    expect(result.status).toBe("verify_failed");
+    expect(result.stopSummary).toMatchObject({
+      reason: "same_module_still_red",
+      summary: "same-module CMR finding still red",
+      repairHint: "continue the family CMR fix loop",
+    });
   });
 });

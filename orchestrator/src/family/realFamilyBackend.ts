@@ -64,14 +64,16 @@ import { z } from "zod";
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
+import {
+  hasBoundedReopenCondition,
+  hasExplicitAcceptedSuppressionSource,
+} from "../acceptedSuppression.js";
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
+import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
 import {
   agentForSlug,
   branchForIssue,
-  extractCoderTag,
-  realCommitCount,
-  reconcileCoderCommits,
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_REPO_ENV,
@@ -81,12 +83,12 @@ import {
   WORKER_IDLE_TIMEOUT_SECONDS,
   modelFamilyForSlug,
 } from "../realBackend.js";
-import { cmrLegAccountingFailure, cmrReviewLegs, modelForSlot } from "../modelRoutes.js";
 import {
-  cmrWorkerSpec,
-  familyShipWorkerSpec,
-  legacyDispatchFamilyWorker,
-} from "./dispatchFamilyWorker.js";
+  cmrLegAccountingFailure,
+  modelForSlot,
+  type CmrLegAccountingRoute,
+} from "../modelRoutes.js";
+import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import { recordFamilyEscalated } from "./ledger.js";
 import {
   isFilledString,
@@ -96,6 +98,7 @@ import {
 
 import type {
   DispatchContext,
+  Finding,
   PriorFindingDisposition,
   StepSoul,
   WorkerResult,
@@ -989,7 +992,13 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (outcome.kind === "malformed") {
       // No parseable verdict ⇒ malformed (the gate must never read it as a pass).
-      return { kind: "malformed", reason: outcome.reason };
+      return {
+        kind: "malformed",
+        reason: outcome.reason,
+        ...(outcome.cmrLegAccountingPayload !== undefined
+          ? { cmrLegAccountingPayload: outcome.cmrLegAccountingPayload }
+          : {}),
+      };
     }
     return {
       kind: "completed",
@@ -1009,6 +1018,7 @@ export class RealFamilyBackend implements FamilyBackend {
         ...(outcome.priorFindingDispositions !== undefined
           ? { priorFindingDispositions: outcome.priorFindingDispositions }
           : {}),
+        ...(outcome.findings !== undefined ? { findings: outcome.findings } : {}),
       },
     };
   }
@@ -1093,6 +1103,17 @@ export class RealFamilyBackend implements FamilyBackend {
     // `mountCmrAuth` creates per-run temp auth dirs (codex/agy) BEFORE the early
     // claude-token escalate below; the finally reclaims them on success, exception,
     // AND that early return (online review r1 — 3 bots: leaked temp dirs).
+    const frozenReviewLegs = spec.cmrReviewLegs;
+    if (frozenReviewLegs === undefined) {
+      return {
+        kind: "escalate",
+        reason: "cmr worker spec missing frozen review legs",
+        diagnosis:
+          "cmrWorkerSpec must freeze the route-selected cmrReview leg collection before " +
+          "dispatch. Refusing to re-read process.env in runCmrWorker because that can " +
+          "write a route file that disagrees with the verified route fingerprint.",
+      };
+    }
     const auth = this.mountCmrAuth();
     try {
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
@@ -1120,12 +1141,12 @@ export class RealFamilyBackend implements FamilyBackend {
       // exact `git diff <familyBaseStartHead>...<familyBase>` scope command + the
       // baseline SHA + the machine-resolved children.
       this.writeCmrFocusFile(ctx);
-      this.writeCmrRouteFile(ctx.cmrPass);
+      this.writeCmrRouteFile(ctx, frozenReviewLegs);
       const result = await sc.run({
         name: "family-cmr",
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: this.opts.workingRepo,
-        sandbox: this.cmrSandbox(auth),
+        sandbox: this.cmrSandbox(auth, frozenReviewLegs),
         // Derive the model from the spec via the shared validated seam (cmr S336 r7
         // symmetry): resolve the worker's slug through the same registry as the
         // single-slice + family ship paths — no constant that could silently drift
@@ -1141,7 +1162,10 @@ export class RealFamilyBackend implements FamilyBackend {
         branchStrategy: { type: "head" },
         promptFile: join(this.opts.promptsDir, spec.promptFile),
       });
-      return cmrOutcomeFromResult(result);
+      return cmrOutcomeFromResult({
+        ...result,
+        cmrReviewLegs: frozenReviewLegs,
+      });
     } finally {
       this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
     }
@@ -1195,13 +1219,29 @@ export class RealFamilyBackend implements FamilyBackend {
             2,
           )}\n\`\`\`\n\nRetry the previously paused family gate with this answer in force. Do not repeat the same HITL escalation unless this answer leaves a concrete blocker unresolved.`
         : "";
+    const moduleBlock =
+      ctx.moduleContext !== undefined
+        ? `\n\nParsed module context (#449; runner-derived, do not infer from prose):\n\n\`\`\`json\n${JSON.stringify(
+            ctx.moduleContext,
+            null,
+            2,
+          )}\n\`\`\``
+        : "\n\nParsed module context (#449): none declared; do not approve cross_module defer from inferred prose/logs.";
+    const closureBlock =
+      ctx.priorCmrFindingIdentityKeys !== undefined
+        ? `\n\nRunner-owned prior CMR finding identity keys that may be claimed fixed in this pass (#450 closure context):\n\n\`\`\`json\n${JSON.stringify(
+            ctx.priorCmrFindingIdentityKeys,
+            null,
+            2,
+          )}\n\`\`\`\n\nDo not invent claimed-fixed identity keys outside this list. If the list is empty, emit empty closure arrays unless this pass reports new findings.`
+        : "\n\nRunner-owned prior CMR finding identity keys (#450 closure context): none supplied. Do not claim fixed prior findings; emit empty closure arrays unless this pass reports new findings.";
     // The focus file is pass-scoped: it pins only the exact review scope and the
     // machine-resolved-child focus. Cross-pass accounting lives in the durable
     // ledger / worker verdict fields, not in this transient prompt file.
     const body =
       `# Integrated cmr — review scope + focus (machine-generated; #335)\n\n` +
       `Review THIS exact family-base diff (the commits the family base added since it\n` +
-      `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}${answerBlock}\n`;
+      `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}${moduleBlock}${closureBlock}${answerBlock}\n`;
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
     this.excludeFromGit(CMR_FOCUS_FILENAME);
@@ -1209,11 +1249,24 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /** Write the route-selected CMR review legs for the in-container worker. */
-  protected writeCmrRouteFile(pass: DispatchContext["cmrPass"]): void {
+  protected writeCmrRouteFile(
+    ctxOrPass: DispatchContext | DispatchContext["cmrPass"],
+    reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+  ): void {
+    const ctx =
+      typeof ctxOrPass === "string" || ctxOrPass === undefined || ctxOrPass === null
+        ? { cmrPass: ctxOrPass ?? undefined }
+        : ctxOrPass;
     const body = JSON.stringify(
       {
-        pass: pass ?? "legacy",
-        reviewLegs: cmrReviewLegs(),
+        pass: ctx.cmrPass ?? "legacy",
+        reviewLegs,
+        ...(ctx.moduleContext !== undefined
+          ? { moduleContext: ctx.moduleContext }
+          : {}),
+        ...(ctx.priorCmrFindingIdentityKeys !== undefined
+          ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
+          : {}),
       },
       null,
       2,
@@ -1261,10 +1314,14 @@ export class RealFamilyBackend implements FamilyBackend {
    * The cmr worker's sandbox (souls + skills + CLIs baked into the 2b image).
    * `runCmrWorker` mounts the auth ONCE up-front (so it can fail-closed on the
    * worker's own Claude token — codex cmr R4) and passes it here, avoiding a
-   * double-mount; the arg defaults to a fresh mount for any other caller.
+   * double-mount. The route legs are also explicit so the container env cannot
+   * drift from the already-resolved worker spec.
    */
-  protected cmrSandbox(auth: CmrAuth = this.mountCmrAuth()): sc.SandboxProvider {
-    return docker(this.cmrSandboxConfig(auth));
+  protected cmrSandbox(
+    auth: CmrAuth,
+    reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+  ): sc.SandboxProvider {
+    return docker(this.cmrSandboxConfig(auth, reviewLegs));
   }
 
   /**
@@ -1390,7 +1447,10 @@ export class RealFamilyBackend implements FamilyBackend {
    * SHADOW the baked skill (#334). The WRITE-capable `cmr` soul lets the pass worker
    * commit pass-local cross-slice fixes when the gate requires them.
    */
-  protected cmrSandboxConfig(auth: CmrAuth): {
+  protected cmrSandboxConfig(
+    auth: CmrAuth,
+    reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+  ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
@@ -1405,7 +1465,7 @@ export class RealFamilyBackend implements FamilyBackend {
       ...SPAWNED_WORKER_ENV,
       [SANDBOX_SOUL_ENV]: CMR_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
-      ORCHESTRATOR_CMR_REVIEW_LEGS: JSON.stringify(cmrReviewLegs()),
+      ORCHESTRATOR_CMR_REVIEW_LEGS: JSON.stringify(reviewLegs),
     };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // The in-container completeness gate's `gh issue view` (the live issue body =
@@ -1854,6 +1914,7 @@ export class RealFamilyBackend implements FamilyBackend {
       phase: "final",
       reason: escalation.reason,
       familyHeadAfter: escalation.familyHeadAfter,
+      stopSummary: escalation.stopSummary,
     });
   }
 
@@ -1972,9 +2033,17 @@ export type CmrWorkerOutcome =
       readonly skippedLegs?: readonly CmrSkippedLeg[];
       readonly claimedFixedFindingIdentityKeys?: readonly string[];
       readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
+      readonly findings?: readonly Finding[];
     }
   | { readonly kind: "escalate"; readonly reason: string; readonly diagnosis: string }
-  | { readonly kind: "malformed"; readonly reason: string };
+  | {
+      readonly kind: "malformed";
+      readonly reason: string;
+      readonly cmrLegAccountingPayload?: {
+        readonly successfulLegs?: readonly string[];
+        readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+      };
+    };
 
 interface CmrSkippedLeg {
   readonly slug: string;
@@ -2048,6 +2117,7 @@ export interface MergerAuth {
  */
 export function cmrOutcomeFromResult(result: {
   completionSignal?: string | string[];
+  cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
   stdout: string;
 }): CmrWorkerOutcome {
   const signal = result.completionSignal;
@@ -2067,7 +2137,7 @@ export function cmrOutcomeFromResult(result: {
         `cmr run is not trusted as a verdict — escalate, never a fabricated pass)`,
     };
   }
-  return parseCmrOutcome(result.stdout);
+  return parseCmrOutcome(result.stdout, result.cmrReviewLegs);
 }
 
 /** A trimmed, non-empty string at the schema layer (mirrors shipOutcome.ts). */
@@ -2098,16 +2168,189 @@ const cmrVerdictLegsSchema = {
 const cmrFindingDispositionSchema = z
   .object({
     identityKey: nonEmpty,
-    status: z.enum(["still-active", "verified-closed", "unable-to-assess"]),
+    status: z.enum([
+      "still-active",
+      "verified-closed",
+      "unable-to-assess",
+      "accepted_suppressed",
+    ]),
     reason: z.string().optional(),
+    source: z.string().optional(),
+    scope: z.string().optional(),
+    boundedReopen: z.string().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((disposition, ctx) => {
+    if (disposition.status !== "accepted_suppressed") return;
+    for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
+      if (disposition[field] === undefined || disposition[field].trim() === "") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `accepted_suppressed prior finding disposition requires ${field}`,
+          path: [field],
+        });
+      }
+    }
+    if (
+      disposition.source !== undefined &&
+      !hasExplicitAcceptedSuppressionSource(disposition.source)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
+        path: ["source"],
+      });
+    }
+    if (
+      disposition.boundedReopen !== undefined &&
+      !hasBoundedReopenCondition(disposition.boundedReopen)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
+        path: ["boundedReopen"],
+      });
+    }
+  });
 const cmrClosureSchema = {
   claimedFixedFindingIdentityKeys: z.array(nonEmpty),
   priorFindingDispositions: z.array(cmrFindingDispositionSchema),
 } as const;
+const cmrDispositionEvidenceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("same_module"), reason: nonEmpty }).strict(),
+  z
+    .object({
+      kind: z.literal("cross_module"),
+      targetModule: nonEmpty,
+      reason: nonEmpty,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("spec_conflict"),
+      source: nonEmpty,
+      reason: nonEmpty,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("infra_failure"),
+      source: nonEmpty,
+      reason: nonEmpty,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("owning_issue_still_red"),
+      owningIssue: nonEmpty,
+      missingSurface: nonEmpty,
+      nextStep: nonEmpty,
+      reason: nonEmpty,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("accepted_suppressed"),
+      source: nonEmpty,
+      scope: nonEmpty,
+      reason: nonEmpty,
+      findingIdentity: nonEmpty.optional(),
+      targetModule: nonEmpty.optional(),
+      boundedReopen: nonEmpty,
+    })
+    .strict()
+    .superRefine((disposition, ctx) => {
+      if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "accepted_suppressed requires explicit user/ADR/issue source",
+          path: ["source"],
+        });
+      }
+      if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "accepted_suppressed requires bounded reopen condition",
+          path: ["boundedReopen"],
+        });
+      }
+    }),
+]);
+const cmrReviewerFindingSchema = z
+  .object({
+    severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
+    category: z.string(),
+    claim_quote: z.string(),
+    location: z.string(),
+    suggested_fix: z.string(),
+    action: z.enum(["fix_now", "defer", "wont_fix", "rejected"]),
+    disposition_reason: z.string().optional(),
+    disposition: cmrDispositionEvidenceSchema.optional(),
+  })
+  .strict()
+  .superRefine((finding, ctx) => {
+    if (
+      (finding.severity === "critical" || finding.severity === "high") &&
+      finding.action !== "fix_now"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["action"],
+        message: "critical/high findings must be fix_now",
+      });
+    }
+    if (
+      finding.action === "defer" &&
+      (finding.disposition === undefined ||
+        finding.disposition.kind === "accepted_suppressed")
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["disposition"],
+        message: "deferred findings require a non-suppression disposition",
+      });
+    }
+    if (
+      (finding.action === "wont_fix" || finding.action === "rejected") &&
+      ((!finding.disposition_reason && !finding.disposition?.reason) ||
+        finding.disposition?.kind !== "accepted_suppressed")
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["disposition"],
+        message: "suppressed findings require accepted_suppressed disposition",
+      });
+    }
+  });
+function normalizeCmrReviewerFinding(
+  finding: z.infer<typeof cmrReviewerFindingSchema>,
+): Finding {
+  if (
+    (finding.action !== "wont_fix" && finding.action !== "rejected") ||
+    finding.disposition?.kind !== "accepted_suppressed"
+  ) {
+    return finding;
+  }
+  return {
+    ...finding,
+    disposition_reason: finding.disposition.reason ?? finding.disposition_reason,
+    disposition: {
+      ...finding.disposition,
+      findingIdentity:
+        finding.disposition.findingIdentity ?? findingIdentityKey(finding),
+    },
+  };
+}
+const cmrFindingsSchema = {
+  findings: z.array(cmrReviewerFindingSchema).optional(),
+} as const;
 const cmrConvergedSchema = z
-  .object({ converged: z.literal(true), ...cmrVerdictLegsSchema, ...cmrClosureSchema })
+  .object({
+    converged: z.literal(true),
+    ...cmrVerdictLegsSchema,
+    ...cmrClosureSchema,
+    ...cmrFindingsSchema,
+  })
   .strict();
 const cmrRedSchema = z
   .object({
@@ -2115,11 +2358,34 @@ const cmrRedSchema = z
     reason: nonEmpty,
     ...cmrVerdictLegsSchema,
     ...cmrClosureSchema,
+    ...cmrFindingsSchema,
   })
   .strict();
 const cmrEscalateSchema = z
   .object({ escalate: z.object({ reason: nonEmpty, diagnosis: nonEmpty }).strict() })
   .strict();
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<string, unknown> {
+  const dispositions = parsed.priorFindingDispositions;
+  if (!Array.isArray(dispositions)) return parsed;
+  return {
+    ...parsed,
+    priorFindingDispositions: dispositions.map((rawDisposition) => {
+      if (
+        !isJsonRecord(rawDisposition) ||
+        typeof rawDisposition.disposition !== "string"
+      ) {
+        return rawDisposition;
+      }
+      const { disposition, status, ...withoutAlias } = rawDisposition;
+      return { ...withoutAlias, status: status ?? disposition };
+    }),
+  };
+}
 
 /**
  * Parse the cmr worker's `<cmr>{…}</cmr>` outcome from its stdout (#335). Pure so
@@ -2132,7 +2398,10 @@ const cmrEscalateSchema = z
  * must NEVER read an ambiguous or off-contract run as a pass). Only the LAST
  * `<cmr>` tag is read (the worker may iterate).
  */
-export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
+export function parseCmrOutcome(
+  stdout: string,
+  routeOrEnv: CmrLegAccountingRoute = process.env,
+): CmrWorkerOutcome {
   const re = /<cmr>([\s\S]*?)<\/cmr>/g;
   let last: string | undefined;
   for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
@@ -2148,11 +2417,12 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
   // `JSON.parse` succeeds on bare literals (`null` / `true` / `5`); the strict
   // schemas reject every non-object, but guard explicitly so the malformed
   // message stays specific (mirrors parseShipOutcome / parseMergerOutcome).
-  if (parsed === null || typeof parsed !== "object") {
+  if (!isJsonRecord(parsed)) {
     return { kind: "malformed", reason: "cmr worker <cmr> tag was not a JSON object" };
   }
+  const normalizedParsed = normalizeKnownCmrAliases(parsed);
   // Escalate FIRST — a model-stuck worker never carries a usable verdict.
-  const escalate = cmrEscalateSchema.safeParse(parsed);
+  const escalate = cmrEscalateSchema.safeParse(normalizedParsed);
   if (escalate.success) {
     return {
       kind: "escalate",
@@ -2160,11 +2430,20 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
       diagnosis: escalate.data.escalate.diagnosis,
     };
   }
-  if (cmrConvergedSchema.safeParse(parsed).success) {
-    const converged = cmrConvergedSchema.parse(parsed);
-    const legAccountingFailure = cmrLegAccountingFailure(converged);
+  if (cmrConvergedSchema.safeParse(normalizedParsed).success) {
+    const converged = cmrConvergedSchema.parse(normalizedParsed);
+    const legAccountingFailure = cmrLegAccountingFailure(converged, routeOrEnv);
     if (legAccountingFailure !== undefined) {
-      return { kind: "malformed", reason: legAccountingFailure };
+      return {
+        kind: "malformed",
+        reason: legAccountingFailure,
+        cmrLegAccountingPayload: {
+          successfulLegs: converged.successfulLegs,
+          ...(converged.skippedLegs !== undefined
+            ? { skippedLegs: converged.skippedLegs }
+            : {}),
+        },
+      };
     }
     return {
       kind: "verdict",
@@ -2174,13 +2453,25 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
       claimedFixedFindingIdentityKeys:
         converged.claimedFixedFindingIdentityKeys,
       priorFindingDispositions: converged.priorFindingDispositions,
+      ...(converged.findings !== undefined
+        ? { findings: converged.findings.map(normalizeCmrReviewerFinding) }
+        : {}),
     };
   }
-  const red = cmrRedSchema.safeParse(parsed);
+  const red = cmrRedSchema.safeParse(normalizedParsed);
   if (red.success) {
-    const legAccountingFailure = cmrLegAccountingFailure(red.data);
+    const legAccountingFailure = cmrLegAccountingFailure(red.data, routeOrEnv);
     if (legAccountingFailure !== undefined) {
-      return { kind: "malformed", reason: legAccountingFailure };
+      return {
+        kind: "malformed",
+        reason: legAccountingFailure,
+        cmrLegAccountingPayload: {
+          successfulLegs: red.data.successfulLegs,
+          ...(red.data.skippedLegs !== undefined
+            ? { skippedLegs: red.data.skippedLegs }
+            : {}),
+        },
+      };
     }
     return {
       kind: "verdict",
@@ -2190,6 +2481,9 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
       ...(red.data.skippedLegs !== undefined ? { skippedLegs: red.data.skippedLegs } : {}),
       claimedFixedFindingIdentityKeys: red.data.claimedFixedFindingIdentityKeys,
       priorFindingDispositions: red.data.priorFindingDispositions,
+      ...(red.data.findings !== undefined
+        ? { findings: red.data.findings.map(normalizeCmrReviewerFinding) }
+        : {}),
     };
   }
   return {

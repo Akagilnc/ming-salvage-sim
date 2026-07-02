@@ -3,7 +3,7 @@ import { coderModel } from "../src/runner.js";
 
 // The S2 coder worker's model is switchable via ORCHESTRATOR_CODER_MODEL so the
 // coder backend can be swapped (claude sonnet ↔ codex gpt-5.5 ↔ …) by env alone —
-// no code change, no image rebuild. `coderModel()` is the resolver; STEP_SPECS.S2
+// no code change, no image rebuild. `coderModel()` is the resolver; S2 worker specs
 // reads it. The auth mount is best-effort for both legs (realBackend mountAuth),
 // so switching the model needs no auth-wiring change.
 
