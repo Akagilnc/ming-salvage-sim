@@ -1225,6 +1225,16 @@ def _fiscal_levy_share_seed(
     return _fiscal_levy_land_share_amount(land, total_land, national_monthly)
 
 
+def _validate_fiscal_levy_share_meta(meta: Dict[str, object], region_id: str) -> None:
+    for key in (
+        _SETTLE_META_JIAO_SEED_KEY,
+        _SETTLE_META_LIAN_SEED_KEY,
+        _SETTLE_META_LAND_DENOMINATOR_KEY,
+    ):
+        if key in meta:
+            _as_float(meta[key], ctx=f"{region_id}.settle._meta.{key}")
+
+
 def _fiscal_levy_mark_provisional(meta: Dict[str, object]) -> None:
     raw = meta.get("provisional", [])
     if isinstance(raw, list):
@@ -1289,6 +1299,7 @@ def _apply_fiscal_levy_targets(
             liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
             land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
             base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
+            _validate_fiscal_levy_share_meta(meta, region_id)
         except ValueError as exc:
             denominator_complete = False
             tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")

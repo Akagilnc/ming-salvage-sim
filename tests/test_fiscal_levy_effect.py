@@ -521,6 +521,49 @@ def test_fiscal_levy_memorial_suppresses_share_estimate_without_complete_denomin
     assert "jiao_levy_start_1637" not in estimate_ids
 
 
+@pytest.mark.parametrize("bad_meta_key", ["剿饷基线", "练饷基线", "饷率田亩分母基线"])
+def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
+    game, monkeypatch, bad_meta_key
+):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1637
+    state.period = 1
+    db.save_state(state)
+    huguang_before = _settle_payload(db, "huguang")
+    expected_liao = huguang_before["p"]["三饷应征"] * 4.0 / 3.0
+    original_shaanxi_fiscal = str(
+        db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()["fiscal"]
+    )
+    fiscal = json.loads(original_shaanxi_fiscal)
+    fiscal["settle"].setdefault("_meta", {})[bad_meta_key] = []
+    msgs = []
+    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
+    )
+    db.conn.commit()
+
+    apply_historical_fiscal_rates(state, db)
+
+    assert any("[fiscal-levy] shaanxi settle 解析失败" in msg and bad_meta_key in msg for msg in msgs)
+    incomplete = _settle_payload(db, "huguang")
+    assert "剿饷基线" not in incomplete["_meta"]
+    assert math.isclose(incomplete["p"]["三饷应征"], expected_liao, rel_tol=1e-9, abs_tol=1e-9)
+
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (original_shaanxi_fiscal, "shaanxi"),
+    )
+    db.conn.commit()
+    apply_historical_fiscal_rates(state, db)
+
+    restored = _settle_payload(db, "huguang")
+    assert "剿饷基线" in restored["_meta"]
+    assert restored["p"]["三饷应征"] > expected_liao
+
+
 def test_fiscal_levy_memorial_estimates_skip_malformed_region_fiscal(game, monkeypatch):
     db, state, content = game
     issues.bind_content(content)
