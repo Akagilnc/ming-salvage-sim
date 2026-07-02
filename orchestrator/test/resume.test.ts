@@ -489,6 +489,39 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     });
   });
 
+  it("recovers a landed SHA-256 coder commit while skipping intervening S8 heads", async () => {
+    const beforeBuildHead = "a".repeat(64);
+    const afterBuildHead = "b".repeat(64);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeBuildHead },
+        { ...entry("S1"), branchHEAD: beforeBuildHead },
+        { ...s8("error"), branchHEAD: afterBuildHead },
+        {
+          step: "S2",
+          sessionId: "session-s2-sha256-protocol-failed",
+          prompt_hash: "hash-S2",
+          branchHEAD: afterBuildHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        { ...coderProtocolFailureS8(), branchHEAD: afterBuildHead },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S3");
+    const s2 = result.stepLedger.find((e) => e.step === "S2");
+    expect(s2?.output).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+    });
+  });
+
   it("does not recover unrelated terminal S8 errors even when HEAD advanced", async () => {
     const beforeBuildHead = "a".repeat(40);
     const afterBuildHead = "b".repeat(40);
