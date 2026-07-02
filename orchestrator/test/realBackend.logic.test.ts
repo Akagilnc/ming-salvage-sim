@@ -1212,10 +1212,21 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     soul: "coder",
     toolchain: ["python", "node", "npm", "typescript"],
   };
+  const reviewerSpec: StepSpec = {
+    id: "S3",
+    role: "reviewer",
+    promptFile: "reviewer_review.md",
+    model: "gpt-5.5",
+    completionSignal: "REVIEWER_STEP_COMPLETE",
+    maxIter: 1,
+    soul: "READ-ONLY",
+    toolchain: ["node", "typescript"],
+  };
 
   class PreflightBackend extends RealBackend {
     public agentRunReached = false;
     public agentResult?: Awaited<ReturnType<typeof sc.run>>;
+    public lastAgentOptions?: Parameters<typeof sc.run>[0];
     public preflightResults = new Map<string, boolean>();
     public preflightHook?: (tool: string) => Promise<void>;
 
@@ -1238,8 +1249,9 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     }
 
     protected override async runAgentSandbox(
-      _options: Parameters<typeof sc.run>[0],
+      options: Parameters<typeof sc.run>[0],
     ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+      this.lastAgentOptions = options;
       this.agentRunReached = true;
       if (this.agentResult !== undefined) return this.agentResult;
       throw new Error("agent sandbox should not run during this test");
@@ -1328,6 +1340,86 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       output: { kind: "coder", committed: true, commitsAdded: 1 },
       sessionId: "sess-496",
     });
+  });
+
+  it("prefers a runner-owned outcome sidecar for a fresh reviewer before Sandcastle tag parsing", async () => {
+    const backend = makeBackend();
+    const dir = mkdtempSync(join(tmpdir(), "worker-review-outcome-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ findings: [] }) + "\n",
+      "utf8",
+    );
+    backend.agentResult = {
+      completionSignal: "REVIEWER_STEP_COMPLETE",
+      stdout: "no review tag here\nREVIEWER_STEP_COMPLETE",
+      commits: [],
+      iterations: [{ sessionId: "sess-review-sidecar" }],
+    } as Awaited<ReturnType<typeof sc.run>>;
+
+    const result = await backend.runStep(
+      reviewerSpec,
+      {
+        branch: "feat/issue-496",
+        base: "main",
+        path: "/tmp/worktree/issue-496",
+      },
+      {
+        outcomeLanding: {
+          path: outcomePath,
+          sandboxPath: ".orchestrator-outcome.json",
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      output: { kind: "reviewer", findings: [] },
+      sessionId: "sess-review-sidecar",
+    });
+    expect(backend.lastAgentOptions).toBeDefined();
+    expect("output" in backend.lastAgentOptions!).toBe(false);
+  });
+
+  it("prefers a runner-owned outcome sidecar for a resumed reviewer before Sandcastle tag parsing", async () => {
+    const backend = makeBackend();
+    const dir = mkdtempSync(join(tmpdir(), "worker-review-resume-outcome-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ findings: [] }) + "\n",
+      "utf8",
+    );
+    backend.agentResult = {
+      completionSignal: "REVIEWER_STEP_COMPLETE",
+      stdout: "not json in any review tag\nREVIEWER_STEP_COMPLETE",
+      commits: [],
+      iterations: [{ sessionId: "sess-review-resume-sidecar" }],
+    } as Awaited<ReturnType<typeof sc.run>>;
+
+    const result = await backend.resumeSession(
+      reviewerSpec,
+      {
+        branch: "feat/issue-496",
+        base: "main",
+        path: "/tmp/worktree/issue-496",
+      },
+      "prior-review-session",
+      {
+        outcomeLanding: {
+          path: outcomePath,
+          sandboxPath: ".orchestrator-outcome.json",
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      output: { kind: "reviewer", findings: [] },
+      sessionId: "sess-review-resume-sidecar",
+    });
+    expect(backend.lastAgentOptions).toBeDefined();
+    expect(backend.lastAgentOptions?.resumeSession).toBe("prior-review-session");
+    expect("output" in backend.lastAgentOptions!).toBe(false);
   });
 
   it("fails closed instead of falling back to stdout when the coder outcome sidecar is malformed", async () => {
