@@ -100,6 +100,19 @@ function s8(handoffStatus: "success" | "escalate" | "error"): PersistentLedgerEn
   };
 }
 
+function coderProtocolFailureS8(): PersistentLedgerEntry {
+  return {
+    ...s8("error"),
+    stopSummary: {
+      reason: "contract_drift",
+      summary:
+        "realBackend: coder step stdout carried no <coder>...</coder> tag - the coder must emit its structured result in a <coder> tag.",
+      repairHint:
+        "Inspect the landed commit and resume from the next step if HEAD advanced.",
+    },
+  };
+}
+
 function escalationAnswer(
   forStep: StepId,
   answer: string,
@@ -395,7 +408,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
           branchHEAD: afterFixHead,
           ts: "2026-07-02T00:00:00.000Z",
         },
-        { ...s8("error"), branchHEAD: afterFixHead },
+        { ...coderProtocolFailureS8(), branchHEAD: afterFixHead },
       ],
     });
 
@@ -415,6 +428,12 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       "S7",
       "S8",
     ]);
+    const s5 = result.stepLedger.find((e) => e.step === "S5");
+    expect(s5?.output).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+    });
   });
 
   it("recovers a landed S2 commit when stdout outcome parsing wrote S8(error)", async () => {
@@ -433,7 +452,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
           branchHEAD: afterBuildHead,
           ts: "2026-07-02T00:00:00.000Z",
         },
-        { ...s8("error"), branchHEAD: afterBuildHead },
+        { ...coderProtocolFailureS8(), branchHEAD: afterBuildHead },
       ],
     });
 
@@ -450,6 +469,55 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       "S7",
       "S8",
     ]);
+    const s2 = result.stepLedger.find((e) => e.step === "S2");
+    expect(s2?.output).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+    });
+  });
+
+  it("does not recover unrelated terminal S8 errors even when HEAD advanced", async () => {
+    const beforeBuildHead = "a".repeat(40);
+    const afterBuildHead = "b".repeat(40);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeBuildHead },
+        { ...entry("S1"), branchHEAD: beforeBuildHead },
+        {
+          step: "S2",
+          sessionId: "session-s2-unrelated-error",
+          prompt_hash: "hash-S2",
+          branchHEAD: afterBuildHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        {
+          ...s8("error"),
+          branchHEAD: afterBuildHead,
+          stopSummary: {
+            reason: "contract_drift",
+            summary: "coder output failed commit-truth reconciliation",
+            repairHint: "Re-run the coder step or inspect the contract failure.",
+          },
+        },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("error");
+    expect(backend.dispatchSpecs).toHaveLength(0);
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S8",
+    ]);
+    expect(result.stopSummary?.summary).toBe(
+      "coder output failed commit-truth reconciliation",
+    );
   });
 });
 

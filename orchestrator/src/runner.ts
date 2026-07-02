@@ -854,12 +854,28 @@ function isLikelyGitSha(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{7,40}$/.test(value);
 }
 
+function isRecoverableCoderProtocolFailure(
+  entry: PersistentLedgerEntry,
+): boolean {
+  if (
+    entry.step !== "S8" ||
+    entry.handoffStatus !== "error" ||
+    entry.stopSummary?.reason !== "contract_drift"
+  ) {
+    return false;
+  }
+
+  return /\bcoder step stdout carried no <coder>[\s\S]*tag\b|structured result in a <coder> tag/i.test(
+    entry.stopSummary.summary,
+  );
+}
+
 function protocolFailedLandedCoderStep(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
 ): { readonly index: number; readonly step: "S2" | "S5"; readonly output: StepOutput } | undefined {
   if (ledger.length < 2) return undefined;
   const last = ledger[ledger.length - 1]!;
-  if (last.step !== "S8" || last.handoffStatus !== "error") return undefined;
+  if (!isRecoverableCoderProtocolFailure(last)) return undefined;
   for (let i = ledger.length - 2; i >= 0; i--) {
     const entry = ledger[i]!;
     if (entry.step === "S8") continue;
@@ -888,6 +904,22 @@ function protocolFailedLandedCoderStep(
     };
   }
   return undefined;
+}
+
+function ledgerThroughRecoveredCoderOutput(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+  landedProtocolFailure: {
+    readonly index: number;
+    readonly output: StepOutput;
+  },
+): ReadonlyArray<LedgerEntry> {
+  return ledger
+    .slice(0, landedProtocolFailure.index + 1)
+    .map((entry, index) =>
+      index === landedProtocolFailure.index
+        ? { ...entry, output: landedProtocolFailure.output }
+        : entry,
+    ) as ReadonlyArray<LedgerEntry>;
 }
 
 function lastReviewerStep(
@@ -1310,10 +1342,10 @@ function planResume(
       return {
         resumeStep: decision.step,
         lastOutput: landedProtocolFailure.output,
-        priorLedger: executableLedger.slice(
-          0,
-          landedProtocolFailure.index + 1,
-        ) as ReadonlyArray<LedgerEntry>,
+        priorLedger: ledgerThroughRecoveredCoderOutput(
+          executableLedger,
+          landedProtocolFailure,
+        ),
       };
     }
   }
