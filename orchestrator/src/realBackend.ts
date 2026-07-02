@@ -2654,7 +2654,7 @@ export class RealBackend implements Backend {
    * (#336) — replacing the inline `push` (a bare `git push`). Every OTHER worker
    * kind (coder / reviewer agent steps) is forwarded to {@link legacyDispatchWorker}
    * (runStep / resumeSession), which #334 already routes to the real `/tdd` /
-   * `/review` workers — so THIS method takes over ONLY the ship leg.
+   * `/code-review` workers — so THIS method takes over ONLY the ship leg.
    *
    * The ship worker (`shipWorkerSpec`) = the 2b container's TOP-LEVEL claude; it
    * `Skill`-invokes gstack-ship (base merge / tests / diff review / VERSION /
@@ -2670,7 +2670,7 @@ export class RealBackend implements Backend {
   ): Promise<WorkerResult> {
     if (spec.kind !== "ship") {
       // #336 owns the ship leg; coder/reviewer agent workers stay on the existing
-      // runStep/resumeSession seam (#334 routes them to /tdd / /review).
+      // runStep/resumeSession seam (#334 routes them to /tdd / /code-review).
       return legacyDispatchWorker(this, spec, ctx);
     }
     if (ctx.worktree === undefined) {
