@@ -991,6 +991,25 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
     return records
 
 
+def _event_pending_choice_records(db: GameDB) -> Dict[str, Dict[str, str]]:
+    records: Dict[str, Dict[str, str]] = {}
+    for r in db.conn.execute(
+        """
+        SELECT event_id, terminal_state, terminal_reason, source
+        FROM event_triggers
+        WHERE COALESCE(terminal_state, '') = ''
+          AND COALESCE(terminal_reason, '') != ''
+        """
+    ).fetchall():
+        if r["event_id"]:
+            records[str(r["event_id"])] = {
+                "terminal_state": "",
+                "terminal_reason": str(r["terminal_reason"] or ""),
+                "source": str(r["source"] or ""),
+            }
+    return records
+
+
 FISCAL_LEVY_EVENT_CATEGORY = "fiscal_levy"
 _LIAO_LEVY_RISE_EVENT_ID = "liao_levy_rise_1631"
 _LIAN_LEVY_START_EVENT_ID = "lian_levy_start_1639"
@@ -1043,6 +1062,22 @@ def _fiscal_levy_default_terminal_reason(ev: Event, state: GameState) -> str:
     return label
 
 
+def _fiscal_levy_normalized_terminal_reason_or_abort(
+    ev: Event,
+    raw: object,
+    state: GameState,
+) -> str:
+    label = _normalize_event_terminal_reason(ev, raw)
+    if label:
+        return label
+    allowed = "/".join(getattr(ev, "terminal_reason_labels", []) or [])
+    raise SettlementAbort(
+        f"饷率事件 {ev.id} 结局标签无法归一：{raw!r}；合法标签：{allowed}",
+        turn=state.turn,
+        stage="fiscal_levy_config",
+    )
+
+
 def _validate_existing_fiscal_levy_terminal_reason(
     ev: Event,
     record: Dict[str, str],
@@ -1051,15 +1086,11 @@ def _validate_existing_fiscal_levy_terminal_reason(
 ) -> None:
     if record.get("terminal_state") != "triggered":
         return
-    label = _normalize_event_terminal_reason(ev, record.get("terminal_reason"))
-    if not label:
-        allowed = "/".join(getattr(ev, "terminal_reason_labels", []) or [])
-        raise SettlementAbort(
-            f"饷率事件 {ev.id} 结局标签无法归一：{record.get('terminal_reason')!r}；"
-            f"合法标签：{allowed}",
-            turn=state.turn,
-            stage="fiscal_levy_config",
-        )
+    label = _fiscal_levy_normalized_terminal_reason_or_abort(
+        ev,
+        record.get("terminal_reason"),
+        state,
+    )
     if label != record.get("terminal_reason"):
         db.conn.execute(
             "UPDATE event_triggers SET terminal_reason=? WHERE event_id=?",
@@ -1267,6 +1298,8 @@ def _wanliang_range(amount: float, *, unit: str = "万两/月") -> Dict[str, obj
     lower = _round_half_up(value * 0.9, 1.0)
     upper = _round_half_up(value * 1.1, 1.0)
     midpoint = round(value, 1)
+    lower = min(lower, midpoint)
+    upper = max(upper, midpoint)
     if upper < lower:
         upper = lower
     if value > 0 and upper == lower:
@@ -1461,6 +1494,7 @@ def apply_historical_fiscal_rates(
 
     def run_fiscal_levy_pass() -> None:
         terminal_records = _event_terminal_records(db)
+        pending_choice_records = _event_pending_choice_records(db)
         for ev in c.events:
             if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
                 continue
@@ -1471,6 +1505,30 @@ def apply_historical_fiscal_rates(
                     state,
                     db,
                 )
+            elif ev.id in pending_choice_records:
+                record = pending_choice_records[ev.id]
+                label = _fiscal_levy_normalized_terminal_reason_or_abort(
+                    ev,
+                    record.get("terminal_reason"),
+                    state,
+                )
+                db.mark_event_triggered(
+                    state,
+                    ev.id,
+                    source=record.get("source") or "fiscal_levy_shadow",
+                    terminal_reason=label,
+                    commit=False,
+                )
+                terminal_records[ev.id] = {
+                    "terminal_state": "triggered",
+                    "terminal_reason": label,
+                }
+                applied.append({
+                    "id": ev.id,
+                    "title": ev.title,
+                    "terminal_state": "triggered",
+                    "terminal_reason": label,
+                })
             if ev.id not in terminal_records:
                 if _event_window_expired(ev, state):
                     db.mark_event_expired(state, ev.id, commit=False)
