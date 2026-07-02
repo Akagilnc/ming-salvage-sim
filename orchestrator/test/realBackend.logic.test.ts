@@ -1330,6 +1330,36 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
+  it("fails closed instead of falling back to stdout when the coder outcome sidecar is malformed", async () => {
+    const backend = makeBackend();
+    const dir = mkdtempSync(join(tmpdir(), "worker-outcome-bad-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+    backend.agentResult = {
+      completionSignal: "CODER_STEP_COMPLETE",
+      stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
+      commits: [],
+      iterations: [{ sessionId: "sess-bad-sidecar" }],
+    } as Awaited<ReturnType<typeof sc.run>>;
+
+    await expect(
+      backend.runStep(
+        coderSpec,
+        {
+          branch: "feat/issue-496",
+          base: "main",
+          path: "/tmp/worktree/issue-496",
+        },
+        {
+          outcomeLanding: {
+            path: outcomePath,
+            sandboxPath: ".orchestrator-outcome.json",
+          },
+        },
+      ),
+    ).rejects.toThrow(/JSON|sidecar/i);
+  });
+
   it("shares an in-flight toolchain preflight across concurrent agent dispatches", async () => {
     const backend = makeBackend();
     const preflightCalls: string[] = [];

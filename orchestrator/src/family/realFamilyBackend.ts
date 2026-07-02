@@ -84,7 +84,10 @@ import {
   WORKER_IDLE_TIMEOUT_SECONDS,
   modelFamilyForSlug,
 } from "../realBackend.js";
-import { readWorkerOutcomeSidecar } from "../workerOutcomeSidecar.js";
+import {
+  WORKER_OUTCOME_SANDBOX_FILE,
+  readWorkerOutcomeSidecar,
+} from "../workerOutcomeSidecar.js";
 import {
   cmrLegAccountingFailure,
   modelForSlot,
@@ -154,8 +157,6 @@ export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
 export const CMR_FOCUS_FILENAME = ".cmr-focus.md";
 /** Route-selected CMR review-leg config written next to {@link CMR_FOCUS_FILENAME}. */
 export const CMR_ROUTE_FILENAME = ".cmr-route.json";
-/** Worker-visible path for the runner-owned machine outcome sidecar. */
-const WORKER_OUTCOME_SANDBOX_FILE = ".orchestrator-outcome.json";
 
 /**
  * The git-ignored SHIP FOCUS file written into the family-base worktree before the

@@ -416,6 +416,41 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       "S8",
     ]);
   });
+
+  it("recovers a landed S2 commit when stdout outcome parsing wrote S8(error)", async () => {
+    const beforeBuildHead = "a".repeat(40);
+    const afterBuildHead = "b".repeat(40);
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        { ...entry("S0"), branchHEAD: beforeBuildHead },
+        { ...entry("S1"), branchHEAD: beforeBuildHead },
+        {
+          step: "S2",
+          sessionId: "session-s2-protocol-failed",
+          prompt_hash: "hash-S2",
+          branchHEAD: afterBuildHead,
+          ts: "2026-07-02T00:00:00.000Z",
+        },
+        { ...s8("error"), branchHEAD: afterBuildHead },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 496, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S3");
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S7",
+      "S8",
+    ]);
+  });
 });
 
 describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication", () => {

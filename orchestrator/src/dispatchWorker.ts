@@ -34,6 +34,7 @@ import {
 import { join, resolve } from "node:path";
 
 import { modelForSlot, type ResolvedModelRoute } from "./modelRoutes.js";
+import { WORKER_OUTCOME_SANDBOX_FILE } from "./workerOutcomeSidecar.js";
 import type {
   Backend,
   DispatchContext,
@@ -50,7 +51,6 @@ import type {
 
 const FIX_FINDINGS_LANDING_FILE = ".orchestrator-fix-findings.json";
 const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
-const WORKER_OUTCOME_SANDBOX_FILE = ".orchestrator-outcome.json";
 
 /**
  * The wiki skill each worker kind invokes (ADR 0026):

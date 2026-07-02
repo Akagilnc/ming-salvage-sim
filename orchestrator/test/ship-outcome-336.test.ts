@@ -297,6 +297,21 @@ describe("#336 shipOutcomeFromResult — completion-signal gate (mirrors the cmr
     });
   });
 
+  it("fails closed instead of falling back to stdout when the ship outcome sidecar is malformed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ship-outcome-bad-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+
+    const o = shipOutcomeFromResult({
+      completionSignal: SHIP_COMPLETION_SIGNAL,
+      stdout: '<ship>{"status": "pushed", "branch": "feat/fallback"}</ship>',
+      outcomePath,
+    });
+
+    expect(o.kind).toBe("malformed");
+    if (o.kind === "malformed") expect(o.reason).toContain("sidecar");
+  });
+
   it("a signaled shipped run ⇒ a shipped outcome", () => {
     const o = shipOutcomeFromResult({
       completionSignal: SHIP_COMPLETION_SIGNAL,

@@ -17,6 +17,7 @@ import type {
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
+  WorkerOutcomeLandingFile,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -370,6 +371,8 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
   class LegacyBackend {
     runStepCalls: StepSpec[] = [];
     resumeCalls: string[] = [];
+    runStepOutcomeLandings: Array<WorkerOutcomeLandingFile | undefined> = [];
+    resumeOutcomeLandings: Array<WorkerOutcomeLandingFile | undefined> = [];
     pushCalls = 0;
     worktree: WorktreeHandle = {
       branch: "b",
@@ -379,8 +382,10 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     async runStep(
       spec: StepSpec,
       _wt: WorktreeHandle,
+      options?: { outcomeLanding?: WorkerOutcomeLandingFile },
     ): Promise<StepOutput> {
       this.runStepCalls.push(spec);
+      this.runStepOutcomeLandings.push(options?.outcomeLanding);
       return spec.role === "coder"
         ? { kind: "coder", committed: true, commitsAdded: 1 }
         : { kind: "reviewer", findings: [] };
@@ -389,8 +394,10 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       _spec: StepSpec,
       _wt: WorktreeHandle,
       sid: string,
+      options?: { outcomeLanding?: WorkerOutcomeLandingFile },
     ): Promise<StepOutput> {
       this.resumeCalls.push(sid);
+      this.resumeOutcomeLandings.push(options?.outcomeLanding);
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
     async push(): Promise<void> {
@@ -455,6 +462,61 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       process.chdir(originalCwd);
       rmSync(worktreePath, { recursive: true, force: true });
       rmSync(wrongCwd, { recursive: true, force: true });
+    }
+  });
+
+  it("passes the runner-owned outcome sidecar to fresh agent workers and excludes it from git", async () => {
+    const worktreePath = mkdtempSync(join(tmpdir(), "dispatch-outcome-worktree-"));
+    const stateDir = mkdtempSync(join(tmpdir(), "dispatch-outcome-state-"));
+    try {
+      execFileSync("git", ["init"], { cwd: worktreePath, stdio: "ignore" });
+      const be = new LegacyBackend();
+      const worktree = { ...be.worktree, path: worktreePath };
+
+      await legacyDispatchWorker(be as unknown as Backend, { ...coderWorker, session: "fresh" }, {
+        worktree,
+        stateDir,
+      });
+
+      expect(be.runStepOutcomeLandings).toEqual([
+        {
+          path: join(stateDir, "worker-outcome-S2", "outcome.json"),
+          sandboxPath: ".orchestrator-outcome.json",
+        },
+      ]);
+      expect(readFileSync(join(stateDir, "worker-outcome-S2", "outcome.json"), "utf8")).toBe("");
+      expect(readFileSync(join(worktreePath, ".git", "info", "exclude"), "utf8")).toContain(
+        ".orchestrator-outcome.json",
+      );
+    } finally {
+      rmSync(worktreePath, { recursive: true, force: true });
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("passes the runner-owned outcome sidecar through resumeSession alongside the session id", async () => {
+    const worktreePath = mkdtempSync(join(tmpdir(), "dispatch-outcome-resume-worktree-"));
+    const stateDir = mkdtempSync(join(tmpdir(), "dispatch-outcome-resume-state-"));
+    try {
+      execFileSync("git", ["init"], { cwd: worktreePath, stdio: "ignore" });
+      const be = new LegacyBackend();
+
+      await legacyDispatchWorker(be as unknown as Backend, { ...coderWorker, id: "S5" }, {
+        worktree: { ...be.worktree, path: worktreePath },
+        stateDir,
+        resumeSessionId: "sess-abc",
+      });
+
+      expect(be.resumeCalls).toEqual(["sess-abc"]);
+      expect(be.resumeOutcomeLandings).toEqual([
+        {
+          path: join(stateDir, "worker-outcome-S5", "outcome.json"),
+          sandboxPath: ".orchestrator-outcome.json",
+        },
+      ]);
+    } finally {
+      rmSync(worktreePath, { recursive: true, force: true });
+      rmSync(stateDir, { recursive: true, force: true });
     }
   });
 

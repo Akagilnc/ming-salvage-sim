@@ -901,6 +901,23 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
+  it("fails closed instead of falling back to stdout when the cmr outcome sidecar is malformed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-bad-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+
+    const outcome = cmrOutcomeFromResult({
+      completionSignal: "CMR_STEP_COMPLETE",
+      stdout:
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.5"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>',
+      outcomePath,
+      cmrReviewLegs: [{ family: "codex", slug: "gpt-5.5" }],
+    });
+
+    expect(outcome.kind).toBe("malformed");
+    if (outcome.kind === "malformed") expect(outcome.reason).toContain("sidecar");
+  });
+
   it("derives redundant accepted_suppressed finding fields from the finding payload", () => {
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: false,
@@ -1057,6 +1074,21 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
         outcomePath,
       }),
     ).toEqual({ resolved: true });
+  });
+
+  it("fails closed instead of falling back to stdout when the merger outcome sidecar is malformed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "merger-outcome-bad-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+
+    const outcome = mergerOutcomeFromResult({
+      completionSignal: "MERGER_STEP_COMPLETE",
+      stdout: '<merger>{"resolved": true}</merger>',
+      outcomePath,
+    });
+
+    expect(outcome.resolved).toBe(false);
+    expect(outcome.reason).toContain("sidecar");
   });
 
   it("a signaled run delegates to parseMergerOutcome (resolved)", () => {

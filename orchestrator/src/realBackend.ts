@@ -108,6 +108,7 @@ import {
   type ShipWorkerOutcome,
 } from "./shipOutcome.js";
 import {
+  WORKER_OUTCOME_SANDBOX_FILE,
   readWorkerOutcomeSidecar as readOutcomeSidecar,
   stripJsonFence as stripOutcomeJsonFence,
 } from "./workerOutcomeSidecar.js";
@@ -559,7 +560,6 @@ export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
 export const SANDBOX_OUTCOME_PATH_ENV = "ORCHESTRATOR_OUTCOME_PATH";
 /** Optional ship-worker focus file read by the ship prompt before gstack-ship. */
 export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
-const WORKER_OUTCOME_SANDBOX_FILE = ".orchestrator-outcome.json";
 
 /**
  * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
