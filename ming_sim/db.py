@@ -61,6 +61,24 @@ _STRUCTURAL_FISCAL_MINIMUMS = {
     "central_taicang_sink_loss_rate": 1,
     "central_jingyun_sink_loss_rate": 1,
 }
+_CENTRAL_LOSS_RATE_PAIRS = {
+    "central_taicang_human_loss_rate": (
+        "central_taicang_human_loss_rate",
+        "central_taicang_sink_loss_rate",
+    ),
+    "central_taicang_sink_loss_rate": (
+        "central_taicang_human_loss_rate",
+        "central_taicang_sink_loss_rate",
+    ),
+    "central_jingyun_human_loss_rate": (
+        "central_jingyun_human_loss_rate",
+        "central_jingyun_sink_loss_rate",
+    ),
+    "central_jingyun_sink_loss_rate": (
+        "central_jingyun_human_loss_rate",
+        "central_jingyun_sink_loss_rate",
+    ),
+}
 
 
 # #287 S1 seed values: province share : central share. The region is the pay-source
@@ -1535,10 +1553,26 @@ class GameDB:
     def is_structural_fiscal_config_key(self, key: str) -> bool:
         return self.fiscal_config_minimum_value(key) is not None
 
-    def set_fiscal_config(self, key: str, value: int, commit: bool = True) -> None:
+    def validate_fiscal_config_value(self, key: str, value: int) -> None:
+        key = str(key or "").strip()
+        value = int(value)
         minimum = self.fiscal_config_minimum_value(key)
-        if minimum is not None and int(value) < minimum:
+        if minimum is not None and value < minimum:
             raise ValueError(f"fiscal_config.{key} 不得低于结构地板 {minimum}")
+        pair = _CENTRAL_LOSS_RATE_PAIRS.get(key)
+        if pair is None:
+            return
+        if value < 0 or value > 100:
+            raise ValueError(f"fiscal_config.{key} 须在 0..100")
+        cfg = self.get_fiscal_config()
+        human_key, sink_key = pair
+        human = value if key == human_key else int(cfg.get(human_key, 0) or 0)
+        sink = value if key == sink_key else int(cfg.get(sink_key, 0) or 0)
+        if human + sink > 100:
+            raise ValueError(f"{human_key}+{sink_key} 不得超过 100%")
+
+    def set_fiscal_config(self, key: str, value: int, commit: bool = True) -> None:
+        self.validate_fiscal_config_value(key, value)
         self.conn.execute(
             "UPDATE fiscal_config SET value = ? WHERE key = ?", (value, key)
         )

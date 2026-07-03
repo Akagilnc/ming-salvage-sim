@@ -7085,11 +7085,12 @@ def apply_score_extraction(
             })
             continue
         new_val = max(0, current + delta)
-        minimum = db.fiscal_config_minimum_value(key)
-        if minimum is not None and new_val < minimum:
+        try:
+            db.validate_fiscal_config_value(key, new_val)
+        except ValueError as exc:
             applied_fiscal.append({
                 "rejected": True,
-                "reason": f"调率目标「{key}」不得低于结构地板 {minimum}。",
+                "reason": f"调率目标「{key}」非法：{exc}",
                 "category": "invalid_enum", "item": change,
             })
             continue
