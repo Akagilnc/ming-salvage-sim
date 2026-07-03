@@ -69,7 +69,13 @@ import {
 import { hasAcceptedSuppressionAuthority } from "../acceptedSuppression.js";
 import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
 import { modelIsStrongLeg } from "../realBackend.js";
-import type { EscalationAnswerPayload, FindingDisposition } from "../types.js";
+import type {
+  DispatchContext,
+  EscalationAnswerPayload,
+  FindingDisposition,
+  WorkerResult,
+  WorkerSpec,
+} from "../types.js";
 import { findingIdentityKey } from "../findings.js";
 import {
   cmrPassAlreadyPassed,
@@ -188,6 +194,7 @@ const NOOP: VerifyCmrResult = { ok: true, ran: false };
  * that real verify work DID happen (this is not the nothing-ran no-op).
  */
 const INCOMPLETE_GATE: VerifyCmrResult = { ok: false, ran: true };
+const OUTCOME_REWRITE_RETRY_CAP = 2;
 
 /** ADR0032 floor: at least one successful CMR leg must be registry-marked strong. */
 export function meetsCmrFloor(successfulLegs: readonly string[]): boolean {
@@ -1163,6 +1170,65 @@ async function dispatchOrAbort(
   }
 }
 
+async function rewriteOutcomeProtocolFailure(input: {
+  readonly familyBackend: FamilyBackend;
+  readonly spec: WorkerSpec;
+  readonly ctx: DispatchContext;
+  readonly result: WorkerResult;
+}): Promise<WorkerResult> {
+  if (input.result.kind !== "malformed") return input.result;
+  if (input.familyBackend.rewriteWorkerOutcome === undefined) {
+    return {
+      kind: "outcome_protocol_failure",
+      reason:
+        `worker outcome protocol failure could not be rewritten: ` +
+        `backend has no same-worker outcome rewrite capability; original failure: ` +
+        input.result.reason,
+      attempts: 0,
+      ...(input.result.sessionId !== undefined
+        ? { sessionId: input.result.sessionId }
+        : {}),
+    };
+  }
+
+  let lastFailure: Extract<WorkerResult, { kind: "malformed" }> = input.result;
+  for (let attempt = 1; attempt <= OUTCOME_REWRITE_RETRY_CAP; attempt++) {
+    let rewritten: WorkerResult;
+    try {
+      rewritten = await input.familyBackend.rewriteWorkerOutcome(
+        input.spec,
+        input.ctx,
+        lastFailure,
+        attempt,
+      );
+    } catch (err) {
+      const sessionId = lastFailure.sessionId ?? input.result.sessionId;
+      return {
+        kind: "outcome_protocol_failure",
+        reason:
+          `worker outcome protocol rewrite threw on attempt ${attempt}: ` +
+          `${err instanceof Error ? err.message : String(err)}; original failure: ` +
+          lastFailure.reason,
+        attempts: attempt,
+        ...(sessionId !== undefined ? { sessionId } : {}),
+      };
+    }
+    if (rewritten.kind !== "malformed") return rewritten;
+    lastFailure = rewritten;
+  }
+
+  const sessionId = lastFailure.sessionId ?? input.result.sessionId;
+  return {
+    kind: "outcome_protocol_failure",
+    reason:
+      `worker outcome protocol failure persisted after ` +
+      `${OUTCOME_REWRITE_RETRY_CAP} same-worker rewrite attempts: ` +
+      lastFailure.reason,
+    attempts: OUTCOME_REWRITE_RETRY_CAP,
+    ...(sessionId !== undefined ? { sessionId } : {}),
+  };
+}
+
 async function runIntegratedCmrPass(input: {
   readonly pass: IntegratedCmrPass;
   readonly familyBackend: FamilyBackend;
@@ -1207,48 +1273,30 @@ async function runIntegratedCmrPass(input: {
       familyHeadAfter: resolvedFamilyHeadAfter,
     };
   }
-  const cmrResult = await dispatchOrAbort(
+  const spec = cmrWorkerSpec("fresh", pass, resolvedRoute);
+  const dispatchCtx: DispatchContext = {
+    familyBase,
+    cmrPass: pass,
+    ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
+      ? { llmResolvedChildren }
+      : {}),
+    ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
+    ...(moduleContext !== undefined ? { moduleContext } : {}),
+    ...(priorCmrFindingIdentityKeys !== undefined
+      ? { priorCmrFindingIdentityKeys }
+      : {}),
+  };
+  const cmrResult = await rewriteOutcomeProtocolFailure({
     familyBackend,
-    cmrWorkerSpec("fresh", pass, resolvedRoute),
-    {
-      familyBase,
-      cmrPass: pass,
-      ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
-        ? { llmResolvedChildren }
-        : {}),
-      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
-      ...(moduleContext !== undefined ? { moduleContext } : {}),
-      ...(priorCmrFindingIdentityKeys !== undefined
-        ? { priorCmrFindingIdentityKeys }
-        : {}),
-    },
-  );
+    spec,
+    ctx: dispatchCtx,
+    result: await dispatchOrAbort(familyBackend, spec, dispatchCtx),
+  });
   const postWorkerFamilyHead = await readPostCmrFamilyHead(
     familyBackend,
     familyBase,
     resolvedFamilyHeadAfter,
   );
-  if (
-    resolvedFamilyHeadAfter !== undefined &&
-    postWorkerFamilyHead !== undefined &&
-    postWorkerFamilyHead !== resolvedFamilyHeadAfter
-  ) {
-    const reason =
-      `integrated CMR ${pass} reviewer moved family HEAD: ` +
-      `${resolvedFamilyHeadAfter} -> ${postWorkerFamilyHead}`;
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary: cmrReviewerHeadMovedStopSummary({
-        pass,
-        familyHeadBefore: resolvedFamilyHeadAfter,
-        familyHeadAfter: postWorkerFamilyHead,
-      }),
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
-  }
   if (cmrResult.kind === "escalated") {
     const reason = `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`;
     const stopSummary = cmrEscalationStopSummary(reason);
@@ -1270,11 +1318,19 @@ async function runIntegratedCmrPass(input: {
     const reason =
       cmrResult.kind === "failed"
         ? `family integrated cmr ${pass} worker failed: ${cmrResult.reason}`
+        : cmrResult.kind === "outcome_protocol_failure"
+          ? `family integrated cmr ${pass} outcome protocol failure: ${cmrResult.reason}`
         : cmrResult.kind === "malformed"
           ? `family integrated cmr ${pass} worker malformed: ${cmrResult.reason}`
           : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
     const stopSummary =
-      cmrResult.kind === "failed"
+      cmrResult.kind === "outcome_protocol_failure"
+        ? infraFailureStopSummary({
+            summary: reason,
+            repairHint:
+              "repair the worker outcome writer/guard or the outcome rewrite prompt, then rerun the family barrier",
+          })
+        : cmrResult.kind === "failed"
         ? cmrWorkerFailedStopSummary({
             reason,
             resolvedRoute,
@@ -1305,6 +1361,27 @@ async function runIntegratedCmrPass(input: {
       ...(stopSummary !== undefined ? { stopSummary } : {}),
     });
     return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
+  }
+  if (
+    resolvedFamilyHeadAfter !== undefined &&
+    postWorkerFamilyHead !== undefined &&
+    postWorkerFamilyHead !== resolvedFamilyHeadAfter
+  ) {
+    const reason =
+      `integrated CMR ${pass} reviewer moved family HEAD: ` +
+      `${resolvedFamilyHeadAfter} -> ${postWorkerFamilyHead}`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: cmrReviewerHeadMovedStopSummary({
+        pass,
+        familyHeadBefore: resolvedFamilyHeadAfter,
+        familyHeadAfter: postWorkerFamilyHead,
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   let cmrFindingClassification: FamilyCmrClassification | undefined;
   if (

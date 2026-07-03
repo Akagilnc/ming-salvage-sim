@@ -692,6 +692,11 @@ export type WorkerOutput =
  *     (no usable output).
  *   - `malformed` — the worker produced output the seam could not parse into the
  *     declared schema (no completion signal / unparseable).
+ *   - `outcome_protocol_failure` — a malformed/missing/schema-incompatible outcome
+ *     reached the runner and either remained malformed after the bounded same-worker
+ *     rewrite path, or the rewrite produced git-truth movement (HEAD/commits/tracked
+ *     status) while only repairing the control envelope. This is infrastructure
+ *     failure, not a semantic review verdict.
  *   - `escalated` — the worker (model-judged) signalled it is stuck and a human
  *     must answer (carries the resume指引). Crash/timeout/missing-skill map to
  *     `failed`/`malformed`; only a MODEL escalate is `escalated`.
@@ -711,6 +716,12 @@ export type WorkerResult =
         readonly successfulLegs?: readonly string[];
         readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
       };
+    }
+  | {
+      readonly kind: "outcome_protocol_failure";
+      readonly reason: string;
+      readonly attempts: number;
+      readonly sessionId?: string;
     }
   | {
       readonly kind: "escalated";

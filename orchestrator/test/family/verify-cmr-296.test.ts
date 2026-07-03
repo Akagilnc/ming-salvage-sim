@@ -1175,6 +1175,73 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     }));
   });
 
+  it("a rewrite worker that throws while repairing malformed CMR outcome ⇒ infra outcome protocol failure, never an escaped throw", async () => {
+    class ThrowingRewriteBackend extends BareFamilyBackend {
+      readonly aborted: FamilyAbortedEvent[] = [];
+      currentFamilyHead = "head-before-worker";
+
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+
+      async readFamilyHead(_familyBase: string): Promise<string> {
+        return this.currentFamilyHead;
+      }
+
+      async recordAborted(event: FamilyAbortedEvent): Promise<void> {
+        this.aborted.push(event);
+      }
+
+      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        if (spec.kind !== "cmr") {
+          throw new Error(`unexpected worker after protocol failure: ${spec.kind}`);
+        }
+        this.currentFamilyHead = "head-after-malformed-cmr";
+        return {
+          kind: "malformed",
+          reason: `${ctx.cmrPass} cmr worker outcome sidecar was not valid JSON`,
+          sessionId: "cmr-session-malformed",
+        };
+      }
+
+      async rewriteWorkerOutcome(
+        _spec: WorkerSpec,
+        _ctx: DispatchContext,
+        _protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
+        attempt: number,
+      ): Promise<WorkerResult> {
+        this.currentFamilyHead = `head-after-rewrite-attempt-${attempt}`;
+        throw new Error("rewrite worker sandbox checkout failed");
+      }
+    }
+
+    const backend = new ThrowingRewriteBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.aborted).toHaveLength(1);
+    expect(backend.aborted[0]?.errorPackage.reason).toMatch(/outcome protocol failure/i);
+    expect(backend.aborted[0]?.errorPackage.reason).toMatch(/sandbox checkout failed/i);
+    expect(backend.aborted[0]?.familyHeadAfter).toBe("head-after-rewrite-attempt-1");
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("outcome protocol failure"),
+      familyHeadAfter: "head-after-rewrite-attempt-1",
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        summary: expect.stringContaining("sandbox checkout failed"),
+        repairHint: expect.stringContaining("worker outcome writer/guard"),
+      }),
+    }));
+  });
+
   it("a cmr worker failed result for missing dependencies is recorded as infra_failure", async () => {
     class FailedCmrBackend extends ThrowingDispatchBackend {
       constructor() {
