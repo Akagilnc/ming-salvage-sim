@@ -261,6 +261,74 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
     expect(result.failedPhase).toBe("final");
   });
 
+  it("resumes after a committed CMR coder-fix with protected finding keys", async () => {
+    const priorKey = "completeness|orchestrator/src/x.ts:12|restart final barrier";
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: (req) => ({
+        converged: true,
+        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        ...(req.priorCmrFindingIdentityKeys !== undefined
+          ? {
+              claimedFixedFindingIdentityKeys: [priorKey],
+              priorFindingDispositions: [
+                {
+                  identityKey: priorKey,
+                  status: "verified-closed" as const,
+                  evidence: "focused regression now passes after coder-fix commit",
+                },
+              ],
+            }
+          : {}),
+      }),
+    });
+    backend.liveHead = "head-after-cmr-fix";
+    backend.ledger.push(
+      {
+        childIssue: 294,
+        status: "merged",
+        childHead: "c294",
+        familyHeadAfter: "head-before-cmr-fix",
+      },
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadBefore: "head-before-cmr-fix",
+        familyHeadAfter: "head-after-cmr-fix",
+        blockingFindingIdentityKeys: [priorKey],
+      } as FamilyLedgerEntry,
+    );
+
+    const result = await runFamily({
+      epic: epicWith(294),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+      reconcileGit: {
+        async liveFamilyHead() {
+          return "head-after-cmr-fix";
+        },
+        async familyBaseStartHead() {
+          return "head-before-cmr-fix";
+        },
+        async childHeadExists() {
+          return { exists: true, childHead: "c294" };
+        },
+        async isAncestor() {
+          return true;
+        },
+      },
+    });
+
+    expect(result.status).toBe("success");
+    expect(backend.cmrCalls[0]).toMatchObject({
+      cmrPass: "completeness",
+      priorCmrFindingIdentityKeys: [priorKey],
+    });
+  });
+
   it("CMR completed/not-converged is a machine abort, not a decision pause", async () => {
     let cmrCalls = 0;
     const seenAnswers: IntegratedCmrRequest["escalationAnswer"][] = [];

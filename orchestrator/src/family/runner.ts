@@ -290,6 +290,22 @@ function pendingPriorCmrFindingIdentityKeysByPass(
       closedPasses.add(entry.cmrPass);
       continue;
     }
+    if (entry.status === "cmr_fix_committed") {
+      const pass = entry.cmrPass;
+      const keys = entry.blockingFindingIdentityKeys;
+      if (
+        pass === undefined ||
+        closedPasses.has(pass) ||
+        processedPasses.has(pass) ||
+        keys === undefined ||
+        keys.length === 0
+      ) {
+        continue;
+      }
+      processedPasses.add(pass);
+      keysByPass[pass] = Array.from(new Set(keys));
+      continue;
+    }
     if (entry.status !== "aborted" || entry.cmrFindingClassification === undefined) {
       continue;
     }

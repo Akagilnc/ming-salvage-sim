@@ -216,8 +216,9 @@ export interface FamilyLedgerEntry {
   /** The family base HEAD BEFORE this child's merge. */
   readonly familyHeadBefore?: string;
   /**
-   * The family base HEAD AFTER this child's merge, at barrier failure, or at the
-   * time a `cmr_passed` audit row's pass reviewed the base.
+   * The family base HEAD AFTER this child's merge, at barrier failure, at CMR
+   * review/fix audit time, or at the time a `cmr_passed` audit row's pass reviewed
+   * the base.
    */
   readonly familyHeadAfter?: string;
   /**
@@ -228,6 +229,12 @@ export interface FamilyLedgerEntry {
   readonly routeFingerprint?: string;
   /** Family CMR finding classification audit trail (#449). */
   readonly cmrFindingClassification?: FamilyCmrClassification;
+  /**
+   * CMR finding identity keys a runner-visible coder-fix commit is expected to
+   * close. Stored structurally on `cmr_fix_committed` rows so crash-resume can
+   * protect the same keys in the next fresh CMR pass.
+   */
+  readonly blockingFindingIdentityKeys?: readonly string[];
   /**
    * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
    * ran, #295) rather than land as a clean deterministic merge? Forwarded by the
