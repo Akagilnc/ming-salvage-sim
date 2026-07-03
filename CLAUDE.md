@@ -58,13 +58,13 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 1. 想法 → **`grill-with-docs`**（有 codebase）/ `grill-me`（无）→ 逼问（核心引擎 `/grilling`），决策结晶**当场**写 **tiny 单决策 ADR** + `CONTEXT.md` 词表。**逼问那一步在这、不在 to-prd；止于不可逆决策。** 大/模糊、一次 session 定不完的，先 **`decision-mapping`** 建决策图逐票推雾、路清再往下。
 2. （可选）`prototype` 去风险（状态/UI 开放问题）——`handoff` 出/回桥接（原型在独立 session 跑），答案落 ADR/issue/NOTES、原型删。
 3. **`to-prd`** → **完整 PRD**（不访谈，只综合 grill 的结论）：详尽 user stories + **Implementation Decisions + Testing Decisions（两层设计）** + Out of Scope；发 issue tracker 当父/epic、贴 `ready-for-agent`。**禁文件路径/代码片段。**
-4. 〔项目加〕设计评审：`ak-cross-m-review`（本地 cmr）+ 线上 bot → 合 ADR、Status→Accepted。〈设计侧到此结束〉
-5. **`to-issues`** 切 thin vertical-slice 子 issue（带 Parent + 验收 + HITL/AFK + blocked-by）。**⚠️ 切完必做原生补救**：① 子挂父 **native sub-issue**（`POST issues/<父>/sub_issues`）② 子↔子 **native blocked_by**（`POST issues/<blocked>/dependencies/blocked_by`）③ **撤父工作态标签**变 tracker（Matt #292）。命令见 [DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)。
+4. **`to-issues`** 切 thin vertical-slice 子 issue（带 Parent + 验收 + HITL/AFK + blocked-by）。**⚠️ 切完必做原生补救**：① 子挂父 **native sub-issue**（`POST issues/<父>/sub_issues`）② 子↔子 **native blocked_by**（`POST issues/<blocked>/dependencies/blocked_by`）③ **撤父工作态标签**变 tracker（Matt #292）。命令见 [DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)。
+5. 〔项目加〕设计评审（**在 to-issues 之后**——cmr 审含切片布线的设计全家；#470/#471/#478 实践序，2026-07-03 修订原 4/5 对调）：`ak-cross-m-review`（本地 cmr）+ 线上 bot → 合 ADR、Status→Accepted。〈设计侧到此结束〉
 6. **逐切片各开新 session `implement`**（canonical 构建步；自治/编排器里不直接 invoke umbrella，内联其流程）：约定 seam 调 `/tdd`（never refactor while RED）→ 跑 typecheck/单测/全量 → baseline commit；**代码级实现现场长**（架构级早在 to-prd 钉了）。硬 bug → `diagnosing-bugs`、架构清理 → `improve-codebase-architecture`。
 7. 〔项目加〕baseline commit 后代码评审：手动/单 session 场景单评用 `/code-review`（Standards + Spec 两轴；它评 `fixed-point...HEAD`，所以必须已有 commit）；**编排器 coder worker 不起 reviewer、不跑 `/code-review`**，单评由 runner 派出的 `/code-review` reviewer worker 承担。然后 per-slice `ak-cross-m-review`（**本项目手动多-session 开发流**的逐切片 cmr：codex+agy 跨家族——区别于 `## Skill routing` 里 #330 **编排器容器 worker** 的分解，那里 `/code-review` 是 runner 派发的 Matt 单评 reviewer worker、`ak-cross-m-review` 仍作整合 cmr）+ ship-pre 双闸 + 线上 bot；`gstack-ship` 收尾。评审修复一律追加新 commit，禁止 amend。
 8. merge commit（不 squash）→ 关子 issue；全完 → 关父 issue。
 
-> **分叉**：步骤 3→5（`to-prd`→`to-issues`）只在「多 session 大活」才走；**单 session 能完的小活直接在同一窗口 implement、跳过 3-5**。步骤 1→3→5 留**同一不间断上下文窗口**（别中途 compact）；每个子 issue **开新 session** 做 6。`triage` 不在这条主线上——它是**入口匝道**，只处理你没创建的外来 issue；`to-issues` 的产出已是 `ready-for-agent`、不再 triage。
+> **分叉**：步骤 3→4（`to-prd`→`to-issues`）只在「多 session 大活」才走；**单 session 能完的小活直接在同一窗口 implement、跳过 3-5**。步骤 1→3→4 留**同一不间断上下文窗口**（别中途 compact）；每个子 issue **开新 session** 做 6。`triage` 不在这条主线上——它是**入口匝道**，只处理你没创建的外来 issue；`to-issues` 的产出已是 `ready-for-agent`、不再 triage。
 
 **两层分工（2026-06-16 定）**：策划+架构 session 出 ADR，开发 session 读 ADR 做（同一 agent 可兼策划/架构两角，但当下分清在哪层、别拿字段/schema/现有代码卡玩法设计）。
 **文档三层（采 Matt Pocock grill-with-docs DDD）**：① `CONTEXT.md`=领域词表（是什么、零实现）；② `docs/adr/`=非显然决策的为什么（**ADR-FORMAT：1-3 句、单决策、稀有**，hard-to-reverse / surprising / real-tradeoff 才建，不是 spec；大模板会把可逆细节吸进来＝过度设计，避开）；③ 详设/代码任务 → issue；④ 实现 → 代码。给 AI 最薄一层。
