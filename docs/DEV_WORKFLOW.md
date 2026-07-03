@@ -1,9 +1,9 @@
 ---
 title: Matt Pocock 开发流程
-description: Matt Pocock skills 整套（想法 → merge）canonical：grill-with-docs → (prototype) → to-prd → to-issues → 逐片 implement（内联 tdd + code-review），外加 7 标签状态机 + triage 入口匝道 + agent brief 契约 + 「状态活 label、不活散文」。本项目 2026-06-17 起 Matt 纯化、严格按 Matt 试水；2026-06-18 修正三处真错（grill 在 to-prd 前 / to-prd 是完整 PRD 含两层设计 / triage 是匝道不是主线）并补「设计六层阶梯」；2026-07-02 同步 code-review / implement 新口径。
+description: Matt Pocock skills 整套（想法 → merge）canonical：grill-with-docs → (prototype) → to-prd → to-issues → 逐片 implement（内联 tdd + code-review），外加 7 标签状态机 + triage 入口匝道 + agent brief 契约 + 「状态活 label、不活散文」。本项目 2026-06-17 起 Matt 纯化、严格按 Matt 试水；2026-06-18 修正三处真错（grill 在 to-prd 前 / to-prd 是完整 PRD 含两层设计 / triage 是匝道不是主线）并补「设计六层阶梯」；2026-07-02 同步 code-review / implement 新口径；2026-07-03 注：本项目〔项目加〕设计评审闸（本地 cmr + 线上 bot → ADR Accepted）位于 to-issues 之后、逐片 implement 之前（CLAUDE.md §开发流程 步骤 5；#470/#471/#478 实践序）。
 type: concept
 created: 2026-06-17
-updated: 2026-07-02
+updated: 2026-07-03
 sources:
   - mattpocock/skills 各 SKILL.md 原文（ask-matt 路由器 / grill-with-docs / grill-me / domain-modeling / prototype / to-prd / to-issues / triage / implement / tdd / code-review / diagnosing-bugs / improve-codebase-architecture）
   - Ming_LLM 2026-06-17 验证 session（#174 走通全链、标签纯化、triage 36 backlog）
@@ -46,6 +46,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
         Problem / Solution / 详尽 User Stories / Implementation Decisions / Testing Decisions / Out of Scope / Further Notes
  └ to-issues ─────── PRD 切薄垂直切片子 issue（Parent + What to build + 验收 + Blocked by + AFK/HITL）
         ↑ grill →(decision-mapping)→ to-prd → to-issues 留同一不间断窗口，别中途 compact（smart zone ~120k）
+ └ 〔项目加〕设计评审闸 ── 本地 cmr + 线上 bot（审含切片布线的设计全家）→ merge → ADR Accepted
  └ (每个 issue 开新 session) implement ── 按 PRD/issue 实现：约定 seam 调 /tdd（never refactor while RED）
           → 跑 typecheck/单测/全量 → baseline commit
           → 单评（手动流 /code-review；编排器 runner 派 /code-review reviewer）→ fix commits
