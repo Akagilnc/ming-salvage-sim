@@ -1181,6 +1181,7 @@ async function runCmrCoderFix(input: {
       cmrPass: pass,
       familyHeadBefore: currentFamilyHeadBefore,
       familyHeadAfter,
+      blockingFindingIdentityKeys,
       reason:
         `${reasonPrefix}: coder-fix committed ${fixResult.output.commitsAdded} ` +
         `commit${fixResult.output.commitsAdded === 1 ? "" : "s"}`,

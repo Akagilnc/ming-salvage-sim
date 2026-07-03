@@ -123,6 +123,7 @@ export interface CmrFixCommittedRecord {
   readonly reason?: string;
   readonly familyHeadBefore?: string;
   readonly familyHeadAfter?: string;
+  readonly blockingFindingIdentityKeys?: readonly string[];
   readonly stopSummary?: StopSummary;
 }
 
@@ -318,6 +319,7 @@ export async function recordCmrFixCommitted(
       reason: record.reason,
       familyHeadBefore: record.familyHeadBefore,
       familyHeadAfter: record.familyHeadAfter,
+      blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
       stopSummary:
         record.stopSummary ??
         successStopSummary({
