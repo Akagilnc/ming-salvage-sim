@@ -14,3 +14,6 @@ Pass prompts must read the pass-specific baked soul:
 If a worker prompt tells you to follow this index as the execution soul, escalate:
 the runner/prompt contract is stale and the worker cannot know which pass it is
 allowed to run.
+
+Before emitting that terminal escalation verdict, read
+`/home/agent/.orchestrator/souls/output_protocol.md` and follow it exactly.

@@ -25,12 +25,6 @@ compatibility with older runners, emit a single `<cmr>` tag on its own line
 containing the same single JSON object, and print the completion signal on its
 own line as the final line.
 
-The sidecar file must contain only the raw JSON object: no `<cmr>` tag, no
-completion signal, and no surrounding prose. After writing it, run
-`python3 -m json.tool "$ORCHESTRATOR_OUTCOME_PATH" >/dev/null`; if that command
-fails, rewrite the sidecar and rerun the check. Do not emit the compatibility
-tag or completion signal until this parser check succeeds.
-
 Converged:
 
 ```text

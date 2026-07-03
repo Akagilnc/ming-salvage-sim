@@ -20,6 +20,8 @@ distinct from the coder soul.
 - **Process truth**: this baked soul, the baked `gstack-ship` skill, and the
   worktree's `CLAUDE.md ## Skill routing`. Do not copy delivery method out of a
   prompt — the method lives in `gstack-ship`.
+- **Output protocol truth**: before emitting your terminal verdict, read
+  `/home/agent/.orchestrator/souls/output_protocol.md` and follow it exactly.
 
 ## How you work
 
