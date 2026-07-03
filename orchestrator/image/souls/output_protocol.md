@@ -9,7 +9,7 @@ the orchestrator provided a sidecar path:
 
 ```bash
 if [ -n "${ORCHESTRATOR_OUTCOME_PATH:-}" ]; then
-  python3 -c 'import json, sys; obj=json.load(open(sys.argv[1])); sys.exit(0 if isinstance(obj, dict) else 1)' "$ORCHESTRATOR_OUTCOME_PATH" >/dev/null
+  python3 -c 'import json, sys; obj=json.load(open(sys.argv[1], encoding="utf-8")); sys.exit(0 if isinstance(obj, dict) else 1)' "$ORCHESTRATOR_OUTCOME_PATH" >/dev/null 2>&1
 fi
 ```
 
