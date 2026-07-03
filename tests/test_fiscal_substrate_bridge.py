@@ -123,7 +123,14 @@ def _hub_container_snapshot(db):
     return values
 
 
-def _assert_hub_conservation_oracle(ledger, containers, *, outbound=None):
+def _assert_hub_conservation_oracle(
+    ledger,
+    containers,
+    *,
+    outbound=None,
+    expected_taicang_losses=None,
+    expected_jingyun_losses=None,
+):
     """Independent hub oracle over persisted ledger/container values.
 
     The test reconstructs the two #261 hub identities from externally visible
@@ -146,27 +153,49 @@ def _assert_hub_conservation_oracle(ledger, containers, *, outbound=None):
     )
     assert inbound_gross == pytest.approx(inbound_booked_net + taicang_loss)
     assert taicang_loss == pytest.approx(taicang_human + taicang_sink)
+    if expected_taicang_losses is not None:
+        expected_human, expected_sink = expected_taicang_losses
+        assert taicang_human == pytest.approx(expected_human)
+        assert taicang_sink == pytest.approx(expected_sink)
 
     if outbound is not None:
-        jingyun_loss = containers["C_京运克扣"] + containers["C_京运运损"]
+        jingyun_human = containers["C_京运克扣"]
+        jingyun_sink = containers["C_京运运损"]
+        jingyun_loss = jingyun_human + jingyun_sink
         outbound_debit = -ledger.get("边饷hub", 0.0)
         assert outbound_debit == pytest.approx(
             outbound["jingyun_paid"] + outbound["central_paid"] + jingyun_loss
         )
         assert jingyun_loss == pytest.approx(outbound["transport_loss"])
         assert outbound["transport_loss"] == pytest.approx(
-            containers["C_京运克扣"] + containers["C_京运运损"]
+            jingyun_human + jingyun_sink
         )
+        if expected_jingyun_losses is not None:
+            expected_human, expected_sink = expected_jingyun_losses
+            assert jingyun_human == pytest.approx(expected_human)
+            assert jingyun_sink == pytest.approx(expected_sink)
 
 
-def _assert_hub_oracle_mutation_fails(ledger, containers, *, outbound=None, mutate):
+def _assert_hub_oracle_mutation_fails(
+    ledger,
+    containers,
+    *,
+    outbound=None,
+    expected_taicang_losses=None,
+    expected_jingyun_losses=None,
+    mutate,
+):
     mutated_ledger = dict(ledger)
     mutated_containers = dict(containers)
     mutated_outbound = dict(outbound) if outbound is not None else None
     mutate(mutated_ledger, mutated_containers, mutated_outbound)
     with pytest.raises(AssertionError):
         _assert_hub_conservation_oracle(
-            mutated_ledger, mutated_containers, outbound=mutated_outbound
+            mutated_ledger,
+            mutated_containers,
+            outbound=mutated_outbound,
+            expected_taicang_losses=expected_taicang_losses,
+            expected_jingyun_losses=expected_jingyun_losses,
         )
 
 
@@ -1048,11 +1077,18 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
         "central_paid": expense_row["central_paid"],
         "transport_loss": expense_row["transport_loss"],
     }
-    _assert_hub_conservation_oracle(ledger_snapshot, container_snapshot, outbound=outbound)
+    expected_jingyun_losses = (1, 1)
+    _assert_hub_conservation_oracle(
+        ledger_snapshot,
+        container_snapshot,
+        outbound=outbound,
+        expected_jingyun_losses=expected_jingyun_losses,
+    )
     _assert_hub_oracle_mutation_fails(
         ledger_snapshot,
         container_snapshot,
         outbound=outbound,
+        expected_jingyun_losses=expected_jingyun_losses,
         mutate=lambda ledger, containers, out: ledger.__setitem__(
             "边饷hub", ledger["边饷hub"] + 1
         ),
@@ -1061,6 +1097,7 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
         ledger_snapshot,
         container_snapshot,
         outbound=outbound,
+        expected_jingyun_losses=expected_jingyun_losses,
         mutate=lambda ledger, containers, out: containers.__setitem__(
             "C_京运克扣", containers["C_京运克扣"] + 1
         ),
@@ -1069,6 +1106,17 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
         ledger_snapshot,
         container_snapshot,
         outbound=outbound,
+        expected_jingyun_losses=expected_jingyun_losses,
+        mutate=lambda ledger, containers, out: (
+            containers.__setitem__("C_京运克扣", 2),
+            containers.__setitem__("C_京运运损", 0),
+        ),
+    )
+    _assert_hub_oracle_mutation_fails(
+        ledger_snapshot,
+        container_snapshot,
+        outbound=outbound,
+        expected_jingyun_losses=expected_jingyun_losses,
         mutate=lambda ledger, containers, out: out.__setitem__(
             "transport_loss", out["transport_loss"] + 1
         ),
@@ -1174,10 +1222,16 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     assert containers["C_太仓纯亏空"] == pytest.approx(1)
     ledger_snapshot = _hub_ledger_snapshot(db, turn=state.turn)
     container_snapshot = _hub_container_snapshot(db)
-    _assert_hub_conservation_oracle(ledger_snapshot, container_snapshot)
+    expected_taicang_losses = (2, 1)
+    _assert_hub_conservation_oracle(
+        ledger_snapshot,
+        container_snapshot,
+        expected_taicang_losses=expected_taicang_losses,
+    )
     _assert_hub_oracle_mutation_fails(
         ledger_snapshot,
         container_snapshot,
+        expected_taicang_losses=expected_taicang_losses,
         mutate=lambda ledger, containers, out: containers.__setitem__(
             "hub_省级起运到京", containers["hub_省级起运到京"] + 1
         ),
@@ -1185,6 +1239,7 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     _assert_hub_oracle_mutation_fails(
         ledger_snapshot,
         container_snapshot,
+        expected_taicang_losses=expected_taicang_losses,
         mutate=lambda ledger, containers, out: ledger.__setitem__(
             "太仓亏空", ledger["太仓亏空"] - 1
         ),
@@ -1192,8 +1247,18 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     _assert_hub_oracle_mutation_fails(
         ledger_snapshot,
         container_snapshot,
+        expected_taicang_losses=expected_taicang_losses,
         mutate=lambda ledger, containers, out: containers.__setitem__(
             "C_太仓挪用", containers["C_太仓挪用"] + 1
+        ),
+    )
+    _assert_hub_oracle_mutation_fails(
+        ledger_snapshot,
+        container_snapshot,
+        expected_taicang_losses=expected_taicang_losses,
+        mutate=lambda ledger, containers, out: (
+            containers.__setitem__("C_太仓挪用", 3),
+            containers.__setitem__("C_太仓纯亏空", 0),
         ),
     )
 
