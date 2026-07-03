@@ -889,6 +889,12 @@ function cmrClosureFailureReason(input: {
 interface IntegratedCmrPassOutcome {
   readonly result: VerifyCmrResult;
   readonly familyHeadAfter?: string;
+  readonly restartFinalBarrier?: {
+    readonly familyHeadAfter?: string;
+    readonly priorCmrFindingIdentityKeysByPass: Partial<
+      Record<IntegratedCmrPass, readonly string[]>
+    >;
+  };
 }
 
 const MAX_CODER_FIX_REPAIR_EVIDENCE_ATTEMPTS = 3;
@@ -1050,13 +1056,9 @@ async function runCmrCoderFix(input: {
     blockingFindingIdentityKeys.join(", ");
 
   let currentFamilyHeadBefore = familyHeadBefore;
-  let lastRepairGateFailure: string | undefined;
+  let attempt = 1;
 
-  for (
-    let attempt = 1;
-    attempt <= MAX_CODER_FIX_REPAIR_EVIDENCE_ATTEMPTS;
-    attempt += 1
-  ) {
+  while (true) {
     const fixResult = await dispatchOrAbort(
       familyBackend,
       familyCoderFixWorkerSpec(resolvedRoute),
@@ -1152,9 +1154,9 @@ async function runCmrCoderFix(input: {
       familyHeadAfter,
     });
     if (repairGateFailure !== undefined) {
-      lastRepairGateFailure = repairGateFailure;
       if (attempt < MAX_CODER_FIX_REPAIR_EVIDENCE_ATTEMPTS) {
         currentFamilyHeadBefore = familyHeadAfter;
+        attempt += 1;
         continue;
       }
       const reason =
@@ -1185,23 +1187,6 @@ async function runCmrCoderFix(input: {
     });
     return { result: { ok: true, ran: true }, familyHeadAfter };
   }
-
-  const reason =
-    `${reasonPrefix} repair evidence gate failed: ` +
-    (lastRepairGateFailure ?? "unknown repair evidence failure");
-  await recordDurableAbort(familyBackend, {
-    phase: "final",
-    cmrPass: pass,
-    reason,
-    familyHeadAfter: currentFamilyHeadBefore,
-    stopSummary: coderFixFailureStopSummary({
-      pass,
-      reason,
-      familyHeadBefore: currentFamilyHeadBefore,
-      familyHeadAfter: currentFamilyHeadBefore,
-    }),
-  });
-  return { result: { ok: false, ran: true }, familyHeadAfter: currentFamilyHeadBefore };
 }
 
 async function readPostCmrFamilyHead(
@@ -1352,6 +1337,9 @@ async function runIntegratedCmrPass(input: {
   readonly familyIssue?: number;
   readonly moduleContext?: FamilyModuleContext;
   readonly priorCmrFindingIdentityKeys?: readonly string[];
+  readonly priorCmrFindingIdentityKeysByPass?: Partial<
+    Record<IntegratedCmrPass, readonly string[]>
+  >;
   readonly resolvedRoute: ResolvedModelRoute;
   readonly allowCoderFix: boolean;
 }): Promise<IntegratedCmrPassOutcome> {
@@ -1366,6 +1354,7 @@ async function runIntegratedCmrPass(input: {
     moduleContext,
     resolvedRoute,
     priorCmrFindingIdentityKeys,
+    priorCmrFindingIdentityKeysByPass,
     allowCoderFix,
   } = input;
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
@@ -1584,21 +1573,20 @@ async function runIntegratedCmrPass(input: {
           resolvedRoute,
         });
         if (!fixRound.result.ok) return fixRound;
-        return runIntegratedCmrPass({
-          pass,
-          familyBackend,
-          familyBase,
-          llmResolvedChildren,
-          escalationAnswer,
-          familyHeadAfter: fixRound.familyHeadAfter,
-          familyIssue,
-          moduleContext,
-          priorCmrFindingIdentityKeys: [
+        const updatedPriorKeys = [
             ...new Set([...(priorCmrFindingIdentityKeys ?? []), ...fixableKeys]),
-          ],
-          resolvedRoute,
-          allowCoderFix: true,
-        });
+        ];
+        return {
+          result: { ok: true, ran: true },
+          familyHeadAfter: fixRound.familyHeadAfter,
+          restartFinalBarrier: {
+            familyHeadAfter: fixRound.familyHeadAfter,
+            priorCmrFindingIdentityKeysByPass: {
+              ...(priorCmrFindingIdentityKeysByPass ?? {}),
+              [pass]: updatedPriorKeys,
+            },
+          },
+        };
       }
       await recordDurableAbort(familyBackend, {
         phase: "final",
@@ -1829,10 +1817,21 @@ export async function runVerifyCmr(
   // #419: Step5 completeness and Step6 correctness are two runner-dispatched
   // CMR worker passes. Correctness is structurally unreachable unless the
   // completeness worker returns a green terminal verdict.
+  const activePriorKeysByPass: Partial<
+    Record<IntegratedCmrPass, readonly string[]>
+  > = {
+    ...(priorCmrFindingIdentityKeys !== undefined
+      ? {
+          completeness: priorCmrFindingIdentityKeys,
+          correctness: priorCmrFindingIdentityKeys,
+        }
+      : {}),
+    ...(priorCmrFindingIdentityKeysByPass ?? {}),
+  };
   const priorKeysForPass = (
     pass: IntegratedCmrPass,
   ): readonly string[] | undefined =>
-    priorCmrFindingIdentityKeysByPass?.[pass] ?? priorCmrFindingIdentityKeys;
+    activePriorKeysByPass[pass];
   const completeness = await runIntegratedCmrPass({
     pass: "completeness",
     familyBackend,
@@ -1843,10 +1842,25 @@ export async function runVerifyCmr(
     familyIssue,
     moduleContext,
     priorCmrFindingIdentityKeys: priorKeysForPass("completeness"),
+    priorCmrFindingIdentityKeysByPass: activePriorKeysByPass,
     resolvedRoute,
     allowCoderFix: true,
   });
   if (!completeness.result.ok) return completeness.result;
+  if (completeness.restartFinalBarrier !== undefined) {
+    return runVerifyCmr({
+      phase: "final",
+      familyBackend,
+      familyBase,
+      llmResolvedChildren,
+      escalationAnswer,
+      familyHeadAfter: completeness.restartFinalBarrier.familyHeadAfter,
+      familyIssue,
+      moduleContext,
+      priorCmrFindingIdentityKeysByPass:
+        completeness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass,
+    });
+  }
 
   const correctness = await runIntegratedCmrPass({
     pass: "correctness",
@@ -1858,10 +1872,25 @@ export async function runVerifyCmr(
     familyIssue,
     moduleContext,
     priorCmrFindingIdentityKeys: priorKeysForPass("correctness"),
+    priorCmrFindingIdentityKeysByPass: activePriorKeysByPass,
     resolvedRoute,
     allowCoderFix: true,
   });
   if (!correctness.result.ok) return correctness.result;
+  if (correctness.restartFinalBarrier !== undefined) {
+    return runVerifyCmr({
+      phase: "final",
+      familyBackend,
+      familyBase,
+      llmResolvedChildren,
+      escalationAnswer,
+      familyHeadAfter: correctness.restartFinalBarrier.familyHeadAfter,
+      familyIssue,
+      moduleContext,
+      priorCmrFindingIdentityKeysByPass:
+        correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass,
+    });
+  }
   const cmrPassedFamilyHeadAfter = correctness.familyHeadAfter;
   // Both CMR passes converged. Fall through to 止于 PR (the ship worker) below.
 

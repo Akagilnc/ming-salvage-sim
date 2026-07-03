@@ -1458,10 +1458,18 @@ export class RealFamilyBackend implements FamilyBackend {
   protected prepareFamilyCoderOutcomeLanding(): { path: string; sandboxPath: string } {
     mkdirSync(this.opts.ledgerDir, { recursive: true });
     const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-family-coder-fix-"));
-    const path = join(dir, "outcome.json");
-    writeFileSync(path, "", "utf8");
-    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
-    return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
+    let success = false;
+    try {
+      const path = join(dir, "outcome.json");
+      writeFileSync(path, "", "utf8");
+      this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
+      success = true;
+      return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
+    } finally {
+      if (!success) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
   }
 
   protected familyCoderSandbox(
