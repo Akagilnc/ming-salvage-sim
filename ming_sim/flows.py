@@ -1092,13 +1092,18 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
               AND central_pay_share > 0
             """
         ).fetchall()
-        for row in army_rows_raw:
-            db._validate_pay_source_values(
-                str(row["id"]), str(row["owner_power"]), str(row["pay_source_region"]),
-                float(row["province_pay_share"] or 0), float(row["central_pay_share"] or 0),
-                bool(row["is_tusi"]), bool(row["self_funded_pay"]),
-                float(row["province_pay_arrears"] or 0), float(row["central_pay_arrears"] or 0),
-            )
+        try:
+            for row in army_rows_raw:
+                db._validate_pay_source_values(
+                    str(row["id"]), str(row["owner_power"]), str(row["pay_source_region"]),
+                    float(row["province_pay_share"] or 0), float(row["central_pay_share"] or 0),
+                    bool(row["is_tusi"]), bool(row["self_funded_pay"]),
+                    float(row["province_pay_arrears"] or 0), float(row["central_pay_arrears"] or 0),
+                )
+        except ValueError as exc:
+            raise _SubstrateHubFixedFlowAbort(
+                f"substrate_hub 军饷饷源校验失败：{exc}"
+            ) from exc
         army_map = {str(r["id"]): r for r in army_rows_raw}
         ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
         ordered += [r for r in army_rows_raw if str(r["id"]) not in ARMY_SALARY_PRIORITY]
@@ -1437,7 +1442,12 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 })
         if pay_source_cutover:
             db._reconcile_central_army_pay_arrears_container()
-            db.assert_army_pay_source_container_conservation()
+            try:
+                db.assert_army_pay_source_container_conservation()
+            except ValueError as exc:
+                raise _SubstrateHubFixedFlowAbort(
+                    f"substrate_hub 军饷饷源守恒失败：{exc}"
+                ) from exc
     finally:
         if pay_source_cutover:
             for attr in (

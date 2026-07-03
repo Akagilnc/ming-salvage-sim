@@ -3749,10 +3749,12 @@ def test_substrate_malformed_fiscal_container_is_logged_not_prefiltered(fresh_ga
     assert surfaced, msgs
 
 
-def test_cutover_pay_source_errors_abort_fixed_flows(fresh_game):
+def test_cutover_pay_source_errors_abort_fixed_flows(fresh_game, monkeypatch, tmp_path):
+    import ming_sim.error_pack as error_pack_mod
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
+    monkeypatch.setattr(error_pack_mod, "user_data_dir", lambda: tmp_path)
     db.conn.execute(
         """
         UPDATE armies
@@ -3762,8 +3764,15 @@ def test_cutover_pay_source_errors_abort_fixed_flows(fresh_game):
     )
     db.conn.commit()
 
-    with pytest.raises(ValueError, match="饷源比例和必须为 1"):
+    with pytest.raises(SettlementAbort) as exc_info:
         flows_mod.apply_fixed_period_flows(db, state)
+
+    abort = exc_info.value
+    assert abort.stage == "fixed_fiscal"
+    assert abort.error_pack_path
+    pack = Path(abort.error_pack_path)
+    assert pack.exists()
+    assert "饷源比例和必须为 1" in (pack / "traceback.txt").read_text(encoding="utf-8")
 
 
 def test_cutover_substrate_bad_state_uses_settlement_abort_error_pack(fresh_game, monkeypatch, tmp_path):
