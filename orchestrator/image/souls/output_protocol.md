@@ -1,18 +1,30 @@
 # Worker output protocol
 
-Every worker that receives `ORCHESTRATOR_OUTCOME_PATH` must write its terminal
-machine result there before emitting the compatibility tag and completion signal.
+The first guarded role is `cmr`. A CMR worker that receives
+`ORCHESTRATOR_OUTCOME_PATH` must route its terminal machine result through the
+versioned outcome guard before emitting any compatibility tag or completion
+signal. Other worker roles keep their prompt-specific sidecar contract until their
+role schema is added to the guard.
 
-The sidecar file must contain only the raw JSON object: no XML-style tag, no
-completion signal, and no surrounding prose. After writing it, validate it when
-the orchestrator provided a sidecar path:
+Write the terminal JSON object to a draft file first, not directly to
+`ORCHESTRATOR_OUTCOME_PATH`. Then run the guard with this shape, substituting the
+worker role and completion signal from the prompt:
 
 ```bash
 if [ -n "${ORCHESTRATOR_OUTCOME_PATH:-}" ]; then
-  python3 -c 'import json, sys; obj=json.load(open(sys.argv[1], encoding="utf-8")); sys.exit(0 if isinstance(obj, dict) else 1)' "$ORCHESTRATOR_OUTCOME_PATH" >/dev/null 2>&1
+  orchestrator-outcome-guard \
+    --role "<worker-role>" \
+    --draft "<draft-json-path>" \
+    --outcome "$ORCHESTRATOR_OUTCOME_PATH" \
+    --evidence-root "$PWD" \
+    --completion-signal "<COMPLETION_SIGNAL>"
 fi
 ```
 
-If that command fails, rewrite the sidecar and rerun the check. When the
-orchestrator provided `ORCHESTRATOR_OUTCOME_PATH`, do not emit the compatibility
-tag or completion signal until this object check succeeds.
+If the command fails, read its error, fix the draft, and rerun the guard. The
+guard writes the raw sidecar JSON and prints the compatibility tag plus completion
+signal only after JSON shape, role schema, required fields, and referenced
+evidence paths pass validation.
+
+Do not print the compatibility tag or completion signal yourself when
+`ORCHESTRATOR_OUTCOME_PATH` is set; let the guard emit them.

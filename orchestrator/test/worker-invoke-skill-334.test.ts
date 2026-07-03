@@ -266,6 +266,22 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(correctnessSoul).not.toMatch(/Gate 1|completeness gate|Run only the completeness/is);
   });
 
+  it("#549 integrated cmr pass souls are reviewer workers, not persistent fixers", () => {
+    for (const soulName of ["cmr_completeness.md", "cmr_correctness.md"]) {
+      const soul = readSoul(soulName);
+
+      expect(soul).toMatch(/reviewer worker/i);
+      expect(soul).toMatch(/findings\/outcome/i);
+      expect(soul).toMatch(/return\s+control\s+to\s+the\s+runner/i);
+      expect(soul).toMatch(/must not repair/i);
+      expect(soul).toMatch(/must not[^.]*create a fix commit/i);
+      expect(soul).not.toMatch(/coder-fix/i);
+      expect(soul).not.toMatch(/Fix every gap|Fix P0\/P1|After every fix/i);
+      expect(soul).not.toMatch(/Commit each coherent fix|git commit|do not push or open a PR/i);
+      expect(soul).not.toMatch(/gh issue create|TODOS\.md/i);
+    }
+  });
+
   it("every existing prompt still defines its structured output contract (tag + signal)", () => {
     // Thinning the METHOD must not drop the output contract route()/the seam
     // decode against — each worker must still emit its tag + completion signal.
@@ -295,11 +311,13 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
   it("the baked shared output protocol owns sidecar parser validation", () => {
     const protocol = readSoul("output_protocol.md");
     expect(protocol).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
-    expect(protocol).toMatch(/raw JSON object/i);
+    expect(protocol).toMatch(/raw sidecar JSON/i);
     expect(protocol).toMatch(/if \[ -n "\$\{ORCHESTRATOR_OUTCOME_PATH:-\}" \]/);
-    expect(protocol).toMatch(
-      /if \[ -n "\$\{ORCHESTRATOR_OUTCOME_PATH:-\}" \][\s\S]*python3 -c 'import json, sys; obj=json\.load\(open\(sys\.argv\[1\], encoding="utf-8"\)\); sys\.exit\(0 if isinstance\(obj, dict\) else 1\)' "\$ORCHESTRATOR_OUTCOME_PATH" >\/dev\/null 2>&1[\s\S]*fi/,
-    );
+    expect(protocol).toMatch(/orchestrator-outcome-guard/);
+    expect(protocol).toMatch(/--draft "<draft-json-path>"/);
+    expect(protocol).toMatch(/--outcome "\$ORCHESTRATOR_OUTCOME_PATH"/);
+    expect(protocol).toMatch(/--completion-signal "<COMPLETION_SIGNAL>"/);
+    expect(protocol).not.toMatch(/python3 -c 'import json/);
     expect(protocol).not.toMatch(/python3 -m json\.tool/);
 
     for (const soulName of [
