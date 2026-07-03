@@ -91,6 +91,22 @@ def _set_fiscal_config_value(db, key, value):
     db.conn.commit()
 
 
+def _zero_non_meta_fiscal_config(db):
+    db.conn.execute(
+        """
+        UPDATE fiscal_config
+        SET value = CASE
+            WHEN key IN (
+                'central_taicang_sink_loss_rate',
+                'central_jingyun_sink_loss_rate'
+            ) THEN 1
+            ELSE 0
+        END
+        WHERE kind != 'meta'
+        """
+    )
+
+
 def _hub_ledger_snapshot(db, *, turn=None):
     query = """
         SELECT category, COALESCE(SUM(delta), 0) AS delta
@@ -611,13 +627,7 @@ def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
     state.metrics["国库"] = 0
     db.save_state(state)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
-    db.conn.execute(
-        """
-        UPDATE fiscal_config
-        SET value = 0
-        WHERE kind != 'meta'
-        """
-    )
+    _zero_non_meta_fiscal_config(db)
     db.conn.execute(
         """
         UPDATE regions
@@ -681,13 +691,7 @@ def test_fixed_flows_legacy_engine_keeps_global_army_pay_route(fresh_game):
     state.metrics["国库"] = 0
     db.save_state(state)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
-    db.conn.execute(
-        """
-        UPDATE fiscal_config
-        SET value = 0
-        WHERE kind != 'meta'
-        """
-    )
+    _zero_non_meta_fiscal_config(db)
     db.conn.execute(
         """
         UPDATE regions
@@ -741,13 +745,7 @@ def test_fixed_flows_substrate_hub_does_not_allocate_legacy_central_pool(fresh_g
     db.save_state(state)
     _set_all_settle_grants(db, 0)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
-    db.conn.execute(
-        """
-        UPDATE fiscal_config
-        SET value = 0
-        WHERE kind != 'meta'
-        """
-    )
+    _zero_non_meta_fiscal_config(db)
     db.conn.execute(
         """
         UPDATE regions
@@ -884,13 +882,7 @@ def test_fixed_flows_substrate_hub_central_capacity_reduces_current_central_arre
     db.save_state(state)
     _set_all_settle_grants(db, 0)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
-    db.conn.execute(
-        """
-        UPDATE fiscal_config
-        SET value = 0
-        WHERE kind != 'meta'
-        """
-    )
+    _zero_non_meta_fiscal_config(db)
     db.conn.execute(
         """
         UPDATE regions
@@ -985,13 +977,7 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
         },
     )
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
-    db.conn.execute(
-        """
-        UPDATE fiscal_config
-        SET value = 0
-        WHERE kind != 'meta'
-        """
-    )
+    _zero_non_meta_fiscal_config(db)
     _set_fiscal_config_value(db, "central_jingyun_human_loss_rate", 20)
     _set_fiscal_config_value(db, "central_jingyun_sink_loss_rate", 10)
     db.conn.execute(
@@ -1131,7 +1117,7 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     db.save_state(state)
     sync_opening_legacies(db, state)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
-    db.conn.execute("UPDATE fiscal_config SET value = 0 WHERE kind != 'meta'")
+    _zero_non_meta_fiscal_config(db)
     _set_fiscal_config_value(db, "central_taicang_human_loss_rate", 10)
     _set_fiscal_config_value(db, "central_taicang_sink_loss_rate", 5)
     db.conn.execute(
@@ -1382,13 +1368,7 @@ def test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expense
         },
     )
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
-    db.conn.execute(
-        """
-        UPDATE fiscal_config
-        SET value = 0
-        WHERE kind != 'meta'
-        """
-    )
+    _zero_non_meta_fiscal_config(db)
     db.conn.execute("UPDATE fiscal_config SET value = 10 WHERE key = '官俸_base'")
     db.conn.execute("UPDATE fiscal_config SET value = 100 WHERE key = '官俸_rate'")
     db.conn.execute(
@@ -1490,13 +1470,7 @@ def test_fixed_flows_substrate_hub_integer_allocation_drives_all_consumers(fresh
         },
     )
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
-    db.conn.execute(
-        """
-        UPDATE fiscal_config
-        SET value = 0
-        WHERE kind != 'meta'
-        """
-    )
+    _zero_non_meta_fiscal_config(db)
     db.conn.execute(
         """
         UPDATE regions
@@ -1617,13 +1591,7 @@ def test_fixed_flows_substrate_hub_fractional_due_caps_integer_debit(fresh_game)
         },
     )
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
-    db.conn.execute(
-        """
-        UPDATE fiscal_config
-        SET value = 0
-        WHERE kind != 'meta'
-        """
-    )
+    _zero_non_meta_fiscal_config(db)
     db.conn.execute(
         """
         UPDATE regions
@@ -1724,13 +1692,7 @@ def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game,
     db.save_state(state)
     _set_all_settle_grants(db, 0)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
-    db.conn.execute(
-        """
-        UPDATE fiscal_config
-        SET value = 0
-        WHERE kind != 'meta'
-        """
-    )
+    _zero_non_meta_fiscal_config(db)
     db.conn.execute(
         """
         UPDATE regions
@@ -2203,13 +2165,7 @@ def test_fixed_flows_cutover_uses_total_source_shortfall_for_mixed_army_morale(f
     state.metrics["国库"] = 0
     db.save_state(state)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
-    db.conn.execute(
-        """
-        UPDATE fiscal_config
-        SET value = 0
-        WHERE kind != 'meta'
-        """
-    )
+    _zero_non_meta_fiscal_config(db)
     db.conn.execute(
         """
         UPDATE regions
@@ -3846,6 +3802,30 @@ def test_cutover_taicang_loss_rate_bad_state_uses_settlement_abort_error_pack(
     monkeypatch.setattr(error_pack_mod, "user_data_dir", lambda: tmp_path)
     _set_fiscal_config_value(db, "central_taicang_human_loss_rate", 80)
     _set_fiscal_config_value(db, "central_taicang_sink_loss_rate", 30)
+
+    with pytest.raises(SettlementAbort) as exc_info:
+        flows_mod.apply_fixed_period_flows(db, state)
+
+    abort = exc_info.value
+    assert abort.stage == "fixed_fiscal"
+    assert abort.error_pack_path
+    pack = Path(abort.error_pack_path)
+    assert pack.exists()
+    assert (pack / "traceback.txt").read_text(encoding="utf-8")
+
+
+def test_cutover_structural_sink_rate_zero_uses_settlement_abort_error_pack(
+    fresh_game, monkeypatch, tmp_path
+):
+    import ming_sim.error_pack as error_pack_mod
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    monkeypatch.setattr(error_pack_mod, "user_data_dir", lambda: tmp_path)
+    db.conn.execute(
+        "UPDATE fiscal_config SET value = 0 WHERE key = 'central_taicang_sink_loss_rate'"
+    )
+    db.conn.commit()
 
     with pytest.raises(SettlementAbort) as exc_info:
         flows_mod.apply_fixed_period_flows(db, state)

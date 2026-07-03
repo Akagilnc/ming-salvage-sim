@@ -262,7 +262,8 @@ def _fiscal_container_value(db: GameDB, key: str) -> float:
 
 def _fiscal_config_rate(db: GameDB, key: str) -> float:
     cfg = db.get_fiscal_config()
-    if key not in cfg and db.fiscal_config_minimum_value(key) is not None:
+    minimum = db.fiscal_config_minimum_value(key)
+    if key not in cfg and minimum is not None:
         raise ValueError(f"fiscal_config.{key} 缺失")
     raw = cfg.get(key, 0)
     if isinstance(raw, bool):
@@ -273,6 +274,8 @@ def _fiscal_config_rate(db: GameDB, key: str) -> float:
         raise ValueError(f"fiscal_config.{key} 非数值：{raw!r}") from exc
     if not math.isfinite(value) or value < 0 or value > 100:
         raise ValueError(f"fiscal_config.{key} 越界：{raw!r}")
+    if minimum is not None and value < minimum:
+        raise ValueError(f"fiscal_config.{key} 低于结构地板 {minimum}：{raw!r}")
     return value / 100.0
 
 

@@ -318,6 +318,30 @@ def test_change_structural_sink_loss_rate_below_floor_rejected(game):
     assert db.get_fiscal_config()[key] == before
 
 
+def test_change_central_loss_rate_pair_above_100_rejected(game):
+    """中央人为+自然损耗率合计不得超过 100%，写入阶段即拒收。"""
+    db, state, content = game
+    turn = state.turn
+    key = "central_taicang_human_loss_rate"
+    before_human = db.get_fiscal_config()[key]
+    before_sink = db.get_fiscal_config()["central_taicang_sink_loss_rate"]
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [{
+            "key": key,
+            "delta": 101 - before_human,
+            "reason": "试图把中央亏空率推过 100%",
+        }],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "fiscal_changes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    cfg = db.get_fiscal_config()
+    assert cfg[key] == before_human
+    assert cfg["central_taicang_sink_loss_rate"] == before_sink
+
+
 @pytest.mark.parametrize("bad", [False, 0.0])
 def test_falsy_dirty_delta_still_rejected(game, bad):
     """False==0 / 0.0==0 为真——无操作短路跑在脏值判定之前,把脏 bool/float 静默
