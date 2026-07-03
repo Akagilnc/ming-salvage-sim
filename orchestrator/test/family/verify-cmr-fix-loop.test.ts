@@ -464,6 +464,12 @@ class ReviewerLeavesTrackedDirtyBeforeFindingBackend extends ReviewFixRereviewBa
   }
 }
 
+class ReviewerTrackedStatusReadFailsBackend extends ReviewFixRereviewBackend {
+  async readFamilyTrackedStatus(): Promise<readonly string[]> {
+    throw new Error("git status failed");
+  }
+}
+
 class MissingRepairEvidenceThenGoodBackend extends ReviewFixRereviewBackend {
   private coderFixRound = 0;
 
@@ -827,6 +833,35 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     ).toBe(false);
     expect(
       backend.ledger.some((entry) => entry.status === "cmr_passed"),
+    ).toBe(false);
+  });
+
+  it("fails closed when the runner cannot read tracked status after CMR review", async () => {
+    const backend = new ReviewerTrackedStatusReadFailsBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/550-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(["cmr"]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("tracked status read failed"),
+      familyHeadAfter: "head-before-cmr-review",
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+      }),
+    }));
+    expect(
+      backend.ledger.some((entry) => entry.status === "cmr_reviewed"),
+    ).toBe(false);
+    expect(
+      backend.ledger.some((entry) => entry.status === "cmr_fix_committed"),
     ).toBe(false);
   });
 
