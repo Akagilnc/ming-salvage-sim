@@ -13,6 +13,9 @@ Read this worktree's `CLAUDE.md ## Skill routing` section and route by it. For a
 conflicted merge that means **invoke the `resolving-merge-conflicts` skill** and
 follow it to resolve the in-progress git merge:
 
+Before emitting your terminal verdict, read
+`/home/agent/.orchestrator/souls/output_protocol.md` and follow it exactly.
+
 1. Inspect the conflict markers and understand BOTH sides' intent (read the slices'
    diffs / commit messages — a conflict is two correct changes colliding, not one
    wrong one).

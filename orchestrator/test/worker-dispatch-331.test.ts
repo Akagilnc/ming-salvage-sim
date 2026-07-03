@@ -481,7 +481,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       expect(be.runStepOutcomeLandings).toEqual([
         {
           path: join(stateDir, "worker-outcome-S2", "outcome.json"),
-          sandboxPath: ".orchestrator-outcome.json",
+          sandboxPath: "/home/agent/workspace/.orchestrator-outcome.json",
         },
       ]);
       expect(readFileSync(join(stateDir, "worker-outcome-S2", "outcome.json"), "utf8")).toBe("");
@@ -511,7 +511,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       expect(be.resumeOutcomeLandings).toEqual([
         {
           path: join(stateDir, "worker-outcome-S5", "outcome.json"),
-          sandboxPath: ".orchestrator-outcome.json",
+          sandboxPath: "/home/agent/workspace/.orchestrator-outcome.json",
         },
       ]);
     } finally {

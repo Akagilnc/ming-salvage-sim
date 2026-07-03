@@ -108,6 +108,7 @@ import {
   type ShipWorkerOutcome,
 } from "./shipOutcome.js";
 import {
+  WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
   readWorkerOutcomeSidecar as readOutcomeSidecar,
   stripJsonFence as stripOutcomeJsonFence,
@@ -2912,7 +2913,7 @@ export class RealBackend implements Backend {
     const dir = mkdtempSync(join(ctx.stateDir, "worker-outcome-ship-"));
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
-    this.excludeRuntimeFileFromGit(ctx.worktree.path, WORKER_OUTCOME_SANDBOX_FILE);
+    this.excludeRuntimeFileFromGit(ctx.worktree.path, WORKER_OUTCOME_REPO_FILE);
     return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
 
