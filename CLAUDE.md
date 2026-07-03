@@ -64,7 +64,7 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 7. 〔项目加〕baseline commit 后代码评审：手动/单 session 场景单评用 `/code-review`（Standards + Spec 两轴；它评 `fixed-point...HEAD`，所以必须已有 commit）；**编排器 coder worker 不起 reviewer、不跑 `/code-review`**，单评由 runner 派出的 `/code-review` reviewer worker 承担。然后 per-slice `ak-cross-m-review`（**本项目手动多-session 开发流**的逐切片 cmr：codex+agy 跨家族——区别于 `## Skill routing` 里 #330 **编排器容器 worker** 的分解，那里 `/code-review` 是 runner 派发的 Matt 单评 reviewer worker、`ak-cross-m-review` 仍作整合 cmr）+ ship-pre 双闸 + 线上 bot；`gstack-ship` 收尾。评审修复一律追加新 commit，禁止 amend。
 8. merge commit（不 squash）→ 关子 issue；全完 → 关父 issue。
 
-> **分叉**：步骤 3→4（`to-prd`→`to-issues`）只在「多 session 大活」才走；**单 session 能完的小活直接在同一窗口 implement、跳过 3-5（含步骤 5 设计评审闸——小活无设计文档，不涉）**。步骤 1→3→4 留**同一不间断上下文窗口**（别中途 compact）；每个子 issue **开新 session** 做 6。`triage` 不在这条主线上——它是**入口匝道**，只处理你没创建的外来 issue；`to-issues` 的产出已是 `ready-for-agent`、不再 triage。
+> **分叉**：步骤 3→4（`to-prd`→`to-issues`）只在「多 session 大活」才走；**单 session 能完的小活直接在同一窗口 implement、跳过 3-5（含步骤 5 设计评审闸——小活无设计文档，不涉）**。步骤 1→3→4 留**同一不间断上下文窗口**（别中途 compact）；每个子 issue **开新 session** 做 6。`triage` 不在这条主线上——它是**入口匝道**，只处理你没创建的外来 issue；`to-issues` 的产出规格即 agent-ready、不再 triage（但贴 `ready-for-agent` **标签**的时机受步骤 5 闸前 hold 约束——闸收敛后统一贴）。
 
 **两层分工（2026-06-16 定）**：策划+架构 session 出 ADR，开发 session 读 ADR 做（同一 agent 可兼策划/架构两角，但当下分清在哪层、别拿字段/schema/现有代码卡玩法设计）。
 **文档三层（采 Matt Pocock grill-with-docs DDD）**：① `CONTEXT.md`=领域词表（是什么、零实现）；② `docs/adr/`=非显然决策的为什么（**ADR-FORMAT：1-3 句、单决策、稀有**，hard-to-reverse / surprising / real-tradeoff 才建，不是 spec；大模板会把可逆细节吸进来＝过度设计，避开）；③ 详设/代码任务 → issue；④ 实现 → 代码。给 AI 最薄一层。
