@@ -269,6 +269,76 @@ const REPLAY_WORKTREE: WorktreeHandle = {
   path: "/dogfood/replay",
 };
 
+function dogfoodRepairEvidence(input: {
+  readonly identityKeys?: ReadonlyArray<string>;
+  readonly findings?: ReadonlyArray<Finding>;
+  readonly changedFiles?: ReadonlyArray<string>;
+  readonly tests?: ReadonlyArray<string>;
+  readonly patchSummary?: string;
+}): NonNullable<Extract<StepOutput, { kind: "coder" }>["repairEvidence"]> {
+  const findings = input.findings ?? [BASE_FINDING];
+  return {
+    findingScope: {
+      identityKeys:
+        input.identityKeys ?? findings.map((item) => findingIdentityKey(item)),
+      locations: findings.map((item) => item.location),
+    },
+    changedFiles: input.changedFiles ?? ["orchestrator/src/dogfoodReplay.ts"],
+    tests: input.tests ?? ["npm test -- --run test/dogfood-replay-451.test.ts"],
+    sameClassBugScan:
+      'rg "repairEvidence|blockingFindingIdentityKeys" orchestrator/src orchestrator/test',
+    introducedRegressionCheck:
+      "npm test -- --run test/dogfood-replay-451.test.ts",
+    ...(input.patchSummary !== undefined
+      ? { patchSummary: input.patchSummary }
+      : {}),
+  };
+}
+
+function dogfoodS5CoderOutputForFindings(
+  findings: ReadonlyArray<Finding>,
+): StepOutput {
+  return {
+    kind: "coder",
+    committed: true,
+    commitsAdded: 1,
+    repairEvidence: dogfoodRepairEvidence({ findings }),
+  };
+}
+
+function completeDogfoodS5CoderOutput(
+  output: Extract<StepOutput, { kind: "coder" }>,
+  ctx?: DispatchContext,
+): StepOutput {
+  const existing = output.repairEvidence;
+  return {
+    ...output,
+    repairEvidence: {
+      ...dogfoodRepairEvidence({
+        identityKeys: ctx?.blockingFindingIdentityKeys,
+        findings: ctx?.blockingFindings,
+        patchSummary: "scripted dogfood coder-fix replay",
+      }),
+      ...(existing ?? {}),
+      findingScope:
+        existing?.findingScope ??
+        dogfoodRepairEvidence({
+          identityKeys: ctx?.blockingFindingIdentityKeys,
+          findings: ctx?.blockingFindings,
+        }).findingScope,
+      tests: existing?.tests ?? [
+        "npm test -- --run test/dogfood-replay-451.test.ts",
+      ],
+      sameClassBugScan:
+        existing?.sameClassBugScan ??
+        'rg "repairEvidence|blockingFindingIdentityKeys" orchestrator/src orchestrator/test',
+      introducedRegressionCheck:
+        existing?.introducedRegressionCheck ??
+        "npm test -- --run test/dogfood-replay-451.test.ts",
+    },
+  };
+}
+
 function ledgerEntry(
   step: StepId,
   input?: {
@@ -384,7 +454,10 @@ class DogfoodSingleSliceBackend implements Backend {
     const scripted =
       spec.id === "S5" ? this.coderOutputs[this.coderAttempt] : undefined;
     if (spec.id === "S5") this.coderAttempt += 1;
-    return scripted ?? { kind: "coder", committed: true, commitsAdded: 1 };
+    const output = scripted ?? { kind: "coder", committed: true, commitsAdded: 1 };
+    return spec.id === "S5" && output.kind === "coder"
+      ? completeDogfoodS5CoderOutput(output)
+      : output;
   }
 
   async dispatchWorker(
@@ -414,9 +487,13 @@ class DogfoodSingleSliceBackend implements Backend {
     const scripted =
       spec.id === "S5" ? this.coderOutputs[this.coderAttempt] : undefined;
     if (spec.id === "S5") this.coderAttempt += 1;
+    const output = scripted ?? { kind: "coder", committed: true, commitsAdded: 1 };
     return {
       kind: "completed",
-      output: scripted ?? { kind: "coder", committed: true, commitsAdded: 1 },
+      output:
+        spec.id === "S5" && output.kind === "coder"
+          ? completeDogfoodS5CoderOutput(output, ctx)
+          : output,
     };
   }
 
@@ -468,6 +545,7 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
   readonly dispatches: string[] = [];
   readonly escalations: FamilyEscalation[] = [];
   private familyWorkerAttempt = 0;
+  private familyHeadCursor: string;
 
   constructor(
     currentHead = "family-head",
@@ -475,10 +553,19 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
     private readonly familyWorkerOutputs: ReadonlyArray<WorkerResult> = [],
   ) {
     super(currentHead, initialLedger);
+    this.familyHeadCursor = currentHead;
   }
 
   async runFamilyVerify(): Promise<{ ok: true }> {
     return { ok: true };
+  }
+
+  override async readFamilyHead(): Promise<string> {
+    return this.familyHeadCursor;
+  }
+
+  private advanceFamilyHead(): void {
+    this.familyHeadCursor = `${this.familyHeadCursor}+fix${this.familyWorkerAttempt}`;
   }
 
   async dispatchWorker(
@@ -490,7 +577,16 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
     );
     const scripted = this.familyWorkerOutputs[this.familyWorkerAttempt];
     this.familyWorkerAttempt += 1;
-    if (scripted !== undefined) return scripted;
+    if (scripted !== undefined) {
+      if (
+        spec.kind === "coder" &&
+        scripted.kind === "completed" &&
+        scripted.output.kind === "coder"
+      ) {
+        this.advanceFamilyHead();
+      }
+      return scripted;
+    }
     if (spec.kind === "cmr") {
       const priorKeys = ctx.priorCmrFindingIdentityKeys ?? [];
       return {
@@ -510,6 +606,7 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
       };
     }
     if (spec.kind === "coder") {
+      this.advanceFamilyHead();
       return {
         kind: "completed",
         output: {
@@ -522,6 +619,10 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
             },
             changedFiles: ["orchestrator/src/dogfoodReplay.ts"],
             tests: ["dogfood replay fixture"],
+            sameClassBugScan:
+              'rg "repairEvidence|blockingFindingIdentityKeys" orchestrator/src orchestrator/test',
+            introducedRegressionCheck:
+              "npm test -- --run test/dogfood-replay-451.test.ts",
             patchSummary: "scripted family CMR coder-fix replay",
           },
         },
@@ -534,7 +635,7 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
         branch: ctx.familyBase ?? "family/dogfood-base",
         status: "pr_opened",
         pr: `pr://${ctx.familyBase ?? "family/dogfood-base"}`,
-        prHead: this.currentHead,
+        prHead: this.familyHeadCursor,
       },
     };
   }
@@ -579,7 +680,7 @@ function noProgressDecisionLedger(
     }),
     ledgerEntry("S4"),
     ledgerEntry("S5", {
-      output: { kind: "coder", committed: true, commitsAdded: 1 },
+      output: dogfoodS5CoderOutputForFindings(findings),
     }),
     ledgerEntry("S6", {
       output: {
@@ -590,7 +691,7 @@ function noProgressDecisionLedger(
     }),
     ledgerEntry("S4"),
     ledgerEntry("S5", {
-      output: { kind: "coder", committed: true, commitsAdded: 1 },
+      output: dogfoodS5CoderOutputForFindings(findings),
     }),
     ledgerEntry("S6", {
       output: {

@@ -118,7 +118,7 @@ function isValidFindingRepairScope(v: unknown): boolean {
   );
 }
 
-function isValidRepairEvidence(v: unknown): v is RepairEvidence {
+export function isValidRepairEvidence(v: unknown): v is RepairEvidence {
   if (v == null || typeof v !== "object" || Array.isArray(v)) return false;
   const obj = v as Record<string, unknown>;
   if (!isValidFindingRepairScope(obj.findingScope)) return false;
@@ -132,6 +132,18 @@ function isValidRepairEvidence(v: unknown): v is RepairEvidence {
   if (obj.fixtures !== undefined && !isFilledStringArray(obj.fixtures)) {
     return false;
   }
+  if (
+    obj.sameClassBugScan !== undefined &&
+    !isFilledString(obj.sameClassBugScan)
+  ) {
+    return false;
+  }
+  if (
+    obj.introducedRegressionCheck !== undefined &&
+    !isFilledString(obj.introducedRegressionCheck)
+  ) {
+    return false;
+  }
   if (obj.patchSummary !== undefined && !isFilledString(obj.patchSummary)) {
     return false;
   }
@@ -139,6 +151,30 @@ function isValidRepairEvidence(v: unknown): v is RepairEvidence {
     (Array.isArray(obj.changedFiles) && obj.changedFiles.length > 0) ||
     (Array.isArray(obj.tests) && obj.tests.length > 0) ||
     (Array.isArray(obj.fixtures) && obj.fixtures.length > 0)
+  );
+}
+
+function hasConcreteRepairScope(scope: RepairEvidence["findingScope"]): boolean {
+  return (
+    (scope.identityKeys?.length ?? 0) > 0 ||
+    (scope.locations?.length ?? 0) > 0 ||
+    (scope.categories?.length ?? 0) > 0 ||
+    (scope.findingGroup?.trim().length ?? 0) > 0 ||
+    (scope.reviewContext?.trim().length ?? 0) > 0 ||
+    (scope.featureArea?.trim().length ?? 0) > 0
+  );
+}
+
+export function isCompleteRepairEvidence(
+  evidence: RepairEvidence | undefined,
+): evidence is RepairEvidence {
+  return (
+    evidence !== undefined &&
+    isValidRepairEvidence(evidence) &&
+    hasConcreteRepairScope(evidence.findingScope) &&
+    (evidence.tests?.length ?? 0) > 0 &&
+    isFilledString(evidence.sameClassBugScan) &&
+    isFilledString(evidence.introducedRegressionCheck)
   );
 }
 
