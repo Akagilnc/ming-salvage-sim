@@ -827,15 +827,10 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     }));
   });
 
-  it("records the post-CMR-worker family HEAD and uses it for the next pass resume guard", async () => {
+  it("records the unchanged CMR-reviewed family HEAD and uses it for the next pass resume guard", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: (req) => {
-        if (req.cmrPass === "completeness") {
-          backend.currentFamilyHead = "head-after-cmr-fix";
-        }
-        return { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
-      },
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
     });
     backend.currentFamilyHead = "head-before-cmr";
     backend.ledger.push({
@@ -843,7 +838,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       event: "cmr_passed",
       phase: "final",
       cmrPass: "correctness",
-      familyHeadAfter: "head-after-cmr-fix",
+      familyHeadAfter: "head-before-cmr",
       routeFingerprint: currentRouteFingerprint(),
     });
 
@@ -863,7 +858,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       event: "cmr_passed",
       phase: "final",
       cmrPass: "completeness",
-      familyHeadAfter: "head-after-cmr-fix",
+      familyHeadAfter: "head-before-cmr",
       routeFingerprint: currentRouteFingerprint(),
     }));
     expect(
@@ -948,7 +943,6 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
 
       async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
         if (spec.kind === "cmr") {
-          this.currentFamilyHead = "head-after-cmr-worker-fix";
           return {
             kind: "escalated",
             escalation: {
@@ -984,7 +978,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]?.reason).toContain("completeness cmr");
-    expect(backend.escalations[0]?.familyHeadAfter).toBe("head-after-cmr-worker-fix");
+    expect(backend.escalations[0]?.familyHeadAfter).toBe("head-after-final-verify");
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
@@ -992,7 +986,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       cmrPass: "completeness",
       reason:
         "completeness cmr needs human review — review workers disagreed on whether the pass can converge",
-      familyHeadAfter: "head-after-cmr-worker-fix",
+      familyHeadAfter: "head-after-final-verify",
     }));
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
@@ -1012,7 +1006,6 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
 
       async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
         if (spec.kind === "cmr") {
-          this.currentFamilyHead = `head-after-${ctx.cmrPass}-cmr`;
           return {
             kind: "completed",
             output: {
@@ -1141,7 +1134,9 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     }
     async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
       if (spec.kind === this.throwOnKind) {
-        this.currentFamilyHead = `head-after-${spec.kind}-worker`;
+        if (spec.kind === "ship") {
+          this.currentFamilyHead = "head-after-ship-worker";
+        }
         throw new Error(`${spec.kind} worker: git checkout ${ctx.familyBase} failed (no such ref)`);
       }
       // The cmr worker converges so the run reaches the ship stage (for the ship case).
@@ -1168,7 +1163,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/cmr worker threw on startup/i);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/no such ref/i);
-    expect(backend.aborted[0]?.familyHeadAfter).toBe("head-after-cmr-worker");
+    expect(backend.aborted[0]?.familyHeadAfter).toBe("head-before-worker");
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
@@ -1176,7 +1171,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       cmrPass: "completeness",
       reason:
         "family integrated cmr completeness worker failed: family cmr worker threw on startup: cmr worker: git checkout family/291-base failed (no such ref)",
-      familyHeadAfter: "head-after-cmr-worker",
+      familyHeadAfter: "head-before-worker",
     }));
   });
 
@@ -1187,7 +1182,6 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       }
       override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
         if (spec.kind === "cmr") {
-          this.currentFamilyHead = "head-after-cmr-worker";
           return {
             kind: "failed",
             reason: "Error: Cannot find module 'missing-cmr-runtime'",
@@ -1213,7 +1207,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       phase: "final",
       cmrPass: "completeness",
       reason: expect.stringContaining("Cannot find module 'missing-cmr-runtime'"),
-      familyHeadAfter: "head-after-cmr-worker",
+      familyHeadAfter: "head-before-worker",
       stopSummary: expect.objectContaining({
         reason: "infra_failure",
         repairHint: expect.stringContaining("install or restore"),

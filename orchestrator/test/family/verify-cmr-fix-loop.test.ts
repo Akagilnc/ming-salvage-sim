@@ -248,6 +248,21 @@ class ReviewFixRereviewBackend implements FamilyBackend {
   }
 }
 
+class ReviewerMutatesHeadBeforeFindingBackend extends ReviewFixRereviewBackend {
+  protected readonly mutatedHead = "head-mutated-by-cmr-reviewer";
+
+  override async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    const result = await super.dispatchWorker(spec, ctx);
+    if (spec.kind === "cmr" && ctx.cmrPass === "completeness") {
+      this.currentFamilyHead = this.mutatedHead;
+    }
+    return result;
+  }
+}
+
 describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix/re-review)", () => {
   it("blocking family CMR findings return to runner, dispatch coder-fix, then trigger a fresh full-diff re-review", async () => {
     const backend = new ReviewFixRereviewBackend();
@@ -330,6 +345,44 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
           entry.reason?.includes(BLOCKING_FAMILY_CMR_KEY),
       ),
     ).toBeUndefined();
+  });
+
+  it("fails closed when the CMR reviewer moves family HEAD before returning blocking findings", async () => {
+    const backend = new ReviewerMutatesHeadBeforeFindingBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/550-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(["cmr"]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      cmrPass: "completeness",
+      reason: expect.stringMatching(/CMR .*reviewer moved family HEAD/i),
+      familyHeadAfter: "head-mutated-by-cmr-reviewer",
+      stopSummary: expect.objectContaining({
+        reason: "contract_drift",
+        metadata: expect.objectContaining({
+          heads: expect.objectContaining({
+            reportedFamilyHead: "head-before-cmr-review",
+            actualFamilyHead: "head-mutated-by-cmr-reviewer",
+          }),
+        }),
+      }),
+    }));
+    expect(
+      backend.ledger.some((entry) => entry.status === "cmr_reviewed"),
+    ).toBe(false);
+    expect(
+      backend.ledger.some((entry) => entry.status === "cmr_fix_committed"),
+    ).toBe(false);
+    expect(
+      backend.ledger.some((entry) => entry.status === "cmr_passed"),
+    ).toBe(false);
   });
 
   it("cmr workers CONVERGED ⇒ ok:true, completeness + correctness dispatches, NO coder-fix, then ship", async () => {
