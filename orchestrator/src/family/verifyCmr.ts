@@ -60,6 +60,7 @@ import {
   dispatchFamilyWorker,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
+import { fixableCmrFindingKeysFromClassification } from "./cmrFixableFindings.js";
 import {
   cmrLegAccountingFailure,
   modelRouteFingerprint,
@@ -899,28 +900,6 @@ interface IntegratedCmrPassOutcome {
 
 const MAX_CODER_FIX_REPAIR_EVIDENCE_ATTEMPTS = 3;
 
-function fixableCmrFindingKeys(
-  classification: FamilyCmrClassification,
-): readonly string[] | undefined {
-  if (classification.blocking.length === 0) return undefined;
-  if (classification.blocking.some((finding) => finding.action !== "fix_now")) {
-    return undefined;
-  }
-  const blockingKeys = new Set(
-    classification.blocking.map((finding) => findingIdentityKey(finding)),
-  );
-  const blockingResults = classification.results.filter((result) =>
-    blockingKeys.has(result.identityKey),
-  );
-  if (
-    blockingResults.length === 0 ||
-    blockingResults.some((result) => result.classification !== "same_module_still_red")
-  ) {
-    return undefined;
-  }
-  return [...blockingKeys];
-}
-
 function coderFixFailureStopSummary(input: {
   readonly pass: IntegratedCmrPass;
   readonly reason: string;
@@ -1561,6 +1540,82 @@ async function runIntegratedCmrPass(input: {
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
+  if (
+    !cmrResult.output.converged &&
+    (cmrResult.output.findings === undefined ||
+      cmrResult.output.findings.length === 0)
+  ) {
+    const reason =
+      cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter: postWorkerFamilyHead,
+      cmrFindingClassification: {
+        blocking: [],
+        deferred: [],
+        dispositions: [],
+        results: [
+          {
+            identityKey: `not_converged|${pass}`,
+            classification: "not_converged",
+            attribution: { method: "reviewer_disposition" },
+            reason,
+          },
+        ],
+        moduleContext: {
+          currentModules: [],
+          childModules: [],
+          undevelopedModules: [],
+        },
+      },
+      stopSummary: notConvergedStopSummary(reason),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+  }
+  const legAccountingFailure = cmrLegAccountingFailure(
+    {
+      successfulLegs: cmrResult.output.successfulLegs ?? [],
+      skippedLegs: cmrResult.output.skippedLegs,
+    },
+    resolvedRoute,
+  );
+  if (legAccountingFailure !== undefined) {
+    const reason = `integrated cmr ${pass} leg accounting failed: ${legAccountingFailure}`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: legAccountingFailureStopSummary({
+        reason,
+        resolvedRoute,
+        routeFingerprint,
+        successfulLegs: cmrResult.output.successfulLegs ?? [],
+        skippedLegs: cmrResult.output.skippedLegs,
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+  }
+  const floorFailure = cmrFloorFailureReason({
+    pass,
+    successfulLegs: cmrResult.output.successfulLegs,
+    skippedLegs: cmrResult.output.skippedLegs,
+  });
+  if (floorFailure !== undefined) {
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason: floorFailure,
+      familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: providerDegradedFloorStopSummary({
+        reason: floorFailure,
+        skippedLegs: cmrResult.output.skippedLegs,
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+  }
   let cmrFindingClassification: FamilyCmrClassification | undefined;
   if (
     cmrResult.output.findings !== undefined &&
@@ -1590,7 +1645,9 @@ async function runIntegratedCmrPass(input: {
         cmrFindingClassification,
         reason,
       );
-      const fixableKeys = fixableCmrFindingKeys(cmrFindingClassification);
+      const fixableKeys = fixableCmrFindingKeysFromClassification(
+        cmrFindingClassification,
+      );
       if (allowCoderFix && fixableKeys !== undefined && fixableKeys.length > 0) {
         await recordCmrReviewed(familyBackend, {
           cmrPass: pass,
@@ -1669,48 +1726,6 @@ async function runIntegratedCmrPass(input: {
         },
       },
       stopSummary: notConvergedStopSummary(reason),
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
-  }
-  const legAccountingFailure = cmrLegAccountingFailure(
-    {
-      successfulLegs: cmrResult.output.successfulLegs ?? [],
-      skippedLegs: cmrResult.output.skippedLegs,
-    },
-    resolvedRoute,
-  );
-  if (legAccountingFailure !== undefined) {
-    const reason = `integrated cmr ${pass} leg accounting failed: ${legAccountingFailure}`;
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary: legAccountingFailureStopSummary({
-        reason,
-        resolvedRoute,
-        routeFingerprint,
-        successfulLegs: cmrResult.output.successfulLegs ?? [],
-        skippedLegs: cmrResult.output.skippedLegs,
-      }),
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
-  }
-  const floorFailure = cmrFloorFailureReason({
-    pass,
-    successfulLegs: cmrResult.output.successfulLegs,
-    skippedLegs: cmrResult.output.skippedLegs,
-  });
-  if (floorFailure !== undefined) {
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason: floorFailure,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary: providerDegradedFloorStopSummary({
-        reason: floorFailure,
-        skippedLegs: cmrResult.output.skippedLegs,
-      }),
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
