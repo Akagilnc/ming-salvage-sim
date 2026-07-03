@@ -271,8 +271,11 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
       const soul = readSoul(soulName);
 
       expect(soul).toMatch(/reviewer worker/i);
+      expect(soul).toMatch(/findings\/outcome/i);
+      expect(soul).toMatch(/return\s+control\s+to\s+the\s+runner/i);
       expect(soul).toMatch(/must not repair/i);
-      expect(soul).toMatch(/runner dispatches coder-fix/i);
+      expect(soul).toMatch(/must not[^.]*create a fix commit/i);
+      expect(soul).not.toMatch(/coder-fix/i);
       expect(soul).not.toMatch(/Fix every gap|Fix P0\/P1|After every fix/i);
       expect(soul).not.toMatch(/Commit each coherent fix|git commit|do not push or open a PR/i);
       expect(soul).not.toMatch(/gh issue create|TODOS\.md/i);
