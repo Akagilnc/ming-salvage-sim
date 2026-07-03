@@ -129,6 +129,65 @@ describe("#549 worker outcome guard", () => {
     }
   });
 
+  it("converged CMR outcome with fix_now findings is rejected before sidecar write or completion output", () => {
+    const dir = mkdtempSync(join(tmpdir(), "outcome-guard-converged-fix-now-"));
+    try {
+      mkdirSync(join(dir, "cmr"), { recursive: true });
+      writeFileSync(join(dir, "cmr", "review.json"), '{"finding":true}\n', "utf8");
+
+      const draftPath = join(dir, "draft.json");
+      const sidecarPath = join(dir, "outcome.json");
+      writeFileSync(
+        draftPath,
+        JSON.stringify({
+          converged: true,
+          successfulLegs: ["gpt-5.5"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+          findings: [
+            {
+              severity: "medium",
+              category: "correctness",
+              claim_quote: "converged output cannot carry unresolved blockers",
+              location: "orchestrator/image/bin/orchestrator-outcome-guard",
+              suggested_fix: "return converged false while fix_now findings remain",
+              action: "fix_now",
+            },
+          ],
+          evidencePaths: ["cmr/review.json"],
+        }),
+        "utf8",
+      );
+      writeFileSync(sidecarPath, "sentinel\n", "utf8");
+
+      const result = spawnSync(
+        GUARD,
+        [
+          "--role",
+          "cmr",
+          "--draft",
+          draftPath,
+          "--outcome",
+          sidecarPath,
+          "--evidence-root",
+          dir,
+          "--completion-signal",
+          "CMR_STEP_COMPLETE",
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).not.toContain("CMR_STEP_COMPLETE");
+      expect(result.stderr).toContain(
+        "findings[0].action cannot be fix_now when converged is true",
+      );
+      expect(readFileSync(sidecarPath, "utf8")).toBe("sentinel\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("malformed finding disposition is rejected before sidecar write or completion output", () => {
     const dir = mkdtempSync(join(tmpdir(), "outcome-guard-finding-disposition-"));
     try {

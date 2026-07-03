@@ -331,6 +331,31 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       }
     });
 
+    it("converged:true with fix_now findings ⇒ malformed (unresolved blockers are not green)", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...VALID_CMR_VERDICT_FIELDS,
+          findings: [
+            {
+              severity: "medium",
+              category: "correctness",
+              claim_quote: "green CMR cannot carry unresolved fix_now blockers",
+              location: "orchestrator/src/family/verifyCmr.ts",
+              suggested_fix: "emit converged false while the blocker remains",
+              action: "fix_now",
+            },
+          ],
+        })}</cmr>`,
+      );
+
+      expect(o.kind).toBe("malformed");
+      if (o.kind === "malformed") {
+        expect(o.reason).toContain("fix_now");
+      }
+    });
+
     it("converged:true without closure arrays ⇒ malformed (absence is not closure)", () => {
       expect(
         parseCmrOutcome(

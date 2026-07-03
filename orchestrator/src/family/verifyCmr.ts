@@ -952,11 +952,13 @@ function familyRepairEvidenceGateFailureReason(input: {
   readonly blockingFindingIdentityKeys: readonly string[];
   readonly familyHeadBefore?: string;
   readonly familyHeadAfter?: string;
+  readonly allowEvidenceOnlyRepair?: boolean;
 }): string | undefined {
   if (input.output.kind !== "coder") {
     return `integrated cmr ${input.pass} coder-fix returned non-coder output`;
   }
-  if (!input.output.committed || input.output.commitsAdded < 1) {
+  const hasIndependentCommit = input.output.committed && input.output.commitsAdded >= 1;
+  if (!hasIndependentCommit && input.allowEvidenceOnlyRepair !== true) {
     return (
       `integrated cmr ${input.pass} coder-fix produced no independent fix commit: ` +
       `committed=${input.output.committed} commitsAdded=${input.output.commitsAdded}`
@@ -1057,6 +1059,10 @@ async function runCmrCoderFix(input: {
 
   let currentFamilyHeadBefore = familyHeadBefore;
   let attempt = 1;
+  let evidenceOnlyFamilyHeadAfter: string | undefined;
+  let repairAttemptFailures: NonNullable<
+    DispatchContext["repairAttemptFailures"]
+  > = [];
 
   while (true) {
     const fixResult = await dispatchOrAbort(
@@ -1066,6 +1072,9 @@ async function runCmrCoderFix(input: {
         familyBase,
         blockingFindings: classification.blocking,
         blockingFindingIdentityKeys,
+        ...(repairAttemptFailures.length > 0
+          ? { repairAttemptFailures }
+          : {}),
         ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
         ...(familyIssue !== undefined ? { familyIssue } : {}),
       },
@@ -1152,10 +1161,36 @@ async function runCmrCoderFix(input: {
       blockingFindingIdentityKeys,
       familyHeadBefore: currentFamilyHeadBefore,
       familyHeadAfter,
+      allowEvidenceOnlyRepair:
+        evidenceOnlyFamilyHeadAfter !== undefined &&
+        familyHeadAfter === evidenceOnlyFamilyHeadAfter,
     });
     if (repairGateFailure !== undefined) {
       if (attempt < MAX_CODER_FIX_REPAIR_EVIDENCE_ATTEMPTS) {
-        currentFamilyHeadBefore = familyHeadAfter;
+        repairAttemptFailures = [
+          ...repairAttemptFailures,
+          {
+            attempt,
+            reason: repairGateFailure,
+            ...(currentFamilyHeadBefore !== undefined
+              ? { familyHeadBefore: currentFamilyHeadBefore }
+              : {}),
+            ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
+          },
+        ];
+        if (
+          fixResult.output.kind === "coder" &&
+          fixResult.output.committed &&
+          fixResult.output.commitsAdded >= 1 &&
+          currentFamilyHeadBefore !== undefined &&
+          familyHeadAfter !== undefined &&
+          currentFamilyHeadBefore !== familyHeadAfter
+        ) {
+          evidenceOnlyFamilyHeadAfter = familyHeadAfter;
+        } else {
+          currentFamilyHeadBefore = familyHeadAfter;
+          evidenceOnlyFamilyHeadAfter = undefined;
+        }
         attempt += 1;
         continue;
       }
@@ -1183,8 +1218,10 @@ async function runCmrCoderFix(input: {
       familyHeadAfter,
       blockingFindingIdentityKeys,
       reason:
-        `${reasonPrefix}: coder-fix committed ${fixResult.output.commitsAdded} ` +
-        `commit${fixResult.output.commitsAdded === 1 ? "" : "s"}`,
+        fixResult.output.committed && fixResult.output.commitsAdded >= 1
+          ? `${reasonPrefix}: coder-fix committed ${fixResult.output.commitsAdded} ` +
+            `commit${fixResult.output.commitsAdded === 1 ? "" : "s"}`
+          : `${reasonPrefix}: coder-fix commit already landed; retry repaired required evidence only`,
     });
     return { result: { ok: true, ran: true }, familyHeadAfter };
   }

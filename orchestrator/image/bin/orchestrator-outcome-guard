@@ -82,6 +82,8 @@ def validate_cmr_outcome(draft: dict) -> None:
     validate_prior_finding_dispositions(require_array(draft, "priorFindingDispositions"))
     if "findings" in draft:
         validate_findings(draft["findings"])
+        if converged is True:
+            reject_fix_now_findings_when_converged(draft["findings"])
     require_string_array(draft, "evidencePaths", min_len=1)
 
 
@@ -184,6 +186,12 @@ def validate_findings(value: object) -> None:
                 raise GuardError(f"findings[{idx}].disposition is required for wont_fix/rejected")
             if disposition_kind != "accepted_suppressed":
                 raise GuardError(f"findings[{idx}].disposition must be accepted_suppressed for wont_fix/rejected")
+
+
+def reject_fix_now_findings_when_converged(value: object) -> None:
+    for idx, finding in enumerate(value):
+        if isinstance(finding, dict) and finding.get("action") == "fix_now":
+            raise GuardError(f"findings[{idx}].action cannot be fix_now when converged is true")
 
 
 def validate_disposition_evidence(value: object, label: str) -> None:

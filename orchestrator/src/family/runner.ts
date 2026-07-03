@@ -24,6 +24,7 @@
  */
 
 import { runOrchestrator } from "../runner.js";
+import { findingIdentityKey } from "../findings.js";
 import {
   applyRuntimeTightRoutePolicy,
   printableRouteLineup,
@@ -46,7 +47,10 @@ import {
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import { runVerifyCmr } from "./verifyCmr.js";
-import { buildFamilyModuleContext } from "./cmrClassification.js";
+import {
+  buildFamilyModuleContext,
+  type FamilyCmrClassification,
+} from "./cmrClassification.js";
 import {
   infraFailureStopSummary,
   successStopSummary,
@@ -278,6 +282,7 @@ function latestVerifiedCmrHead(
 
 function pendingPriorCmrFindingIdentityKeysByPass(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
+  currentFamilyHead?: string,
 ): Partial<Record<IntegratedCmrPass, ReadonlyArray<string>>> {
   const keysByPass: Partial<Record<IntegratedCmrPass, string[]>> = {};
   const closedPasses = new Set<string>();
@@ -304,6 +309,27 @@ function pendingPriorCmrFindingIdentityKeysByPass(
       }
       processedPasses.add(pass);
       keysByPass[pass] = Array.from(new Set(keys));
+      continue;
+    }
+    if (entry.status === "cmr_reviewed") {
+      const pass = entry.cmrPass;
+      const reviewedHead = filled(entry.familyHeadAfter);
+      const keys = fixableCmrFindingKeysFromClassification(
+        entry.cmrFindingClassification,
+      );
+      if (
+        pass === undefined ||
+        closedPasses.has(pass) ||
+        processedPasses.has(pass) ||
+        currentFamilyHead === undefined ||
+        reviewedHead === undefined ||
+        currentFamilyHead === reviewedHead ||
+        keys.length === 0
+      ) {
+        continue;
+      }
+      processedPasses.add(pass);
+      keysByPass[pass] = [...keys];
       continue;
     }
     if (entry.status !== "aborted" || entry.cmrFindingClassification === undefined) {
@@ -338,6 +364,32 @@ function pendingPriorCmrFindingIdentityKeysByPass(
   return Object.fromEntries(
     Object.entries(keysByPass).map(([pass, values]) => [pass, values]),
   ) as Partial<Record<IntegratedCmrPass, ReadonlyArray<string>>>;
+}
+
+function fixableCmrFindingKeysFromClassification(
+  classification: FamilyCmrClassification | undefined,
+): readonly string[] {
+  if (classification === undefined || classification.blocking.length === 0) {
+    return [];
+  }
+  if (classification.blocking.some((finding) => finding.action !== "fix_now")) {
+    return [];
+  }
+  const blockingKeys = new Set(
+    classification.blocking.map((finding) => findingIdentityKey(finding)),
+  );
+  const resultsByKey = new Map(
+    classification.results.map((result) => [result.identityKey, result]),
+  );
+  const keys: string[] = [];
+  for (const key of blockingKeys) {
+    const result = resultsByKey.get(key);
+    if (result?.classification !== "same_module_still_red") {
+      return [];
+    }
+    keys.push(key);
+  }
+  return keys;
 }
 
 function latestAbortedStopSummary(
@@ -1102,7 +1154,10 @@ export async function runFamily(
     // needs it; an empty list ⇒ the cmr request omits the field.
     llmResolvedChildren: await llmResolvedChildren(familyBackend),
     ...(() => {
-      const priorKeysByPass = pendingPriorCmrFindingIdentityKeysByPass(preFinalLedger);
+      const priorKeysByPass = pendingPriorCmrFindingIdentityKeysByPass(
+        preFinalLedger,
+        preFinalFamilyHead,
+      );
       return Object.keys(priorKeysByPass).length > 0
         ? { priorCmrFindingIdentityKeysByPass: priorKeysByPass }
         : {};

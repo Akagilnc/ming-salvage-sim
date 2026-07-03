@@ -42,6 +42,7 @@ interface DispatchRecord {
   readonly promptFile?: string;
   readonly contextRetention?: WorkerSpec["contextRetention"];
   readonly blockingFindingIdentityKeys?: readonly string[];
+  readonly repairAttemptFailures?: DispatchContext["repairAttemptFailures"];
 }
 
 /**
@@ -605,6 +606,7 @@ class MissingRepairEvidenceThenGoodBackend extends ReviewFixRereviewBackend {
       cmrPass: ctx.cmrPass,
       priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
       blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
+      repairAttemptFailures: ctx.repairAttemptFailures,
     });
 
     if (this.coderFixRound++ === 0) {
@@ -615,13 +617,12 @@ class MissingRepairEvidenceThenGoodBackend extends ReviewFixRereviewBackend {
       };
     }
 
-    this.currentFamilyHead = "head-after-coder-fix";
     return {
       kind: "completed",
       output: {
         kind: "coder",
-        committed: true,
-        commitsAdded: 1,
+        committed: false,
+        commitsAdded: 0,
         repairEvidence: {
           findingScope: {
             identityKeys: [BLOCKING_FAMILY_CMR_KEY],
@@ -876,7 +877,17 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({ kind: "coder" }),
-      expect.objectContaining({ kind: "coder" }),
+      expect.objectContaining({
+        kind: "coder",
+        repairAttemptFailures: [
+          expect.objectContaining({
+            attempt: 1,
+            reason: expect.stringContaining("repairEvidence missing required"),
+            familyHeadBefore: "head-before-cmr-review",
+            familyHeadAfter: "head-after-bad-coder-fix",
+          }),
+        ],
+      }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
@@ -885,6 +896,14 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship" }),
     ]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "cmr_fix_committed",
+      event: "cmr_fix_committed",
+      cmrPass: "completeness",
+      familyHeadBefore: "head-before-cmr-review",
+      familyHeadAfter: "head-after-bad-coder-fix",
+      blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+    }));
     expect(
       backend.dispatches.findIndex((dispatch, index) => {
         return (
