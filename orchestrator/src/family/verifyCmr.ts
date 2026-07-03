@@ -930,6 +930,28 @@ function coderFixFailureStopSummary(input: {
   });
 }
 
+function cmrReviewerHeadMovedStopSummary(input: {
+  readonly pass: IntegratedCmrPass;
+  readonly familyHeadBefore: string;
+  readonly familyHeadAfter: string;
+}): StopSummary {
+  return contractDriftStopSummary({
+    summary:
+      `integrated CMR ${input.pass} reviewer moved family HEAD: ` +
+      `${input.familyHeadBefore} -> ${input.familyHeadAfter}`,
+    repairHint:
+      "restore the reviewer/coder role boundary so CMR review leaves HEAD unchanged, then rerun the family CMR gate",
+    heads: {
+      reportedFamilyHead: input.familyHeadBefore,
+      actualFamilyHead: input.familyHeadAfter,
+      sources: {
+        reportedFamilyHead: "pre-CMR family head",
+        actualFamilyHead: "post-CMR family head",
+      },
+    },
+  });
+}
+
 async function runCmrCoderFix(input: {
   readonly pass: IntegratedCmrPass;
   readonly familyBackend: FamilyBackend;
@@ -1206,6 +1228,27 @@ async function runIntegratedCmrPass(input: {
     familyBase,
     resolvedFamilyHeadAfter,
   );
+  if (
+    resolvedFamilyHeadAfter !== undefined &&
+    postWorkerFamilyHead !== undefined &&
+    postWorkerFamilyHead !== resolvedFamilyHeadAfter
+  ) {
+    const reason =
+      `integrated CMR ${pass} reviewer moved family HEAD: ` +
+      `${resolvedFamilyHeadAfter} -> ${postWorkerFamilyHead}`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: cmrReviewerHeadMovedStopSummary({
+        pass,
+        familyHeadBefore: resolvedFamilyHeadAfter,
+        familyHeadAfter: postWorkerFamilyHead,
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+  }
   if (cmrResult.kind === "escalated") {
     const reason = `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`;
     const stopSummary = cmrEscalationStopSummary(reason);

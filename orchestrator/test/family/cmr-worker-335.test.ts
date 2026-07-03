@@ -534,6 +534,32 @@ describe("integrated CMR pass prompt closure contract", () => {
     });
   }
 
+  for (const promptName of [
+    "integrated_cmr.md",
+    "integrated_cmr_completeness.md",
+    "integrated_cmr_correctness.md",
+  ]) {
+    it(`${promptName} routes same-module still-red examples into the runner coder-fix path`, () => {
+      const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
+      const examples = [...prompt.matchAll(/<cmr>(\{[^\n]*"converged": false[^\n]*\})<\/cmr>/g)];
+
+      expect(examples.length).toBeGreaterThan(0);
+      for (const [, rawJson] of examples) {
+        const output = JSON.parse(rawJson) as {
+          readonly findings?: readonly {
+            readonly action: string;
+            readonly disposition?: { readonly kind?: string };
+          }[];
+        };
+        for (const finding of output.findings ?? []) {
+          if (finding.disposition?.kind === "same_module") {
+            expect(finding.action).toBe("fix_now");
+          }
+        }
+      }
+    });
+  }
+
   it("integrated completeness prompt keeps undeveloped targets out of issue-body YAML", () => {
     const prompt = readFileSync(
       join(realPromptsDir, "integrated_cmr_completeness.md"),
