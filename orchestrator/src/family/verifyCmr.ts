@@ -1583,7 +1583,7 @@ async function runIntegratedCmrPass(input: {
             ...new Set([...(priorCmrFindingIdentityKeys ?? []), ...fixableKeys]),
           ],
           resolvedRoute,
-          allowCoderFix: false,
+          allowCoderFix: true,
         });
       }
       await recordDurableAbort(familyBackend, {
