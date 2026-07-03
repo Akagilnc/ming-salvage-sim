@@ -216,6 +216,15 @@ def _as_finite_nonnegative_float(label: str, value: object) -> float:
     return amount
 
 
+def _as_settle_param_nonnegative_float(label: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} 非数值：{value!r}")
+    amount = float(value)
+    if not math.isfinite(amount) or amount < 0:
+        raise ValueError(f"{label} 非法：{value!r}")
+    return amount
+
+
 def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True) -> Tuple[float, float]:
     """Salt and commerce taxes stay as central side-channel income under cutover."""
     salt_total = 0.0
@@ -241,11 +250,6 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True
             f"region {row['id']} fiscal.commerce_tax", fiscal.get("commerce_tax", 0)
         )
     return salt_total, commerce_total
-
-
-def _substrate_hub_salt_commerce_income(db: GameDB, *, strict: bool = True) -> float:
-    salt, commerce = _substrate_hub_salt_commerce_income_split(db, strict=strict)
-    return salt + commerce
 
 
 def _fiscal_container_value(db: GameDB, key: str) -> float:
@@ -506,12 +510,10 @@ def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
         raw = p.get("拨付gross", 0)
         if raw is None:
             continue
-        try:
-            amount = float(raw)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"region {row['id']} settle.p.拨付gross 非数值：{raw!r}") from exc
-        if not math.isfinite(amount) or amount < 0:
-            raise ValueError(f"region {row['id']} settle.p.拨付gross 非法：{raw!r}")
+        amount = _as_settle_param_nonnegative_float(
+            f"region {row['id']} settle.p.拨付gross",
+            raw,
+        )
         due_by_region[str(row["id"])] = amount
     return due_by_region
 
@@ -1055,11 +1057,16 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             str(row["id"]): army_needed(row) * float(row["central_pay_share"] or 0)
             for row in ordered
         }
-        hub_outbound = _compute_substrate_hub_outbound(
-            db,
-            max(0.0, float(state.metrics.get("国库", 0) or 0)),
-            central_due_by_army,
-        )
+        try:
+            hub_outbound = _compute_substrate_hub_outbound(
+                db,
+                max(0.0, float(state.metrics.get("国库", 0) or 0)),
+                central_due_by_army,
+            )
+        except ValueError as exc:
+            raise _SubstrateHubFixedFlowAbort(
+                f"substrate_hub 京运补/中央军饷 hub 分配失败：{exc}"
+            ) from exc
         _set_fiscal_container(
             db, "C_京运克扣", hub_outbound.central_transport_human_loss,
             "京运转运人为克扣（可追赃）",
