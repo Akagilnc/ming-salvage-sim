@@ -266,6 +266,19 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(correctnessSoul).not.toMatch(/Gate 1|completeness gate|Run only the completeness/is);
   });
 
+  it("#549 integrated cmr pass souls are reviewer workers, not persistent fixers", () => {
+    for (const soulName of ["cmr_completeness.md", "cmr_correctness.md"]) {
+      const soul = readSoul(soulName);
+
+      expect(soul).toMatch(/reviewer worker/i);
+      expect(soul).toMatch(/must not repair/i);
+      expect(soul).toMatch(/runner dispatches coder-fix/i);
+      expect(soul).not.toMatch(/Fix every gap|Fix P0\/P1|After every fix/i);
+      expect(soul).not.toMatch(/Commit each coherent fix|git commit|do not push or open a PR/i);
+      expect(soul).not.toMatch(/gh issue create|TODOS\.md/i);
+    }
+  });
+
   it("every existing prompt still defines its structured output contract (tag + signal)", () => {
     // Thinning the METHOD must not drop the output contract route()/the seam
     // decode against — each worker must still emit its tag + completion signal.

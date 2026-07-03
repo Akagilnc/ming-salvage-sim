@@ -202,6 +202,7 @@ export async function legacyDispatchFamilyWorker(
           ? { priorFindingDispositions: cmr.priorFindingDispositions }
           : {}),
         ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
+        ...(cmr.evidencePaths !== undefined ? { evidencePaths: cmr.evidencePaths } : {}),
       },
     };
   }
