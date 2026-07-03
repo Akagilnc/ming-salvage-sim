@@ -57,6 +57,10 @@ _FISCAL_ENGINE_KEY = "__fiscal_engine"
 _FISCAL_ENGINE_LEGACY = 0
 _FISCAL_ENGINE_SUBSTRATE_HUB = 1
 _CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY = "central_army_pay_arrears"
+_STRUCTURAL_FISCAL_MINIMUMS = {
+    "central_taicang_sink_loss_rate": 1,
+    "central_jingyun_sink_loss_rate": 1,
+}
 
 
 # #287 S1 seed values: province share : central share. The region is the pay-source
@@ -1414,8 +1418,8 @@ class GameDB:
         - `cur == 0`（全新库，无版本行）：整体 seed JSON 全表 → 版本号置 JSON 版。仅此一次。
         - `cur < json`（老档升版）：逐版跑 `_FISCAL_MIGRATIONS[cur+1 .. json]` 的差量动作。
           新 schema 若要给老档补 key，必须在对应版本登记；未声明的 key 一律不碰
-          （玩家削减/裁撤全保留）。未登记版本只走兼容兜底 `_seed_missing`，不得作为新 schema
-          正常迁移路径。
+          （玩家削减/裁撤全保留）。未登记版本不再按当前 JSON 全表补缺；新 schema 正常迁移
+          必须登记显式版本步。
         - `cur >= json`：**啥都不做**。已是最新，玩家状态神圣。
 
         ⇒ 玩家裁撤的科目读档后保持删除（不再被旧 INSERT OR IGNORE 复活）。
@@ -1438,11 +1442,8 @@ class GameDB:
         cols = "(key, value, kind, note, budget_role, account, direction, display, sort_order)"
 
         def _seed_missing() -> None:
-            """兼容兜底迁移；新 schema 不应依赖它补老档 key。"""
-            self.conn.executemany(
-                f"INSERT OR IGNORE INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [_meta(rec) for rec in rows],
-            )
+            """未登记版本步不补当前 JSON 全表；新增 key 必须走显式版本迁移。"""
+            return None
 
         def _seed_keys(keys: "tuple[str, ...]") -> None:
             wanted = set(keys)
@@ -1519,7 +1520,25 @@ class GameDB:
         ).fetchall()
         return {str(r["key"]): int(r["value"]) for r in rows}
 
+    def fiscal_config_minimum_value(self, key: str) -> Optional[int]:
+        raw = str(key or "").strip()
+        if raw in _STRUCTURAL_FISCAL_MINIMUMS:
+            return _STRUCTURAL_FISCAL_MINIMUMS[raw]
+        stem = self._stem_of(raw)
+        if not stem:
+            return None
+        return (
+            _STRUCTURAL_FISCAL_MINIMUMS.get(f"{stem}_base")
+            or _STRUCTURAL_FISCAL_MINIMUMS.get(f"{stem}_rate")
+        )
+
+    def is_structural_fiscal_config_key(self, key: str) -> bool:
+        return self.fiscal_config_minimum_value(key) is not None
+
     def set_fiscal_config(self, key: str, value: int, commit: bool = True) -> None:
+        minimum = self.fiscal_config_minimum_value(key)
+        if minimum is not None and int(value) < minimum:
+            raise ValueError(f"fiscal_config.{key} 不得低于结构地板 {minimum}")
         self.conn.execute(
             "UPDATE fiscal_config SET value = ? WHERE key = ?", (value, key)
         )
@@ -1762,6 +1781,8 @@ class GameDB:
             return None
         base_key = f"{stem}_base"
         rate_key = f"{stem}_rate"
+        if base_key in _STRUCTURAL_FISCAL_MINIMUMS or rate_key in _STRUCTURAL_FISCAL_MINIMUMS:
+            return None
         # 存在性查 base 或 rate 任一——田赋只有 田赋_rate（无 base），但仍是可裁撤的 dynamic 项。
         exists = self.conn.execute(
             "SELECT 1 FROM fiscal_config WHERE key IN (?, ?)", (base_key, rate_key)
