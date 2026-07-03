@@ -1246,6 +1246,14 @@ async function readPostCmrTrackedStatus(
   );
 }
 
+async function readPostCmrCurrentHead(
+  familyBackend: FamilyBackend,
+): Promise<string | undefined> {
+  if (familyBackend.readFamilyCurrentHead === undefined) return undefined;
+  const liveHead = (await familyBackend.readFamilyCurrentHead()).trim();
+  return liveHead.length > 0 ? liveHead : undefined;
+}
+
 async function readRequiredFamilyHead(
   familyBackend: FamilyBackend,
   familyBase: string,
@@ -1437,6 +1445,46 @@ async function runIntegratedCmrPass(input: {
     familyBase,
     resolvedFamilyHeadAfter,
   );
+  let postWorkerCurrentHead: string | undefined;
+  try {
+    postWorkerCurrentHead = await readPostCmrCurrentHead(familyBackend);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    const reason = `integrated CMR ${pass} current HEAD read failed: ${detail}`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: infraFailureStopSummary({
+        summary: reason,
+        repairHint:
+          "repair the family current-HEAD reader before trusting the CMR reviewer ref guard",
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+  }
+  if (
+    postWorkerCurrentHead !== undefined &&
+    postWorkerFamilyHead !== undefined &&
+    postWorkerCurrentHead !== postWorkerFamilyHead
+  ) {
+    const reason =
+      `integrated CMR ${pass} reviewer checked out a different HEAD: ` +
+      `family base ${postWorkerFamilyHead}, current HEAD ${postWorkerCurrentHead}`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter: postWorkerCurrentHead,
+      stopSummary: cmrReviewerHeadMovedStopSummary({
+        pass,
+        familyHeadBefore: postWorkerFamilyHead,
+        familyHeadAfter: postWorkerCurrentHead,
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerCurrentHead };
+  }
   let postWorkerTrackedStatus: readonly string[];
   try {
     postWorkerTrackedStatus = await readPostCmrTrackedStatus(
