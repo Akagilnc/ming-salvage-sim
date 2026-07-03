@@ -78,6 +78,10 @@ export interface DogfoodReplay {
   readonly summary: string;
 }
 
+const CMR_EVIDENCE = {
+  evidencePaths: ["cmr/review-summary.json"],
+} as const;
+
 const BASE_FINDING: Finding = {
   severity: "high",
   category: "correctness",
@@ -165,6 +169,7 @@ async function familyClassificationScenario(input: {
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
+      ...CMR_EVIDENCE,
       findings: [input.finding],
     },
   };
@@ -495,6 +500,7 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
           successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
+          ...CMR_EVIDENCE,
         },
       };
     }
@@ -908,6 +914,7 @@ module_scope:
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
+      ...CMR_EVIDENCE,
       findings: [crossModuleFinding],
     },
   };
@@ -987,6 +994,7 @@ async function familyAttributionReplay(
         successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
         findings: [attributedFinding],
       },
     },
@@ -1022,6 +1030,7 @@ async function familyAttributionReplay(
           successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
+          ...CMR_EVIDENCE,
           findings: [attributedFinding],
         },
       }),
@@ -1040,6 +1049,7 @@ async function legacyDispositionParserReplay(): Promise<SeamReplay> {
       priorFindingDispositions: [
         { identityKey, disposition: "verified-closed" },
       ],
+      ...CMR_EVIDENCE,
     })}</cmr>`;
   const outcome = parseCmrOutcome(outcomeText);
   if (outcome.kind !== "verdict" || !outcome.converged) {
@@ -1059,6 +1069,7 @@ async function legacyDispositionParserReplay(): Promise<SeamReplay> {
         skippedLegs: outcome.skippedLegs,
         claimedFixedFindingIdentityKeys: outcome.claimedFixedFindingIdentityKeys,
         priorFindingDispositions: outcome.priorFindingDispositions,
+        evidencePaths: outcome.evidencePaths,
       },
     },
     {
@@ -1071,6 +1082,7 @@ async function legacyDispositionParserReplay(): Promise<SeamReplay> {
         priorFindingDispositions: [
           { identityKey, status: "verified-closed" },
         ],
+        ...CMR_EVIDENCE,
       },
     },
     {
@@ -1120,6 +1132,7 @@ async function finalLegacyDispositionReplay(): Promise<SeamReplay> {
     priorFindingDispositions: [
       { identityKey, disposition: "verified-closed" },
     ],
+    ...CMR_EVIDENCE,
   })}</cmr>`;
   const parsedFinal = parseCmrOutcome(rawFinalCmr);
   if (parsedFinal.kind !== "verdict" || !parsedFinal.converged) {
@@ -1140,6 +1153,7 @@ async function finalLegacyDispositionReplay(): Promise<SeamReplay> {
         priorFindingDispositions: [
           { identityKey, status: "verified-closed" },
         ],
+        ...CMR_EVIDENCE,
       },
     },
     {
@@ -1152,6 +1166,7 @@ async function finalLegacyDispositionReplay(): Promise<SeamReplay> {
         claimedFixedFindingIdentityKeys:
           parsedFinal.claimedFixedFindingIdentityKeys,
         priorFindingDispositions: parsedFinal.priorFindingDispositions,
+        evidencePaths: parsedFinal.evidencePaths,
       },
     },
     {
@@ -1378,6 +1393,7 @@ async function routeAccountingReplay(): Promise<SeamReplay> {
         successfulLegs: [...declaredLegs, rejectedDefaultLeg],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
       },
     },
   ]);
@@ -1503,6 +1519,7 @@ function cmrClosureWorkerResult(input: {
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: input.claimedFixedFindingIdentityKeys,
       priorFindingDispositions: input.priorFindingDispositions,
+      ...CMR_EVIDENCE,
     },
   };
 }
@@ -1713,6 +1730,7 @@ async function familyAcceptedSuppressionSummaryReplay(input: {
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
+      ...CMR_EVIDENCE,
       findings: [input.finding],
     },
   };
@@ -1884,6 +1902,7 @@ async function providerStrongLegPassReplay(input: {
         skippedLegs: [{ slug: "agy", reason: "provider quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
       },
     },
     {
@@ -1895,6 +1914,7 @@ async function providerStrongLegPassReplay(input: {
         skippedLegs: [{ slug: "agy", reason: "provider quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
       },
     },
     {
@@ -1951,6 +1971,7 @@ async function familyShipMalformedAfterCmrReplay(): Promise<SeamReplay> {
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
+      ...CMR_EVIDENCE,
     },
   };
   const backend = new DogfoodCmrFamilyBackend("family-head", [], [
@@ -2024,6 +2045,7 @@ async function familyShipReviewDegradedReplay(): Promise<SeamReplay> {
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
+      ...CMR_EVIDENCE,
     },
   };
   const backend = new DogfoodCmrFamilyBackend("family-head", [], [

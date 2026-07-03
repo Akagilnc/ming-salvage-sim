@@ -1054,6 +1054,7 @@ export class RealFamilyBackend implements FamilyBackend {
           ? { priorFindingDispositions: outcome.priorFindingDispositions }
           : {}),
         ...(outcome.findings !== undefined ? { findings: outcome.findings } : {}),
+        evidencePaths: outcome.evidencePaths,
       },
     };
   }

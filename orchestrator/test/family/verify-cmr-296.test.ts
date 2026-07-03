@@ -39,6 +39,10 @@ import type {
 } from "../../src/family/types.js";
 import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.js";
 
+const CMR_EVIDENCE = {
+  evidencePaths: ["cmr/review-summary.json"],
+} as const;
+
 afterEach(() => {
   vi.unstubAllEnvs();
 });
@@ -229,6 +233,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
                 { slug: "opus", reason: "auth unavailable" },
                 { slug: "gpt-5.5", reason: "auth unavailable" },
               ],
+              ...CMR_EVIDENCE,
             },
           };
         }
@@ -1014,6 +1019,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
               kind: "cmr",
               converged: true,
               successfulLegs: ["opus", "gpt-5.5", "agy"],
+              ...CMR_EVIDENCE,
             },
           };
         }
@@ -1141,7 +1147,12 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       // The cmr worker converges so the run reaches the ship stage (for the ship case).
       return {
         kind: "completed",
-        output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] },
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          ...CMR_EVIDENCE,
+        },
       };
     }
   }
@@ -1235,6 +1246,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
               kind: "cmr",
               converged: true,
               successfulLegs: ["opus", "gpt-5.5", "agy"],
+              ...CMR_EVIDENCE,
             },
           };
         }

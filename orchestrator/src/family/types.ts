@@ -557,6 +557,8 @@ export interface IntegratedCmrResult {
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   /** Structured findings to classify at the family gate (#449). */
   readonly findings?: readonly Finding[];
+  /** Worker outcome guard evidence artifacts referenced by this CMR verdict. */
+  readonly evidencePaths?: readonly string[];
 }
 
 /** What opening the family PR needs (decision 4, 止于 PR). */

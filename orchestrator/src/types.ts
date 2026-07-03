@@ -615,6 +615,8 @@ export interface CmrResult {
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   /** Structured CMR findings for family-level defer/suppression classification. */
   readonly findings?: readonly Finding[];
+  /** Worker outcome guard evidence artifacts referenced by this CMR verdict. */
+  readonly evidencePaths?: readonly string[];
   // NOTE: a STUCK cmr worker is the WorkerResult-level `{kind:"escalated"}` case,
   // NOT an `escalate` field on this `completed` payload (codex cmr R3b finding: a
   // payload-level escalate would be silently ignored by the verifyCmr consumer,

@@ -28,6 +28,10 @@ import type {
   WorkerSpec,
 } from "../../src/types.js";
 
+const CMR_EVIDENCE = {
+  evidencePaths: ["cmr/review-summary.json"],
+} as const;
+
 /** One recorded worker dispatch (the kind + the session mode). */
 interface DispatchRecord {
   readonly kind: WorkerSpec["kind"];
@@ -91,7 +95,12 @@ class SchedulerFamilyBackend implements FamilyBackend {
       return (
         this.script.cmr?.() ?? {
           kind: "completed",
-          output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] },
+          output: {
+            kind: "cmr",
+            converged: true,
+            successfulLegs: ["opus", "gpt-5.5", "agy"],
+            ...CMR_EVIDENCE,
+          },
         }
       );
     }
@@ -117,7 +126,15 @@ class SchedulerFamilyBackend implements FamilyBackend {
 describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr passes, no runner fix loop)", () => {
   it("cmr workers CONVERGED ⇒ ok:true, completeness + correctness dispatches, NO coder-fix, then ship", async () => {
     const backend = new SchedulerFamilyBackend({
-      cmr: () => ({ kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] } }),
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          ...CMR_EVIDENCE,
+        },
+      }),
     });
     const result = await runVerifyCmr({
       phase: "final",
@@ -163,7 +180,13 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({
         kind: "completed",
-        output: { kind: "cmr", converged: false, reason: "cross-slice contract drift left unresolved" },
+        output: {
+          kind: "cmr",
+          converged: false,
+          reason: "cross-slice contract drift left unresolved",
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          ...CMR_EVIDENCE,
+        },
       }),
     });
     const result = await runVerifyCmr({
@@ -191,6 +214,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
           converged: true,
           successfulLegs: ["opus", "gpt-5.5", "agy"],
           claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|fake closure"],
+          ...CMR_EVIDENCE,
         },
       }),
     });
@@ -231,6 +255,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
               status: "verified-closed",
             },
           ],
+          ...CMR_EVIDENCE,
         },
       }),
     });
@@ -266,6 +291,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
               status: "verified-closed",
             },
           ],
+          ...CMR_EVIDENCE,
         },
       }),
     });
@@ -302,6 +328,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
               status: "still-active",
             },
           ],
+          ...CMR_EVIDENCE,
         },
       }),
     });
@@ -337,6 +364,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
               status: "verified-closed",
             },
           ],
+          ...CMR_EVIDENCE,
         },
       }),
     });
@@ -394,6 +422,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
           successfulLegs: ["opus", "gpt-5.5", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
+          ...CMR_EVIDENCE,
           findings: [suppressed, blocker],
         },
       }),
@@ -470,6 +499,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
               boundedReopen: "reopen on higher severity",
             },
           ],
+          ...CMR_EVIDENCE,
         },
       }),
     });
@@ -520,6 +550,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
               boundedReopen: trustedSuppression.boundedReopen,
             },
           ],
+          ...CMR_EVIDENCE,
         },
       }),
     });
@@ -575,6 +606,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
           successfulLegs: ["opus", "gpt-5.5", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
+          ...CMR_EVIDENCE,
           findings: [finding],
         },
       }),
@@ -670,7 +702,15 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-dispatched cmr pas
 
   it("the cmr pass worker dispatch is FRESH (not a crash/escalate resume) — NO resume plumbing", async () => {
     const backend = new SchedulerFamilyBackend({
-      cmr: () => ({ kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] } }),
+      cmr: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          ...CMR_EVIDENCE,
+        },
+      }),
     });
     await runVerifyCmr({
       phase: "final",
