@@ -1,6 +1,6 @@
 # Family CMR findings return to runner before fixes
 
-Status: Proposed (#533)
+Status: Accepted (#533/#553, 2026-07-03)
 
 Family CMR completeness/correctness workers are reviewer workers: they may gather review evidence, run the needed tests, dispatch review legs, and emit findings/outcome, but they must not repair blocking findings themselves. A blocking finding returns control to the runner, which dispatches a separate coder-fix worker; only after that worker produces a new fix commit and repair evidence does the runner dispatch a fresh CMR reviewer over the current full diff.
 
@@ -31,3 +31,4 @@ Rejected alternative: let CMR workers fix cheap same-module findings themselves.
 - Reviewer workers, including CMR pass workers, must be treated as read/review producers, not persistent fixers.
 - Worker outcome JSON is a control envelope, not a semantic truth source.
 - Commits, heads, test logs, review artifacts, and repair evidence are the hard evidence runner may enforce.
+- A CMR reviewer that writes off-schema self-fix state is rejected by the outcome guard; a CMR reviewer that moves the family head is contract drift, not a valid review or fix round.
