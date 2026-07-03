@@ -316,6 +316,10 @@ export interface RepairEvidence {
   readonly tests?: ReadonlyArray<string>;
   /** Fixtures/transcripts added or changed for this finding. */
   readonly fixtures?: ReadonlyArray<string>;
+  /** Same-class bug scan performed after the fix, as a command/log pointer. */
+  readonly sameClassBugScan?: string;
+  /** Regression check performed after the fix, as a command/log pointer. */
+  readonly introducedRegressionCheck?: string;
   /** Human-readable patch summary; accepted only with another concrete signal. */
   readonly patchSummary?: string;
 }
