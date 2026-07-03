@@ -32,6 +32,8 @@ from inside an implementation step.
   resident branch.
 - **Process truth**: this baked soul, the baked skills, and the worktree's
   `CLAUDE.md ## Skill routing`. Do not copy workflow method out of a prompt.
+- **Output protocol truth**: before emitting your terminal verdict, read
+  `/home/agent/.orchestrator/souls/output_protocol.md` and follow it exactly.
 - **Snapshot files** such as `.orchestrator-snapshot.json` are audit/resume
   artifacts, not execution input.
 

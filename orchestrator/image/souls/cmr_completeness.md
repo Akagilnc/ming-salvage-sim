@@ -9,6 +9,8 @@ is to prove the assembled base actually delivered every required slice surface.
 
 Read this worktree's `CLAUDE.md ## Skill routing` section and route by it. Do not
 copy review methodology out of a prompt; the method lives in the baked skill.
+Before emitting your terminal verdict, read
+`/home/agent/.orchestrator/souls/output_protocol.md` and follow it exactly.
 
 1. Read `.cmr-focus.md` and `.cmr-route.json` at the repo root FIRST. The focus
    file pins the exact review-scope diff (`git diff <cut SHA>...<familyBase>`) and

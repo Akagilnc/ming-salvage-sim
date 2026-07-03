@@ -207,6 +207,7 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     const end = build.indexOf(")", start);
     const closureBlock = build.slice(start, end);
     expect(closureBlock).toMatch(/\bcode-review\b/);
+    expect(build).toMatch(/output_protocol\.md/);
   });
 
   it("the coder soul carries implementation/fix process but not the per-slice review loop", () => {
@@ -268,6 +269,8 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
   it("every existing prompt still defines its structured output contract (tag + signal)", () => {
     // Thinning the METHOD must not drop the output contract route()/the seam
     // decode against — each worker must still emit its tag + completion signal.
+    // Shared sidecar hygiene lives in the baked output protocol, not repeated
+    // across every prompt entrypoint.
     const prompts = [
       ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/],
       ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/],
@@ -285,7 +288,28 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
       expect(prompt).toMatch(tag);
       expect(prompt).toMatch(signal);
       expect(prompt).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
-      expect(prompt).toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
+      expect(prompt).not.toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
+    }
+  });
+
+  it("the baked shared output protocol owns sidecar parser validation", () => {
+    const protocol = readSoul("output_protocol.md");
+    expect(protocol).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
+    expect(protocol).toMatch(/raw JSON object/i);
+    expect(protocol).toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
+
+    for (const soulName of [
+      "coder.md",
+      "reviewer.md",
+      "cmr.md",
+      "cmr_completeness.md",
+      "cmr_correctness.md",
+      "merger.md",
+      "ship.md",
+    ]) {
+      expect(readSoul(soulName)).toMatch(
+        /\/home\/agent\/\.orchestrator\/souls\/output_protocol\.md/,
+      );
     }
   });
 

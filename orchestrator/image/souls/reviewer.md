@@ -10,6 +10,9 @@ full-diff re-review after a fix (`S6`).
 Read the worktree's `CLAUDE.md ## Skill routing` section and route by it. Your job
 is one Matt `code-review` pass over the current full slice diff:
 
+Before emitting your terminal verdict, read
+`/home/agent/.orchestrator/souls/output_protocol.md` and follow it exactly.
+
 - Invoke `/code-review` with a fixed point. Use `origin/main` if it resolves in
   the worktree; otherwise use `main`. Do not ask the human for a fixed point.
 - `code-review` reports two axes: Standards + Spec. Preserve that separation in
