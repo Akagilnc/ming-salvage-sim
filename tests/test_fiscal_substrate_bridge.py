@@ -3820,6 +3820,56 @@ def test_cutover_jingyun_gross_bool_uses_settlement_abort_error_pack(
     assert _read_settle(db)["p"]["拨付gross"] is True
 
 
+def test_cutover_outbound_debit_failure_uses_settlement_abort_error_pack(
+    fresh_game, monkeypatch, tmp_path
+):
+    import ming_sim.error_pack as error_pack_mod
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 5
+    db.save_state(state)
+    monkeypatch.setattr(error_pack_mod, "user_data_dir", lambda: tmp_path)
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'shaanxi', province_pay_share = 0,
+            central_pay_share = 1, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0,
+            manpower = 10000, salary_rate = 10
+        WHERE id = 'guanning'
+        """
+    )
+    db.conn.commit()
+    original_record = db.record_issue_economy_move
+
+    def fail_border_hub_debit(state_arg, account, amount, category, reason):
+        if category == "边饷hub":
+            return None
+        return original_record(state_arg, account, amount, category, reason)
+
+    monkeypatch.setattr(db, "record_issue_economy_move", fail_border_hub_debit)
+
+    with pytest.raises(SettlementAbort) as exc_info:
+        flows_mod.apply_fixed_period_flows(db, state)
+
+    abort = exc_info.value
+    assert abort.stage == "fixed_fiscal"
+    assert abort.error_pack_path
+    pack = Path(abort.error_pack_path)
+    assert pack.exists()
+    assert "边饷hub实拨失败" in (pack / "traceback.txt").read_text(encoding="utf-8")
+
+
 def test_cutover_taicang_loss_rate_bad_state_uses_settlement_abort_error_pack(
     fresh_game, monkeypatch, tmp_path
 ):
