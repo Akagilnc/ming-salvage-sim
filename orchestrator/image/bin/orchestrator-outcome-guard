@@ -102,7 +102,7 @@ def validate_evidence_paths(draft: dict, evidence_root: str) -> None:
         if os.path.isabs(path):
             raise GuardError(f"evidencePaths[{idx}] must be relative: {path}")
         evidence_path = os.path.realpath(os.path.join(root, path))
-        if not evidence_path.startswith(root + os.sep) and evidence_path != root:
+        if os.path.commonpath([root, evidence_path]) != root:
             raise GuardError(f"evidencePaths[{idx}] escapes evidence root: {path}")
         if not os.path.exists(evidence_path):
             raise GuardError(f"evidencePaths[{idx}] does not exist: {path}")
@@ -238,7 +238,11 @@ def validate_disposition_evidence(value: object, label: str) -> None:
 
 
 def has_explicit_accepted_suppression_source(value: str) -> bool:
-    return re.search(r"(^|\s)(#\d+|issue\s*#\d+|adr\s*0*\d+|owner|human|user)\b", value, re.I) is not None
+    return re.search(
+        r"(^|\s)(#\d+|issue\s*#?\s*\d+|adr[-\s]*0*\d+|owner|human|user)\b",
+        value,
+        re.I,
+    ) is not None
 
 
 def has_bounded_reopen_condition(value: str) -> bool:

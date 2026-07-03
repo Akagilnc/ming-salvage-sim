@@ -478,6 +478,49 @@ describe("#549 worker outcome guard", () => {
     }
   });
 
+  it("evidence root containment accepts paths under the filesystem root", () => {
+    const dir = mkdtempSync(join(tmpdir(), "outcome-guard-root-evidence-"));
+    try {
+      mkdirSync(join(dir, "cmr"), { recursive: true });
+      const evidencePath = join(dir, "cmr", "review.json");
+      writeFileSync(evidencePath, '{"ok":true}\n', "utf8");
+
+      const outcome = {
+        converged: true,
+        successfulLegs: ["gpt-5.5"],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        evidencePaths: [evidencePath.replace(/^\//, "")],
+      };
+      const draftPath = join(dir, "draft.json");
+      const sidecarPath = join(dir, "outcome.json");
+      writeFileSync(draftPath, JSON.stringify(outcome), "utf8");
+      writeFileSync(sidecarPath, "", "utf8");
+
+      const stdout = execFileSync(
+        GUARD,
+        [
+          "--role",
+          "cmr",
+          "--draft",
+          draftPath,
+          "--outcome",
+          sidecarPath,
+          "--evidence-root",
+          "/",
+          "--completion-signal",
+          "CMR_STEP_COMPLETE",
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(JSON.parse(readFileSync(sidecarPath, "utf8"))).toEqual(outcome);
+      expect(stdout).toBe(`${cmrTag(outcome)}\nCMR_STEP_COMPLETE\n`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("malformed prior finding disposition is rejected by the guard role schema", () => {
     const dir = mkdtempSync(join(tmpdir(), "outcome-guard-prior-disposition-"));
     try {
@@ -582,6 +625,61 @@ describe("#549 worker outcome guard", () => {
       expect(readFileSync(sidecarPath, "utf8")).toBe("sentinel\n");
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepted_suppressed prior finding dispositions accept common issue and ADR source formats", () => {
+    for (const source of ["issue 549", "ADR-0050"]) {
+      const dir = mkdtempSync(join(tmpdir(), "outcome-guard-prior-accepted-source-"));
+      try {
+        mkdirSync(join(dir, "cmr"), { recursive: true });
+        writeFileSync(join(dir, "cmr", "review.json"), '{"ok":true}\n', "utf8");
+
+        const identityKey =
+          "standards|orchestrator/image/bin/orchestrator-outcome-guard|accepted suppression source";
+        const outcome = {
+          converged: true,
+          successfulLegs: ["gpt-5.5"],
+          claimedFixedFindingIdentityKeys: [identityKey],
+          priorFindingDispositions: [
+            {
+              identityKey,
+              status: "accepted_suppressed",
+              reason: "bounded source is accepted by the issue or ADR owner",
+              source,
+              scope: "outcome guard suppression source parser",
+              boundedReopen: "reopen if source scope changes or new evidence appears",
+            },
+          ],
+          evidencePaths: ["cmr/review.json"],
+        };
+        const draftPath = join(dir, "draft.json");
+        const sidecarPath = join(dir, "outcome.json");
+        writeFileSync(draftPath, JSON.stringify(outcome), "utf8");
+        writeFileSync(sidecarPath, "", "utf8");
+
+        const stdout = execFileSync(
+          GUARD,
+          [
+            "--role",
+            "cmr",
+            "--draft",
+            draftPath,
+            "--outcome",
+            sidecarPath,
+            "--evidence-root",
+            dir,
+            "--completion-signal",
+            "CMR_STEP_COMPLETE",
+          ],
+          { encoding: "utf8" },
+        );
+
+        expect(JSON.parse(readFileSync(sidecarPath, "utf8"))).toEqual(outcome);
+        expect(stdout).toBe(`${cmrTag(outcome)}\nCMR_STEP_COMPLETE\n`);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     }
   });
 
