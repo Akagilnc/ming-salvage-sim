@@ -286,6 +286,7 @@ function pendingPriorCmrFindingIdentityKeysByPass(
   const keysByPass: Partial<Record<IntegratedCmrPass, string[]>> = {};
   const closedPasses = new Set<string>();
   const processedPasses = new Set<string>();
+  const passesWithUnclosedFixCommits = new Set<string>();
   for (let index = ledger.length - 1; index >= 0; index--) {
     const entry = ledger[index]!;
     if (entry.status === "shipped") break;
@@ -306,8 +307,17 @@ function pendingPriorCmrFindingIdentityKeysByPass(
       ) {
         continue;
       }
-      processedPasses.add(pass);
-      keysByPass[pass] = Array.from(new Set(keys));
+      passesWithUnclosedFixCommits.add(pass);
+      const existing = keysByPass[pass] ?? [];
+      const seen = new Set(existing);
+      const merged = [...existing];
+      for (let keyIndex = keys.length - 1; keyIndex >= 0; keyIndex--) {
+        const key = keys[keyIndex]!;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.unshift(key);
+      }
+      keysByPass[pass] = merged;
       continue;
     }
     if (entry.status === "cmr_reviewed") {
@@ -320,7 +330,15 @@ function pendingPriorCmrFindingIdentityKeysByPass(
       if (
         pass === undefined ||
         closedPasses.has(pass) ||
-        processedPasses.has(pass) ||
+        processedPasses.has(pass)
+      ) {
+        continue;
+      }
+      if (passesWithUnclosedFixCommits.has(pass)) {
+        continue;
+      }
+      processedPasses.add(pass);
+      if (
         currentFamilyHead === undefined ||
         reviewedHead === undefined ||
         currentFamilyHead === reviewedHead ||
@@ -329,7 +347,6 @@ function pendingPriorCmrFindingIdentityKeysByPass(
       ) {
         continue;
       }
-      processedPasses.add(pass);
       keysByPass[pass] = [...keys];
       continue;
     }
@@ -344,6 +361,9 @@ function pendingPriorCmrFindingIdentityKeysByPass(
     }
     const pass = entry.cmrPass;
     if (pass === undefined) continue;
+    if (passesWithUnclosedFixCommits.has(pass)) {
+      continue;
+    }
     processedPasses.add(pass);
     const keys = keysByPass[pass] ?? [];
     const seen = new Set(keys);

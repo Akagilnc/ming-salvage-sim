@@ -1563,9 +1563,13 @@ export class RealFamilyBackend implements FamilyBackend {
     readonly head: string;
     readonly trackedStatus: readonly string[];
   } {
-    const trackedStatus = this.sh("git", ["status", "--short", "--untracked-files=no"]);
+    const trackedStatus = this.sh("git", [
+      "status",
+      "--short",
+      "--untracked-files=no",
+    ], this.opts.workingRepo);
     return {
-      head: this.sh("git", ["rev-parse", "HEAD"]),
+      head: this.sh("git", ["rev-parse", "HEAD"], this.opts.workingRepo),
       trackedStatus: trackedStatus === "" ? [] : trackedStatus.split(/\r?\n/),
     };
   }
@@ -1581,7 +1585,11 @@ export class RealFamilyBackend implements FamilyBackend {
     if (!headMoved && !trackedDirty) return undefined;
 
     const commitEvidence = headMoved
-      ? this.sh("git", ["log", "--oneline", `${input.before.head}..${input.after.head}`])
+      ? this.sh("git", [
+          "log",
+          "--oneline",
+          `${input.before.head}..${input.after.head}`,
+        ], this.opts.workingRepo)
       : "";
     const reasons = [
       headMoved
