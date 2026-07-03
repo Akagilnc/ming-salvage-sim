@@ -24,7 +24,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 > `to-prd` 故意**不访谈**（SKILL.md 原文："Do NOT interview the user — just synthesize what you already know"）。访谈/逼问那一步是 `grill-with-docs`，它在前；`to-prd` 只是把 grill 透的对话**笔录**成 PRD。所以顺序不可能反——to-prd 前面没 grill 就没东西可综合。
 
 > [!important] triage 不在主线上，是**入口匝道**
-> `triage` 只处理**你没创建的**外来 issue（bug 报告 / 进来的需求）。`to-issues` 产出的子 issue 已经是 `ready-for-agent`，**不要再 triage**（原文："Issues that to-issues produced are already agent-ready, so don't triage them"）。
+> `triage` 只处理**你没创建的**外来 issue（bug 报告 / 进来的需求）。`to-issues` 产出的子 issue 规格即 agent-ready，**不要再 triage**（原文："Issues that to-issues produced are already agent-ready, so don't triage them"）。（本项目注：不 triage 不变，但贴 `ready-for-agent` **标签**受设计评审闸前 hold 约束——闸收敛后统一贴，见流程图。）
 
 > [!important] `to-prd` / `to-issues` 只在「多 session 大活」才走
 > `ask-matt` 第 3 步是个分叉：**多 session 才做的大 feature** 才 `to-prd` → `to-issues`；**单 session 能完的小活直接在同一窗口 implement、跳过这两步**。别把 to-prd/to-issues 当所有活的必经。
@@ -91,7 +91,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 - **Out of Scope** —— 明确不做的。
 - **Further Notes** —— 其它。
 
-产出发到 issue tracker（父/epic），贴 `ready-for-agent`，无需再单独 triage。
+产出发到 issue tracker（父/epic），贴 `ready-for-agent`，无需再单独 triage（父标签在 to-issues 撤父转 tracker；**切片**标签受设计评审闸前 hold 约束）。
 
 ### 设计落在哪（六层阶梯，解「详细设计在哪长」）
 
