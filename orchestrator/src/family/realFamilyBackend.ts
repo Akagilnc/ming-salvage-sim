@@ -557,7 +557,7 @@ export class RealFamilyBackend implements FamilyBackend {
       this.opts.workingRepo,
     );
     const trimmed = out.trim();
-    return trimmed.length === 0 ? [] : trimmed.split("\n");
+    return trimmed.length === 0 ? [] : trimmed.split(/\r?\n/);
   }
 
   // ─────────────────────────── merge ───────────────────────────
@@ -1554,7 +1554,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const trackedStatus = this.sh("git", ["status", "--short", "--untracked-files=no"]);
     return {
       head: this.sh("git", ["rev-parse", "HEAD"]),
-      trackedStatus: trackedStatus === "" ? [] : trackedStatus.split("\n"),
+      trackedStatus: trackedStatus === "" ? [] : trackedStatus.split(/\r?\n/),
     };
   }
 
