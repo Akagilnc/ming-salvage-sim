@@ -1324,7 +1324,6 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         if (spec.kind !== "cmr") {
           throw new Error(`unexpected worker after protocol failure: ${spec.kind}`);
         }
-        this.currentFamilyHead = "head-after-malformed-cmr";
         return {
           kind: "malformed",
           reason: `${ctx.cmrPass} cmr worker outcome sidecar was not valid JSON`,
@@ -1336,9 +1335,8 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         _spec: WorkerSpec,
         _ctx: DispatchContext,
         _protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
-        attempt: number,
+        _attempt: number,
       ): Promise<WorkerResult> {
-        this.currentFamilyHead = `head-after-rewrite-attempt-${attempt}`;
         throw new Error("rewrite worker sandbox checkout failed");
       }
     }
@@ -1354,14 +1352,14 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/outcome protocol failure/i);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/sandbox checkout failed/i);
-    expect(backend.aborted[0]?.familyHeadAfter).toBe("head-after-rewrite-attempt-1");
+    expect(backend.aborted[0]?.familyHeadAfter).toBe("head-before-worker");
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
       phase: "final",
       cmrPass: "completeness",
       reason: expect.stringContaining("outcome protocol failure"),
-      familyHeadAfter: "head-after-rewrite-attempt-1",
+      familyHeadAfter: "head-before-worker",
       stopSummary: expect.objectContaining({
         reason: "infra_failure",
         summary: expect.stringContaining("sandbox checkout failed"),

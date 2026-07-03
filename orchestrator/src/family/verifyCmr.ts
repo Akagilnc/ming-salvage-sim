@@ -1507,6 +1507,43 @@ async function runIntegratedCmrPass(input: {
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
+  if (
+    resolvedFamilyHeadAfter !== undefined &&
+    postWorkerFamilyHead !== undefined &&
+    postWorkerFamilyHead !== resolvedFamilyHeadAfter
+  ) {
+    const reason =
+      `integrated CMR ${pass} reviewer moved family HEAD: ` +
+      `${resolvedFamilyHeadAfter} -> ${postWorkerFamilyHead}`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: cmrReviewerHeadMovedStopSummary({
+        pass,
+        familyHeadBefore: resolvedFamilyHeadAfter,
+        familyHeadAfter: postWorkerFamilyHead,
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+  }
+  if (postWorkerTrackedStatus.length > 0) {
+    const reason =
+      `integrated CMR ${pass} reviewer left tracked changes: ` +
+      postWorkerTrackedStatus.join("; ");
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: cmrReviewerTrackedDirtyStopSummary({
+        pass,
+        trackedStatus: postWorkerTrackedStatus,
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+  }
   if (cmrResult.kind === "escalated") {
     const reason = `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`;
     const stopSummary = cmrEscalationStopSummary(reason);
@@ -1571,43 +1608,6 @@ async function runIntegratedCmrPass(input: {
       ...(stopSummary !== undefined ? { stopSummary } : {}),
     });
     return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
-  }
-  if (
-    resolvedFamilyHeadAfter !== undefined &&
-    postWorkerFamilyHead !== undefined &&
-    postWorkerFamilyHead !== resolvedFamilyHeadAfter
-  ) {
-    const reason =
-      `integrated CMR ${pass} reviewer moved family HEAD: ` +
-      `${resolvedFamilyHeadAfter} -> ${postWorkerFamilyHead}`;
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary: cmrReviewerHeadMovedStopSummary({
-        pass,
-        familyHeadBefore: resolvedFamilyHeadAfter,
-        familyHeadAfter: postWorkerFamilyHead,
-      }),
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
-  }
-  if (postWorkerTrackedStatus.length > 0) {
-    const reason =
-      `integrated CMR ${pass} reviewer left tracked changes: ` +
-      postWorkerTrackedStatus.join("; ");
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary: cmrReviewerTrackedDirtyStopSummary({
-        pass,
-        trackedStatus: postWorkerTrackedStatus,
-      }),
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   if (
     !cmrResult.output.converged &&

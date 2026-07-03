@@ -977,6 +977,37 @@ class ReviewerChecksOutOtherHeadBackend implements FamilyBackend {
   }
 }
 
+class MalformedReviewerMovesFamilyHeadBackend extends ReviewFixRereviewBackend {
+  override async readFamilyCurrentHead(): Promise<string> {
+    return this.currentFamilyHead;
+  }
+
+  override async readFamilyTrackedStatus(): Promise<readonly string[]> {
+    return [];
+  }
+
+  override async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      role: spec.role,
+      promptFile: spec.promptFile,
+      contextRetention: spec.contextRetention,
+      cmrPass: ctx.cmrPass,
+      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
+      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
+    });
+    if (spec.kind === "cmr") {
+      this.currentFamilyHead = "head-after-reviewer-commit";
+      return { kind: "malformed", reason: "no parseable CMR-VERDICT" };
+    }
+    throw new Error(`unexpected worker kind ${spec.kind}`);
+  }
+}
+
 describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix/re-review)", () => {
   it("blocking family CMR findings return to runner, dispatch coder-fix, then trigger a fresh full-diff re-review", async () => {
     const backend = new ReviewFixRereviewBackend();
@@ -1430,6 +1461,40 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
           heads: expect.objectContaining({
             reportedFamilyHead: "family-head",
             actualFamilyHead: "detached-review-head",
+          }),
+        }),
+      }),
+    }));
+    expect(
+      backend.dispatches.some((dispatch) => dispatch.kind === "ship"),
+    ).toBe(false);
+  });
+
+  it("checks reviewer HEAD movement before accepting a malformed CMR abort", async () => {
+    const backend = new MalformedReviewerMovesFamilyHeadBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/550-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatches).toEqual([
+      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
+    ]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      cmrPass: "completeness",
+      reason: expect.stringMatching(/reviewer moved family HEAD/i),
+      familyHeadAfter: "head-after-reviewer-commit",
+      stopSummary: expect.objectContaining({
+        reason: "contract_drift",
+        metadata: expect.objectContaining({
+          heads: expect.objectContaining({
+            reportedFamilyHead: "head-before-cmr-review",
+            actualFamilyHead: "head-after-reviewer-commit",
           }),
         }),
       }),
