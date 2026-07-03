@@ -279,7 +279,7 @@ function latestVerifiedCmrHead(
   return undefined;
 }
 
-function pendingPriorCmrFindingIdentityKeysByPass(
+export function pendingPriorCmrFindingIdentityKeysByPass(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
   currentFamilyHead?: string,
 ): Partial<Record<IntegratedCmrPass, ReadonlyArray<string>>> {
@@ -348,6 +348,18 @@ function pendingPriorCmrFindingIdentityKeysByPass(
         continue;
       }
       keysByPass[pass] = [...keys];
+      continue;
+    }
+    if (entry.status === "aborted" && entry.cmrFindingClassification === undefined) {
+      const pass = entry.cmrPass;
+      if (
+        pass === undefined ||
+        closedPasses.has(pass) ||
+        processedPasses.has(pass)
+      ) {
+        continue;
+      }
+      processedPasses.add(pass);
       continue;
     }
     if (entry.status !== "aborted" || entry.cmrFindingClassification === undefined) {

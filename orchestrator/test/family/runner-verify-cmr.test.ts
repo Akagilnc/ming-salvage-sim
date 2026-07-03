@@ -18,7 +18,10 @@
 
 import { describe, expect, it } from "vitest";
 import { classifyFamilyCmrFindings } from "../../src/family/cmrClassification.js";
-import { runFamily } from "../../src/family/runner.js";
+import {
+  pendingPriorCmrFindingIdentityKeysByPass,
+  runFamily,
+} from "../../src/family/runner.js";
 import { findingIdentityKey } from "../../src/findings.js";
 import type { Finding } from "../../src/types.js";
 import type {
@@ -418,6 +421,149 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect((calls.at(-1) as VerifyCmrInput & {
       priorCmrFindingIdentityKeysByPass?: { correctness?: readonly string[] };
     })?.priorCmrFindingIdentityKeysByPass?.correctness).toEqual([newKey, newerKey]);
+  });
+
+  it("does not use an older CMR review as crash-window evidence after coder-fix aborts", async () => {
+    const priorFinding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "coder-fix must prove repair evidence before closure",
+      location: "orchestrator/src/family/verifyCmr.ts:runCmrCoderFix",
+      suggested_fix: "do not treat aborted evidence failure as crash-window repair",
+      action: "fix_now",
+    };
+    const priorKey = findingIdentityKey(priorFinding);
+    const calls: VerifyCmrInput[] = [];
+    class PreSeededFamilyBackend extends FakeFamilyBackend {
+      constructor() {
+        super();
+        this.ledger.push(
+          { childIssue: 10, status: "merged" },
+          {
+            status: "cmr_reviewed",
+            event: "cmr_reviewed",
+            phase: "final",
+            cmrPass: "correctness",
+            familyHeadAfter: "head-before-coder-fix",
+            cmrFindingClassification: {
+              blocking: [priorFinding],
+              deferred: [],
+              dispositions: [],
+              moduleContext: {
+                currentModules: [],
+                childModules: [],
+                undevelopedModules: [],
+              },
+              results: [
+                {
+                  identityKey: priorKey,
+                  classification: "same_module_still_red",
+                  attribution: { method: "family_module", issue: 293 },
+                  reason: "coder-fix must prove repair evidence before closure",
+                },
+              ],
+            },
+          },
+          {
+            status: "aborted",
+            event: "aborted",
+            phase: "final",
+            cmrPass: "correctness",
+            familyHeadAfter: "head-after-bad-coder-fix",
+            reason:
+              "integrated cmr correctness coder-fix repair evidence gate failed after 3 attempts",
+            stopSummary: {
+              reason: "contract_drift",
+              summary:
+                "integrated CMR correctness coder-fix failed: repair evidence gate failed",
+              repairHint:
+                "repair the family CMR coder-fix worker contract, then rerun the family CMR gate",
+            },
+          },
+        );
+      }
+      async readFamilyHead(): Promise<string> {
+        return "head-after-bad-coder-fix";
+      }
+    }
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      calls.push(input);
+      return { ok: true, ran: true };
+    };
+
+    await runFamily({
+      epic: epicWith(10),
+      familyBackend: new PreSeededFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+      verifyCmr,
+    });
+
+    expect((calls.at(-1) as VerifyCmrInput & {
+      priorCmrFindingIdentityKeysByPass?: { correctness?: readonly string[] };
+    })?.priorCmrFindingIdentityKeysByPass?.correctness).toBeUndefined();
+  });
+
+  it("does not derive pending keys from cmr_reviewed after a newer coder-fix abort row", () => {
+    const priorFinding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "coder-fix must prove repair evidence before closure",
+      location: "orchestrator/src/family/verifyCmr.ts:runCmrCoderFix",
+      suggested_fix: "do not treat aborted evidence failure as crash-window repair",
+      action: "fix_now",
+    };
+    const priorKey = findingIdentityKey(priorFinding);
+
+    const pending = pendingPriorCmrFindingIdentityKeysByPass(
+      [
+        { childIssue: 10, status: "merged" },
+        {
+          status: "cmr_reviewed",
+          event: "cmr_reviewed",
+          phase: "final",
+          cmrPass: "correctness",
+          familyHeadAfter: "head-before-coder-fix",
+          cmrFindingClassification: {
+            blocking: [priorFinding],
+            deferred: [],
+            dispositions: [],
+            moduleContext: {
+              currentModules: [],
+              childModules: [],
+              undevelopedModules: [],
+            },
+            results: [
+              {
+                identityKey: priorKey,
+                classification: "same_module_still_red",
+                attribution: { method: "family_module", issue: 293 },
+                reason: "coder-fix must prove repair evidence before closure",
+              },
+            ],
+          },
+        } as FamilyLedgerEntry,
+        {
+          status: "aborted",
+          event: "aborted",
+          phase: "final",
+          cmrPass: "correctness",
+          familyHeadAfter: "head-after-bad-coder-fix",
+          reason:
+            "integrated cmr correctness coder-fix repair evidence gate failed after 3 attempts",
+          stopSummary: {
+            reason: "contract_drift",
+            summary:
+              "integrated CMR correctness coder-fix failed: repair evidence gate failed",
+            repairHint:
+              "repair the family CMR coder-fix worker contract, then rerun the family CMR gate",
+          },
+        } as FamilyLedgerEntry,
+      ],
+      "head-after-bad-coder-fix",
+    );
+
+    expect(pending.correctness).toBeUndefined();
   });
 
   it("passes the known #287 hub-loss accepted suppression through production CMR context", async () => {

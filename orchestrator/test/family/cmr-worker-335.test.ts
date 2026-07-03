@@ -51,6 +51,7 @@ import {
   SANDBOX_AGY_DIR,
   type CmrAuth,
   type CmrWorkerOutcome,
+  type ShipAuth,
 } from "../../src/family/realFamilyBackend.js";
 import {
   SANDBOX_CODEX_DIR,
@@ -756,6 +757,46 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(spec.contextRetention).toBe("retain");
     expect(ctx.familyIssue).toBe(533);
     expect(ctx.blockingFindingIdentityKeys).toEqual(["cmr-key-1"]);
+  });
+
+  it("cleans up family coder-fix findings if outcome landing fails", async () => {
+    const repo = realRepo335();
+
+    class FailingOutcomeLandingBackend extends RealFamilyBackend {
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok" };
+      }
+
+      protected override prepareFamilyCoderOutcomeLanding(): {
+        path: string;
+        sandboxPath: string;
+      } {
+        throw new Error("outcome landing failed");
+      }
+
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        if (file === "git" && args[0] === "checkout") return "";
+        return super.sh(file, args, cwd);
+      }
+    }
+
+    const be = new FailingOutcomeLandingBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("family-coder-landing-fail-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+    });
+
+    await expect(
+      be.dispatchWorker(familyCoderFixWorkerSpec(), {
+        familyBase: "fb",
+        blockingFindingIdentityKeys: ["cmr-key-1"],
+      }),
+    ).rejects.toThrow("outcome landing failed");
+    expect(existsSync(join(repo, ".orchestrator-fix-findings.json"))).toBe(false);
   });
 
   it("a converged verdict ⇒ WorkerResult.completed with a bare cmr payload", async () => {

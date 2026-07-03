@@ -1408,22 +1408,25 @@ export class RealFamilyBackend implements FamilyBackend {
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
       const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx);
-      const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
       try {
-        const result = await this.runAgentSandbox({
-          name: "family-coder-fix",
-          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-          cwd: this.opts.workingRepo,
-          sandbox: this.familyCoderSandbox(auth, ctx, outcomeLanding),
-          agent: this.agentForSpec(spec),
-          maxIterations: spec.maxIter,
-          completionSignal: spec.completionSignal,
-          branchStrategy: { type: "head" },
-          promptFile: join(this.opts.promptsDir, spec.promptFile),
-        });
-        return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
+        const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
+        try {
+          const result = await this.runAgentSandbox({
+            name: "family-coder-fix",
+            idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+            cwd: this.opts.workingRepo,
+            sandbox: this.familyCoderSandbox(auth, ctx, outcomeLanding),
+            agent: this.agentForSpec(spec),
+            maxIterations: spec.maxIter,
+            completionSignal: spec.completionSignal,
+            branchStrategy: { type: "head" },
+            promptFile: join(this.opts.promptsDir, spec.promptFile),
+          });
+          return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
+        } finally {
+          this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
+        }
       } finally {
-        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
         rmSync(fixFindingsLanding.path, { force: true });
       }
     } finally {
