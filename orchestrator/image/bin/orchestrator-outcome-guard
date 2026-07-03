@@ -267,6 +267,10 @@ def validate_prior_finding_dispositions(value: list) -> None:
             for field in ["reason", "source", "scope", "boundedReopen"]:
                 if field not in disposition or disposition[field].strip() == "":
                     raise GuardError(f"{label}.{field} is required for accepted_suppressed")
+            if not has_explicit_accepted_suppression_source(disposition["source"]):
+                raise GuardError(f"{label}.source must name an explicit user/ADR/issue source")
+            if not has_bounded_reopen_condition(disposition["boundedReopen"]):
+                raise GuardError(f"{label}.boundedReopen must include a bounded reopen condition")
 
 
 def validate_exact_fields(

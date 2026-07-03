@@ -465,6 +465,67 @@ describe("#549 worker outcome guard", () => {
     }
   });
 
+  it("accepted_suppressed prior finding dispositions require explicit source and bounded reopen before sidecar write", () => {
+    const dir = mkdtempSync(join(tmpdir(), "outcome-guard-prior-accepted-"));
+    try {
+      mkdirSync(join(dir, "cmr"), { recursive: true });
+      writeFileSync(join(dir, "cmr", "review.json"), '{"ok":true}\n', "utf8");
+
+      const draftPath = join(dir, "draft.json");
+      const sidecarPath = join(dir, "outcome.json");
+      writeFileSync(
+        draftPath,
+        JSON.stringify({
+          converged: true,
+          successfulLegs: ["gpt-5.5"],
+          claimedFixedFindingIdentityKeys: [
+            "standards|orchestrator/image/bin/orchestrator-outcome-guard|weak accepted suppression",
+          ],
+          priorFindingDispositions: [
+            {
+              identityKey:
+                "standards|orchestrator/image/bin/orchestrator-outcome-guard|weak accepted suppression",
+              status: "accepted_suppressed",
+              reason: "reviewer prose says it is acceptable",
+              source: "reviewer prose only",
+              scope: "outcome guard",
+              boundedReopen: "never",
+            },
+          ],
+          evidencePaths: ["cmr/review.json"],
+        }),
+        "utf8",
+      );
+      writeFileSync(sidecarPath, "sentinel\n", "utf8");
+
+      const result = spawnSync(
+        GUARD,
+        [
+          "--role",
+          "cmr",
+          "--draft",
+          draftPath,
+          "--outcome",
+          sidecarPath,
+          "--evidence-root",
+          dir,
+          "--completion-signal",
+          "CMR_STEP_COMPLETE",
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).not.toContain("CMR_STEP_COMPLETE");
+      expect(result.stderr).toContain(
+        "priorFindingDispositions[0].source must name an explicit user/ADR/issue source",
+      );
+      expect(readFileSync(sidecarPath, "utf8")).toBe("sentinel\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("worker image bake stages the guard binary and exposes it on PATH", () => {
     const buildScript = readFileSync(resolve(process.cwd(), "image/build.sh"), "utf8");
     const containerfile = readFileSync(
