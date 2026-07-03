@@ -1254,6 +1254,119 @@ async function readPostCmrCurrentHead(
   return liveHead.length > 0 ? liveHead : undefined;
 }
 
+async function guardPostCmrReviewerGitState(input: {
+  readonly familyBackend: FamilyBackend;
+  readonly familyBase: string;
+  readonly pass: IntegratedCmrPass;
+  readonly expectedFamilyHead?: string;
+  readonly familyHeadAfter?: string;
+}): Promise<IntegratedCmrPassOutcome | undefined> {
+  const {
+    familyBackend,
+    familyBase,
+    pass,
+    expectedFamilyHead,
+    familyHeadAfter,
+  } = input;
+  let currentHead: string | undefined;
+  try {
+    currentHead = await readPostCmrCurrentHead(familyBackend);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    const reason = `integrated CMR ${pass} current HEAD read failed: ${detail}`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter,
+      stopSummary: infraFailureStopSummary({
+        summary: reason,
+        repairHint:
+          "repair the family current-HEAD reader before trusting the CMR reviewer ref guard",
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter };
+  }
+  if (
+    currentHead !== undefined &&
+    familyHeadAfter !== undefined &&
+    currentHead !== familyHeadAfter
+  ) {
+    const reason =
+      `integrated CMR ${pass} reviewer checked out a different HEAD: ` +
+      `family base ${familyHeadAfter}, current HEAD ${currentHead}`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter: currentHead,
+      stopSummary: cmrReviewerHeadMovedStopSummary({
+        pass,
+        familyHeadBefore: familyHeadAfter,
+        familyHeadAfter: currentHead,
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: currentHead };
+  }
+  let trackedStatus: readonly string[];
+  try {
+    trackedStatus = await readPostCmrTrackedStatus(familyBackend, familyBase);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    const reason = `integrated CMR ${pass} tracked status read failed: ${detail}`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter,
+      stopSummary: infraFailureStopSummary({
+        summary: reason,
+        repairHint:
+          "repair the family tracked-status reader before trusting the CMR reviewer cleanliness gate",
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter };
+  }
+  if (
+    expectedFamilyHead !== undefined &&
+    familyHeadAfter !== undefined &&
+    familyHeadAfter !== expectedFamilyHead
+  ) {
+    const reason =
+      `integrated CMR ${pass} reviewer moved family HEAD: ` +
+      `${expectedFamilyHead} -> ${familyHeadAfter}`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter,
+      stopSummary: cmrReviewerHeadMovedStopSummary({
+        pass,
+        familyHeadBefore: expectedFamilyHead,
+        familyHeadAfter,
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter };
+  }
+  if (trackedStatus.length > 0) {
+    const reason =
+      `integrated CMR ${pass} reviewer left tracked changes: ` +
+      trackedStatus.join("; ");
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter,
+      stopSummary: cmrReviewerTrackedDirtyStopSummary({
+        pass,
+        trackedStatus,
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter };
+  }
+  return undefined;
+}
+
 async function readRequiredFamilyHead(
   familyBackend: FamilyBackend,
   familyBase: string,
@@ -1434,116 +1547,41 @@ async function runIntegratedCmrPass(input: {
       ? { priorCmrFindingIdentityKeys }
       : {}),
   };
+  const rawCmrResult = await dispatchOrAbort(familyBackend, spec, dispatchCtx);
+  if (rawCmrResult.kind === "malformed") {
+    const postReviewFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      resolvedFamilyHeadAfter,
+    );
+    const postReviewGitAbort = await guardPostCmrReviewerGitState({
+      familyBackend,
+      familyBase,
+      pass,
+      expectedFamilyHead: resolvedFamilyHeadAfter,
+      familyHeadAfter: postReviewFamilyHead,
+    });
+    if (postReviewGitAbort !== undefined) return postReviewGitAbort;
+  }
   const cmrResult = await rewriteOutcomeProtocolFailure({
     familyBackend,
     spec,
     ctx: dispatchCtx,
-    result: await dispatchOrAbort(familyBackend, spec, dispatchCtx),
+    result: rawCmrResult,
   });
   const postWorkerFamilyHead = await readPostCmrFamilyHead(
     familyBackend,
     familyBase,
     resolvedFamilyHeadAfter,
   );
-  let postWorkerCurrentHead: string | undefined;
-  try {
-    postWorkerCurrentHead = await readPostCmrCurrentHead(familyBackend);
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    const reason = `integrated CMR ${pass} current HEAD read failed: ${detail}`;
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary: infraFailureStopSummary({
-        summary: reason,
-        repairHint:
-          "repair the family current-HEAD reader before trusting the CMR reviewer ref guard",
-      }),
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
-  }
-  if (
-    postWorkerCurrentHead !== undefined &&
-    postWorkerFamilyHead !== undefined &&
-    postWorkerCurrentHead !== postWorkerFamilyHead
-  ) {
-    const reason =
-      `integrated CMR ${pass} reviewer checked out a different HEAD: ` +
-      `family base ${postWorkerFamilyHead}, current HEAD ${postWorkerCurrentHead}`;
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerCurrentHead,
-      stopSummary: cmrReviewerHeadMovedStopSummary({
-        pass,
-        familyHeadBefore: postWorkerFamilyHead,
-        familyHeadAfter: postWorkerCurrentHead,
-      }),
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerCurrentHead };
-  }
-  let postWorkerTrackedStatus: readonly string[];
-  try {
-    postWorkerTrackedStatus = await readPostCmrTrackedStatus(
-      familyBackend,
-      familyBase,
-    );
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    const reason = `integrated CMR ${pass} tracked status read failed: ${detail}`;
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary: infraFailureStopSummary({
-        summary: reason,
-        repairHint:
-          "repair the family tracked-status reader before trusting the CMR reviewer cleanliness gate",
-      }),
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
-  }
-  if (
-    resolvedFamilyHeadAfter !== undefined &&
-    postWorkerFamilyHead !== undefined &&
-    postWorkerFamilyHead !== resolvedFamilyHeadAfter
-  ) {
-    const reason =
-      `integrated CMR ${pass} reviewer moved family HEAD: ` +
-      `${resolvedFamilyHeadAfter} -> ${postWorkerFamilyHead}`;
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary: cmrReviewerHeadMovedStopSummary({
-        pass,
-        familyHeadBefore: resolvedFamilyHeadAfter,
-        familyHeadAfter: postWorkerFamilyHead,
-      }),
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
-  }
-  if (postWorkerTrackedStatus.length > 0) {
-    const reason =
-      `integrated CMR ${pass} reviewer left tracked changes: ` +
-      postWorkerTrackedStatus.join("; ");
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary: cmrReviewerTrackedDirtyStopSummary({
-        pass,
-        trackedStatus: postWorkerTrackedStatus,
-      }),
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
-  }
+  const postWorkerGitAbort = await guardPostCmrReviewerGitState({
+    familyBackend,
+    familyBase,
+    pass,
+    expectedFamilyHead: resolvedFamilyHeadAfter,
+    familyHeadAfter: postWorkerFamilyHead,
+  });
+  if (postWorkerGitAbort !== undefined) return postWorkerGitAbort;
   if (cmrResult.kind === "escalated") {
     const reason = `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`;
     const stopSummary = cmrEscalationStopSummary(reason);
