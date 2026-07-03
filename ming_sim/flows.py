@@ -262,6 +262,8 @@ def _fiscal_container_value(db: GameDB, key: str) -> float:
 
 def _fiscal_config_rate(db: GameDB, key: str) -> float:
     cfg = db.get_fiscal_config()
+    if key not in cfg and db.fiscal_config_minimum_value(key) is not None:
+        raise ValueError(f"fiscal_config.{key} 缺失")
     raw = cfg.get(key, 0)
     if isinstance(raw, bool):
         raise ValueError(f"fiscal_config.{key} 非法：{raw!r}")

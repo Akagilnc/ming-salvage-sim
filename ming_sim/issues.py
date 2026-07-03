@@ -6932,6 +6932,13 @@ def apply_score_extraction(
                 "category": "invalid_enum", "item": remove,
             })
             continue
+        if db.is_structural_fiscal_config_key(key):
+            applied_fiscal_removes.append({
+                "rejected": True,
+                "reason": f"裁撤目标「{key}」是结构性财政地板，不可裁撤。",
+                "category": "invalid_enum", "item": remove,
+            })
+            continue
         removed_key = db.remove_fiscal_item(key, commit=commit_now)
         if removed_key is None:
             # 查无此项 = 正常业务拒绝,逐项拒收留痕(不再 print 静默跳;ADR 决定 1 / S3)。
@@ -7078,6 +7085,14 @@ def apply_score_extraction(
             })
             continue
         new_val = max(0, current + delta)
+        minimum = db.fiscal_config_minimum_value(key)
+        if minimum is not None and new_val < minimum:
+            applied_fiscal.append({
+                "rejected": True,
+                "reason": f"调率目标「{key}」不得低于结构地板 {minimum}。",
+                "category": "invalid_enum", "item": change,
+            })
+            continue
         db.set_fiscal_config(key, new_val, commit=commit_now)
         # dynamic 税（辽饷/盐税/商税/田赋）实收走 region.fiscal，改 fiscal_config 不生效；
         # 按 new/old 比例同步缩放各省实收字段，使调额当真改变下月入账。皇庄读 config，无需联动。

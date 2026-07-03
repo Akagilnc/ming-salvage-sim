@@ -86,6 +86,23 @@ def test_remove_dynamic_tax_still_zeroes_region_field(game):
     assert int(fiscal.get("liao_xiang", 0) or 0) == 0  # dynamic 联动归零
 
 
+def test_remove_structural_sink_loss_rate_rejected(game):
+    """中央自然损耗率是结构地板，不能被 fiscal_removes 裁撤成 0。"""
+    db, state, content = game
+    turn = state.turn
+    key = "central_taicang_sink_loss_rate"
+    before = db.get_fiscal_config()[key]
+
+    run_settle(db, state, content, {
+        "fiscal_removes": [{"key": key, "reason": "试图抹平自然损耗"}],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "fiscal_removes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert db.get_fiscal_config()[key] == before
+
+
 # ---- fiscal_creates：重复 key / 非法枚举 / 脏 init_value ----
 
 def test_create_duplicate_key_rejected_good_create_lands(game):
@@ -282,6 +299,23 @@ def test_change_dynamic_tax_rate_scales_region_field(game):
         "SELECT fiscal FROM regions WHERE id=?", (rid,)).fetchone()[0] or "{}")
     # 按 new/old 比例缩放后实收 < 400(联动当真生效)
     assert 0 <= int(fiscal.get("liao_xiang", 0) or 0) < 400
+
+
+def test_change_structural_sink_loss_rate_below_floor_rejected(game):
+    """中央自然损耗率可调但不可清零；低于结构地板的 change 逐项拒收。"""
+    db, state, content = game
+    turn = state.turn
+    key = "central_jingyun_sink_loss_rate"
+    before = db.get_fiscal_config()[key]
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [{"key": key, "delta": -before, "reason": "试图清零自然运损"}],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "fiscal_changes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert db.get_fiscal_config()[key] == before
 
 
 @pytest.mark.parametrize("bad", [False, 0.0])

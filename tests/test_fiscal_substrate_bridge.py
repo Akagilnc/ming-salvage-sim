@@ -1893,7 +1893,10 @@ def test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub(fre
         reopened.conn.close()
 
 
-def test_fiscal_config_v8_migration_preserves_deleted_old_keys(fresh_db):
+@pytest.mark.parametrize("starting_schema_version", [6, 7])
+def test_fiscal_config_v8_migration_preserves_deleted_old_keys(
+    fresh_db, starting_schema_version
+):
     path = fresh_db.path
     content = fresh_db.content
     new_loss_keys = (
@@ -1908,7 +1911,8 @@ def test_fiscal_config_v8_migration_preserves_deleted_old_keys(fresh_db):
         [(key,) for key in new_loss_keys],
     )
     fresh_db.conn.execute(
-        "UPDATE fiscal_config SET value = 7 WHERE key = '__schema_version'"
+        "UPDATE fiscal_config SET value = ? WHERE key = '__schema_version'",
+        (starting_schema_version,),
     )
     fresh_db.conn.commit()
 
