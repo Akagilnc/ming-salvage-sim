@@ -2,16 +2,19 @@
  * The unified worker-dispatch seam at the FAMILY layer (ADR 0026 / PRD #330,
  * #331) — parallel to the single-slice `dispatchWorker` (../dispatchWorker.ts).
  *
- * The family-LEVEL worker steps — the integrated cross-model cmr over the merged
- * family base, and the family-base ship/PR — are dispatched through ONE seam
- * instead of the per-method `runIntegratedCmr` / `openFamilyPr`.
+ * The family-LEVEL worker steps — integrated cross-model cmr over the merged
+ * family base, runner-visible coder-fix for blocking CMR findings, and the
+ * family-base ship/PR — are dispatched through ONE seam instead of hiding work
+ * inside the per-method `runIntegratedCmr` / `openFamilyPr`.
  *
- *   - {@link cmrWorkerSpec} / {@link familyShipWorkerSpec} — the declarative
- *     {@link WorkerSpec}s for the two family workers.
+ *   - {@link cmrWorkerSpec} / {@link familyCoderFixWorkerSpec} /
+ *     {@link familyShipWorkerSpec} — the declarative {@link WorkerSpec}s for the
+ *     family workers.
  *   - {@link dispatchFamilyWorker} — the free function the verify-cmr hook calls.
  *     It uses `familyBackend.dispatchWorker` when implemented, else forwards to the
  *     legacy `runIntegratedCmr` / `openFamilyPr` (#331 prefactor — behaviour
- *     unchanged). The real container cmr worker lands in #335.
+ *     unchanged for legacy cmr/ship). The real container cmr worker lands in #335;
+ *     the runner-visible CMR coder-fix worker lands in #550.
  *
  * NOTE the DispatchContext for a family worker carries `familyBase` (the caller
  * has only the base string, no single-slice worktree path — PRD #330 R2);
@@ -38,8 +41,15 @@ import type {
   OpenFamilyPrResult,
 } from "./types.js";
 
+const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
+  "python",
+  "node",
+  "npm",
+  "typescript",
+] as const;
+
 /**
- * The integrated-cmr family worker spec (#335 invoke `ak-cross-m-review`).
+ * The integrated-cmr family reviewer spec (#335 invoke `ak-cross-m-review`).
  *
  * ADR 0030 splits integrated cmr into ordered runner-dispatched pass workers:
  * completeness first, correctness second. This spec describes ONE such pass
@@ -47,13 +57,11 @@ import type {
  *   - `session: "fresh"` = start a NEW pass session (not a crash/escalate
  *     `resume`, which skips git-truthing). `verifyCmr` dispatches one fresh worker
  *     per pass and gates correctness on completeness.
- *   - `soul: "cmr"` = the pass worker is WRITE-capable (it may commit pass-local
- *     fixes on the family base), NOT the READ-ONLY per-slice reviewer soul.
- *   - `maxIter: 5` = the within-step Ralph iteration budget (StepSpec.maxIter
- *     semantics, same as the coder/ship workers), NOT the count of cmr fix rounds.
- *     `maxIter` is the sandbox iteration budget for this pass worker, not a
- *     runner-level cmr round counter. `verifyCmr` consumes only the terminal pass
- *     verdict and performs route/closure accounting.
+ *   - `role: "reviewer"` and `contextRetention: "clean"` = this worker reports
+ *     review artifacts/outcome only. Blocking findings return to the runner; a
+ *     separate coder-fix worker commits repairs.
+ *   - `maxIter: 1` = one reviewer pass. Fresh re-review is a new runner dispatch,
+ *     not an in-worker fix loop.
  */
 export function cmrWorkerSpec(
   session: WorkerSessionMode = "fresh",
@@ -61,31 +69,46 @@ export function cmrWorkerSpec(
   route?: ResolvedModelRoute,
 ): WorkerSpec {
   return {
-    id: "S2", // family cmr is a WRITE-capable pass worker before family S7 ship;
-    //           ADR 0030 exposes the pass boundary via `cmrPass`, not new S3/S5/S6
-    //           family step ids.
+    id: "S3",
     kind: "cmr",
-    role: "coder", // it WRITES (commits cross-slice fixes), not a read-only reviewer
+    role: "reviewer",
     // The cmr skill fans out a Claude Agent leg + CLI legs → host pinned Claude
     // top-level (PRD #330 [J]).
     host: "claude",
     session,
-    // The pass worker may retain context while producing its terminal pass verdict;
-    // `verifyCmr` still owns the ADR 0030 pass boundary and pass ordering.
-    contextRetention: "retain",
+    contextRetention: "clean",
     skill: "ak-cross-m-review",
     promptFile:
       pass === "completeness"
         ? "integrated_cmr_completeness.md"
         : "integrated_cmr_correctness.md",
     completionSignal: "CMR_STEP_COMPLETE",
-    maxIter: 5,
+    maxIter: 1,
     model:
       route?.slots[pass === "completeness" ? "cmrCompleteness" : "cmrCorrectness"] ??
       modelForSlot(pass === "completeness" ? "cmrCompleteness" : "cmrCorrectness"),
     cmrReviewLegs: route?.legCollections.cmrReview ?? activeCmrReviewLegs(),
     soul: "cmr",
     toolchain: [],
+  };
+}
+
+/** Family-level coder-fix worker for blocking CMR findings (#550). */
+export function familyCoderFixWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
+  return {
+    id: "S5",
+    kind: "coder",
+    role: "coder",
+    host: "claude",
+    session: "fresh",
+    contextRetention: "retain",
+    skill: "/tdd",
+    promptFile: "coder_fix.md",
+    completionSignal: "CODER_STEP_COMPLETE",
+    maxIter: 5,
+    model: route?.slots.coderFix ?? modelForSlot("coderFix"),
+    soul: "coder",
+    toolchain: IMAGE_TOOLCHAIN,
   };
 }
 
@@ -125,6 +148,8 @@ export function familyShipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
  * Returns the discriminated {@link WorkerResult}. For #331 the legacy wrapper
  * always yields `completed` (forwarding `runIntegratedCmr` / `openFamilyPr`):
  *   - cmr → `completed` with a {@link CmrResult} payload (`red` IS `completed`).
+ *   - coder-fix → requires a backend implementing the unified seam (no legacy
+ *     family method can safely make persistent fix commits).
  *   - family ship → `completed` with a {@link ShipResult} payload.
  */
 export async function dispatchFamilyWorker(
