@@ -6,17 +6,17 @@
  * The cmr worker = the 2b container's TOP-LEVEL claude; it `Skill`-invokes
  * `ak-cross-m-review` (which itself fans out 1 Agent + 2 CLI legs inside the
  * container — proven in #333), FRESH each round (cross-model independence). The
- * worker returns a `{converged, reason?, successfulLegs, skippedLegs?}` verdict
- * (PRD #330 R2: the family cmr consumer `verifyCmr.ts` is escalate-on-red, NO
- * fix-loop, so no findings array is required). A `red` verdict is
- * `WorkerResult.completed` (a CmrResult payload), NOT `failed`.
+ * worker returns a `{converged, reason?, findings?, successfulLegs, skippedLegs?}`
+ * verdict (PRD #330 R2: a `red` review outcome is still
+ * `WorkerResult.completed`, and `verifyCmr.ts` decides whether to abort or dispatch
+ * a separate coder-fix worker). A `red` verdict is NOT `failed`.
  *
  * Tested WITHOUT a real container:
  *   - parseCmrOutcome: the `<cmr>` tag → converged / red / escalate / malformed;
  *   - cmrOutcomeFromResult: the completion-signal gate (an unsignaled run is NOT a
  *     pass — mirrors the merger gate);
  *   - RealFamilyBackend.dispatchWorker(cmr): routes ak-cross-m-review + FRESH +
- *     cmr (write/fixer) soul through the injected `runCmrWorker` seam and wraps the verdict
+ *     clean cmr reviewer soul through the injected `runCmrWorker` seam and wraps the verdict
  *     into a WorkerResult (converged → completed; red → completed; escalate →
  *     escalated; malformed → malformed);
  *   - cmrSandboxConfig: wires the agy auth runtime-mount (writable dir) + codex
@@ -59,10 +59,14 @@ import {
   SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
 } from "../../src/realBackend.js";
-import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
+import {
+  cmrWorkerSpec,
+  familyCoderFixWorkerSpec,
+  familyShipWorkerSpec,
+} from "../../src/family/dispatchFamilyWorker.js";
 import { cmrLegAccountingFailure } from "../../src/modelRoutes.js";
 import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
-import type { DispatchContext, WorkerSpec } from "../../src/types.js";
+import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
@@ -530,6 +534,32 @@ describe("integrated CMR pass prompt closure contract", () => {
     });
   }
 
+  for (const promptName of [
+    "integrated_cmr.md",
+    "integrated_cmr_completeness.md",
+    "integrated_cmr_correctness.md",
+  ]) {
+    it(`${promptName} routes same-module still-red examples into the runner coder-fix path`, () => {
+      const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
+      const examples = [...prompt.matchAll(/<cmr>(\{[^\n]*"converged": false[^\n]*\})<\/cmr>/g)];
+
+      expect(examples.length).toBeGreaterThan(0);
+      for (const [, rawJson] of examples) {
+        const output = JSON.parse(rawJson) as {
+          readonly findings?: readonly {
+            readonly action: string;
+            readonly disposition?: { readonly kind?: string };
+          }[];
+        };
+        for (const finding of output.findings ?? []) {
+          if (finding.disposition?.kind === "same_module") {
+            expect(finding.action).toBe("fix_now");
+          }
+        }
+      }
+    });
+  }
+
   it("integrated completeness prompt keeps undeveloped targets out of issue-body YAML", () => {
     const prompt = readFileSync(
       join(realPromptsDir, "integrated_cmr_completeness.md"),
@@ -615,6 +645,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
   /** A backend whose container `runCmrWorker` seam is fixtured (no real sc.run). */
   class FixturedCmrBackend extends RealFamilyBackend {
     runCmrCalls: { spec: ReturnType<typeof cmrWorkerSpec>; ctx: DispatchContext }[] = [];
+    runCoderFixCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
     runShipCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
     outcome: CmrWorkerOutcome = {
       kind: "verdict",
@@ -640,6 +671,16 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       this.runShipCalls.push({ spec, ctx });
       return { kind: "shipped", branch: ctx.familyBase!, status: "pr_opened", pr: "https://gh/pr/9" };
     }
+    protected override async runFamilyCoderFixWorker(
+      spec: WorkerSpec,
+      ctx: DispatchContext,
+    ): Promise<WorkerResult> {
+      this.runCoderFixCalls.push({ spec, ctx });
+      return {
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      };
+    }
     protected override verifyFamilyShipPr(): { ok: true; headOid: string } | { ok: false; reason: string } {
       return { ok: true, headOid: "head-1" };
     }
@@ -657,7 +698,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     });
   }
 
-  it("dispatches the cmr pass worker spec to runCmrWorker — ak-cross-m-review + FRESH session + write-capable cmr soul", async () => {
+  it("dispatches the cmr pass worker spec to runCmrWorker — ak-cross-m-review + FRESH clean reviewer cmr soul", async () => {
     const be = fixtured();
     await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "feat/330-pure-scheduler" });
     expect(be.runCmrCalls.length).toBe(1);
@@ -666,10 +707,30 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(spec.skill).toBe("ak-cross-m-review");
     // FRESH session = a new pass-worker session, not a crash/escalate resume.
     expect(spec.session).toBe("fresh");
-    // The pass worker can retain context while producing its terminal verdict, under
-    // the WRITE-capable `cmr` soul.
-    expect(spec.contextRetention).toBe("retain");
+    // The pass worker is a clean reviewer boundary; blocking findings return to the
+    // runner, which dispatches a separate coder-fix worker.
+    expect(spec.contextRetention).toBe("clean");
+    expect(spec.role).toBe("reviewer");
+    expect(spec.maxIter).toBe(1);
     expect(spec.soul).toBe("cmr");
+  });
+
+  it("dispatches the family coder-fix spec to runFamilyCoderFixWorker — /tdd + retained coder context", async () => {
+    const be = fixtured();
+    await be.dispatchWorker(familyCoderFixWorkerSpec(), {
+      familyBase: "feat/330-pure-scheduler",
+      familyIssue: 533,
+      blockingFindingIdentityKeys: ["cmr-key-1"],
+    });
+    expect(be.runCoderFixCalls.length).toBe(1);
+    const { spec, ctx } = be.runCoderFixCalls[0]!;
+    expect(spec.kind).toBe("coder");
+    expect(spec.skill).toBe("/tdd");
+    expect(spec.promptFile).toBe("coder_fix.md");
+    expect(spec.session).toBe("fresh");
+    expect(spec.contextRetention).toBe("retain");
+    expect(ctx.familyIssue).toBe(533);
+    expect(ctx.blockingFindingIdentityKeys).toEqual(["cmr-key-1"]);
   });
 
   it("a converged verdict ⇒ WorkerResult.completed with a bare cmr payload", async () => {

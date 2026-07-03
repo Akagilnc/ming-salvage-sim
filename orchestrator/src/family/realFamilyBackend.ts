@@ -73,9 +73,18 @@ import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
 import {
   agentForSlug,
+  assertCompletionSignal,
   branchForIssue,
+  extractCoderTag,
+  lastSessionId,
+  parseCoderSelfReport,
+  realCommitCount,
+  reconcileCoderCommits,
   SANDBOX_CODEX_DIR,
+  SANDBOX_FIX_FINDINGS_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
+  SANDBOX_ISSUE_NUMBER_ENV,
   SANDBOX_REPO_ENV,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
@@ -83,6 +92,7 @@ import {
   SPAWNED_WORKER_ENV,
   WORKER_IDLE_TIMEOUT_SECONDS,
   modelFamilyForSlug,
+  type SelfReportedCoder,
 } from "../realBackend.js";
 import {
   WORKER_OUTCOME_REPO_FILE,
@@ -103,6 +113,7 @@ import {
 } from "../shipOutcome.js";
 
 import type {
+  CoderResult,
   DispatchContext,
   Finding,
   PriorFindingDisposition,
@@ -158,6 +169,8 @@ export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
 export const CMR_FOCUS_FILENAME = ".cmr-focus.md";
 /** Route-selected CMR review-leg config written next to {@link CMR_FOCUS_FILENAME}. */
 export const CMR_ROUTE_FILENAME = ".cmr-route.json";
+/** Runner-owned family coder-fix findings file, written transiently in the family base. */
+export const FAMILY_FIX_FINDINGS_FILENAME = ".orchestrator-fix-findings.json";
 
 /**
  * The git-ignored SHIP FOCUS file written into the family-base worktree before the
@@ -173,10 +186,9 @@ export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
 /** The cmr worker's completion signal (matches the integrated CMR pass prompts). */
 const CMR_COMPLETION_SIGNAL = "CMR_STEP_COMPLETE";
 /**
- * The WRITE-capable soul the integrated-cmr pass worker runs under (ADR 0030).
- * The worker invokes `ak-cross-m-review` for one selected gate and may commit
- * pass-local cross-slice fixes on the family base; it is NOT the READ-ONLY
- * reviewer soul. The dedicated `cmr` soul carries that pass-worker discipline.
+ * The integrated-cmr reviewer soul (ADR 0030). It invokes `ak-cross-m-review` for
+ * one selected gate and returns runner-visible review outcomes; persistent repairs
+ * are made only by the separate family coder-fix worker.
  */
 const CMR_SOUL = "cmr";
 
@@ -272,6 +284,7 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set([
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
+    "coder_fix.md",
     "family_ship.md",
     MERGER_CONFLICT_PROMPT,
   ]),
@@ -439,8 +452,8 @@ export class RealFamilyBackend implements FamilyBackend {
   /**
    * Build the container agent for a {@link WorkerSpec}: resolve the model slug
    * through the SAME backend registry the single-slice path uses. This is the lone
-   * seam that turns `spec.model` into a Sandcastle provider for BOTH family
-   * WorkerSpec-driven runs (ship + cmr), so neither can hardcode a model id or
+   * seam that turns `spec.model` into a Sandcastle provider for family
+   * WorkerSpec-driven runs (cmr + coder-fix + ship), so none can hardcode a model id or
    * assume a provider family that drifts from the slug the runner declares.
    * `protected` + pure (no container/I/O) so a unit test asserts the resolved model
    * without spinning a real `sc.run`.
@@ -978,23 +991,23 @@ export class RealFamilyBackend implements FamilyBackend {
 
   /**
    * THE family worker-dispatch seam (ADR 0026 / #331 / #335 / #336). It dispatches
-   * real CONTAINER workers for the two delivered legs:
- *   - cmr  (#335): a route-selected top-level agent invoking `ak-cross-m-review`
- *     (`runCmrWorker`).
+   * real CONTAINER workers for the delivered family legs:
+   *   - cmr  (#335): a route-selected top-level reviewer invoking `ak-cross-m-review`
+   *     (`runCmrWorker`) for one clean review pass.
+   *   - coder (#550): a family coder-fix worker invoking `/tdd` for blocking CMR
+   *     findings (`runFamilyCoderFixWorker`).
    *   - ship (#336): a container ship worker invoking `gstack-ship` 止于 PR
    *     (`dispatchShipWorker`) — this REPLACED the legacy inline `openFamilyPr`.
    * Every OTHER family worker kind (merge — B 段) still forwards to the legacy
    * wrapper until its own slice wires it.
    *
    * The cmr worker (`cmrWorkerSpec`) = the 2b container's TOP-LEVEL route-selected
-   * agent for ONE ADR 0030 pass (completeness or correctness). It `Skill`-invokes
-   * ak-cross-m-review in-container, may commit pass-local fixes on the family base,
-   * and returns a TERMINAL `{converged, reason?, successfulLegs, skippedLegs?}`
-   * verdict. The runner (`verifyCmr.ts`) owns the pass order (Step 5 before Step 6),
-   * route-leg accounting, ADR0032 strong-leg floor, and closure checks before ship.
-   * A non-converged or escalate verdict is the runner's escalate/abort fork. A
-   * `completed` verdict is `WorkerResult.completed` (a CmrResult payload), NOT
-   * `failed`.
+   * reviewer for ONE ADR 0030 pass (completeness or correctness). It
+   * `Skill`-invokes ak-cross-m-review in-container and returns a TERMINAL review
+   * verdict. The runner (`verifyCmr.ts`) owns pass order, route-leg accounting,
+   * ADR0032 strong-leg floor, blocking-finding classification, coder-fix dispatch,
+   * and fresh re-review before ship. A non-converged review outcome is a completed
+   * CMR payload the runner routes; it is NOT a failed worker.
    */
   async dispatchWorker(
     spec: WorkerSpec,
@@ -1004,6 +1017,9 @@ export class RealFamilyBackend implements FamilyBackend {
       // #336: the family ship step (止于 PR) is a CONTAINER ship WORKER invoking
       // `gstack-ship` (replacing the inline `openFamilyPr`).
       return this.dispatchShipWorker(spec, ctx);
+    }
+    if (spec.kind === "coder") {
+      return this.runFamilyCoderFixWorker(spec, ctx);
     }
     if (spec.kind !== "cmr") {
       // Any other family worker kind (merge — B 段) forwards to the legacy seam.
@@ -1095,10 +1111,10 @@ export class RealFamilyBackend implements FamilyBackend {
    * `protected` so a unit test fixtures the outcome without a real container (the
    * real container only runs on the driver / manual-smoke / e2e path).
    *
-   * The worker is the container's TOP-LEVEL route-selected agent, running on the
-   * resident family base (`branchStrategy: head` keeps it in place so pass-local
-   * fixes land there) under the WRITE-capable `cmr` soul. Its `<cmr>` tag TERMINAL
-   * pass verdict is gated on the completion signal then parsed into a
+   * The worker is the container's TOP-LEVEL route-selected reviewer, running on the
+   * resident family base (`branchStrategy: head` keeps it on the full current diff)
+   * under the dedicated `cmr` soul. Its `<cmr>` tag TERMINAL pass verdict is gated
+   * on the completion signal then parsed into a
    * {@link CmrWorkerOutcome}; `verifyCmr.ts` performs the ADR 0030 pass sequencing
    * and accounting around that verdict.
    */
@@ -1195,8 +1211,9 @@ export class RealFamilyBackend implements FamilyBackend {
           // sequencing and accounting.
           maxIterations: spec.maxIter,
           completionSignal: spec.completionSignal,
-          // On the resident family base — the worker COMMITS its cross-slice fixes
-          // here (`head` keeps it in place, no detached temp checkout).
+          // On the resident family base so the clean CMR reviewer audits the
+          // current full family diff. Persistent repairs are made only by the
+          // separate family coder-fix worker.
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
         });
@@ -1217,6 +1234,183 @@ export class RealFamilyBackend implements FamilyBackend {
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     return await sc.run(options);
+  }
+
+  // ─────────────────────────── family coder-fix ───────────────────────────
+
+  /**
+   * Run the runner-visible family coder-fix worker (#550). The CMR reviewer never
+   * commits repairs; blocking CMR findings arrive here as structured
+   * `blockingFindings` / `blockingFindingIdentityKeys`, this worker commits on the
+   * resident family base, and `verifyCmr.ts` dispatches a fresh CMR re-review over
+   * the resulting full diff.
+   */
+  protected async runFamilyCoderFixWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    if (ctx.familyBase === undefined) {
+      throw new Error(
+        "dispatchWorker(coder): a family coder-fix worker requires ctx.familyBase " +
+          "(the merged base branch to repair).",
+      );
+    }
+    const auth = this.mountShipAuth();
+    try {
+      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
+        return {
+          kind: "escalated",
+          escalation: {
+            reason:
+              "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the family coder-fix worker cannot start",
+            diagnosis:
+              "the family coder-fix worker is a top-level Claude worker when the " +
+              "active route selects a Claude-family coderFix model; provide " +
+              "CLAUDE_CODE_OAUTH_TOKEN / ~/.sc-claude-token or select a non-Claude " +
+              "coderFix route.",
+          },
+        };
+      }
+      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+      const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx);
+      const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
+      try {
+        const result = await this.runAgentSandbox({
+          name: "family-coder-fix",
+          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+          cwd: this.opts.workingRepo,
+          sandbox: this.familyCoderSandbox(auth, ctx, outcomeLanding),
+          agent: this.agentForSpec(spec),
+          maxIterations: spec.maxIter,
+          completionSignal: spec.completionSignal,
+          branchStrategy: { type: "head" },
+          promptFile: join(this.opts.promptsDir, spec.promptFile),
+        });
+        return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
+      } finally {
+        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
+        rmSync(fixFindingsLanding.path, { force: true });
+      }
+    } finally {
+      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+    }
+  }
+
+  /** Write the runner-owned blocking CMR findings file into the checked-out family base. */
+  protected writeFamilyFixFindingsFile(
+    ctx: DispatchContext,
+  ): { path: string; sandboxPath: string } {
+    this.excludeOptionalRuntimeFileFromGit(FAMILY_FIX_FINDINGS_FILENAME);
+    const path = join(this.opts.workingRepo, FAMILY_FIX_FINDINGS_FILENAME);
+    writeFileSync(
+      path,
+      `${JSON.stringify(
+        {
+          blockingFindings: ctx.blockingFindings ?? [],
+          blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
+          ...(ctx.escalationAnswer !== undefined
+            ? { escalationAnswer: ctx.escalationAnswer }
+            : {}),
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    return { path, sandboxPath: FAMILY_FIX_FINDINGS_FILENAME };
+  }
+
+  protected prepareFamilyCoderOutcomeLanding(): { path: string; sandboxPath: string } {
+    mkdirSync(this.opts.ledgerDir, { recursive: true });
+    const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-family-coder-fix-"));
+    const path = join(dir, "outcome.json");
+    writeFileSync(path, "", "utf8");
+    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
+    return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
+  }
+
+  protected familyCoderSandbox(
+    auth: ShipAuth,
+    ctx: DispatchContext,
+    outcomeLanding: { path: string; sandboxPath: string },
+  ): sc.SandboxProvider {
+    return docker(this.familyCoderSandboxConfig(auth, ctx, outcomeLanding));
+  }
+
+  protected familyCoderSandboxConfig(
+    auth: ShipAuth,
+    ctx: DispatchContext,
+    outcomeLanding: { path: string; sandboxPath: string },
+  ): {
+    imageName: string;
+    env: Record<string, string>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+  } {
+    const env: Record<string, string> = {
+      ...SPAWNED_WORKER_ENV,
+      [SANDBOX_SOUL_ENV]: "coder",
+      [SANDBOX_REPO_ENV]: this.opts.repo,
+      [SANDBOX_FIX_FINDINGS_PATH_ENV]: FAMILY_FIX_FINDINGS_FILENAME,
+      [SANDBOX_OUTCOME_PATH_ENV]: outcomeLanding.sandboxPath,
+    };
+    if (ctx.familyIssue !== undefined) {
+      const issue = String(ctx.familyIssue);
+      env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
+      env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV] = issue;
+    }
+    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
+    const mounts: { hostPath: string; sandboxPath: string }[] = [
+      { hostPath: outcomeLanding.path, sandboxPath: outcomeLanding.sandboxPath },
+    ];
+    if (auth.codexAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    return { imageName: this.opts.imageName, env, mounts };
+  }
+
+  protected familyCoderResultFromRun(
+    result: Pick<
+      Awaited<ReturnType<typeof sc.run>>,
+      "completionSignal" | "stdout" | "commits" | "iterations"
+    >,
+    spec: WorkerSpec,
+    outcomePath: string,
+  ): WorkerResult {
+    try {
+      assertCompletionSignal(result, spec.completionSignal, "family-coder-fix");
+      const sidecar = readWorkerOutcomeSidecar(outcomePath);
+      const raw = sidecar ?? extractCoderTag(result.stdout);
+      const truth = reconcileCoderCommits(
+        parseCoderSelfReport(raw),
+        realCommitCount(result),
+      );
+      return {
+        kind: "completed",
+        output: this.familyCoderOutput(truth),
+        sessionId: lastSessionId(result),
+      };
+    } catch (err) {
+      return {
+        kind: "malformed",
+        reason:
+          `family coder-fix worker output malformed: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+        sessionId: lastSessionId(result),
+      };
+    }
+  }
+
+  private familyCoderOutput(output: SelfReportedCoder): CoderResult {
+    return {
+      kind: "coder",
+      committed: output.committed,
+      commitsAdded: output.commitsAdded,
+      ...(output.repairEvidence !== undefined
+        ? { repairEvidence: output.repairEvidence }
+        : {}),
+      ...(output.escalate !== undefined ? { escalate: output.escalate } : {}),
+    };
   }
 
   /**
@@ -1505,8 +1699,8 @@ export class RealFamilyBackend implements FamilyBackend {
    * there), and the claude OAuth token (env var). Without the agy mount the agy
    * cmr leg has no auth and the cmr degrades to codex-only. NO skills mount: the 2b
    * image BAKES ak-cross-m-review + its closure (#333) — a runtime mount would
-   * SHADOW the baked skill (#334). The WRITE-capable `cmr` soul lets the pass worker
-   * commit pass-local cross-slice fixes when the gate requires them.
+   * SHADOW the baked skill (#334). The dedicated `cmr` soul carries review/outcome
+   * discipline only; persistent fixes route through the family coder-fix worker.
    */
   protected cmrSandboxConfig(
     auth: CmrAuth,

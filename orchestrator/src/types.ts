@@ -56,9 +56,9 @@ export type HandoffStatus = "success" | "escalate" | "error";
  * - `"coder"`: implementation/fix soul (TDD for S2, finding fix contract for S5).
  * - `"READ-ONLY"`: reviewer soul with READ-ONLY soft constraint baked in
  *   (prompt-level, not an OS-level mount — same image, separate `run()`).
- * - `"cmr"`: family integrated-cmr pass worker soul (ADR 0030) — a WRITE-capable
- *   soul: the pass worker invokes `ak-cross-m-review` for the selected gate and may
- *   commit pass-local cross-slice fixes; it is not the read-only reviewer soul.
+ * - `"cmr"`: family integrated-cmr pass worker soul (ADR 0030) — review/outcome
+ *   discipline for the selected CMR gate. Blocking findings return to the runner;
+ *   a separate `"coder"` worker creates any persistent repair commits.
  * - `"ship"`: the delivery soul the family ship worker runs under — a WRITE soul
  *   distinct from `"coder"`: it invokes `gstack-ship`, stops at PR creation, and
  *   records deferred findings in a tracker (issue / TODOS.md), never the PR body.
@@ -558,6 +558,13 @@ export interface DispatchContext {
    * rewriting the terminal ledger row that paused the run.
    */
   readonly escalationAnswer?: EscalationAnswerPayload;
+  /**
+   * FAMILY worker only: the parent/family issue whose live GitHub context should be
+   * available to clean family workers. The family runner still passes structured
+   * CMR findings separately; this number only lets prompts fetch current issue
+   * prose when needed.
+   */
+  readonly familyIssue?: number;
   /**
    * FAMILY cmr worker only: the child issue numbers whose merge into the family
    * base was LLM-resolved (#295) — forwarded to the integrated cmr 承重闸 so it
