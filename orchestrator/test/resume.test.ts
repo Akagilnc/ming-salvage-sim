@@ -72,48 +72,6 @@ const CLAIMED_FIXED_FINDING: Finding = {
 const CLAIMED_FIXED_KEY =
   "correctness|orchestrator/src/runner.ts:1061|do not rely on omitting a finding to mean it is closed.";
 
-function bareCoderOutput(commitsAdded = 1): StepOutput {
-  return { kind: "coder", committed: commitsAdded > 0, commitsAdded };
-}
-
-function s5CoderOutput(
-  commitsAdded = 1,
-  identityKeys: ReadonlyArray<string> = [CLAIMED_FIXED_KEY],
-  findings: ReadonlyArray<Finding> = [CLAIMED_FIXED_FINDING],
-): StepOutput {
-  return {
-    kind: "coder",
-    committed: commitsAdded > 0,
-    commitsAdded,
-    repairEvidence: {
-      findingScope: {
-        identityKeys,
-        locations: findings.map((finding) => finding.location),
-      },
-      changedFiles: ["orchestrator/src/runner.ts"],
-      tests: ["npm test -- --run test/resume.test.ts"],
-      sameClassBugScan:
-        'rg "repairEvidence|blockingFindingIdentityKeys" orchestrator/src orchestrator/test',
-      introducedRegressionCheck: "npm test -- --run test/resume.test.ts",
-    },
-  };
-}
-
-function coderOutputForStep(
-  step: StepId,
-  commitsAdded = 1,
-  ctx?: DispatchContext,
-): StepOutput {
-  if (step !== "S5") {
-    return bareCoderOutput(commitsAdded);
-  }
-  return s5CoderOutput(
-    commitsAdded,
-    ctx?.blockingFindingIdentityKeys ?? [CLAIMED_FIXED_KEY],
-    ctx?.blockingFindings ?? [CLAIMED_FIXED_FINDING],
-  );
-}
-
 /** Build a persisted ledger entry (the resume truth on disk). */
 function entry(
   step: StepId,
@@ -227,7 +185,7 @@ class ResumeBackend implements Backend {
     if (spec.role === "reviewer") {
       return { kind: "reviewer", findings: [] };
     }
-    return coderOutputForStep(spec.id);
+    return { kind: "coder", committed: true, commitsAdded: 1 };
   }
 
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
@@ -273,7 +231,7 @@ class ResumeBackend implements Backend {
     if (spec.role === "reviewer") {
       return { kind: "reviewer", findings: [] };
     }
-    return coderOutputForStep(spec.id);
+    return { kind: "coder", committed: true, commitsAdded: 1 };
   }
 
   async countCommitsBetween(
@@ -337,15 +295,7 @@ class DispatchRecordingResumeBackend extends ResumeBackend {
       ctx.resumeSessionId !== undefined
         ? await this.resumeSession(stepSpec, ctx.worktree!, ctx.resumeSessionId)
         : await this.runStep(stepSpec, ctx.worktree!);
-    return {
-      kind: "completed",
-      output:
-        spec.id === "S5" &&
-        output.kind === "coder" &&
-        output.repairEvidence === undefined
-          ? coderOutputForStep(spec.id, output.commitsAdded, ctx)
-          : output,
-    };
+    return { kind: "completed", output };
   }
 }
 
@@ -507,8 +457,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.dispatchSpecs[0]?.id).toBe("S5");
-    expect(backend.dispatchSpecs[1]?.id).toBe("S6");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S6");
     expect(result.stepLedger.map((e) => e.step)).toEqual([
       "S0",
       "S1",
@@ -516,27 +465,16 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       "S3",
       "S4",
       "S5",
-      "S5",
       "S6",
       "S4",
       "S7",
       "S8",
     ]);
-    const s5Entries = result.stepLedger.filter((e) => e.step === "S5");
-    expect(s5Entries[0]?.output).toEqual({
+    const s5 = result.stepLedger.find((e) => e.step === "S5");
+    expect(s5?.output).toEqual({
       kind: "coder",
       committed: true,
       commitsAdded: 1,
-    });
-    expect(s5Entries[1]?.output).toMatchObject({
-      kind: "coder",
-      committed: true,
-      commitsAdded: 1,
-      repairEvidence: {
-        sameClassBugScan:
-          'rg "repairEvidence|blockingFindingIdentityKeys" orchestrator/src orchestrator/test',
-        introducedRegressionCheck: "npm test -- --run test/resume.test.ts",
-      },
     });
   });
 
@@ -825,7 +763,7 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
         entry("S4"),
-        entry("S5", s5CoderOutput()),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S6", {
           kind: "reviewer",
           findings: [],
@@ -834,7 +772,7 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
           ],
         }),
         entry("S4"),
-        entry("S5", s5CoderOutput()),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S6", {
           kind: "reviewer",
           findings: [],
@@ -877,7 +815,7 @@ describe("#439 decision-escalate answer channel", () => {
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
         entry("S4"),
-        entry("S5", s5CoderOutput()),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S6", {
           kind: "reviewer",
           findings: [],
@@ -886,7 +824,7 @@ describe("#439 decision-escalate answer channel", () => {
           ],
         }),
         entry("S4"),
-        entry("S5", s5CoderOutput()),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S6", {
           kind: "reviewer",
           findings: [],
@@ -1250,7 +1188,7 @@ describe("#439 decision-escalate answer channel", () => {
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
         entry("S4"),
-        entry("S5", s5CoderOutput()),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S6", {
           kind: "reviewer",
           findings: [],
