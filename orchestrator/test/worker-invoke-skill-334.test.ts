@@ -296,7 +296,10 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     const protocol = readSoul("output_protocol.md");
     expect(protocol).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
     expect(protocol).toMatch(/raw JSON object/i);
-    expect(protocol).toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
+    expect(protocol).toMatch(/if \[ -n "\$\{ORCHESTRATOR_OUTCOME_PATH:-\}" \]/);
+    expect(protocol).toMatch(
+      /if \[ -n "\$\{ORCHESTRATOR_OUTCOME_PATH:-\}" \][\s\S]*python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"[\s\S]*fi/,
+    );
 
     for (const soulName of [
       "coder.md",
