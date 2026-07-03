@@ -37,7 +37,7 @@ import type {
   OpenFamilyPrResult,
   MergeRequest,
 } from "../../src/family/types.js";
-import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.js";
+import type { DispatchContext, Finding, WorkerResult, WorkerSpec } from "../../src/types.js";
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -288,6 +288,54 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         }),
       }),
     }));
+  });
+
+  it("checks CMR leg floor before routing fix_now findings to coder-fix", async () => {
+    const weakLegFinding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "weak-leg review must not trigger coder-fix",
+      location: "orchestrator/src/family/verifyCmr.ts:leg-floor-before-fix",
+      suggested_fix: "validate CMR leg coverage before dispatching coder-fix",
+      action: "fix_now",
+    };
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({
+        converged: false,
+        reason: "weak CMR leg reported a fixable finding",
+        successfulLegs: ["agy"],
+        skippedLegs: [
+          { slug: "opus", reason: "auth unavailable" },
+          { slug: "gpt-5.5", reason: "auth unavailable" },
+        ],
+        findings: [weakLegFinding],
+        ...CMR_EVIDENCE,
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.prCalls).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("floor"),
+      stopSummary: expect.objectContaining({ reason: "provider_degraded" }),
+    }));
+    expect(
+      backend.ledger.some((entry) => entry.status === "cmr_reviewed"),
+    ).toBe(false);
+    expect(
+      backend.ledger.some((entry) => entry.status === "cmr_fix_committed"),
+    ).toBe(false);
   });
 
   it("rejects route-undeclared strong legs before applying the CMR floor", async () => {
