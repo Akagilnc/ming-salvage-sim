@@ -17,6 +17,12 @@ When you are done (or are escalating), write the single JSON object to
 with older runners, emit EXACTLY ONE `<review>` tag on its own containing the same
 single JSON object, and print the completion signal on its own line.
 
+The sidecar file must contain only the raw JSON object: no `<review>` tag, no
+completion signal, and no surrounding prose. After writing it, run
+`python3 -m json.tool "$ORCHESTRATOR_OUTCOME_PATH" >/dev/null`; if that command
+fails, rewrite the sidecar and rerun the check. Do not emit the compatibility
+tag or completion signal until this parser check succeeds.
+
 Success:
 
 ```text

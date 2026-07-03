@@ -268,18 +268,25 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
   it("every existing prompt still defines its structured output contract (tag + signal)", () => {
     // Thinning the METHOD must not drop the output contract route()/the seam
     // decode against — each worker must still emit its tag + completion signal.
-    expect(read("coder_implement.md")).toMatch(/<coder>/);
-    expect(read("coder_implement.md")).toMatch(/CODER_STEP_COMPLETE/);
-    expect(read("coder_fix.md")).toMatch(/<coder>/);
-    expect(read("coder_fix.md")).toMatch(/CODER_STEP_COMPLETE/);
-    expect(read("reviewer_review.md")).toMatch(/<review>/);
-    expect(read("reviewer_review.md")).toMatch(/REVIEWER_STEP_COMPLETE/);
-    expect(read("ship.md")).toMatch(/<ship>/);
-    expect(read("ship.md")).toMatch(/SHIP_STEP_COMPLETE/);
-    expect(read("integrated_cmr_completeness.md")).toMatch(/<cmr>/);
-    expect(read("integrated_cmr_completeness.md")).toMatch(/CMR_STEP_COMPLETE/);
-    expect(read("integrated_cmr_correctness.md")).toMatch(/<cmr>/);
-    expect(read("integrated_cmr_correctness.md")).toMatch(/CMR_STEP_COMPLETE/);
+    const prompts = [
+      ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/],
+      ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/],
+      ["reviewer_review.md", /<review>/, /REVIEWER_STEP_COMPLETE/],
+      ["ship.md", /<ship>/, /SHIP_STEP_COMPLETE/],
+      ["family_ship.md", /<ship>/, /SHIP_STEP_COMPLETE/],
+      ["integrated_cmr.md", /<cmr>/, /CMR_STEP_COMPLETE/],
+      ["integrated_cmr_completeness.md", /<cmr>/, /CMR_STEP_COMPLETE/],
+      ["integrated_cmr_correctness.md", /<cmr>/, /CMR_STEP_COMPLETE/],
+      ["merger_resolve_conflict.md", /<merger>/, /MERGER_STEP_COMPLETE/],
+    ] as const;
+
+    for (const [promptName, tag, signal] of prompts) {
+      const prompt = read(promptName);
+      expect(prompt).toMatch(tag);
+      expect(prompt).toMatch(signal);
+      expect(prompt).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
+      expect(prompt).toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
+    }
   });
 
   it("reviewer and integrated-cmr prompts document every parser-required blocking/defer disposition field", () => {
