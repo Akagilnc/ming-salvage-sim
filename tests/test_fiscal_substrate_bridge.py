@@ -862,7 +862,8 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
     assert hub_row["needed"] == pytest.approx(20)
     assert hub_row["k"] == pytest.approx(0.5)
     assert hub_row["paid"] == pytest.approx(10)
-    assert state.metrics["国库"] == pytest.approx(0)
+    income_row = next(flow for flow in flow_rows if flow.get("category") == "田赋辽饷盐商")
+    assert state.metrics["国库"] == pytest.approx(income_row["amount"])
     ledger = db.conn.execute(
         """
         SELECT COALESCE(SUM(delta), 0) AS delta
@@ -878,6 +879,81 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
     assert rows["guanning"]["arrears"] == pytest.approx(5)
     assert rows["shaanxi_army"]["arrears"] == pytest.approx(5)
     assert db.get_central_army_pay_arrears_container() == pytest.approx(10)
+
+
+def test_fixed_flows_substrate_hub_books_treasury_income_from_remittance_not_legacy_formula(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 0
+    db.save_state(state)
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.execute("UPDATE fiscal_config SET value = 0 WHERE kind != 'meta'")
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute("UPDATE regions SET controlled_by = 'houjin', tax_per_turn = 999")
+    _write_settle(
+        db,
+        "shaanxi",
+        {
+            "st": {
+                "省库库银": 0,
+                "C_地方截留": 0,
+                "C_中饱": 0,
+                "C_漂没": 0,
+                "C_eff损耗": 0,
+                "民欠旧赋": 0,
+                "军饷欠": 0,
+                "官俸欠": 0,
+                "宗禄欠": 0,
+                "官民田": 0,
+                "隐田": 0,
+            },
+            "p": {
+                "正赋应征": 20,
+                "三饷应征": 0,
+                "火耗率": 0,
+                "逋赋率": 0,
+                "起运定额": 12,
+                "拨付gross": 0,
+                "中饱率": 0,
+                "漂没率": 0,
+                "Due": {"军饷": 0, "官俸": 0, "宗禄": 0, "赈济": 0},
+            },
+        },
+    )
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET controlled_by = 'ming',
+            fiscal = json_set(fiscal, '$.salt_tax', 3, '$.commerce_tax', 4)
+        WHERE id = 'shaanxi'
+        """
+    )
+    db.conn.commit()
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    assert state.metrics["国库"] == 19
+    income_row = next(flow for flow in flow_rows if flow.get("category") == "田赋辽饷盐商")
+    assert income_row["amount"] == 19
+    assert income_row["remittance"] == pytest.approx(12)
+    assert income_row["salt_commerce"] == pytest.approx(7)
+    ledger = db.conn.execute(
+        """
+        SELECT delta, reason
+        FROM economy_ledger
+        WHERE account = '国库' AND category = '田赋辽饷盐商'
+        """
+    ).fetchone()
+    assert ledger["delta"] == 19
+    assert "省级起运" in ledger["reason"]
 
 
 def test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expenses(fresh_game):
@@ -975,7 +1051,8 @@ def test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expense
     assert hub_row["paid"] == pytest.approx(15)
     assert central_row["paid"] == pytest.approx(10)
     assert low_priority["delta"] == 0
-    assert state.metrics["国库"] == 0
+    income_row = next(flow for flow in flow_rows if flow.get("category") == "田赋辽饷盐商")
+    assert state.metrics["国库"] == pytest.approx(income_row["amount"])
 
 
 def test_fixed_flows_substrate_hub_integer_allocation_drives_all_consumers(fresh_game):
@@ -3350,6 +3427,7 @@ def test_apply_fixed_period_flows_malformed_fiscal_scalar_isolated(fresh_game, m
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
+    _disable_army_pay_source_cutover(db)
     _, _, before_details = flows_mod.calc_province_fiscal(state, db)
     expected_tax = sum(
         int(d["province_total"]) for d in before_details if d["region_id"] != "shaanxi"

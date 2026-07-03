@@ -175,6 +175,121 @@ def calc_province_fiscal(
     return guo_ku_total, nei_ku_total, details
 
 
+def _as_finite_nonnegative_float(label: str, value: object) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{label} 非数值：{value!r}")
+    if value in (None, ""):
+        return 0.0
+    try:
+        amount = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} 非数值：{value!r}") from exc
+    if not math.isfinite(amount) or amount < 0:
+        raise ValueError(f"{label} 非法：{value!r}")
+    return amount
+
+
+def _substrate_hub_salt_commerce_income(db: GameDB, *, strict: bool = True) -> float:
+    """Salt and commerce taxes stay as central side-channel income under cutover."""
+    total = 0.0
+    rows = db.conn.execute(
+        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
+    ).fetchall()
+    for row in rows:
+        try:
+            fiscal = json.loads(str(row["fiscal"] or "{}"))
+        except (TypeError, ValueError) as exc:
+            if not strict:
+                continue
+            raise ValueError(f"region {row['id']} fiscal JSON 非法，无法汇总盐商旁路") from exc
+        if not isinstance(fiscal, dict):
+            if not strict:
+                continue
+            raise ValueError(f"region {row['id']} fiscal 非字典，无法汇总盐商旁路")
+        total += _as_finite_nonnegative_float(
+            f"region {row['id']} fiscal.salt_tax", fiscal.get("salt_tax", 0)
+        )
+        total += _as_finite_nonnegative_float(
+            f"region {row['id']} fiscal.commerce_tax", fiscal.get("commerce_tax", 0)
+        )
+    return total
+
+
+def _project_substrate_hub_remittance_income(db: GameDB, *, strict: bool = True) -> float:
+    """Budget projection for substrate_hub income without calling legacy formula."""
+    total = 0.0
+    rows = db.conn.execute(
+        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
+    ).fetchall()
+    for row in rows:
+        try:
+            fiscal = json.loads(str(row["fiscal"] or "{}"))
+        except (TypeError, ValueError) as exc:
+            if not strict:
+                continue
+            raise ValueError(f"region {row['id']} fiscal JSON 非法，无法估算起运") from exc
+        if not isinstance(fiscal, dict):
+            if not strict:
+                continue
+            raise ValueError(f"region {row['id']} fiscal 非字典，无法估算起运")
+        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        p = settle.get("p") if isinstance(settle, dict) else None
+        st = settle.get("st") if isinstance(settle, dict) else None
+        if not isinstance(p, dict) or not isinstance(st, dict):
+            continue
+        zhengfu_raw = p.get("正赋应征")
+        if zhengfu_raw is None:
+            land = _as_finite_nonnegative_float(
+                f"region {row['id']} settle.st.官民田", st.get("官民田", 0)
+            )
+            per_mu = _as_finite_nonnegative_float(
+                f"region {row['id']} settle.p.正赋亩额", p.get("正赋亩额", 0)
+            )
+            zhengfu = round(land * per_mu / 12, 4)
+        else:
+            zhengfu = _as_finite_nonnegative_float(
+                f"region {row['id']} settle.p.正赋应征", zhengfu_raw
+            )
+        sanxiang = _as_finite_nonnegative_float(
+            f"region {row['id']} settle.p.三饷应征", p.get("三饷应征", 0)
+        )
+        arrears_rate = _as_finite_nonnegative_float(
+            f"region {row['id']} settle.p.逋赋率", p.get("逋赋率", 0)
+        )
+        transport_loss = _as_finite_nonnegative_float(
+            f"region {row['id']} settle.p.漂没率", p.get("漂没率", 0)
+        )
+        if arrears_rate > 1 or transport_loss > 1:
+            raise ValueError(f"region {row['id']} settle rate 越界，无法估算起运")
+        quota = _as_finite_nonnegative_float(
+            f"region {row['id']} settle.p.起运定额", p.get("起运定额", 0)
+        )
+        collected = (zhengfu + sanxiang) * (1 - arrears_rate)
+        total += min(collected, quota) * (1 - transport_loss)
+    return total
+
+
+def _substrate_hub_budget_tax_income(db: GameDB) -> int:
+    gross = _project_substrate_hub_remittance_income(
+        db, strict=False
+    ) + _substrate_hub_salt_commerce_income(db, strict=False)
+    return max(0, int(round(gross)))
+
+
+def _set_fiscal_container(db: GameDB, key: str, value: float, note: str) -> None:
+    db.conn.execute(
+        """
+        INSERT INTO fiscal_containers (key, value, note)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          note = excluded.note,
+          updated_at = CURRENT_TIMESTAMP
+        """,
+        (key, float(value), note),
+    )
+
+
 # 固定月度收支科目目录现走数据驱动：db.iter_budget_items() 从 fiscal_config 读
 # budget_role=fixed 的 base 项（account/direction/display）。加新税源只改 content/fiscal_config.json。
 # 税收/皇庄走 calc_province_fiscal（动态）；legacy 军饷走 army_needed，substrate_hub 军饷
@@ -189,7 +304,11 @@ def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, li
     建筑＝按 condition 折产/维护；
     其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。"""
     cfg = db.get_fiscal_config()
-    gk_tax, nk_huang, _ = calc_province_fiscal(state, db)
+    if db.is_substrate_hub_fiscal_engine_enabled():
+        gk_tax = _substrate_hub_budget_tax_income(db)
+        nk_huang = 0
+    else:
+        gk_tax, nk_huang, _ = calc_province_fiscal(state, db)
     # #44 军饷=SUM(应发)，应发挂钩兵力(army_needed=ceil(manpower×salary_rate/10000))，非旧 maintenance 定额。
     # #307 substrate_hub 下旧「户部直扣国库发饷」全局路径退役；预算行改读 hub 预计实拨，
     # 与 apply_fixed_period_flows 的 边饷hub 扣款同源，避免预算净额虚高。
@@ -974,17 +1093,22 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
     # ── 固定收支落账（税/皇庄/宗室/官俸/织造…全走唯一定额源 compute_budget_lines）──
     # 军饷与建筑另有逐项落账逻辑（arrears/condition），故下面跳过这两类，仅落其余定额项。
-    budget = compute_budget_lines(db, state)
-    _SKIP = {"各军军饷", "建筑产出", "建筑维护"}
-    for account in ("国库", "内库"):
-        for it in budget[account]["income"]:
-            if it["name"] in _SKIP:
-                continue
-            _income(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}入")
-        for it in budget[account]["expense"]:
-            if it["name"] in _SKIP:
-                continue
-            _expense(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}支")
+    def _apply_budget_lines(*, skip_treasury_tax: bool = False) -> None:
+        budget = compute_budget_lines(db, state)
+        skip = {"各军军饷", "建筑产出", "建筑维护"}
+        if skip_treasury_tax:
+            skip.add("田赋辽饷盐商")
+        for account in ("国库", "内库"):
+            for it in budget[account]["income"]:
+                if it["name"] in skip:
+                    continue
+                _income(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}入")
+            for it in budget[account]["expense"]:
+                if it["name"] in skip:
+                    continue
+                _expense(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}支")
+
+    _apply_budget_lines(skip_treasury_tax=db.is_substrate_hub_fiscal_engine_enabled())
 
     # ── legacy 各军军饷（按优先级，先发当月；不足挂 arrears 累计万两）──
     if db.fiscal_engine() == "legacy":
@@ -1092,13 +1216,43 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
     # ── #66 省级财政基座（settle_tick）shadow 推进 ──
     try:
-        _advance_province_fiscal_substrate(
+        remittance_total = _advance_province_fiscal_substrate(
             db,
             state,
             hub_outbound.jingyun_paid_by_region
             if db.is_substrate_hub_fiscal_engine_enabled()
             else None,
         )
+        if db.is_substrate_hub_fiscal_engine_enabled():
+            salt_commerce = _substrate_hub_salt_commerce_income(db)
+            inbound_gross = remittance_total + salt_commerce
+            # Central leakage accounts are explicit zero-loss hooks until #260
+            # supplies actions/rates that can lower or raise the human/sink parts.
+            central_loss = 0.0
+            _set_fiscal_container(db, "C_太仓挪用", 0.0, "中央太仓人为亏空（可追赃）")
+            _set_fiscal_container(db, "C_太仓纯亏空", 0.0, "中央太仓自然亏空（sink）")
+            _set_fiscal_container(db, "C_京运克扣", 0.0, "京运转运人为克扣（可追赃）")
+            _set_fiscal_container(db, "C_京运运损", 0.0, "京运转运自然运损（sink）")
+            _set_fiscal_container(db, "hub_省级起运到京", remittance_total, "Σ本月明控省起运到京")
+            _set_fiscal_container(db, "hub_盐商解京", salt_commerce, "明控省盐税/商税中央旁路")
+            net_income = max(0, int(round(inbound_gross - central_loss)))
+            if net_income > 0:
+                actual = db.record_issue_economy_move(
+                    state,
+                    "国库",
+                    net_income,
+                    "田赋辽饷盐商",
+                    f"{TURN_UNIT}省级起运入京与盐商旁路",
+                )
+                flows.append({
+                    "dir": "income",
+                    "account": "国库",
+                    "amount": actual,
+                    "category": "田赋辽饷盐商",
+                    "remittance": remittance_total,
+                    "salt_commerce": salt_commerce,
+                    "central_loss": central_loss,
+                })
         if pay_source_cutover:
             db._reconcile_central_army_pay_arrears_container()
             db.assert_army_pay_source_container_conservation()
@@ -1117,7 +1271,7 @@ def _advance_province_fiscal_substrate(
     db: GameDB,
     state: GameState,
     jingyun_paid_gross_by_region: Optional[Dict[str, float]] = None,
-) -> None:
+) -> float:
     """#66/#266：月末固定财政相位推进省级 settle_tick 基座（动态 shadow spine）。
 
     **shadow 模式**：推进基座末态（军饷欠/民欠/火耗的死亡螺旋逐月累积）并落库，但**不驱动
@@ -1168,10 +1322,15 @@ def _advance_province_fiscal_substrate(
             f"火耗入截留{b.get('火耗实收', 0):.1f}；末态欠账 "
             f"军饷欠{res.new_st.get('军饷欠', 0):.0f}/官俸欠{res.new_st.get('官俸欠', 0):.0f}/"
             f"宗禄欠{res.new_st.get('宗禄欠', 0):.0f}/民欠{res.new_st.get('民欠旧赋', 0):.0f}"
-            f"（shadow，未入国库）"
+            f"（{'hub，待入国库' if db.is_substrate_hub_fiscal_engine_enabled() else 'shadow，未入国库'}）"
         )
     if advanced and owns_transaction:
         db.conn.commit()
+    return sum(
+        float((outcome.result.breakdown or {}).get("起运到京", 0.0) or 0.0)
+        for outcome in outcomes
+        if outcome.error is None and outcome.result is not None
+    )
 
 
 class DeltaApplyResult(NamedTuple):
