@@ -564,6 +564,10 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
     return this.familyHeadCursor;
   }
 
+  protected forceFamilyHead(head: string): void {
+    this.familyHeadCursor = head;
+  }
+
   private advanceFamilyHead(): void {
     this.familyHeadCursor = `${this.familyHeadCursor}+fix${this.familyWorkerAttempt}`;
   }
@@ -1172,6 +1176,84 @@ async function familyAttributionReplay(
           findings: [attributedFinding],
         },
       }),
+    },
+  };
+}
+
+async function cmrReviewerSelfFixAttemptReplay(): Promise<SeamReplay> {
+  const selfFixFinding = finding({
+    severity: "medium",
+    claim_quote:
+      "#258 CMR worker found blocking findings and moved into the fix loop before all review legs completed",
+    location: "orchestrator/src/family/verifyCmr.ts:cmr-self-fix-boundary",
+    action: "fix_now",
+  });
+  const cmrOutput: WorkerResult = {
+    kind: "completed",
+    output: {
+      kind: "cmr",
+      converged: false,
+      reason:
+        "blocking findings remain; reviewer says it is moving into the fix loop before all review legs completed",
+      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      ...CMR_EVIDENCE,
+      findings: [selfFixFinding],
+    },
+  };
+
+  class ReviewerSelfFixBackend extends DogfoodCmrFamilyBackend {
+    private didSelfFix = false;
+
+    override async dispatchWorker(
+      spec: WorkerSpec,
+      ctx: DispatchContext,
+    ): Promise<WorkerResult> {
+      const result = await super.dispatchWorker(spec, ctx);
+      if (!this.didSelfFix && spec.kind === "cmr" && ctx.cmrPass === "completeness") {
+        this.didSelfFix = true;
+        this.forceFamilyHead("head-after-reviewer-self-fix");
+      }
+      return result;
+    }
+  }
+
+  const backend = new ReviewerSelfFixBackend(
+    "head-before-reviewer",
+    [],
+    [cmrOutput],
+  );
+  const result = await runVerifyCmr({
+    phase: "final",
+    familyBase: "family/258-reviewer-self-fix",
+    familyBackend: backend,
+  });
+  const abort = backend.ledger.find((entry) => entry.status === "aborted");
+  if (
+    result.ok ||
+    abort?.stopSummary?.reason !== "contract_drift" ||
+    !String(abort.reason).includes("reviewer moved family HEAD")
+  ) {
+    throw new Error(
+      `dogfood #258 reviewer self-fix replay did not fail closed: ` +
+        `run.ok=${result.ok} statuses=${backend.ledger.map((entry) => entry.status).join(",")}`,
+    );
+  }
+  return {
+    stopSummary: abort.stopSummary,
+    sourceEvidence: {
+      seam: "family_verify_cmr",
+      mechanism: "cmr_reviewer_self_fix_head_movement",
+      reviewerSelfFixBlocked: true,
+      familyHeadBefore: "head-before-reviewer",
+      familyHeadAfter: "head-after-reviewer-self-fix",
+      ledgerStatuses: backend.ledger.map((entry) => entry.status),
+      dispatches: backend.dispatches,
+      coderFixDispatched: backend.dispatches.some((dispatch) =>
+        dispatch.startsWith("coder:"),
+      ),
+      ...cmrWorkerParserEvidence(cmrOutput),
     },
   };
 }
@@ -2368,6 +2450,8 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     ],
   };
   const familyAttributionSource = await familyAttributionReplay(moduleContext);
+  const cmrReviewerSelfFixAttemptSource =
+    await cmrReviewerSelfFixAttemptReplay();
   const sameModuleFinding = finding({
     severity: "medium",
     claim_quote: "same-module CMR gap was incorrectly treated as defer",
@@ -2557,6 +2641,16 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       source: "runner",
       sourceStopSummary: targetedResetReplay.stopSummary,
       sourceEvidence: targetedResetReplay.sourceEvidence,
+    }),
+    replayScenario({
+      id: "258-cmr-reviewer-self-fix-attempt",
+      issue: 258,
+      title: "family CMR reviewer cannot move into a same-session fix loop",
+      classification: "contract_drift",
+      stopSummary: cmrReviewerSelfFixAttemptSource.stopSummary,
+      source: "family",
+      sourceStopSummary: cmrReviewerSelfFixAttemptSource.stopSummary,
+      sourceEvidence: cmrReviewerSelfFixAttemptSource.sourceEvidence,
     }),
     await familyClassificationScenario({
       id: "287-same-module-cmr-gap",

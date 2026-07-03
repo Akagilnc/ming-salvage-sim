@@ -383,7 +383,7 @@ wiki 流程里的**一步**(可大可小),由 runner 派出去执行。判据 = 
 _Avoid_: 把 worker 等同「invoke skill 的步」(用不用 skill 不是 worker 的判据)、subagent(worker 是顶层容器、不是 runner 的子代理)。
 
 **reviewer worker**:
-被 runner 派出、只负责评审与产出 findings/outcome 的 worker。它可以读 scope/issue/ADR、运行评审所需测试、派多模型 review legs、汇总原始评审证据,但不承担持久修复,不得提交修复 commit。CMR completeness/correctness worker 在发现 blocking finding 时也按 reviewer worker 边界处理:整理 finding、保留 artifacts、写 outcome 后交回 runner,由 runner 派 coder-fix 修。边界取舍见 ADR 0050。
+被 runner 派出、只负责评审与产出 findings/outcome 的 worker。它可以读 scope/issue/ADR、运行评审所需测试、派多模型 review legs、汇总原始评审证据,但不承担持久修复,不得提交修复 commit。CMR completeness/correctness worker 在发现 blocking finding 时也按 reviewer worker 边界处理:整理 finding、保留 artifacts、写 outcome 后交回 runner,由 runner 派 coder-fix 修。若它试图在 outcome 里写自修状态,由 outcome guard 拒绝;若它实际移动 family HEAD,runner 视为 contract drift。边界取舍见 ADR 0050。
 _Avoid_: 自评自修、顺手修一下、把 CMR reviewer 当 coder-fix。
 
 **coder-fix worker**:
