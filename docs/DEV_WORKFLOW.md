@@ -1,11 +1,11 @@
 ---
 title: Matt Pocock 开发流程
-description: Matt Pocock skills 整套（想法 → merge）canonical：grill-with-docs → (prototype) → to-prd → to-issues → 逐片 tdd，外加 7 标签状态机 + triage 入口匝道 + agent brief 契约 + 「状态活 label、不活散文」。本项目 2026-06-17 起 Matt 纯化、严格按 Matt 试水；2026-06-18 修正三处真错（grill 在 to-prd 前 / to-prd 是完整 PRD 含两层设计 / triage 是匝道不是主线）并补「设计六层阶梯」。
+description: Matt Pocock skills 整套（想法 → merge）canonical：grill-with-docs → (prototype) → to-prd → to-issues → 逐片 implement（内联 tdd + code-review），外加 7 标签状态机 + triage 入口匝道 + agent brief 契约 + 「状态活 label、不活散文」。本项目 2026-06-17 起 Matt 纯化、严格按 Matt 试水；2026-06-18 修正三处真错（grill 在 to-prd 前 / to-prd 是完整 PRD 含两层设计 / triage 是匝道不是主线）并补「设计六层阶梯」；2026-07-02 同步 code-review / implement 新口径。
 type: concept
 created: 2026-06-17
-updated: 2026-06-18
+updated: 2026-07-02
 sources:
-  - mattpocock/skills 各 SKILL.md 原文（ask-matt 路由器 / grill-with-docs / grill-me / domain-modeling / prototype / to-prd / to-issues / triage / tdd / diagnosing-bugs / improve-codebase-architecture）
+  - mattpocock/skills 各 SKILL.md 原文（ask-matt 路由器 / grill-with-docs / grill-me / domain-modeling / prototype / to-prd / to-issues / triage / implement / tdd / code-review / diagnosing-bugs / improve-codebase-architecture）
   - Ming_LLM 2026-06-17 验证 session（#174 走通全链、标签纯化、triage 36 backlog）
   - Ming_LLM 2026-06-18 校订 session（对照 skill 原文修正流程顺序 + to-prd 两层设计 + 设计阶梯）
 related:
@@ -47,7 +47,8 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
  └ to-issues ─────── PRD 切薄垂直切片子 issue（Parent + What to build + 验收 + Blocked by + AFK/HITL）
         ↑ grill →(decision-mapping)→ to-prd → to-issues 留同一不间断窗口，别中途 compact（smart zone ~120k）
  └ (每个 issue 开新 session) implement ── 按 PRD/issue 实现：约定 seam 调 /tdd（never refactor while RED）
-          → 跑 typecheck/单测/全量 → 调 /review → commit 到当前分支
+          → 跑 typecheck/单测/全量 → baseline commit
+          → 单评（手动流 /code-review；编排器 runner 派 /code-review reviewer）→ fix commits
         ▼
      merge commit（不 squash）→ 关子 issue；全完 → 人手动关父
         （prototype 按需绕道，handoff 出/回桥接）
@@ -66,16 +67,16 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 | `codebase-design` | A 规划·架构词汇 | 深模块设计共享词汇（Module/Interface/Depth/Seam…，被 tdd/improve 挂用）|
 | `to-prd` | B 立项 | grill 透后**综合成完整 PRD**（不访谈），含两层设计，发 issue tracker 当父 |
 | `to-issues` | B 立项 | PRD 切薄垂直切片子 issue（tracer bullet）+ 依赖序 |
-| `implement` | C 实现（逐片，各开新 session）| 按 PRD/issue 实现：约定 seam 调 `/tdd` → typecheck/单测/全量 → 调 `/review` → commit |
+| `implement` | C 实现（逐片，各开新 session）| umbrella：按 PRD/issue 实现，约定 seam 调 `/tdd` → typecheck/单测/全量 → baseline commit → 单评 → fix commits；自治/编排器内联流程，不直接 invoke umbrella |
 | `tdd` | C 实现（被 implement 调）| 红绿重构；**代码级实现在这现场长**；never refactor while RED |
-| `review` | C 实现·收尾 | 代码评审（implement 末尾调）|
+| `code-review` | C 实现·收尾 | Matt 单评：固定点 diff 的 Standards + Spec 两轴 review；取代旧内置 `/review` 作为 canonical 收尾评审。它评 `fixed-point...HEAD`，所以手动/单 session implement 也要在 baseline commit 后跑；编排器里由 runner 派 `/code-review` reviewer worker 跑，coder worker 不自启 review；reviewer soul 固定传 `origin/main`（不存在则 `main`），不让 AFK worker 停下来问 fixed point |
 | `diagnosing-bugs` | C 旁路（硬 bug）| 硬 bug / 性能 regression 调查（旧名 `diagnose`）|
 | `improve-codebase-architecture` | 保养 | 据 CONTEXT + ADR 找深挖/重构，产出回 A 当新想法 |
 | `triage` | 入口匝道（非主线）| **外来** issue（你没创建的）走五态状态机、贴标签、发 agent brief |
 | `handoff` | 横切 | session 间交付（context 满 / 绕道 prototype 的桥）|
 
 > [!note] 本项目在 Matt 之上加的闸（非 Matt canonical）
-> 本项目在 ③ 之后插一道**设计评审**（`ak-cross-m-review` 本地 cmr + 线上 bot，收敛 ADR），在 ⑤ 之后插一道**代码评审**（per-slice cmr + ship-pre + 线上 bot）。这两道是本项目的质量装置，**不是** Matt 的 skill；写在这里是为了「试水」时看清哪些是 Matt 原装、哪些是我们加的。详见 [[cross-model-review]] / [[pr-review-loop]]。
+> 本项目在 ③ 之后插一道**设计评审**（`ak-cross-m-review` 本地 cmr + 线上 bot，收敛 ADR），在 ⑥ baseline commit 之后插一道**代码评审**（Matt `/code-review` 单评 + per-slice cmr + ship-pre + 线上 bot）。其中 `/code-review` 是 Matt 原装，per-slice cmr / ship-pre / 线上 bot 是本项目质量装置；编排器中 coder/reviewer 角色必须分离，`/code-review` 属于 runner 派出的 reviewer worker，不属于 coder worker 自评。详见 [[cross-model-review]] / [[pr-review-loop]]。
 
 ### to-prd —— 完整 PRD（含两层设计，别漏）
 
@@ -149,7 +150,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 - **垂直切片（tracer bullet）**：每片穿透所有层、独立可 demo/merge。**禁横切**（先全 schema 再全 UI = 谁也独立不了）。
 - **`Blocked by` = 散文约定**：写子 issue body 里，靠抓 issue 的人读了、看 blocker 关没关、没关就先不开。**GitHub 不强制**（本项目补 native blocked_by，见下）。
 - **AFK / HITL**：AFK 可甩多 session 真并行；HITL（要人在环）串行在你的注意力上。
-- **context hygiene**：grill → to-prd → to-issues 留在同一上下文窗口；每个子 issue **开新 session** 做 tdd（互相独立才能真并行），别拿上一个 issue 的脏 context 接下一个。
+- **context hygiene**：grill → to-prd → to-issues 留在同一上下文窗口；每个子 issue **开新 session** 走 implement（内联 `/tdd` + 单评；手动流可用 `/code-review`，编排器由 runner 派 `/code-review` reviewer；互相独立才能真并行），别拿上一个 issue 的脏 context 接下一个。
 
 ### to-issues 后的原生补救（Matt skill 还没跟上 GitHub 新功能，必做）
 
@@ -212,6 +213,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
   - 标签 Matt 纯化：35 → 7（删 `priority/area/type` 等 28 个）。
   - triage 36 个 backlog：fan-out 分类 → 7 ready-for-agent / 20 ready-for-human / 2 关闭 / 7 tracker 留空。
 - **本页校订（2026-06-18）**：对照 skill 原文修正三处真错——① `to-prd` 实为「grill 之后」（不访谈，只综合）；② `to-prd` 产**完整 PRD**含 Implementation/Testing Decisions 两层设计（先前误写成薄 issue）；③ `triage` 是**入口匝道**、不对 `to-issues` 产出用——并补「设计六层阶梯」消歧。
+- **本页校订（2026-07-02）**：同步 Matt 新增 `code-review` 与 `implement`：`implement` 是 umbrella（自治/编排器内联，不直接 invoke），baseline commit 后单评改为 `/code-review` 两轴 Standards + Spec；本项目 per-slice cmr 仍是额外跨模型闸，二者叠加非替代。编排器里保持 runner-visible role boundary：coder 不自评，`code-review` 由 runner 派 reviewer worker 执行。
 - **关联**：ship 后的 PR 评审循环见 [[pr-review-loop]]；自治 TDD 实现 loop 见 [[tdd-autonomous-dev]]；设计阶段 cross-model 评审见 [[cross-model-review]]。
 
 > [!note] 状态：严格按 Matt 试水中（完全实验，非照抄）

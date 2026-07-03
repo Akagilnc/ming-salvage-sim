@@ -15,7 +15,7 @@
  *     worker to the EXISTING backend methods (`runStep`/`resumeSession` for agent
  *     workers, `push` for the S7 ship worker) and wraps their returns into the
  *     discriminated {@link WorkerResult}. External behaviour is unchanged
- *     (regression green); the real worker dispatch (invoke `/tdd` / `/review` /
+ *     (regression green); the real worker dispatch (invoke `/tdd` / `/code-review` /
  *     `gstack-ship`) lands in #334/#336.
  *   - {@link workerResultToStep} — unwrap a `completed` {@link WorkerResult} back
  *     into the `{@link StepOutput} | {@link StepResult}` shape the existing runner
@@ -34,6 +34,7 @@ import {
 import { join, resolve } from "node:path";
 
 import { modelForSlot, type ResolvedModelRoute } from "./modelRoutes.js";
+import { WORKER_OUTCOME_SANDBOX_FILE } from "./workerOutcomeSidecar.js";
 import type {
   Backend,
   DispatchContext,
@@ -53,7 +54,7 @@ const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
 
 /**
  * The wiki skill each worker kind invokes (ADR 0026):
- *   coder/fix → `/tdd`, reviewer → `/review`, cmr → `ak-cross-m-review`,
+ *   coder/fix → `/tdd`, reviewer → `/code-review`, cmr → `ak-cross-m-review`,
  *   ship → `gstack-ship`, merge → none (may use no skill — US#9).
  *
  * #331 PREFACTOR: this is only the DECLARED routing on the spec (so #337's "coder
@@ -62,7 +63,7 @@ const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
  */
 const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
   coder: "/tdd",
-  reviewer: "/review",
+  reviewer: "/code-review",
   cmr: "ak-cross-m-review",
   ship: "gstack-ship",
   merge: undefined,
@@ -152,6 +153,35 @@ function writeFixFindingsLandingFile(
     path: landingPath,
     sandboxPath: FIX_FINDINGS_LANDING_FILE,
     cleanup: ctx.stateDir === undefined,
+  };
+}
+
+function writeWorkerOutcomeLandingFile(
+  spec: WorkerSpec,
+  ctx: DispatchContext,
+):
+  | {
+      path: string;
+      sandboxPath: string;
+    }
+  | undefined {
+  if (
+    (spec.kind !== "coder" && spec.kind !== "reviewer") ||
+    ctx.stateDir === undefined ||
+    ctx.worktree === undefined ||
+    !existsSync(ctx.worktree.path)
+  ) {
+    return undefined;
+  }
+  mkdirSync(ctx.stateDir, { recursive: true });
+  const outcomeDir = join(ctx.stateDir, `worker-outcome-${spec.id}`);
+  mkdirSync(outcomeDir, { recursive: true });
+  const landingPath = join(outcomeDir, "outcome.json");
+  writeFileSync(landingPath, "", "utf8");
+  ensureGitExcluded(ctx.worktree.path, WORKER_OUTCOME_SANDBOX_FILE);
+  return {
+    path: landingPath,
+    sandboxPath: WORKER_OUTCOME_SANDBOX_FILE,
   };
 }
 
@@ -282,19 +312,27 @@ export async function legacyDispatchWorker(
           },
         }
       : undefined;
+  const outcomeLanding = writeWorkerOutcomeLandingFile(spec, ctx);
+  const runOptions =
+    fixFindingsOptions !== undefined || outcomeLanding !== undefined
+      ? {
+          ...(fixFindingsOptions ?? {}),
+          ...(outcomeLanding !== undefined ? { outcomeLanding } : {}),
+        }
+      : undefined;
   try {
     if (ctx.resumeSessionId !== undefined) {
       ret = await backend.resumeSession(
         stepSpec,
         ctx.worktree,
         ctx.resumeSessionId,
-        fixFindingsOptions,
+        runOptions,
       );
     } else {
       ret = await backend.runStep(
         stepSpec,
         ctx.worktree,
-        fixFindingsOptions,
+        runOptions,
       );
     }
   } finally {

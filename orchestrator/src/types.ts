@@ -398,7 +398,7 @@ export interface StepResult {
  * Which kind of work a worker performs. Drives the {@link WorkerResult} payload
  * discriminant and (later slices) which skill is invoked:
  *   - `coder`    → invoke `/tdd` (S2 implement / S5 fix), resume across rounds.
- *   - `reviewer` → invoke `/review` (S3/S6 per-slice review), fresh each round.
+ *   - `reviewer` → invoke `/code-review` (S3/S6 per-slice review), fresh each round.
  *   - `cmr`      → invoke `ak-cross-m-review` (family integrated cmr), fresh.
  *   - `ship`     → invoke `gstack-ship` (S7 / family PR).
  *   - `merge`    → family-layer merge (may use NO skill — ADR 0026); B 段, no A-段
@@ -1036,7 +1036,7 @@ export interface Backend {
    * (`runStep`/`resumeSession` for agent workers, `push` for the S7 ship worker),
    * so external behaviour is unchanged (regression green) and every existing fake
    * Backend keeps working without change. The real worker dispatch (invoke
-   * `/tdd` / `/review` / `gstack-ship`) lands in #334/#336. The legacy methods
+   * `/tdd` / `/code-review` / `gstack-ship`) lands in #334/#336. The legacy methods
    * stay on the seam during the transition.
    *
    * OPTIONAL on the interface during the prefactor so the existing zero-container
@@ -1073,6 +1073,20 @@ export interface Backend {
    */
   worktreeHead?(worktree: WorktreeHandle): Promise<string | undefined>;
   /**
+   * Optional git-truth helper for resume recovery.
+   *
+   * When a legacy coder worker landed commits but failed the old stdout outcome
+   * protocol, the runner can only recover the step if it can reconstruct the
+   * true commit count from two persisted HEADs. Backends that cannot provide
+   * this must leave the method absent; the runner will then report the original
+   * terminal error instead of synthesising a misleading success.
+   */
+  countCommitsBetween?(
+    worktree: WorktreeHandle,
+    fromHead: string,
+    toHead: string,
+  ): Promise<number>;
+  /**
    * Write one persisted ledger entry to the sibling state directory (#249).
    *
    * The `stateDir` is derived by the runner from the worktree path: it is a
@@ -1095,9 +1109,18 @@ export interface FixFindingsLandingFile {
   readonly sandboxPath: string;
 }
 
+/** Runner-owned worker outcome sidecar made visible inside the worker sandbox. */
+export interface WorkerOutcomeLandingFile {
+  /** Host path to the runner-owned JSON file. */
+  readonly path: string;
+  /** Path where the worker sees the file inside the sandbox repo. */
+  readonly sandboxPath: string;
+}
+
 /** Optional agent-step execution metadata consumed by real sandboxes. */
 export interface AgentStepRunOptions {
   readonly fixFindingsLanding?: FixFindingsLandingFile;
+  readonly outcomeLanding?: WorkerOutcomeLandingFile;
 }
 
 // ──────────────────────────── run result ────────────────────────────
