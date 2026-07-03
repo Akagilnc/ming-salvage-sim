@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 
 
@@ -164,8 +165,80 @@ def validate_findings(value: object) -> None:
                 raise GuardError(f"findings[{idx}].{field} must be a non-empty string")
         if "disposition_reason" in finding and not isinstance(finding["disposition_reason"], str):
             raise GuardError(f"findings[{idx}].disposition_reason must be a string")
-        if "disposition" in finding and not isinstance(finding["disposition"], dict):
-            raise GuardError(f"findings[{idx}].disposition must be an object")
+        if "disposition" in finding:
+            validate_disposition_evidence(
+                finding["disposition"],
+                f"findings[{idx}].disposition",
+            )
+        disposition = finding.get("disposition")
+        disposition_kind = disposition.get("kind") if isinstance(disposition, dict) else None
+        if finding["severity"] in ["critical", "high"] and finding["action"] != "fix_now":
+            raise GuardError(f"findings[{idx}].action must be fix_now for critical/high severity")
+        if finding["action"] == "defer":
+            if disposition is None:
+                raise GuardError(f"findings[{idx}].disposition is required for defer")
+            if disposition_kind == "accepted_suppressed":
+                raise GuardError(f"findings[{idx}].disposition must not be accepted_suppressed for defer")
+        if finding["action"] in ["wont_fix", "rejected"]:
+            if disposition is None:
+                raise GuardError(f"findings[{idx}].disposition is required for wont_fix/rejected")
+            if disposition_kind != "accepted_suppressed":
+                raise GuardError(f"findings[{idx}].disposition must be accepted_suppressed for wont_fix/rejected")
+
+
+def validate_disposition_evidence(value: object, label: str) -> None:
+    if not isinstance(value, dict):
+        raise GuardError(f"{label} must be an object")
+    kind = value.get("kind")
+    if not isinstance(kind, str) or kind not in [
+        "same_module",
+        "cross_module",
+        "spec_conflict",
+        "infra_failure",
+        "owning_issue_still_red",
+        "accepted_suppressed",
+    ]:
+        raise GuardError(f"{label}.kind is not a supported value")
+
+    if kind == "same_module":
+        required = {"kind", "reason"}
+        allowed = required
+    elif kind == "cross_module":
+        required = {"kind", "targetModule", "reason"}
+        allowed = required
+    elif kind in ["spec_conflict", "infra_failure"]:
+        required = {"kind", "source", "reason"}
+        allowed = required
+    elif kind == "owning_issue_still_red":
+        required = {"kind", "owningIssue", "missingSurface", "nextStep", "reason"}
+        allowed = required
+    elif kind == "accepted_suppressed":
+        required = {"kind", "source", "scope", "reason", "boundedReopen"}
+        allowed = required | {"findingIdentity", "targetModule"}
+    validate_exact_fields(value, allowed, label, required)
+    for field in required - {"kind"}:
+        if not isinstance(value[field], str) or value[field].strip() == "":
+            raise GuardError(f"{label}.{field} must be a non-empty string")
+    for field in allowed - required:
+        if field in value and (not isinstance(value[field], str) or value[field].strip() == ""):
+            raise GuardError(f"{label}.{field} must be a non-empty string")
+    if kind == "accepted_suppressed":
+        if not has_explicit_accepted_suppression_source(value["source"]):
+            raise GuardError(f"{label}.source must name an explicit user/ADR/issue source")
+        if not has_bounded_reopen_condition(value["boundedReopen"]):
+            raise GuardError(f"{label}.boundedReopen must include a bounded reopen condition")
+
+
+def has_explicit_accepted_suppression_source(value: str) -> bool:
+    return re.search(r"(^|\s)(#\d+|issue\s*#\d+|adr\s*0*\d+|owner|human|user)\b", value, re.I) is not None
+
+
+def has_bounded_reopen_condition(value: str) -> bool:
+    return re.search(r"\breopen\b", value, re.I) is not None and re.search(
+        r"\b(if|when|on|upon|unless)\b",
+        value,
+        re.I,
+    ) is not None
 
 
 def validate_prior_finding_dispositions(value: list) -> None:

@@ -129,6 +129,154 @@ describe("#549 worker outcome guard", () => {
     }
   });
 
+  it("malformed finding disposition is rejected before sidecar write or completion output", () => {
+    const dir = mkdtempSync(join(tmpdir(), "outcome-guard-finding-disposition-"));
+    try {
+      mkdirSync(join(dir, "cmr"), { recursive: true });
+      writeFileSync(join(dir, "cmr", "review.json"), '{"finding":true}\n', "utf8");
+
+      const draftPath = join(dir, "draft.json");
+      const sidecarPath = join(dir, "outcome.json");
+      writeFileSync(
+        draftPath,
+        JSON.stringify({
+          converged: false,
+          reason: "blocking findings remain",
+          successfulLegs: ["gpt-5.5"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+          findings: [
+            {
+              severity: "medium",
+              category: "correctness",
+              claim_quote: "guard must reject malformed disposition payloads",
+              location: "orchestrator/image/bin/orchestrator-outcome-guard",
+              suggested_fix: "validate the disposition role schema",
+              action: "fix_now",
+              disposition: { kind: "bogus" },
+            },
+          ],
+          evidencePaths: ["cmr/review.json"],
+        }),
+        "utf8",
+      );
+      writeFileSync(sidecarPath, "sentinel\n", "utf8");
+
+      const result = spawnSync(
+        GUARD,
+        [
+          "--role",
+          "cmr",
+          "--draft",
+          draftPath,
+          "--outcome",
+          sidecarPath,
+          "--evidence-root",
+          dir,
+          "--completion-signal",
+          "CMR_STEP_COMPLETE",
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).not.toContain("CMR_STEP_COMPLETE");
+      expect(result.stderr).toContain("findings[0].disposition.kind is not a supported value");
+      expect(readFileSync(sidecarPath, "utf8")).toBe("sentinel\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      name: "critical/high findings cannot be deferred",
+      finding: {
+        severity: "high",
+        category: "correctness",
+        claim_quote: "P1 blockers must return to coder-fix",
+        location: "orchestrator/src/family/verifyCmr.ts",
+        suggested_fix: "mark this as fix_now",
+        action: "defer",
+        disposition: {
+          kind: "same_module",
+          reason: "same module but still high severity",
+        },
+      },
+      error: "findings[0].action must be fix_now for critical/high severity",
+    },
+    {
+      name: "defer requires an explicit disposition",
+      finding: {
+        severity: "medium",
+        category: "standards",
+        claim_quote: "defer needs an auditable reason",
+        location: "orchestrator/src/family/verifyCmr.ts",
+        suggested_fix: "include a non-suppression disposition",
+        action: "defer",
+      },
+      error: "findings[0].disposition is required for defer",
+    },
+    {
+      name: "defer cannot use accepted_suppressed",
+      finding: {
+        severity: "medium",
+        category: "standards",
+        claim_quote: "defer is not an accepted suppression",
+        location: "orchestrator/src/family/verifyCmr.ts",
+        suggested_fix: "use a non-suppression disposition or wont_fix",
+        action: "defer",
+        disposition: {
+          kind: "accepted_suppressed",
+          source: "issue #549 owner instruction",
+          scope: "outcome guard",
+          reason: "accepted only for this example",
+          boundedReopen: "reopen if this scope changes",
+        },
+      },
+      error: "findings[0].disposition must not be accepted_suppressed for defer",
+    },
+    {
+      name: "wont_fix requires accepted_suppressed",
+      finding: {
+        severity: "medium",
+        category: "standards",
+        claim_quote: "wont_fix must carry accepted suppression evidence",
+        location: "orchestrator/src/family/verifyCmr.ts",
+        suggested_fix: "include accepted_suppressed disposition evidence",
+        action: "wont_fix",
+        disposition: {
+          kind: "same_module",
+          reason: "same-module is not enough to suppress a finding",
+        },
+      },
+      error: "findings[0].disposition must be accepted_suppressed for wont_fix/rejected",
+    },
+    {
+      name: "rejected accepted_suppressed requires bounded reopen evidence",
+      finding: {
+        severity: "medium",
+        category: "standards",
+        claim_quote: "suppression needs all required fields",
+        location: "orchestrator/src/family/verifyCmr.ts",
+        suggested_fix: "include boundedReopen",
+        action: "rejected",
+        disposition: {
+          kind: "accepted_suppressed",
+          source: "issue #549 owner instruction",
+          scope: "outcome guard",
+          reason: "accepted only for this example",
+        },
+      },
+      error: "findings[0].disposition.boundedReopen is required",
+    },
+  ])(
+    "runner-malformed finding action/disposition combination is rejected: $name",
+    ({ finding, error }) => {
+      expectGuardRejectsFinding(finding, error);
+    },
+  );
+
   it("valid guarded CMR escalation outcome reaches the runner-compatible parser", () => {
     const dir = mkdtempSync(join(tmpdir(), "outcome-guard-escalate-"));
     try {
@@ -363,4 +511,56 @@ describe("#549 worker outcome guard", () => {
 
 function cmrTag(outcome: unknown): string {
   return `<cmr>${JSON.stringify(outcome)}</cmr>`;
+}
+
+function expectGuardRejectsFinding(
+  finding: Record<string, unknown>,
+  expectedError: string,
+): void {
+  const dir = mkdtempSync(join(tmpdir(), "outcome-guard-finding-combo-"));
+  try {
+    mkdirSync(join(dir, "cmr"), { recursive: true });
+    writeFileSync(join(dir, "cmr", "review.json"), '{"finding":true}\n', "utf8");
+
+    const draftPath = join(dir, "draft.json");
+    const sidecarPath = join(dir, "outcome.json");
+    writeFileSync(
+      draftPath,
+      JSON.stringify({
+        converged: false,
+        reason: "blocking findings remain",
+        successfulLegs: ["gpt-5.5"],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        findings: [finding],
+        evidencePaths: ["cmr/review.json"],
+      }),
+      "utf8",
+    );
+    writeFileSync(sidecarPath, "sentinel\n", "utf8");
+
+    const result = spawnSync(
+      GUARD,
+      [
+        "--role",
+        "cmr",
+        "--draft",
+        draftPath,
+        "--outcome",
+        sidecarPath,
+        "--evidence-root",
+        dir,
+        "--completion-signal",
+        "CMR_STEP_COMPLETE",
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).not.toContain("CMR_STEP_COMPLETE");
+    expect(result.stderr).toContain(expectedError);
+    expect(readFileSync(sidecarPath, "utf8")).toBe("sentinel\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }

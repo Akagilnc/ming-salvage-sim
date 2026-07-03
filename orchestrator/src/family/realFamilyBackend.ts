@@ -2137,7 +2137,7 @@ export type CmrWorkerOutcome =
       readonly claimedFixedFindingIdentityKeys?: readonly string[];
       readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
       readonly findings?: readonly Finding[];
-      readonly evidencePaths?: readonly string[];
+      readonly evidencePaths: readonly string[];
     }
   | { readonly kind: "escalate"; readonly reason: string; readonly diagnosis: string }
   | {
@@ -2272,8 +2272,8 @@ const nonEmpty = z.string().trim().min(1);
  * field) is rejected → malformed, closing the same "too-lax shape leaks the pass
  * branch" fail-open the ship parser was already hardened against. The contract is
  * the integrated CMR pass prompts' "must match one of the shapes above exactly":
- *   1. `{converged:true, successfulLegs, skippedLegs?}`           — converged;
- *   2. `{converged:false, reason, successfulLegs, skippedLegs?}`  — not converged;
+ *   1. `{converged:true, successfulLegs, skippedLegs?, evidencePaths}`           — converged;
+ *   2. `{converged:false, reason, successfulLegs, skippedLegs?, evidencePaths}`  — not converged;
  *   3. `{escalate:{reason, diagnosis}}`            — could not run the review.
  * Verdicts must also account for every default CMR leg: each must be either
  * successful or explicitly skipped.
@@ -2467,7 +2467,7 @@ const cmrFindingsSchema = {
   findings: z.array(cmrReviewerFindingSchema).optional(),
 } as const;
 const cmrEvidenceSchema = {
-  evidencePaths: z.array(nonEmpty).optional(),
+  evidencePaths: z.array(nonEmpty).min(1),
 } as const;
 const cmrConvergedSchema = z
   .object({
@@ -2591,9 +2591,7 @@ function classifyCmrOutcomePayload(
       ...(converged.findings !== undefined
         ? { findings: converged.findings.map(normalizeCmrReviewerFinding) }
         : {}),
-      ...(converged.evidencePaths !== undefined
-        ? { evidencePaths: converged.evidencePaths }
-        : {}),
+      evidencePaths: converged.evidencePaths,
     };
   }
   const red = cmrRedSchema.safeParse(normalizedParsed);
@@ -2622,17 +2620,15 @@ function classifyCmrOutcomePayload(
       ...(red.data.findings !== undefined
         ? { findings: red.data.findings.map(normalizeCmrReviewerFinding) }
         : {}),
-      ...(red.data.evidencePaths !== undefined
-        ? { evidencePaths: red.data.evidencePaths }
-        : {}),
+      evidencePaths: red.data.evidencePaths,
     };
   }
   return {
     kind: "malformed",
     reason:
       `${source} matched no valid shape (expected one of: ` +
-      "{converged:true,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions}, " +
-      "{converged:false,reason,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions}, " +
+      "{converged:true,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions,evidencePaths}, " +
+      "{converged:false,reason,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions,evidencePaths}, " +
       "{escalate:{reason,diagnosis}} — non-empty strings, no extra keys)",
   };
 }
