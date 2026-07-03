@@ -25,15 +25,18 @@
         ↳ 必须先于 `settle_province_tick`，让饷率当月生效；后置通用事件终态 pass
           读到已 terminal 的饷率事件后自然跳过，防重复处理。
      c. apply_fixed_period_flows(db, state)       # 月度财政 tick
-        ↳ compute_budget_lines 的定额项（田赋/辽饷/盐税/商税/官俸/宫廷/…）
+        ↳ compute_budget_lines 的定额项（旧档 legacy 为田赋/辽饷/盐税/商税；新档 substrate_hub
+          为省级起运 + 盐税解京 + 商税解京，并显式列太仓亏空/京运边饷 hub/官俸/宫廷/…）
         ↳ 军饷按存档级 `fiscal_engine` 分流：
           - `legacy` 老档：保留旧「各军军饷」预算行 + 逐军从国库扣发；国库不足挂 `armies.arrears`。
-          - `substrate_hub` 新档：旧「各军军饷」预算/流水为 0，不再从该全局路径双付；省份额由省级
-            substrate 写 `province_pay_arrears`，中央份额走 `中央军饷` outbound 写 `central_pay_arrears`
-            与中央容器，仍用 **应发 = ceil(manpower × salary_rate / 10000)**（#44，0 兵=0 饷）。
+          - `substrate_hub` 新档：旧「各军军饷」预算/流水为 0，不再从该全局路径双付；先按本月开账
+            国库能力跑 `边饷hub` outbound，京运给各省 grant 与中央份额共用同一个 hub tier，
+            写 `中央军饷`、`central_pay_arrears`、中央欠饷容器与 `C_京运克扣/C_京运运损`。
+            省份额随后由省级 substrate 写 `province_pay_arrears`，仍用 **应发 =
+            ceil(manpower × salary_rate / 10000)**（#44，0 兵=0 饷）。
         ↳ 逐建筑 condition × output_amount → 国库/内库
         ↳ 我那座金矿(+800)/银行(+300)/帝国航空(+10皇威) 在这一步生效
-        ↳ #66/#266 省级财政基座：动态 shadow spine 通过
+        ↳ #66/#266/#261 省级财政基座与跨省 hub：动态 substrate spine 通过
           `GameDB.settle_ming_province_substrate_ticks()` 一次扫描 Ming 省 fiscal payload，
           推进 `controlled_by='ming'` 且有 `fiscal.settle` key 的省；失地自然出列，
           明控但无 settle 的省不创建基座。
@@ -41,9 +44,10 @@
           形状错误和 settle_tick 守恒错误会作为逐省 outcome 隔离并写 tlog。
           其它 bridge bug 继续 fail-loud。
           陕西 seed 已按 #266 重标到史实量级（正赋/辽饷九厘/军饷/官俸/宗禄/逋赋/火耗/起运定额），
-          末态逐月演化+落库并 tlog 打印实征/起运/火耗/末态欠账；本切片仅把省/中央军饷欠账接入
-          per-source 容器，**起运入国库 hub 仍不在此处落账**；
-          fail-loud 但隔离（基座 bug 不掀翻本步固定财政，cmr S4 F4）。
+          末态逐月演化+落库并 tlog 打印实征/起运/火耗/末态欠账；新档将省级起运、盐税、商税先写
+          hub 容器，再按太仓损耗拆 `C_太仓挪用/C_太仓纯亏空` 后净额入国库。省/中央军饷欠账接入
+          per-source 容器；基座显式坏态在 cutover 档 fail-loud，老 shadow 隔离只保留给非 cutover
+          兼容路径。
         ⚠️ 我的 economy_moves 不要重复这些固定项！
      d. apply_event_terminal_states(state, db)    # 事件终态写路径（候选读取本身只读）
         ↳ 声明了 trigger_end_* 且未 `open_window` 的事件，超过最晚时点会先记 `event_triggers.terminal_state=expired`
