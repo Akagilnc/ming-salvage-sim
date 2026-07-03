@@ -2137,6 +2137,7 @@ export type CmrWorkerOutcome =
       readonly claimedFixedFindingIdentityKeys?: readonly string[];
       readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
       readonly findings?: readonly Finding[];
+      readonly evidencePaths?: readonly string[];
     }
   | { readonly kind: "escalate"; readonly reason: string; readonly diagnosis: string }
   | {
@@ -2465,12 +2466,16 @@ function normalizeCmrReviewerFinding(
 const cmrFindingsSchema = {
   findings: z.array(cmrReviewerFindingSchema).optional(),
 } as const;
+const cmrEvidenceSchema = {
+  evidencePaths: z.array(nonEmpty).optional(),
+} as const;
 const cmrConvergedSchema = z
   .object({
     converged: z.literal(true),
     ...cmrVerdictLegsSchema,
     ...cmrClosureSchema,
     ...cmrFindingsSchema,
+    ...cmrEvidenceSchema,
   })
   .strict();
 const cmrRedSchema = z
@@ -2480,6 +2485,7 @@ const cmrRedSchema = z
     ...cmrVerdictLegsSchema,
     ...cmrClosureSchema,
     ...cmrFindingsSchema,
+    ...cmrEvidenceSchema,
   })
   .strict();
 const cmrEscalateSchema = z
@@ -2585,6 +2591,9 @@ function classifyCmrOutcomePayload(
       ...(converged.findings !== undefined
         ? { findings: converged.findings.map(normalizeCmrReviewerFinding) }
         : {}),
+      ...(converged.evidencePaths !== undefined
+        ? { evidencePaths: converged.evidencePaths }
+        : {}),
     };
   }
   const red = cmrRedSchema.safeParse(normalizedParsed);
@@ -2612,6 +2621,9 @@ function classifyCmrOutcomePayload(
       priorFindingDispositions: red.data.priorFindingDispositions,
       ...(red.data.findings !== undefined
         ? { findings: red.data.findings.map(normalizeCmrReviewerFinding) }
+        : {}),
+      ...(red.data.evidencePaths !== undefined
+        ? { evidencePaths: red.data.evidencePaths }
         : {}),
     };
   }
