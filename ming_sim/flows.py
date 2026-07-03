@@ -278,6 +278,15 @@ def _round_nonnegative_amount(value: float) -> int:
     return max(0, int(math.floor(max(0.0, float(value)) + 0.5)))
 
 
+def _income_amount_after_legacy_modifier(
+    db: GameDB, state: GameState, account: str, amount: int
+) -> int:
+    if amount <= 0:
+        return 0
+    net_pct = int(db.legacy_modifiers(state).get(account, 0) or 0)  # type: ignore[arg-type]
+    return db.apply_legacy_pct(amount, net_pct) if net_pct else int(amount)
+
+
 def _central_loss_split(db: GameDB, gross: float, human_key: str, sink_key: str) -> Tuple[int, int]:
     gross_amount = _round_nonnegative_amount(gross)
     human_rate = _fiscal_config_rate(db, human_key)
@@ -1295,17 +1304,31 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             else None,
         )
         if db.is_substrate_hub_fiscal_engine_enabled():
-            salt_income, commerce_income = _substrate_hub_salt_commerce_income_split(db)
-            remittance_amount = _round_nonnegative_amount(remittance_total)
-            salt_amount = _round_nonnegative_amount(salt_income)
-            commerce_amount = _round_nonnegative_amount(commerce_income)
-            inbound_gross = remittance_amount + salt_amount + commerce_amount
-            taicang_human_loss, taicang_sink_loss = _central_loss_split(
-                db,
-                inbound_gross,
-                _CENTRAL_TAICANG_HUMAN_LOSS_RATE,
-                _CENTRAL_TAICANG_SINK_LOSS_RATE,
-            )
+            try:
+                salt_income, commerce_income = _substrate_hub_salt_commerce_income_split(db)
+                raw_remittance_amount = _round_nonnegative_amount(remittance_total)
+                raw_salt_amount = _round_nonnegative_amount(salt_income)
+                raw_commerce_amount = _round_nonnegative_amount(commerce_income)
+                remittance_amount = _income_amount_after_legacy_modifier(
+                    db, state, "国库", raw_remittance_amount
+                )
+                salt_amount = _income_amount_after_legacy_modifier(
+                    db, state, "国库", raw_salt_amount
+                )
+                commerce_amount = _income_amount_after_legacy_modifier(
+                    db, state, "国库", raw_commerce_amount
+                )
+                inbound_gross = remittance_amount + salt_amount + commerce_amount
+                taicang_human_loss, taicang_sink_loss = _central_loss_split(
+                    db,
+                    inbound_gross,
+                    _CENTRAL_TAICANG_HUMAN_LOSS_RATE,
+                    _CENTRAL_TAICANG_SINK_LOSS_RATE,
+                )
+            except ValueError as exc:
+                raise _SubstrateHubFixedFlowAbort(
+                    f"substrate_hub 太仓入库 hub 分配失败：{exc}"
+                ) from exc
             central_loss = taicang_human_loss + taicang_sink_loss
             _set_fiscal_container(db, "C_太仓挪用", taicang_human_loss, "中央太仓人为亏空（可追赃）")
             _set_fiscal_container(db, "C_太仓纯亏空", taicang_sink_loss, "中央太仓自然亏空（sink）")
@@ -1313,21 +1336,24 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             _set_fiscal_container(db, "hub_盐税解京", salt_amount, "明控省盐税中央旁路")
             _set_fiscal_container(db, "hub_商税解京", commerce_amount, "明控省商税中央旁路")
 
-            for category, amount, reason in (
-                ("起运", remittance_amount, f"{TURN_UNIT}省级起运入京"),
-                ("盐税", salt_amount, f"{TURN_UNIT}盐税中央旁路"),
-                ("商税", commerce_amount, f"{TURN_UNIT}商税中央旁路"),
+            for category, raw_amount, amount, reason in (
+                ("起运", raw_remittance_amount, remittance_amount, f"{TURN_UNIT}省级起运入京"),
+                ("盐税", raw_salt_amount, salt_amount, f"{TURN_UNIT}盐税中央旁路"),
+                ("商税", raw_commerce_amount, commerce_amount, f"{TURN_UNIT}商税中央旁路"),
             ):
                 if amount <= 0:
                     continue
                 actual = db.record_issue_economy_move(
                     state,
                     "国库",
-                    amount,
+                    raw_amount,
                     category,
                     reason,
-                    apply_legacy_modifier=False,
                 )
+                if actual != amount:
+                    raise _SubstrateHubFixedFlowAbort(
+                        f"{category}入库实记不符：预计{amount}万两，实际{actual}万两"
+                    )
                 flows.append({
                     "dir": "income",
                     "account": "国库",
