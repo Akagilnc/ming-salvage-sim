@@ -66,7 +66,6 @@ import { isFilledString } from "./shipOutcome.js";
 // coder-output / commitsAdded rules can never drift.
 import {
   escalateOf,
-  isCompleteRepairEvidence,
   isValidEscalation,
   isValidStepOutput,
 } from "./validate.js";
@@ -685,46 +684,6 @@ function repairEvidenceMatchesKey(
   );
 }
 
-function repairEvidenceScopesActiveFindings(
-  evidence: RepairEvidence,
-  activeFindings: ReadonlyArray<Finding>,
-  activeIdentityKeys: ReadonlyArray<string>,
-): boolean {
-  if (activeFindings.length === 0 || activeIdentityKeys.length === 0) {
-    return false;
-  }
-  const matchingKeys = matchingContinueFixingKeys(
-    {
-      event: "runner_bookkeeping",
-      intent: "continue_fixing",
-      source: "resume_input",
-      ts: "repair-evidence-gate",
-      findingScope: evidence.findingScope,
-    },
-    activeFindings,
-    activeIdentityKeys,
-  );
-  return activeIdentityKeys.every((key) => matchingKeys.includes(key));
-}
-
-function coderFixEligibleForFreshReview(
-  output: StepOutput | undefined,
-  activeFindings: ReadonlyArray<Finding>,
-  activeIdentityKeys: ReadonlyArray<string>,
-): boolean {
-  return (
-    output?.kind === "coder" &&
-    output.committed &&
-    output.commitsAdded >= 1 &&
-    isCompleteRepairEvidence(output.repairEvidence) &&
-    repairEvidenceScopesActiveFindings(
-      output.repairEvidence,
-      activeFindings,
-      activeIdentityKeys,
-    )
-  );
-}
-
 const FINDING_SEVERITY_RANK: Readonly<Record<Finding["severity"], number>> = {
   clarity: 0,
   low: 1,
@@ -1014,25 +973,15 @@ async function planRecoveredLandedCoderProtocolFailure(
     committed: true,
     commitsAdded,
   };
-  const replayedS4 =
+  const pendingBlockingFindings =
     landedProtocolFailure.step === "S5"
-      ? replayS4AdjudicationState(executableLedger)
+      ? adjudicatedBlockingFindingsForPersistedS4(executableLedger)
       : undefined;
-  const pendingBlockingFindings = replayedS4?.blocking;
   const decision = route({
     from: landedProtocolFailure.step,
     output,
     ...(pendingBlockingFindings !== undefined
       ? { pendingBlockingFindings }
-      : {}),
-    ...(landedProtocolFailure.step === "S5" && replayedS4 !== undefined
-      ? {
-          repairEvidenceEligible: coderFixEligibleForFreshReview(
-            output,
-            replayedS4.blocking,
-            replayedS4.blockingIdentityKeys,
-          ),
-        }
       : {}),
   });
   if (decision.kind === "handoff") {
@@ -1481,26 +1430,15 @@ function planResume(
     lastEntry.step === "S8"
       ? lastNonTerminalStep(executableLedger) ?? lastEntry.step
       : lastEntry.step;
-  const replayedS4 =
-    routeFrom === "S4" || routeFrom === "S5"
-      ? replayS4AdjudicationState(executableLedger)
-      : undefined;
   const pendingBlockingFindings =
-    routeFrom === "S4" ? replayedS4?.blocking : undefined;
+    routeFrom === "S4"
+      ? adjudicatedBlockingFindingsForPersistedS4(executableLedger)
+      : undefined;
   const decision = route({
     from: routeFrom,
     output: agentEntry?.output,
     ...(pendingBlockingFindings !== undefined
       ? { pendingBlockingFindings }
-      : {}),
-    ...(routeFrom === "S5" && replayedS4 !== undefined
-      ? {
-          repairEvidenceEligible: coderFixEligibleForFreshReview(
-            agentEntry?.output,
-            replayedS4.blocking,
-            replayedS4.blockingIdentityKeys,
-          ),
-        }
       : {}),
   });
   if (decision.kind === "handoff") {
@@ -2971,15 +2909,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       output: lastOutput,
       ...(step === "S4"
         ? { pendingBlockingFindings }
-        : {}),
-      ...(step === "S5"
-        ? {
-            repairEvidenceEligible: coderFixEligibleForFreshReview(
-              lastOutput,
-              pendingBlockingFindings,
-              pendingBlockingFindingIdentityKeys,
-            ),
-          }
         : {}),
     });
 

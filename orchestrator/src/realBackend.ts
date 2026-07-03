@@ -1703,6 +1703,8 @@ const repairEvidenceSchema = z
     changedFiles: z.array(z.string().min(1)).optional(),
     tests: z.array(z.string().min(1)).optional(),
     fixtures: z.array(z.string().min(1)).optional(),
+    sameClassBugScan: z.string().min(1).optional(),
+    introducedRegressionCheck: z.string().min(1).optional(),
     patchSummary: z.string().optional(),
   })
   .superRefine((value, ctx) => {
