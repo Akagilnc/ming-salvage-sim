@@ -31,6 +31,12 @@ describe("#451 dogfood replay fixture", () => {
           stopReason: "same_module_still_red",
         }),
         expect.objectContaining({
+          id: "258-cmr-reviewer-self-fix-attempt",
+          issue: 258,
+          classification: "contract_drift",
+          stopReason: "contract_drift",
+        }),
+        expect.objectContaining({
           id: "287-cross-module-defer-with-module",
           issue: 287,
           classification: "cross_module_defer",
@@ -286,6 +292,7 @@ describe("#451 dogfood replay fixture", () => {
       "307-reviewer-text-only-change",
       "307-no-observable-progress",
       "307-continue-fixing-targeted-reset",
+      "258-cmr-reviewer-self-fix-attempt",
       "287-same-module-cmr-gap",
       "287-cross-module-defer-with-module",
       "287-module-declaration-fenced-yaml",
@@ -358,6 +365,23 @@ describe("#451 dogfood replay fixture", () => {
         mechanism: "claimed_attempt_without_observable_progress",
         status: "escalate",
         implementationMovement: false,
+      }),
+    });
+    expect(rowsById.get("258-cmr-reviewer-self-fix-attempt")).toMatchObject({
+      source: "family",
+      classification: "contract_drift",
+      stopReason: "contract_drift",
+      sourceStopSummary: expect.objectContaining({
+        reason: "contract_drift",
+        summary: expect.stringContaining("reviewer moved family HEAD"),
+      }),
+      sourceEvidence: expect.objectContaining({
+        seam: "family_verify_cmr",
+        mechanism: "cmr_reviewer_self_fix_head_movement",
+        reviewerSelfFixBlocked: true,
+        coderFixDispatched: false,
+        ledgerStatuses: ["aborted"],
+        dispatches: ["cmr:completeness"],
       }),
     });
     expect(rowsById.get("287-module-declaration-fenced-yaml")?.sourceEvidence).toMatchObject({

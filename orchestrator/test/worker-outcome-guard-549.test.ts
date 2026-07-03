@@ -323,7 +323,7 @@ describe("#549 worker outcome guard", () => {
     }
   });
 
-  it("malformed CMR draft is rejected before sidecar write or completion output", () => {
+  it("#258 CMR self-fix state is rejected before sidecar write or completion output", () => {
     const dir = mkdtempSync(join(tmpdir(), "outcome-guard-malformed-"));
     try {
       mkdirSync(join(dir, "cmr"), { recursive: true });
