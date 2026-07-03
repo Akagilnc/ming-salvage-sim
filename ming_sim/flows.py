@@ -582,30 +582,33 @@ def _compute_substrate_hub_outbound(
         if tier_due_total > 0
         else 1.0
     )
-    jingyun_gross_by_region, central_paid_by_army = _allocate_substrate_hub_paid_ints(
+    jingyun_gross_by_region, central_gross_by_army = _allocate_substrate_hub_paid_ints(
         jingyun_due_by_region,
         central_due_by_army,
         k,
         treasury_available,
     )
     jingyun_gross_total = sum(jingyun_gross_by_region.values())
+    central_gross_total = sum(central_gross_by_army.values())
+    hub_gross_total = jingyun_gross_total + central_gross_total
     human_loss, sink_loss = _central_loss_split(
         db,
-        jingyun_gross_total,
+        hub_gross_total,
         _CENTRAL_JINGYUN_HUMAN_LOSS_RATE,
         _CENTRAL_JINGYUN_SINK_LOSS_RATE,
     )
     central_transport_loss = float(human_loss + sink_loss)
-    if jingyun_gross_total > 0 and central_transport_loss > 0:
-        net_total = max(0.0, jingyun_gross_total - central_transport_loss)
-        jingyun_paid_by_region, _ = _allocate_substrate_hub_paid_ints(
+    if hub_gross_total > 0 and central_transport_loss > 0:
+        net_total = max(0.0, hub_gross_total - central_transport_loss)
+        jingyun_paid_by_region, central_paid_by_army = _allocate_substrate_hub_paid_ints(
             jingyun_gross_by_region,
-            {},
-            net_total / jingyun_gross_total if jingyun_gross_total > 0 else 1.0,
+            central_gross_by_army,
+            net_total / hub_gross_total if hub_gross_total > 0 else 1.0,
             net_total,
         )
     else:
         jingyun_paid_by_region = jingyun_gross_by_region
+        central_paid_by_army = central_gross_by_army
     return _HubOutboundResult(
         k=k,
         jingyun_due_total=jingyun_due_total,

@@ -1040,19 +1040,19 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
     assert hub_row["jingyun_due"] == pytest.approx(10)
     assert hub_row["needed"] == pytest.approx(20)
     assert hub_row["k"] == pytest.approx(0.5)
-    assert hub_row["paid"] == pytest.approx(10)
+    assert hub_row["paid"] == pytest.approx(6)
     assert expense_row["paid"] == pytest.approx(15)
-    assert expense_row["jingyun_paid"] == pytest.approx(3)
-    assert expense_row["central_paid"] == pytest.approx(10)
-    assert expense_row["transport_loss"] == pytest.approx(2)
+    assert expense_row["jingyun_paid"] == pytest.approx(4)
+    assert expense_row["central_paid"] == pytest.approx(6)
+    assert expense_row["transport_loss"] == pytest.approx(5)
     loss_rows = {
         row["key"]: row["value"]
         for row in db.conn.execute(
             "SELECT key, value FROM fiscal_containers WHERE key IN ('C_京运克扣', 'C_京运运损')"
         ).fetchall()
     }
-    assert loss_rows["C_京运克扣"] == pytest.approx(1)
-    assert loss_rows["C_京运运损"] == pytest.approx(1)
+    assert loss_rows["C_京运克扣"] == pytest.approx(3)
+    assert loss_rows["C_京运运损"] == pytest.approx(2)
     ledger = db.conn.execute(
         """
         SELECT COALESCE(SUM(delta), 0) AS delta
@@ -1061,11 +1061,11 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
         """
     ).fetchone()
     assert ledger["delta"] == pytest.approx(-15)
-    assert rows["guanning"]["central_pay_arrears"] == pytest.approx(5)
-    assert rows["shaanxi_army"]["central_pay_arrears"] == pytest.approx(5)
-    assert rows["guanning"]["arrears"] == pytest.approx(5)
-    assert rows["shaanxi_army"]["arrears"] == pytest.approx(5)
-    assert db.get_central_army_pay_arrears_container() == pytest.approx(10)
+    assert rows["guanning"]["central_pay_arrears"] == pytest.approx(7)
+    assert rows["shaanxi_army"]["central_pay_arrears"] == pytest.approx(7)
+    assert rows["guanning"]["arrears"] == pytest.approx(7)
+    assert rows["shaanxi_army"]["arrears"] == pytest.approx(7)
+    assert db.get_central_army_pay_arrears_container() == pytest.approx(14)
     ledger_snapshot = _hub_ledger_snapshot(db, turn=state.turn)
     container_snapshot = _hub_container_snapshot(db)
     outbound = {
@@ -1073,7 +1073,7 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
         "central_paid": expense_row["central_paid"],
         "transport_loss": expense_row["transport_loss"],
     }
-    expected_jingyun_losses = (1, 1)
+    expected_jingyun_losses = (3, 2)
     _assert_hub_conservation_oracle(
         ledger_snapshot,
         container_snapshot,
@@ -1116,6 +1116,109 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
         mutate=lambda ledger, containers, out: out.__setitem__(
             "transport_loss", out["transport_loss"] + 1
         ),
+    )
+
+
+def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_jingyun(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 10
+    db.save_state(state)
+    _set_all_settle_grants(db, 0)
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    _zero_non_meta_fiscal_config(db)
+    _set_fiscal_config_value(db, "central_jingyun_human_loss_rate", 20)
+    _set_fiscal_config_value(db, "central_jingyun_sink_loss_rate", 10)
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET tax_per_turn = 0,
+            fiscal = json_set(
+                fiscal, '$.huang_tian', 0, '$.liao_xiang', 0,
+                '$.salt_tax', 0, '$.commerce_tax', 0
+            )
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'shaanxi', province_pay_share = 0,
+            central_pay_share = 1, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0,
+            manpower = 10000, salary_rate = 10
+        WHERE id = 'guanning'
+        """
+    )
+    db.conn.commit()
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    expense_row = next(flow for flow in flow_rows if flow.get("category") == "边饷hub")
+    central_row = next(flow for flow in flow_rows if flow.get("category") == "中央军饷")
+    army = db.conn.execute(
+        "SELECT central_pay_arrears, arrears FROM armies WHERE id = 'guanning'"
+    ).fetchone()
+    loss_rows = {
+        row["key"]: row["value"]
+        for row in db.conn.execute(
+            "SELECT key, value FROM fiscal_containers WHERE key IN ('C_京运克扣', 'C_京运运损')"
+        ).fetchall()
+    }
+    persisted = {
+        row["key"]: row["value"]
+        for row in db.conn.execute(
+            "SELECT key, value FROM fiscal_containers WHERE key IN ('hub_京运实拨', 'hub_中央军饷实拨', 'hub_京运损耗')"
+        ).fetchall()
+    }
+    ledger = db.conn.execute(
+        """
+        SELECT COALESCE(SUM(delta), 0) AS delta
+        FROM economy_ledger
+        WHERE account = '国库' AND category = '边饷hub'
+        """
+    ).fetchone()
+
+    assert central_row["jingyun_due"] == pytest.approx(0)
+    assert central_row["needed"] == pytest.approx(10)
+    assert central_row["k"] == pytest.approx(1)
+    assert central_row["paid"] == pytest.approx(7)
+    assert central_row["shortfall"] == pytest.approx(3)
+    assert central_row["transport_loss"] == pytest.approx(3)
+    assert expense_row["paid"] == pytest.approx(10)
+    assert expense_row["jingyun_paid"] == pytest.approx(0)
+    assert expense_row["central_paid"] == pytest.approx(7)
+    assert expense_row["transport_loss"] == pytest.approx(3)
+    assert loss_rows["C_京运克扣"] == pytest.approx(2)
+    assert loss_rows["C_京运运损"] == pytest.approx(1)
+    assert persisted["hub_京运实拨"] == pytest.approx(0)
+    assert persisted["hub_中央军饷实拨"] == pytest.approx(7)
+    assert persisted["hub_京运损耗"] == pytest.approx(3)
+    assert ledger["delta"] == pytest.approx(-10)
+    assert army["central_pay_arrears"] == pytest.approx(3)
+    assert army["arrears"] == pytest.approx(3)
+
+    ledger_snapshot = _hub_ledger_snapshot(db, turn=state.turn)
+    container_snapshot = _hub_container_snapshot(db)
+    outbound = {
+        "jingyun_paid": expense_row["jingyun_paid"],
+        "central_paid": expense_row["central_paid"],
+        "transport_loss": expense_row["transport_loss"],
+    }
+    _assert_hub_conservation_oracle(
+        ledger_snapshot,
+        container_snapshot,
+        outbound=outbound,
+        expected_jingyun_losses=(2, 1),
     )
 
 
