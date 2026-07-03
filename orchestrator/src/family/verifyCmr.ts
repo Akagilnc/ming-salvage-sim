@@ -1166,6 +1166,13 @@ async function runCmrCoderFix(input: {
           currentFamilyHeadBefore !== familyHeadAfter
         ) {
           evidenceOnlyFamilyHeadAfter = familyHeadAfter;
+        } else if (
+          evidenceOnlyFamilyHeadAfter !== undefined &&
+          familyHeadAfter === evidenceOnlyFamilyHeadAfter
+        ) {
+          // Keep the original pre-fix head and committed repair head across
+          // repeated evidence-only retries. Later attempts still need to prove
+          // the same already-landed commit, not add another commit.
         } else {
           currentFamilyHeadBefore = familyHeadAfter;
           evidenceOnlyFamilyHeadAfter = undefined;

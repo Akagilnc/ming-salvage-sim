@@ -566,6 +566,48 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(pending.correctness).toBeUndefined();
   });
 
+  it("keeps committed CMR fix keys when a later re-review abort has no classification", () => {
+    const priorKey =
+      "correctness|orchestrator/src/family/verifycmr.ts:45|post fix re-review aborted";
+
+    const pending = pendingPriorCmrFindingIdentityKeysByPass(
+      [
+        { childIssue: 10, status: "merged" },
+        {
+          status: "cmr_reviewed",
+          event: "cmr_reviewed",
+          phase: "final",
+          cmrPass: "correctness",
+          familyHeadAfter: "head-before-coder-fix",
+        } as FamilyLedgerEntry,
+        {
+          status: "cmr_fix_committed",
+          event: "cmr_fix_committed",
+          phase: "final",
+          cmrPass: "correctness",
+          familyHeadBefore: "head-before-coder-fix",
+          familyHeadAfter: "head-after-coder-fix",
+          blockingFindingIdentityKeys: [priorKey],
+        } as FamilyLedgerEntry,
+        {
+          status: "aborted",
+          event: "aborted",
+          phase: "final",
+          cmrPass: "correctness",
+          familyHeadAfter: "head-after-coder-fix",
+          reason: "integrated cmr correctness provider floor failed after coder-fix",
+          stopSummary: {
+            reason: "provider_degraded",
+            summary: "post-fix CMR re-review did not have a strong leg",
+          },
+        } as FamilyLedgerEntry,
+      ],
+      "head-after-coder-fix",
+    );
+
+    expect(pending.correctness).toEqual([priorKey]);
+  });
+
   it("passes the known #287 hub-loss accepted suppression through production CMR context", async () => {
     const classified: ReturnType<typeof classifyFamilyCmrFindings>[] = [];
     const acceptedScope =

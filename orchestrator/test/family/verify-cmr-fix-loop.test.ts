@@ -640,6 +640,63 @@ class MissingRepairEvidenceThenGoodBackend extends ReviewFixRereviewBackend {
   }
 }
 
+class MultipleEvidenceOnlyFailuresThenGoodBackend extends ReviewFixRereviewBackend {
+  private coderFixRound = 0;
+
+  override async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    if (spec.kind !== "coder") return super.dispatchWorker(spec, ctx);
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      role: spec.role,
+      promptFile: spec.promptFile,
+      contextRetention: spec.contextRetention,
+      cmrPass: ctx.cmrPass,
+      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
+      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
+      repairAttemptFailures: ctx.repairAttemptFailures,
+    });
+
+    this.coderFixRound += 1;
+    if (this.coderFixRound === 1) {
+      this.currentFamilyHead = "head-after-bad-coder-fix";
+      return {
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      };
+    }
+
+    const completeEvidence = this.coderFixRound >= 3;
+    return {
+      kind: "completed",
+      output: {
+        kind: "coder",
+        committed: false,
+        commitsAdded: 0,
+        repairEvidence: {
+          findingScope: {
+            identityKeys: [BLOCKING_FAMILY_CMR_KEY],
+            locations: [BLOCKING_FAMILY_CMR_FINDING.location],
+          },
+          changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
+          tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
+          ...(completeEvidence
+            ? {
+                sameClassBugScan:
+                  "rg \"runCmrCoderFix|cmr_fix_committed\" orchestrator/src/family orchestrator/test/family",
+                introducedRegressionCheck:
+                  "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
+              }
+            : {}),
+        },
+      },
+    };
+  }
+}
+
 class NoHeadMovementThenGoodBackend extends ReviewFixRereviewBackend {
   private coderFixRound = 0;
 
@@ -913,6 +970,58 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         );
       }),
     ).toBe(3);
+  });
+
+  it("preserves evidence-only repair state across multiple failed evidence retries", async () => {
+    const backend = new MultipleEvidenceOnlyFailuresThenGoodBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/551-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches).toEqual([
+      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
+      expect.objectContaining({ kind: "coder" }),
+      expect.objectContaining({
+        kind: "coder",
+        repairAttemptFailures: [
+          expect.objectContaining({
+            attempt: 1,
+            familyHeadBefore: "head-before-cmr-review",
+            familyHeadAfter: "head-after-bad-coder-fix",
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        kind: "coder",
+        repairAttemptFailures: [
+          expect.objectContaining({ attempt: 1 }),
+          expect.objectContaining({
+            attempt: 2,
+            familyHeadBefore: "head-before-cmr-review",
+            familyHeadAfter: "head-after-bad-coder-fix",
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
+      expect.objectContaining({ kind: "ship" }),
+    ]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "cmr_fix_committed",
+      event: "cmr_fix_committed",
+      cmrPass: "completeness",
+      familyHeadBefore: "head-before-cmr-review",
+      familyHeadAfter: "head-after-bad-coder-fix",
+      blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+    }));
   });
 
   it("bounces family coder-fix back before re-review when family HEAD did not move", async () => {
