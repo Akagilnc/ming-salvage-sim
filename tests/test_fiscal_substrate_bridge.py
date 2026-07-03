@@ -3729,6 +3729,33 @@ def test_cutover_substrate_bad_state_uses_settlement_abort_error_pack(fresh_game
     assert _read_settle(db)["p"] == []
 
 
+def test_cutover_jingyun_gross_bool_uses_settlement_abort_error_pack(
+    fresh_game, monkeypatch, tmp_path
+):
+    import ming_sim.error_pack as error_pack_mod
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    monkeypatch.setattr(error_pack_mod, "user_data_dir", lambda: tmp_path)
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = json.loads(str(row["fiscal"]))
+    fiscal["settle"]["p"]["拨付gross"] = True
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+
+    with pytest.raises(SettlementAbort) as exc_info:
+        flows_mod.apply_fixed_period_flows(db, state)
+
+    abort = exc_info.value
+    assert abort.stage == "fixed_fiscal"
+    assert abort.error_pack_path
+    assert Path(abort.error_pack_path).exists()
+    assert _read_settle(db)["p"]["拨付gross"] is True
+
+
 def test_pre_settle_cutover_substrate_bad_state_uses_settlement_abort_error_pack(
     fresh_game, monkeypatch, tmp_path
 ):
