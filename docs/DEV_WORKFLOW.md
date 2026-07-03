@@ -1,9 +1,9 @@
 ---
 title: Matt Pocock 开发流程
-description: Matt Pocock skills 整套（想法 → merge）canonical：grill-with-docs → (prototype) → to-prd → to-issues → 逐片 implement（内联 tdd + code-review），外加 7 标签状态机 + triage 入口匝道 + agent brief 契约 + 「状态活 label、不活散文」。本项目 2026-06-17 起 Matt 纯化、严格按 Matt 试水；2026-06-18 修正三处真错（grill 在 to-prd 前 / to-prd 是完整 PRD 含两层设计 / triage 是匝道不是主线）并补「设计六层阶梯」；2026-07-02 同步 code-review / implement 新口径。
+description: Matt Pocock skills 整套（想法 → merge）canonical：grill-with-docs → (prototype) → to-prd → to-issues → 逐片 implement（内联 tdd + code-review），外加 7 标签状态机 + triage 入口匝道 + agent brief 契约 + 「状态活 label、不活散文」。本项目 2026-06-17 起 Matt 纯化、严格按 Matt 试水；2026-06-18 修正三处真错（grill 在 to-prd 前 / to-prd 是完整 PRD 含两层设计 / triage 是匝道不是主线）并补「设计六层阶梯」；2026-07-02 同步 code-review / implement 新口径；2026-07-03 注：本项目〔项目加〕设计评审闸（本地 cmr + 线上 bot → ADR Accepted）位于 to-issues 之后、逐片 implement 之前（CLAUDE.md §开发流程 步骤 5；#470/#471/#478 实践序）。
 type: concept
 created: 2026-06-17
-updated: 2026-07-02
+updated: 2026-07-03
 sources:
   - mattpocock/skills 各 SKILL.md 原文（ask-matt 路由器 / grill-with-docs / grill-me / domain-modeling / prototype / to-prd / to-issues / triage / implement / tdd / code-review / diagnosing-bugs / improve-codebase-architecture）
   - Ming_LLM 2026-06-17 验证 session（#174 走通全链、标签纯化、triage 36 backlog）
@@ -24,7 +24,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 > `to-prd` 故意**不访谈**（SKILL.md 原文："Do NOT interview the user — just synthesize what you already know"）。访谈/逼问那一步是 `grill-with-docs`，它在前；`to-prd` 只是把 grill 透的对话**笔录**成 PRD。所以顺序不可能反——to-prd 前面没 grill 就没东西可综合。
 
 > [!important] triage 不在主线上，是**入口匝道**
-> `triage` 只处理**你没创建的**外来 issue（bug 报告 / 进来的需求）。`to-issues` 产出的子 issue 已经是 `ready-for-agent`，**不要再 triage**（原文："Issues that to-issues produced are already agent-ready, so don't triage them"）。
+> `triage` 只处理**你没创建的**外来 issue（bug 报告 / 进来的需求）。`to-issues` 产出的子 issue 规格即 agent-ready，**不要再 triage**（原文："Issues that to-issues produced are already agent-ready, so don't triage them"）。（本项目注：不 triage 不变，但贴 `ready-for-agent` **标签**受设计评审闸前 hold 约束——闸收敛后统一贴，见流程图。）
 
 > [!important] `to-prd` / `to-issues` 只在「多 session 大活」才走
 > `ask-matt` 第 3 步是个分叉：**多 session 才做的大 feature** 才 `to-prd` → `to-issues`；**单 session 能完的小活直接在同一窗口 implement、跳过这两步**。别把 to-prd/to-issues 当所有活的必经。
@@ -46,6 +46,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
         Problem / Solution / 详尽 User Stories / Implementation Decisions / Testing Decisions / Out of Scope / Further Notes
  └ to-issues ─────── PRD 切薄垂直切片子 issue（Parent + What to build + 验收 + Blocked by + AFK/HITL）
         ↑ grill →(decision-mapping)→ to-prd → to-issues 留同一不间断窗口，别中途 compact（smart zone ~120k）
+ └ 〔项目加〕设计评审闸 ── 本地 cmr + 线上 bot（审含切片布线的设计全家）→ merge → ADR Accepted（切片的 ready-for-agent 闸后统一贴，闸前 hold）
  └ (每个 issue 开新 session) implement ── 按 PRD/issue 实现：约定 seam 调 /tdd（never refactor while RED）
           → 跑 typecheck/单测/全量 → baseline commit
           → 单评（手动流 /code-review；编排器 runner 派 /code-review reviewer）→ fix commits
@@ -90,7 +91,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 - **Out of Scope** —— 明确不做的。
 - **Further Notes** —— 其它。
 
-产出发到 issue tracker（父/epic），贴 `ready-for-agent`，无需再单独 triage。
+产出发到 issue tracker（父/epic），贴 `ready-for-agent`，无需再单独 triage（父标签在 to-issues 撤父转 tracker；**切片**标签受设计评审闸前 hold 约束）。
 
 ### 设计落在哪（六层阶梯，解「详细设计在哪长」）
 
@@ -219,5 +220,5 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 > [!note] 状态：严格按 Matt 试水中（完全实验，非照抄）
 > 本页把 Matt 整套当 canonical 写全，本项目**严格照它跑一遍**验证成不成立。**操作姿态（2026-06-18 定）**：先走走看，碰到不合理的地方就**改 / 提 issue**、慢慢理解，**不是无脑照抄**。
 > **已拍决定**：**跑 Matt 的重型 `to-prd`**（含 Implementation/Testing Decisions 两层设计），不退薄 issue（2026-06-18，完全实验——既是 strict Matt 就不再逐点问「要不要照 Matt」）。
-> **仍记的偏离 / 待撞的粗糙边**（数据点）：(a) 在 to-prd 后、to-issues 后各插一道 cross-model 评审闸（项目加的，非 Matt）——其中**设计评审闸的对象应从「ADR」扩到「PRD + ADR」**，因为设计大头现在在 PRD；(b) 实践中撞到的粗糙边（如 to-issues 前父 issue 短暂挂 `ready-for-agent`）按「走走看」原则**遇到再改 / 提 issue**，不提前拍。
+> **仍记的偏离 / 待撞的粗糙边**（数据点）：(a) 〔2026-07-03 已结算〕设计评审闸=**一道**、位于 to-issues 之后（cmr 审含切片布线的设计全家=PRD+ADR+词表+切片，#470/#471/#478 实践序）——早期「to-prd 后、to-issues 后各插一道」的两闸设想与「对象从 ADR 扩到 PRD+ADR」的诉求均已被此形态吸收；(b) 实践中撞到的粗糙边（如 to-issues 前父 issue 短暂挂 `ready-for-agent`）按「走走看」原则**遇到再改 / 提 issue**，不提前拍。
 > 成立后这套机制的 canonical 应回流 wiki（wiki session 的活）；本项目侧只留「采纳决定 + 指针」在 `CLAUDE.md`。
