@@ -308,10 +308,7 @@ def _substrate_hub_budget_income_lines(db: GameDB) -> Tuple[List[Dict[str, objec
     remittance = _round_nonnegative_amount(_fiscal_container_value(db, "hub_省级起运到京"))
     salt = _round_nonnegative_amount(_fiscal_container_value(db, "hub_盐税解京"))
     commerce = _round_nonnegative_amount(_fiscal_container_value(db, "hub_商税解京"))
-    taicang_loss = _round_nonnegative_amount(
-        _fiscal_container_value(db, "C_太仓挪用")
-        + _fiscal_container_value(db, "C_太仓纯亏空")
-    )
+    taicang_loss = _round_nonnegative_amount(_fiscal_container_value(db, "hub_太仓亏空"))
     income = [
         {"name": "起运", "amount": remittance, "note": "各省起运到京（hub 持久源）"},
         {"name": "盐税", "amount": salt, "note": "盐税中央旁路（hub 持久源）"},
@@ -334,6 +331,20 @@ def _set_fiscal_container(db: GameDB, key: str, value: float, note: str) -> None
           updated_at = CURRENT_TIMESTAMP
         """,
         (key, float(value), note),
+    )
+
+
+def _add_fiscal_container(db: GameDB, key: str, delta: float, note: str) -> None:
+    db.conn.execute(
+        """
+        INSERT INTO fiscal_containers (key, value, note)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+          value = fiscal_containers.value + excluded.value,
+          note = excluded.note,
+          updated_at = CURRENT_TIMESTAMP
+        """,
+        (key, float(delta), note),
     )
 
 
@@ -1081,13 +1092,17 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             raise _SubstrateHubFixedFlowAbort(
                 f"substrate_hub 京运补/中央军饷 hub 分配失败：{exc}"
             ) from exc
-        _set_fiscal_container(
+        _add_fiscal_container(
             db, "C_京运克扣", hub_outbound.central_transport_human_loss,
             "京运转运人为克扣（可追赃）",
         )
-        _set_fiscal_container(
+        _add_fiscal_container(
             db, "C_京运运损", hub_outbound.central_transport_sink_loss,
             "京运转运自然运损（sink）",
+        )
+        _set_fiscal_container(
+            db, "hub_京运损耗", hub_outbound.central_transport_loss,
+            "本月京运转运损耗",
         )
         hub_debit = _debit_substrate_hub_outbound(db, state, hub_outbound)
         if hub_debit > 0:
@@ -1335,11 +1350,12 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     f"substrate_hub 太仓入库 hub 分配失败：{exc}"
                 ) from exc
             central_loss = taicang_human_loss + taicang_sink_loss
-            _set_fiscal_container(db, "C_太仓挪用", taicang_human_loss, "中央太仓人为亏空（可追赃）")
-            _set_fiscal_container(db, "C_太仓纯亏空", taicang_sink_loss, "中央太仓自然亏空（sink）")
+            _add_fiscal_container(db, "C_太仓挪用", taicang_human_loss, "中央太仓人为亏空（可追赃）")
+            _add_fiscal_container(db, "C_太仓纯亏空", taicang_sink_loss, "中央太仓自然亏空（sink）")
             _set_fiscal_container(db, "hub_省级起运到京", remittance_amount, "Σ本月明控省起运到京")
             _set_fiscal_container(db, "hub_盐税解京", salt_amount, "明控省盐税中央旁路")
             _set_fiscal_container(db, "hub_商税解京", commerce_amount, "明控省商税中央旁路")
+            _set_fiscal_container(db, "hub_太仓亏空", central_loss, "本月中央太仓亏空与挪用")
 
             for category, raw_amount, amount, reason in (
                 ("起运", raw_remittance_amount, remittance_amount, f"{TURN_UNIT}省级起运入京"),
