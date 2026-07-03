@@ -396,6 +396,86 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     }));
   });
 
+  it("does not rewrite CMR route-accounting malformed results", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    class RouteAccountingRewriteBackend extends CapableFamilyBackend {
+      readonly rewriteCalls: Array<{
+        spec: WorkerSpec;
+        ctx: DispatchContext;
+        protocolFailure: Extract<WorkerResult, { kind: "malformed" }>;
+        attempt: number;
+      }> = [];
+
+      constructor() {
+        super({ verify: () => ({ ok: true }) });
+      }
+
+      async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "malformed",
+            reason: "successful leg opus is not declared in active route",
+            sessionId: "cmr-route-accounting",
+            cmrLegAccountingPayload: {
+              successfulLegs: ["agy", "opus"],
+              skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
+            },
+          };
+        }
+        throw new Error(`unexpected worker after route-accounting failure: ${spec.kind}`);
+      }
+
+      async rewriteWorkerOutcome(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
+        attempt: number,
+      ): Promise<WorkerResult> {
+        this.rewriteCalls.push({ spec, ctx, protocolFailure, attempt });
+        return {
+          kind: "completed",
+          output: {
+            kind: "cmr",
+            converged: true,
+            successfulLegs: ["gpt-5.5", "agy"],
+            ...CMR_EVIDENCE,
+          },
+        };
+      }
+    }
+
+    const backend = new RouteAccountingRewriteBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.rewriteCalls).toEqual([]);
+    expect(backend.prCalls).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("not declared"),
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        repairHint: expect.stringContaining("leg accounting payload"),
+        metadata: expect.objectContaining({
+          routeAccounting: expect.objectContaining({
+            successfulLegs: ["agy", "opus"],
+            skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
+          }),
+        }),
+      }),
+    }));
+  });
+
   it("fingerprints the resolved route without re-throwing an already accepted tight-route violation", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     vi.stubEnv("ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS", "opus");

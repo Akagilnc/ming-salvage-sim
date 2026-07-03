@@ -162,6 +162,11 @@ export interface VerifyCmrInput {
   readonly priorCmrFindingIdentityKeysByPass?: Partial<
     Record<IntegratedCmrPass, readonly string[]>
   >;
+  /**
+   * Internal final-barrier budget threaded across CMR coder-fix restarts. Public
+   * callers omit it; recursive restarts decrement it after each accepted fix.
+   */
+  readonly remainingCmrCoderFixRounds?: number;
 }
 
 /** The verify-cmr hook result. */
@@ -895,10 +900,12 @@ interface IntegratedCmrPassOutcome {
     readonly priorCmrFindingIdentityKeysByPass: Partial<
       Record<IntegratedCmrPass, readonly string[]>
     >;
+    readonly remainingCmrCoderFixRounds: number;
   };
 }
 
 const MAX_CODER_FIX_REPAIR_EVIDENCE_ATTEMPTS = 3;
+const MAX_CMR_CODER_FIX_ROUNDS = 3;
 
 function coderFixFailureStopSummary(input: {
   readonly pass: IntegratedCmrPass;
@@ -1299,6 +1306,9 @@ async function rewriteOutcomeProtocolFailure(input: {
   readonly result: WorkerResult;
 }): Promise<WorkerResult> {
   if (input.result.kind !== "malformed") return input.result;
+  if (input.result.cmrLegAccountingPayload !== undefined) {
+    return input.result;
+  }
   if (input.familyBackend.rewriteWorkerOutcome === undefined) {
     return {
       kind: "outcome_protocol_failure",
@@ -1366,6 +1376,7 @@ async function runIntegratedCmrPass(input: {
   >;
   readonly resolvedRoute: ResolvedModelRoute;
   readonly allowCoderFix: boolean;
+  readonly remainingCmrCoderFixRounds: number;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -1380,6 +1391,7 @@ async function runIntegratedCmrPass(input: {
     priorCmrFindingIdentityKeys,
     priorCmrFindingIdentityKeysByPass,
     allowCoderFix,
+    remainingCmrCoderFixRounds,
   } = input;
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
   const resolvedFamilyHeadAfter = await readPostCmrFamilyHead(
@@ -1663,6 +1675,28 @@ async function runIntegratedCmrPass(input: {
           cmrFindingClassification,
           stopSummary,
         });
+        if (remainingCmrCoderFixRounds <= 0) {
+          const budgetReason =
+            `integrated cmr ${pass} coder-fix round budget exhausted after ` +
+            `${MAX_CMR_CODER_FIX_ROUNDS} committed repair rounds: ` +
+            fixableKeys.join(", ");
+          await recordDurableAbort(familyBackend, {
+            phase: "final",
+            cmrPass: pass,
+            reason: budgetReason,
+            familyHeadAfter: postWorkerFamilyHead,
+            cmrFindingClassification,
+            stopSummary: coderFixFailureStopSummary({
+              pass,
+              reason: budgetReason,
+              familyHeadAfter: postWorkerFamilyHead,
+            }),
+          });
+          return {
+            result: { ok: false, ran: true },
+            familyHeadAfter: postWorkerFamilyHead,
+          };
+        }
         const fixRound = await runCmrCoderFix({
           pass,
           familyBackend,
@@ -1675,6 +1709,7 @@ async function runIntegratedCmrPass(input: {
           resolvedRoute,
         });
         if (!fixRound.result.ok) return fixRound;
+        const remainingAfterFix = remainingCmrCoderFixRounds - 1;
         const updatedPriorKeys = [
             ...new Set([...(priorCmrFindingIdentityKeys ?? []), ...fixableKeys]),
         ];
@@ -1687,6 +1722,7 @@ async function runIntegratedCmrPass(input: {
               ...(priorCmrFindingIdentityKeysByPass ?? {}),
               [pass]: updatedPriorKeys,
             },
+            remainingCmrCoderFixRounds: remainingAfterFix,
           },
         };
       }
@@ -1797,6 +1833,7 @@ export async function runVerifyCmr(
     moduleContext,
     priorCmrFindingIdentityKeys,
     priorCmrFindingIdentityKeysByPass,
+    remainingCmrCoderFixRounds,
   } = input;
 
   // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
@@ -1892,6 +1929,8 @@ export async function runVerifyCmr(
     pass: IntegratedCmrPass,
   ): readonly string[] | undefined =>
     activePriorKeysByPass[pass];
+  const activeRemainingCmrCoderFixRounds =
+    remainingCmrCoderFixRounds ?? MAX_CMR_CODER_FIX_ROUNDS;
   const completeness = await runIntegratedCmrPass({
     pass: "completeness",
     familyBackend,
@@ -1905,6 +1944,7 @@ export async function runVerifyCmr(
     priorCmrFindingIdentityKeysByPass: activePriorKeysByPass,
     resolvedRoute,
     allowCoderFix: true,
+    remainingCmrCoderFixRounds: activeRemainingCmrCoderFixRounds,
   });
   if (!completeness.result.ok) return completeness.result;
   if (completeness.restartFinalBarrier !== undefined) {
@@ -1919,6 +1959,8 @@ export async function runVerifyCmr(
       moduleContext,
       priorCmrFindingIdentityKeysByPass:
         completeness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass,
+      remainingCmrCoderFixRounds:
+        completeness.restartFinalBarrier.remainingCmrCoderFixRounds,
     });
   }
 
@@ -1935,6 +1977,7 @@ export async function runVerifyCmr(
     priorCmrFindingIdentityKeysByPass: activePriorKeysByPass,
     resolvedRoute,
     allowCoderFix: true,
+    remainingCmrCoderFixRounds: activeRemainingCmrCoderFixRounds,
   });
   if (!correctness.result.ok) return correctness.result;
   if (correctness.restartFinalBarrier !== undefined) {
@@ -1949,6 +1992,8 @@ export async function runVerifyCmr(
       moduleContext,
       priorCmrFindingIdentityKeysByPass:
         correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass,
+      remainingCmrCoderFixRounds:
+        correctness.restartFinalBarrier.remainingCmrCoderFixRounds,
     });
   }
   const cmrPassedFamilyHeadAfter = correctness.familyHeadAfter;
