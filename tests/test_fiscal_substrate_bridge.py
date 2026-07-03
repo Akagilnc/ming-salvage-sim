@@ -1183,13 +1183,19 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     )
     db.conn.commit()
 
+    net_pct = int(db.legacy_modifiers(state).get("国库", 0) or 0)
+    assert net_pct < 0
+
     flow_rows = flows_mod.apply_fixed_period_flows(db, state)
 
-    assert state.metrics["国库"] == 16
+    expected_remittance = db.apply_legacy_pct(12, net_pct)
+    expected_salt = db.apply_legacy_pct(3, net_pct)
+    expected_commerce = db.apply_legacy_pct(4, net_pct)
+    assert state.metrics["国库"] == expected_remittance + expected_salt + expected_commerce - 3
     flow_by_category = {flow.get("category"): flow for flow in flow_rows}
-    assert flow_by_category["起运"]["amount"] == 12
-    assert flow_by_category["盐税"]["amount"] == 3
-    assert flow_by_category["商税"]["amount"] == 4
+    assert flow_by_category["起运"]["amount"] == expected_remittance
+    assert flow_by_category["盐税"]["amount"] == expected_salt
+    assert flow_by_category["商税"]["amount"] == expected_commerce
     assert flow_by_category["太仓亏空"]["amount"] == 3
     ledger = {
         row["category"]: row["delta"]
@@ -1201,7 +1207,12 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
             """
         ).fetchall()
     }
-    assert ledger == {"起运": 12, "盐税": 3, "商税": 4, "太仓亏空": -3}
+    assert ledger == {
+        "起运": expected_remittance,
+        "盐税": expected_salt,
+        "商税": expected_commerce,
+        "太仓亏空": -3,
+    }
     containers = {
         row["key"]: row["value"]
         for row in db.conn.execute(
@@ -1215,9 +1226,9 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
             """
         ).fetchall()
     }
-    assert containers["hub_省级起运到京"] == pytest.approx(12)
-    assert containers["hub_盐税解京"] == pytest.approx(3)
-    assert containers["hub_商税解京"] == pytest.approx(4)
+    assert containers["hub_省级起运到京"] == pytest.approx(expected_remittance)
+    assert containers["hub_盐税解京"] == pytest.approx(expected_salt)
+    assert containers["hub_商税解京"] == pytest.approx(expected_commerce)
     assert containers["C_太仓挪用"] == pytest.approx(2)
     assert containers["C_太仓纯亏空"] == pytest.approx(1)
     ledger_snapshot = _hub_ledger_snapshot(db, turn=state.turn)
@@ -3819,6 +3830,28 @@ def test_cutover_jingyun_gross_bool_uses_settlement_abort_error_pack(
     assert abort.error_pack_path
     assert Path(abort.error_pack_path).exists()
     assert _read_settle(db)["p"]["拨付gross"] is True
+
+
+def test_cutover_taicang_loss_rate_bad_state_uses_settlement_abort_error_pack(
+    fresh_game, monkeypatch, tmp_path
+):
+    import ming_sim.error_pack as error_pack_mod
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    monkeypatch.setattr(error_pack_mod, "user_data_dir", lambda: tmp_path)
+    _set_fiscal_config_value(db, "central_taicang_human_loss_rate", 80)
+    _set_fiscal_config_value(db, "central_taicang_sink_loss_rate", 30)
+
+    with pytest.raises(SettlementAbort) as exc_info:
+        flows_mod.apply_fixed_period_flows(db, state)
+
+    abort = exc_info.value
+    assert abort.stage == "fixed_fiscal"
+    assert abort.error_pack_path
+    pack = Path(abort.error_pack_path)
+    assert pack.exists()
+    assert (pack / "traceback.txt").read_text(encoding="utf-8")
 
 
 def test_pre_settle_cutover_substrate_bad_state_uses_settlement_abort_error_pack(
