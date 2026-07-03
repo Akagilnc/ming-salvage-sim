@@ -46,7 +46,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
         Problem / Solution / 详尽 User Stories / Implementation Decisions / Testing Decisions / Out of Scope / Further Notes
  └ to-issues ─────── PRD 切薄垂直切片子 issue（Parent + What to build + 验收 + Blocked by + AFK/HITL）
         ↑ grill →(decision-mapping)→ to-prd → to-issues 留同一不间断窗口，别中途 compact（smart zone ~120k）
- └ 〔项目加〕设计评审闸 ── 本地 cmr + 线上 bot（审含切片布线的设计全家）→ merge → ADR Accepted
+ └ 〔项目加〕设计评审闸 ── 本地 cmr + 线上 bot（审含切片布线的设计全家）→ merge → ADR Accepted（切片的 ready-for-agent 闸后统一贴，闸前 hold）
  └ (每个 issue 开新 session) implement ── 按 PRD/issue 实现：约定 seam 调 /tdd（never refactor while RED）
           → 跑 typecheck/单测/全量 → baseline commit
           → 单评（手动流 /code-review；编排器 runner 派 /code-review reviewer）→ fix commits
