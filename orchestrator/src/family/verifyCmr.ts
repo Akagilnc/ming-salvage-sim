@@ -977,12 +977,26 @@ async function rewriteOutcomeProtocolFailure(input: {
 
   let lastFailure: Extract<WorkerResult, { kind: "malformed" }> = input.result;
   for (let attempt = 1; attempt <= OUTCOME_REWRITE_RETRY_CAP; attempt++) {
-    const rewritten = await input.familyBackend.rewriteWorkerOutcome(
-      input.spec,
-      input.ctx,
-      lastFailure,
-      attempt,
-    );
+    let rewritten: WorkerResult;
+    try {
+      rewritten = await input.familyBackend.rewriteWorkerOutcome(
+        input.spec,
+        input.ctx,
+        lastFailure,
+        attempt,
+      );
+    } catch (err) {
+      const sessionId = lastFailure.sessionId ?? input.result.sessionId;
+      return {
+        kind: "outcome_protocol_failure",
+        reason:
+          `worker outcome protocol rewrite threw on attempt ${attempt}: ` +
+          `${err instanceof Error ? err.message : String(err)}; original failure: ` +
+          lastFailure.reason,
+        attempts: attempt,
+        ...(sessionId !== undefined ? { sessionId } : {}),
+      };
+    }
     if (rewritten.kind !== "malformed") return rewritten;
     lastFailure = rewritten;
   }
