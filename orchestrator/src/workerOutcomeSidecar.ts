@@ -1,7 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
 
-/** Worker-visible path for the runner-owned machine outcome sidecar. */
-export const WORKER_OUTCOME_SANDBOX_FILE = ".orchestrator-outcome.json";
+/** Repo-root filename excluded from git for the runner-owned outcome sidecar. */
+export const WORKER_OUTCOME_REPO_FILE = ".orchestrator-outcome.json";
+
+/**
+ * Worker-visible path for the runner-owned machine outcome sidecar.
+ *
+ * Sandcastle's Docker provider resolves the sandbox repo directory to
+ * /home/agent/workspace. Keep the env var absolute so a worker that has cd'd into
+ * a subdirectory still writes and validates the mounted root sidecar.
+ */
+export const WORKER_OUTCOME_SANDBOX_FILE =
+  `/home/agent/workspace/${WORKER_OUTCOME_REPO_FILE}`;
 
 /**
  * Unwrap a ```json … ``` (or bare ``` … ```) fenced code block to its inner

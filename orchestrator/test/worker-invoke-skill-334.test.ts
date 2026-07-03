@@ -298,7 +298,7 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(protocol).toMatch(/raw JSON object/i);
     expect(protocol).toMatch(/if \[ -n "\$\{ORCHESTRATOR_OUTCOME_PATH:-\}" \]/);
     expect(protocol).toMatch(
-      /if \[ -n "\$\{ORCHESTRATOR_OUTCOME_PATH:-\}" \][\s\S]*python3 -c 'import json, sys; obj=json\.load\(open\(sys\.argv\[1\]\)\); sys\.exit\(0 if isinstance\(obj, dict\) else 1\)' "\$ORCHESTRATOR_OUTCOME_PATH"[\s\S]*fi/,
+      /if \[ -n "\$\{ORCHESTRATOR_OUTCOME_PATH:-\}" \][\s\S]*python3 -c 'import json, sys; obj=json\.load\(open\(sys\.argv\[1\], encoding="utf-8"\)\); sys\.exit\(0 if isinstance\(obj, dict\) else 1\)' "\$ORCHESTRATOR_OUTCOME_PATH" >\/dev\/null 2>&1[\s\S]*fi/,
     );
     expect(protocol).not.toMatch(/python3 -m json\.tool/);
 
