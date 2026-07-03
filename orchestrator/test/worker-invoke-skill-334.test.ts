@@ -422,6 +422,32 @@ class ReviewWorkerBackend implements Backend {
   }
   async writeLedger(): Promise<void> {}
 
+  protected coderOutput(spec: WorkerSpec, ctx: DispatchContext): StepOutput {
+    const output: StepOutput = {
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+    };
+    if (spec.id !== "S5") {
+      return output;
+    }
+    return {
+      ...output,
+      repairEvidence: {
+        findingScope: {
+          identityKeys: ctx.blockingFindingIdentityKeys ?? [],
+          locations: ctx.blockingFindings?.map((finding) => finding.location) ?? [],
+        },
+        changedFiles: ["f.ts"],
+        tests: ["npm test -- --run test/worker-invoke-skill-334.test.ts"],
+        sameClassBugScan:
+          'rg "blockingFindingIdentityKeys|repairEvidence" orchestrator/src orchestrator/test',
+        introducedRegressionCheck:
+          "npm test -- --run test/worker-invoke-skill-334.test.ts",
+      },
+    };
+  }
+
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
@@ -432,7 +458,7 @@ class ReviewWorkerBackend implements Backend {
     if (spec.kind === "coder") {
       return {
         kind: "completed",
-        output: { kind: "coder", committed: true, commitsAdded: 1 },
+        output: this.coderOutput(spec, ctx),
       };
     }
     if (spec.kind === "reviewer") {
@@ -525,7 +551,7 @@ describe("#336 cmr S336 r4 — the terminal single-slice S7 gate re-asserts the 
       if (spec.kind === "coder") {
         return {
           kind: "completed",
-          output: { kind: "coder", committed: true, commitsAdded: 1 },
+          output: this.coderOutput(spec, ctx),
         };
       }
       if (spec.kind === "reviewer") {

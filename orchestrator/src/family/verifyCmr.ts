@@ -86,6 +86,7 @@ import {
   recordShipped,
 } from "./ledger.js";
 import { isFilledString } from "../shipOutcome.js";
+import { isCompleteRepairEvidence } from "../validate.js";
 import {
   contractDriftStopSummary,
   infraFailureStopSummary,
@@ -890,6 +891,8 @@ interface IntegratedCmrPassOutcome {
   readonly familyHeadAfter?: string;
 }
 
+const MAX_CODER_FIX_REPAIR_EVIDENCE_ATTEMPTS = 3;
+
 function fixableCmrFindingKeys(
   classification: FamilyCmrClassification,
 ): readonly string[] | undefined {
@@ -937,6 +940,53 @@ function coderFixFailureStopSummary(input: {
   });
 }
 
+function familyRepairEvidenceGateFailureReason(input: {
+  readonly pass: IntegratedCmrPass;
+  readonly output: Extract<WorkerResult, { kind: "completed" }>["output"];
+  readonly blockingFindingIdentityKeys: readonly string[];
+  readonly familyHeadBefore?: string;
+  readonly familyHeadAfter?: string;
+}): string | undefined {
+  if (input.output.kind !== "coder") {
+    return `integrated cmr ${input.pass} coder-fix returned non-coder output`;
+  }
+  if (!input.output.committed || input.output.commitsAdded < 1) {
+    return (
+      `integrated cmr ${input.pass} coder-fix produced no independent fix commit: ` +
+      `committed=${input.output.committed} commitsAdded=${input.output.commitsAdded}`
+    );
+  }
+  if (
+    input.familyHeadBefore === undefined ||
+    input.familyHeadAfter === undefined ||
+    input.familyHeadBefore === input.familyHeadAfter
+  ) {
+    return (
+      `integrated cmr ${input.pass} coder-fix produced no verifiable family HEAD movement: ` +
+      `${input.familyHeadBefore ?? "unknown"} -> ${input.familyHeadAfter ?? "unknown"}`
+    );
+  }
+  if (!isCompleteRepairEvidence(input.output.repairEvidence)) {
+    return (
+      `integrated cmr ${input.pass} coder-fix repairEvidence missing required ` +
+      `finding scope, tests, same-class bug scan, or introduced-regression check`
+    );
+  }
+  const evidenceKeys = new Set(
+    input.output.repairEvidence.findingScope.identityKeys ?? [],
+  );
+  const missingKeys = input.blockingFindingIdentityKeys.filter(
+    (key) => !evidenceKeys.has(key),
+  );
+  if (missingKeys.length > 0) {
+    return (
+      `integrated cmr ${input.pass} coder-fix repairEvidence did not map to ` +
+      `blocking finding scope: ${missingKeys.join(", ")}`
+    );
+  }
+  return undefined;
+}
+
 function cmrReviewerHeadMovedStopSummary(input: {
   readonly pass: IntegratedCmrPass;
   readonly familyHeadBefore: string;
@@ -981,124 +1031,163 @@ async function runCmrCoderFix(input: {
     familyIssue,
     resolvedRoute,
   } = input;
-  const fixResult = await dispatchOrAbort(
-    familyBackend,
-    familyCoderFixWorkerSpec(resolvedRoute),
-    {
-      familyBase,
-      blockingFindings: classification.blocking,
-      blockingFindingIdentityKeys,
-      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
-      ...(familyIssue !== undefined ? { familyIssue } : {}),
-    },
-  );
-  const familyHeadAfter = await readPostCmrFamilyHead(
-    familyBackend,
-    familyBase,
-    familyHeadBefore,
-  );
   const reasonPrefix =
     `integrated cmr ${pass} coder-fix for ` +
     blockingFindingIdentityKeys.join(", ");
 
-  if (fixResult.kind === "escalated") {
-    const reason = `${reasonPrefix} escalated: ${fixResult.escalation.reason} — ${fixResult.escalation.diagnosis}`;
-    const stopSummary = coderFixFailureStopSummary({
-      pass,
-      reason,
-      familyHeadBefore,
-      familyHeadAfter,
-    });
-    await familyBackend.escalateFamily?.({
-      reason,
-      familyHeadAfter,
-      stopSummary,
-    });
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter,
-      stopSummary,
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
-  }
+  let currentFamilyHeadBefore = familyHeadBefore;
+  let lastRepairGateFailure: string | undefined;
 
-  if (fixResult.kind !== "completed" || fixResult.output.kind !== "coder") {
-    const reason =
-      fixResult.kind === "failed"
-        ? `${reasonPrefix} failed: ${fixResult.reason}`
-        : fixResult.kind === "malformed"
-          ? `${reasonPrefix} malformed: ${fixResult.reason}`
-          : `${reasonPrefix} returned no valid coder result`;
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter,
-      stopSummary: coderFixFailureStopSummary({
+  for (
+    let attempt = 1;
+    attempt <= MAX_CODER_FIX_REPAIR_EVIDENCE_ATTEMPTS;
+    attempt += 1
+  ) {
+    const fixResult = await dispatchOrAbort(
+      familyBackend,
+      familyCoderFixWorkerSpec(resolvedRoute),
+      {
+        familyBase,
+        blockingFindings: classification.blocking,
+        blockingFindingIdentityKeys,
+        ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
+        ...(familyIssue !== undefined ? { familyIssue } : {}),
+      },
+    );
+    const familyHeadAfter = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      currentFamilyHeadBefore,
+    );
+
+    if (fixResult.kind === "escalated") {
+      const reason = `${reasonPrefix} escalated: ${fixResult.escalation.reason} — ${fixResult.escalation.diagnosis}`;
+      const stopSummary = coderFixFailureStopSummary({
         pass,
         reason,
-        familyHeadBefore,
+        familyHeadBefore: currentFamilyHeadBefore,
         familyHeadAfter,
-      }),
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
-  }
+      });
+      await familyBackend.escalateFamily?.({
+        reason,
+        familyHeadAfter,
+        stopSummary,
+      });
+      await recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter,
+        stopSummary,
+      });
+      return { result: { ok: false, ran: true }, familyHeadAfter };
+    }
 
-  if (fixResult.output.escalate !== undefined) {
-    const reason =
-      `${reasonPrefix} escalated: ${fixResult.output.escalate.reason} — ` +
-      fixResult.output.escalate.diagnosis;
-    const stopSummary = coderFixFailureStopSummary({
-      pass,
-      reason,
-      familyHeadBefore,
-      familyHeadAfter,
-    });
-    await familyBackend.escalateFamily?.({
-      reason,
-      familyHeadAfter,
-      stopSummary,
-    });
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter,
-      stopSummary,
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
-  }
+    if (fixResult.kind !== "completed" || fixResult.output.kind !== "coder") {
+      const reason =
+        fixResult.kind === "failed"
+          ? `${reasonPrefix} failed: ${fixResult.reason}`
+          : fixResult.kind === "malformed"
+            ? `${reasonPrefix} malformed: ${fixResult.reason}`
+            : `${reasonPrefix} returned no valid coder result`;
+      await recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter,
+        stopSummary: coderFixFailureStopSummary({
+          pass,
+          reason,
+          familyHeadBefore: currentFamilyHeadBefore,
+          familyHeadAfter,
+        }),
+      });
+      return { result: { ok: false, ran: true }, familyHeadAfter };
+    }
 
-  if (!fixResult.output.committed || fixResult.output.commitsAdded < 1) {
-    const reason =
-      `${reasonPrefix} produced no independent fix commit: ` +
-      `committed=${fixResult.output.committed} commitsAdded=${fixResult.output.commitsAdded}`;
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter,
-      stopSummary: coderFixFailureStopSummary({
+    if (fixResult.output.escalate !== undefined) {
+      const reason =
+        `${reasonPrefix} escalated: ${fixResult.output.escalate.reason} — ` +
+        fixResult.output.escalate.diagnosis;
+      const stopSummary = coderFixFailureStopSummary({
         pass,
         reason,
-        familyHeadBefore,
+        familyHeadBefore: currentFamilyHeadBefore,
         familyHeadAfter,
-      }),
+      });
+      await familyBackend.escalateFamily?.({
+        reason,
+        familyHeadAfter,
+        stopSummary,
+      });
+      await recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter,
+        stopSummary,
+      });
+      return { result: { ok: false, ran: true }, familyHeadAfter };
+    }
+
+    const repairGateFailure = familyRepairEvidenceGateFailureReason({
+      pass,
+      output: fixResult.output,
+      blockingFindingIdentityKeys,
+      familyHeadBefore: currentFamilyHeadBefore,
+      familyHeadAfter,
     });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
+    if (repairGateFailure !== undefined) {
+      lastRepairGateFailure = repairGateFailure;
+      if (attempt < MAX_CODER_FIX_REPAIR_EVIDENCE_ATTEMPTS) {
+        currentFamilyHeadBefore = familyHeadAfter;
+        continue;
+      }
+      const reason =
+        `${reasonPrefix} repair evidence gate failed after ${attempt} attempts: ` +
+        repairGateFailure;
+      await recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter,
+        stopSummary: coderFixFailureStopSummary({
+          pass,
+          reason,
+          familyHeadBefore: currentFamilyHeadBefore,
+          familyHeadAfter,
+        }),
+      });
+      return { result: { ok: false, ran: true }, familyHeadAfter };
+    }
+
+    await recordCmrFixCommitted(familyBackend, {
+      cmrPass: pass,
+      familyHeadBefore: currentFamilyHeadBefore,
+      familyHeadAfter,
+      reason:
+        `${reasonPrefix}: coder-fix committed ${fixResult.output.commitsAdded} ` +
+        `commit${fixResult.output.commitsAdded === 1 ? "" : "s"}`,
+    });
+    return { result: { ok: true, ran: true }, familyHeadAfter };
   }
 
-  await recordCmrFixCommitted(familyBackend, {
+  const reason =
+    `${reasonPrefix} repair evidence gate failed: ` +
+    (lastRepairGateFailure ?? "unknown repair evidence failure");
+  await recordDurableAbort(familyBackend, {
+    phase: "final",
     cmrPass: pass,
-    familyHeadBefore,
-    familyHeadAfter,
-    reason:
-      `${reasonPrefix}: coder-fix committed ${fixResult.output.commitsAdded} ` +
-      `commit${fixResult.output.commitsAdded === 1 ? "" : "s"}`,
+    reason,
+    familyHeadAfter: currentFamilyHeadBefore,
+    stopSummary: coderFixFailureStopSummary({
+      pass,
+      reason,
+      familyHeadBefore: currentFamilyHeadBefore,
+      familyHeadAfter: currentFamilyHeadBefore,
+    }),
   });
-  return { result: { ok: true, ran: true }, familyHeadAfter };
+  return { result: { ok: false, ran: true }, familyHeadAfter: currentFamilyHeadBefore };
 }
 
 async function readPostCmrFamilyHead(

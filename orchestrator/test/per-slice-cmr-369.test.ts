@@ -127,6 +127,26 @@ class RetryReviewBackend implements Backend {
       if (scripted !== undefined) {
         return { kind: "completed", output: scripted };
       }
+      return {
+        kind: "completed",
+        output: {
+          kind: "coder",
+          committed: true,
+          commitsAdded: 1,
+          repairEvidence: {
+            findingScope: {
+              identityKeys: ctx.blockingFindingIdentityKeys ?? [],
+              locations: ctx.blockingFindings?.map((finding) => finding.location) ?? [],
+            },
+            changedFiles: ["src/runner.ts"],
+            tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+            sameClassBugScan:
+              "rg \"priorFindingDispositions|repairEvidence\" orchestrator/src orchestrator/test",
+            introducedRegressionCheck:
+              "npm test -- --run test/per-slice-cmr-369.test.ts",
+          },
+        },
+      };
     }
     if (spec.kind === "coder") {
       return {
@@ -359,6 +379,116 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     ]);
   });
 
+  it("bounces S5 back to coder-fix when repair evidence is missing before fresh re-review", async () => {
+    const backend = new RetryReviewBackend(
+      [
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      undefined,
+      [
+        { kind: "coder", committed: true, commitsAdded: 1 },
+        {
+          kind: "coder",
+          committed: true,
+          commitsAdded: 1,
+          repairEvidence: {
+            findingScope: {
+              identityKeys: [blockingKey],
+              locations: [blocking.location],
+            },
+            changedFiles: ["src/runner.ts"],
+            tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+            sameClassBugScan: "rg \"absence is not closure\" orchestrator/src orchestrator/test",
+            introducedRegressionCheck:
+              "npm test -- --run test/per-slice-cmr-369.test.ts",
+          },
+        },
+      ],
+    );
+
+    const result = await runOrchestrator({ issueNumber: 551, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+    const s6Index = backend.specs.findIndex((spec) => spec.id === "S6");
+    expect(backend.ctxs[s6Index]?.blockingFindingIdentityKeys).toEqual([
+      blockingKey,
+    ]);
+  });
+
+  it("bounces S5 back to coder-fix when no new fix commit exists", async () => {
+    const completeRepairEvidence = {
+      findingScope: {
+        identityKeys: [blockingKey],
+        locations: [blocking.location],
+      },
+      changedFiles: ["src/runner.ts"],
+      tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+      sameClassBugScan: "rg \"absence is not closure\" orchestrator/src orchestrator/test",
+      introducedRegressionCheck:
+        "npm test -- --run test/per-slice-cmr-369.test.ts",
+    };
+    const backend = new RetryReviewBackend(
+      [
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      undefined,
+      [
+        {
+          kind: "coder",
+          committed: false,
+          commitsAdded: 0,
+          repairEvidence: completeRepairEvidence,
+        },
+        {
+          kind: "coder",
+          committed: true,
+          commitsAdded: 1,
+          repairEvidence: completeRepairEvidence,
+        },
+      ],
+    );
+
+    const result = await runOrchestrator({ issueNumber: 551, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
+    ]);
+  });
+
   it("passes prior claimed-fixed findings and identity keys to the S6 fresh reviewer", async () => {
     const backend = new RetryReviewBackend([
       { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
@@ -513,6 +643,10 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
         changedFiles: ["src/runner.ts"],
         tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+        sameClassBugScan:
+          "rg \"repairEvidenceMatchesKey|sameFindingLineage\" orchestrator/src/runner.ts orchestrator/test",
+        introducedRegressionCheck:
+          "npm test -- --run test/per-slice-cmr-369.test.ts",
       },
     };
     const worktree = makeGitWorktree();
@@ -605,6 +739,10 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       repairEvidence: {
         findingScope: { identityKeys: [blockingKey] },
         tests: ["test/per-slice-cmr-369.test.ts"],
+        sameClassBugScan:
+          "rg \"repairEvidenceMatchesKey|sameFindingLineage\" orchestrator/src/runner.ts orchestrator/test",
+        introducedRegressionCheck:
+          "npm test -- --run test/per-slice-cmr-369.test.ts",
       },
     };
     const worktree = makeGitWorktree();
@@ -697,6 +835,10 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       repairEvidence: {
         findingScope: { identityKeys: [blockingKey] },
         tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+        sameClassBugScan:
+          "rg \"repairEvidenceMatchesKey|sameFindingLineage\" orchestrator/src/runner.ts orchestrator/test",
+        introducedRegressionCheck:
+          "npm test -- --run test/per-slice-cmr-369.test.ts",
       },
     };
     const worktree = makeGitWorktree();
@@ -816,6 +958,10 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
               findingScope: { identityKeys: [blockingKey] },
               changedFiles: ["src/runner.ts"],
               tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
+              sameClassBugScan:
+                "rg \"repairEvidenceMatchesKey|sameFindingLineage\" orchestrator/src/runner.ts orchestrator/test",
+              introducedRegressionCheck:
+                "npm test -- --run test/per-slice-cmr-369.test.ts",
             },
           },
           repairMovementPaths: ["src/runner.ts"],

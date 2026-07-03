@@ -122,12 +122,38 @@ class SeamOnlyBackend implements Backend {
   async writeSnapshot(): Promise<void> {}
   async writeLedger(): Promise<void> {}
 
+  private coderOutput(spec: WorkerSpec, ctx: DispatchContext): StepOutput {
+    const output: StepOutput = {
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+    };
+    if (spec.id !== "S5") {
+      return output;
+    }
+    return {
+      ...output,
+      repairEvidence: {
+        findingScope: {
+          identityKeys: ctx.blockingFindingIdentityKeys ?? [],
+          locations: ctx.blockingFindings?.map((finding) => finding.location) ?? [],
+        },
+        changedFiles: ["f.ts"],
+        tests: ["npm test -- --run test/runner-pure-scheduler-337.test.ts"],
+        sameClassBugScan:
+          'rg "blockingFindingIdentityKeys|repairEvidence" orchestrator/src orchestrator/test',
+        introducedRegressionCheck:
+          "npm test -- --run test/runner-pure-scheduler-337.test.ts",
+      },
+    };
+  }
+
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}:${spec.skill ?? "—"}`);
     this.specs.push(spec);
     this.ctxs.push(ctx);
     if (spec.kind === "coder") {
-      return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+      return { kind: "completed", output: this.coderOutput(spec, ctx) };
     }
     if (spec.kind === "reviewer") {
       this.reviewCount += 1;

@@ -57,6 +57,11 @@ export interface RouteContext {
    * were closure.
    */
   readonly pendingBlockingFindings?: ReadonlyArray<Finding>;
+  /**
+   * Runner-owned mechanical gate for S5 coder-fix output. `false` means the
+   * fix result is not eligible for fresh re-review yet, so S5 is re-dispatched.
+   */
+  readonly repairEvidenceEligible?: boolean;
 }
 
 /**
@@ -140,8 +145,11 @@ export function route(ctx: RouteContext): RouteDecision {
       if (!isValidCoderOutput(ctx.output)) {
         return { kind: "handoff", status: "error" };
       }
+      if (ctx.repairEvidenceEligible === false) {
+        return { kind: "next", step: "S5" };
+      }
       if (!ctx.output.committed) {
-        return { kind: "handoff", status: "error" };
+        return { kind: "next", step: "S5" };
       }
       return { kind: "next", step: "S6" };
     }
