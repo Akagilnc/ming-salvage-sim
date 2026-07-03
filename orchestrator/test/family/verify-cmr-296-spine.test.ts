@@ -597,6 +597,96 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
     expect(backend.cmrCalls[0]?.priorCmrFindingIdentityKeys).toBeUndefined();
   });
 
+  it("does not treat an aborted coder-fix evidence failure as a crash-window fix", async () => {
+    const blockedKey =
+      "completeness|orchestrator/src/x.ts:12|repair evidence never passed";
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({
+        converged: true,
+        successfulLegs: ["opus", "gpt-5.5", "agy"],
+      }),
+    });
+    backend.liveHead = "head-after-bad-coder-fix";
+    backend.ledger.push(
+      {
+        childIssue: 294,
+        status: "merged",
+        childHead: "c294",
+        familyHeadAfter: "head-before-cmr-fix",
+      },
+      {
+        status: "cmr_reviewed",
+        event: "cmr_reviewed",
+        phase: "final",
+        cmrPass: "completeness",
+        reason: "blocking family CMR finding requires coder-fix",
+        familyHeadAfter: "head-before-cmr-fix",
+        cmrFindingClassification: {
+          blocking: [],
+          deferred: [],
+          dispositions: [],
+          moduleContext: {
+            currentModules: [],
+            childModules: [],
+            undevelopedModules: [],
+          },
+          results: [
+            {
+              identityKey: blockedKey,
+              classification: "same_module_still_red",
+              attribution: { method: "family_module" },
+              reason: "same-module family CMR blocker",
+            },
+          ],
+        },
+      } as FamilyLedgerEntry,
+      {
+        status: "aborted",
+        event: "aborted",
+        phase: "final",
+        cmrPass: "completeness",
+        reason:
+          "integrated cmr completeness coder-fix repair evidence gate failed after 3 attempts",
+        familyHeadAfter: "head-after-bad-coder-fix",
+        stopSummary: {
+          reason: "contract_drift",
+          summary:
+            "integrated CMR completeness coder-fix failed: repair evidence gate failed",
+          repairHint:
+            "repair the family CMR coder-fix worker contract, then rerun the family CMR gate",
+        },
+      } as FamilyLedgerEntry,
+    );
+
+    const result = await runFamily({
+      epic: epicWith(294),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+      reconcileGit: {
+        async liveFamilyHead() {
+          return "head-after-bad-coder-fix";
+        },
+        async familyBaseStartHead() {
+          return "head-before-cmr-fix";
+        },
+        async childHeadExists() {
+          return { exists: true, childHead: "c294" };
+        },
+        async isAncestor() {
+          return true;
+        },
+      },
+    });
+
+    expect(result.status).toBe("success");
+    expect(backend.cmrCalls[0]).toMatchObject({
+      cmrPass: "completeness",
+    });
+    expect(backend.cmrCalls[0]?.priorCmrFindingIdentityKeys).toBeUndefined();
+  });
+
   it("CMR completed/not-converged is a machine abort, not a decision pause", async () => {
     let cmrCalls = 0;
     const seenAnswers: IntegratedCmrRequest["escalationAnswer"][] = [];
