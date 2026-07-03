@@ -1223,13 +1223,9 @@ async function readPostCmrTrackedStatus(
   familyBase: string,
 ): Promise<readonly string[]> {
   if (familyBackend.readFamilyTrackedStatus === undefined) return [];
-  try {
-    return (await familyBackend.readFamilyTrackedStatus(familyBase)).filter(
-      (line) => line.trim().length > 0,
-    );
-  } catch {
-    return [];
-  }
+  return (await familyBackend.readFamilyTrackedStatus(familyBase)).filter(
+    (line) => line.trim().length > 0,
+  );
 }
 
 async function readRequiredFamilyHead(
@@ -1414,10 +1410,28 @@ async function runIntegratedCmrPass(input: {
     familyBase,
     resolvedFamilyHeadAfter,
   );
-  const postWorkerTrackedStatus = await readPostCmrTrackedStatus(
-    familyBackend,
-    familyBase,
-  );
+  let postWorkerTrackedStatus: readonly string[];
+  try {
+    postWorkerTrackedStatus = await readPostCmrTrackedStatus(
+      familyBackend,
+      familyBase,
+    );
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    const reason = `integrated CMR ${pass} tracked status read failed: ${detail}`;
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: infraFailureStopSummary({
+        summary: reason,
+        repairHint:
+          "repair the family tracked-status reader before trusting the CMR reviewer cleanliness gate",
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+  }
   if (cmrResult.kind === "escalated") {
     const reason = `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`;
     const stopSummary = cmrEscalationStopSummary(reason);
