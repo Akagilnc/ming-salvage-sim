@@ -246,6 +246,13 @@ fi
 # NOTE: macOS ships bash 3.2 (no associative arrays / `declare -A`), and this
 # script's shebang resolves to it — so we map role→env-alias with a portable
 # case, NOT an assoc array, to keep the build reproducible on a macOS host.
+if [ ! -f "$HERE/souls/output_protocol.md" ]; then
+  echo "[build] ERROR: shared worker output protocol not found at $HERE/souls/output_protocol.md" >&2
+  exit 1
+fi
+cp "$HERE/souls/output_protocol.md" "$STAGE/souls/output_protocol.md"
+echo "[build]   baking shared worker output protocol"
+
 soul_env_alias() {
   case "$1" in
     reviewer) echo "READ-ONLY" ;;   # soulForStep → StepSoul "READ-ONLY"

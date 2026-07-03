@@ -207,6 +207,7 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     const end = build.indexOf(")", start);
     const closureBlock = build.slice(start, end);
     expect(closureBlock).toMatch(/\bcode-review\b/);
+    expect(build).toMatch(/output_protocol\.md/);
   });
 
   it("the coder soul carries implementation/fix process but not the per-slice review loop", () => {
@@ -268,18 +269,52 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
   it("every existing prompt still defines its structured output contract (tag + signal)", () => {
     // Thinning the METHOD must not drop the output contract route()/the seam
     // decode against — each worker must still emit its tag + completion signal.
-    expect(read("coder_implement.md")).toMatch(/<coder>/);
-    expect(read("coder_implement.md")).toMatch(/CODER_STEP_COMPLETE/);
-    expect(read("coder_fix.md")).toMatch(/<coder>/);
-    expect(read("coder_fix.md")).toMatch(/CODER_STEP_COMPLETE/);
-    expect(read("reviewer_review.md")).toMatch(/<review>/);
-    expect(read("reviewer_review.md")).toMatch(/REVIEWER_STEP_COMPLETE/);
-    expect(read("ship.md")).toMatch(/<ship>/);
-    expect(read("ship.md")).toMatch(/SHIP_STEP_COMPLETE/);
-    expect(read("integrated_cmr_completeness.md")).toMatch(/<cmr>/);
-    expect(read("integrated_cmr_completeness.md")).toMatch(/CMR_STEP_COMPLETE/);
-    expect(read("integrated_cmr_correctness.md")).toMatch(/<cmr>/);
-    expect(read("integrated_cmr_correctness.md")).toMatch(/CMR_STEP_COMPLETE/);
+    // Shared sidecar hygiene lives in the baked output protocol, not repeated
+    // across every prompt entrypoint.
+    const prompts = [
+      ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/],
+      ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/],
+      ["reviewer_review.md", /<review>/, /REVIEWER_STEP_COMPLETE/],
+      ["ship.md", /<ship>/, /SHIP_STEP_COMPLETE/],
+      ["family_ship.md", /<ship>/, /SHIP_STEP_COMPLETE/],
+      ["integrated_cmr.md", /<cmr>/, /CMR_STEP_COMPLETE/],
+      ["integrated_cmr_completeness.md", /<cmr>/, /CMR_STEP_COMPLETE/],
+      ["integrated_cmr_correctness.md", /<cmr>/, /CMR_STEP_COMPLETE/],
+      ["merger_resolve_conflict.md", /<merger>/, /MERGER_STEP_COMPLETE/],
+    ] as const;
+
+    for (const [promptName, tag, signal] of prompts) {
+      const prompt = read(promptName);
+      expect(prompt).toMatch(tag);
+      expect(prompt).toMatch(signal);
+      expect(prompt).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
+      expect(prompt).not.toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
+    }
+  });
+
+  it("the baked shared output protocol owns sidecar parser validation", () => {
+    const protocol = readSoul("output_protocol.md");
+    expect(protocol).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
+    expect(protocol).toMatch(/raw JSON object/i);
+    expect(protocol).toMatch(/if \[ -n "\$\{ORCHESTRATOR_OUTCOME_PATH:-\}" \]/);
+    expect(protocol).toMatch(
+      /if \[ -n "\$\{ORCHESTRATOR_OUTCOME_PATH:-\}" \][\s\S]*python3 -c 'import json, sys; obj=json\.load\(open\(sys\.argv\[1\], encoding="utf-8"\)\); sys\.exit\(0 if isinstance\(obj, dict\) else 1\)' "\$ORCHESTRATOR_OUTCOME_PATH" >\/dev\/null 2>&1[\s\S]*fi/,
+    );
+    expect(protocol).not.toMatch(/python3 -m json\.tool/);
+
+    for (const soulName of [
+      "coder.md",
+      "reviewer.md",
+      "cmr.md",
+      "cmr_completeness.md",
+      "cmr_correctness.md",
+      "merger.md",
+      "ship.md",
+    ]) {
+      expect(readSoul(soulName)).toMatch(
+        /\/home\/agent\/\.orchestrator\/souls\/output_protocol\.md/,
+      );
+    }
   });
 
   it("reviewer and integrated-cmr prompts document every parser-required blocking/defer disposition field", () => {
