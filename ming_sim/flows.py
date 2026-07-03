@@ -1400,9 +1400,9 @@ def _advance_province_fiscal_substrate(
 ) -> float:
     """#66/#266：月末固定财政相位推进省级 settle_tick 基座（动态 shadow spine）。
 
-    **shadow 模式**：推进基座末态（军饷欠/民欠/火耗的死亡螺旋逐月累积）并落库，但**不驱动
-    国库**——#266 已把陕西 seed 重标到史实量级；国库 cutover + 饷率 effect 通道 + 跨省
-    hub 均为 follow-up。
+    **shadow / hub 模式**：推进基座末态（军饷欠/民欠/火耗的死亡螺旋逐月累积）并落库。
+    非 cutover shadow 只打印/持久化末态，不驱动国库；substrate_hub cutover 则返回
+    本 tick 起运到京合计，供调用方统一入 hub/国库。
 
     **fail-loud 但隔离**：基座缺失（旧档无种子）或 settle_tick 抛 ValueError/守恒破时，tlog
     响亮告警并跳过该省该月推进（港口锁：FAIL tick 不落库），但**绝不让 shadow 基座 bug 掀翻
