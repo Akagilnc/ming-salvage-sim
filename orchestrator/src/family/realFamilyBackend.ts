@@ -199,6 +199,7 @@ const CMR_SOUL = "cmr";
  * TODOS.md) never the PR body — not the coder's TDD build loop.
  */
 const SHIP_SOUL: StepSoul = "ship";
+const OUTCOME_REWRITE_PROMPT = "outcome_rewrite.md";
 
 /** Compatibility read model for durable family-ledger escalation rows. */
 export interface FamilyEscalationRecord extends FamilyEscalation {
@@ -285,6 +286,7 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
     "coder_fix.md",
+    OUTCOME_REWRITE_PROMPT,
     "family_ship.md",
     MERGER_CONFLICT_PROMPT,
   ]),
@@ -1032,6 +1034,36 @@ export class RealFamilyBackend implements FamilyBackend {
       );
     }
     const outcome = await this.runCmrWorker(spec, ctx);
+    return this.cmrOutcomeToWorkerResult(outcome, ctx);
+  }
+
+  async rewriteWorkerOutcome(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
+    attempt: number,
+  ): Promise<WorkerResult> {
+    if (spec.kind !== "cmr") {
+      return {
+        kind: "failed",
+        reason:
+          `outcome protocol rewrite for worker kind "${spec.kind}" is not implemented`,
+      };
+    }
+    const outcome = await this.runCmrOutcomeRewrite(
+      spec,
+      ctx,
+      protocolFailure,
+      attempt,
+    );
+    if (outcome.kind === "outcome_protocol_failure") return outcome;
+    return this.cmrOutcomeToWorkerResult(outcome, ctx);
+  }
+
+  private cmrOutcomeToWorkerResult(
+    outcome: CmrWorkerOutcome,
+    ctx: DispatchContext,
+  ): WorkerResult {
     if (outcome.kind === "escalate") {
       // A model-stuck cmr worker (missing skill / no leg ran / could not produce a
       // verdict) is the WorkerResult-level escalate (續跑 path), NOT a fabricated
@@ -1039,6 +1071,7 @@ export class RealFamilyBackend implements FamilyBackend {
       return {
         kind: "escalated",
         escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
+        ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
       };
     }
     if (outcome.kind === "malformed") {
@@ -1046,6 +1079,7 @@ export class RealFamilyBackend implements FamilyBackend {
       return {
         kind: "malformed",
         reason: outcome.reason,
+        ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
         ...(outcome.cmrLegAccountingPayload !== undefined
           ? { cmrLegAccountingPayload: outcome.cmrLegAccountingPayload }
           : {}),
@@ -1072,6 +1106,7 @@ export class RealFamilyBackend implements FamilyBackend {
         ...(outcome.findings !== undefined ? { findings: outcome.findings } : {}),
         evidencePaths: outcome.evidencePaths,
       },
+      ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
     };
   }
 
@@ -1217,11 +1252,101 @@ export class RealFamilyBackend implements FamilyBackend {
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
         });
-        return cmrOutcomeFromResult({
-          ...result,
-          cmrReviewLegs: frozenReviewLegs,
-          outcomePath: outcomeLanding.path,
+        return withCmrSession(
+          cmrOutcomeFromResult({
+            ...result,
+            cmrReviewLegs: frozenReviewLegs,
+            outcomePath: outcomeLanding.path,
+          }),
+          lastSessionIdIfPresent(result),
+        );
+      } finally {
+        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
+      }
+    } finally {
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
+    }
+  }
+
+  protected async runCmrOutcomeRewrite(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
+    attempt: number,
+  ): Promise<CmrWorkerOutcome | Extract<WorkerResult, { kind: "outcome_protocol_failure" }>> {
+    if (ctx.familyBase === undefined) {
+      return {
+        kind: "malformed",
+        reason: "cmr outcome rewrite requires ctx.familyBase",
+        ...(protocolFailure.sessionId !== undefined
+          ? { sessionId: protocolFailure.sessionId }
+          : {}),
+      };
+    }
+    if (protocolFailure.sessionId === undefined) {
+      return {
+        kind: "malformed",
+        reason:
+          "cmr outcome rewrite requires the malformed worker sessionId to resume the same producing worker",
+      };
+    }
+    const frozenReviewLegs = spec.cmrReviewLegs;
+    if (frozenReviewLegs === undefined) {
+      return {
+        kind: "malformed",
+        reason: "cmr outcome rewrite requires frozen review legs on the worker spec",
+        sessionId: protocolFailure.sessionId,
+      };
+    }
+    const auth = this.mountCmrAuth();
+    try {
+      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
+        return {
+          kind: "malformed",
+          reason:
+            "cmr outcome rewrite cannot resume the same Claude worker without CLAUDE_CODE_OAUTH_TOKEN",
+          sessionId: protocolFailure.sessionId,
+        };
+      }
+      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+      const gitBefore = this.captureOutcomeRewriteGitEvidence();
+      const outcomeLanding = this.prepareCmrOutcomeLanding(ctx);
+      try {
+        const result = await this.runAgentSandbox({
+          name: `family-cmr-outcome-rewrite-${ctx.cmrPass ?? "legacy"}-${attempt}`,
+          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+          cwd: this.opts.workingRepo,
+          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding),
+          agent: this.agentForSpec(spec),
+          maxIterations: 1,
+          completionSignal: spec.completionSignal,
+          branchStrategy: { type: "head" },
+          resumeSession: protocolFailure.sessionId,
+          promptFile: join(this.opts.promptsDir, OUTCOME_REWRITE_PROMPT),
+          promptArgs: {
+            ATTEMPT: String(attempt),
+            FAILURE_REASON: protocolFailure.reason,
+            WORKER_KIND: spec.kind,
+            CMR_PASS: ctx.cmrPass ?? "legacy",
+            COMPLETION_SIGNAL: spec.completionSignal,
+          },
         });
+        const outcome = withCmrSession(
+          cmrOutcomeFromResult({
+            ...result,
+            cmrReviewLegs: frozenReviewLegs,
+            outcomePath: outcomeLanding.path,
+          }),
+          lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
+        );
+        const gitFailure = this.outcomeRewriteGitFailure({
+          before: gitBefore,
+          after: this.captureOutcomeRewriteGitEvidence(),
+          attempt,
+          sessionId: outcome.sessionId,
+        });
+        if (gitFailure !== undefined) return gitFailure;
+        return outcome;
       } finally {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
@@ -1410,6 +1535,49 @@ export class RealFamilyBackend implements FamilyBackend {
         ? { repairEvidence: output.repairEvidence }
         : {}),
       ...(output.escalate !== undefined ? { escalate: output.escalate } : {}),
+    };
+  }
+
+  private captureOutcomeRewriteGitEvidence(): {
+    readonly head: string;
+    readonly trackedStatus: readonly string[];
+  } {
+    const trackedStatus = this.sh("git", ["status", "--short", "--untracked-files=no"]);
+    return {
+      head: this.sh("git", ["rev-parse", "HEAD"]),
+      trackedStatus: trackedStatus === "" ? [] : trackedStatus.split("\n"),
+    };
+  }
+
+  private outcomeRewriteGitFailure(input: {
+    readonly before: ReturnType<RealFamilyBackend["captureOutcomeRewriteGitEvidence"]>;
+    readonly after: ReturnType<RealFamilyBackend["captureOutcomeRewriteGitEvidence"]>;
+    readonly attempt: number;
+    readonly sessionId?: string;
+  }): Extract<WorkerResult, { kind: "outcome_protocol_failure" }> | undefined {
+    const headMoved = input.before.head !== input.after.head;
+    const trackedDirty = input.after.trackedStatus.length > 0;
+    if (!headMoved && !trackedDirty) return undefined;
+
+    const commitEvidence = headMoved
+      ? this.sh("git", ["log", "--oneline", `${input.before.head}..${input.after.head}`])
+      : "";
+    const reasons = [
+      headMoved
+        ? `outcome rewrite moved HEAD from ${input.before.head} to ${input.after.head}; commits: ${
+            commitEvidence === "" ? "(no descendant commits listed)" : commitEvidence
+          }`
+        : undefined,
+      trackedDirty
+        ? `outcome rewrite left tracked changes: ${input.after.trackedStatus.join("; ")}`
+        : undefined,
+    ].filter((reason): reason is string => reason !== undefined);
+
+    return {
+      kind: "outcome_protocol_failure",
+      reason: reasons.join(" | "),
+      attempts: input.attempt,
+      ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
     };
   }
 
@@ -2333,11 +2501,18 @@ export type CmrWorkerOutcome =
       readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
       readonly findings?: readonly Finding[];
       readonly evidencePaths: readonly string[];
+      readonly sessionId?: string;
     }
-  | { readonly kind: "escalate"; readonly reason: string; readonly diagnosis: string }
+  | {
+      readonly kind: "escalate";
+      readonly reason: string;
+      readonly diagnosis: string;
+      readonly sessionId?: string;
+    }
   | {
       readonly kind: "malformed";
       readonly reason: string;
+      readonly sessionId?: string;
       readonly cmrLegAccountingPayload?: {
         readonly successfulLegs?: readonly string[];
         readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
@@ -2347,6 +2522,21 @@ export type CmrWorkerOutcome =
 interface CmrSkippedLeg {
   readonly slug: string;
   readonly reason: string;
+}
+
+function withCmrSession(
+  outcome: CmrWorkerOutcome,
+  sessionId: string | undefined,
+): CmrWorkerOutcome {
+  return sessionId === undefined ? outcome : { ...outcome, sessionId };
+}
+
+function lastSessionIdIfPresent(result: unknown): string | undefined {
+  const iterations = (result as { readonly iterations?: unknown }).iterations;
+  if (!Array.isArray(iterations)) return undefined;
+  return lastSessionId({
+    iterations: iterations as ReadonlyArray<{ readonly sessionId?: string }>,
+  });
 }
 
 /**

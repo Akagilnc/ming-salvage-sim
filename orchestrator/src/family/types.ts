@@ -436,6 +436,22 @@ export interface FamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult>;
+  /**
+   * Runner fallback for outcome protocol failures (#552).
+   *
+   * When a worker finished but its outcome control envelope was malformed,
+   * missing, or schema-incompatible, the runner may ask the SAME producing worker
+   * to rewrite only the machine outcome from existing artifacts/local memory.
+   * This is a control-envelope repair path: it must not run semantic review/fix
+   * work, move git truth, leave tracked changes, or infer a route from prose. The
+   * runner owns the bounded retry cap.
+   */
+  rewriteWorkerOutcome?(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
+    attempt: number,
+  ): Promise<WorkerResult>;
 
   // ─── #296 verify-cmr seam capabilities (ADR 0022 decision 3④/⑤/⑥/4) ───────
   // ALL OPTIONAL: a #293-era backend (the no-op default, the existing fakes)
