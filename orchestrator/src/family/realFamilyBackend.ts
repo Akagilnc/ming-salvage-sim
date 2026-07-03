@@ -97,7 +97,7 @@ import {
 import {
   WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
-  readWorkerOutcomeSidecar,
+  readRequiredWorkerOutcomeSidecar,
 } from "../workerOutcomeSidecar.js";
 import {
   cmrLegAccountingFailure,
@@ -548,6 +548,16 @@ export class RealFamilyBackend implements FamilyBackend {
   async readFamilyHead(familyBase: string): Promise<string> {
     const out = await this.sh("git", ["rev-parse", familyBase], this.opts.workingRepo);
     return out.trim();
+  }
+
+  async readFamilyTrackedStatus(_familyBase: string): Promise<readonly string[]> {
+    const out = await this.sh(
+      "git",
+      ["status", "--short", "--untracked-files=no"],
+      this.opts.workingRepo,
+    );
+    const trimmed = out.trim();
+    return trimmed.length === 0 ? [] : trimmed.split("\n");
   }
 
   // ─────────────────────────── merge ───────────────────────────
@@ -1504,8 +1514,7 @@ export class RealFamilyBackend implements FamilyBackend {
   ): WorkerResult {
     try {
       assertCompletionSignal(result, spec.completionSignal, "family-coder-fix");
-      const sidecar = readWorkerOutcomeSidecar(outcomePath);
-      const raw = sidecar ?? extractCoderTag(result.stdout);
+      const raw = readRequiredWorkerOutcomeSidecar(outcomePath);
       const truth = reconcileCoderCommits(
         parseCoderSelfReport(raw),
         realCommitCount(result),
@@ -2628,8 +2637,8 @@ export function cmrOutcomeFromResult(result: {
     };
   }
   try {
-    const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
-    if (sidecar !== undefined) {
+    if (result.outcomePath !== undefined) {
+      const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
       return classifyCmrOutcomePayload(
         sidecar,
         result.cmrReviewLegs ?? process.env,
@@ -3055,8 +3064,8 @@ export function mergerOutcomeFromResult(result: {
     };
   }
   try {
-    const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
-    if (sidecar !== undefined) {
+    if (result.outcomePath !== undefined) {
+      const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
       return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
     }
   } catch (err) {

@@ -110,6 +110,7 @@ import {
 import {
   WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
+  readRequiredWorkerOutcomeSidecar as readRequiredOutcomeSidecar,
   readWorkerOutcomeSidecar as readOutcomeSidecar,
   stripJsonFence as stripOutcomeJsonFence,
 } from "./workerOutcomeSidecar.js";
@@ -2401,9 +2402,10 @@ export class RealBackend implements Backend {
     typedOutputUsed: boolean,
     options?: AgentStepRunOptions,
   ): unknown {
-    let sidecar: unknown | undefined;
     try {
-      sidecar = readWorkerOutcomeSidecar(options?.outcomeLanding?.path);
+      if (options?.outcomeLanding?.path !== undefined) {
+        return readRequiredOutcomeSidecar(options.outcomeLanding.path);
+      }
     } catch (err) {
       if (spec.role === "reviewer") {
         const wrapped = new Error(
@@ -2415,7 +2417,6 @@ export class RealBackend implements Backend {
       }
       throw err;
     }
-    if (sidecar !== undefined) return sidecar;
     if (typedOutputUsed) return result.output;
     // Untyped compatibility path: structured result lives in the role tag.
     return spec.role === "coder"

@@ -267,6 +267,25 @@ class ReviewerMutatesHeadBeforeFindingBackend extends ReviewFixRereviewBackend {
   }
 }
 
+class ReviewerLeavesTrackedDirtyBeforeFindingBackend extends ReviewFixRereviewBackend {
+  private reviewerLeftTrackedChanges = false;
+
+  override async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    const result = await super.dispatchWorker(spec, ctx);
+    if (spec.kind === "cmr" && ctx.cmrPass === "completeness") {
+      this.reviewerLeftTrackedChanges = true;
+    }
+    return result;
+  }
+
+  async readFamilyTrackedStatus(): Promise<readonly string[]> {
+    return this.reviewerLeftTrackedChanges ? ["M tracked.txt"] : [];
+  }
+}
+
 class MissingRepairEvidenceThenGoodBackend extends ReviewFixRereviewBackend {
   private coderFixRound = 0;
 
@@ -540,6 +559,41 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
             reportedFamilyHead: "head-before-cmr-review",
             actualFamilyHead: "head-mutated-by-cmr-reviewer",
           }),
+        }),
+      }),
+    }));
+    expect(
+      backend.ledger.some((entry) => entry.status === "cmr_reviewed"),
+    ).toBe(false);
+    expect(
+      backend.ledger.some((entry) => entry.status === "cmr_fix_committed"),
+    ).toBe(false);
+    expect(
+      backend.ledger.some((entry) => entry.status === "cmr_passed"),
+    ).toBe(false);
+  });
+
+  it("fails closed when the CMR reviewer leaves tracked changes without moving HEAD", async () => {
+    const backend = new ReviewerLeavesTrackedDirtyBeforeFindingBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/550-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(["cmr"]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      cmrPass: "completeness",
+      reason: expect.stringMatching(/reviewer left tracked changes/i),
+      familyHeadAfter: "head-before-cmr-review",
+      stopSummary: expect.objectContaining({
+        reason: "contract_drift",
+        metadata: expect.objectContaining({
+          trackedStatus: ["M tracked.txt"],
         }),
       }),
     }));

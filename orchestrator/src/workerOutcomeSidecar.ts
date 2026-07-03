@@ -38,3 +38,15 @@ export function readWorkerOutcomeSidecar(path: string | undefined): unknown | un
   if (raw.length === 0) return undefined;
   return JSON.parse(stripJsonFence(raw));
 }
+
+/** Read a sidecar that the runner already prepared and mounted for this worker. */
+export function readRequiredWorkerOutcomeSidecar(path: string): unknown {
+  if (!existsSync(path)) {
+    throw new Error("worker outcome sidecar was not written");
+  }
+  const raw = readFileSync(path, "utf8").trim();
+  if (raw.length === 0) {
+    throw new Error("worker outcome sidecar was blank");
+  }
+  return JSON.parse(stripJsonFence(raw));
+}
