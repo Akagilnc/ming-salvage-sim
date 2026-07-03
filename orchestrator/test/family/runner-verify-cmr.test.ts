@@ -28,6 +28,9 @@ import type {
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
+  DispatchContext,
+  WorkerResult,
+  WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
 import type {
@@ -92,6 +95,8 @@ class FakeFamilyBackend implements FamilyBackend {
 function epicWith(...issues: number[]): FamilyEpic {
   return { issue: 293, children: issues.map((issue) => ({ issue, blockedBy: [] })) };
 }
+
+const COMPLETE_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
 
 describe("family spine verify-cmr wiring (#293 seam 4)", () => {
   it("calls the verify hook at the wave barrier AND end-of-run, each with phase + context", async () => {
@@ -524,6 +529,189 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         reason: "not_ready_for_agent",
       }),
     );
+  });
+
+  it("routes a malformed CMR worker outcome to same-worker outcome rewrite before semantic CMR handling", async () => {
+    class OutcomeRewriteFamilyBackend extends FakeFamilyBackend {
+      readonly dispatchCalls: Array<{ spec: WorkerSpec; ctx: DispatchContext }> = [];
+      readonly rewriteCalls: Array<{
+        spec: WorkerSpec;
+        ctx: DispatchContext;
+        protocolFailure: Extract<WorkerResult, { kind: "malformed" }>;
+        attempt: number;
+      }> = [];
+
+      async runFamilyVerify(): Promise<{ ok: true }> {
+        return { ok: true };
+      }
+
+      async readFamilyHead(): Promise<string> {
+        return "+10";
+      }
+
+      async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        this.dispatchCalls.push({ spec, ctx });
+        if (spec.kind === "cmr" && ctx.cmrPass === "completeness") {
+          return {
+            kind: "malformed",
+            reason: "cmr worker outcome sidecar was not valid JSON",
+            sessionId: "cmr-session-completeness",
+          };
+        }
+        if (spec.kind === "cmr" && ctx.cmrPass === "correctness") {
+          return completedCmr(ctx.cmrPass);
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: ctx.familyBase ?? "family/293-base",
+              pr: "https://github.com/Akagilnc/ming-salvage-sim/pull/552",
+              prHead: "+10",
+              status: "pr_opened",
+            },
+          };
+        }
+        throw new Error(`unexpected worker ${spec.kind}:${ctx.cmrPass ?? ""}`);
+      }
+
+      async rewriteWorkerOutcome(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
+        attempt: number,
+      ): Promise<WorkerResult> {
+        this.rewriteCalls.push({ spec, ctx, protocolFailure, attempt });
+        return completedCmr(ctx.cmrPass ?? "completeness");
+      }
+    }
+
+    const completedCmr = (
+      cmrPass: "completeness" | "correctness",
+    ): WorkerResult => ({
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        cmrPass,
+        converged: true,
+        successfulLegs: COMPLETE_CMR_LEGS,
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        evidencePaths: [`cmr/${cmrPass}-rewrite.json`],
+      },
+      sessionId: `cmr-session-${cmrPass}`,
+    });
+
+    const familyBackend = new OutcomeRewriteFamilyBackend();
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+    });
+
+    expect(familyBackend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "cmr_passed",
+        event: "cmr_passed",
+        cmrPass: "completeness",
+      }),
+    );
+    expect(result.status).toBe("success");
+    expect(familyBackend.rewriteCalls).toHaveLength(1);
+    expect(familyBackend.rewriteCalls[0]).toMatchObject({
+      ctx: { cmrPass: "completeness", familyBase: "family/293-base" },
+      protocolFailure: {
+        kind: "malformed",
+        reason: expect.stringContaining("outcome sidecar"),
+        sessionId: "cmr-session-completeness",
+      },
+      attempt: 1,
+    });
+    expect(familyBackend.rewriteCalls[0]!.spec.kind).toBe("cmr");
+    expect(familyBackend.dispatchCalls.map(({ spec, ctx }) => `${spec.kind}:${ctx.cmrPass ?? "none"}`)).toEqual([
+      "cmr:completeness",
+      "cmr:correctness",
+      "ship:none",
+    ]);
+    expect(familyBackend.ledger).not.toContainEqual(
+      expect.objectContaining({
+        status: "aborted",
+        reason: expect.stringMatching(/malformed|outcome sidecar/i),
+      }),
+    );
+  });
+
+  it("escalates repeated outcome rewrite failures as infrastructure protocol failure", async () => {
+    class RepeatedRewriteFailureBackend extends FakeFamilyBackend {
+      readonly dispatchCalls: Array<{ spec: WorkerSpec; ctx: DispatchContext }> = [];
+      readonly rewriteCalls: Array<{ attempt: number; protocolFailure: WorkerResult }> = [];
+
+      async runFamilyVerify(): Promise<{ ok: true }> {
+        return { ok: true };
+      }
+
+      async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        this.dispatchCalls.push({ spec, ctx });
+        if (spec.kind === "cmr" && ctx.cmrPass === "completeness") {
+          return {
+            kind: "malformed",
+            reason: "cmr worker emitted no outcome sidecar",
+            sessionId: "cmr-session-bad",
+          };
+        }
+        throw new Error(`unexpected worker after repeated protocol failure: ${spec.kind}`);
+      }
+
+      async rewriteWorkerOutcome(
+        _spec: WorkerSpec,
+        _ctx: DispatchContext,
+        protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
+        attempt: number,
+      ): Promise<WorkerResult> {
+        this.rewriteCalls.push({ attempt, protocolFailure });
+        return {
+          kind: "malformed",
+          reason: `rewrite attempt ${attempt} still produced invalid JSON`,
+          sessionId: "cmr-session-bad",
+        };
+      }
+    }
+
+    const familyBackend = new RepeatedRewriteFailureBackend();
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("verify_failed");
+    expect(result.failedPhase).toBe("final");
+    expect(familyBackend.rewriteCalls.map((call) => call.attempt)).toEqual([1, 2]);
+    expect(familyBackend.dispatchCalls.map(({ spec, ctx }) => `${spec.kind}:${ctx.cmrPass ?? "none"}`)).toEqual([
+      "cmr:completeness",
+    ]);
+    const abort = familyBackend.ledger.find(
+      (entry) => entry.status === "aborted" && entry.cmrPass === "completeness",
+    );
+    expect(abort).toMatchObject({
+      status: "aborted",
+      event: "aborted",
+      reason: expect.stringContaining("outcome protocol failure"),
+      stopSummary: {
+        reason: "infra_failure",
+        summary: expect.stringContaining("outcome protocol failure"),
+      },
+    });
+    expect(abort).not.toHaveProperty("cmrFindingClassification");
   });
 
   it("verify_failed ignores earlier success summaries when no aborted barrier row exists", async () => {
