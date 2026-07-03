@@ -22,14 +22,26 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+
+import * as sc from "@ai-hero/sandcastle";
 import {
   MERGER_SOUL,
+  cmrOutcomeFromResult,
   mergerOutcomeFromResult,
+  type MergerAuth,
   parseCmrOutcome,
   parseMergerOutcome,
   RealFamilyBackend,
@@ -864,6 +876,86 @@ describe("parseMergerOutcome (#291 pure)", () => {
 });
 
 describe("parseCmrOutcome accepted suppression contract", () => {
+  it("prefers a runner-owned outcome sidecar over malformed cmr stdout", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        converged: true,
+        successfulLegs: ["gpt-5.5"],
+        skippedLegs: [
+          { slug: "opus", reason: "not configured for this test" },
+          { slug: "agy", reason: "not configured for this test" },
+        ],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+      }) + "\n",
+      "utf8",
+    );
+
+    const outcome = cmrOutcomeFromResult({
+      completionSignal: "CMR_STEP_COMPLETE",
+      stdout: "<cmr>not json</cmr>\nCMR_STEP_COMPLETE",
+      outcomePath,
+      cmrReviewLegs: [
+        { family: "claude", slug: "opus" },
+        { family: "codex", slug: "gpt-5.5" },
+        { family: "gemini", slug: "agy" },
+      ],
+    });
+
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: true,
+      successfulLegs: ["gpt-5.5"],
+    });
+  });
+
+  it("parses cmr sidecar payloads directly when free-form text contains a cmr tag delimiter", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-delimiter-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        escalate: {
+          reason: "review unavailable",
+          diagnosis: "diagnosis quoted the literal </cmr> delimiter",
+        },
+      }) + "\n",
+      "utf8",
+    );
+
+    const outcome = cmrOutcomeFromResult({
+      completionSignal: "CMR_STEP_COMPLETE",
+      stdout: "<cmr>not json</cmr>\nCMR_STEP_COMPLETE",
+      outcomePath,
+    });
+
+    expect(outcome).toEqual({
+      kind: "escalate",
+      reason: "review unavailable",
+      diagnosis: "diagnosis quoted the literal </cmr> delimiter",
+    });
+  });
+
+  it("fails closed instead of falling back to stdout when the cmr outcome sidecar is malformed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-bad-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+
+    const outcome = cmrOutcomeFromResult({
+      completionSignal: "CMR_STEP_COMPLETE",
+      stdout:
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.5"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>',
+      outcomePath,
+      cmrReviewLegs: [{ family: "codex", slug: "gpt-5.5" }],
+    });
+
+    expect(outcome.kind).toBe("malformed");
+    if (outcome.kind === "malformed") expect(outcome.reason).toContain("sidecar");
+  });
+
   it("derives redundant accepted_suppressed finding fields from the finding payload", () => {
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: false,
@@ -1004,6 +1096,60 @@ describe("parseCmrOutcome accepted suppression contract", () => {
 });
 
 describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
+  it("prefers a runner-owned outcome sidecar over malformed merger stdout", () => {
+    const dir = mkdtempSync(join(tmpdir(), "merger-outcome-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ resolved: true, tradeoffs: "preserved both sides" }) + "\n",
+      "utf8",
+    );
+
+    expect(
+      mergerOutcomeFromResult({
+        completionSignal: "MERGER_STEP_COMPLETE",
+        stdout: "<merger>not json</merger>\nMERGER_STEP_COMPLETE",
+        outcomePath,
+      }),
+    ).toEqual({ resolved: true });
+  });
+
+  it("parses merger sidecar payloads directly when free-form text contains a merger tag delimiter", () => {
+    const dir = mkdtempSync(join(tmpdir(), "merger-outcome-delimiter-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        resolved: true,
+        tradeoffs: "resolution notes quoted the literal </merger> delimiter",
+      }) + "\n",
+      "utf8",
+    );
+
+    expect(
+      mergerOutcomeFromResult({
+        completionSignal: "MERGER_STEP_COMPLETE",
+        stdout: "<merger>not json</merger>\nMERGER_STEP_COMPLETE",
+        outcomePath,
+      }),
+    ).toEqual({ resolved: true });
+  });
+
+  it("fails closed instead of falling back to stdout when the merger outcome sidecar is malformed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "merger-outcome-bad-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+
+    const outcome = mergerOutcomeFromResult({
+      completionSignal: "MERGER_STEP_COMPLETE",
+      stdout: '<merger>{"resolved": true}</merger>',
+      outcomePath,
+    });
+
+    expect(outcome.resolved).toBe(false);
+    expect(outcome.reason).toContain("sidecar");
+  });
+
   it("a signaled run delegates to parseMergerOutcome (resolved)", () => {
     expect(
       mergerOutcomeFromResult({
@@ -1029,6 +1175,44 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
         stdout: '<merger>{"resolved": true}</merger>',
       }).resolved,
     ).toBe(false);
+  });
+});
+
+describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
+  it("removes the temporary outcome sidecar directory after parsing the merger result", async () => {
+    const repo = trackRepo();
+    const ledgerDir = mkdtempSync(join(tmpdir(), "merger-cleanup-ledger-"));
+    ledgerDirs.push(ledgerDir);
+    let outcomePathAtRun: string | undefined;
+    class CleanupBackend extends RealFamilyBackend {
+      public run(req: ConflictResolveRequest) {
+        return this.runMergerAgent(req);
+      }
+      protected override mountMergerAuth(): MergerAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override prepareMergerOutcomeLanding(): { path: string; sandboxPath: string } {
+        const landing = super.prepareMergerOutcomeLanding();
+        outcomePathAtRun = landing.path;
+        return landing;
+      }
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
+        writeFileSync(outcomePathAtRun, JSON.stringify({ resolved: true }), "utf8");
+        return {
+          completionSignal: "MERGER_STEP_COMPLETE",
+          stdout: "<merger>{}</merger>",
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const b = new CleanupBackend(opts(repo, { ledgerDir }));
+    const out = await b.run({ childIssue: 496, childBranch: "feat/child" });
+
+    expect(out.resolved).toBe(true);
+    expect(outcomePathAtRun).toBeDefined();
+    expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
   });
 });
 
@@ -1322,5 +1506,39 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
         escalationKind: "decision",
       },
     ]);
+  });
+});
+
+describe("RealFamilyBackend runtime file git excludes", () => {
+  it("treats CRLF exclude entries as existing lines instead of appending duplicates", () => {
+    class Probe extends RealFamilyBackend {
+      public exclude(filename: string): void {
+        this.excludeOptionalRuntimeFileFromGit(filename);
+      }
+    }
+    const repo = trackRepo();
+    const excludePath = join(repo, ".git", "info", "exclude");
+    writeFileSync(excludePath, ".orchestrator-outcome.json\r\n", "utf8");
+    const b = new Probe(opts(repo));
+
+    b.exclude(".orchestrator-outcome.json");
+
+    expect(readFileSync(excludePath, "utf8")).toBe(".orchestrator-outcome.json\r\n");
+  });
+
+  it("treats CRLF exclude entries as existing lines in the CMR exclude helper too", () => {
+    class Probe extends RealFamilyBackend {
+      public excludeCmr(filename: string): void {
+        this.excludeFromGit(filename);
+      }
+    }
+    const repo = trackRepo();
+    const excludePath = join(repo, ".git", "info", "exclude");
+    writeFileSync(excludePath, ".cmr-route.json\r\n", "utf8");
+    const b = new Probe(opts(repo));
+
+    b.excludeCmr(".cmr-route.json");
+
+    expect(readFileSync(excludePath, "utf8")).toBe(".cmr-route.json\r\n");
   });
 });

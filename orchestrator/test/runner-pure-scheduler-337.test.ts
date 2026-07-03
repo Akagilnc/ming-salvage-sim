@@ -179,9 +179,9 @@ describe("#337 runner is a pure scheduler — no inline productive work (BEHAVIO
     // seam, and the review/fix loop is visible at runner boundaries.
     expect(backend.dispatched).toEqual([
       "S2:coder:/tdd",
-      "S3:reviewer:/review",
+      "S3:reviewer:/code-review",
       "S5:coder:/tdd",
-      "S6:reviewer:/review",
+      "S6:reviewer:/code-review",
       "S7:ship:gstack-ship",
     ]);
   });
@@ -225,7 +225,7 @@ describe("#337 review-decomposition wording: runner owns per-slice review, integ
   const claudeMd = readFileSync(join(repoRoot, "CLAUDE.md"), "utf8");
   // ADR 0030: the repo-root CLAUDE.md ## Skill routing now exposes the separate
   // per-slice reviewer path, while integrated CMR remains family-layer.
-  const skillRouting = claudeMd.slice(claudeMd.indexOf("## Skill routing"));
+  const skillRouting = claudeMd.slice(claudeMd.indexOf("\n## Skill routing"));
 
   it("the reviewer soul is the live read-only full-diff reviewer", () => {
     const staleCoderOwnedReviewClaim = new RegExp(
@@ -243,9 +243,12 @@ describe("#337 review-decomposition wording: runner owns per-slice review, integ
     expect(reviewerSoul).not.toMatch(staleCoderOwnedReviewClaim);
   });
 
-  it("the reviewer soul routes the compatibility reviewer to a single-vendor review", () => {
-    expect(reviewerSoul).toMatch(/\/review/);
-    expect(reviewerSoul).toMatch(/baked review skill|fixed review contract/i);
+  it("the reviewer soul routes the compatibility reviewer to Matt code-review", () => {
+    expect(reviewerSoul).toMatch(/\/code-review/);
+    expect(reviewerSoul).not.toMatch(/builtin `\/review`/i);
+    expect(reviewerSoul).toMatch(/Standards \+ Spec|two-axis|fixed-point/i);
+    expect(reviewerSoul).toMatch(/origin\/main/);
+    expect(reviewerSoul).toMatch(/otherwise use `main`/i);
   });
 
   it("the reviewer soul names ak-cross-m-review only as the family-layer review", () => {
@@ -260,7 +263,8 @@ describe("#337 review-decomposition wording: runner owns per-slice review, integ
   });
 
   it("the CLAUDE.md ## Skill routing keeps runner-visible per-slice review/fix and integrated cmr separate", () => {
-    expect(skillRouting).toMatch(/\/review/);
+    expect(skillRouting).toMatch(/\/code-review/);
+    expect(skillRouting).toMatch(/origin\/main/);
     expect(skillRouting).toMatch(/runner/i);
     expect(skillRouting).toMatch(/reviewer/i);
     expect(skillRouting).toMatch(/ak-cross-m-review/);

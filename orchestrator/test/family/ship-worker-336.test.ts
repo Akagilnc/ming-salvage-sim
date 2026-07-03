@@ -17,12 +17,20 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as sc from "@ai-hero/sandcastle";
 import { RealFamilyBackend, SHIP_FOCUS_FILENAME } from "../../src/family/realFamilyBackend.js";
 import {
   modelIdForSlug,
@@ -567,6 +575,61 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
     ).rejects.toThrow(/SENTINEL/);
     expect(focusBodyAtRun).toBeDefined();
     expect(focusBodyAtRun).toContain("integ/291-wave3");
+  });
+
+  it("runShipWorker removes the temporary outcome sidecar directory after parsing it", async () => {
+    let outcomePathAtRun: string | undefined;
+    class SeamBackend extends RealFamilyBackend {
+      protected override sh(): string {
+        return "";
+      }
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok", ghToken: "gho_ok" };
+      }
+      protected override verifyFamilyShipPr(): { ok: true; headOid: string } {
+        return { ok: true, headOid: "head-1" };
+      }
+      protected override async shipContainerRun(
+        _spec: WorkerSpec,
+        _auth: ShipAuth,
+        outcomeLanding?: { path: string; sandboxPath: string },
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (outcomeLanding === undefined) {
+          throw new Error("expected an outcome sidecar landing");
+        }
+        outcomePathAtRun = outcomeLanding.path;
+        writeFileSync(
+          outcomeLanding.path,
+          JSON.stringify({
+            status: "pr_opened",
+            branch: FAMILY_BASE,
+            pr: "https://github.com/Akagilnc/ming-salvage-sim/pull/999",
+          }),
+          "utf8",
+        );
+        return {
+          stdout: "<ship>{}</ship>",
+          completionSignal: "SHIP_STEP_COMPLETE",
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const b = new SeamBackend({
+      workingRepo: realRepo(),
+      familyBase: FAMILY_BASE,
+      ledgerDir: mkDir("ship-outcome-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+    });
+
+    const out = await (
+      b as unknown as { runShipWorker(s: WorkerSpec, c: DispatchContext): Promise<ShipWorkerOutcome> }
+    ).runShipWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+
+    expect(out.kind).toBe("shipped");
+    expect(outcomePathAtRun).toBeDefined();
+    expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
   });
 });
 

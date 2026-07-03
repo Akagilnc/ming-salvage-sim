@@ -18,6 +18,7 @@
  */
 
 import { z } from "zod";
+import { readWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
 
 /**
  * The classified outcome of a ship WORKER's run (#336). One of:
@@ -104,6 +105,7 @@ const failedSchema = z
  */
 export function shipOutcomeFromResult(result: {
   completionSignal?: string | string[];
+  outcomePath?: string;
   stdout: string;
 }): ShipWorkerOutcome {
   const signal = result.completionSignal;
@@ -121,6 +123,19 @@ export function shipOutcomeFromResult(result: {
       diagnosis:
         `expected "${SHIP_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
         `ship run is not trusted as a delivery — escalate, never a fabricated PR)`,
+    };
+  }
+  try {
+    const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
+    if (sidecar !== undefined) {
+      return classifyShipOutcomePayload(sidecar, "ship worker outcome sidecar");
+    }
+  } catch (err) {
+    return {
+      kind: "malformed",
+      reason:
+        `ship worker outcome sidecar was not valid JSON: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
     };
   }
   return parseShipOutcome(result.stdout);
@@ -159,11 +174,18 @@ export function parseShipOutcome(stdout: string): ShipWorkerOutcome {
   } catch {
     return { kind: "malformed", reason: "ship worker <ship> tag was not valid JSON" };
   }
+  return classifyShipOutcomePayload(parsed, "ship worker <ship> tag");
+}
+
+function classifyShipOutcomePayload(
+  parsed: unknown,
+  source: string,
+): ShipWorkerOutcome {
   // `JSON.parse` succeeds on bare literals (`null` / `true` / `5`); the strict
   // object schemas below reject every non-object, but guard explicitly so the
   // malformed message stays specific (mirrors parseCmrOutcome / parseMergerOutcome).
   if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: "ship worker <ship> tag was not a JSON object" };
+    return { kind: "malformed", reason: `${source} was not a JSON object` };
   }
   // Centralized classification (cmr S336 r3): try each of the four — and only four —
   // strict schemas. A `.strict()` match rejects any extra key (a mixed
@@ -202,7 +224,7 @@ export function parseShipOutcome(stdout: string): ShipWorkerOutcome {
   return {
     kind: "malformed",
     reason:
-      'ship worker <ship> tag matched no valid shape (expected one of: {status:"pushed",branch}, ' +
+      `${source} matched no valid shape (expected one of: {status:"pushed",branch}, ` +
       '{status:"pr_opened",branch,pr}, {escalate:{reason,diagnosis}}, {failed:{reason,diagnosis}} — ' +
       "non-empty strings, no extra keys)",
   };

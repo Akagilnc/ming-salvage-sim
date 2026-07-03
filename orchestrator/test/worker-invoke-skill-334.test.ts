@@ -54,6 +54,7 @@ import type {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const promptsDir = join(here, "..", "prompts");
+const imageDir = join(here, "..", "image");
 
 // ─── (1) RealBackend.boxConfig drops the runtime skillsMount (#334) ───────────
 
@@ -198,6 +199,14 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(review).toMatch(/escalationAnswer/i);
     expect(review).not.toMatch(/\.orchestrator-snapshot\.json/i);
     expect(review).not.toMatch(/fetch the current issue body|Retry transient network failures|Review the current full slice diff/is);
+  });
+
+  it("the worker image bakes the Matt code-review skill for reviewer workers", () => {
+    const build = readFileSync(join(imageDir, "build.sh"), "utf8");
+    const start = build.indexOf("SKILL_CLOSURE=(");
+    const end = build.indexOf(")", start);
+    const closureBlock = build.slice(start, end);
+    expect(closureBlock).toMatch(/\bcode-review\b/);
   });
 
   it("the coder soul carries implementation/fix process but not the per-slice review loop", () => {
@@ -430,9 +439,9 @@ describe("#334 ADR 0030 worker routing", () => {
     expect(result.status).toBe("success");
     expect(backend.dispatched).toEqual([
       "S2:coder:/tdd",
-      "S3:reviewer:/review",
+      "S3:reviewer:/code-review",
       "S5:coder:/tdd",
-      "S6:reviewer:/review",
+      "S6:reviewer:/code-review",
       "S7:ship:gstack-ship",
     ]);
   });

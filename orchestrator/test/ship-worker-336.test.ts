@@ -15,12 +15,13 @@
  * deleted-inline regression are asserted at the seam.
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as sc from "@ai-hero/sandcastle";
 import {
   RealBackend,
   SANDBOX_CODEX_DIR,
@@ -450,6 +451,76 @@ describe("#336 single-slice runShipWorker — fail-closed when gh auth is missin
       /shipSandbox should not be built/,
     );
     expect(be.sandboxReached).toBe(true);
+  });
+});
+
+describe("#336 single-slice runShipWorker — outcome sidecar cleanup", () => {
+  it("removes the temporary outcome sidecar directory after parsing the ship result", async () => {
+    let outcomePathAtRun: string | undefined;
+    const localWorktree: WorktreeHandle = {
+      branch: "feat/issue-496",
+      base: "main",
+      path: mkDir("ship-outcome-worktree-"),
+    };
+    class OutcomeCleanupBackend extends RealBackend {
+      public run(spec: WorkerSpec, ctx: DispatchContext): Promise<ShipWorkerOutcome> {
+        return (
+          this as unknown as {
+            runShipWorker(s: WorkerSpec, c: DispatchContext): Promise<ShipWorkerOutcome>;
+          }
+        ).runShipWorker(spec, ctx);
+      }
+      protected override buildOrReuseClone(): string {
+        return mkDir("ship-outcome-clone-");
+      }
+      protected override assertIndependentClone(): void {}
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok", ghToken: "gho_ok" };
+      }
+      protected override excludeRuntimeFileFromGit(): void {}
+      protected override prepareShipOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } | undefined {
+        const landing = super.prepareShipOutcomeLanding(ctx);
+        outcomePathAtRun = landing?.path;
+        return landing;
+      }
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
+        writeFileSync(
+          outcomePathAtRun,
+          JSON.stringify({
+            status: "pr_opened",
+            branch: "feat/issue-496",
+            pr: "https://github.com/Akagilnc/ming-salvage-sim/pull/514",
+          }),
+          "utf8",
+        );
+        return {
+          completionSignal: "SHIP_STEP_COMPLETE",
+          stdout: "<ship>{}</ship>",
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const be = new OutcomeCleanupBackend({
+      sourceRepo: mkDir("ship-outcome-src-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      runKey: "k336outcome",
+    });
+
+    const outcome = await be.run(shipWorkerSpec(), {
+      worktree: localWorktree,
+      stateDir: mkDir("ship-outcome-state-"),
+    });
+
+    expect(outcome.kind).toBe("shipped");
+    expect(outcomePathAtRun).toBeDefined();
+    expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
   });
 });
 

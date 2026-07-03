@@ -16,9 +16,11 @@ rule, and the escalate-don't-guess policy all live in the soul + the
 
 ## Required output
 
-When you are done (or are escalating), emit a single `<merger>` tag on its own line
-containing a single JSON object, then print the completion signal on its own line as
-the final line. If you iterate, only the LAST `<merger>` tag is read.
+When you are done (or are escalating), write the single JSON object to
+`$ORCHESTRATOR_OUTCOME_PATH` when that env var is set. Then, for compatibility
+with older runners, emit a single `<merger>` tag on its own line containing the
+same single JSON object, and print the completion signal on its own line as the
+final line.
 
 Success / resolved:
 

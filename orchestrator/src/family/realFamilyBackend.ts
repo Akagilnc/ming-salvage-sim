@@ -79,10 +79,15 @@ import {
   SANDBOX_REPO_ENV,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
+  SANDBOX_OUTCOME_PATH_ENV,
   SPAWNED_WORKER_ENV,
   WORKER_IDLE_TIMEOUT_SECONDS,
   modelFamilyForSlug,
 } from "../realBackend.js";
+import {
+  WORKER_OUTCOME_SANDBOX_FILE,
+  readWorkerOutcomeSidecar,
+} from "../workerOutcomeSidecar.js";
 import {
   cmrLegAccountingFailure,
   modelForSlot,
@@ -669,26 +674,43 @@ export class RealFamilyBackend implements FamilyBackend {
             "semantics (a thrown sc.run startup error would surface as an opaque wave abort).",
         };
       }
-      const result = await sc.run({
-        name: `merger-resolve-${req.childIssue}`,
-        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-        cwd: this.opts.workingRepo,
-        sandbox: this.mergerSandbox(auth),
-        agent: agentForSlug(mergerModel()),
-        maxIterations: 1,
-        completionSignal: MERGER_COMPLETION_SIGNAL,
-        branchStrategy: { type: "head" }, // commit the resolved merge in place
-        promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
-      });
-      return mergerOutcomeFromResult(result);
+      const outcomeLanding = this.prepareMergerOutcomeLanding();
+      try {
+        const result = await this.runAgentSandbox({
+          name: `merger-resolve-${req.childIssue}`,
+          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+          cwd: this.opts.workingRepo,
+          sandbox: this.mergerSandbox(auth, outcomeLanding),
+          agent: agentForSlug(mergerModel()),
+          maxIterations: 1,
+          completionSignal: MERGER_COMPLETION_SIGNAL,
+          branchStrategy: { type: "head" }, // commit the resolved merge in place
+          promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
+        });
+        return mergerOutcomeFromResult({ ...result, outcomePath: outcomeLanding.path });
+      } finally {
+        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
+      }
     } finally {
       this.cleanupTempAuthDirs([auth.codexAuthDir]);
     }
   }
 
   /** The merger agent's sandbox (souls + skills baked into the image + optional auth). */
-  protected mergerSandbox(auth: MergerAuth = this.mountMergerAuth()): sc.SandboxProvider {
-    return docker(this.mergerSandboxConfig(auth));
+  protected prepareMergerOutcomeLanding(): { path: string; sandboxPath: string } {
+    mkdirSync(this.opts.ledgerDir, { recursive: true });
+    const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-merger-"));
+    const path = join(dir, "outcome.json");
+    writeFileSync(path, "", "utf8");
+    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_SANDBOX_FILE);
+    return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
+  }
+
+  protected mergerSandbox(
+    auth: MergerAuth = this.mountMergerAuth(),
+    outcomeLanding?: { path: string; sandboxPath: string },
+  ): sc.SandboxProvider {
+    return docker(this.mergerSandboxConfig(auth, outcomeLanding));
   }
 
   /**
@@ -758,19 +780,31 @@ export class RealFamilyBackend implements FamilyBackend {
    * whose merger slot resolves to a Codex-family worker. The merger needs NO gh
    * mount — it resolves + commits in place, never pushes / opens a PR.
    */
-  protected mergerSandboxConfig(auth: MergerAuth): {
+  protected mergerSandboxConfig(
+    auth: MergerAuth,
+    outcomeLanding?: { path: string; sandboxPath: string },
+  ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
     const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    if (outcomeLanding !== undefined) {
+      env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
+    }
     const mounts: { hostPath: string; sandboxPath: string }[] = [];
     if (
       auth.codexAuthDir !== undefined &&
       modelFamilyForSlug(mergerModel()) === "codex"
     ) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    if (outcomeLanding !== undefined) {
+      mounts.push({
+        hostPath: outcomeLanding.path,
+        sandboxPath: outcomeLanding.sandboxPath,
+      });
     }
     return {
       imageName: this.opts.imageName,
@@ -1142,33 +1176,45 @@ export class RealFamilyBackend implements FamilyBackend {
       // baseline SHA + the machine-resolved children.
       this.writeCmrFocusFile(ctx);
       this.writeCmrRouteFile(ctx, frozenReviewLegs);
-      const result = await sc.run({
-        name: "family-cmr",
-        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-        cwd: this.opts.workingRepo,
-        sandbox: this.cmrSandbox(auth, frozenReviewLegs),
-        // Derive the model from the spec via the shared validated seam (cmr S336 r7
-        // symmetry): resolve the worker's slug through the same registry as the
-        // single-slice + family ship paths — no constant that could silently drift
-        // from the spec the runner declares.
-        agent: this.agentForSpec(spec),
-        // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
-        // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
-        // sequencing and accounting.
-        maxIterations: spec.maxIter,
-        completionSignal: spec.completionSignal,
-        // On the resident family base — the worker COMMITS its cross-slice fixes
-        // here (`head` keeps it in place, no detached temp checkout).
-        branchStrategy: { type: "head" },
-        promptFile: join(this.opts.promptsDir, spec.promptFile),
-      });
-      return cmrOutcomeFromResult({
-        ...result,
-        cmrReviewLegs: frozenReviewLegs,
-      });
+      const outcomeLanding = this.prepareCmrOutcomeLanding(ctx);
+      try {
+        const result = await this.runAgentSandbox({
+          name: "family-cmr",
+          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+          cwd: this.opts.workingRepo,
+          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding),
+          // Derive the model from the spec via the shared validated seam (cmr S336 r7
+          // symmetry): resolve the worker's slug through the same registry as the
+          // single-slice + family ship paths — no constant that could silently drift
+          // from the spec the runner declares.
+          agent: this.agentForSpec(spec),
+          // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
+          // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
+          // sequencing and accounting.
+          maxIterations: spec.maxIter,
+          completionSignal: spec.completionSignal,
+          // On the resident family base — the worker COMMITS its cross-slice fixes
+          // here (`head` keeps it in place, no detached temp checkout).
+          branchStrategy: { type: "head" },
+          promptFile: join(this.opts.promptsDir, spec.promptFile),
+        });
+        return cmrOutcomeFromResult({
+          ...result,
+          cmrReviewLegs: frozenReviewLegs,
+          outcomePath: outcomeLanding.path,
+        });
+      } finally {
+        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
+      }
     } finally {
       this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
     }
+  }
+
+  protected async runAgentSandbox(
+    options: Parameters<typeof sc.run>[0],
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    return await sc.run(options);
   }
 
   /**
@@ -1275,6 +1321,18 @@ export class RealFamilyBackend implements FamilyBackend {
     writeFileSync(join(this.opts.workingRepo, CMR_ROUTE_FILENAME), body + "\n", "utf8");
   }
 
+  protected prepareCmrOutcomeLanding(
+    ctx: DispatchContext,
+  ): { path: string; sandboxPath: string } {
+    mkdirSync(this.opts.ledgerDir, { recursive: true });
+    const pass = ctx.cmrPass ?? "legacy";
+    const dir = mkdtempSync(join(this.opts.ledgerDir, `worker-outcome-cmr-${pass}-`));
+    const path = join(dir, "outcome.json");
+    writeFileSync(path, "", "utf8");
+    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_SANDBOX_FILE);
+    return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
+  }
+
   /** Add a transient cmr runtime file to the worktree's local git excludes. */
   protected excludeFromGit(filename: string): void {
     try {
@@ -1292,7 +1350,7 @@ export class RealFamilyBackend implements FamilyBackend {
       } catch {
         // no exclude file yet
       }
-      if (!existing.split("\n").includes(filename)) {
+      if (!existing.split(/\r?\n/).includes(filename)) {
         mkdirSync(join(abs, ".."), { recursive: true });
         appendFileSync(
           abs,
@@ -1320,8 +1378,9 @@ export class RealFamilyBackend implements FamilyBackend {
   protected cmrSandbox(
     auth: CmrAuth,
     reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+    outcomeLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
-    return docker(this.cmrSandboxConfig(auth, reviewLegs));
+    return docker(this.cmrSandboxConfig(auth, reviewLegs, outcomeLanding));
   }
 
   /**
@@ -1450,6 +1509,7 @@ export class RealFamilyBackend implements FamilyBackend {
   protected cmrSandboxConfig(
     auth: CmrAuth,
     reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+    outcomeLanding?: { path: string; sandboxPath: string },
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -1473,6 +1533,9 @@ export class RealFamilyBackend implements FamilyBackend {
     // shipSandboxConfig's `!== undefined` guard); UNLIKE ship there is NO preflight —
     // gh absence degrades the gate's authority, it never blocks the cmr worker.
     if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
+    if (outcomeLanding !== undefined) {
+      env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
+    }
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     // Each leg's auth is mounted only when present (the 降级链 — a missing leg
     // degrades, the rest still review). The agy dir is WRITABLE (default, no
@@ -1482,6 +1545,12 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (auth.agyDir !== undefined) {
       mounts.push({ hostPath: auth.agyDir, sandboxPath: SANDBOX_AGY_DIR });
+    }
+    if (outcomeLanding !== undefined) {
+      mounts.push({
+        hostPath: outcomeLanding.path,
+        sandboxPath: outcomeLanding.sandboxPath,
+      });
     }
     return { imageName: this.opts.imageName, env, mounts };
   }
@@ -1640,8 +1709,16 @@ export class RealFamilyBackend implements FamilyBackend {
       // target. Written AFTER the checkout (the file lives in the family-base
       // worktree) and BEFORE the container so the worker can read it.
       this.writeShipFocusFile(ctx);
-      const result = await this.shipContainerRun(spec, auth);
-      return shipOutcomeFromResult(result);
+      const outcomeLanding = this.prepareFamilyShipOutcomeLanding();
+      try {
+        const result = await this.shipContainerRun(spec, auth, outcomeLanding);
+        return shipOutcomeFromResult({
+          ...result,
+          outcomePath: outcomeLanding.path,
+        });
+      } finally {
+        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
+      }
     } finally {
       this.cleanupTempAuthDirs([auth.codexAuthDir]);
     }
@@ -1656,12 +1733,13 @@ export class RealFamilyBackend implements FamilyBackend {
   protected async shipContainerRun(
     spec: WorkerSpec,
     auth: ShipAuth = this.mountShipAuth(),
+    outcomeLanding?: { path: string; sandboxPath: string },
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     return sc.run({
       name: "family-ship",
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
-      sandbox: this.shipSandbox(auth),
+      sandbox: this.shipSandbox(auth, outcomeLanding),
       // Derive the model from the spec via the SAME validated mapping the
       // single-slice ship path uses (realBackend.ts:2122) — NOT a hardcoded id.
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
@@ -1673,6 +1751,15 @@ export class RealFamilyBackend implements FamilyBackend {
       branchStrategy: { type: "head" },
       promptFile: join(this.opts.promptsDir, spec.promptFile),
     });
+  }
+
+  protected prepareFamilyShipOutcomeLanding(): { path: string; sandboxPath: string } {
+    mkdirSync(this.opts.ledgerDir, { recursive: true });
+    const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-ship-"));
+    const path = join(dir, "outcome.json");
+    writeFileSync(path, "", "utf8");
+    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_SANDBOX_FILE);
+    return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
 
   /**
@@ -1707,12 +1794,12 @@ export class RealFamilyBackend implements FamilyBackend {
         : "");
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, SHIP_FOCUS_FILENAME);
-    this.excludeShipFocusFromGit();
+    this.excludeOptionalRuntimeFileFromGit(SHIP_FOCUS_FILENAME);
     writeFileSync(target, body, "utf8");
   }
 
-  /** Add the ship focus file to the worktree's local git excludes (never committed). */
-  protected excludeShipFocusFromGit(): void {
+  /** Best-effort exclude for optional runtime files that must never be committed. */
+  protected excludeOptionalRuntimeFileFromGit(filename: string): void {
     try {
       const excludePath = join(
         this.sh("git", ["rev-parse", "--git-dir"], this.opts.workingRepo),
@@ -1728,11 +1815,11 @@ export class RealFamilyBackend implements FamilyBackend {
       } catch {
         // no exclude file yet
       }
-      if (!existing.split("\n").includes(SHIP_FOCUS_FILENAME)) {
+      if (!existing.split(/\r?\n/).includes(filename)) {
         mkdirSync(join(abs, ".."), { recursive: true });
         appendFileSync(
           abs,
-          (existing.endsWith("\n") || existing === "" ? "" : "\n") + SHIP_FOCUS_FILENAME + "\n",
+          (existing.endsWith("\n") || existing === "" ? "" : "\n") + filename + "\n",
           "utf8",
         );
       }
@@ -1744,8 +1831,11 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /** The family ship worker's sandbox (souls + skills + CLIs baked into the 2b image). */
-  protected shipSandbox(auth: ShipAuth = this.mountShipAuth()): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(auth));
+  protected shipSandbox(
+    auth: ShipAuth = this.mountShipAuth(),
+    outcomeLanding?: { path: string; sandboxPath: string },
+  ): sc.SandboxProvider {
+    return docker(this.shipSandboxConfig(auth, outcomeLanding));
   }
 
   /**
@@ -1822,7 +1912,10 @@ export class RealFamilyBackend implements FamilyBackend {
    * auth + the claude token + the gh token (GH_TOKEN, cmr S336 r10), NO skills mount
    * (the 2b image BAKES gstack-ship — a runtime mount would SHADOW it, #334).
    */
-  protected shipSandboxConfig(auth: ShipAuth): {
+  protected shipSandboxConfig(
+    auth: ShipAuth,
+    outcomeLanding?: { path: string; sandboxPath: string },
+  ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
@@ -1841,9 +1934,18 @@ export class RealFamilyBackend implements FamilyBackend {
     // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh
     // gate is the runShipWorker preflight — symmetric with the single-slice path).
     if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
+    if (outcomeLanding !== undefined) {
+      env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
+    }
     const mounts: { hostPath: string; sandboxPath: string }[] = [];
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    if (outcomeLanding !== undefined) {
+      mounts.push({
+        hostPath: outcomeLanding.path,
+        sandboxPath: outcomeLanding.sandboxPath,
+      });
     }
     return { imageName: this.opts.imageName, env, mounts };
   }
@@ -2118,6 +2220,7 @@ export interface MergerAuth {
 export function cmrOutcomeFromResult(result: {
   completionSignal?: string | string[];
   cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
+  outcomePath?: string;
   stdout: string;
 }): CmrWorkerOutcome {
   const signal = result.completionSignal;
@@ -2135,6 +2238,23 @@ export function cmrOutcomeFromResult(result: {
       diagnosis:
         `expected "${CMR_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
         `cmr run is not trusted as a verdict — escalate, never a fabricated pass)`,
+    };
+  }
+  try {
+    const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
+    if (sidecar !== undefined) {
+      return classifyCmrOutcomePayload(
+        sidecar,
+        result.cmrReviewLegs ?? process.env,
+        "cmr worker outcome sidecar",
+      );
+    }
+  } catch (err) {
+    return {
+      kind: "malformed",
+      reason:
+        `cmr worker outcome sidecar was not valid JSON: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
     };
   }
   return parseCmrOutcome(result.stdout, result.cmrReviewLegs);
@@ -2414,11 +2534,19 @@ export function parseCmrOutcome(
   } catch {
     return { kind: "malformed", reason: "cmr worker <cmr> tag was not valid JSON" };
   }
+  return classifyCmrOutcomePayload(parsed, routeOrEnv, "cmr worker <cmr> tag");
+}
+
+function classifyCmrOutcomePayload(
+  parsed: unknown,
+  routeOrEnv: CmrLegAccountingRoute,
+  source: string,
+): CmrWorkerOutcome {
   // `JSON.parse` succeeds on bare literals (`null` / `true` / `5`); the strict
   // schemas reject every non-object, but guard explicitly so the malformed
   // message stays specific (mirrors parseShipOutcome / parseMergerOutcome).
   if (!isJsonRecord(parsed)) {
-    return { kind: "malformed", reason: "cmr worker <cmr> tag was not a JSON object" };
+    return { kind: "malformed", reason: `${source} was not a JSON object` };
   }
   const normalizedParsed = normalizeKnownCmrAliases(parsed);
   // Escalate FIRST — a model-stuck worker never carries a usable verdict.
@@ -2489,7 +2617,7 @@ export function parseCmrOutcome(
   return {
     kind: "malformed",
     reason:
-      "cmr worker <cmr> tag matched no valid shape (expected one of: " +
+      `${source} matched no valid shape (expected one of: ` +
       "{converged:true,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions}, " +
       "{converged:false,reason,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions}, " +
       "{escalate:{reason,diagnosis}} — non-empty strings, no extra keys)",
@@ -2512,6 +2640,7 @@ export function parseCmrOutcome(
  */
 export function mergerOutcomeFromResult(result: {
   completionSignal?: string | string[];
+  outcomePath?: string;
   stdout: string;
 }): { resolved: boolean; reason?: string } {
   const signal = result.completionSignal;
@@ -2529,6 +2658,19 @@ export function mergerOutcomeFromResult(result: {
         `merger agent did not fire its completion signal — expected ` +
         `"${MERGER_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
         `run does not count as resolved)`,
+    };
+  }
+  try {
+    const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
+    if (sidecar !== undefined) {
+      return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
+    }
+  } catch (err) {
+    return {
+      resolved: false,
+      reason:
+        `merger agent outcome sidecar was not valid JSON: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
     };
   }
   return parseMergerOutcome(result.stdout);
@@ -2585,11 +2727,18 @@ export function parseMergerOutcome(stdout: string): {
   } catch {
     return { resolved: false, reason: "merger agent <merger> tag was not valid JSON" };
   }
+  return classifyMergerOutcomePayload(parsed, "merger agent <merger> tag");
+}
+
+function classifyMergerOutcomePayload(
+  parsed: unknown,
+  source: string,
+): { resolved: boolean; reason?: string } {
   // `JSON.parse` succeeds on the bare literals `null` / `true` / `5` / `"x"`; the
   // strict schemas reject every non-object, but guard explicitly so the message
   // stays specific (agy R1: a non-object must never crash or coerce to resolved).
   if (parsed === null || typeof parsed !== "object") {
-    return { resolved: false, reason: "merger agent <merger> tag was not a JSON object" };
+    return { resolved: false, reason: `${source} was not a JSON object` };
   }
   if (mergerResolvedSchema.safeParse(parsed).success) {
     return { resolved: true };
