@@ -295,6 +295,15 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     ).toEqual({ kind: "next", step: "S5" });
   });
 
+  it("#551 keeps per-slice S5 no-commit output on the existing terminal error edge", () => {
+    expect(
+      route({
+        from: "S5",
+        output: { kind: "coder", committed: false, commitsAdded: 0 },
+      }),
+    ).toEqual({ kind: "handoff", status: "error" });
+  });
+
   it("fails closed when a fresh re-review omits disposition for a prior claimed-fixed finding", async () => {
     const backend = new RetryReviewBackend([
       { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },

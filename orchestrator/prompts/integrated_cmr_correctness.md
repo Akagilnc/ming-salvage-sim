@@ -19,23 +19,34 @@ gate in this worker.
 
 ## Required output
 
-When the correctness gate has converged (or you must escalate), emit a single
-JSON object to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is set. Then, for
-compatibility with older runners, emit a single `<cmr>` tag on its own line
-containing the same single JSON object, and print the completion signal on its
-own line as the final line.
+When the correctness gate has converged (or you must escalate), write the single
+JSON object to a draft file first. When `$ORCHESTRATOR_OUTCOME_PATH` is set, do
+not write the sidecar or completion output yourself; run the versioned guard:
+
+```bash
+orchestrator-outcome-guard \
+  --role "cmr" \
+  --draft "<draft-json-path>" \
+  --outcome "$ORCHESTRATOR_OUTCOME_PATH" \
+  --evidence-root "$PWD" \
+  --completion-signal "CMR_STEP_COMPLETE"
+```
+
+The guard emits the compatibility `<cmr>` tag and completion signal only after
+validation passes. If `$ORCHESTRATOR_OUTCOME_PATH` is not set, use the same JSON
+shape in the legacy tag/signal output.
 
 Converged:
 
 ```text
-<cmr>{"converged": true, "successfulLegs": ["opus", "gpt-5.5"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>
+<cmr>{"converged": true, "successfulLegs": ["opus", "gpt-5.5"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
 CMR_STEP_COMPLETE
 ```
 
 Not converged:
 
 ```text
-<cmr>{"converged": false, "reason": "<short>", "successfulLegs": ["opus", "gpt-5.5"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "findings": [{"severity": "medium", "category": "correctness", "claim_quote": "<stable claim>", "location": "<file-or-scope>", "suggested_fix": "<next step>", "action": "defer", "disposition": {"kind": "same_module", "reason": "<why this is still in the family module>"}}]}</cmr>
+<cmr>{"converged": false, "reason": "<short>", "successfulLegs": ["opus", "gpt-5.5"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "findings": [{"severity": "medium", "category": "correctness", "claim_quote": "<stable claim>", "location": "<file-or-scope>", "suggested_fix": "<next step>", "action": "fix_now", "disposition": {"kind": "same_module", "reason": "<why this is still in the family module>"}}], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
 CMR_STEP_COMPLETE
 ```
 
@@ -66,6 +77,10 @@ Rules:
 - On any not-converged verdict, `reason`, `successfulLegs`,
   `claimedFixedFindingIdentityKeys`, and `priorFindingDispositions` are REQUIRED;
   `findings` is optional but must use reviewer finding shape when present.
+- On any converged or not-converged verdict, `evidencePaths` is REQUIRED and must
+  list relative paths to existing review/test artifacts under the repo root. Do
+  not use absolute paths or `..`; the guard rejects paths it cannot resolve under
+  `$PWD`.
 - For `findings[].disposition.kind`, use exactly one of `same_module`,
   `cross_module`, `spec_conflict`, `infra_failure`,
   `owning_issue_still_red`, or `accepted_suppressed`. Only `cross_module`
@@ -81,5 +96,8 @@ Rules:
   unless a prior finding key was provided, because the runner derives it from
   category, location, and claim quote. `disposition.reason` is the canonical
   rationale; top-level `disposition_reason` may repeat it but is not required.
-- Emit the `<cmr>` tag LAST; if you iterate, the LAST tag is the one that counts.
-- Always print `CMR_STEP_COMPLETE` on its own line at the very end.
+- When `$ORCHESTRATOR_OUTCOME_PATH` is set, let `orchestrator-outcome-guard` emit
+  the `<cmr>` tag and `CMR_STEP_COMPLETE`; do not print them yourself.
+- Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag LAST; if you iterate,
+  the LAST tag is the one that counts, then print `CMR_STEP_COMPLETE` on its own
+  line at the very end.

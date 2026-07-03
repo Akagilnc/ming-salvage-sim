@@ -35,6 +35,7 @@ export interface StopSummaryMetadata {
   readonly admissionSkipped?: ReadonlyArray<AdmissionSkippedSummary>;
   readonly alreadyDone?: ReadonlyArray<AlreadyDoneSummary>;
   readonly trustBoundary?: TrustBoundarySummary;
+  readonly trackedStatus?: ReadonlyArray<string>;
 }
 
 export interface AcceptedSuppressionSummary {
@@ -371,19 +372,18 @@ export function contractDriftStopSummary(input: {
   readonly repairHint: string;
   readonly ship?: ShipFailureSummary;
   readonly heads?: HeadFreshnessSummary;
+  readonly metadata?: StopSummaryMetadata;
 }): StopSummary {
+  const metadata = {
+    ...(input.metadata ?? {}),
+    ...(input.ship !== undefined ? { ship: input.ship } : {}),
+    ...(input.heads !== undefined ? { heads: input.heads } : {}),
+  };
   return {
     reason: "contract_drift",
     summary: input.summary,
     repairHint: input.repairHint,
-    ...(input.ship !== undefined || input.heads !== undefined
-      ? {
-          metadata: {
-            ...(input.ship !== undefined ? { ship: input.ship } : {}),
-            ...(input.heads !== undefined ? { heads: input.heads } : {}),
-          },
-        }
-      : {}),
+    ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
   };
 }
 
