@@ -128,6 +128,7 @@ def _hub_ledger_snapshot(db, *, turn=None):
 def _hub_container_snapshot(db):
     keys = (
         "hub_省级起运到京", "hub_盐税解京", "hub_商税解京",
+        "hub_太仓亏空", "hub_京运损耗",
         "C_太仓挪用", "C_太仓纯亏空", "C_京运克扣", "C_京运运损",
     )
     rows = db.conn.execute(
@@ -160,7 +161,7 @@ def _assert_hub_conservation_oracle(
     )
     taicang_human = containers["C_太仓挪用"]
     taicang_sink = containers["C_太仓纯亏空"]
-    taicang_loss = taicang_human + taicang_sink
+    taicang_loss = containers["hub_太仓亏空"]
     inbound_booked_net = (
         ledger.get("起运", 0.0)
         + ledger.get("盐税", 0.0)
@@ -168,28 +169,28 @@ def _assert_hub_conservation_oracle(
         + ledger.get("太仓亏空", 0.0)
     )
     assert inbound_gross == pytest.approx(inbound_booked_net + taicang_loss)
-    assert taicang_loss == pytest.approx(taicang_human + taicang_sink)
     if expected_taicang_losses is not None:
         expected_human, expected_sink = expected_taicang_losses
         assert taicang_human == pytest.approx(expected_human)
         assert taicang_sink == pytest.approx(expected_sink)
+        assert taicang_loss == pytest.approx(expected_human + expected_sink)
 
     if outbound is not None:
         jingyun_human = containers["C_京运克扣"]
         jingyun_sink = containers["C_京运运损"]
-        jingyun_loss = jingyun_human + jingyun_sink
+        jingyun_loss = containers["hub_京运损耗"]
         outbound_debit = -ledger.get("边饷hub", 0.0)
         assert outbound_debit == pytest.approx(
             outbound["jingyun_paid"] + outbound["central_paid"] + jingyun_loss
         )
         assert jingyun_loss == pytest.approx(outbound["transport_loss"])
-        assert outbound["transport_loss"] == pytest.approx(
-            jingyun_human + jingyun_sink
-        )
         if expected_jingyun_losses is not None:
             expected_human, expected_sink = expected_jingyun_losses
             assert jingyun_human == pytest.approx(expected_human)
             assert jingyun_sink == pytest.approx(expected_sink)
+            assert outbound["transport_loss"] == pytest.approx(
+                expected_human + expected_sink
+            )
 
 
 def _assert_hub_oracle_mutation_fails(
@@ -825,15 +826,22 @@ def test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory(fresh_game):
     db.conn.commit()
 
     balances = []
+    taicang_loss_months = []
+    taicang_loss_stocks = []
     for _ in range(3):
         turn = state.turn
         flow_rows = flows_mod.apply_fixed_period_flows(db, state)
         balances.append(state.metrics["国库"])
+        container_snapshot = _hub_container_snapshot(db)
+        taicang_loss_months.append(container_snapshot["hub_太仓亏空"])
+        taicang_loss_stocks.append(
+            container_snapshot["C_太仓挪用"] + container_snapshot["C_太仓纯亏空"]
+        )
 
         assert any(row.get("category") == "起运" for row in flow_rows)
         _assert_hub_conservation_oracle(
             _hub_ledger_snapshot(db, turn=turn),
-            _hub_container_snapshot(db),
+            container_snapshot,
         )
 
         state.turn += 1
@@ -841,6 +849,8 @@ def test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory(fresh_game):
 
     assert len(set(balances)) > 1
     assert balances[-1] == db.load_state().metrics["国库"]
+    assert taicang_loss_stocks[-1] == pytest.approx(sum(taicang_loss_months))
+    assert taicang_loss_stocks[-1] > taicang_loss_months[-1]
 
 
 def test_ready_context_retry_does_not_recompute_substrate_hub_pre_settle(fresh_game):
@@ -1274,6 +1284,7 @@ def test_budget_lines_read_persisted_substrate_hub_income_source(fresh_game):
             ("hub_省级起运到京", 11),
             ("hub_盐税解京", 3),
             ("hub_商税解京", 4),
+            ("hub_太仓亏空", 3),
             ("C_太仓挪用", 2),
             ("C_太仓纯亏空", 1),
         ],
@@ -1316,6 +1327,7 @@ def test_treasury_budget_summary_names_substrate_hub_surfaces(fresh_game):
             ("hub_省级起运到京", 11),
             ("hub_盐税解京", 3),
             ("hub_商税解京", 4),
+            ("hub_太仓亏空", 3),
             ("C_太仓挪用", 2),
             ("C_太仓纯亏空", 1),
         ],
