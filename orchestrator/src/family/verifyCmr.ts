@@ -1009,6 +1009,20 @@ function cmrReviewerHeadMovedStopSummary(input: {
   });
 }
 
+function cmrReviewerTrackedDirtyStopSummary(input: {
+  readonly pass: IntegratedCmrPass;
+  readonly trackedStatus: readonly string[];
+}): StopSummary {
+  return contractDriftStopSummary({
+    summary:
+      `integrated CMR ${input.pass} reviewer left tracked changes: ` +
+      input.trackedStatus.join("; "),
+    repairHint:
+      "restore the reviewer/coder role boundary so CMR review leaves the tracked worktree clean, then rerun the family CMR gate",
+    metadata: { trackedStatus: input.trackedStatus },
+  });
+}
+
 async function runCmrCoderFix(input: {
   readonly pass: IntegratedCmrPass;
   readonly familyBackend: FamilyBackend;
@@ -1204,6 +1218,20 @@ async function readPostCmrFamilyHead(
   }
 }
 
+async function readPostCmrTrackedStatus(
+  familyBackend: FamilyBackend,
+  familyBase: string,
+): Promise<readonly string[]> {
+  if (familyBackend.readFamilyTrackedStatus === undefined) return [];
+  try {
+    return (await familyBackend.readFamilyTrackedStatus(familyBase)).filter(
+      (line) => line.trim().length > 0,
+    );
+  } catch {
+    return [];
+  }
+}
+
 async function readRequiredFamilyHead(
   familyBackend: FamilyBackend,
   familyBase: string,
@@ -1386,6 +1414,10 @@ async function runIntegratedCmrPass(input: {
     familyBase,
     resolvedFamilyHeadAfter,
   );
+  const postWorkerTrackedStatus = await readPostCmrTrackedStatus(
+    familyBackend,
+    familyBase,
+  );
   if (cmrResult.kind === "escalated") {
     const reason = `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`;
     const stopSummary = cmrEscalationStopSummary(reason);
@@ -1468,6 +1500,22 @@ async function runIntegratedCmrPass(input: {
         pass,
         familyHeadBefore: resolvedFamilyHeadAfter,
         familyHeadAfter: postWorkerFamilyHead,
+      }),
+    });
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+  }
+  if (postWorkerTrackedStatus.length > 0) {
+    const reason =
+      `integrated CMR ${pass} reviewer left tracked changes: ` +
+      postWorkerTrackedStatus.join("; ");
+    await recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
+      familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: cmrReviewerTrackedDirtyStopSummary({
+        pass,
+        trackedStatus: postWorkerTrackedStatus,
       }),
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };

@@ -18,7 +18,7 @@
  */
 
 import { z } from "zod";
-import { readWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
+import { readRequiredWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
 
 /**
  * The classified outcome of a ship WORKER's run (#336). One of:
@@ -126,8 +126,8 @@ export function shipOutcomeFromResult(result: {
     };
   }
   try {
-    const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
-    if (sidecar !== undefined) {
+    if (result.outcomePath !== undefined) {
+      const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
       return classifyShipOutcomePayload(sidecar, "ship worker outcome sidecar");
     }
   } catch (err) {
