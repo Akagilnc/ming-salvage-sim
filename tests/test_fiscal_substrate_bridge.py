@@ -1778,7 +1778,8 @@ def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
         """
         UPDATE armies
         SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
-            central_pay_share = 0, pay_source_region = ''
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
         """
     )
     db.conn.execute(
@@ -1786,7 +1787,9 @@ def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
         UPDATE armies
         SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
             pay_source_region = 'shaanxi', province_pay_share = 0,
-            central_pay_share = 1, manpower = 10000, salary_rate = 10
+            central_pay_share = 1, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0,
+            manpower = 10000, salary_rate = 10
         WHERE id = 'guanning'
         """
     )
@@ -1795,7 +1798,9 @@ def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
         UPDATE armies
         SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
             pay_source_region = 'fujian', province_pay_share = 1.0,
-            central_pay_share = 0.0, manpower = 10000, salary_rate = 10
+            central_pay_share = 0.0, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0,
+            manpower = 10000, salary_rate = 10
         WHERE id = 'fujian_navy'
         """
     )
@@ -1807,6 +1812,17 @@ def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
         if row["name"] == "各军军饷"
     )
     assert substrate_pay == 5
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+    hub_row = next(row for row in flow_rows if row.get("category") == "边饷hub")
+    assert hub_row["paid"] == pytest.approx(5)
+
+    settled_budget = flows_mod.compute_budget_lines(db, state)
+    settled_pay = next(
+        row["amount"] for row in settled_budget["国库"]["expense"]
+        if row["name"] == "各军军饷"
+    )
+    assert settled_pay == 5
 
     _disable_army_pay_source_cutover(db)
 
