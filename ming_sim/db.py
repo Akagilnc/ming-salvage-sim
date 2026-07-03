@@ -1406,15 +1406,16 @@ class GameDB:
         """从 content/fiscal_config.json（self.content.fiscal_items）seed 财政科目目录。
 
         base/rate 单位为【月度】万两/%。科目目录与元数据全走 JSON 设定（铁律：设定走 JSON）；
-        加新税源只改 JSON 加两行（base+rate）并升 schema_version，零 Python。
+        新档加税源只改 JSON；若老档也要补新 key，必须登记对应 schema_version 的差量迁移。
 
         ── 版本迁移策略（铁律：fiscal_config 只在建库时整体 seed 一次）──
         每个库带 `__schema_version`。本函数按它与 JSON schema_version 比对，分三种走法：
 
         - `cur == 0`（全新库，无版本行）：整体 seed JSON 全表 → 版本号置 JSON 版。仅此一次。
-        - `cur < json`（老档升版）：逐版跑 `_FISCAL_MIGRATIONS[cur+1 .. json]` 的差量动作，
-          每版只动那版真正变的 key，**未声明的 key 一律不碰**（玩家削减/裁撤全保留），
-          跑完把版本号推到该版。默认迁移＝只 INSERT 老档缺的 key（不覆盖既有值、不复活已删项）。
+        - `cur < json`（老档升版）：逐版跑 `_FISCAL_MIGRATIONS[cur+1 .. json]` 的差量动作。
+          新 schema 若要给老档补 key，必须在对应版本登记；未声明的 key 一律不碰
+          （玩家削减/裁撤全保留）。未登记版本只走兼容兜底 `_seed_missing`，不得作为新 schema
+          正常迁移路径。
         - `cur >= json`：**啥都不做**。已是最新，玩家状态神圣。
 
         ⇒ 玩家裁撤的科目读档后保持删除（不再被旧 INSERT OR IGNORE 复活）。
@@ -1437,17 +1438,29 @@ class GameDB:
         cols = "(key, value, kind, note, budget_role, account, direction, display, sort_order)"
 
         def _seed_missing() -> None:
-            """老档升版的默认迁移：只补 JSON 有、库里没有的 key（不覆盖既有值、不复活已删项）。"""
+            """兼容兜底迁移；新 schema 不应依赖它补老档 key。"""
             self.conn.executemany(
                 f"INSERT OR IGNORE INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [_meta(rec) for rec in rows],
             )
 
+        def _seed_keys(keys: "tuple[str, ...]") -> None:
+            wanted = set(keys)
+            self.conn.executemany(
+                f"INSERT OR IGNORE INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [_meta(rec) for rec in rows if str(rec["key"]) in wanted],
+            )
+
         # 每版迁移：从 N-1 → N，只动那版真正变的东西。键＝目标版本号 N。
-        # 不在表里的版本步走默认 _seed_missing（只补缺 key）。将来要改某 key 默认 / 删某 key /
-        # 加新 key，就在这里登记一条 lambda，只动那一项，别动其它——这样玩家改过的全保住。
+        # 将来要改某 key 默认 / 删某 key / 加新 key，就在这里登记一条 lambda，只动那一项，
+        # 别动其它——这样玩家改过的全保住。未登记版本只保留旧兼容兜底，不作为正常迁移路径。
         _FISCAL_MIGRATIONS: "Dict[int, Any]" = {
-            # 8: lambda: self._add_fiscal_key("关税_base", ...),   # 例：将来加新税
+            8: lambda: _seed_keys((
+                "central_taicang_human_loss_rate",
+                "central_taicang_sink_loss_rate",
+                "central_jingyun_human_loss_rate",
+                "central_jingyun_sink_loss_rate",
+            )),
         }
 
         cur_ver_row = self.conn.execute(
@@ -8585,6 +8598,7 @@ class GameDB:
         target_kind: str | None = None,
         target_id: str | None = None,
         commit: bool = True,
+        apply_legacy_modifier: bool = True,
     ) -> int:
         """记一笔经济流水到 economy_ledger，同步更新 metrics[account]。
 
@@ -8594,13 +8608,14 @@ class GameDB:
         遗产修正：account 上若有 active 遗产百分比修正符，先按 apply_legacy_pct 放大/缩小 delta
         再落账。修正折进本笔流水，不另立账行。
         category=='局势遗产' 时不再二次修正（避免自乘，且当前已无该类调用）。
+        apply_legacy_modifier=False 仅给已经在上游按总账口径结算的程序路径使用。
         帝国修正只对收入（delta>0 正向流水）生效；支出（delta<0）按面值落账（issue #341）——
         即本路径仅以 delta>0 调 apply_legacy_pct（其 base>=0 ×(1+net/100) 分支）；
         apply_legacy_pct 自身的 base<0 ×(1-net/100) 分支由 region/army 等其它调用方使用，本路径不走。
         """
         if isinstance(delta, bool) or not isinstance(delta, int):
             raise TypeError("delta must be an integer")
-        if category != "局势遗产":
+        if apply_legacy_modifier and category != "局势遗产":
             net_pct = int(self.legacy_modifiers(state).get(account, 0) or 0)  # type: ignore[arg-type]
             if net_pct and delta > 0:
                 delta = self.apply_legacy_pct(int(delta), net_pct)

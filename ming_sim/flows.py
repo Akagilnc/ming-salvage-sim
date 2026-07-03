@@ -322,7 +322,7 @@ def _set_fiscal_container(db: GameDB, key: str, value: float, note: str) -> None
 # 固定月度收支科目目录现走数据驱动：db.iter_budget_items() 从 fiscal_config 读
 # budget_role=fixed 的 base 项（account/direction/display）。加新税源只改 content/fiscal_config.json。
 # 税收/皇庄走 calc_province_fiscal（动态）；legacy 军饷走 army_needed，substrate_hub 军饷
-# 旧预算行归零、由 per-source 省/中央欠账路径承载。compute_budget_lines 是预算展示同源，
+# 旧流水归零，预算兼容行改读 hub 预计实拨。compute_budget_lines 是预算展示同源，
 # flows 落账 / UI budget_payload / db.treasury_budget_summary 三处共用，禁止各自重算。
 
 
@@ -1313,7 +1313,14 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             ):
                 if amount <= 0:
                     continue
-                actual = db.record_issue_economy_move(state, "国库", amount, category, reason)
+                actual = db.record_issue_economy_move(
+                    state,
+                    "国库",
+                    amount,
+                    category,
+                    reason,
+                    apply_legacy_modifier=False,
+                )
                 flows.append({
                     "dir": "income",
                     "account": "国库",

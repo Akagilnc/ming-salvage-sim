@@ -29,9 +29,10 @@
           为省级起运 + 盐税解京 + 商税解京，并显式列太仓亏空/京运边饷 hub/官俸/宫廷/…）
         ↳ 军饷按存档级 `fiscal_engine` 分流：
           - `legacy` 老档：保留旧「各军军饷」预算行 + 逐军从国库扣发；国库不足挂 `armies.arrears`。
-          - `substrate_hub` 新档：旧「各军军饷」预算/流水为 0，不再从该全局路径双付；先按本月开账
-            国库能力跑 `边饷hub` outbound，京运给各省 grant 与中央份额共用同一个 hub tier，
-            写 `中央军饷`、`central_pay_arrears`、中央欠饷容器与 `C_京运克扣/C_京运运损`。
+          - `substrate_hub` 新档：旧「各军军饷」流水为 0，不再从该全局路径双付；预算兼容行
+            仍展示 hub 预计实拨。先按本月开账国库能力跑 `边饷hub` outbound，京运给各省
+            grant 与中央份额共用同一个 hub tier，写 `中央军饷`、`central_pay_arrears`、
+            中央欠饷容器与 `C_京运克扣/C_京运运损`。
             省份额随后由省级 substrate 写 `province_pay_arrears`，仍用 **应发 =
             ceil(manpower × salary_rate / 10000)**（#44，0 兵=0 饷）。
         ↳ 逐建筑 condition × output_amount → 国库/内库

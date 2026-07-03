@@ -25,6 +25,7 @@ from ming_sim.db import GameDB
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.fiscal_tick import settle_tick
 from ming_sim.flows import army_needed
+from ming_sim.issues import sync_opening_legacies
 
 
 @pytest.fixture
@@ -1080,6 +1081,7 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     db, state = fresh_game
     state.metrics["国库"] = 0
     db.save_state(state)
+    sync_opening_legacies(db, state)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
     db.conn.execute("UPDATE fiscal_config SET value = 0 WHERE kind != 'meta'")
     _set_fiscal_config_value(db, "central_taicang_human_loss_rate", 10)
@@ -1811,6 +1813,44 @@ def test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub(fre
             for row in flow_rows
         )
         assert any(row.get("category") == "中央军饷" for row in flow_rows)
+    finally:
+        reopened.conn.close()
+
+
+def test_fiscal_config_v8_migration_preserves_deleted_old_keys(fresh_db):
+    path = fresh_db.path
+    content = fresh_db.content
+    new_loss_keys = (
+        "central_taicang_human_loss_rate",
+        "central_taicang_sink_loss_rate",
+        "central_jingyun_human_loss_rate",
+        "central_jingyun_sink_loss_rate",
+    )
+    fresh_db.conn.execute("DELETE FROM fiscal_config WHERE key = '官俸_base'")
+    fresh_db.conn.executemany(
+        "DELETE FROM fiscal_config WHERE key = ?",
+        [(key,) for key in new_loss_keys],
+    )
+    fresh_db.conn.execute(
+        "UPDATE fiscal_config SET value = 7 WHERE key = '__schema_version'"
+    )
+    fresh_db.conn.commit()
+
+    reopened = GameDB(path, content)
+    try:
+        deleted = reopened.conn.execute(
+            "SELECT 1 FROM fiscal_config WHERE key = '官俸_base'"
+        ).fetchone()
+        assert deleted is None
+        rows = reopened.conn.execute(
+            f"SELECT key FROM fiscal_config WHERE key IN ({','.join('?' for _ in new_loss_keys)})",
+            new_loss_keys,
+        ).fetchall()
+        assert {str(row["key"]) for row in rows} == set(new_loss_keys)
+        version = reopened.conn.execute(
+            "SELECT value FROM fiscal_config WHERE key = '__schema_version'"
+        ).fetchone()
+        assert int(version["value"]) == 8
     finally:
         reopened.conn.close()
 
