@@ -22,10 +22,10 @@ Before emitting your terminal verdict, read
    clause-by-clause delivery of child issue specs, required wiring of constraints /
    delegations / exemptions, and whether behavioral keys actually fire when
    exercised. Green tests or a generic end-to-end pipeline are not delivery proof.
-3. Stop at review artifacts and outcome. If you find a blocking delivery gap,
-   report structured findings, raw evidence paths, and relevant test logs; you
-   must not repair the gap, edit tracked files as a fix, or create a fix commit.
-   The runner dispatches coder-fix after your outcome.
+3. Stop at findings/outcome. If you find a blocking delivery gap, report
+   structured findings, raw evidence paths, and relevant test logs, then return
+   control to the runner. You must not repair the gap, edit tracked files as a
+   fix, or create a fix commit.
 4. A gap whose fix needs an out-of-slice architecture or design decision must be
    classified/escalated in the outcome rather than silently downgraded.
 
