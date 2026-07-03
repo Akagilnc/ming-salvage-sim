@@ -914,6 +914,69 @@ class OutcomeProtocolFailureCoderFixBackend extends ReviewFixRereviewBackend {
   }
 }
 
+class ReviewerChecksOutOtherHeadBackend implements FamilyBackend {
+  readonly ledger: FamilyLedgerEntry[] = [];
+  readonly dispatches: DispatchRecord[] = [];
+
+  async mergeChildIntoFamilyBase(): Promise<never> {
+    throw new Error("not used");
+  }
+  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+    this.ledger.push(entry);
+  }
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return this.ledger;
+  }
+  async readFamilyHead(): Promise<string> {
+    return "family-head";
+  }
+  async readFamilyCurrentHead(): Promise<string> {
+    return "detached-review-head";
+  }
+  async readFamilyTrackedStatus(): Promise<readonly string[]> {
+    return [];
+  }
+  async runFamilyVerify(): Promise<FamilyVerifyResult> {
+    return { ok: true };
+  }
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      role: spec.role,
+      promptFile: spec.promptFile,
+      contextRetention: spec.contextRetention,
+      cmrPass: ctx.cmrPass,
+      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
+      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
+    });
+    if (spec.kind === "cmr") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          ...CMR_EVIDENCE,
+        },
+      };
+    }
+    if (spec.kind === "ship") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx.familyBase!,
+          status: "pr_opened",
+          pr: `pr://${ctx.familyBase}`,
+          prHead: "family-head",
+        },
+      };
+    }
+    throw new Error(`unexpected worker kind ${spec.kind}`);
+  }
+}
+
 describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix/re-review)", () => {
   it("blocking family CMR findings return to runner, dispatch coder-fix, then trigger a fresh full-diff re-review", async () => {
     const backend = new ReviewFixRereviewBackend();
@@ -1339,6 +1402,40 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     ).toBe(false);
     expect(
       backend.ledger.some((entry) => entry.status === "cmr_passed"),
+    ).toBe(false);
+  });
+
+  it("fails closed when the CMR reviewer checks out a different clean HEAD", async () => {
+    const backend = new ReviewerChecksOutOtherHeadBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/550-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatches).toEqual([
+      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
+    ]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      cmrPass: "completeness",
+      reason: expect.stringMatching(/checked out.*different HEAD/i),
+      familyHeadAfter: "detached-review-head",
+      stopSummary: expect.objectContaining({
+        reason: "contract_drift",
+        metadata: expect.objectContaining({
+          heads: expect.objectContaining({
+            reportedFamilyHead: "family-head",
+            actualFamilyHead: "detached-review-head",
+          }),
+        }),
+      }),
+    }));
+    expect(
+      backend.dispatches.some((dispatch) => dispatch.kind === "ship"),
     ).toBe(false);
   });
 

@@ -416,6 +416,8 @@ export interface FamilyBackend {
    * HEAD, not just the pre-pass head supplied by the spine.
    */
   readFamilyHead?(familyBase: string): Promise<string>;
+  /** Live checked-out worktree HEAD read seam after a family worker returns. */
+  readFamilyCurrentHead?(): Promise<string>;
   /**
    * Live tracked worktree status read seam. Reviewer workers must not leave
    * tracked edits behind even when HEAD is unchanged.

@@ -550,6 +550,11 @@ export class RealFamilyBackend implements FamilyBackend {
     return out.trim();
   }
 
+  async readFamilyCurrentHead(): Promise<string> {
+    const out = await this.sh("git", ["rev-parse", "HEAD"], this.opts.workingRepo);
+    return out.trim();
+  }
+
   async readFamilyTrackedStatus(_familyBase: string): Promise<readonly string[]> {
     const out = await this.sh(
       "git",
