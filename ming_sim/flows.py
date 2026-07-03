@@ -31,6 +31,23 @@ class _SubstrateHubFixedFlowAbort(RuntimeError):
     """Marker for substrate hub bad-state/conservation failures in fixed fiscal."""
 
 
+def raise_fixed_period_flow_abort_if_needed(
+    db: GameDB, state: GameState, exc: BaseException
+) -> None:
+    """Convert fixed-flow marker aborts after any surrounding transaction has rolled back."""
+    if not isinstance(exc, _SubstrateHubFixedFlowAbort):
+        return
+    if getattr(db.conn, "_commit_suspended", False):
+        return
+    pack_path = write_error_pack(db, state, exc=exc, extracted=None, resolve_ctx=None)
+    raise SettlementAbort(
+        settlement_abort_message(pack_path),
+        turn=int(getattr(state, "turn", 0)),
+        stage="fixed_fiscal",
+        error_pack_path=pack_path,
+    ) from exc
+
+
 def _province_transport_ratio(fiscal: dict, unrest: int) -> float:
     """解运比（保留函数签名，返回1.0；实际损耗已并入 _province_efficiency）。"""
     return 1.0
@@ -985,13 +1002,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         except _SubstrateHubFixedFlowAbort as exc:
             state.metrics.clear()
             state.metrics.update(metrics_before)
-            pack_path = write_error_pack(db, state, exc=exc, extracted=None, resolve_ctx=None)
-            raise SettlementAbort(
-                settlement_abort_message(pack_path),
-                turn=int(getattr(state, "turn", 0)),
-                stage="fixed_fiscal",
-                error_pack_path=pack_path,
-            ) from exc
+            raise_fixed_period_flow_abort_if_needed(db, state, exc)
         except BaseException:
             state.metrics.clear()
             state.metrics.update(metrics_before)
