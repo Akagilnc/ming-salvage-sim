@@ -556,6 +556,17 @@ export interface DispatchContext {
    */
   readonly blockingFindingIdentityKeys?: ReadonlyArray<string>;
   /**
+   * FAMILY CMR coder-fix retry only: runner-observed repair-evidence gate failures
+   * from earlier attempts for the SAME blocking finding set. Fresh retry workers
+   * receive this instead of relying on hidden session memory.
+   */
+  readonly repairAttemptFailures?: ReadonlyArray<{
+    readonly attempt: number;
+    readonly reason: string;
+    readonly familyHeadBefore?: string;
+    readonly familyHeadAfter?: string;
+  }>;
+  /**
    * S5 coder-fix, S7 ship, or family-level CMR/ship worker: the human answer that
    * reopened a prior decision-escalate pause (#439). The runner passes it to the
    * re-dispatched worker so the resume instruction is visible without deleting or

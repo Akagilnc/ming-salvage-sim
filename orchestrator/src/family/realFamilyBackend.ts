@@ -1443,6 +1443,10 @@ export class RealFamilyBackend implements FamilyBackend {
         {
           blockingFindings: ctx.blockingFindings ?? [],
           blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
+          ...(ctx.repairAttemptFailures !== undefined &&
+          ctx.repairAttemptFailures.length > 0
+            ? { repairAttemptFailures: ctx.repairAttemptFailures }
+            : {}),
           ...(ctx.escalationAnswer !== undefined
             ? { escalationAnswer: ctx.escalationAnswer }
             : {}),
@@ -2879,7 +2883,19 @@ const cmrConvergedSchema = z
     ...cmrFindingsSchema,
     ...cmrEvidenceSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((outcome, ctx) => {
+    const fixNowIndex = outcome.findings?.findIndex(
+      (finding) => finding.action === "fix_now",
+    );
+    if (fixNowIndex !== undefined && fixNowIndex >= 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["findings", fixNowIndex, "action"],
+        message: "converged CMR outcome cannot carry fix_now findings",
+      });
+    }
+  });
 const cmrRedSchema = z
   .object({
     converged: z.literal(false),
@@ -2958,6 +2974,18 @@ function classifyCmrOutcomePayload(
     return { kind: "malformed", reason: `${source} was not a JSON object` };
   }
   const normalizedParsed = normalizeKnownCmrAliases(parsed);
+  if (
+    normalizedParsed.converged === true &&
+    Array.isArray(normalizedParsed.findings) &&
+    normalizedParsed.findings.some(
+      (finding) => isJsonRecord(finding) && finding.action === "fix_now",
+    )
+  ) {
+    return {
+      kind: "malformed",
+      reason: `${source} cannot be converged while findings include fix_now actions`,
+    };
+  }
   // Escalate FIRST — a model-stuck worker never carries a usable verdict.
   const escalate = cmrEscalateSchema.safeParse(normalizedParsed);
   if (escalate.success) {
