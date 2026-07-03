@@ -1155,6 +1155,93 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(evidenceCalls.every((call) => call.cwd === repo)).toBe(true);
   });
 
+  it("trims outcome rewrite git evidence before comparing heads and tracked status", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+
+    class TrimmedGitEvidenceBackend extends RealFamilyBackend {
+      outcomePath: string | undefined;
+      revParseCalls = 0;
+
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
+        const landing = super.prepareCmrOutcomeLanding(ctx);
+        this.outcomePath = landing.path;
+        return landing;
+      }
+
+      protected override sh(file: string, args: string[]): string {
+        if (file === "git") {
+          if (args[0] === "status") return "\r\n";
+          if (args[0] === "rev-parse") {
+            this.revParseCalls += 1;
+            return this.revParseCalls === 1 ? "same-head\n" : "same-head\r\n";
+          }
+        }
+        return "";
+      }
+
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (this.outcomePath === undefined) throw new Error("missing outcome path");
+        writeFileSync(
+          this.outcomePath,
+          JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          }),
+          "utf8",
+        );
+        return {
+          completionSignal: "CMR_STEP_COMPLETE",
+          stdout: "",
+          iterations: [{ sessionId: "cmr-session-rewritten" }],
+          commits: [],
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+
+    const be = new TrimmedGitEvidenceBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-outcome-rewrite-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    const result = await be.rewriteWorkerOutcome(
+      cmrWorkerSpec("fresh", "completeness"),
+      { familyBase: "fb", cmrPass: "completeness" },
+      {
+        kind: "malformed",
+        reason: "cmr worker outcome sidecar was not valid JSON",
+        sessionId: "cmr-session-original",
+      },
+      1,
+    );
+
+    expect(result).toMatchObject({
+      kind: "completed",
+      sessionId: "cmr-session-rewritten",
+      output: {
+        kind: "cmr",
+        cmrPass: "completeness",
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+      },
+    });
+  });
+
   it("rejects an outcome rewrite that returns a valid CMR envelope with tracked changes left behind", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const repo = realRepo335();

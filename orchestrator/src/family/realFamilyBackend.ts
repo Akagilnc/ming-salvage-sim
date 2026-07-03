@@ -1570,9 +1570,9 @@ export class RealFamilyBackend implements FamilyBackend {
       "status",
       "--short",
       "--untracked-files=no",
-    ], this.opts.workingRepo);
+    ], this.opts.workingRepo).trim();
     return {
-      head: this.sh("git", ["rev-parse", "HEAD"], this.opts.workingRepo),
+      head: this.sh("git", ["rev-parse", "HEAD"], this.opts.workingRepo).trim(),
       trackedStatus: trackedStatus === "" ? [] : trackedStatus.split(/\r?\n/),
     };
   }
