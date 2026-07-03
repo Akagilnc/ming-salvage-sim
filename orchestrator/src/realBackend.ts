@@ -1728,6 +1728,11 @@ const coderOutputSchema = z.object({
     .optional(),
 });
 
+/** Parse a coder worker self-report with the same schema the single-slice path uses. */
+export function parseCoderSelfReport(raw: unknown): SelfReportedCoder {
+  return coderOutputSchema.parse(raw);
+}
+
 export class RealBackend implements Backend {
   private readonly opts: RealBackendOptions;
   private readonly ownerLogin: string;

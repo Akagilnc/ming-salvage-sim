@@ -374,7 +374,13 @@ describe("#451 dogfood replay fixture", () => {
         issue: 307,
         module: "orchestrator-runner",
       },
-      dispatches: ["cmr:completeness"],
+      dispatches: expect.arrayContaining([
+        "cmr:completeness",
+        "coder:family/287-attribution",
+        "cmr:correctness",
+        "ship:family/287-attribution",
+      ]),
+      reviewFixRereviewVisible: true,
     });
     expect(rowsById.get("287-correctness-r3-legacy-disposition")?.sourceEvidence).toMatchObject({
       seam: "family_verify_cmr",
