@@ -37,7 +37,7 @@ from ming_sim.error_pack import (
     write_error_pack,
 )
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
-from ming_sim.flows import apply_fixed_period_flows
+from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
 from ming_sim.issues import (
     apply_event_terminal_states,
     apply_historical_fiscal_rates,
@@ -171,30 +171,34 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
         raise ValueError("月末结算已开始（前半段已入账），请重试颁诏完成结算，不能退朝跳过。")
     # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
     # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
-    with atomic_and_reload(db, state, content=content, registry=registry):
-        # 退朝无诏：对话式拟旨草案须先丢弃，再 commit 其余 pending 动作。
-        # commit_pending_actions 会把 kind=directive 插成 turn_directives(draft)，
-        # 但无诏路径不走 extractor / mark_directives_issued → 孤儿 draft 既不颁诏也不可见。
-        # 先 discard 确保 commit 时 directive pending 为空（codex r5 F2）。
-        db.discard_pending_directives(state.turn)
-        db.commit_pending_actions(state, content=content, registry=registry)
-        fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
-        if fiscal_levies:
-            tlog(
-                f"[fiscal-levy] 本回合饷率事件前置落账 {len(fiscal_levies)} 条："
-                f"{[(t['id'], t.get('terminal_reason') or t['terminal_state']) for t in fiscal_levies]}"
-            )
-        apply_fixed_period_flows(db, state)
-        message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
-        db.record_log(state, message)
-        print("\n" + message)
-        # 推进回合的路都得清本回合 resolve_context：崩溃重试后改走此路时，留下的
-        # ready=1 行会被恢复入口当「未完成回合」重放=double-apply（cmr S2+S3 r4）。
-        db.clear_resolve_context(state.turn)
-        state.next_period()
-        # settling 随推进复位，同 settle_with_delta（cmr S4 r1 F1）。
-        state.turn_phase = TurnPhase.SUMMONING.value
-        db.save_state(state)
+    try:
+        with atomic_and_reload(db, state, content=content, registry=registry):
+            # 退朝无诏：对话式拟旨草案须先丢弃，再 commit 其余 pending 动作。
+            # commit_pending_actions 会把 kind=directive 插成 turn_directives(draft)，
+            # 但无诏路径不走 extractor / mark_directives_issued → 孤儿 draft 既不颁诏也不可见。
+            # 先 discard 确保 commit 时 directive pending 为空（codex r5 F2）。
+            db.discard_pending_directives(state.turn)
+            db.commit_pending_actions(state, content=content, registry=registry)
+            fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
+            if fiscal_levies:
+                tlog(
+                    f"[fiscal-levy] 本回合饷率事件前置落账 {len(fiscal_levies)} 条："
+                    f"{[(t['id'], t.get('terminal_reason') or t['terminal_state']) for t in fiscal_levies]}"
+                )
+            apply_fixed_period_flows(db, state)
+            message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
+            db.record_log(state, message)
+            print("\n" + message)
+            # 推进回合的路都得清本回合 resolve_context：崩溃重试后改走此路时，留下的
+            # ready=1 行会被恢复入口当「未完成回合」重放=double-apply（cmr S2+S3 r4）。
+            db.clear_resolve_context(state.turn)
+            state.next_period()
+            # settling 随推进复位，同 settle_with_delta（cmr S4 r1 F1）。
+            state.turn_phase = TurnPhase.SUMMONING.value
+            db.save_state(state)
+    except BaseException as exc:
+        raise_fixed_period_flow_abort_if_needed(db, state, exc)
+        raise
 
 
 def resolve_directives(
@@ -255,15 +259,19 @@ def resolve_directives(
     # 早退、占位同键 upsert，语义不变。
     # pre_settle 自己的 atomic 在此嵌套（depth>0）时跳过 reload，由本层（最外层）真回滚后
     # 重载刷净内存（同 advance_without_edict 先例）；reload 再炸链上抛。见 atomic_and_reload。
-    with atomic_and_reload(db, state, content=content, registry=registry):
-        auto_triggered = pre_settle(
-            state, db, on_stage=lambda label: _emit("stage", label),
-            content=content, registry=registry)
-        db.save_resolve_context(
-            state.turn, decree_text, "", {},
-            secret_orders={}, relevant_memories=[],   # #48：占位用分组承载的空 dict（旋即被真存覆盖）
-            source=Provenance(source).value,    # #146 A：皇帝下旨回合默认 player（被真存同值覆盖）；恢复 fallthrough 穿透 ctx 真源。Provenance(source).value 归一(兼容 enum/合法值串)、与 persist_resolve_context 一致(gemini R5)
-        )
+    try:
+        with atomic_and_reload(db, state, content=content, registry=registry):
+            auto_triggered = pre_settle(
+                state, db, on_stage=lambda label: _emit("stage", label),
+                content=content, registry=registry)
+            db.save_resolve_context(
+                state.turn, decree_text, "", {},
+                secret_orders={}, relevant_memories=[],   # #48：占位用分组承载的空 dict（旋即被真存覆盖）
+                source=Provenance(source).value,    # #146 A：皇帝下旨回合默认 player（被真存同值覆盖）；恢复 fallthrough 穿透 ctx 真源。Provenance(source).value 归一(兼容 enum/合法值串)、与 persist_resolve_context 一致(gemini R5)
+            )
+    except BaseException as exc:
+        raise_fixed_period_flow_abort_if_needed(db, state, exc)
+        raise
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
     relevant_memories: List[Dict] = []
@@ -921,47 +929,51 @@ def pre_settle(
     # atomic + 最外层回滚后从 DB 重载（ADR 0008 决定 3 第三条）：apply_fixed_period_flows 直改了
     # state.metrics（flows.py:192）、尾部 turn_phase 已被赋 settling，脏 settling 会被下次 pre_settle
     # 守门跳过=该月财政永久丢（cmr S4 r1 F4）。嵌套时跳过 reload，由最外层拥有者处理。见 atomic_and_reload。
-    with atomic_and_reload(db, state, content=content, registry=registry):
-        # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
-        # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
-        # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
-        committed = db.commit_pending_actions(state, content=content, registry=registry)
-        if committed:
-            tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
-        fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
-        if fiscal_levies:
-            tlog(
-                f"[fiscal-levy] 本回合饷率事件前置落账 {len(fiscal_levies)} 条："
-                f"{[(t['id'], t.get('terminal_reason') or t['terminal_state']) for t in fiscal_levies]}"
-            )
-        tlog("结算 1/4 固定月度财政 tick")
-        if on_stage is not None:
-            on_stage("固定月度财政入账")
-        # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
-        apply_fixed_period_flows(db, state)
-        # 在途兜底：在途 ≥2 回合（或旧数据 transit_start_turn=0）的人物强制到任，
-        # 确保 LLM 漏产到任叙事时不永久在途（ADR 0009 决策5 = 叙事优先；此为代码兜底）。
-        # 必须先于 apply_event_terminal_states / auto_trigger_seed_issues：二者按 character.X.location
-        # 等门控判事件终态/硬立项，超期在途赴门控地的人物若未先到任，门控读旧 location 不达标 →
-        # person-core 事件被误判 avoided 永久作废、兜底形同虚设（CMR r2 P2）。
-        forced_arrivals = force_transit_arrivals(db, state, content, commit=False)
-        if forced_arrivals:
-            tlog(f"[transit-aging] 强制到任 {len(forced_arrivals)} 人：{[f['name'] for f in forced_arrivals]}")
-        terminalized = apply_event_terminal_states(state, db, commit=False)
-        if terminalized:
-            tlog(f"[event_terminal] 本回合事件终态落账 {len(terminalized)} 条：{[(t['id'], t['terminal_state']) for t in terminalized]}")
-        # 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，绕过 LLM 因果判定。
-        auto_triggered = auto_trigger_seed_issues(state, db)
-        if auto_triggered:
-            tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
-        # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
-        # 推演前的确定性写，挪入前半段事务（原在 resolve_directives，ADR 0008 S4）。
-        due_orders = db.auto_submit_due_secret_orders(state)
-        if due_orders:
-            tlog(f"[secret_order] 到期送核议 {due_orders}")
-        # 完成相位：同事务内落 settling（崩在上面任一步=全回滚=相位未变）。
-        state.turn_phase = TurnPhase.SETTLING.value
-        db.save_state(state)
+    try:
+        with atomic_and_reload(db, state, content=content, registry=registry):
+            # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
+            # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
+            # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
+            committed = db.commit_pending_actions(state, content=content, registry=registry)
+            if committed:
+                tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
+            fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
+            if fiscal_levies:
+                tlog(
+                    f"[fiscal-levy] 本回合饷率事件前置落账 {len(fiscal_levies)} 条："
+                    f"{[(t['id'], t.get('terminal_reason') or t['terminal_state']) for t in fiscal_levies]}"
+                )
+            tlog("结算 1/4 固定月度财政 tick")
+            if on_stage is not None:
+                on_stage("固定月度财政入账")
+            # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
+            apply_fixed_period_flows(db, state)
+            # 在途兜底：在途 ≥2 回合（或旧数据 transit_start_turn=0）的人物强制到任，
+            # 确保 LLM 漏产到任叙事时不永久在途（ADR 0009 决策5 = 叙事优先；此为代码兜底）。
+            # 必须先于 apply_event_terminal_states / auto_trigger_seed_issues：二者按 character.X.location
+            # 等门控判事件终态/硬立项，超期在途赴门控地的人物若未先到任，门控读旧 location 不达标 →
+            # person-core 事件被误判 avoided 永久作废、兜底形同虚设（CMR r2 P2）。
+            forced_arrivals = force_transit_arrivals(db, state, content, commit=False)
+            if forced_arrivals:
+                tlog(f"[transit-aging] 强制到任 {len(forced_arrivals)} 人：{[f['name'] for f in forced_arrivals]}")
+            terminalized = apply_event_terminal_states(state, db, commit=False)
+            if terminalized:
+                tlog(f"[event_terminal] 本回合事件终态落账 {len(terminalized)} 条：{[(t['id'], t['terminal_state']) for t in terminalized]}")
+            # 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，绕过 LLM 因果判定。
+            auto_triggered = auto_trigger_seed_issues(state, db)
+            if auto_triggered:
+                tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
+            # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
+            # 推演前的确定性写，挪入前半段事务（原在 resolve_directives，ADR 0008 S4）。
+            due_orders = db.auto_submit_due_secret_orders(state)
+            if due_orders:
+                tlog(f"[secret_order] 到期送核议 {due_orders}")
+            # 完成相位：同事务内落 settling（崩在上面任一步=全回滚=相位未变）。
+            state.turn_phase = TurnPhase.SETTLING.value
+            db.save_state(state)
+    except BaseException as exc:
+        raise_fixed_period_flow_abort_if_needed(db, state, exc)
+        raise
     return auto_triggered
 
 
