@@ -220,5 +220,5 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 > [!note] 状态：严格按 Matt 试水中（完全实验，非照抄）
 > 本页把 Matt 整套当 canonical 写全，本项目**严格照它跑一遍**验证成不成立。**操作姿态（2026-06-18 定）**：先走走看，碰到不合理的地方就**改 / 提 issue**、慢慢理解，**不是无脑照抄**。
 > **已拍决定**：**跑 Matt 的重型 `to-prd`**（含 Implementation/Testing Decisions 两层设计），不退薄 issue（2026-06-18，完全实验——既是 strict Matt 就不再逐点问「要不要照 Matt」）。
-> **仍记的偏离 / 待撞的粗糙边**（数据点）：(a) 在 to-prd 后、to-issues 后各插一道 cross-model 评审闸（项目加的，非 Matt）——其中**设计评审闸的对象应从「ADR」扩到「PRD + ADR」**，因为设计大头现在在 PRD；(b) 实践中撞到的粗糙边（如 to-issues 前父 issue 短暂挂 `ready-for-agent`）按「走走看」原则**遇到再改 / 提 issue**，不提前拍。
+> **仍记的偏离 / 待撞的粗糙边**（数据点）：(a) 〔2026-07-03 已结算〕设计评审闸=**一道**、位于 to-issues 之后（cmr 审含切片布线的设计全家=PRD+ADR+词表+切片，#470/#471/#478 实践序）——早期「to-prd 后、to-issues 后各插一道」的两闸设想与「对象从 ADR 扩到 PRD+ADR」的诉求均已被此形态吸收；(b) 实践中撞到的粗糙边（如 to-issues 前父 issue 短暂挂 `ready-for-agent`）按「走走看」原则**遇到再改 / 提 issue**，不提前拍。
 > 成立后这套机制的 canonical 应回流 wiki（wiki session 的活）；本项目侧只留「采纳决定 + 指针」在 `CLAUDE.md`。
