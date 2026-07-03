@@ -138,6 +138,20 @@ const BLOCKING_FAMILY_CMR_FINDING: Finding = {
 };
 const BLOCKING_FAMILY_CMR_KEY = findingIdentityKey(BLOCKING_FAMILY_CMR_FINDING);
 
+const SECOND_BLOCKING_FAMILY_CMR_FINDING: Finding = {
+  severity: "medium",
+  category: "correctness",
+  claim_quote:
+    "fresh family CMR re-review found another same-module runner-owned blocker",
+  location: "orchestrator/src/family/verifyCmr.ts:cmr-repeat-fix-loop",
+  suggested_fix:
+    "route the new blocker through a new runner-visible coder-fix round",
+  action: "fix_now",
+};
+const SECOND_BLOCKING_FAMILY_CMR_KEY = findingIdentityKey(
+  SECOND_BLOCKING_FAMILY_CMR_FINDING,
+);
+
 class ReviewFixRereviewBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
@@ -230,6 +244,170 @@ class ReviewFixRereviewBackend implements FamilyBackend {
             introducedRegressionCheck:
               "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
             patchSummary: "routed family CMR findings through coder-fix",
+          },
+        },
+      };
+    }
+
+    if (spec.kind === "ship") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx.familyBase!,
+          status: "pr_opened",
+          pr: `pr://${ctx.familyBase}`,
+          prHead: this.currentFamilyHead,
+        },
+      };
+    }
+
+    throw new Error(`unexpected worker kind ${spec.kind}`);
+  }
+}
+
+class RepeatedReviewFixRereviewBackend implements FamilyBackend {
+  readonly ledger: FamilyLedgerEntry[] = [];
+  readonly dispatches: DispatchRecord[] = [];
+  currentFamilyHead = "head-before-repeat-cmr-review";
+  private completenessReviewRound = 0;
+  private coderFixRound = 0;
+
+  async mergeChildIntoFamilyBase(): Promise<never> {
+    throw new Error("not used");
+  }
+  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+    this.ledger.push(entry);
+  }
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return this.ledger;
+  }
+  async readFamilyHead(): Promise<string> {
+    return this.currentFamilyHead;
+  }
+  async runFamilyVerify(): Promise<FamilyVerifyResult> {
+    return { ok: true };
+  }
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      role: spec.role,
+      promptFile: spec.promptFile,
+      contextRetention: spec.contextRetention,
+      cmrPass: ctx.cmrPass,
+      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
+      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
+    });
+
+    if (spec.kind === "cmr") {
+      if (ctx.cmrPass === "completeness") {
+        const reviewRound = this.completenessReviewRound++;
+        if (reviewRound === 0) {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: false,
+              reason: "first blocking family CMR finding requires coder-fix",
+              successfulLegs: ["opus", "gpt-5.5", "agy"],
+              claimedFixedFindingIdentityKeys: [],
+              priorFindingDispositions: [],
+              ...CMR_EVIDENCE,
+              findings: [BLOCKING_FAMILY_CMR_FINDING],
+            },
+          };
+        }
+        if (reviewRound === 1) {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: false,
+              reason:
+                "fresh full-diff re-review found a new same-module blocker",
+              successfulLegs: ["opus", "gpt-5.5", "agy"],
+              claimedFixedFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+              priorFindingDispositions: [
+                {
+                  identityKey: BLOCKING_FAMILY_CMR_KEY,
+                  status: "verified-closed",
+                  reason: "first coder-fix closed the first blocker",
+                },
+              ],
+              ...CMR_EVIDENCE,
+              findings: [SECOND_BLOCKING_FAMILY_CMR_FINDING],
+            },
+          };
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "cmr",
+            converged: true,
+            successfulLegs: ["opus", "gpt-5.5", "agy"],
+            claimedFixedFindingIdentityKeys: [
+              BLOCKING_FAMILY_CMR_KEY,
+              SECOND_BLOCKING_FAMILY_CMR_KEY,
+            ],
+            priorFindingDispositions: [
+              {
+                identityKey: BLOCKING_FAMILY_CMR_KEY,
+                status: "verified-closed",
+                reason: "first blocker stayed closed",
+              },
+              {
+                identityKey: SECOND_BLOCKING_FAMILY_CMR_KEY,
+                status: "verified-closed",
+                reason: "second coder-fix closed the second blocker",
+              },
+            ],
+            ...CMR_EVIDENCE,
+          },
+        };
+      }
+      return {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          ...CMR_EVIDENCE,
+        },
+      };
+    }
+
+    if (spec.kind === "coder") {
+      this.coderFixRound += 1;
+      this.currentFamilyHead = `head-after-coder-fix-${this.coderFixRound}`;
+      return {
+        kind: "completed",
+        output: {
+          kind: "coder",
+          committed: true,
+          commitsAdded: 1,
+          repairEvidence: {
+            findingScope: {
+              identityKeys: [...(ctx.blockingFindingIdentityKeys ?? [])],
+              locations: [
+                ...(ctx.blockingFindingIdentityKeys?.includes(
+                  BLOCKING_FAMILY_CMR_KEY,
+                )
+                  ? [BLOCKING_FAMILY_CMR_FINDING.location]
+                  : []),
+                ...(ctx.blockingFindingIdentityKeys?.includes(
+                  SECOND_BLOCKING_FAMILY_CMR_KEY,
+                )
+                  ? [SECOND_BLOCKING_FAMILY_CMR_FINDING.location]
+                  : []),
+              ],
+            },
+            changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
+            tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
+            sameClassBugScan:
+              "rg \"allowCoderFix|runCmrCoderFix\" orchestrator/src/family/verifyCmr.ts",
+            introducedRegressionCheck:
+              "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
           },
         },
       };
@@ -476,6 +654,50 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
           entry.reason?.includes(BLOCKING_FAMILY_CMR_KEY),
       ),
     ).toBeUndefined();
+  });
+
+  it("routes new fixable findings from fresh re-review back through another coder-fix round", async () => {
+    const backend = new RepeatedReviewFixRereviewBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/550-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches).toEqual([
+      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
+      expect.objectContaining({
+        kind: "coder",
+        blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({
+        kind: "coder",
+        blockingFindingIdentityKeys: [SECOND_BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [
+          BLOCKING_FAMILY_CMR_KEY,
+          SECOND_BLOCKING_FAMILY_CMR_KEY,
+        ],
+      }),
+      expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
+      expect.objectContaining({ kind: "ship", promptFile: "family_ship.md" }),
+    ]);
+    expect(
+      backend.ledger.filter((entry) => entry.status === "cmr_reviewed"),
+    ).toHaveLength(2);
+    expect(
+      backend.ledger.filter((entry) => entry.status === "cmr_fix_committed"),
+    ).toHaveLength(2);
   });
 
   it("bounces family coder-fix back before re-review when repair evidence is missing", async () => {
