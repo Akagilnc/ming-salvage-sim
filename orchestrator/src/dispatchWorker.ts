@@ -34,7 +34,10 @@ import {
 import { join, resolve } from "node:path";
 
 import { modelForSlot, type ResolvedModelRoute } from "./modelRoutes.js";
-import { WORKER_OUTCOME_SANDBOX_FILE } from "./workerOutcomeSidecar.js";
+import {
+  WORKER_OUTCOME_REPO_FILE,
+  WORKER_OUTCOME_SANDBOX_FILE,
+} from "./workerOutcomeSidecar.js";
 import type {
   Backend,
   DispatchContext,
@@ -178,7 +181,7 @@ function writeWorkerOutcomeLandingFile(
   mkdirSync(outcomeDir, { recursive: true });
   const landingPath = join(outcomeDir, "outcome.json");
   writeFileSync(landingPath, "", "utf8");
-  ensureGitExcluded(ctx.worktree.path, WORKER_OUTCOME_SANDBOX_FILE);
+  ensureGitExcluded(ctx.worktree.path, WORKER_OUTCOME_REPO_FILE);
   return {
     path: landingPath,
     sandboxPath: WORKER_OUTCOME_SANDBOX_FILE,
