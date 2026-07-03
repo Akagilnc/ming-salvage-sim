@@ -87,7 +87,7 @@ def validate_cmr_outcome(draft: dict) -> None:
     require_string_array(draft, "evidencePaths", min_len=1)
 
 
-def validate_escalation(value: object) -> None:
+def validate_escalation(value: dict) -> None:
     if not isinstance(value, dict):
         raise GuardError("escalate must be an object")
     validate_exact_fields(value, {"reason", "diagnosis"}, "escalate")
@@ -130,7 +130,7 @@ def require_string_array(draft: dict, field: str, min_len: int = 0) -> None:
             raise GuardError(f"{field}[{idx}] must be a non-empty string")
 
 
-def validate_skipped_legs(value: object) -> None:
+def validate_skipped_legs(value: list) -> None:
     if not isinstance(value, list):
         raise GuardError("skippedLegs must be an array")
     for idx, leg in enumerate(value):
@@ -142,7 +142,7 @@ def validate_skipped_legs(value: object) -> None:
                 raise GuardError(f"skippedLegs[{idx}].{field} must be a non-empty string")
 
 
-def validate_findings(value: object) -> None:
+def validate_findings(value: list) -> None:
     if not isinstance(value, list):
         raise GuardError("findings must be an array")
     required = {
@@ -188,13 +188,13 @@ def validate_findings(value: object) -> None:
                 raise GuardError(f"findings[{idx}].disposition must be accepted_suppressed for wont_fix/rejected")
 
 
-def reject_fix_now_findings_when_converged(value: object) -> None:
+def reject_fix_now_findings_when_converged(value: list) -> None:
     for idx, finding in enumerate(value):
         if isinstance(finding, dict) and finding.get("action") == "fix_now":
             raise GuardError(f"findings[{idx}].action cannot be fix_now when converged is true")
 
 
-def validate_disposition_evidence(value: object, label: str) -> None:
+def validate_disposition_evidence(value: dict, label: str) -> None:
     if not isinstance(value, dict):
         raise GuardError(f"{label} must be an object")
     kind = value.get("kind")

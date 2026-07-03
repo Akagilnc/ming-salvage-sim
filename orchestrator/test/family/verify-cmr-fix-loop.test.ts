@@ -153,6 +153,21 @@ const SECOND_BLOCKING_FAMILY_CMR_KEY = findingIdentityKey(
   SECOND_BLOCKING_FAMILY_CMR_FINDING,
 );
 
+const EXCESSIVE_CMR_FIX_FINDINGS: readonly Finding[] = Array.from(
+  { length: 4 },
+  (_, index) => ({
+    severity: "medium",
+    category: "correctness",
+    claim_quote: `family CMR fix loop still has blocker ${index + 1}`,
+    location: `orchestrator/src/family/verifyCmr.ts:cmr-fix-budget-${index + 1}`,
+    suggested_fix: "bound repeated family CMR coder-fix restarts",
+    action: "fix_now",
+  }),
+);
+const EXCESSIVE_CMR_FIX_KEYS = EXCESSIVE_CMR_FIX_FINDINGS.map((finding) =>
+  findingIdentityKey(finding),
+);
+
 class ReviewFixRereviewBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
@@ -549,6 +564,126 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
   }
 }
 
+class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
+  readonly ledger: FamilyLedgerEntry[] = [];
+  readonly dispatches: DispatchRecord[] = [];
+  currentFamilyHead = "head-before-excessive-cmr-review";
+  private completenessReviewRound = 0;
+  private coderFixRound = 0;
+
+  async mergeChildIntoFamilyBase(): Promise<never> {
+    throw new Error("not used");
+  }
+  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+    this.ledger.push(entry);
+  }
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return this.ledger;
+  }
+  async readFamilyHead(): Promise<string> {
+    return this.currentFamilyHead;
+  }
+  async runFamilyVerify(): Promise<FamilyVerifyResult> {
+    return { ok: true };
+  }
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      role: spec.role,
+      promptFile: spec.promptFile,
+      contextRetention: spec.contextRetention,
+      cmrPass: ctx.cmrPass,
+      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
+      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
+    });
+
+    if (spec.kind === "cmr") {
+      if (ctx.cmrPass === "completeness") {
+        const reviewRound = this.completenessReviewRound++;
+        if (reviewRound < EXCESSIVE_CMR_FIX_FINDINGS.length) {
+          const closedPriorKeys = EXCESSIVE_CMR_FIX_KEYS.slice(0, reviewRound);
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: false,
+              reason: `fresh full-diff re-review found blocker ${reviewRound + 1}`,
+              successfulLegs: ["opus", "gpt-5.5", "agy"],
+              claimedFixedFindingIdentityKeys: closedPriorKeys,
+              priorFindingDispositions: closedPriorKeys.map((identityKey) => ({
+                identityKey,
+                status: "verified-closed",
+                reason: "prior coder-fix stayed closed",
+              })),
+              ...CMR_EVIDENCE,
+              findings: [EXCESSIVE_CMR_FIX_FINDINGS[reviewRound]!],
+            },
+          };
+        }
+      }
+      return {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys: EXCESSIVE_CMR_FIX_KEYS,
+          priorFindingDispositions: EXCESSIVE_CMR_FIX_KEYS.map((identityKey) => ({
+            identityKey,
+            status: "verified-closed",
+            reason: "all repeated coder-fixes closed",
+          })),
+          ...CMR_EVIDENCE,
+        },
+      };
+    }
+
+    if (spec.kind === "coder") {
+      const fixedKeys = [...(ctx.blockingFindingIdentityKeys ?? [])];
+      this.coderFixRound += 1;
+      this.currentFamilyHead = `head-after-excessive-coder-fix-${this.coderFixRound}`;
+      return {
+        kind: "completed",
+        output: {
+          kind: "coder",
+          committed: true,
+          commitsAdded: 1,
+          repairEvidence: {
+            findingScope: {
+              identityKeys: fixedKeys,
+              locations: EXCESSIVE_CMR_FIX_FINDINGS.filter((finding) =>
+                fixedKeys.includes(findingIdentityKey(finding)),
+              ).map((finding) => finding.location),
+            },
+            changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
+            tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
+            sameClassBugScan:
+              "rg \"remainingCmrCoderFixRounds|MAX_CMR_CODER_FIX_ROUNDS\" orchestrator/src/family/verifyCmr.ts",
+            introducedRegressionCheck:
+              "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
+          },
+        },
+      };
+    }
+
+    if (spec.kind === "ship") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx.familyBase!,
+          status: "pr_opened",
+          pr: `pr://${ctx.familyBase}`,
+          prHead: this.currentFamilyHead,
+        },
+      };
+    }
+
+    throw new Error(`unexpected worker kind ${spec.kind}`);
+  }
+}
+
 class ReviewerMutatesHeadBeforeFindingBackend extends ReviewFixRereviewBackend {
   protected readonly mutatedHead = "head-mutated-by-cmr-reviewer";
 
@@ -884,6 +1019,34 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(
       backend.ledger.filter((entry) => entry.status === "cmr_fix_committed"),
     ).toHaveLength(2);
+  });
+
+  it("fails closed instead of restarting coder-fix forever when fresh CMR keeps finding blockers", async () => {
+    const backend = new ExcessiveReviewFixRestartsBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/550-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(
+      backend.dispatches.filter((dispatch) => dispatch.kind === "coder"),
+    ).toHaveLength(3);
+    expect(
+      backend.ledger.filter((entry) => entry.status === "cmr_fix_committed"),
+    ).toHaveLength(3);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      cmrPass: "completeness",
+      familyHeadAfter: "head-after-excessive-coder-fix-3",
+      reason: expect.stringContaining("coder-fix round budget exhausted"),
+    }));
+    expect(
+      backend.dispatches.some((dispatch) => dispatch.kind === "ship"),
+    ).toBe(false);
   });
 
   it("restarts verify and completeness when a correctness coder-fix commits", async () => {
