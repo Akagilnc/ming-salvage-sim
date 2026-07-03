@@ -287,6 +287,7 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
   const closedPasses = new Set<string>();
   const processedPasses = new Set<string>();
   const passesWithUnclosedFixCommits = new Set<string>();
+  const passesWithUnclassifiedAbort = new Set<string>();
   for (let index = ledger.length - 1; index >= 0; index--) {
     const entry = ledger[index]!;
     if (entry.status === "shipped") break;
@@ -337,6 +338,9 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
       if (passesWithUnclosedFixCommits.has(pass)) {
         continue;
       }
+      if (passesWithUnclassifiedAbort.has(pass)) {
+        continue;
+      }
       processedPasses.add(pass);
       if (
         currentFamilyHead === undefined ||
@@ -359,7 +363,7 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
       ) {
         continue;
       }
-      processedPasses.add(pass);
+      passesWithUnclassifiedAbort.add(pass);
       continue;
     }
     if (entry.status !== "aborted" || entry.cmrFindingClassification === undefined) {
@@ -367,7 +371,9 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
     }
     if (
       entry.cmrPass !== undefined &&
-      (closedPasses.has(entry.cmrPass) || processedPasses.has(entry.cmrPass))
+      (closedPasses.has(entry.cmrPass) ||
+        processedPasses.has(entry.cmrPass) ||
+        passesWithUnclassifiedAbort.has(entry.cmrPass))
     ) {
       continue;
     }
