@@ -843,6 +843,180 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(String(be.runOptions?.promptFile)).toContain("outcome_rewrite.md");
   });
 
+  it("rejects an outcome rewrite that returns a valid CMR envelope after moving HEAD", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    const beforeHead = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repo,
+      encoding: "utf8",
+    }).trim();
+
+    class MutatingOutcomeRewriteBackend extends RealFamilyBackend {
+      outcomePath: string | undefined;
+
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
+        const landing = super.prepareCmrOutcomeLanding(ctx);
+        this.outcomePath = landing.path;
+        return landing;
+      }
+
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (this.outcomePath === undefined) throw new Error("missing outcome path");
+        execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "illegal rewrite commit"], {
+          cwd: repo,
+        });
+        writeFileSync(
+          this.outcomePath,
+          JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          }),
+          "utf8",
+        );
+        return {
+          completionSignal: "CMR_STEP_COMPLETE",
+          stdout: "",
+          iterations: [{ sessionId: "cmr-session-rewritten" }],
+          commits: [],
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+
+    const be = new MutatingOutcomeRewriteBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-outcome-rewrite-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    const result = await be.rewriteWorkerOutcome(
+      cmrWorkerSpec("fresh", "completeness"),
+      { familyBase: "fb", cmrPass: "completeness" },
+      {
+        kind: "malformed",
+        reason: "cmr worker outcome sidecar was not valid JSON",
+        sessionId: "cmr-session-original",
+      },
+      1,
+    );
+
+    expect(result).toMatchObject({
+      kind: "outcome_protocol_failure",
+      attempts: 1,
+      sessionId: "cmr-session-rewritten",
+    });
+    expect(result.kind === "outcome_protocol_failure" ? result.reason : "").toContain(
+      "outcome rewrite moved HEAD",
+    );
+    expect(result.kind === "outcome_protocol_failure" ? result.reason : "").toContain(
+      beforeHead,
+    );
+    expect(result.kind === "outcome_protocol_failure" ? result.reason : "").toContain(
+      "illegal rewrite commit",
+    );
+  });
+
+  it("rejects an outcome rewrite that returns a valid CMR envelope with tracked changes left behind", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    writeFileSync(join(repo, "tracked.txt"), "before\n", "utf8");
+    execFileSync("git", ["add", "tracked.txt"], { cwd: repo });
+    execFileSync("git", ["commit", "-q", "-m", "track baseline"], { cwd: repo });
+
+    class DirtyOutcomeRewriteBackend extends RealFamilyBackend {
+      outcomePath: string | undefined;
+
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
+        const landing = super.prepareCmrOutcomeLanding(ctx);
+        this.outcomePath = landing.path;
+        return landing;
+      }
+
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (this.outcomePath === undefined) throw new Error("missing outcome path");
+        writeFileSync(join(repo, "tracked.txt"), "after\n", "utf8");
+        writeFileSync(
+          this.outcomePath,
+          JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          }),
+          "utf8",
+        );
+        return {
+          completionSignal: "CMR_STEP_COMPLETE",
+          stdout: "",
+          iterations: [{ sessionId: "cmr-session-rewritten" }],
+          commits: [],
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+
+    const be = new DirtyOutcomeRewriteBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-outcome-rewrite-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    const result = await be.rewriteWorkerOutcome(
+      cmrWorkerSpec("fresh", "completeness"),
+      { familyBase: "fb", cmrPass: "completeness" },
+      {
+        kind: "malformed",
+        reason: "cmr worker outcome sidecar was not valid JSON",
+        sessionId: "cmr-session-original",
+      },
+      1,
+    );
+
+    expect(result).toMatchObject({
+      kind: "outcome_protocol_failure",
+      attempts: 1,
+      sessionId: "cmr-session-rewritten",
+    });
+    expect(result.kind === "outcome_protocol_failure" ? result.reason : "").toContain(
+      "outcome rewrite left tracked changes",
+    );
+    expect(result.kind === "outcome_protocol_failure" ? result.reason : "").toContain(
+      "M tracked.txt",
+    );
+  });
+
   it("forwards llmResolvedChildren on the DispatchContext to the cmr worker", async () => {
     const be = fixtured();
     await be.dispatchWorker(cmrWorkerSpec(), {

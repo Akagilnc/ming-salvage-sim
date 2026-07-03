@@ -429,7 +429,8 @@ export interface FamilyBackend {
    * missing, or schema-incompatible, the runner may ask the SAME producing worker
    * to rewrite only the machine outcome from existing artifacts/local memory.
    * This is a control-envelope repair path: it must not run semantic review/fix
-   * work or infer a route from prose. The runner owns the bounded retry cap.
+   * work, move git truth, leave tracked changes, or infer a route from prose. The
+   * runner owns the bounded retry cap.
    */
   rewriteWorkerOutcome?(
     spec: WorkerSpec,

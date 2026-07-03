@@ -1041,6 +1041,7 @@ export class RealFamilyBackend implements FamilyBackend {
       protocolFailure,
       attempt,
     );
+    if (outcome.kind === "outcome_protocol_failure") return outcome;
     return this.cmrOutcomeToWorkerResult(outcome, ctx);
   }
 
@@ -1256,7 +1257,7 @@ export class RealFamilyBackend implements FamilyBackend {
     ctx: DispatchContext,
     protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
     attempt: number,
-  ): Promise<CmrWorkerOutcome> {
+  ): Promise<CmrWorkerOutcome | Extract<WorkerResult, { kind: "outcome_protocol_failure" }>> {
     if (ctx.familyBase === undefined) {
       return {
         kind: "malformed",
@@ -1292,6 +1293,7 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+      const gitBefore = this.captureOutcomeRewriteGitEvidence();
       const outcomeLanding = this.prepareCmrOutcomeLanding(ctx);
       try {
         const result = await this.runAgentSandbox({
@@ -1313,7 +1315,7 @@ export class RealFamilyBackend implements FamilyBackend {
             COMPLETION_SIGNAL: spec.completionSignal,
           },
         });
-        return withCmrSession(
+        const outcome = withCmrSession(
           cmrOutcomeFromResult({
             ...result,
             cmrReviewLegs: frozenReviewLegs,
@@ -1321,6 +1323,14 @@ export class RealFamilyBackend implements FamilyBackend {
           }),
           lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
         );
+        const gitFailure = this.outcomeRewriteGitFailure({
+          before: gitBefore,
+          after: this.captureOutcomeRewriteGitEvidence(),
+          attempt,
+          sessionId: outcome.sessionId,
+        });
+        if (gitFailure !== undefined) return gitFailure;
+        return outcome;
       } finally {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
@@ -1333,6 +1343,49 @@ export class RealFamilyBackend implements FamilyBackend {
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     return await sc.run(options);
+  }
+
+  private captureOutcomeRewriteGitEvidence(): {
+    readonly head: string;
+    readonly trackedStatus: readonly string[];
+  } {
+    const trackedStatus = this.sh("git", ["status", "--short", "--untracked-files=no"]);
+    return {
+      head: this.sh("git", ["rev-parse", "HEAD"]),
+      trackedStatus: trackedStatus === "" ? [] : trackedStatus.split("\n"),
+    };
+  }
+
+  private outcomeRewriteGitFailure(input: {
+    readonly before: ReturnType<RealFamilyBackend["captureOutcomeRewriteGitEvidence"]>;
+    readonly after: ReturnType<RealFamilyBackend["captureOutcomeRewriteGitEvidence"]>;
+    readonly attempt: number;
+    readonly sessionId?: string;
+  }): Extract<WorkerResult, { kind: "outcome_protocol_failure" }> | undefined {
+    const headMoved = input.before.head !== input.after.head;
+    const trackedDirty = input.after.trackedStatus.length > 0;
+    if (!headMoved && !trackedDirty) return undefined;
+
+    const commitEvidence = headMoved
+      ? this.sh("git", ["log", "--oneline", `${input.before.head}..${input.after.head}`])
+      : "";
+    const reasons = [
+      headMoved
+        ? `outcome rewrite moved HEAD from ${input.before.head} to ${input.after.head}; commits: ${
+            commitEvidence === "" ? "(no descendant commits listed)" : commitEvidence
+          }`
+        : undefined,
+      trackedDirty
+        ? `outcome rewrite left tracked changes: ${input.after.trackedStatus.join("; ")}`
+        : undefined,
+    ].filter((reason): reason is string => reason !== undefined);
+
+    return {
+      kind: "outcome_protocol_failure",
+      reason: reasons.join(" | "),
+      attempts: input.attempt,
+      ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+    };
   }
 
   /**
