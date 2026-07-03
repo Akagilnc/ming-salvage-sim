@@ -90,6 +90,85 @@ def _set_fiscal_config_value(db, key, value):
     db.conn.commit()
 
 
+def _hub_ledger_snapshot(db, *, turn=None):
+    query = """
+        SELECT category, COALESCE(SUM(delta), 0) AS delta
+        FROM economy_ledger
+        WHERE account = '国库'
+          AND category IN ('起运', '盐税', '商税', '太仓亏空', '边饷hub')
+    """
+    params = []
+    if turn is not None:
+        query += " AND turn = ?"
+        params.append(int(turn))
+    query += """
+        GROUP BY category
+    """
+    rows = db.conn.execute(query, params).fetchall()
+    return {str(row["category"]): float(row["delta"] or 0) for row in rows}
+
+
+def _hub_container_snapshot(db):
+    keys = (
+        "hub_省级起运到京", "hub_盐税解京", "hub_商税解京",
+        "C_太仓挪用", "C_太仓纯亏空", "C_京运克扣", "C_京运运损",
+    )
+    rows = db.conn.execute(
+        f"SELECT key, value FROM fiscal_containers WHERE key IN ({','.join('?' for _ in keys)})",
+        keys,
+    ).fetchall()
+    values = {key: 0.0 for key in keys}
+    values.update({str(row["key"]): float(row["value"] or 0) for row in rows})
+    return values
+
+
+def _assert_hub_conservation_oracle(ledger, containers, *, outbound=None):
+    """Independent hub oracle over persisted ledger/container values.
+
+    The test reconstructs the two #261 hub identities from externally visible
+    stores only: economy_ledger and fiscal_containers. Mutating any side of the
+    equation must fail this helper.
+    """
+    inbound_gross = (
+        containers["hub_省级起运到京"]
+        + containers["hub_盐税解京"]
+        + containers["hub_商税解京"]
+    )
+    taicang_human = containers["C_太仓挪用"]
+    taicang_sink = containers["C_太仓纯亏空"]
+    taicang_loss = taicang_human + taicang_sink
+    inbound_booked_net = (
+        ledger.get("起运", 0.0)
+        + ledger.get("盐税", 0.0)
+        + ledger.get("商税", 0.0)
+        + ledger.get("太仓亏空", 0.0)
+    )
+    assert inbound_gross == pytest.approx(inbound_booked_net + taicang_loss)
+    assert taicang_loss == pytest.approx(taicang_human + taicang_sink)
+
+    if outbound is not None:
+        jingyun_loss = containers["C_京运克扣"] + containers["C_京运运损"]
+        outbound_debit = -ledger.get("边饷hub", 0.0)
+        assert outbound_debit == pytest.approx(
+            outbound["jingyun_paid"] + outbound["central_paid"] + jingyun_loss
+        )
+        assert jingyun_loss == pytest.approx(outbound["transport_loss"])
+        assert outbound["transport_loss"] == pytest.approx(
+            containers["C_京运克扣"] + containers["C_京运运损"]
+        )
+
+
+def _assert_hub_oracle_mutation_fails(ledger, containers, *, outbound=None, mutate):
+    mutated_ledger = dict(ledger)
+    mutated_containers = dict(containers)
+    mutated_outbound = dict(outbound) if outbound is not None else None
+    mutate(mutated_ledger, mutated_containers, mutated_outbound)
+    with pytest.raises(AssertionError):
+        _assert_hub_conservation_oracle(
+            mutated_ledger, mutated_containers, outbound=mutated_outbound
+        )
+
+
 def _disable_army_pay_source_cutover(db):
     db.conn.execute(
         """
@@ -710,6 +789,63 @@ def test_substrate_hub_dual_track_sanity_keeps_legacy_calc_as_reference(fresh_ga
     db.assert_army_pay_source_container_conservation()
 
 
+def test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.commit()
+
+    balances = []
+    for _ in range(3):
+        turn = state.turn
+        flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+        balances.append(state.metrics["国库"])
+
+        assert any(row.get("category") == "起运" for row in flow_rows)
+        _assert_hub_conservation_oracle(
+            _hub_ledger_snapshot(db, turn=turn),
+            _hub_container_snapshot(db),
+        )
+
+        state.turn += 1
+        db.save_state(state)
+
+    assert len(set(balances)) > 1
+    assert balances[-1] == db.load_state().metrics["国库"]
+
+
+def test_ready_context_retry_does_not_recompute_substrate_hub_pre_settle(fresh_game):
+    from ming_sim.decree import persist_resolve_context, pre_settle
+
+    db, state = fresh_game
+    turn = state.turn
+
+    pre_settle(state, db)
+    before_ledger = _hub_ledger_snapshot(db, turn=turn)
+    before_containers = _hub_container_snapshot(db)
+    before_balance = state.metrics["国库"]
+
+    persist_resolve_context(
+        db,
+        turn,
+        {},
+        decree_text="测试诏",
+        narrative="测试邸报",
+        simulator_payload={},
+        secret_orders=[],
+        relevant_memories=[],
+    )
+    assert db.get_resolve_context(turn)["extracted"] == {}
+
+    pre_settle(state, db)
+
+    assert _hub_ledger_snapshot(db, turn=turn) == before_ledger
+    assert _hub_container_snapshot(db) == before_containers
+    assert state.metrics["国库"] == before_balance
+    _assert_hub_conservation_oracle(before_ledger, before_containers)
+
+
 def test_fixed_flows_substrate_hub_central_capacity_reduces_current_central_arrears(fresh_game):
     import ming_sim.flows as flows_mod
 
@@ -904,6 +1040,38 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
     assert rows["guanning"]["arrears"] == pytest.approx(5)
     assert rows["shaanxi_army"]["arrears"] == pytest.approx(5)
     assert db.get_central_army_pay_arrears_container() == pytest.approx(10)
+    ledger_snapshot = _hub_ledger_snapshot(db, turn=state.turn)
+    container_snapshot = _hub_container_snapshot(db)
+    outbound = {
+        "jingyun_paid": expense_row["jingyun_paid"],
+        "central_paid": expense_row["central_paid"],
+        "transport_loss": expense_row["transport_loss"],
+    }
+    _assert_hub_conservation_oracle(ledger_snapshot, container_snapshot, outbound=outbound)
+    _assert_hub_oracle_mutation_fails(
+        ledger_snapshot,
+        container_snapshot,
+        outbound=outbound,
+        mutate=lambda ledger, containers, out: ledger.__setitem__(
+            "边饷hub", ledger["边饷hub"] + 1
+        ),
+    )
+    _assert_hub_oracle_mutation_fails(
+        ledger_snapshot,
+        container_snapshot,
+        outbound=outbound,
+        mutate=lambda ledger, containers, out: containers.__setitem__(
+            "C_京运克扣", containers["C_京运克扣"] + 1
+        ),
+    )
+    _assert_hub_oracle_mutation_fails(
+        ledger_snapshot,
+        container_snapshot,
+        outbound=outbound,
+        mutate=lambda ledger, containers, out: out.__setitem__(
+            "transport_loss", out["transport_loss"] + 1
+        ),
+    )
 
 
 def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losses(fresh_game):
@@ -1002,6 +1170,30 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     assert containers["hub_商税解京"] == pytest.approx(4)
     assert containers["C_太仓挪用"] == pytest.approx(2)
     assert containers["C_太仓纯亏空"] == pytest.approx(1)
+    ledger_snapshot = _hub_ledger_snapshot(db, turn=state.turn)
+    container_snapshot = _hub_container_snapshot(db)
+    _assert_hub_conservation_oracle(ledger_snapshot, container_snapshot)
+    _assert_hub_oracle_mutation_fails(
+        ledger_snapshot,
+        container_snapshot,
+        mutate=lambda ledger, containers, out: containers.__setitem__(
+            "hub_省级起运到京", containers["hub_省级起运到京"] + 1
+        ),
+    )
+    _assert_hub_oracle_mutation_fails(
+        ledger_snapshot,
+        container_snapshot,
+        mutate=lambda ledger, containers, out: ledger.__setitem__(
+            "太仓亏空", ledger["太仓亏空"] - 1
+        ),
+    )
+    _assert_hub_oracle_mutation_fails(
+        ledger_snapshot,
+        container_snapshot,
+        mutate=lambda ledger, containers, out: containers.__setitem__(
+            "C_太仓挪用", containers["C_太仓挪用"] + 1
+        ),
+    )
 
 
 def test_budget_lines_read_persisted_substrate_hub_income_source(fresh_game):
@@ -1045,6 +1237,33 @@ def test_budget_lines_read_persisted_substrate_hub_income_source(fresh_game):
     assert income["商税"] == 4
     assert "田赋辽饷盐商" not in income
     assert expenses["太仓亏空"] == 3
+
+
+def test_treasury_budget_summary_names_substrate_hub_surfaces(fresh_game):
+    db, state = fresh_game
+    db._mark_substrate_hub_fiscal_engine_enabled()
+    db.conn.executemany(
+        """
+        INSERT INTO fiscal_containers (key, value, note)
+        VALUES (?, ?, 'test summary substrate hub source')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
+        """,
+        [
+            ("hub_省级起运到京", 11),
+            ("hub_盐税解京", 3),
+            ("hub_商税解京", 4),
+            ("C_太仓挪用", 2),
+            ("C_太仓纯亏空", 1),
+        ],
+    )
+    db.conn.commit()
+
+    summary = db.treasury_budget_summary(state)
+
+    assert "起运" in summary
+    assert "边饷hub" in summary
+    assert "太仓亏空" in summary
+    assert "田赋+辽饷" not in summary
 
 
 def test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expenses(fresh_game):
