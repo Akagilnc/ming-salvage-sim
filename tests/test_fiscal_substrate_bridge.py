@@ -13,6 +13,7 @@
 import json
 import sqlite3
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +22,7 @@ import ming_sim.content as content_mod
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
+from ming_sim.exceptions import SettlementAbort
 from ming_sim.fiscal_tick import settle_tick
 from ming_sim.flows import army_needed
 
@@ -73,6 +75,18 @@ def _set_all_settle_grants(db, amount):
             "UPDATE regions SET fiscal = ? WHERE id = ?",
             (json.dumps(fiscal, ensure_ascii=False), str(row["id"])),
         )
+    db.conn.commit()
+
+
+def _set_fiscal_config_value(db, key, value):
+    db.conn.execute(
+        """
+        INSERT INTO fiscal_config (key, value, kind, note)
+        VALUES (?, ?, 'rate', 'test override')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
+        """,
+        (key, value),
+    )
     db.conn.commit()
 
 
@@ -812,6 +826,8 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
         WHERE kind != 'meta'
         """
     )
+    _set_fiscal_config_value(db, "central_jingyun_human_loss_rate", 20)
+    _set_fiscal_config_value(db, "central_jingyun_sink_loss_rate", 10)
     db.conn.execute(
         """
         UPDATE regions
@@ -857,13 +873,24 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
             """
         ).fetchall()
     }
+    expense_row = next(flow for flow in flow_rows if flow.get("category") == "边饷hub")
     hub_row = next(flow for flow in flow_rows if flow.get("category") == "中央军饷")
     assert hub_row["jingyun_due"] == pytest.approx(10)
     assert hub_row["needed"] == pytest.approx(20)
     assert hub_row["k"] == pytest.approx(0.5)
     assert hub_row["paid"] == pytest.approx(10)
-    income_row = next(flow for flow in flow_rows if flow.get("category") == "田赋辽饷盐商")
-    assert state.metrics["国库"] == pytest.approx(income_row["amount"])
+    assert expense_row["paid"] == pytest.approx(15)
+    assert expense_row["jingyun_paid"] == pytest.approx(3)
+    assert expense_row["central_paid"] == pytest.approx(10)
+    assert expense_row["transport_loss"] == pytest.approx(2)
+    loss_rows = {
+        row["key"]: row["value"]
+        for row in db.conn.execute(
+            "SELECT key, value FROM fiscal_containers WHERE key IN ('C_京运克扣', 'C_京运运损')"
+        ).fetchall()
+    }
+    assert loss_rows["C_京运克扣"] == pytest.approx(1)
+    assert loss_rows["C_京运运损"] == pytest.approx(1)
     ledger = db.conn.execute(
         """
         SELECT COALESCE(SUM(delta), 0) AS delta
@@ -872,8 +899,6 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
         """
     ).fetchone()
     assert ledger["delta"] == pytest.approx(-15)
-    settle = _read_settle(db, "shaanxi")
-    assert settle["p"]["拨付gross"] == pytest.approx(10)
     assert rows["guanning"]["central_pay_arrears"] == pytest.approx(5)
     assert rows["shaanxi_army"]["central_pay_arrears"] == pytest.approx(5)
     assert rows["guanning"]["arrears"] == pytest.approx(5)
@@ -881,7 +906,7 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
     assert db.get_central_army_pay_arrears_container() == pytest.approx(10)
 
 
-def test_fixed_flows_substrate_hub_books_treasury_income_from_remittance_not_legacy_formula(fresh_game):
+def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losses(fresh_game):
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -889,6 +914,8 @@ def test_fixed_flows_substrate_hub_books_treasury_income_from_remittance_not_leg
     db.save_state(state)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
     db.conn.execute("UPDATE fiscal_config SET value = 0 WHERE kind != 'meta'")
+    _set_fiscal_config_value(db, "central_taicang_human_loss_rate", 10)
+    _set_fiscal_config_value(db, "central_taicang_sink_loss_rate", 5)
     db.conn.execute(
         """
         UPDATE armies
@@ -940,20 +967,84 @@ def test_fixed_flows_substrate_hub_books_treasury_income_from_remittance_not_leg
 
     flow_rows = flows_mod.apply_fixed_period_flows(db, state)
 
-    assert state.metrics["国库"] == 19
-    income_row = next(flow for flow in flow_rows if flow.get("category") == "田赋辽饷盐商")
-    assert income_row["amount"] == 19
-    assert income_row["remittance"] == pytest.approx(12)
-    assert income_row["salt_commerce"] == pytest.approx(7)
-    ledger = db.conn.execute(
+    assert state.metrics["国库"] == 16
+    flow_by_category = {flow.get("category"): flow for flow in flow_rows}
+    assert flow_by_category["起运"]["amount"] == 12
+    assert flow_by_category["盐税"]["amount"] == 3
+    assert flow_by_category["商税"]["amount"] == 4
+    assert flow_by_category["太仓亏空"]["amount"] == 3
+    ledger = {
+        row["category"]: row["delta"]
+        for row in db.conn.execute(
+            """
+            SELECT category, delta
+            FROM economy_ledger
+            WHERE account = '国库' AND category IN ('起运', '盐税', '商税', '太仓亏空')
+            """
+        ).fetchall()
+    }
+    assert ledger == {"起运": 12, "盐税": 3, "商税": 4, "太仓亏空": -3}
+    containers = {
+        row["key"]: row["value"]
+        for row in db.conn.execute(
+            """
+            SELECT key, value
+            FROM fiscal_containers
+            WHERE key IN (
+                'hub_省级起运到京', 'hub_盐税解京', 'hub_商税解京',
+                'C_太仓挪用', 'C_太仓纯亏空'
+            )
+            """
+        ).fetchall()
+    }
+    assert containers["hub_省级起运到京"] == pytest.approx(12)
+    assert containers["hub_盐税解京"] == pytest.approx(3)
+    assert containers["hub_商税解京"] == pytest.approx(4)
+    assert containers["C_太仓挪用"] == pytest.approx(2)
+    assert containers["C_太仓纯亏空"] == pytest.approx(1)
+
+
+def test_budget_lines_read_persisted_substrate_hub_income_source(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    db.conn.executemany(
         """
-        SELECT delta, reason
-        FROM economy_ledger
-        WHERE account = '国库' AND category = '田赋辽饷盐商'
+        INSERT INTO fiscal_containers (key, value, note)
+        VALUES (?, ?, 'test persisted hub source')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
+        """,
+        [
+            ("hub_省级起运到京", 11),
+            ("hub_盐税解京", 3),
+            ("hub_商税解京", 4),
+            ("C_太仓挪用", 2),
+            ("C_太仓纯亏空", 1),
+        ],
+    )
+    db.conn.execute(
         """
-    ).fetchone()
-    assert ledger["delta"] == 19
-    assert "省级起运" in ledger["reason"]
+        UPDATE regions
+        SET fiscal = json_set(
+            fiscal,
+            '$.settle.p.正赋应征', 999,
+            '$.settle.p.起运定额', 999,
+            '$.salt_tax', 999,
+            '$.commerce_tax', 999
+        )
+        """
+    )
+    db.conn.commit()
+
+    budget = flows_mod.compute_budget_lines(db, state)
+
+    income = {row["name"]: row["amount"] for row in budget["国库"]["income"]}
+    expenses = {row["name"]: row["amount"] for row in budget["国库"]["expense"]}
+    assert income["起运"] == 11
+    assert income["盐税"] == 3
+    assert income["商税"] == 4
+    assert "田赋辽饷盐商" not in income
+    assert expenses["太仓亏空"] == 3
 
 
 def test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expenses(fresh_game):
@@ -1051,8 +1142,17 @@ def test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expense
     assert hub_row["paid"] == pytest.approx(15)
     assert central_row["paid"] == pytest.approx(10)
     assert low_priority["delta"] == 0
-    income_row = next(flow for flow in flow_rows if flow.get("category") == "田赋辽饷盐商")
-    assert state.metrics["国库"] == pytest.approx(income_row["amount"])
+    split_income = sum(
+        flow["amount"]
+        for flow in flow_rows
+        if flow.get("category") in {"起运", "盐税", "商税"}
+    )
+    taicang_loss = sum(
+        flow["amount"]
+        for flow in flow_rows
+        if flow.get("category") == "太仓亏空"
+    )
+    assert state.metrics["国库"] == pytest.approx(split_income - taicang_loss)
 
 
 def test_fixed_flows_substrate_hub_integer_allocation_drives_all_consumers(fresh_game):
@@ -1170,6 +1270,8 @@ def test_substrate_hub_debit_fails_loud_when_required_debit_not_booked(fresh_db,
         central_paid_by_army={"guanning": 5.0},
         central_paid_total=5.0,
         central_transport_loss=0.0,
+        central_transport_human_loss=0.0,
+        central_transport_sink_loss=0.0,
     )
     monkeypatch.setattr(
         fresh_db, "record_issue_economy_move",
@@ -3341,6 +3443,33 @@ def test_cutover_pay_source_errors_abort_fixed_flows(fresh_game):
         flows_mod.apply_fixed_period_flows(db, state)
 
 
+def test_cutover_substrate_bad_state_uses_settlement_abort_error_pack(fresh_game, monkeypatch, tmp_path):
+    import ming_sim.error_pack as error_pack_mod
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    monkeypatch.setattr(error_pack_mod, "user_data_dir", lambda: tmp_path)
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = json.loads(str(row["fiscal"]))
+    fiscal["settle"]["p"] = []
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+
+    with pytest.raises(SettlementAbort) as exc_info:
+        flows_mod.apply_fixed_period_flows(db, state)
+
+    abort = exc_info.value
+    assert abort.stage == "fixed_fiscal"
+    assert abort.error_pack_path
+    pack = Path(abort.error_pack_path)
+    assert pack.exists()
+    assert (pack / "traceback.txt").read_text(encoding="utf-8")
+    assert _read_settle(db)["p"] == []
+
+
 def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game, monkeypatch):
     # Public entry contract: fixed fiscal must not crash before shadow substrate isolation can log.
     import ming_sim.flows as flows_mod
@@ -3573,12 +3702,12 @@ def test_all_ming_settle_substrates_advance_with_observable_shadow_tlog(fresh_ga
 
     assert len(settle_region_ids) == 17
     assert len(shadow_msgs) == 17
-    assert not any(
+    assert any(
         flow.get("account") == "国库"
         and flow.get("dir") == "income"
-        and ("起运" in str(flow) or "fiscal-substrate" in str(flow))
+        and flow.get("category") == "起运"
         for flow in fixed_flows
-    ), "shadow 基座只算/打印起运，不得作为额外国库收入落账"
+    ), "cutover 基座应把起运作为 hub 国库收入落账"
     for region_id in settle_region_ids:
         surfaced = [m for m in shadow_msgs if f"[fiscal-substrate] {region_id} 推进：" in m]
         assert surfaced, f"{region_id} 缺 shadow tlog: {msgs}"

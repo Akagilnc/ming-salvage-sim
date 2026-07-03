@@ -1,6 +1,6 @@
 {
   "_comment": "财政科目目录（数据驱动）。base/rate 单位＝月度万两/%，全盘按月。改默认值改本文件并升 db.py 的 FISCAL_SCHEMA_VERSION。budget_role: fixed=由 flows.compute_budget_lines 遍历按 base×rate 直接落账；dynamic=走省级 calc_province_fiscal / 皇庄专路，不在遍历目录里（base/rate 仍供省级公式与系数调节）。account/direction/display 仅 fixed 项用于生成 budget 行。order 控制预算表展示顺序。",
-  "schema_version": 7,
+  "schema_version": 8,
   "items": [
     {"key": "田赋_rate",     "value": 68,  "kind": "rate", "budget_role": "dynamic", "note": "各省田赋实收率%，账面×此率/100。可升至 85（查隐田+清丈）"},
     {"key": "辽饷_base",     "value": 43,  "kind": "base", "budget_role": "dynamic", "note": "辽东加派月额，万两"},
@@ -11,6 +11,10 @@
     {"key": "商税_rate",     "value": 100, "kind": "rate", "budget_role": "dynamic", "note": "商税实收率%"},
     {"key": "皇庄_base",     "value": 20,  "kind": "base", "budget_role": "dynamic", "note": "皇庄地租月度上缴内库，万两"},
     {"key": "皇庄_rate",     "value": 100, "kind": "rate", "budget_role": "dynamic", "note": "皇庄收益率%"},
+    {"key": "central_taicang_human_loss_rate", "value": 3, "kind": "rate", "budget_role": "dynamic", "note": "中央太仓人为亏空率%，可追赃回收"},
+    {"key": "central_taicang_sink_loss_rate", "value": 2, "kind": "rate", "budget_role": "dynamic", "note": "中央太仓纯亏空率%，不可回收 sink"},
+    {"key": "central_jingyun_human_loss_rate", "value": 4, "kind": "rate", "budget_role": "dynamic", "note": "京运转运人为克扣率%，可追赃回收"},
+    {"key": "central_jingyun_sink_loss_rate", "value": 2, "kind": "rate", "budget_role": "dynamic", "note": "京运转运自然运损率%，不可回收 sink"},
 
     {"key": "矿税_base",     "value": 3,   "kind": "base", "budget_role": "fixed", "account": "内库", "direction": "income", "display": "矿税", "order": 30, "note": "矿税残余月额，万两"},
     {"key": "矿税_rate",     "value": 100, "kind": "rate", "budget_role": "fixed", "note": "矿税实收率%"},
