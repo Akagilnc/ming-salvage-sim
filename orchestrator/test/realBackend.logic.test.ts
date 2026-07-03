@@ -43,6 +43,7 @@ import {
   modelFamilyForSlug,
   modelIsStrongLeg,
   parseBlockedBy,
+  parseCoderSelfReport,
   parseSubIssueCount,
   promptsDirError,
   realCommitCount,
@@ -1757,6 +1758,22 @@ describe("realBackend extractCoderTag", () => {
       committed: false,
       commitsAdded: 0,
       escalate: { reason: "blocked", diagnosis: "design gap" },
+    });
+  });
+
+  it("#551 accepts coder-fix repair evidence with same-class and regression checks through the real parser", () => {
+    const stdout =
+      '<coder>{"committed": true, "commitsAdded": 1, "repairEvidence": {"findingScope": {"identityKeys": ["correctness|orchestrator/src/realBackend.ts:1700|schema drift"], "locations": ["orchestrator/src/realBackend.ts"]}, "changedFiles": ["orchestrator/src/realBackend.ts"], "tests": ["npm test -- --run test/realBackend.logic.test.ts -t #551"], "sameClassBugScan": "rg \\"repairEvidenceSchema|isCompleteRepairEvidence\\" orchestrator/src orchestrator/test", "introducedRegressionCheck": "npm test -- --run test/family/verify-cmr-fix-loop.test.ts", "patchSummary": "thread #551 repair evidence through the real worker parser"}}</coder>';
+
+    expect(parseCoderSelfReport(extractCoderTag(stdout))).toMatchObject({
+      committed: true,
+      commitsAdded: 1,
+      repairEvidence: {
+        sameClassBugScan:
+          'rg "repairEvidenceSchema|isCompleteRepairEvidence" orchestrator/src orchestrator/test',
+        introducedRegressionCheck:
+          "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
+      },
     });
   });
 
