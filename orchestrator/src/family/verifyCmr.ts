@@ -1100,7 +1100,9 @@ async function runCmrCoderFix(input: {
           ? `${reasonPrefix} failed: ${fixResult.reason}`
           : fixResult.kind === "malformed"
             ? `${reasonPrefix} malformed: ${fixResult.reason}`
-            : `${reasonPrefix} returned no valid coder result`;
+            : fixResult.kind === "outcome_protocol_failure"
+              ? `${reasonPrefix} outcome protocol failure: ${fixResult.reason}`
+              : `${reasonPrefix} returned no valid coder result`;
       await recordDurableAbort(familyBackend, {
         phase: "final",
         cmrPass: pass,

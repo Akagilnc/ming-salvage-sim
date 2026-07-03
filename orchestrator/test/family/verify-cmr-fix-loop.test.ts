@@ -889,6 +889,31 @@ class NoHeadMovementThenGoodBackend extends ReviewFixRereviewBackend {
   }
 }
 
+class OutcomeProtocolFailureCoderFixBackend extends ReviewFixRereviewBackend {
+  override async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    if (spec.kind !== "coder") return super.dispatchWorker(spec, ctx);
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      role: spec.role,
+      promptFile: spec.promptFile,
+      contextRetention: spec.contextRetention,
+      cmrPass: ctx.cmrPass,
+      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
+      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
+    });
+    return {
+      kind: "outcome_protocol_failure",
+      reason: "coder-fix outcome guard rejected missing repairEvidence",
+      attempts: 2,
+      sessionId: "coder-fix-session",
+    };
+  }
+}
+
 describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix/re-review)", () => {
   it("blocking family CMR findings return to runner, dispatch coder-fix, then trigger a fresh full-diff re-review", async () => {
     const backend = new ReviewFixRereviewBackend();
@@ -1209,6 +1234,39 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship" }),
     ]);
+  });
+
+  it("preserves coder-fix outcome protocol failure details in the durable abort", async () => {
+    const backend = new OutcomeProtocolFailureCoderFixBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/551-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatches).toEqual([
+      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
+      expect.objectContaining({
+        kind: "coder",
+        blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+    ]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("outcome protocol failure"),
+      stopSummary: expect.objectContaining({
+        summary: expect.stringContaining(
+          "coder-fix outcome guard rejected missing repairEvidence",
+        ),
+      }),
+    }));
+    expect(
+      backend.ledger.some((entry) => entry.status === "cmr_fix_committed"),
+    ).toBe(false);
   });
 
   it("fails closed when the CMR reviewer moves family HEAD before returning blocking findings", async () => {
