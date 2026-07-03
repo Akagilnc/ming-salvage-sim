@@ -260,6 +260,20 @@ def _fiscal_container_value(db: GameDB, key: str) -> float:
     return float(row["value"] or 0.0) if row is not None else 0.0
 
 
+def _fiscal_container_values_when_complete(
+    db: GameDB, keys: Tuple[str, ...]
+) -> Optional[Dict[str, float]]:
+    rows = db.conn.execute(
+        f"SELECT key, value FROM fiscal_containers WHERE key IN ({','.join('?' for _ in keys)})",
+        keys,
+    ).fetchall()
+    if len(rows) != len(keys):
+        return None
+    values = {key: 0.0 for key in keys}
+    values.update({str(row["key"]): float(row["value"] or 0.0) for row in rows})
+    return values
+
+
 def _fiscal_config_rate(db: GameDB, key: str) -> float:
     cfg = db.get_fiscal_config()
     minimum = db.fiscal_config_minimum_value(key)
@@ -428,6 +442,16 @@ def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, li
 
 def _substrate_hub_budget_army_pay(db: GameDB, state: GameState) -> int:
     """Return the fixed-budget army-pay outflow for substrate_hub saves."""
+    persisted = _fiscal_container_values_when_complete(
+        db, ("hub_京运实拨", "hub_中央军饷实拨", "hub_京运损耗")
+    )
+    if persisted is not None:
+        return _round_nonnegative_amount(
+            persisted["hub_京运实拨"]
+            + persisted["hub_中央军饷实拨"]
+            + persisted["hub_京运损耗"]
+        )
+
     rows = db.conn.execute(
         """
         SELECT id, manpower, salary_rate, owner_power, central_pay_share
@@ -1103,6 +1127,14 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         _set_fiscal_container(
             db, "hub_京运损耗", hub_outbound.central_transport_loss,
             "本月京运转运损耗",
+        )
+        _set_fiscal_container(
+            db, "hub_京运实拨", hub_outbound.jingyun_paid_total,
+            "本月京运补实拨",
+        )
+        _set_fiscal_container(
+            db, "hub_中央军饷实拨", hub_outbound.central_paid_total,
+            "本月中央军饷实拨",
         )
         hub_debit = _debit_substrate_hub_outbound(db, state, hub_outbound)
         if hub_debit > 0:
