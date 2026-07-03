@@ -1136,7 +1136,12 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             db, "hub_中央军饷实拨", hub_outbound.central_paid_total,
             "本月中央军饷实拨",
         )
-        hub_debit = _debit_substrate_hub_outbound(db, state, hub_outbound)
+        try:
+            hub_debit = _debit_substrate_hub_outbound(db, state, hub_outbound)
+        except RuntimeError as exc:
+            raise _SubstrateHubFixedFlowAbort(
+                f"substrate_hub 京运补/中央军饷 hub 扣账失败：{exc}"
+            ) from exc
         if hub_debit > 0:
             flows.append({
                 "dir": "expense",
