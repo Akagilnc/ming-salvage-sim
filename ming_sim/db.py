@@ -1554,7 +1554,17 @@ class GameDB:
         return self.fiscal_config_minimum_value(key) is not None
 
     def fiscal_config_loss_rate_pair(self, key: str) -> Optional[Tuple[str, str]]:
-        return _CENTRAL_LOSS_RATE_PAIRS.get(str(key or "").strip())
+        raw = str(key or "").strip()
+        pair = _CENTRAL_LOSS_RATE_PAIRS.get(raw)
+        if pair is not None:
+            return pair
+        stem = self._stem_of(raw)
+        if not stem:
+            return None
+        return (
+            _CENTRAL_LOSS_RATE_PAIRS.get(f"{stem}_base")
+            or _CENTRAL_LOSS_RATE_PAIRS.get(f"{stem}_rate")
+        )
 
     def validate_fiscal_config_values(self, values: Dict[str, int]) -> None:
         if not values:
@@ -1843,6 +1853,11 @@ class GameDB:
             return None
         base_key = f"{stem}_base"
         rate_key = f"{stem}_rate"
+        if (
+            self.fiscal_config_loss_rate_pair(base_key) is not None
+            or self.fiscal_config_loss_rate_pair(rate_key) is not None
+        ):
+            return None
         if base_key in _STRUCTURAL_FISCAL_MINIMUMS or rate_key in _STRUCTURAL_FISCAL_MINIMUMS:
             return None
         # 存在性查 base 或 rate 任一——田赋只有 田赋_rate（无 base），但仍是可裁撤的 dynamic 项。

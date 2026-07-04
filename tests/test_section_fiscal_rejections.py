@@ -120,6 +120,38 @@ def test_remove_central_human_loss_rate_rejected_as_loss_pair(game):
     assert db.get_fiscal_config()[key] == before
 
 
+def test_remove_central_human_loss_rate_stem_rejected_as_loss_pair(game):
+    """stem 写法也不可绕过中央损耗率成对配置裁撤保护。"""
+    db, state, content = game
+    turn = state.turn
+    key = "central_taicang_human_loss_rate"
+    before = db.get_fiscal_config()[key]
+
+    run_settle(db, state, content, {
+        "fiscal_removes": [{
+            "key": "central_taicang_human_loss",
+            "reason": "试图用 stem 裁撤人为损耗",
+        }],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "fiscal_removes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert db.get_fiscal_config()[key] == before
+
+
+def test_direct_remove_central_human_loss_rate_stem_refuses_loss_pair(game):
+    """db.remove_fiscal_item 自身也要拒绝 stem 形态的中央损耗率配置。"""
+    db, _, _ = game
+    key = "central_taicang_human_loss_rate"
+    before = db.get_fiscal_config()[key]
+
+    removed = db.remove_fiscal_item("central_taicang_human_loss")
+
+    assert removed is None
+    assert db.get_fiscal_config()[key] == before
+
+
 # ---- fiscal_creates：重复 key / 非法枚举 / 脏 init_value ----
 
 def test_create_duplicate_key_rejected_good_create_lands(game):
