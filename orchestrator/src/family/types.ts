@@ -129,8 +129,14 @@ export interface FamilyLedgerEntry {
    *     the covered `familyHeadAfter`; the spine's resume guard reads it so only
    *     the same already-delivered HEAD skips re-verify / re-cmr / re-ship. NOT
    *     counted as merged (no `childIssue`).
-   *   - `"cmr_passed"` — a PHASE-LEVEL audit event recording one green integrated
-   *     CMR pass (#419). NOT counted as merged.
+ *   - `"cmr_reviewed"` — a PHASE-LEVEL audit event recording one red integrated
+ *     CMR review outcome before the runner dispatches coder-fix (#550). NOT
+ *     counted as merged.
+ *   - `"cmr_fix_committed"` — a PHASE-LEVEL audit event recording the separate
+ *     coder-fix worker's independent commit for a CMR finding (#550). NOT counted
+ *     as merged.
+ *   - `"cmr_passed"` — a PHASE-LEVEL audit event recording one green integrated
+ *     CMR pass (#419). NOT counted as merged.
    *   - `"escalated"` — a PHASE-LEVEL family pause/failure marker (#439). Decision
    *     escalations are answerable by a later append-only `escalation_answered`
    *     row; failure escalations are terminal until human/manual repair outside
@@ -145,6 +151,8 @@ export interface FamilyLedgerEntry {
     | "merged"
     | "aborted"
     | "shipped"
+    | "cmr_reviewed"
+    | "cmr_fix_committed"
     | "cmr_passed"
     | "escalated"
     | "escalation_answered"
@@ -160,6 +168,10 @@ export interface FamilyLedgerEntry {
    *   - `"shipped"` — the terminal family ship succeeded (online review r2, codex
    *     P1), paired with `status:"shipped"`; written by the verify-cmr hook at the
    *     止于-PR success so a resume sees the family is already delivered.
+   *   - `"cmr_reviewed"` — paired with `status:"cmr_reviewed"`; records a red
+   *     reviewer outcome before the runner sends it to coder-fix (#550).
+   *   - `"cmr_fix_committed"` — paired with `status:"cmr_fix_committed"`; records
+   *     the separate coder-fix worker commit before fresh re-review (#550).
    *   - `"cmr_passed"` — paired with `status:"cmr_passed"`; records the pass
    *     verdict so step5 and step6 are visible in the family ledger (#419).
    *   - `"escalated"` — paired with `status:"escalated"`; records the family
@@ -174,6 +186,8 @@ export interface FamilyLedgerEntry {
     | "reconciled"
     | "aborted"
     | "shipped"
+    | "cmr_reviewed"
+    | "cmr_fix_committed"
     | "cmr_passed"
     | "escalated"
     | "escalation_answered"
@@ -202,8 +216,9 @@ export interface FamilyLedgerEntry {
   /** The family base HEAD BEFORE this child's merge. */
   readonly familyHeadBefore?: string;
   /**
-   * The family base HEAD AFTER this child's merge, at barrier failure, or at the
-   * time a `cmr_passed` audit row's pass reviewed the base.
+   * The family base HEAD AFTER this child's merge, at barrier failure, at CMR
+   * review/fix audit time, or at the time a `cmr_passed` audit row's pass reviewed
+   * the base.
    */
   readonly familyHeadAfter?: string;
   /**
@@ -214,6 +229,12 @@ export interface FamilyLedgerEntry {
   readonly routeFingerprint?: string;
   /** Family CMR finding classification audit trail (#449). */
   readonly cmrFindingClassification?: FamilyCmrClassification;
+  /**
+   * CMR finding identity keys a runner-visible coder-fix commit is expected to
+   * close. Stored structurally on `cmr_fix_committed` rows so crash-resume can
+   * protect the same keys in the next fresh CMR pass.
+   */
+  readonly blockingFindingIdentityKeys?: readonly string[];
   /**
    * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
    * ran, #295) rather than land as a clean deterministic merge? Forwarded by the
@@ -395,6 +416,13 @@ export interface FamilyBackend {
    * HEAD, not just the pre-pass head supplied by the spine.
    */
   readFamilyHead?(familyBase: string): Promise<string>;
+  /** Live checked-out worktree HEAD read seam after a family worker returns. */
+  readFamilyCurrentHead?(): Promise<string>;
+  /**
+   * Live tracked worktree status read seam. Reviewer workers must not leave
+   * tracked edits behind even when HEAD is unchanged.
+   */
+  readFamilyTrackedStatus?(familyBase: string): Promise<readonly string[]>;
 
   /**
    * THE unified worker-dispatch seam at the FAMILY layer (ADR 0026 / PRD #330
@@ -421,6 +449,22 @@ export interface FamilyBackend {
   dispatchWorker?(
     spec: WorkerSpec,
     ctx: DispatchContext,
+  ): Promise<WorkerResult>;
+  /**
+   * Runner fallback for outcome protocol failures (#552).
+   *
+   * When a worker finished but its outcome control envelope was malformed,
+   * missing, or schema-incompatible, the runner may ask the SAME producing worker
+   * to rewrite only the machine outcome from existing artifacts/local memory.
+   * This is a control-envelope repair path: it must not run semantic review/fix
+   * work, move git truth, leave tracked changes, or infer a route from prose. The
+   * runner owns the bounded retry cap.
+   */
+  rewriteWorkerOutcome?(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
+    attempt: number,
   ): Promise<WorkerResult>;
 
   // ─── #296 verify-cmr seam capabilities (ADR 0022 decision 3④/⑤/⑥/4) ───────
@@ -557,6 +601,8 @@ export interface IntegratedCmrResult {
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   /** Structured findings to classify at the family gate (#449). */
   readonly findings?: readonly Finding[];
+  /** Worker outcome guard evidence artifacts referenced by this CMR verdict. */
+  readonly evidencePaths?: readonly string[];
 }
 
 /** What opening the family PR needs (decision 4, 止于 PR). */

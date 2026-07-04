@@ -46,7 +46,10 @@ import {
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import { runVerifyCmr } from "./verifyCmr.js";
-import { buildFamilyModuleContext } from "./cmrClassification.js";
+import {
+  buildFamilyModuleContext,
+} from "./cmrClassification.js";
+import { fixableCmrFindingKeysFromClassification } from "./cmrFixableFindings.js";
 import {
   infraFailureStopSummary,
   successStopSummary,
@@ -276,12 +279,15 @@ function latestVerifiedCmrHead(
   return undefined;
 }
 
-function pendingPriorCmrFindingIdentityKeysByPass(
+export function pendingPriorCmrFindingIdentityKeysByPass(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
+  currentFamilyHead?: string,
 ): Partial<Record<IntegratedCmrPass, ReadonlyArray<string>>> {
   const keysByPass: Partial<Record<IntegratedCmrPass, string[]>> = {};
   const closedPasses = new Set<string>();
   const processedPasses = new Set<string>();
+  const passesWithUnclosedFixCommits = new Set<string>();
+  const unclassifiedAbortHeadByPass = new Map<string, string | undefined>();
   for (let index = ledger.length - 1; index >= 0; index--) {
     const entry = ledger[index]!;
     if (entry.status === "shipped") break;
@@ -290,17 +296,101 @@ function pendingPriorCmrFindingIdentityKeysByPass(
       closedPasses.add(entry.cmrPass);
       continue;
     }
+    if (entry.status === "cmr_fix_committed") {
+      const pass = entry.cmrPass;
+      const keys = entry.blockingFindingIdentityKeys;
+      if (
+        pass === undefined ||
+        closedPasses.has(pass) ||
+        processedPasses.has(pass) ||
+        keys === undefined ||
+        keys.length === 0
+      ) {
+        continue;
+      }
+      passesWithUnclosedFixCommits.add(pass);
+      const existing = keysByPass[pass] ?? [];
+      const seen = new Set(existing);
+      const merged = [...existing];
+      for (let keyIndex = keys.length - 1; keyIndex >= 0; keyIndex--) {
+        const key = keys[keyIndex]!;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.unshift(key);
+      }
+      keysByPass[pass] = merged;
+      continue;
+    }
+    if (entry.status === "cmr_reviewed") {
+      const pass = entry.cmrPass;
+      const reviewedHead = filled(entry.familyHeadAfter);
+      const keys =
+        entry.cmrFindingClassification !== undefined
+          ? fixableCmrFindingKeysFromClassification(entry.cmrFindingClassification)
+          : undefined;
+      if (
+        pass === undefined ||
+        closedPasses.has(pass) ||
+        processedPasses.has(pass)
+      ) {
+        continue;
+      }
+      if (passesWithUnclosedFixCommits.has(pass)) {
+        continue;
+      }
+      const hasUnclassifiedAbort = unclassifiedAbortHeadByPass.has(pass);
+      const abortHead = unclassifiedAbortHeadByPass.get(pass);
+      if (
+        hasUnclassifiedAbort &&
+        (reviewedHead === undefined ||
+          abortHead === undefined ||
+          abortHead === reviewedHead)
+      ) {
+        continue;
+      }
+      processedPasses.add(pass);
+      if (
+        currentFamilyHead === undefined ||
+        reviewedHead === undefined ||
+        currentFamilyHead === reviewedHead ||
+        keys === undefined ||
+        keys.length === 0
+      ) {
+        continue;
+      }
+      keysByPass[pass] = [...keys];
+      continue;
+    }
+    if (entry.status === "aborted" && entry.cmrFindingClassification === undefined) {
+      const pass = entry.cmrPass;
+      if (
+        pass === undefined ||
+        closedPasses.has(pass) ||
+        processedPasses.has(pass)
+      ) {
+        continue;
+      }
+      if (!unclassifiedAbortHeadByPass.has(pass)) {
+        unclassifiedAbortHeadByPass.set(pass, filled(entry.familyHeadAfter));
+      }
+      continue;
+    }
     if (entry.status !== "aborted" || entry.cmrFindingClassification === undefined) {
       continue;
     }
     if (
       entry.cmrPass !== undefined &&
-      (closedPasses.has(entry.cmrPass) || processedPasses.has(entry.cmrPass))
+      (closedPasses.has(entry.cmrPass) ||
+        processedPasses.has(entry.cmrPass) ||
+        unclassifiedAbortHeadByPass.has(entry.cmrPass))
     ) {
       continue;
     }
     const pass = entry.cmrPass;
     if (pass === undefined) continue;
+    if (passesWithUnclosedFixCommits.has(pass)) {
+      continue;
+    }
     processedPasses.add(pass);
     const keys = keysByPass[pass] ?? [];
     const seen = new Set(keys);
@@ -1086,7 +1176,10 @@ export async function runFamily(
     // needs it; an empty list ⇒ the cmr request omits the field.
     llmResolvedChildren: await llmResolvedChildren(familyBackend),
     ...(() => {
-      const priorKeysByPass = pendingPriorCmrFindingIdentityKeysByPass(preFinalLedger);
+      const priorKeysByPass = pendingPriorCmrFindingIdentityKeysByPass(
+        preFinalLedger,
+        preFinalFamilyHead,
+      );
       return Object.keys(priorKeysByPass).length > 0
         ? { priorCmrFindingIdentityKeysByPass: priorKeysByPass }
         : {};

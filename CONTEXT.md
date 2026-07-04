@@ -401,12 +401,24 @@ _Avoid_: 阶段、stage(太泛)、iteration(那是步内的)
 _Avoid_: 配置、config(太泛)
 
 **runner**(纯调度器):
-驱动 step 序列的 TS 代码,**只做调度**——step 之间的流程决策(input gate / route / 排序 / step ledger / 续跑);由 `route()` 定下一步,agent 永不决定下一步、不跳步、不改流程。它**派 worker 步、收结果、据此路由,自己不干任何具体活**(具体纪律活在 worker invoke 的 skill 里,见 worker / 0026)。
-_Avoid_: 编排器(指整个系统,runner 只是它控调度那部分)、把它当干活的(它只调度)。
+驱动 step 序列的 TS 代码,**只做调度**——step 之间的流程决策(input gate / route / 排序 / step ledger / 续跑);由 `route()` 定下一步,agent 永不决定下一步、不跳步、不改流程。它**派 worker 步、收结果、据此路由,自己不干任何具体活**(具体纪律活在 worker invoke 的 skill 里,见 worker / 0026)。runner 不裁决 review finding 的语义真假,也不从 reviewer prose 里用正则/关键词猜路由;它只读稳定的 worker outcome 控制信封与硬证据(commit/head/test log/review artifact),据此做机械路由。
+_Avoid_: 编排器(指整个系统,runner 只是它控调度那部分)、把它当干活的(它只调度)、把 runner 当语义裁判、用自由文本/正则推断路由。
 
 **worker**:
 wiki 流程里的**一步**(可大可小),由 runner 派出去执行。判据 = **步内没有需要调度的东西**(调度只发生在步与步之间,是 runner 的活)。每个 worker 跑在自己的容器/上下文里,里面的 agent 是该容器的**顶层**(Claude 或 Codex,非 runner 的 sub),故能起自己的 sub + CLI(例:cmr worker 起 1 Agent + 2 CLI 跑三腿)。worker **不一定用 skill**(如 merge 可能就不用);用时 Claude=`Skill` invoke、Codex=加载 SKILL.md 当 skill item 传入 prompt。
 _Avoid_: 把 worker 等同「invoke skill 的步」(用不用 skill 不是 worker 的判据)、subagent(worker 是顶层容器、不是 runner 的子代理)。
+
+**reviewer worker**:
+被 runner 派出、只负责评审与产出 findings/outcome 的 worker。它可以读 scope/issue/ADR、运行评审所需测试、派多模型 review legs、汇总原始评审证据,但不承担持久修复,不得提交修复 commit。CMR completeness/correctness worker 在发现 blocking finding 时也按 reviewer worker 边界处理:整理 finding、保留 artifacts、写 outcome 后交回 runner,由 runner 派 coder-fix 修。若它试图在 outcome 里写自修状态,由 outcome guard 拒绝;若它实际移动 family HEAD,runner 视为 contract drift。边界取舍见 0050。
+_Avoid_: 自评自修、顺手修一下、把 CMR reviewer 当 coder-fix。
+
+**coder-fix worker**:
+被 runner 派出、专门修复上一轮 reviewer/CMR worker 给出的 blocking findings 的 worker。它必须产出独立新 commit,并留下修复证据;runner 只用这些硬证据判断能否进入 fresh re-review,不判断修复语义是否正确。证据缺失、不匹配或没有真实新 commit 时,runner 打回 coder-fix 补齐,而不是自己猜修好了没有。边界取舍见 0050。
+_Avoid_: reviewer 自修、amend 折叠、无 commit 修复、runner 代判修复正确。
+
+**修复证据**:
+coder-fix worker 随本轮 fix 提供的可追踪材料:新增 commit/head 移动、对应 diff、finding scope 对应关系、focused test log、same-class bug scan、introduced-regression check。它是进入 fresh re-review 的机械门票,不是修复正确性的最终证明;正确性仍由下一轮 reviewer/CMR worker 判断。
+_Avoid_: 口头说已修、只贴总结不落 commit/test、自查二连缺席、把修复证据当 reviewer concurrence。
 
 **smart zoom**(步的粒度):
 选一个 worker/step 该多大的权衡(Matt)。大步省调度、但一个上下文塞太多会到上限;小步上下文清爽、但调度多。判据 = 步内无需调度 + 上下文预算。大步不一定好。
@@ -414,6 +426,18 @@ _Avoid_: 把 worker 等同「invoke skill 的步」(用不用 skill 不是 worke
 **completionSignal**:
 一个 step 完成时 agent 必须 emit 的固定串(如 `AK_STEP_COMPLETE:coder_implement`)。runner 靠它确认该步真跑完。
 _Avoid_: 结束标记、done(太泛)
+
+**worker outcome**:
+worker 步结束时交给 runner 的稳定控制信封,用于说明该步在流程上的终态(如 converged / needs_fix / escalate)并指向证据制品。它不是 review 正文,也不是 finding 语义真相;语义判断留在 reviewer/CMR worker 的原始评审产物里。runner 可验证 outcome 的格式/schema、完成信号、git head/commit 移动、测试日志是否存在,但不靠 outcome prose 或关键词裁案。
+_Avoid_: reviewer report、语义 verdict、自由文本状态、把 JSON 字段当事实本身。
+
+**outcome 协议失败**:
+worker 已经执行到终态附近,但交给 runner 的 worker outcome 缺失、JSON 不可解析、schema 不匹配或与硬证据对不上。它不是业务失败、不是 review finding、也不是 CMR 未收敛;runner 不猜语义,只把它当控制信封协议坏了,要求同一个产出方基于已有 review artifact / test log / commit evidence 重写合法 outcome(保留本轮记忆,暂定最多 2 次)。正常路径应由 worker 在 emit completionSignal 前按版本化报告模板/脚本自检 outcome 合规,runner 打回只是兜底。连续无法产出合法 outcome 才升级为 infra failure。
+_Avoid_: 把格式坏当 finding、runner 从 prose 里猜、丢掉已产出的评审/测试/提交证据、把协议失败说成实现失败、每次格式错都新开 worker。
+
+**outcome guard**:
+烤进 worker image 的统一完成前守门工具/包装器,作用点类似 pre-commit 但管的是 worker outcome 与 completionSignal。worker 交给它 outcome draft,由它做 JSON parse、role schema、必要字段与证据路径存在性检查;通过后统一写 `$ORCHESTRATOR_OUTCOME_PATH` 并发出兼容 tag/completionSignal。它不住在 prompt 里,也不靠每轮 prompt 手搓说明;prompt 最多引用它,理想状态由 worker 执行入口强制。分层: guard 查格式/schema/证据路径存在;runner 查 git truth 与 step 路由;reviewer/CMR worker 查语义对错。
+_Avoid_: 把校验逻辑塞进 prompt、每个角色复制一份 JSON 说明、让 runner 靠自由文本补救、让 guard 做语义裁决。
 
 **step ledger**:
 每个 **worker 步**落一条的账本(step / promptFile / prompt_hash / agent / model / commits before-after / sessionId 等)。防跳步的事后真源 + 续跑真源(下一步只读 ledger,不靠 LLM 记忆)。同 0017 的「状态文件」是同一份。(runner 的纯调度决策不产 worker 制品、不落 StepSpec 字段,但其路由结果仍记入 ledger 供续跑。)
