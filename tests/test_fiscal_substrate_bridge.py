@@ -3432,18 +3432,18 @@ def test_region_loader_rejects_bad_settle_meta_defaults(monkeypatch, settle, def
 
 ZHONGYUAN_JINGSHI_GOLDEN = {
     "beizhili": {
-        "省库库银": 0,
+        "省库库银": 18.7,
         "C_地方截留": 2.352,
         "民欠旧赋": 6.3,
-        "军饷欠": 12,
-        "官俸欠": 0.3,
-        "宗禄欠": 10,
+        "军饷欠": 0,
+        "官俸欠": 0,
+        "宗禄欠": 0,
     },
     "shandong": {
-        "省库库银": 0,
+        "省库库银": 6.96,
         "C_地方截留": 2.184,
         "民欠旧赋": 7.35,
-        "军饷欠": 2.85,
+        "军饷欠": 0,
         "官俸欠": 0,
         "宗禄欠": 0,
     },
@@ -3453,7 +3453,7 @@ ZHONGYUAN_JINGSHI_GOLDEN = {
         "民欠旧赋": 8,
         "军饷欠": 0,
         "官俸欠": 0,
-        "宗禄欠": 31,
+        "宗禄欠": 8.15,
     },
 }
 
@@ -3733,6 +3733,8 @@ def test_zhongyuan_jingshi_settle_province_tick_golden(region_id, expect, fresh_
     after = _read_settle(fresh_db, region_id)["st"]
 
     assert after["军饷欠"] == pytest.approx(_province_pay_arrears(fresh_db, region_id), abs=1e-6)
+    for key, value in expect.items():
+        assert after[key] == pytest.approx(value, abs=1e-6), f"{region_id} golden {key}"
     for key, value in res.new_st.items():
         if key == "军饷欠":
             continue
