@@ -368,6 +368,36 @@ def test_fiscal_levy_shadow_skips_bad_settle_shape_without_blocking_other_region
     assert huguang["p"]["三饷应征"] > before_huguang
 
 
+def test_fiscal_levy_rewrites_nonnumeric_current_targets_from_meta(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    fiscal = json.loads(
+        str(db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()["fiscal"])
+    )
+    fiscal["settle"]["p"]["三饷应征"] = "待重算"
+    fiscal["settle"]["p"]["起运定额"] = "待重算"
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
+    )
+    db.conn.commit()
+
+    apply_historical_fiscal_rates(state, db)
+
+    settle = _settle_payload(db, "shaanxi")
+    expected_sanxiang = settle["_meta"]["辽饷九厘基线"] * 4.0 / 3.0
+    assert math.isclose(settle["p"]["三饷应征"], expected_sanxiang, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(
+        settle["p"]["起运定额"],
+        settle["_meta"]["正赋起运基线"] + expected_sanxiang,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+
+
 def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game, monkeypatch):
     db, state, content = game
     issues.bind_content(content)

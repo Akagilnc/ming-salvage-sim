@@ -1061,7 +1061,7 @@
       "fiscal": {
         "huang_tian": 0,
         "wang_tian": 45,
-        "guan_min_tian": 1348.276723,
+        "guan_min_tian": 415,
         "liao_xiang": 6,
         "salt_tax": 0,
         "commerce_tax": 3,
@@ -1170,7 +1170,7 @@
       "fiscal": {
         "huang_tian": 0,
         "wang_tian": 10,
-        "guan_min_tian": 1342.25067,
+        "guan_min_tian": 350,
         "liao_xiang": 8,
         "salt_tax": 8,
         "commerce_tax": 6,
@@ -1269,7 +1269,7 @@
       "fiscal": {
         "huang_tian": 0,
         "wang_tian": 15,
-        "guan_min_tian": 2568.651366,
+        "guan_min_tian": 405,
         "liao_xiang": 6,
         "salt_tax": 10,
         "commerce_tax": 8,
@@ -1368,7 +1368,7 @@
       "fiscal": {
         "huang_tian": 0,
         "wang_tian": 8,
-        "guan_min_tian": 940.20748,
+        "guan_min_tian": 232,
         "liao_xiang": 3,
         "salt_tax": 0,
         "commerce_tax": 1,
@@ -1472,7 +1472,7 @@
       "fiscal": {
         "huang_tian": 0,
         "wang_tian": 5,
-        "guan_min_tian": 179.93588,
+        "guan_min_tian": 255,
         "liao_xiang": 2,
         "salt_tax": 0,
         "commerce_tax": 2,
@@ -1571,7 +1571,7 @@
       "fiscal": {
         "huang_tian": 0,
         "wang_tian": 3,
-        "guan_min_tian": 51.66663,
+        "guan_min_tian": 207,
         "liao_xiang": 1,
         "salt_tax": 0,
         "commerce_tax": 1,
