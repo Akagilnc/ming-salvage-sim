@@ -131,14 +131,15 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     expect(be.openFamilyPrCount).toBe(0); // never the inline openFamilyPr
   });
 
-  it("the family ship spec is a WRITE/coder worker with an iterative budget (maxIter>1) — gstack-ship must self-rerun rerun-able failures (family_ship.md)", () => {
+  it("the family ship spec is a WRITE/coder worker with an iterative budget, while cmr is a single clean review pass", () => {
     const spec = familyShipWorkerSpec();
     expect(spec.role).toBe("coder");
     expect(spec.maxIter).toBeGreaterThan(1);
-    // The cmr pass worker is also iterative (maxIter>1): it is WRITE-capable and may
-    // spend more than one sandbox iteration producing its terminal pass verdict,
-    // not a single-pass read-only reviewer. Both family workers write/iterate.
-    expect(cmrWorkerSpec().maxIter).toBeGreaterThan(1);
+    // The cmr pass worker is a clean reviewer boundary. A red outcome returns to
+    // the runner, which dispatches coder-fix separately.
+    expect(cmrWorkerSpec().role).toBe("reviewer");
+    expect(cmrWorkerSpec().contextRetention).toBe("clean");
+    expect(cmrWorkerSpec().maxIter).toBe(1);
   });
 
   it("a shipped outcome ⇒ WorkerResult.completed with a ShipResult payload", async () => {

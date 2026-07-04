@@ -23,6 +23,10 @@ import type {
   WorktreeHandle,
 } from "../src/types.js";
 
+const CMR_EVIDENCE = {
+  evidencePaths: ["cmr/review-summary.json"],
+} as const;
+
 /**
  * #331 — the unified worker-dispatch seam.
  *
@@ -233,7 +237,12 @@ describe("#331 the S7 ship worker must return a SHIP payload (codex R2 guard)", 
       // ship: a mis-wired backend returns a non-ship completed payload.
       return {
         kind: "completed",
-        output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] },
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          ...CMR_EVIDENCE,
+        },
       };
     }
   }

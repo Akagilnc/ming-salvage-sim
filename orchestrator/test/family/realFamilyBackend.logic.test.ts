@@ -890,6 +890,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
         ],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        evidencePaths: ["cmr/review.json"],
       }) + "\n",
       "utf8",
     );
@@ -967,6 +968,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       ],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
+      evidencePaths: ["cmr/review.json"],
       findings: [
         {
           severity: "medium",
@@ -1012,6 +1014,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       ],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
+      evidencePaths: ["cmr/review.json"],
       findings: [
         {
           severity: "medium",
@@ -1046,6 +1049,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
         { slug: "agy", reason: "not part of this parser unit" },
       ],
       claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|accepted"],
+      evidencePaths: ["cmr/review.json"],
       priorFindingDispositions: [
         {
           identityKey: "correctness|src/x.ts:1|accepted",
@@ -1053,6 +1057,57 @@ describe("parseCmrOutcome accepted suppression contract", () => {
           source: "#445 owner answer",
           scope: "runner review/fix loop",
           boundedReopen: "reopen if the same scope regresses",
+        },
+      ],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome).toMatchObject({
+      kind: "malformed",
+      reason: expect.stringContaining(
+        "cmr worker <cmr> tag matched no valid shape",
+      ),
+    });
+  });
+
+  it("rejects converged CMR verdicts that omit evidence paths", () => {
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: true,
+      successfulLegs: ["gpt-5.5"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome).toMatchObject({
+      kind: "malformed",
+      reason: expect.stringContaining(
+        "cmr worker <cmr> tag matched no valid shape",
+      ),
+    });
+  });
+
+  it("rejects not-converged CMR verdicts that omit evidence paths", () => {
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: false,
+      reason: "blocking findings remain",
+      successfulLegs: ["gpt-5.5"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      findings: [
+        {
+          severity: "medium",
+          category: "correctness",
+          claim_quote: "missing evidence paths should not be accepted",
+          location: "orchestrator/src/family/realFamilyBackend.ts",
+          suggested_fix: "include review artifact evidence paths",
+          action: "fix_now",
         },
       ],
     })}</cmr>\nCMR_STEP_COMPLETE`);
@@ -1074,6 +1129,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
         { slug: "agy", reason: "not part of this parser unit" },
       ],
       claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|accepted"],
+      evidencePaths: ["cmr/review.json"],
       priorFindingDispositions: [
         {
           identityKey: "correctness|src/x.ts:1|accepted",

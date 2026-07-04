@@ -22,6 +22,10 @@ import type {
 } from "../../src/family/types.js";
 import type { DispatchContext, Finding, WorkerResult, WorkerSpec } from "../../src/types.js";
 
+const CMR_EVIDENCE = {
+  evidencePaths: ["cmr/review-summary.json"],
+} as const;
+
 describe("#449 family CMR module declarations", () => {
   it("parses only the structured Module Declaration fenced YAML block", () => {
     expect(
@@ -1319,6 +1323,7 @@ describe("#449 CMR worker output parsing", () => {
         successfulLegs: ["opus", "gpt-5.5", "agy"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
         findings: [finding],
       })}</cmr>`,
     );
@@ -1424,6 +1429,7 @@ describe("#449 verifyCmr family gate classification", () => {
         successfulLegs: ["opus", "gpt-5.5", "agy"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
         findings: [finding],
       },
     });
@@ -1467,6 +1473,7 @@ describe("#449 verifyCmr family gate classification", () => {
         successfulLegs: ["opus", "gpt-5.5", "agy"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
         findings: [undeclaredTargetFinding],
       },
     });
@@ -1532,6 +1539,7 @@ module_scope:
         successfulLegs: ["opus", "gpt-5.5", "agy"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
         findings: [crossModuleFinding],
       },
     });
@@ -1724,6 +1732,7 @@ module_scope:
         successfulLegs: ["opus", "gpt-5.5", "agy"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
         findings: [crossModuleFinding],
       },
     });
@@ -1802,6 +1811,7 @@ module_scope:
         successfulLegs: ["opus", "gpt-5.5", "agy"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
         findings: [suppressedFinding],
       },
     });
@@ -1898,6 +1908,7 @@ module_scope:
         skippedLegs: [{ slug: "gpt-5.5", reason: "codex quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
         findings: [crossModuleFinding, suppressedFinding],
       },
     });
@@ -1994,6 +2005,7 @@ module_scope:
           successfulLegs: ["opus", "gpt-5.5", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
+          ...CMR_EVIDENCE,
           findings: [crossModuleFinding],
         },
       },
@@ -2005,6 +2017,7 @@ module_scope:
           successfulLegs: ["opus", "gpt-5.5", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
+          ...CMR_EVIDENCE,
         },
       },
     ]);
@@ -2055,6 +2068,7 @@ module_scope:
           successfulLegs: ["opus", "gpt-5.5", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
+          ...CMR_EVIDENCE,
         },
       },
       {
@@ -2065,6 +2079,7 @@ module_scope:
           successfulLegs: ["opus", "gpt-5.5", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
+          ...CMR_EVIDENCE,
         },
       },
     ]);
