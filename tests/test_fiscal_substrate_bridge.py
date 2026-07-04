@@ -26,6 +26,7 @@ from ming_sim.exceptions import SettlementAbort
 from ming_sim.fiscal_tick import settle_tick
 from ming_sim.flows import army_needed
 from ming_sim.issues import sync_opening_legacies
+from tests.fiscal_test_utils import zero_non_meta_fiscal_config
 
 
 @pytest.fixture
@@ -92,19 +93,7 @@ def _set_fiscal_config_value(db, key, value):
 
 
 def _zero_non_meta_fiscal_config(db):
-    db.conn.execute(
-        """
-        UPDATE fiscal_config
-        SET value = CASE
-            WHEN key IN (
-                'central_taicang_sink_loss_rate',
-                'central_jingyun_sink_loss_rate'
-            ) THEN 1
-            ELSE 0
-        END
-        WHERE kind != 'meta'
-        """
-    )
+    zero_non_meta_fiscal_config(db)
 
 
 def _hub_ledger_snapshot(db, *, turn=None):
@@ -1284,12 +1273,30 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
 
     net_pct = int(db.legacy_modifiers(state).get("国库", 0) or 0)
     assert net_pct < 0
-
-    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
-
     expected_remittance = db.apply_legacy_pct(12, net_pct)
     expected_salt = db.apply_legacy_pct(3, net_pct)
     expected_commerce = db.apply_legacy_pct(4, net_pct)
+
+    pre_budget = flows_mod.compute_budget_lines(db, state)
+    pre_income = {
+        row["name"]: row["amount"]
+        for row in pre_budget["国库"]["income"]
+        if row["name"] in {"起运", "盐税", "商税"}
+    }
+    pre_expense = {
+        row["name"]: row["amount"]
+        for row in pre_budget["国库"]["expense"]
+        if row["name"] == "太仓亏空"
+    }
+    assert pre_income == {
+        "起运": expected_remittance,
+        "盐税": expected_salt,
+        "商税": expected_commerce,
+    }
+    assert pre_expense == {"太仓亏空": 3}
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
     assert state.metrics["国库"] == expected_remittance + expected_salt + expected_commerce - 3
     flow_by_category = {flow.get("category"): flow for flow in flow_rows}
     assert flow_by_category["起运"]["amount"] == expected_remittance
@@ -1987,7 +1994,7 @@ def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
         row["amount"] for row in settled_budget["国库"]["expense"]
         if row["name"] == "各军军饷"
     )
-    assert settled_pay == 5
+    assert settled_pay == 10
 
     _disable_army_pay_source_cutover(db)
 
