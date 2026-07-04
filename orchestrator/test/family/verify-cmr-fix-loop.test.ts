@@ -1219,7 +1219,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     ).toBe(false);
   });
 
-  it("restarts verify and completeness when a correctness coder-fix commits", async () => {
+  it("continues at correctness when a correctness coder-fix commits", async () => {
     const backend = new CorrectnessReviewFixRestartsBackend();
 
     const result = await runVerifyCmr({
@@ -1231,7 +1231,6 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(result).toEqual({ ok: true, ran: true });
     expect(backend.verifyRequests).toEqual([
       { phase: "final", familyBase: "family/550-base" },
-      { phase: "final", familyBase: "family/550-base" },
     ]);
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
@@ -1239,11 +1238,6 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({
         kind: "coder",
         blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
-      }),
-      expect.objectContaining({
-        kind: "cmr",
-        cmrPass: "completeness",
-        priorCmrFindingIdentityKeys: undefined,
       }),
       expect.objectContaining({
         kind: "cmr",
