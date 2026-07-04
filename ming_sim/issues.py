@@ -1272,7 +1272,6 @@ def _apply_fiscal_levy_targets(
     liao_rise_approved = _fiscal_levy_event_approved(terminal_records, _LIAO_LEVY_RISE_EVENT_ID)
     jiao_in_force = _jiao_levy_in_force(terminal_records, state)
     lian_levy_approved = _fiscal_levy_event_approved(terminal_records, _LIAN_LEVY_START_EVENT_ID)
-    levy_targets_active = liao_rise_approved or jiao_in_force or lian_levy_approved
     region_entries: List[Dict[str, object]] = []
     denominator_complete = True
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
@@ -1356,12 +1355,9 @@ def _apply_fiscal_levy_targets(
         target_jiao = jiao_seed if jiao_in_force else 0.0
         target_lian = lian_seed if lian_levy_approved else 0.0
         target_sanxiang = target_liao + target_jiao + target_lian
+        current_sanxiang = _as_float(p.get("三饷应征"), ctx=f"{region_id}.settle.p.三饷应征")
         current_transport = _as_float(p.get("起运定额"), ctx=f"{region_id}.settle.p.起运定额")
-        target_transport = (
-            base_transport + target_sanxiang
-            if levy_targets_active
-            else current_transport
-        )
+        target_transport = base_transport + target_sanxiang
         next_p = dict(p)
         next_p["三饷应征"] = target_sanxiang
         next_p["起运定额"] = target_transport
@@ -1374,7 +1370,9 @@ def _apply_fiscal_levy_targets(
         if land_denominator > 0:
             meta[_SETTLE_META_LAND_DENOMINATOR_KEY] = land_denominator
         _fiscal_levy_mark_provisional(meta)
-        if next_p == p and meta == meta_raw:
+        if meta == meta_raw \
+                and math.isclose(current_sanxiang, target_sanxiang, rel_tol=0, abs_tol=1e-9) \
+                and math.isclose(current_transport, target_transport, rel_tol=0, abs_tol=1e-9):
             continue
         settle["p"] = next_p
         settle["_meta"] = meta

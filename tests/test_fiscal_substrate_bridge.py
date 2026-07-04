@@ -344,6 +344,21 @@ def _province_container_total(db):
     return total
 
 
+def _primary_source_only_region_pay_arrears(db, region_id):
+    settle = _read_settle(db, region_id)
+    if not isinstance(settle, dict):
+        return 0.0
+    if db._primary_source_army_pay_due(settle) is None:
+        return 0.0
+    if db._army_pay_source_rows_for_region(region_id):
+        return 0.0
+    return float(settle["st"].get("军饷欠", 0) or 0.0)
+
+
+def _region_pay_arrears_container_basis(db, region_id):
+    return _province_pay_arrears(db, region_id) + _primary_source_only_region_pay_arrears(db, region_id)
+
+
 def _region_with_settle(settle):
     return {
         "id": "test_province",
@@ -733,7 +748,7 @@ def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
     _province_total, central_total, army_total = _non_self_funded_pay_arrears(db)
     assert db.get_central_army_pay_arrears_container() == pytest.approx(central_total)
     assert _province_container_total(db) + db.get_central_army_pay_arrears_container() == pytest.approx(
-        army_total
+        army_total + db._primary_source_only_army_pay_container_total()
     )
 
 
@@ -3633,7 +3648,7 @@ def test_zhongyuan_jingshi_primary_source_refinement(region_id, expected, fresh_
 
 SOUTH_SOUTHWEST_SEEDS = {
     "sichuan": {
-        "zh": "四川", "官民田": 13482.76723, "正赋应征": 2.2652, "三饷应征": 1.4,
+        "zh": "四川", "官民田": 1348.276723, "正赋应征": 2.2652, "三饷应征": 1.4,
         "正赋起运基线": 0.8427, "起运定额": 2.2427, "军饷": 5.0, "宗禄": 0.8,
         "source_grain": {
             "source": "《万历会计录》卷十「四川布政司田赋」",
@@ -3645,7 +3660,7 @@ SOUTH_SOUTHWEST_SEEDS = {
                        "官俸欠": 1.2, "宗禄欠": 0.8},
     },
     "fujian": {
-        "zh": "福建", "官民田": 13422.5067, "正赋应征": 2.0642, "三饷应征": 1.7,
+        "zh": "福建", "官民田": 1342.25067, "正赋应征": 2.0642, "三饷应征": 1.7,
         "正赋起运基线": 0.7461, "起运定额": 2.4461, "军饷": 4.0, "宗禄": 0,
         "source_grain": {
             "source": "《万历会计录》卷五「福建布政司田赋」",
@@ -3657,7 +3672,7 @@ SOUTH_SOUTHWEST_SEEDS = {
                        "官俸欠": 1.2, "宗禄欠": 0},
     },
     "guangdong": {
-        "zh": "广东", "官民田": 25686.51366, "正赋应征": 2.2373, "三饷应征": 1.5,
+        "zh": "广东", "官民田": 2568.651366, "正赋应征": 2.2373, "三饷应征": 1.5,
         "正赋起运基线": 0.8333, "起运定额": 2.3333, "军饷": 3.6, "宗禄": 0,
         "source_grain": {
             "source": "《万历会计录》卷十一「广东布政司田赋」",
@@ -3669,7 +3684,7 @@ SOUTH_SOUTHWEST_SEEDS = {
                        "官俸欠": 1.1, "宗禄欠": 0},
     },
     "guangxi": {
-        "zh": "广西", "官民田": 9402.0748, "正赋应征": 0.7891, "三饷应征": 0.6,
+        "zh": "广西", "官民田": 940.20748, "正赋应征": 0.7891, "三饷应征": 0.6,
         "正赋起运基线": 0.0, "起运定额": 0.6, "军饷": 2.2, "宗禄": 0.72,
         "source_grain": {
             "source": "《万历会计录》卷十二「广西布政司田赋」",
@@ -3681,7 +3696,7 @@ SOUTH_SOUTHWEST_SEEDS = {
                        "官俸欠": 0.5, "宗禄欠": 0.72},
     },
     "yunnan": {
-        "zh": "云南", "官民田": 1799.3588, "正赋应征": 0.3010, "三饷应征": 0.5,
+        "zh": "云南", "官民田": 179.93588, "正赋应征": 0.3010, "三饷应征": 0.5,
         "正赋起运基线": 0.0, "起运定额": 0.5, "军饷": 1.8, "宗禄": 0,
         "source_grain": {
             "source": "《万历会计录》卷十三「云南布政司田赋」",
@@ -3693,7 +3708,7 @@ SOUTH_SOUTHWEST_SEEDS = {
                        "官俸欠": 0.5, "宗禄欠": 0},
     },
     "guizhou": {
-        "zh": "贵州", "官民田": 516.6663, "正赋应征": 0.1059, "三饷应征": 0.25,
+        "zh": "贵州", "官民田": 51.66663, "正赋应征": 0.1059, "三饷应征": 0.25,
         "正赋起运基线": 0.0, "起运定额": 0.25, "军饷": 1.6, "宗禄": 0,
         "source_grain": {
             "source": "《万历会计录》卷十四「贵州布政司田赋」",
@@ -3739,6 +3754,10 @@ def test_south_southwest_seeds_have_valid_historical_settle_substrate(fresh_db, 
             assert source_grain[key] == pytest.approx(value)
         else:
             assert source_grain[key] == value
+    assert settle["st"]["官民田"] == pytest.approx(
+        source_grain["taxable_land_qing"] / 100,
+        abs=1e-9,
+    )
     assert source_grain["scan_checked"] is True
     assert "影印图" in source_grain["ocr_status"]
     conversion = source_grain["conversion"]
@@ -3919,8 +3938,21 @@ def test_liaodong_and_dongjiang_are_pure_military_pay_funnels(fresh_db):
 
 def test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile(fresh_db):
     settle = _read_settle(fresh_db, "liaodong")
+    opening_arrears = settle["st"]["军饷欠"]
+    expected_due = 711391 / 10000 / 12
+    expected_grant = 409984 / 10000 / 12
 
-    assert settle["p"]["Due"]["军饷"] == pytest.approx(711391 / 10000 / 12)
+    assert settle["p"]["Due"]["军饷"] == pytest.approx(expected_due)
+
+    fresh_db.settle_province_tick("liaodong", [])
+    fresh_db.conn.commit()
+
+    after = _read_settle(fresh_db, "liaodong")
+    assert after["p"]["Due"]["军饷"] == pytest.approx(expected_due)
+    assert after["st"]["军饷欠"] == pytest.approx(
+        max(0, opening_arrears + expected_due - expected_grant),
+        abs=1e-6,
+    )
 
 
 @pytest.mark.parametrize("bad_annual", [True, "711391", float("nan"), float("inf")])
@@ -4094,7 +4126,10 @@ def test_settle_province_tick_persists_border_remainder_golden(fresh_db):
         for k, v in want.items():
             assert after[k] == pytest.approx(v, abs=1e-3), \
                 f"{region_id} {k}：落库 {after[k]} ≠ #267 {v}"
-        assert after["军饷欠"] == pytest.approx(_province_pay_arrears(fresh_db, region_id), abs=1e-6)
+        assert after["军饷欠"] == pytest.approx(
+            _region_pay_arrears_container_basis(fresh_db, region_id),
+            abs=1e-6,
+        )
         for k, v in res.new_st.items():
             if k == "军饷欠":
                 continue
@@ -4918,7 +4953,10 @@ def test_all_ming_settle_substrates_advance_with_observable_shadow_tlog(fresh_ga
         assert f"[fiscal-substrate] {region_id} 推进" in "\n".join(shadow_msgs)
     for region_id in ("shaanxi", "shanxi", "liaodong", "dongjiang_area"):
         settle = _read_settle(db, region_id)
-        assert settle["st"]["军饷欠"] == pytest.approx(_province_pay_arrears(db, region_id), abs=1e-6)
+        assert settle["st"]["军饷欠"] == pytest.approx(
+            _region_pay_arrears_container_basis(db, region_id),
+            abs=1e-6,
+        )
     assert _read_settle(db, "henan")["st"]["宗禄欠"] > 0, "周/福藩重省应有宗禄欠压"
     assert _read_settle(db, "huguang")["p"]["Due"]["宗禄"] > _read_settle(db, "nanzhili")["p"]["Due"]["宗禄"], \
         "楚藩重省宗禄 Due 应重于江南基准"
