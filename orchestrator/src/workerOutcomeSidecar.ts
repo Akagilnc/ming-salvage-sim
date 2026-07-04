@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 /** Repo-root filename excluded from git for the runner-owned outcome sidecar. */
 export const WORKER_OUTCOME_REPO_FILE = ".orchestrator-outcome.json";
@@ -23,6 +24,19 @@ export function stripJsonFence(s: string): string {
   return m ? m[1].trim() : s;
 }
 
+function nestedOutcomePath(path: string): string {
+  return join(path, "outcome.json");
+}
+
+function readableSidecarPath(path: string): string | undefined {
+  if (!existsSync(path)) return undefined;
+  if (!statSync(path).isDirectory()) return path;
+  const nested = nestedOutcomePath(path);
+  return existsSync(nested) && !statSync(nested).isDirectory()
+    ? nested
+    : undefined;
+}
+
 /**
  * Read a runner-owned worker outcome sidecar.
  *
@@ -33,8 +47,9 @@ export function stripJsonFence(s: string): string {
  */
 export function readWorkerOutcomeSidecar(path: string | undefined): unknown | undefined {
   if (path === undefined) return undefined;
-  if (!existsSync(path)) return undefined;
-  const raw = readFileSync(path, "utf8").trim();
+  const readPath = readableSidecarPath(path);
+  if (readPath === undefined) return undefined;
+  const raw = readFileSync(readPath, "utf8").trim();
   if (raw.length === 0) return undefined;
   return JSON.parse(stripJsonFence(raw));
 }
@@ -44,7 +59,13 @@ export function readRequiredWorkerOutcomeSidecar(path: string): unknown {
   if (!existsSync(path)) {
     throw new Error("worker outcome sidecar was not written");
   }
-  const raw = readFileSync(path, "utf8").trim();
+  const readPath = readableSidecarPath(path);
+  if (readPath === undefined) {
+    throw new Error(
+      "worker outcome sidecar path was a directory and contained no outcome.json",
+    );
+  }
+  const raw = readFileSync(readPath, "utf8").trim();
   if (raw.length === 0) {
     throw new Error("worker outcome sidecar was blank");
   }
