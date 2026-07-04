@@ -203,6 +203,35 @@ const NOOP: VerifyCmrResult = { ok: true, ran: false };
 const INCOMPLETE_GATE: VerifyCmrResult = { ok: false, ran: true };
 const OUTCOME_REWRITE_RETRY_CAP = 2;
 
+async function runFamilyVerifyOrAbort(input: {
+  readonly phase: VerifyCmrPhase;
+  readonly familyBase: string;
+  readonly familyBackend: FamilyBackend;
+  readonly familyHeadAfter?: string;
+}): Promise<VerifyCmrResult | undefined> {
+  const { phase, familyBase, familyBackend, familyHeadAfter } = input;
+  const verify: FamilyVerifyResult = await familyBackend.runFamilyVerify!({
+    phase,
+    familyBase,
+  });
+  if (verify.ok) return undefined;
+
+  const reason = verify.errorPackage?.reason ?? "family verify failed";
+  await familyBackend.recordAborted?.({
+    phase,
+    familyBase,
+    errorPackage: verify.errorPackage ?? { reason },
+    familyHeadAfter,
+  });
+  await recordDurableAbort(familyBackend, {
+    phase,
+    reason,
+    familyHeadAfter,
+    stopSummary: familyVerifyFailureStopSummary(reason),
+  });
+  return { ok: false, ran: true };
+}
+
 /** ADR0032 floor: at least one successful CMR leg must be registry-marked strong. */
 export function meetsCmrFloor(successfulLegs: readonly string[]): boolean {
   return successfulLegs.some(modelIsStrongLeg);
@@ -1930,26 +1959,13 @@ export async function runVerifyCmr(
   // ── verify (both phases; "final" runs the FULL suite — a RealBackend scopes it
   //    off `phase`). RED ⇒ fail-fast: record the `aborted` event so the failure is
   //    not silently dropped, and return `{ok:false}` (decision 3④/5). ──
-  const verify: FamilyVerifyResult = await familyBackend.runFamilyVerify({ phase, familyBase });
-  if (!verify.ok) {
-    const reason = verify.errorPackage?.reason ?? "family verify failed";
-    // (a) in-memory seam (back-compat, #296) — enriched with the abort-time head.
-    await familyBackend.recordAborted?.({
-      phase,
-      familyBase,
-      errorPackage: verify.errorPackage ?? { reason },
-      familyHeadAfter,
-    });
-    // (b) PHASE-LEVEL DURABLE ledger entry (#291 缺口 2): so the abort reaches the
-    //     ledger reconcile reads末条 familyHeadAfter from, not only the seam array.
-    await recordDurableAbort(familyBackend, {
-      phase,
-      reason,
-      familyHeadAfter,
-      stopSummary: familyVerifyFailureStopSummary(reason),
-    });
-    return { ok: false, ran: true };
-  }
+  const verifyFailed = await runFamilyVerifyOrAbort({
+    phase,
+    familyBase,
+    familyBackend,
+    familyHeadAfter,
+  });
+  if (verifyFailed !== undefined) return verifyFailed;
 
   // The wave barrier is verify-only (decision 3④); cmr + PR are the end-of-run
   // (decision 3⑤/⑥). A green wave verify clears the wave.
@@ -2076,6 +2092,13 @@ export async function runVerifyCmr(
       correctnessFamilyHeadAfter = correctness.familyHeadAfter;
       break;
     }
+    const verifyAfterFixFailed = await runFamilyVerifyOrAbort({
+      phase,
+      familyBase,
+      familyBackend,
+      familyHeadAfter: correctness.restartFinalBarrier.familyHeadAfter,
+    });
+    if (verifyAfterFixFailed !== undefined) return verifyAfterFixFailed;
     correctnessFamilyHeadAfter = correctness.restartFinalBarrier.familyHeadAfter;
     correctnessPriorKeysByPass =
       correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;

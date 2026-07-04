@@ -288,8 +288,14 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   readonly verifyRequests: FamilyVerifyRequest[] = [];
+  readonly aborted: FamilyAbortedEvent[] = [];
   currentFamilyHead = "head-before-correctness-review";
   private correctnessReviewRound = 0;
+  private verifyRound = 0;
+
+  constructor(
+    private readonly verifyResults: readonly FamilyVerifyResult[] = [],
+  ) {}
 
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
@@ -305,7 +311,10 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
   }
   async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
     this.verifyRequests.push(req);
-    return { ok: true };
+    return this.verifyResults[this.verifyRound++] ?? { ok: true };
+  }
+  async recordAborted(event: FamilyAbortedEvent): Promise<void> {
+    this.aborted.push(event);
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     this.dispatches.push({
@@ -1231,6 +1240,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(result).toEqual({ ok: true, ran: true });
     expect(backend.verifyRequests).toEqual([
       { phase: "final", familyBase: "family/550-base" },
+      { phase: "final", familyBase: "family/550-base" },
     ]);
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
@@ -1245,6 +1255,41 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
       expect.objectContaining({ kind: "ship", promptFile: "family_ship.md" }),
+    ]);
+  });
+
+  it("aborts before correctness re-review when the post-fix full verify is red", async () => {
+    const backend = new CorrectnessReviewFixRestartsBackend([
+      { ok: true },
+      { ok: false, errorPackage: { reason: "vitest red after correctness fix" } },
+    ]);
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/550-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.verifyRequests).toEqual([
+      { phase: "final", familyBase: "family/550-base" },
+      { phase: "final", familyBase: "family/550-base" },
+    ]);
+    expect(backend.dispatches).toEqual([
+      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
+      expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
+      expect.objectContaining({
+        kind: "coder",
+        blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+    ]);
+    expect(backend.aborted).toEqual([
+      expect.objectContaining({
+        phase: "final",
+        familyBase: "family/550-base",
+        familyHeadAfter: "head-after-correctness-coder-fix",
+        errorPackage: { reason: "vitest red after correctness fix" },
+      }),
     ]);
   });
 
