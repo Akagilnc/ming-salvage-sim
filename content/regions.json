@@ -150,6 +150,7 @@
           "_meta": {
             "provisional": [
               "宗禄",
+              "起运定额",
               "隐田"
             ],
             "postures": [
@@ -163,8 +164,7 @@
               "scan_checked": true,
               "checked_fields": [
                 "官民田",
-                "正赋应征",
-                "起运定额"
+                "正赋应征"
               ],
               "conversion": {
                 "grain_silver_liang_per_stone": 0.25,
