@@ -72,7 +72,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 ### `class_delta` — 阶级满意度变化
 - 合法 key：`<class_name>` 或 `<class_name>@<region_id>`（如 `农民@shaanxi`）
 - `class_name` 在 `content/classes.json` 里：农民 / 士绅 / 官僚 / 军户 / 商人 / 匠户 / 宗藩
-- 值：int 增量
+- 值：int 增量 〔⚠️ 与实码不符：实际为嵌套结构 `{类:{satisfaction/leverage: int}}`，扁平值被 `_apply_class_dict` 静默跳过，见 ADR 0056〕
 
 ### `region_delta` — 地区变化
 - key：region_id（如 `beizhili` / `shaanxi` / `liaodong` 等，看 `content/regions.json` id 列）
