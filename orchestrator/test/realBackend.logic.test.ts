@@ -1797,6 +1797,26 @@ describe("realBackend extractCoderTag", () => {
     });
   });
 
+  it("accepts a final coder tag with extra trailing braces after a balanced JSON object", () => {
+    const stdout =
+      '<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "blocked", "diagnosis": "source gap"}}}</coder>\n' +
+      "CODER_STEP_COMPLETE";
+
+    expect(extractCoderTag(stdout)).toEqual({
+      committed: false,
+      commitsAdded: 0,
+      escalate: { reason: "blocked", diagnosis: "source gap" },
+    });
+  });
+
+  it("still rejects non-brace garbage after a balanced coder JSON object", () => {
+    expect(() =>
+      extractCoderTag(
+        '<coder>{"committed": false, "commitsAdded": 0} trailing</coder>',
+      ),
+    ).toThrow();
+  });
+
   it("returns an escalate payload when the coder tag carries one", () => {
     const stdout =
       '<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "blocked", "diagnosis": "design gap"}}</coder>';
