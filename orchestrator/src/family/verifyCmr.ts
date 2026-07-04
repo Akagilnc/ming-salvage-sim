@@ -2052,39 +2052,37 @@ export async function runVerifyCmr(
     });
   }
 
-  const correctness = await runIntegratedCmrPass({
-    pass: "correctness",
-    familyBackend,
-    familyBase,
-    llmResolvedChildren,
-    escalationAnswer,
-    familyHeadAfter: completeness.familyHeadAfter,
-    familyIssue,
-    moduleContext,
-    priorCmrFindingIdentityKeys: priorKeysForPass("correctness"),
-    priorCmrFindingIdentityKeysByPass: activePriorKeysByPass,
-    resolvedRoute,
-    allowCoderFix: true,
-    remainingCmrCoderFixRounds: activeRemainingCmrCoderFixRounds,
-  });
-  if (!correctness.result.ok) return correctness.result;
-  if (correctness.restartFinalBarrier !== undefined) {
-    return runVerifyCmr({
-      phase: "final",
+  let correctnessFamilyHeadAfter = completeness.familyHeadAfter;
+  let correctnessPriorKeysByPass = activePriorKeysByPass;
+  let correctnessRemainingCmrCoderFixRounds = activeRemainingCmrCoderFixRounds;
+  while (true) {
+    const correctness = await runIntegratedCmrPass({
+      pass: "correctness",
       familyBackend,
       familyBase,
       llmResolvedChildren,
       escalationAnswer,
-      familyHeadAfter: correctness.restartFinalBarrier.familyHeadAfter,
+      familyHeadAfter: correctnessFamilyHeadAfter,
       familyIssue,
       moduleContext,
-      priorCmrFindingIdentityKeysByPass:
-        correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass,
-      remainingCmrCoderFixRounds:
-        correctness.restartFinalBarrier.remainingCmrCoderFixRounds,
+      priorCmrFindingIdentityKeys: correctnessPriorKeysByPass.correctness,
+      priorCmrFindingIdentityKeysByPass: correctnessPriorKeysByPass,
+      resolvedRoute,
+      allowCoderFix: true,
+      remainingCmrCoderFixRounds: correctnessRemainingCmrCoderFixRounds,
     });
+    if (!correctness.result.ok) return correctness.result;
+    if (correctness.restartFinalBarrier === undefined) {
+      correctnessFamilyHeadAfter = correctness.familyHeadAfter;
+      break;
+    }
+    correctnessFamilyHeadAfter = correctness.restartFinalBarrier.familyHeadAfter;
+    correctnessPriorKeysByPass =
+      correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
+    correctnessRemainingCmrCoderFixRounds =
+      correctness.restartFinalBarrier.remainingCmrCoderFixRounds;
   }
-  const cmrPassedFamilyHeadAfter = correctness.familyHeadAfter;
+  const cmrPassedFamilyHeadAfter = correctnessFamilyHeadAfter;
   // Both CMR passes converged. Fall through to 止于 PR (the ship worker) below.
 
   // ── 止于 PR (decision 4): green verify + converged cmr ⇒ open the family PR and
