@@ -87,6 +87,11 @@ let repos: string[] = [];
 // online R1 CodeRabbit: `opts()` mints a temp ledger dir per call — track them too,
 // else they leak across the suite and accumulate over a long CI run.
 let ledgerDirs: string[] = [];
+function trackTempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  ledgerDirs.push(dir);
+  return dir;
+}
 function trackRepo(): string {
   const r = makeRepo();
   repos.push(r);
@@ -512,7 +517,7 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
   it("R1-T1: depsInstalled is STALE (reinstall) when a manifest is newer than node_modules", () => {
     // gemini R1 T1: a bare node_modules-exists check skips installing a dep a child
     // PR added (package.json/lock newer than the last install) → verify on stale deps.
-    const proj = mkdtempSync(join(tmpdir(), "verify-stale-"));
+    const proj = trackTempDir("verify-stale-");
     const nm = join(proj, "node_modules");
     const pkg = join(proj, "package.json");
     mkdirSync(nm, { recursive: true });
@@ -877,7 +882,7 @@ describe("parseMergerOutcome (#291 pure)", () => {
 
 describe("parseCmrOutcome accepted suppression contract", () => {
   it("prefers a runner-owned outcome sidecar over malformed cmr stdout", () => {
-    const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-"));
+    const dir = trackTempDir("cmr-outcome-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
       outcomePath,
@@ -913,8 +918,60 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
+  it("treats a guarded cmr sidecar as completion even when Sandcastle omits the completion signal", () => {
+    const dir = trackTempDir("cmr-outcome-sidecar-complete-");
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        converged: false,
+        reason: "same-module budget summary label mismatch remains",
+        successfulLegs: ["opus", "gpt-5.5"],
+        skippedLegs: [{ slug: "agy", reason: "no active conversation" }],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        findings: [
+          {
+            severity: "low",
+            category: "correctness",
+            claim_quote: '"中央军饷", "太仓亏空", "宗室禄米", "官俸", "工部",',
+            location: "ming_sim/db.py:3985",
+            suggested_fix: "Use 百官俸禄 as the matched budget item name.",
+            action: "fix_now",
+            disposition: {
+              kind: "same_module",
+              reason: "The exact-name match is in the changed budget summary consumer.",
+            },
+          },
+        ],
+        evidencePaths: ["cmr/step6-correctness/review-summary.json"],
+      }) + "\n",
+      "utf8",
+    );
+
+    const outcome = cmrOutcomeFromResult({
+      completionSignal: undefined,
+      stdout:
+        "CMR correctness gate completed through the outcome guard.\n" +
+        "Reached max iterations (1).\n",
+      outcomePath,
+      cmrReviewLegs: [
+        { family: "claude", slug: "opus" },
+        { family: "codex", slug: "gpt-5.5" },
+        { family: "gemini", slug: "agy" },
+      ],
+    });
+
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: false,
+      reason: "same-module budget summary label mismatch remains",
+      findings: [expect.objectContaining({ location: "ming_sim/db.py:3985" })],
+    });
+  });
+
   it("parses cmr sidecar payloads directly when free-form text contains a cmr tag delimiter", () => {
-    const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-delimiter-"));
+    const dir = trackTempDir("cmr-outcome-delimiter-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
       outcomePath,
@@ -941,7 +998,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
   });
 
   it("fails closed instead of falling back to stdout when the cmr outcome sidecar is malformed", () => {
-    const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-bad-"));
+    const dir = trackTempDir("cmr-outcome-bad-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
 
@@ -955,6 +1012,65 @@ describe("parseCmrOutcome accepted suppression contract", () => {
 
     expect(outcome.kind).toBe("malformed");
     if (outcome.kind === "malformed") expect(outcome.reason).toContain("sidecar");
+  });
+
+  it("rejects a blank guarded cmr sidecar instead of falling back to stdout", () => {
+    const dir = trackTempDir("cmr-outcome-blank-");
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "   \n", "utf8");
+
+    const outcome = cmrOutcomeFromResult({
+      completionSignal: "CMR_STEP_COMPLETE",
+      stdout:
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.5"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
+      outcomePath,
+      cmrReviewLegs: [
+        { family: "claude", slug: "opus" },
+        { family: "codex", slug: "gpt-5.5" },
+        { family: "gemini", slug: "agy" },
+      ],
+    });
+
+    expect(outcome.kind).toBe("malformed");
+    if (outcome.kind === "malformed") expect(outcome.reason).toContain("sidecar");
+  });
+
+  it("falls back to signaled cmr stdout only when no outcome sidecar path exists", () => {
+    const outcome = cmrOutcomeFromResult({
+      completionSignal: "CMR_STEP_COMPLETE",
+      stdout:
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.5"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
+      cmrReviewLegs: [
+        { family: "claude", slug: "opus" },
+        { family: "codex", slug: "gpt-5.5" },
+        { family: "gemini", slug: "agy" },
+      ],
+    });
+
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: true,
+      successfulLegs: ["gpt-5.5"],
+    });
+  });
+
+  it("keeps malformed cmr sidecar from masking a missing completion signal", () => {
+    const dir = trackTempDir("cmr-outcome-bad-unsignaled-");
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+
+    const outcome = cmrOutcomeFromResult({
+      completionSignal: undefined,
+      stdout:
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.5"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>',
+      outcomePath,
+      cmrReviewLegs: [{ family: "codex", slug: "gpt-5.5" }],
+    });
+
+    expect(outcome.kind).toBe("escalate");
+    if (outcome.kind === "escalate") {
+      expect(outcome.reason).toContain("completion signal");
+    }
   });
 
   it("derives redundant accepted_suppressed finding fields from the finding payload", () => {
@@ -1153,7 +1269,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
 
 describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
   it("prefers a runner-owned outcome sidecar over malformed merger stdout", () => {
-    const dir = mkdtempSync(join(tmpdir(), "merger-outcome-"));
+    const dir = trackTempDir("merger-outcome-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
       outcomePath,
@@ -1171,7 +1287,7 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
   });
 
   it("parses merger sidecar payloads directly when free-form text contains a merger tag delimiter", () => {
-    const dir = mkdtempSync(join(tmpdir(), "merger-outcome-delimiter-"));
+    const dir = trackTempDir("merger-outcome-delimiter-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
       outcomePath,
@@ -1192,7 +1308,7 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
   });
 
   it("fails closed instead of falling back to stdout when the merger outcome sidecar is malformed", () => {
-    const dir = mkdtempSync(join(tmpdir(), "merger-outcome-bad-"));
+    const dir = trackTempDir("merger-outcome-bad-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
 
@@ -1204,6 +1320,30 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
 
     expect(outcome.resolved).toBe(false);
     expect(outcome.reason).toContain("sidecar");
+  });
+
+  it("rejects a blank guarded merger sidecar instead of falling back to stdout", () => {
+    const dir = trackTempDir("merger-outcome-blank-");
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "   \n", "utf8");
+
+    const outcome = mergerOutcomeFromResult({
+      completionSignal: "MERGER_STEP_COMPLETE",
+      stdout: '<merger>{"resolved": true}</merger>',
+      outcomePath,
+    });
+
+    expect(outcome.resolved).toBe(false);
+    expect(outcome.reason).toContain("sidecar");
+  });
+
+  it("falls back to signaled merger stdout only when no outcome sidecar path exists", () => {
+    expect(
+      mergerOutcomeFromResult({
+        completionSignal: "MERGER_STEP_COMPLETE",
+        stdout: '<merger>{"resolved": true}</merger>',
+      }),
+    ).toEqual({ resolved: true });
   });
 
   it("a signaled run delegates to parseMergerOutcome (resolved)", () => {

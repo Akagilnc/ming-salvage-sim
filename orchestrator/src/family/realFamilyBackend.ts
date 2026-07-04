@@ -2634,12 +2634,10 @@ export interface MergerAuth {
 }
 
 /**
- * Decide the cmr worker outcome from a Sandcastle run result: gate on the
- * completion signal FIRST (mirrors the merger gate / `assertCompletionSignal`),
- * then parse the `<cmr>` tag. Pure (a check on the run-result shape) so the gate is
- * unit-tested without a container. A complete-but-UNSIGNALED run (e.g.
- * `maxIterations` hit mid-review) is treated as ESCALATE (the safe direction — the
- * worker did not declare it finished, so its verdict is not trusted as a pass).
+ * Decide the cmr worker outcome from a Sandcastle run result. Guarded CMR workers
+ * write their machine result to the runner-owned sidecar; a valid sidecar is the
+ * completion proof and verdict source. Legacy/no-sidecar workers still require the
+ * Sandcastle completion signal before stdout fallback is trusted.
  */
 export function cmrOutcomeFromResult(result: {
   completionSignal?: string | string[];
@@ -2651,19 +2649,6 @@ export function cmrOutcomeFromResult(result: {
   const signaled = Array.isArray(signal)
     ? signal.includes(CMR_COMPLETION_SIGNAL)
     : signal === CMR_COMPLETION_SIGNAL;
-  if (!signaled) {
-    const actual =
-      signal === undefined
-        ? "none (no signal fired before the iteration limit)"
-        : `"${String(signal)}"`;
-    return {
-      kind: "escalate",
-      reason: "cmr worker did not fire its completion signal",
-      diagnosis:
-        `expected "${CMR_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
-        `cmr run is not trusted as a verdict — escalate, never a fabricated pass)`,
-    };
-  }
   try {
     if (result.outcomePath !== undefined) {
       const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
@@ -2674,6 +2659,7 @@ export function cmrOutcomeFromResult(result: {
       );
     }
   } catch (err) {
+    if (!signaled) return missingCmrCompletionSignalOutcome(signal);
     return {
       kind: "malformed",
       reason:
@@ -2681,7 +2667,27 @@ export function cmrOutcomeFromResult(result: {
         `${err instanceof Error ? err.message : String(err)}`,
     };
   }
+
+  if (!signaled) {
+    return missingCmrCompletionSignalOutcome(signal);
+  }
   return parseCmrOutcome(result.stdout, result.cmrReviewLegs);
+}
+
+function missingCmrCompletionSignalOutcome(
+  signal: string | string[] | undefined,
+): CmrWorkerOutcome {
+  const actual =
+    signal === undefined
+      ? "none (no signal fired before the iteration limit)"
+      : `"${String(signal)}"`;
+  return {
+    kind: "escalate",
+    reason: "cmr worker did not fire its completion signal",
+    diagnosis:
+      `expected "${CMR_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
+      `cmr run is not trusted as a verdict — escalate, never a fabricated pass)`,
+  };
 }
 
 /** A trimmed, non-empty string at the schema layer (mirrors shipOutcome.ts). */

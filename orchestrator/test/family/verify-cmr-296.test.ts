@@ -67,8 +67,15 @@ class CapableFamilyBackend implements FamilyBackend {
       verify?: (req: FamilyVerifyRequest) => FamilyVerifyResult;
       cmr?: (req: IntegratedCmrRequest) => IntegratedCmrResult;
       pr?: (req: OpenFamilyPrRequest) => OpenFamilyPrResult;
+      worker?: (spec: WorkerSpec, ctx: DispatchContext) => WorkerResult | Promise<WorkerResult>;
     } = {},
-  ) {}
+  ) {
+    if (script.worker !== undefined) {
+      this.dispatchWorker = script.worker;
+    }
+  }
+
+  declare readonly dispatchWorker?: FamilyBackend["dispatchWorker"];
 
   // ── core merge/ledger seam (unchanged from #293) ──
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
@@ -1000,6 +1007,138 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       "family/291-base",
       "family/291-base",
     ]);
+  });
+
+  it("continues a correctness coder-fix loop at correctness without re-running completeness", async () => {
+    const correctnessKey =
+      "correctness|ming_sim/issues.py:7089|db.validate_fiscal_config_value(key, new_val)";
+    const finding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "db.validate_fiscal_config_value(key, new_val)",
+      location: "ming_sim/issues.py:7089",
+      suggested_fix:
+        "Validate the final batch state before applying order-sensitive fiscal changes.",
+      action: "fix_now",
+    };
+    let backend!: CapableFamilyBackend;
+    backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: (req) => {
+        if (req.cmrPass === "completeness") {
+          return {
+            converged: true,
+            successfulLegs: ["opus", "gpt-5.5", "agy"],
+          };
+        }
+        if (req.priorCmrFindingIdentityKeys?.includes(correctnessKey)) {
+          return {
+            converged: true,
+            successfulLegs: ["opus", "gpt-5.5", "agy"],
+            claimedFixedFindingIdentityKeys: [correctnessKey],
+            priorFindingDispositions: [
+              {
+                identityKey: correctnessKey,
+                status: "verified-closed",
+                evidence: "regression and same-class scan passed after coder-fix",
+              },
+            ],
+          };
+        }
+        return {
+          converged: false,
+          reason: "correctness found an order-sensitive fiscal config bug",
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          findings: [finding],
+          ...CMR_EVIDENCE,
+        };
+      },
+      async worker(spec, ctx) {
+        if (spec.kind === "cmr") {
+          const cmr = await backend.runIntegratedCmr({
+            familyBase: ctx.familyBase ?? "family/291-base",
+            ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+            ...(ctx.priorCmrFindingIdentityKeys !== undefined
+              ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
+              : {}),
+          });
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+              converged: cmr.converged,
+              ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
+              ...(cmr.successfulLegs !== undefined
+                ? { successfulLegs: cmr.successfulLegs }
+                : {}),
+              ...(cmr.claimedFixedFindingIdentityKeys !== undefined
+                ? { claimedFixedFindingIdentityKeys: cmr.claimedFixedFindingIdentityKeys }
+                : {}),
+              ...(cmr.priorFindingDispositions !== undefined
+                ? { priorFindingDispositions: cmr.priorFindingDispositions }
+                : {}),
+              ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
+              ...(cmr.evidencePaths !== undefined ? { evidencePaths: cmr.evidencePaths } : {}),
+            },
+          };
+        }
+        if (spec.kind === "coder") {
+          expect(ctx.blockingFindingIdentityKeys).toEqual([correctnessKey]);
+          backend.currentFamilyHead = "head-after-correctness-fix";
+          return {
+            kind: "completed",
+            output: {
+              kind: "coder",
+              committed: true,
+              commitsAdded: 1,
+              repairEvidence: {
+                findingScope: { identityKeys: [correctnessKey] },
+                changedFiles: ["ming_sim/issues.py"],
+                tests: ["pytest tests/test_fiscal_config.py::test_loss_rate_batch_rebalance"],
+                sameClassBugScan: "rg 'validate_fiscal_config_value' ming_sim tests",
+                introducedRegressionCheck:
+                  "npm test -- --run test/family/verify-cmr-296.test.ts",
+              },
+            },
+          };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: ctx.familyBase ?? "family/291-base",
+              pr: "pr://family/291-base",
+              prHead: backend.currentFamilyHead,
+              status: "pr_opened",
+            },
+          };
+        }
+        return { kind: "failed", reason: `unexpected worker ${spec.kind}` };
+      },
+    });
+    backend.currentFamilyHead = "head-before-correctness-fix";
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-before-correctness-fix",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.cmrCalls.map((call) => call.cmrPass)).toEqual([
+      "completeness",
+      "correctness",
+      "correctness",
+    ]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "cmr_fix_committed",
+      event: "cmr_fix_committed",
+      cmrPass: "correctness",
+      familyHeadAfter: "head-after-correctness-fix",
+    }));
   });
 
   it("RED full verify → ok:false, ran:true, aborted event, and NO cmr / NO PR (verify gates cmr)", async () => {
