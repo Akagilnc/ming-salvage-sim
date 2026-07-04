@@ -2404,7 +2404,8 @@ export class RealBackend implements Backend {
   ): unknown {
     try {
       if (options?.outcomeLanding?.path !== undefined) {
-        return readRequiredOutcomeSidecar(options.outcomeLanding.path);
+        const sidecar = readOutcomeSidecar(options.outcomeLanding.path);
+        if (sidecar !== undefined) return sidecar;
       }
     } catch (err) {
       if (spec.role === "reviewer") {

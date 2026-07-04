@@ -1343,6 +1343,39 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
+  it("falls back to signaled coder stdout when the outcome sidecar path is an empty directory", async () => {
+    const backend = makeBackend();
+    const dir = mkdtempSync(join(tmpdir(), "worker-outcome-empty-dir-"));
+    const outcomePath = join(dir, "outcome.json");
+    mkdirSync(outcomePath);
+    backend.agentResult = {
+      completionSignal: "CODER_STEP_COMPLETE",
+      stdout: '<coder>{"committed": true, "commitsAdded": 1}</coder>\nCODER_STEP_COMPLETE',
+      commits: [{ sha: "abc123" }],
+      iterations: [{ sessionId: "sess-dir-sidecar" }],
+    } as Awaited<ReturnType<typeof sc.run>>;
+
+    const result = await backend.runStep(
+      coderSpec,
+      {
+        branch: "feat/issue-582",
+        base: "main",
+        path: "/tmp/worktree/issue-582",
+      },
+      {
+        outcomeLanding: {
+          path: outcomePath,
+          sandboxPath: ".orchestrator-outcome.json",
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
+      sessionId: "sess-dir-sidecar",
+    });
+  });
+
   it("prefers a runner-owned outcome sidecar for a fresh reviewer before Sandcastle tag parsing", async () => {
     const backend = makeBackend();
     const dir = mkdtempSync(join(tmpdir(), "worker-review-outcome-"));
