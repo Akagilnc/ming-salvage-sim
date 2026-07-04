@@ -1784,6 +1784,19 @@ describe("realBackend extractCoderTag", () => {
     expect(extractCoderTag(stdout)).toEqual({ committed: true, commitsAdded: 3 });
   });
 
+  it("ignores inline prose mentions of <coder> before the final JSON tag", () => {
+    const stdout =
+      "我会保留最终 `<coder>` 输出作为兼容协议。\n" +
+      '<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "blocked", "diagnosis": "source gap"}}</coder>\n' +
+      "CODER_STEP_COMPLETE";
+
+    expect(extractCoderTag(stdout)).toEqual({
+      committed: false,
+      commitsAdded: 0,
+      escalate: { reason: "blocked", diagnosis: "source gap" },
+    });
+  });
+
   it("returns an escalate payload when the coder tag carries one", () => {
     const stdout =
       '<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "blocked", "diagnosis": "design gap"}}</coder>';
