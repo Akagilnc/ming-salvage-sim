@@ -1014,6 +1014,49 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     if (outcome.kind === "malformed") expect(outcome.reason).toContain("sidecar");
   });
 
+  it("falls back to signaled cmr stdout when the prepared outcome sidecar is blank", () => {
+    const dir = trackTempDir("cmr-outcome-blank-");
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "   \n", "utf8");
+
+    const outcome = cmrOutcomeFromResult({
+      completionSignal: "CMR_STEP_COMPLETE",
+      stdout:
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.5"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
+      outcomePath,
+      cmrReviewLegs: [
+        { family: "claude", slug: "opus" },
+        { family: "codex", slug: "gpt-5.5" },
+        { family: "gemini", slug: "agy" },
+      ],
+    });
+
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: true,
+      successfulLegs: ["gpt-5.5"],
+    });
+  });
+
+  it("keeps malformed cmr sidecar from masking a missing completion signal", () => {
+    const dir = trackTempDir("cmr-outcome-bad-unsignaled-");
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+
+    const outcome = cmrOutcomeFromResult({
+      completionSignal: undefined,
+      stdout:
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.5"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>',
+      outcomePath,
+      cmrReviewLegs: [{ family: "codex", slug: "gpt-5.5" }],
+    });
+
+    expect(outcome.kind).toBe("escalate");
+    if (outcome.kind === "escalate") {
+      expect(outcome.reason).toContain("completion signal");
+    }
+  });
+
   it("derives redundant accepted_suppressed finding fields from the finding payload", () => {
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: false,
@@ -1261,6 +1304,20 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
 
     expect(outcome.resolved).toBe(false);
     expect(outcome.reason).toContain("sidecar");
+  });
+
+  it("falls back to signaled merger stdout when the prepared outcome sidecar is blank", () => {
+    const dir = trackTempDir("merger-outcome-blank-");
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "   \n", "utf8");
+
+    expect(
+      mergerOutcomeFromResult({
+        completionSignal: "MERGER_STEP_COMPLETE",
+        stdout: '<merger>{"resolved": true}</merger>',
+        outcomePath,
+      }),
+    ).toEqual({ resolved: true });
   });
 
   it("a signaled run delegates to parseMergerOutcome (resolved)", () => {
