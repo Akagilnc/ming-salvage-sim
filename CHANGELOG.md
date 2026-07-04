@@ -21,7 +21,7 @@
 - **评审发现收口**：补齐无诏推进固定财政 abort 回归，移除 `record_issue_economy_move` 已废弃参数，并将中央损耗率 key 去重抽象记录为后续 issue #575。
 
 ### 测试
-- 新增 substrate hub cutover、中央损耗、预算展示、固定财政 abort、同名固定流隔离与缺失配置 fail-loud 覆盖；ship 验证为 `2097 passed, 13 skipped`（root pytest），focused fiscal bridge `189 passed`，Codex/Claude pre-landing 与 adversarial review 无阻塞发现。
+- 新增 substrate hub cutover、中央损耗、预算展示、固定财政 abort、同名固定流隔离与缺失配置 fail-loud 覆盖；PR 收尾验证为 `2101 passed, 13 skipped`（root pytest），fiscal bridge `146 passed`，财政/预算/事务 focused suite `175 passed`，Codex/Claude pre-landing 与 adversarial review 无阻塞发现。
 
 ## [0.23.0.0] - 2026-07-02
 
