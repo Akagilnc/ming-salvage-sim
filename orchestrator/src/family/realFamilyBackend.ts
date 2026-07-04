@@ -98,7 +98,6 @@ import {
   WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
   readRequiredWorkerOutcomeSidecar,
-  readWorkerOutcomeSidecar,
 } from "../workerOutcomeSidecar.js";
 import {
   cmrLegAccountingFailure,
@@ -2652,14 +2651,12 @@ export function cmrOutcomeFromResult(result: {
     : signal === CMR_COMPLETION_SIGNAL;
   try {
     if (result.outcomePath !== undefined) {
-      const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
-      if (sidecar !== undefined) {
-        return classifyCmrOutcomePayload(
-          sidecar,
-          result.cmrReviewLegs ?? process.env,
-          "cmr worker outcome sidecar",
-        );
-      }
+      const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
+      return classifyCmrOutcomePayload(
+        sidecar,
+        result.cmrReviewLegs ?? process.env,
+        "cmr worker outcome sidecar",
+      );
     }
   } catch (err) {
     if (!signaled) return missingCmrCompletionSignalOutcome(signal);
@@ -3126,10 +3123,8 @@ export function mergerOutcomeFromResult(result: {
   }
   try {
     if (result.outcomePath !== undefined) {
-      const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
-      if (sidecar !== undefined) {
-        return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
-      }
+      const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
+      return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
     }
   } catch (err) {
     return {

@@ -1014,7 +1014,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     if (outcome.kind === "malformed") expect(outcome.reason).toContain("sidecar");
   });
 
-  it("falls back to signaled cmr stdout when the prepared outcome sidecar is blank", () => {
+  it("rejects a blank guarded cmr sidecar instead of falling back to stdout", () => {
     const dir = trackTempDir("cmr-outcome-blank-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "   \n", "utf8");
@@ -1024,6 +1024,22 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       stdout:
         '<cmr>{"converged": true, "successfulLegs": ["gpt-5.5"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       outcomePath,
+      cmrReviewLegs: [
+        { family: "claude", slug: "opus" },
+        { family: "codex", slug: "gpt-5.5" },
+        { family: "gemini", slug: "agy" },
+      ],
+    });
+
+    expect(outcome.kind).toBe("malformed");
+    if (outcome.kind === "malformed") expect(outcome.reason).toContain("sidecar");
+  });
+
+  it("falls back to signaled cmr stdout only when no outcome sidecar path exists", () => {
+    const outcome = cmrOutcomeFromResult({
+      completionSignal: "CMR_STEP_COMPLETE",
+      stdout:
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.5"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       cmrReviewLegs: [
         { family: "claude", slug: "opus" },
         { family: "codex", slug: "gpt-5.5" },
@@ -1306,16 +1322,26 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
     expect(outcome.reason).toContain("sidecar");
   });
 
-  it("falls back to signaled merger stdout when the prepared outcome sidecar is blank", () => {
+  it("rejects a blank guarded merger sidecar instead of falling back to stdout", () => {
     const dir = trackTempDir("merger-outcome-blank-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "   \n", "utf8");
 
+    const outcome = mergerOutcomeFromResult({
+      completionSignal: "MERGER_STEP_COMPLETE",
+      stdout: '<merger>{"resolved": true}</merger>',
+      outcomePath,
+    });
+
+    expect(outcome.resolved).toBe(false);
+    expect(outcome.reason).toContain("sidecar");
+  });
+
+  it("falls back to signaled merger stdout only when no outcome sidecar path exists", () => {
     expect(
       mergerOutcomeFromResult({
         completionSignal: "MERGER_STEP_COMPLETE",
         stdout: '<merger>{"resolved": true}</merger>',
-        outcomePath,
       }),
     ).toEqual({ resolved: true });
   });
