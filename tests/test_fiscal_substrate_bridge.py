@@ -3733,7 +3733,36 @@ def test_south_southwest_seeds_have_valid_historical_settle_substrate(fresh_db, 
     assert "salt_tax" in meta["excluded_from_settle"]
     assert "commerce_tax" in meta["excluded_from_settle"]
     assert meta["正赋起运基线"] == pytest.approx(expected["正赋起运基线"])
-    assert meta["source_grain"] == expected["source_grain"]
+    source_grain = meta["source_grain"]
+    for key, value in expected["source_grain"].items():
+        if isinstance(value, (int, float)):
+            assert source_grain[key] == pytest.approx(value)
+        else:
+            assert source_grain[key] == value
+    assert source_grain["scan_checked"] is True
+    assert "影印图" in source_grain["ocr_status"]
+    conversion = source_grain["conversion"]
+    assert "official_anchor" in conversion
+    assert conversion["assessed_formula"] == (
+        "assessed_grain_shi * assessed_silver_liang_per_stone / 10000 / 12"
+    )
+    assert conversion["transport_formula"] == (
+        "transport_grain_shi * transport_silver_liang_per_stone / 10000 / 12"
+    )
+    assert p["正赋应征"] == pytest.approx(
+        source_grain["assessed_grain_shi"]
+        * conversion["assessed_silver_liang_per_stone"]
+        / 10000
+        / 12,
+        abs=0.0001,
+    )
+    assert meta["正赋起运基线"] == pytest.approx(
+        source_grain["transport_grain_shi"]
+        * conversion["transport_silver_liang_per_stone"]
+        / 10000
+        / 12,
+        abs=0.0001,
+    )
     assert "官民田" not in meta["provisional"]
     assert "起运定额" not in meta["provisional"]
     res = settle_tick(settle["st"], p, [])
@@ -4954,6 +4983,11 @@ def test_seeded_substrates_keep_multi_tick_historical_trajectories(fresh_db):
             st = res.new_st
         assert all(value >= 0 for value in arrears), \
             f"{region_id} 边镇军饷容器不得为负: {arrears}"
+        assert arrears == sorted(arrears), \
+            f"{region_id} 边镇军饷缺口在拨付不足时不得回落: {arrears}"
+        if settle["p"]["Due"]["军饷"] > settle["p"]["拨付gross"]:
+            assert arrears[-1] > 0, \
+                f"{region_id} 拨付不足时边镇军饷缺口应持续存在: {arrears}"
 
 
 def test_all_settle_substrate_provisional_meta_covers_virtual_fields(fresh_db):
@@ -5052,7 +5086,9 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
         assert source["title"] == "《万历会计录》"
         assert source["chapter"] == exp["chapter"]
         assert source["scan_checked"] is True
-        expected_checked_fields = {"官民田", "正赋应征"}
+        expected_checked_fields = {"官民田"}
+        if region_id != "nanzhili":
+            expected_checked_fields.add("正赋应征")
         if exp["transport_checked"]:
             expected_checked_fields.add("起运定额")
         assert set(source["checked_fields"]) == expected_checked_fields
@@ -5075,6 +5111,10 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
             assert "起运定额" not in meta.get("provisional", [])
         else:
             assert "起运定额" in meta.get("provisional", [])
+        if region_id == "nanzhili":
+            assert "正赋应征" in meta.get("provisional", [])
+        else:
+            assert "正赋应征" not in meta.get("provisional", [])
         assert "隐田" in meta.get("provisional", [])
         assert math.isclose(
             settle["p"]["正赋应征"],
