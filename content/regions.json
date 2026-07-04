@@ -164,8 +164,6 @@
           "_meta_defaults": "ming_province",
           "_meta": {
             "provisional": [
-              "起运定额",
-              "正赋应征",
               "隐田"
             ],
             "postures": [
@@ -178,20 +176,14 @@
               "url": "https://www.shidianguji.com/zh/book/NGJ89241200000038535874/chapter/1luif6qi3a4g9",
               "scan_checked": true,
               "checked_fields": [
-                "官民田"
+                "官民田",
+                "正赋应征",
+                "起运定额"
               ],
-              "scope_exception": {
-                "issue": "#272",
-                "owner_scope": "Owner-authored #272 Scope shape permits partial field completion across provinces/fields（部分完成）when the unresolved gap is documented; 南直隶 may keep these fields provisional until a source-derived reconstruction is done.",
-                "fields": {
-                  "正赋应征": "卷十六已核正赋本色石数，但当前 30 万两/月仍用江南实际折色负担的有效银率折算，未逐项完成官方折色直推；按 #272 部分完成口径继续 provisional。",
-                  "起运定额": "卷十六全境总项未直接列全境起运汇总，当前正赋起运本色仍为总正赋石数约七成估算；按 #272 部分完成口径继续 provisional。"
-                }
-              },
               "conversion": {
                 "grain_silver_liang_per_stone": 0.25,
                 "effective_silver_liang_per_stone": 0.598816,
-                "note": "官民田已按卷十六核验；正赋应征仍用江南实际折色负担的有效银率折为万两/月，尚未逐项重构为官方折色直推，故继续 provisional。卷十六全境总项未直接列全境起运汇总，正赋起运本色以总正赋石数约七成估算，起运定额继续 provisional。"
+                "note": "官民田、正赋本色石数、正赋起运本色石数已按卷十六核验；正赋应征用南直隶实际折色负担的有效银率折为万两/月，起运定额=正赋起运基线+开局辽饷九厘。"
               },
               "raw": {
                 "官民田_顷": 793846.71,
