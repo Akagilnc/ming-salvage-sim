@@ -5119,7 +5119,6 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
             "zhengfu": 30,
             "base_transport": 8.77,
             "sanxiang": 8.0,
-            "transport_checked": False,
         },
         "zhejiang": {
             "chapter": "卷二 浙江布政司田赋",
@@ -5130,7 +5129,6 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
             "zhengfu": 23,
             "base_transport": 3.53,
             "sanxiang": 5.5,
-            "transport_checked": True,
         },
         "jiangxi": {
             "chapter": "卷三 江西布政司田赋",
@@ -5141,7 +5139,6 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
             "zhengfu": 22,
             "base_transport": 4.70,
             "sanxiang": 4.5,
-            "transport_checked": True,
         },
         "huguang": {
             "chapter": "卷四 湖广布政司田赋",
@@ -5152,7 +5149,6 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
             "zhengfu": 34,
             "base_transport": 1.91,
             "sanxiang": 6.0,
-            "transport_checked": True,
         },
     }
 
@@ -5164,11 +5160,7 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
         assert source["title"] == "《万历会计录》"
         assert source["chapter"] == exp["chapter"]
         assert source["scan_checked"] is True
-        expected_checked_fields = {"官民田"}
-        if region_id != "nanzhili":
-            expected_checked_fields.add("正赋应征")
-        if exp["transport_checked"]:
-            expected_checked_fields.add("起运定额")
+        expected_checked_fields = {"官民田", "正赋应征", "起运定额"}
         assert set(source["checked_fields"]) == expected_checked_fields
         assert source["conversion"]["grain_silver_liang_per_stone"] == 0.25
         effective_rate = source["conversion"]["effective_silver_liang_per_stone"]
@@ -5186,20 +5178,9 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
             abs=0.01,
         )
         assert "官民田" not in meta.get("provisional", [])
-        if exp["transport_checked"]:
-            assert "起运定额" not in meta.get("provisional", [])
-        else:
-            assert "起运定额" in meta.get("provisional", [])
-        if region_id == "nanzhili":
-            assert "正赋应征" in meta.get("provisional", [])
-            assert scope_exception["issue"] == "#272"
-            assert "部分完成" in scope_exception["owner_scope"]
-            assert set(scope_exception["fields"]) == {"正赋应征", "起运定额"}
-            assert "官方折色直推" in scope_exception["fields"]["正赋应征"]
-            assert "全境起运汇总" in scope_exception["fields"]["起运定额"]
-        else:
-            assert "正赋应征" not in meta.get("provisional", [])
-            assert scope_exception is None
+        assert "起运定额" not in meta.get("provisional", [])
+        assert "正赋应征" not in meta.get("provisional", [])
+        assert scope_exception is None
         assert "隐田" in meta.get("provisional", [])
         assert math.isclose(
             settle["p"]["正赋应征"],
