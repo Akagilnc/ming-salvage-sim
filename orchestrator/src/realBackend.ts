@@ -939,18 +939,35 @@ function extractTaggedJson(
   tag: "coder" | "review",
   missingMessage: string,
 ): unknown {
-  // Scan for ALL role tags; the last one is the final iteration's result.
-  // `[\s\S]` so the body may span newlines; non-greedy so adjacent tags don't
-  // merge.
-  const re = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "g");
-  let last: string | undefined;
-  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) {
-    last = m[1];
+  const open = `<${tag}>`;
+  const close = `</${tag}>`;
+  const starts: number[] = [];
+  for (
+    let idx = stdout.indexOf(open);
+    idx !== -1;
+    idx = stdout.indexOf(open, idx + open.length)
+  ) {
+    starts.push(idx);
   }
-  if (last === undefined) {
+  if (starts.length === 0) {
     throw new Error(missingMessage);
   }
-  return JSON.parse(stripJsonFence(last.trim()));
+
+  let lastErr: unknown;
+  for (let i = starts.length - 1; i >= 0; i -= 1) {
+    const bodyStart = starts[i] + open.length;
+    const end = stdout.indexOf(close, bodyStart);
+    if (end === -1) continue;
+    const body = stdout.slice(bodyStart, end).trim();
+    try {
+      return JSON.parse(stripJsonFence(body));
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  if (lastErr !== undefined) throw lastErr;
+  throw new Error(missingMessage);
 }
 
 export function extractCoderTag(stdout: string): unknown {
