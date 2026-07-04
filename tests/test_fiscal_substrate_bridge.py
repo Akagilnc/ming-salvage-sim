@@ -6,7 +6,7 @@
 2. 桥——`GameDB.settle_province_tick(region_id, actions)` 读 settle.st/p → 跑 settle_tick →
    写回 new_st。**港口锁**：坏输入/守恒破 raise 时 FAIL tick 绝不落库（毒态不钉存档）。
 
-陕西种子 = 低省库 + 正赋15/月 + 辽饷2.5/月 + 逋赋0.45 + 边镇 Due；
+陕西种子 = 低省库 + 正赋5.0563/月 + 辽饷2.1969011325/月 + 逋赋0.45 + 边镇 Due；
 空 action 跑一 tick 应进入欠账螺旋。月末 shadow spine 按 controlled_by==ming 且有 settle
 动态推进，失地/无基座省自然出列。
 """
@@ -3488,10 +3488,10 @@ def test_shaanxi_seed_is_relabelled_to_historical_shadow_scale(fresh_db):
     settle = _read_settle(fresh_db)
     p = settle["p"]
     assert p["正赋应征"] == pytest.approx(5.0563, abs=1e-4)
-    assert p["三饷应征"] == pytest.approx(2.5)
+    assert p["三饷应征"] == pytest.approx(2.1969011325)
     assert p["火耗率"] == pytest.approx(0.18)
     assert p["逋赋率"] == pytest.approx(0.45)
-    assert p["起运定额"] == pytest.approx(0)
+    assert p["起运定额"] == pytest.approx(2.1969011325)
     assert p["拨付gross"] == pytest.approx(4)
     assert p["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, "shaanxi"))
     assert {k: p["Due"][k] for k in ("官俸", "宗禄", "赈济")} == {"官俸": 3, "宗禄": 6, "赈济": 0}
@@ -3507,7 +3507,10 @@ def test_shaanxi_seed_is_relabelled_to_historical_shadow_scale(fresh_db):
     assert meta["levies"]["seeded"] == ["辽饷"]
     assert "剿饷" in meta["levies"]["not_seeded"]
     assert "练饷" in meta["levies"]["not_seeded"]
-    assert "歲額，悉留本省" in meta["notes"]["起运定额"]
+    assert meta["辽饷九厘基线"] == pytest.approx(2.1969011325)
+    assert meta["正赋起运基线"] == pytest.approx(0)
+    assert "九厘" in meta["notes"]["辽饷九厘基线"]
+    assert "歲額，悉留本省" in meta["notes"]["正赋起运基线"]
     primary = meta["primary_sources"]["万历会计录卷九陕西布政司田赋"]
     assert primary["registered_land_raw"] == "田土官民共貳拾玖萬貳千玖百貳拾頃拾伍畝壹分零"
     assert primary["regular_tax_raw"]["實徵麥石"] == pytest.approx(688647.2416)
@@ -3683,8 +3686,8 @@ def test_settle_province_tick_persists_shaanxi_historical_shadow_golden(fresh_db
     res = fresh_db.settle_province_tick("shaanxi", [])
     fresh_db.conn.commit()
     after = _read_settle(fresh_db)["st"]
-    assert after["C_地方截留"] == pytest.approx(0.7481, abs=1e-3)
-    assert after["民欠旧赋"] == pytest.approx(3.4003, abs=1e-3)
+    assert after["C_地方截留"] == pytest.approx(0.7181, abs=1e-3)
+    assert after["民欠旧赋"] == pytest.approx(3.2639, abs=1e-3)
     assert after["军饷欠"] == pytest.approx(_province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6)
     # 落库逐键 == settle_tick 的 new_st（桥不篡改）
     for k, v in res.new_st.items():
@@ -3786,8 +3789,8 @@ def test_apply_fixed_period_flows_advances_shaanxi_substrate(fresh_game):
     after = _read_settle(db)["st"]
     assert after["军饷欠"] == pytest.approx(_province_pay_arrears(db, "shaanxi"), abs=1e-6)
     assert after["省库库银"] == pytest.approx(0, abs=1e-3)
-    assert after["C_地方截留"] == pytest.approx(0.7481, abs=1e-3)
-    assert after["民欠旧赋"] == pytest.approx(3.4003, abs=1e-3)
+    assert after["C_地方截留"] == pytest.approx(0.7181, abs=1e-3)
+    assert after["民欠旧赋"] == pytest.approx(3.2639, abs=1e-3)
 
 
 def test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine(fresh_game):
