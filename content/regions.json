@@ -844,7 +844,7 @@
       "fiscal": {
         "huang_tian": 0,
         "wang_tian": 45,
-        "guan_min_tian": 415,
+        "guan_min_tian": 1348.276723,
         "liao_xiang": 6,
         "salt_tax": 0,
         "commerce_tax": 3,
@@ -853,6 +853,17 @@
           "_note": "#70 切片5：华南/西南平省 shadow settle_tick seed（四川）。1627.10 开局三饷仅辽饷九厘；盐/商税源不进 settle。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "宗禄",
+              "隐田"
+            ],
+            "正赋起运基线": 0.8427,
+            "source_grain": {
+              "source": "《万历会计录》卷十「四川布政司田赋」",
+              "taxable_land_qing": 134827.6723,
+              "assessed_grain_shi": 1028545.133,
+              "transport_grain_shi": 404497.2409
+            },
             "excluded_from_settle": [
               "salt_tax",
               "commerce_tax"
@@ -871,15 +882,15 @@
             "军饷欠": 4,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 4150,
+            "官民田": 13482.76723,
             "隐田": 1200
           },
           "p": {
-            "正赋应征": 8,
+            "正赋应征": 2.2652,
             "三饷应征": 1.4,
             "火耗率": 0.16,
             "逋赋率": 0.38,
-            "起运定额": 1.8,
+            "起运定额": 2.2427,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0.5,
@@ -913,7 +924,7 @@
       "fiscal": {
         "huang_tian": 0,
         "wang_tian": 10,
-        "guan_min_tian": 350,
+        "guan_min_tian": 1342.25067,
         "liao_xiang": 8,
         "salt_tax": 8,
         "commerce_tax": 6,
@@ -922,6 +933,17 @@
           "_note": "#70 切片5：华南/西南平省 shadow settle_tick seed（福建）。盐/海商税源是旁路税，不进 settle。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "宗禄",
+              "隐田"
+            ],
+            "正赋起运基线": 0.7461,
+            "source_grain": {
+              "source": "《万历会计录》卷五「福建布政司田赋」",
+              "taxable_land_qing": 134225.067,
+              "assessed_grain_shi": 883121.6379,
+              "transport_grain_shi": 314000.0
+            },
             "excluded_from_settle": [
               "salt_tax",
               "commerce_tax"
@@ -940,15 +962,15 @@
             "军饷欠": 2,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 3500,
+            "官民田": 13422.5067,
             "隐田": 900
           },
           "p": {
-            "正赋应征": 11,
+            "正赋应征": 2.0642,
             "三饷应征": 1.7,
             "火耗率": 0.16,
             "逋赋率": 0.28,
-            "起运定额": 2.4,
+            "起运定额": 2.4461,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0,
@@ -982,7 +1004,7 @@
       "fiscal": {
         "huang_tian": 0,
         "wang_tian": 15,
-        "guan_min_tian": 405,
+        "guan_min_tian": 2568.651366,
         "liao_xiang": 6,
         "salt_tax": 10,
         "commerce_tax": 8,
@@ -991,6 +1013,17 @@
           "_note": "#70 切片5：华南/西南平省 shadow settle_tick seed（广东）。盐/商税不进 substrate，只作独立税源。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "宗禄",
+              "隐田"
+            ],
+            "正赋起运基线": 0.8333,
+            "source_grain": {
+              "source": "《万历会计录》卷十一「广东布政司田赋」",
+              "taxable_land_qing": 256865.1366,
+              "assessed_grain_shi": 999747.6116,
+              "transport_grain_shi": 400000.0
+            },
             "excluded_from_settle": [
               "salt_tax",
               "commerce_tax"
@@ -1009,15 +1042,15 @@
             "军饷欠": 2,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 4050,
+            "官民田": 25686.51366,
             "隐田": 1000
           },
           "p": {
-            "正赋应征": 10,
+            "正赋应征": 2.2373,
             "三饷应征": 1.5,
             "火耗率": 0.16,
             "逋赋率": 0.3,
-            "起运定额": 2.2,
+            "起运定额": 2.3333,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0,
@@ -1051,7 +1084,7 @@
       "fiscal": {
         "huang_tian": 0,
         "wang_tian": 8,
-        "guan_min_tian": 232,
+        "guan_min_tian": 940.20748,
         "liao_xiang": 3,
         "salt_tax": 0,
         "commerce_tax": 1,
@@ -1060,6 +1093,17 @@
           "_note": "#70 切片5：华南/西南平省 shadow settle_tick seed（广西）。土司微税，田赋/辽饷轻量。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "宗禄",
+              "隐田"
+            ],
+            "正赋起运基线": 0.0,
+            "source_grain": {
+              "source": "《万历会计录》卷十二「广西布政司田赋」",
+              "taxable_land_qing": 94020.748,
+              "assessed_grain_shi": 373088.3344,
+              "transport_grain_shi": 0.0
+            },
             "excluded_from_settle": [
               "salt_tax",
               "commerce_tax"
@@ -1078,15 +1122,15 @@
             "军饷欠": 1,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 2320,
+            "官民田": 9402.0748,
             "隐田": 900
           },
           "p": {
-            "正赋应征": 3.2,
+            "正赋应征": 0.7891,
             "三饷应征": 0.6,
             "火耗率": 0.18,
             "逋赋率": 0.5,
-            "起运定额": 0.8,
+            "起运定额": 0.6,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0.3,
@@ -1120,7 +1164,7 @@
       "fiscal": {
         "huang_tian": 0,
         "wang_tian": 5,
-        "guan_min_tian": 255,
+        "guan_min_tian": 179.93588,
         "liao_xiang": 2,
         "salt_tax": 0,
         "commerce_tax": 2,
@@ -1129,6 +1173,17 @@
           "_note": "#70 切片5：华南/西南平省 shadow settle_tick seed（云南）。边地土司微税，矿税/商税不进 settle。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "宗禄",
+              "隐田"
+            ],
+            "正赋起运基线": 0.0,
+            "source_grain": {
+              "source": "《万历会计录》卷十三「云南布政司田赋」",
+              "taxable_land_qing": 17993.588,
+              "assessed_grain_shi": 142690.2976,
+              "transport_grain_shi": 0.0
+            },
             "excluded_from_settle": [
               "salt_tax",
               "commerce_tax"
@@ -1147,15 +1202,15 @@
             "军饷欠": 1,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 2550,
+            "官民田": 1799.3588,
             "隐田": 1100
           },
           "p": {
-            "正赋应征": 3.8,
+            "正赋应征": 0.301,
             "三饷应征": 0.5,
             "火耗率": 0.18,
             "逋赋率": 0.48,
-            "起运定额": 0.7,
+            "起运定额": 0.5,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0.4,
@@ -1189,7 +1244,7 @@
       "fiscal": {
         "huang_tian": 0,
         "wang_tian": 3,
-        "guan_min_tian": 207,
+        "guan_min_tian": 51.66663,
         "liao_xiang": 1,
         "salt_tax": 0,
         "commerce_tax": 1,
@@ -1198,6 +1253,17 @@
           "_note": "#70 切片5：华南/西南平省 shadow settle_tick seed（贵州）。山地军屯衰败，微税。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "宗禄",
+              "隐田"
+            ],
+            "正赋起运基线": 0.0,
+            "source_grain": {
+              "source": "《万历会计录》卷十四「贵州布政司田赋」",
+              "taxable_land_qing": 5166.663,
+              "assessed_grain_shi": 50808.5896,
+              "transport_grain_shi": 0.0
+            },
             "excluded_from_settle": [
               "salt_tax",
               "commerce_tax"
@@ -1216,15 +1282,15 @@
             "军饷欠": 1,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 2070,
+            "官民田": 516.6663,
             "隐田": 850
           },
           "p": {
-            "正赋应征": 2.4,
+            "正赋应征": 0.1059,
             "三饷应征": 0.25,
             "火耗率": 0.18,
             "逋赋率": 0.55,
-            "起运定额": 0.4,
+            "起运定额": 0.25,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0.2,

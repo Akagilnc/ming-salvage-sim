@@ -3470,34 +3470,76 @@ def test_zhongyuan_jingshi_primary_source_refinement(region_id, expected, fresh_
 
 SOUTH_SOUTHWEST_SEEDS = {
     "sichuan": {
-        "zh": "四川", "正赋应征": 8.0, "三饷应征": 1.4, "起运定额": 1.8, "军饷": 5.0, "宗禄": 1.4,
-        "first_tick": {"省库库银": 0, "C_地方截留": 0.93248, "民欠旧赋": 3.572, "军饷欠": 4.472,
-                       "官俸欠": 1.2, "宗禄欠": 1.4},
+        "zh": "四川", "官民田": 13482.76723, "正赋应征": 2.2652, "三饷应征": 1.4,
+        "正赋起运基线": 0.8427, "起运定额": 2.2427, "军饷": 5.0, "宗禄": 1.4,
+        "source_grain": {
+            "source": "《万历会计录》卷十「四川布政司田赋」",
+            "taxable_land_qing": 134827.6723,
+            "assessed_grain_shi": 1028545.133,
+            "transport_grain_shi": 404497.2409,
+        },
+        "first_tick": {"省库库银": 0, "C_地方截留": 0.363588, "民欠旧赋": 1.392776, "军饷欠": 0,
+                       "官俸欠": 0.670276, "宗禄欠": 1.4},
     },
     "fujian": {
-        "zh": "福建", "正赋应征": 11.0, "三饷应征": 1.7, "起运定额": 2.4, "军饷": 4.0, "宗禄": 0.8,
-        "first_tick": {"省库库银": 0, "C_地方截留": 1.46304, "民欠旧赋": 3.556, "军饷欠": 1.256,
-                       "官俸欠": 0, "宗禄欠": 0},
+        "zh": "福建", "官民田": 13422.5067, "正赋应征": 2.0642, "三饷应征": 1.7,
+        "正赋起运基线": 0.7461, "起运定额": 2.4461, "军饷": 4.0, "宗禄": 0.8,
+        "source_grain": {
+            "source": "《万历会计录》卷五「福建布政司田赋」",
+            "taxable_land_qing": 134225.067,
+            "assessed_grain_shi": 883121.6379,
+            "transport_grain_shi": 314000.0,
+        },
+        "first_tick": {"省库库银": 0, "C_地方截留": 0.433636, "民欠旧赋": 1.053976, "军饷欠": 6.735876,
+                       "官俸欠": 1.2, "宗禄欠": 0.8},
     },
     "guangdong": {
-        "zh": "广东", "正赋应征": 10.0, "三饷应征": 1.5, "起运定额": 2.2, "军饷": 3.6, "宗禄": 0.9,
-        "first_tick": {"省库库银": 0, "C_地方截留": 1.288, "民欠旧赋": 3.45, "军饷欠": 1.75,
-                       "官俸欠": 0, "宗禄欠": 0},
+        "zh": "广东", "官民田": 25686.51366, "正赋应征": 2.2373, "三饷应征": 1.5,
+        "正赋起运基线": 0.8333, "起运定额": 2.3333, "军饷": 3.6, "宗禄": 0.9,
+        "source_grain": {
+            "source": "《万历会计录》卷十一「广东布政司田赋」",
+            "taxable_land_qing": 256865.1366,
+            "assessed_grain_shi": 999747.6116,
+            "transport_grain_shi": 400000.0,
+        },
+        "first_tick": {"省库库银": 0, "C_地方截留": 0.418578, "民欠旧赋": 1.12119, "军饷欠": 5.71719,
+                       "官俸欠": 1.1, "宗禄欠": 0.9},
     },
     "guangxi": {
-        "zh": "广西", "正赋应征": 3.2, "三饷应征": 0.6, "起运定额": 0.8, "军饷": 2.2, "宗禄": 0.3,
-        "first_tick": {"省库库银": 0, "C_地方截留": 0.342, "民欠旧赋": 1.9, "军饷欠": 1.8,
-                       "官俸欠": 0.5, "宗禄欠": 0.3},
+        "zh": "广西", "官民田": 9402.0748, "正赋应征": 0.7891, "三饷应征": 0.6,
+        "正赋起运基线": 0.0, "起运定额": 0.6, "军饷": 2.2, "宗禄": 0.3,
+        "source_grain": {
+            "source": "《万历会计录》卷十二「广西布政司田赋」",
+            "taxable_land_qing": 94020.748,
+            "assessed_grain_shi": 373088.3344,
+            "transport_grain_shi": 0.0,
+        },
+        "first_tick": {"省库库银": 0, "C_地方截留": 0.125019, "民欠旧赋": 0.69455, "军饷欠": 0,
+                       "官俸欠": 0.10545, "宗禄欠": 0.3},
     },
     "yunnan": {
-        "zh": "云南", "正赋应征": 3.8, "三饷应征": 0.5, "起运定额": 0.7, "军饷": 1.8, "宗禄": 0.2,
-        "first_tick": {"省库库银": 0, "C_地方截留": 0.40248, "民欠旧赋": 2.064, "军饷欠": 1.0,
-                       "官俸欠": 0.364, "宗禄欠": 0.2},
+        "zh": "云南", "官民田": 1799.3588, "正赋应征": 0.3010, "三饷应征": 0.5,
+        "正赋起运基线": 0.0, "起运定额": 0.5, "军饷": 1.8, "宗禄": 0.2,
+        "source_grain": {
+            "source": "《万历会计录》卷十三「云南布政司田赋」",
+            "taxable_land_qing": 17993.588,
+            "assessed_grain_shi": 142690.2976,
+            "transport_grain_shi": 0.0,
+        },
+        "first_tick": {"省库库银": 0, "C_地方截留": 0.074974, "民欠旧赋": 0.38448, "军饷欠": 0,
+                       "官俸欠": 0.1, "宗禄欠": 0.2},
     },
     "guizhou": {
-        "zh": "贵州", "正赋应征": 2.4, "三饷应征": 0.25, "起运定额": 0.4, "军饷": 1.6, "宗禄": 0.15,
-        "first_tick": {"省库库银": 0, "C_地方截留": 0.21465, "民欠旧赋": 1.4575, "军饷欠": 1.6075,
-                       "官俸欠": 0.4, "宗禄欠": 0.15},
+        "zh": "贵州", "官民田": 516.6663, "正赋应征": 0.1059, "三饷应征": 0.25,
+        "正赋起运基线": 0.0, "起运定额": 0.25, "军饷": 1.6, "宗禄": 0.15,
+        "source_grain": {
+            "source": "《万历会计录》卷十四「贵州布政司田赋」",
+            "taxable_land_qing": 5166.663,
+            "assessed_grain_shi": 50808.5896,
+            "transport_grain_shi": 0.0,
+        },
+        "first_tick": {"省库库银": 0, "C_地方截留": 0.028828, "民欠旧赋": 0.195745, "军饷欠": 0,
+                       "官俸欠": 0.2, "宗禄欠": 0.15},
     },
 }
 
@@ -3509,6 +3551,7 @@ def test_south_southwest_seeds_have_valid_historical_settle_substrate(fresh_db, 
     assert isinstance(settle.get("st"), dict) and isinstance(settle.get("p"), dict), \
         f"{expected['zh']} settle 基座须含 st + p"
 
+    assert settle["st"]["官民田"] == pytest.approx(expected["官民田"])
     p = settle["p"]
     assert p["正赋应征"] == pytest.approx(expected["正赋应征"])
     assert p["三饷应征"] == pytest.approx(expected["三饷应征"])
@@ -3516,7 +3559,7 @@ def test_south_southwest_seeds_have_valid_historical_settle_substrate(fresh_db, 
     assert p["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, region_id))
     assert p["Due"]["宗禄"] == pytest.approx(expected["宗禄"])
     assert p["Due"]["赈济"] == 0
-    assert p["三饷应征"] < p["正赋应征"], f"{expected['zh']} 开局只 seed 辽饷，不能塞剿/练饷"
+    assert p["三饷应征"] > 0, f"{expected['zh']} 开局须 seed 辽饷"
     assert p["起运定额"] >= p["三饷应征"], f"{expected['zh']} 辽饷应可全额起运"
     assert "salt_tax" not in p and "commerce_tax" not in p, "盐税/商税不进 settle substrate"
 
@@ -3526,6 +3569,10 @@ def test_south_southwest_seeds_have_valid_historical_settle_substrate(fresh_db, 
     assert "练饷" in meta["levies"]["not_seeded"]
     assert "salt_tax" in meta["excluded_from_settle"]
     assert "commerce_tax" in meta["excluded_from_settle"]
+    assert meta["正赋起运基线"] == pytest.approx(expected["正赋起运基线"])
+    assert meta["source_grain"] == expected["source_grain"]
+    assert "官民田" not in meta["provisional"]
+    assert "起运定额" not in meta["provisional"]
     res = settle_tick(settle["st"], p, [])
     assert res.new_st["省库库银"] is not None
 
@@ -4765,7 +4812,7 @@ def test_all_settle_substrate_provisional_meta_covers_virtual_fields(fresh_db):
         provisional = set(settle["_meta"].get("provisional", []))
         if p["正赋应征"] == 0 and p["起运定额"] == 0:
             required = {"军饷", "拨付gross", "军饷欠", "起运定额"}
-        elif region_id == "shaanxi":
+        elif region_id == "shaanxi" or "source_grain" in meta:
             required = {"宗禄", "隐田"}
         else:
             required = {"宗禄", "起运定额", "官民田", "隐田"}
