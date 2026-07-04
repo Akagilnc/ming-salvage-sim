@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import web_app
+from tests.fiscal_test_utils import zero_non_meta_fiscal_config
 
 
 def test_budget_payload_filters_central_army_pay_fixed_flow(game):
@@ -28,13 +29,7 @@ def test_budget_payload_filters_real_substrate_hub_fixed_flow(game):
     state.metrics["国库"] = 5
     db.save_state(state)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
-    db.conn.execute(
-        """
-        UPDATE fiscal_config
-        SET value = 0
-        WHERE kind != 'meta'
-        """
-    )
+    zero_non_meta_fiscal_config(db)
     db.conn.execute(
         """
         UPDATE regions
@@ -90,3 +85,15 @@ def test_budget_payload_filters_real_substrate_hub_fixed_flow(game):
     assert "边饷hub" in ledger_categories
     assert "边饷hub" not in categories
     assert payload["国库"]["movements_total"] == 0
+
+    state.metrics["国库"] = 20
+    db.save_state(state)
+    db.conn.execute("UPDATE armies SET manpower = 20000 WHERE id = 'guanning'")
+    db.conn.commit()
+
+    updated_payload = runtime.budget_payload()
+    updated_army_pay = next(
+        row["amount"] for row in updated_payload["国库"]["expense"]
+        if row["name"] == "各军军饷"
+    )
+    assert updated_army_pay == 20

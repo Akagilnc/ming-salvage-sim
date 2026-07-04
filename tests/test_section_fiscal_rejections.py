@@ -86,6 +86,72 @@ def test_remove_dynamic_tax_still_zeroes_region_field(game):
     assert int(fiscal.get("liao_xiang", 0) or 0) == 0  # dynamic 联动归零
 
 
+def test_remove_structural_sink_loss_rate_rejected(game):
+    """中央自然损耗率是结构地板，不能被 fiscal_removes 裁撤成 0。"""
+    db, state, content = game
+    turn = state.turn
+    key = "central_taicang_sink_loss_rate"
+    before = db.get_fiscal_config()[key]
+
+    run_settle(db, state, content, {
+        "fiscal_removes": [{"key": key, "reason": "试图抹平自然损耗"}],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "fiscal_removes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert db.get_fiscal_config()[key] == before
+
+
+def test_remove_central_human_loss_rate_rejected_as_loss_pair(game):
+    """中央人为损耗率虽无最低地板，也属于成对损耗率，不可被 fiscal_removes 裁撤。"""
+    db, state, content = game
+    turn = state.turn
+    key = "central_taicang_human_loss_rate"
+    before = db.get_fiscal_config()[key]
+
+    run_settle(db, state, content, {
+        "fiscal_removes": [{"key": key, "reason": "试图裁撤人为损耗"}],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "fiscal_removes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert db.get_fiscal_config()[key] == before
+
+
+def test_remove_central_human_loss_rate_stem_rejected_as_loss_pair(game):
+    """stem 写法也不可绕过中央损耗率成对配置裁撤保护。"""
+    db, state, content = game
+    turn = state.turn
+    key = "central_taicang_human_loss_rate"
+    before = db.get_fiscal_config()[key]
+
+    run_settle(db, state, content, {
+        "fiscal_removes": [{
+            "key": "central_taicang_human_loss",
+            "reason": "试图用 stem 裁撤人为损耗",
+        }],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "fiscal_removes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert db.get_fiscal_config()[key] == before
+
+
+def test_direct_remove_central_human_loss_rate_stem_refuses_loss_pair(game):
+    """db.remove_fiscal_item 自身也要拒绝 stem 形态的中央损耗率配置。"""
+    db, _, _ = game
+    key = "central_taicang_human_loss_rate"
+    before = db.get_fiscal_config()[key]
+
+    removed = db.remove_fiscal_item("central_taicang_human_loss")
+
+    assert removed is None
+    assert db.get_fiscal_config()[key] == before
+
+
 # ---- fiscal_creates：重复 key / 非法枚举 / 脏 init_value ----
 
 def test_create_duplicate_key_rejected_good_create_lands(game):
@@ -282,6 +348,80 @@ def test_change_dynamic_tax_rate_scales_region_field(game):
         "SELECT fiscal FROM regions WHERE id=?", (rid,)).fetchone()[0] or "{}")
     # 按 new/old 比例缩放后实收 < 400(联动当真生效)
     assert 0 <= int(fiscal.get("liao_xiang", 0) or 0) < 400
+
+
+def test_change_structural_sink_loss_rate_below_floor_rejected(game):
+    """中央自然损耗率可调但不可清零；低于结构地板的 change 逐项拒收。"""
+    db, state, content = game
+    turn = state.turn
+    key = "central_jingyun_sink_loss_rate"
+    before = db.get_fiscal_config()[key]
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [{"key": key, "delta": -before, "reason": "试图清零自然运损"}],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "fiscal_changes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert db.get_fiscal_config()[key] == before
+
+
+def test_change_central_loss_rate_pair_above_100_rejected(game):
+    """中央人为+自然损耗率合计不得超过 100%，写入阶段即拒收。"""
+    db, state, content = game
+    turn = state.turn
+    key = "central_taicang_human_loss_rate"
+    before_human = db.get_fiscal_config()[key]
+    before_sink = db.get_fiscal_config()["central_taicang_sink_loss_rate"]
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [{
+            "key": key,
+            "delta": 101 - before_human,
+            "reason": "试图把中央亏空率推过 100%",
+        }],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "fiscal_changes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    cfg = db.get_fiscal_config()
+    assert cfg[key] == before_human
+    assert cfg["central_taicang_sink_loss_rate"] == before_sink
+
+
+def test_change_central_loss_rate_rebalance_uses_batch_final_total(game):
+    """中央损耗率同批重分配只看批次终态，合法 rebalance 不受行顺序影响。"""
+    db, state, content = game
+    db.conn.execute(
+        "UPDATE fiscal_config SET value = 80 WHERE key = 'central_taicang_human_loss_rate'"
+    )
+    db.conn.execute(
+        "UPDATE fiscal_config SET value = 20 WHERE key = 'central_taicang_sink_loss_rate'"
+    )
+    db.conn.commit()
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [
+            {
+                "key": "central_taicang_human_loss_rate",
+                "delta": 5,
+                "reason": "先记人为损耗调整",
+            },
+            {
+                "key": "central_taicang_sink_loss_rate",
+                "delta": -5,
+                "reason": "再压自然损耗抵扣",
+            },
+        ],
+    }, narrative="x", decree_text="y")
+
+    assert _rejection_rows(db, turn, "fiscal_changes") == []
+    cfg = db.get_fiscal_config()
+    assert cfg["central_taicang_human_loss_rate"] == 85
+    assert cfg["central_taicang_sink_loss_rate"] == 15
 
 
 @pytest.mark.parametrize("bad", [False, 0.0])
