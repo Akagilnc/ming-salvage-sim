@@ -3982,7 +3982,7 @@ class GameDB:
                 "边饷hub" if _amt("国库", "expense", "各军军饷") else "",
                 *(
                     name for name in (
-                        "中央军饷", "太仓亏空", "宗室禄米", "官俸", "工部",
+                        "中央军饷", "太仓亏空", "宗室禄米", "百官俸禄", "工部",
                         "赈灾备用", "建筑维护",
                     )
                     if _amt("国库", "expense", name)
@@ -3992,7 +3992,7 @@ class GameDB:
         else:
             gk_expense_names = _parts(
                 "国库", "expense",
-                ("各军军饷", "宗室禄米", "官俸", "工部", "赈灾备用", "建筑维护"),
+                ("各军军饷", "宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护"),
             )
         return (
             f"{TURN_UNIT}度预算基准：国库入{format_money(gk_in)}"
