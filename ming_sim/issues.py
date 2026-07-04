@@ -1359,8 +1359,12 @@ def _apply_fiscal_levy_targets(
         target_jiao = jiao_seed if jiao_in_force else 0.0
         target_lian = lian_seed if lian_levy_approved else 0.0
         target_sanxiang = target_liao + target_jiao + target_lian
-        current_sanxiang = _as_float(p.get("三饷应征"), ctx=f"{region_id}.settle.p.三饷应征")
-        current_transport = _as_float(p.get("起运定额"), ctx=f"{region_id}.settle.p.起运定额")
+        raw_sanxiang = p.get("三饷应征")
+        raw_transport = p.get("起运定额")
+        current_targets_stored = _is_stored_number(raw_sanxiang) and _is_stored_number(raw_transport)
+        if current_targets_stored:
+            current_sanxiang = _as_float(raw_sanxiang, ctx=f"{region_id}.settle.p.三饷应征")
+            current_transport = _as_float(raw_transport, ctx=f"{region_id}.settle.p.起运定额")
         target_transport = base_transport + target_sanxiang
         next_p = dict(p)
         next_p["三饷应征"] = target_sanxiang
@@ -1375,8 +1379,7 @@ def _apply_fiscal_levy_targets(
             meta[_SETTLE_META_LAND_DENOMINATOR_KEY] = land_denominator
         _fiscal_levy_mark_provisional(meta)
         if meta == meta_raw \
-                and _is_stored_number(p.get("三饷应征")) \
-                and _is_stored_number(p.get("起运定额")) \
+                and current_targets_stored \
                 and math.isclose(current_sanxiang, target_sanxiang, rel_tol=0, abs_tol=1e-9) \
                 and math.isclose(current_transport, target_transport, rel_tol=0, abs_tol=1e-9):
             continue
