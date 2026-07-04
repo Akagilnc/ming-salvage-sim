@@ -108,6 +108,25 @@ export interface CmrPassedRecord {
   readonly stopSummary?: StopSummary;
 }
 
+/** A red integrated CMR review outcome handed back to the runner before fix (#550). */
+export interface CmrReviewedRecord {
+  readonly cmrPass: IntegratedCmrPass;
+  readonly reason?: string;
+  readonly familyHeadAfter?: string;
+  readonly cmrFindingClassification?: FamilyCmrClassification;
+  readonly stopSummary?: StopSummary;
+}
+
+/** A separate coder-fix commit produced for a red integrated CMR finding (#550). */
+export interface CmrFixCommittedRecord {
+  readonly cmrPass: IntegratedCmrPass;
+  readonly reason?: string;
+  readonly familyHeadBefore?: string;
+  readonly familyHeadAfter?: string;
+  readonly blockingFindingIdentityKeys?: readonly string[];
+  readonly stopSummary?: StopSummary;
+}
+
 /** A PHASE-LEVEL family escalation marker (#439). */
 export interface FamilyEscalatedRecord {
   readonly escalationKind: EscalationKind;
@@ -249,6 +268,79 @@ export async function recordCmrPassed(
               }
             : undefined,
         ),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/** Append one PHASE-LEVEL red CMR review audit event before coder-fix (#550). */
+export async function recordCmrReviewed(
+  backend: FamilyBackend,
+  record: CmrReviewedRecord,
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      status: "cmr_reviewed",
+      event: "cmr_reviewed",
+      phase: "final",
+      cmrPass: record.cmrPass,
+      reason: record.reason,
+      familyHeadAfter: record.familyHeadAfter,
+      cmrFindingClassification: record.cmrFindingClassification,
+      stopSummary:
+        record.stopSummary ??
+        infraFailureStopSummary({
+          summary: record.reason ?? "family CMR review returned blocking findings",
+          repairHint:
+            "inspect this CMR review row and the following coder-fix row before re-review",
+          ...(record.familyHeadAfter !== undefined
+            ? {
+                heads: {
+                  actualFamilyHead: record.familyHeadAfter,
+                  sources: { actualFamilyHead: "cmr_reviewed ledger row" },
+                },
+              }
+            : {}),
+        }),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/** Append one PHASE-LEVEL CMR coder-fix commit audit event (#550). */
+export async function recordCmrFixCommitted(
+  backend: FamilyBackend,
+  record: CmrFixCommittedRecord,
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      status: "cmr_fix_committed",
+      event: "cmr_fix_committed",
+      phase: "final",
+      cmrPass: record.cmrPass,
+      reason: record.reason,
+      familyHeadBefore: record.familyHeadBefore,
+      familyHeadAfter: record.familyHeadAfter,
+      blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
+      stopSummary:
+        record.stopSummary ??
+        successStopSummary({
+          ...(record.familyHeadAfter !== undefined ||
+          record.familyHeadBefore !== undefined
+            ? {
+                heads: {
+                  ...(record.familyHeadBefore !== undefined
+                    ? { reportedFamilyHead: record.familyHeadBefore }
+                    : {}),
+                  ...(record.familyHeadAfter !== undefined
+                    ? { actualFamilyHead: record.familyHeadAfter }
+                    : {}),
+                  sources: {
+                    reportedFamilyHead: "cmr_fix_committed pre-fix head",
+                    actualFamilyHead: "cmr_fix_committed post-fix head",
+                  },
+                },
+              }
+            : {}),
+        }),
     }) as FamilyLedgerEntry,
   );
 }

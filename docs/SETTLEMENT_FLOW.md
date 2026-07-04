@@ -16,6 +16,7 @@
   ── 前半段：pre_settle + 占位 context 同一外层 atomic；提交后保持已落 ──
   2. pre_settle(state, db, content=, registry=)   # 内层事务被外层 atomic 并入（flat 可重入）
      a. db.commit_pending_actions(...)            # 动作闸门：聊天暂存的结构化写动作批量落库（driver 路无暂存=no-op）
+        # 〔ADR 0055/ADR 0057 interim：经外廷受判类此步改为只物化案卷、效果结算判决后落（颁布判官），见 ADR 0055〕
      b. apply_historical_fiscal_rates(state, db)  # #259 饷率事件前置：同 tick 置结局 + 改 settle.p
         ↳ 仅处理 category="fiscal_levy" 的历史事件；shadow stub 的结局须经事件白名单归一
           （辽饷升/剿饷开征/练饷开征：{已准, 已驳}，剿饷议停：{已停, 仍征}），不可归一则 fail-loud。

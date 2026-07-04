@@ -78,6 +78,10 @@ export interface DogfoodReplay {
   readonly summary: string;
 }
 
+const CMR_EVIDENCE = {
+  evidencePaths: ["cmr/review-summary.json"],
+} as const;
+
 const BASE_FINDING: Finding = {
   severity: "high",
   category: "correctness",
@@ -165,6 +169,7 @@ async function familyClassificationScenario(input: {
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
+      ...CMR_EVIDENCE,
       findings: [input.finding],
     },
   };
@@ -263,6 +268,76 @@ const REPLAY_WORKTREE: WorktreeHandle = {
   base: "main",
   path: "/dogfood/replay",
 };
+
+function dogfoodRepairEvidence(input: {
+  readonly identityKeys?: ReadonlyArray<string>;
+  readonly findings?: ReadonlyArray<Finding>;
+  readonly changedFiles?: ReadonlyArray<string>;
+  readonly tests?: ReadonlyArray<string>;
+  readonly patchSummary?: string;
+}): NonNullable<Extract<StepOutput, { kind: "coder" }>["repairEvidence"]> {
+  const findings = input.findings ?? [BASE_FINDING];
+  return {
+    findingScope: {
+      identityKeys:
+        input.identityKeys ?? findings.map((item) => findingIdentityKey(item)),
+      locations: findings.map((item) => item.location),
+    },
+    changedFiles: input.changedFiles ?? ["orchestrator/src/dogfoodReplay.ts"],
+    tests: input.tests ?? ["npm test -- --run test/dogfood-replay-451.test.ts"],
+    sameClassBugScan:
+      'rg "repairEvidence|blockingFindingIdentityKeys" orchestrator/src orchestrator/test',
+    introducedRegressionCheck:
+      "npm test -- --run test/dogfood-replay-451.test.ts",
+    ...(input.patchSummary !== undefined
+      ? { patchSummary: input.patchSummary }
+      : {}),
+  };
+}
+
+function dogfoodS5CoderOutputForFindings(
+  findings: ReadonlyArray<Finding>,
+): StepOutput {
+  return {
+    kind: "coder",
+    committed: true,
+    commitsAdded: 1,
+    repairEvidence: dogfoodRepairEvidence({ findings }),
+  };
+}
+
+function completeDogfoodS5CoderOutput(
+  output: Extract<StepOutput, { kind: "coder" }>,
+  ctx?: DispatchContext,
+): StepOutput {
+  const existing = output.repairEvidence;
+  return {
+    ...output,
+    repairEvidence: {
+      ...dogfoodRepairEvidence({
+        identityKeys: ctx?.blockingFindingIdentityKeys,
+        findings: ctx?.blockingFindings,
+        patchSummary: "scripted dogfood coder-fix replay",
+      }),
+      ...(existing ?? {}),
+      findingScope:
+        existing?.findingScope ??
+        dogfoodRepairEvidence({
+          identityKeys: ctx?.blockingFindingIdentityKeys,
+          findings: ctx?.blockingFindings,
+        }).findingScope,
+      tests: existing?.tests ?? [
+        "npm test -- --run test/dogfood-replay-451.test.ts",
+      ],
+      sameClassBugScan:
+        existing?.sameClassBugScan ??
+        'rg "repairEvidence|blockingFindingIdentityKeys" orchestrator/src orchestrator/test',
+      introducedRegressionCheck:
+        existing?.introducedRegressionCheck ??
+        "npm test -- --run test/dogfood-replay-451.test.ts",
+    },
+  };
+}
 
 function ledgerEntry(
   step: StepId,
@@ -379,7 +454,10 @@ class DogfoodSingleSliceBackend implements Backend {
     const scripted =
       spec.id === "S5" ? this.coderOutputs[this.coderAttempt] : undefined;
     if (spec.id === "S5") this.coderAttempt += 1;
-    return scripted ?? { kind: "coder", committed: true, commitsAdded: 1 };
+    const output = scripted ?? { kind: "coder", committed: true, commitsAdded: 1 };
+    return spec.id === "S5" && output.kind === "coder"
+      ? completeDogfoodS5CoderOutput(output)
+      : output;
   }
 
   async dispatchWorker(
@@ -409,9 +487,13 @@ class DogfoodSingleSliceBackend implements Backend {
     const scripted =
       spec.id === "S5" ? this.coderOutputs[this.coderAttempt] : undefined;
     if (spec.id === "S5") this.coderAttempt += 1;
+    const output = scripted ?? { kind: "coder", committed: true, commitsAdded: 1 };
     return {
       kind: "completed",
-      output: scripted ?? { kind: "coder", committed: true, commitsAdded: 1 },
+      output:
+        spec.id === "S5" && output.kind === "coder"
+          ? completeDogfoodS5CoderOutput(output, ctx)
+          : output,
     };
   }
 
@@ -433,7 +515,7 @@ class DogfoodFamilyBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
 
   constructor(
-    private readonly currentHead = "family-head",
+    protected readonly currentHead = "family-head",
     initialLedger: ReadonlyArray<FamilyLedgerEntry> = [],
     private readonly mergeFamilyHead?: string,
   ) {
@@ -463,6 +545,7 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
   readonly dispatches: string[] = [];
   readonly escalations: FamilyEscalation[] = [];
   private familyWorkerAttempt = 0;
+  private familyHeadCursor: string;
 
   constructor(
     currentHead = "family-head",
@@ -470,10 +553,23 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
     private readonly familyWorkerOutputs: ReadonlyArray<WorkerResult> = [],
   ) {
     super(currentHead, initialLedger);
+    this.familyHeadCursor = currentHead;
   }
 
   async runFamilyVerify(): Promise<{ ok: true }> {
     return { ok: true };
+  }
+
+  override async readFamilyHead(): Promise<string> {
+    return this.familyHeadCursor;
+  }
+
+  protected forceFamilyHead(head: string): void {
+    this.familyHeadCursor = head;
+  }
+
+  private advanceFamilyHead(): void {
+    this.familyHeadCursor = `${this.familyHeadCursor}+fix${this.familyWorkerAttempt}`;
   }
 
   async dispatchWorker(
@@ -485,16 +581,54 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
     );
     const scripted = this.familyWorkerOutputs[this.familyWorkerAttempt];
     this.familyWorkerAttempt += 1;
-    if (scripted !== undefined) return scripted;
+    if (scripted !== undefined) {
+      if (
+        spec.kind === "coder" &&
+        scripted.kind === "completed" &&
+        scripted.output.kind === "coder"
+      ) {
+        this.advanceFamilyHead();
+      }
+      return scripted;
+    }
     if (spec.kind === "cmr") {
+      const priorKeys = ctx.priorCmrFindingIdentityKeys ?? [];
       return {
         kind: "completed",
         output: {
           kind: "cmr",
           converged: true,
           successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
-          claimedFixedFindingIdentityKeys: [],
-          priorFindingDispositions: [],
+          claimedFixedFindingIdentityKeys: priorKeys,
+          priorFindingDispositions: priorKeys.map((identityKey) => ({
+            identityKey,
+            status: "verified-closed" as const,
+            reason: "scripted dogfood re-review verified the family coder-fix",
+          })),
+          ...CMR_EVIDENCE,
+        },
+      };
+    }
+    if (spec.kind === "coder") {
+      this.advanceFamilyHead();
+      return {
+        kind: "completed",
+        output: {
+          kind: "coder",
+          committed: true,
+          commitsAdded: 1,
+          repairEvidence: {
+            findingScope: {
+              identityKeys: ctx.blockingFindingIdentityKeys ?? [],
+            },
+            changedFiles: ["orchestrator/src/dogfoodReplay.ts"],
+            tests: ["dogfood replay fixture"],
+            sameClassBugScan:
+              'rg "repairEvidence|blockingFindingIdentityKeys" orchestrator/src orchestrator/test',
+            introducedRegressionCheck:
+              "npm test -- --run test/dogfood-replay-451.test.ts",
+            patchSummary: "scripted family CMR coder-fix replay",
+          },
         },
       };
     }
@@ -503,7 +637,9 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
       output: {
         kind: "ship",
         branch: ctx.familyBase ?? "family/dogfood-base",
-        status: "pushed",
+        status: "pr_opened",
+        pr: `pr://${ctx.familyBase ?? "family/dogfood-base"}`,
+        prHead: this.familyHeadCursor,
       },
     };
   }
@@ -548,7 +684,7 @@ function noProgressDecisionLedger(
     }),
     ledgerEntry("S4"),
     ledgerEntry("S5", {
-      output: { kind: "coder", committed: true, commitsAdded: 1 },
+      output: dogfoodS5CoderOutputForFindings(findings),
     }),
     ledgerEntry("S6", {
       output: {
@@ -559,7 +695,7 @@ function noProgressDecisionLedger(
     }),
     ledgerEntry("S4"),
     ledgerEntry("S5", {
-      output: { kind: "coder", committed: true, commitsAdded: 1 },
+      output: dogfoodS5CoderOutputForFindings(findings),
     }),
     ledgerEntry("S6", {
       output: {
@@ -908,6 +1044,7 @@ module_scope:
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
+      ...CMR_EVIDENCE,
       findings: [crossModuleFinding],
     },
   };
@@ -987,6 +1124,7 @@ async function familyAttributionReplay(
         successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
         findings: [attributedFinding],
       },
     },
@@ -998,21 +1136,33 @@ async function familyAttributionReplay(
     familyIssue: 287,
     moduleContext,
   });
-  const abort = backend.ledger.find((entry) => entry.status === "aborted");
-  const result = abort?.cmrFindingClassification?.results[0];
+  const reviewed = backend.ledger.find(
+    (entry) => entry.status === "cmr_reviewed" && entry.cmrPass === "completeness",
+  );
+  const fixed = backend.ledger.find(
+    (entry) => entry.status === "cmr_fix_committed" && entry.cmrPass === "completeness",
+  );
+  const passed = backend.ledger.find(
+    (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
+  );
+  const result = reviewed?.cmrFindingClassification?.results[0];
   if (result?.attribution.method !== "child_module_scope") {
     throw new Error("dogfood family attribution replay did not hit child scope");
   }
-  if (run.ok || abort?.stopSummary === undefined) {
-    throw new Error("dogfood family attribution replay did not hit family gate");
+  if (!run.ok || reviewed?.stopSummary === undefined || fixed === undefined || passed === undefined) {
+    throw new Error(
+      `dogfood family attribution replay did not hit family review/fix/re-review gate: ` +
+        `run.ok=${run.ok} statuses=${backend.ledger.map((entry) => entry.status).join(",")}`,
+    );
   }
   return {
-    stopSummary: abort.stopSummary,
+    stopSummary: reviewed.stopSummary,
     sourceEvidence: {
       seam: "family_verify_cmr",
       attribution: result.attribution,
       classification: result.classification,
       dispatches: backend.dispatches,
+      reviewFixRereviewVisible: true,
       ...cmrWorkerParserEvidence({
         kind: "completed",
         output: {
@@ -1022,9 +1172,88 @@ async function familyAttributionReplay(
           successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
+          ...CMR_EVIDENCE,
           findings: [attributedFinding],
         },
       }),
+    },
+  };
+}
+
+async function cmrReviewerSelfFixAttemptReplay(): Promise<SeamReplay> {
+  const selfFixFinding = finding({
+    severity: "medium",
+    claim_quote:
+      "#258 CMR worker found blocking findings and moved into the fix loop before all review legs completed",
+    location: "orchestrator/src/family/verifyCmr.ts:cmr-self-fix-boundary",
+    action: "fix_now",
+  });
+  const cmrOutput: WorkerResult = {
+    kind: "completed",
+    output: {
+      kind: "cmr",
+      converged: false,
+      reason:
+        "blocking findings remain; reviewer says it is moving into the fix loop before all review legs completed",
+      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      ...CMR_EVIDENCE,
+      findings: [selfFixFinding],
+    },
+  };
+
+  class ReviewerSelfFixBackend extends DogfoodCmrFamilyBackend {
+    private didSelfFix = false;
+
+    override async dispatchWorker(
+      spec: WorkerSpec,
+      ctx: DispatchContext,
+    ): Promise<WorkerResult> {
+      const result = await super.dispatchWorker(spec, ctx);
+      if (!this.didSelfFix && spec.kind === "cmr" && ctx.cmrPass === "completeness") {
+        this.didSelfFix = true;
+        this.forceFamilyHead("head-after-reviewer-self-fix");
+      }
+      return result;
+    }
+  }
+
+  const backend = new ReviewerSelfFixBackend(
+    "head-before-reviewer",
+    [],
+    [cmrOutput],
+  );
+  const result = await runVerifyCmr({
+    phase: "final",
+    familyBase: "family/258-reviewer-self-fix",
+    familyBackend: backend,
+  });
+  const abort = backend.ledger.find((entry) => entry.status === "aborted");
+  if (
+    result.ok ||
+    abort?.stopSummary?.reason !== "contract_drift" ||
+    !String(abort.reason).includes("reviewer moved family HEAD")
+  ) {
+    throw new Error(
+      `dogfood #258 reviewer self-fix replay did not fail closed: ` +
+        `run.ok=${result.ok} statuses=${backend.ledger.map((entry) => entry.status).join(",")}`,
+    );
+  }
+  return {
+    stopSummary: abort.stopSummary,
+    sourceEvidence: {
+      seam: "family_verify_cmr",
+      mechanism: "cmr_reviewer_self_fix_head_movement",
+      reviewerSelfFixBlocked: true,
+      familyHeadBefore: "head-before-reviewer",
+      familyHeadAfter: "head-after-reviewer-self-fix",
+      ledgerStatuses: backend.ledger.map((entry) => entry.status),
+      dispatches: backend.dispatches,
+      coderFixDispatched: backend.dispatches.some((dispatch) =>
+        dispatch.startsWith("coder:"),
+      ),
+      ...cmrWorkerParserEvidence(cmrOutput),
     },
   };
 }
@@ -1040,6 +1269,7 @@ async function legacyDispositionParserReplay(): Promise<SeamReplay> {
       priorFindingDispositions: [
         { identityKey, disposition: "verified-closed" },
       ],
+      ...CMR_EVIDENCE,
     })}</cmr>`;
   const outcome = parseCmrOutcome(outcomeText);
   if (outcome.kind !== "verdict" || !outcome.converged) {
@@ -1059,6 +1289,7 @@ async function legacyDispositionParserReplay(): Promise<SeamReplay> {
         skippedLegs: outcome.skippedLegs,
         claimedFixedFindingIdentityKeys: outcome.claimedFixedFindingIdentityKeys,
         priorFindingDispositions: outcome.priorFindingDispositions,
+        evidencePaths: outcome.evidencePaths,
       },
     },
     {
@@ -1071,6 +1302,7 @@ async function legacyDispositionParserReplay(): Promise<SeamReplay> {
         priorFindingDispositions: [
           { identityKey, status: "verified-closed" },
         ],
+        ...CMR_EVIDENCE,
       },
     },
     {
@@ -1120,6 +1352,7 @@ async function finalLegacyDispositionReplay(): Promise<SeamReplay> {
     priorFindingDispositions: [
       { identityKey, disposition: "verified-closed" },
     ],
+    ...CMR_EVIDENCE,
   })}</cmr>`;
   const parsedFinal = parseCmrOutcome(rawFinalCmr);
   if (parsedFinal.kind !== "verdict" || !parsedFinal.converged) {
@@ -1140,6 +1373,7 @@ async function finalLegacyDispositionReplay(): Promise<SeamReplay> {
         priorFindingDispositions: [
           { identityKey, status: "verified-closed" },
         ],
+        ...CMR_EVIDENCE,
       },
     },
     {
@@ -1152,6 +1386,7 @@ async function finalLegacyDispositionReplay(): Promise<SeamReplay> {
         claimedFixedFindingIdentityKeys:
           parsedFinal.claimedFixedFindingIdentityKeys,
         priorFindingDispositions: parsedFinal.priorFindingDispositions,
+        evidencePaths: parsedFinal.evidencePaths,
       },
     },
     {
@@ -1378,6 +1613,7 @@ async function routeAccountingReplay(): Promise<SeamReplay> {
         successfulLegs: [...declaredLegs, rejectedDefaultLeg],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
       },
     },
   ]);
@@ -1503,6 +1739,7 @@ function cmrClosureWorkerResult(input: {
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: input.claimedFixedFindingIdentityKeys,
       priorFindingDispositions: input.priorFindingDispositions,
+      ...CMR_EVIDENCE,
     },
   };
 }
@@ -1713,6 +1950,7 @@ async function familyAcceptedSuppressionSummaryReplay(input: {
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
+      ...CMR_EVIDENCE,
       findings: [input.finding],
     },
   };
@@ -1884,6 +2122,7 @@ async function providerStrongLegPassReplay(input: {
         skippedLegs: [{ slug: "agy", reason: "provider quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
       },
     },
     {
@@ -1895,6 +2134,7 @@ async function providerStrongLegPassReplay(input: {
         skippedLegs: [{ slug: "agy", reason: "provider quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
       },
     },
     {
@@ -1951,6 +2191,7 @@ async function familyShipMalformedAfterCmrReplay(): Promise<SeamReplay> {
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
+      ...CMR_EVIDENCE,
     },
   };
   const backend = new DogfoodCmrFamilyBackend("family-head", [], [
@@ -2024,6 +2265,7 @@ async function familyShipReviewDegradedReplay(): Promise<SeamReplay> {
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
+      ...CMR_EVIDENCE,
     },
   };
   const backend = new DogfoodCmrFamilyBackend("family-head", [], [
@@ -2208,6 +2450,8 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     ],
   };
   const familyAttributionSource = await familyAttributionReplay(moduleContext);
+  const cmrReviewerSelfFixAttemptSource =
+    await cmrReviewerSelfFixAttemptReplay();
   const sameModuleFinding = finding({
     severity: "medium",
     claim_quote: "same-module CMR gap was incorrectly treated as defer",
@@ -2397,6 +2641,16 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       source: "runner",
       sourceStopSummary: targetedResetReplay.stopSummary,
       sourceEvidence: targetedResetReplay.sourceEvidence,
+    }),
+    replayScenario({
+      id: "258-cmr-reviewer-self-fix-attempt",
+      issue: 258,
+      title: "family CMR reviewer cannot move into a same-session fix loop",
+      classification: "contract_drift",
+      stopSummary: cmrReviewerSelfFixAttemptSource.stopSummary,
+      source: "family",
+      sourceStopSummary: cmrReviewerSelfFixAttemptSource.stopSummary,
+      sourceEvidence: cmrReviewerSelfFixAttemptSource.sourceEvidence,
     }),
     await familyClassificationScenario({
       id: "287-same-module-cmr-gap",

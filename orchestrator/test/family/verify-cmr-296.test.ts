@@ -37,7 +37,11 @@ import type {
   OpenFamilyPrResult,
   MergeRequest,
 } from "../../src/family/types.js";
-import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.js";
+import type { DispatchContext, Finding, WorkerResult, WorkerSpec } from "../../src/types.js";
+
+const CMR_EVIDENCE = {
+  evidencePaths: ["cmr/review-summary.json"],
+} as const;
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -229,6 +233,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
                 { slug: "opus", reason: "auth unavailable" },
                 { slug: "gpt-5.5", reason: "auth unavailable" },
               ],
+              ...CMR_EVIDENCE,
             },
           };
         }
@@ -285,6 +290,54 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     }));
   });
 
+  it("checks CMR leg floor before routing fix_now findings to coder-fix", async () => {
+    const weakLegFinding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "weak-leg review must not trigger coder-fix",
+      location: "orchestrator/src/family/verifyCmr.ts:leg-floor-before-fix",
+      suggested_fix: "validate CMR leg coverage before dispatching coder-fix",
+      action: "fix_now",
+    };
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({
+        converged: false,
+        reason: "weak CMR leg reported a fixable finding",
+        successfulLegs: ["agy"],
+        skippedLegs: [
+          { slug: "opus", reason: "auth unavailable" },
+          { slug: "gpt-5.5", reason: "auth unavailable" },
+        ],
+        findings: [weakLegFinding],
+        ...CMR_EVIDENCE,
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.prCalls).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("floor"),
+      stopSummary: expect.objectContaining({ reason: "provider_degraded" }),
+    }));
+    expect(
+      backend.ledger.some((entry) => entry.status === "cmr_reviewed"),
+    ).toBe(false);
+    expect(
+      backend.ledger.some((entry) => entry.status === "cmr_fix_committed"),
+    ).toBe(false);
+  });
+
   it("rejects route-undeclared strong legs before applying the CMR floor", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     const backend = new CapableFamilyBackend({
@@ -337,6 +390,86 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
               skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
             }),
             repairHint: expect.stringContaining("undeclared legs"),
+          }),
+        }),
+      }),
+    }));
+  });
+
+  it("does not rewrite CMR route-accounting malformed results", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    class RouteAccountingRewriteBackend extends CapableFamilyBackend {
+      readonly rewriteCalls: Array<{
+        spec: WorkerSpec;
+        ctx: DispatchContext;
+        protocolFailure: Extract<WorkerResult, { kind: "malformed" }>;
+        attempt: number;
+      }> = [];
+
+      constructor() {
+        super({ verify: () => ({ ok: true }) });
+      }
+
+      async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "malformed",
+            reason: "successful leg opus is not declared in active route",
+            sessionId: "cmr-route-accounting",
+            cmrLegAccountingPayload: {
+              successfulLegs: ["agy", "opus"],
+              skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
+            },
+          };
+        }
+        throw new Error(`unexpected worker after route-accounting failure: ${spec.kind}`);
+      }
+
+      async rewriteWorkerOutcome(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
+        attempt: number,
+      ): Promise<WorkerResult> {
+        this.rewriteCalls.push({ spec, ctx, protocolFailure, attempt });
+        return {
+          kind: "completed",
+          output: {
+            kind: "cmr",
+            converged: true,
+            successfulLegs: ["gpt-5.5", "agy"],
+            ...CMR_EVIDENCE,
+          },
+        };
+      }
+    }
+
+    const backend = new RouteAccountingRewriteBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.rewriteCalls).toEqual([]);
+    expect(backend.prCalls).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("not declared"),
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        repairHint: expect.stringContaining("leg accounting payload"),
+        metadata: expect.objectContaining({
+          routeAccounting: expect.objectContaining({
+            successfulLegs: ["agy", "opus"],
+            skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
           }),
         }),
       }),
@@ -822,15 +955,10 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     }));
   });
 
-  it("records the post-CMR-worker family HEAD and uses it for the next pass resume guard", async () => {
+  it("records the unchanged CMR-reviewed family HEAD and uses it for the next pass resume guard", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: (req) => {
-        if (req.cmrPass === "completeness") {
-          backend.currentFamilyHead = "head-after-cmr-fix";
-        }
-        return { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
-      },
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] }),
     });
     backend.currentFamilyHead = "head-before-cmr";
     backend.ledger.push({
@@ -838,7 +966,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       event: "cmr_passed",
       phase: "final",
       cmrPass: "correctness",
-      familyHeadAfter: "head-after-cmr-fix",
+      familyHeadAfter: "head-before-cmr",
       routeFingerprint: currentRouteFingerprint(),
     });
 
@@ -858,7 +986,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       event: "cmr_passed",
       phase: "final",
       cmrPass: "completeness",
-      familyHeadAfter: "head-after-cmr-fix",
+      familyHeadAfter: "head-before-cmr",
       routeFingerprint: currentRouteFingerprint(),
     }));
     expect(
@@ -943,7 +1071,6 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
 
       async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
         if (spec.kind === "cmr") {
-          this.currentFamilyHead = "head-after-cmr-worker-fix";
           return {
             kind: "escalated",
             escalation: {
@@ -979,7 +1106,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]?.reason).toContain("completeness cmr");
-    expect(backend.escalations[0]?.familyHeadAfter).toBe("head-after-cmr-worker-fix");
+    expect(backend.escalations[0]?.familyHeadAfter).toBe("head-after-final-verify");
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
@@ -987,7 +1114,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       cmrPass: "completeness",
       reason:
         "completeness cmr needs human review — review workers disagreed on whether the pass can converge",
-      familyHeadAfter: "head-after-cmr-worker-fix",
+      familyHeadAfter: "head-after-final-verify",
     }));
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
@@ -1007,13 +1134,13 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
 
       async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
         if (spec.kind === "cmr") {
-          this.currentFamilyHead = `head-after-${ctx.cmrPass}-cmr`;
           return {
             kind: "completed",
             output: {
               kind: "cmr",
               converged: true,
               successfulLegs: ["opus", "gpt-5.5", "agy"],
+              ...CMR_EVIDENCE,
             },
           };
         }
@@ -1135,13 +1262,20 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     }
     async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
       if (spec.kind === this.throwOnKind) {
-        this.currentFamilyHead = `head-after-${spec.kind}-worker`;
+        if (spec.kind === "ship") {
+          this.currentFamilyHead = "head-after-ship-worker";
+        }
         throw new Error(`${spec.kind} worker: git checkout ${ctx.familyBase} failed (no such ref)`);
       }
       // The cmr worker converges so the run reaches the ship stage (for the ship case).
       return {
         kind: "completed",
-        output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] },
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          ...CMR_EVIDENCE,
+        },
       };
     }
   }
@@ -1157,7 +1291,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/cmr worker threw on startup/i);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/no such ref/i);
-    expect(backend.aborted[0]?.familyHeadAfter).toBe("head-after-cmr-worker");
+    expect(backend.aborted[0]?.familyHeadAfter).toBe("head-before-worker");
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
@@ -1165,7 +1299,72 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       cmrPass: "completeness",
       reason:
         "family integrated cmr completeness worker failed: family cmr worker threw on startup: cmr worker: git checkout family/291-base failed (no such ref)",
-      familyHeadAfter: "head-after-cmr-worker",
+      familyHeadAfter: "head-before-worker",
+    }));
+  });
+
+  it("a rewrite worker that throws while repairing malformed CMR outcome ⇒ infra outcome protocol failure, never an escaped throw", async () => {
+    class ThrowingRewriteBackend extends BareFamilyBackend {
+      readonly aborted: FamilyAbortedEvent[] = [];
+      currentFamilyHead = "head-before-worker";
+
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+
+      async readFamilyHead(_familyBase: string): Promise<string> {
+        return this.currentFamilyHead;
+      }
+
+      async recordAborted(event: FamilyAbortedEvent): Promise<void> {
+        this.aborted.push(event);
+      }
+
+      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        if (spec.kind !== "cmr") {
+          throw new Error(`unexpected worker after protocol failure: ${spec.kind}`);
+        }
+        return {
+          kind: "malformed",
+          reason: `${ctx.cmrPass} cmr worker outcome sidecar was not valid JSON`,
+          sessionId: "cmr-session-malformed",
+        };
+      }
+
+      async rewriteWorkerOutcome(
+        _spec: WorkerSpec,
+        _ctx: DispatchContext,
+        _protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
+        _attempt: number,
+      ): Promise<WorkerResult> {
+        throw new Error("rewrite worker sandbox checkout failed");
+      }
+    }
+
+    const backend = new ThrowingRewriteBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.aborted).toHaveLength(1);
+    expect(backend.aborted[0]?.errorPackage.reason).toMatch(/outcome protocol failure/i);
+    expect(backend.aborted[0]?.errorPackage.reason).toMatch(/sandbox checkout failed/i);
+    expect(backend.aborted[0]?.familyHeadAfter).toBe("head-before-worker");
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "completeness",
+      reason: expect.stringContaining("outcome protocol failure"),
+      familyHeadAfter: "head-before-worker",
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        summary: expect.stringContaining("sandbox checkout failed"),
+        repairHint: expect.stringContaining("worker outcome writer/guard"),
+      }),
     }));
   });
 
@@ -1176,7 +1375,6 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       }
       override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
         if (spec.kind === "cmr") {
-          this.currentFamilyHead = "head-after-cmr-worker";
           return {
             kind: "failed",
             reason: "Error: Cannot find module 'missing-cmr-runtime'",
@@ -1202,7 +1400,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       phase: "final",
       cmrPass: "completeness",
       reason: expect.stringContaining("Cannot find module 'missing-cmr-runtime'"),
-      familyHeadAfter: "head-after-cmr-worker",
+      familyHeadAfter: "head-before-worker",
       stopSummary: expect.objectContaining({
         reason: "infra_failure",
         repairHint: expect.stringContaining("install or restore"),
@@ -1235,6 +1433,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
               kind: "cmr",
               converged: true,
               successfulLegs: ["opus", "gpt-5.5", "agy"],
+              ...CMR_EVIDENCE,
             },
           };
         }

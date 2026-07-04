@@ -56,9 +56,9 @@ export type HandoffStatus = "success" | "escalate" | "error";
  * - `"coder"`: implementation/fix soul (TDD for S2, finding fix contract for S5).
  * - `"READ-ONLY"`: reviewer soul with READ-ONLY soft constraint baked in
  *   (prompt-level, not an OS-level mount — same image, separate `run()`).
- * - `"cmr"`: family integrated-cmr pass worker soul (ADR 0030) — a WRITE-capable
- *   soul: the pass worker invokes `ak-cross-m-review` for the selected gate and may
- *   commit pass-local cross-slice fixes; it is not the read-only reviewer soul.
+ * - `"cmr"`: family integrated-cmr pass worker soul (ADR 0030) — review/outcome
+ *   discipline for the selected CMR gate. Blocking findings return to the runner;
+ *   a separate `"coder"` worker creates any persistent repair commits.
  * - `"ship"`: the delivery soul the family ship worker runs under — a WRITE soul
  *   distinct from `"coder"`: it invokes `gstack-ship`, stops at PR creation, and
  *   records deferred findings in a tracker (issue / TODOS.md), never the PR body.
@@ -316,6 +316,10 @@ export interface RepairEvidence {
   readonly tests?: ReadonlyArray<string>;
   /** Fixtures/transcripts added or changed for this finding. */
   readonly fixtures?: ReadonlyArray<string>;
+  /** Same-class bug scan performed after the fix, as a command/log pointer. */
+  readonly sameClassBugScan?: string;
+  /** Regression check performed after the fix, as a command/log pointer. */
+  readonly introducedRegressionCheck?: string;
   /** Human-readable patch summary; accepted only with another concrete signal. */
   readonly patchSummary?: string;
 }
@@ -552,12 +556,30 @@ export interface DispatchContext {
    */
   readonly blockingFindingIdentityKeys?: ReadonlyArray<string>;
   /**
+   * FAMILY CMR coder-fix retry only: runner-observed repair-evidence gate failures
+   * from earlier attempts for the SAME blocking finding set. Fresh retry workers
+   * receive this instead of relying on hidden session memory.
+   */
+  readonly repairAttemptFailures?: ReadonlyArray<{
+    readonly attempt: number;
+    readonly reason: string;
+    readonly familyHeadBefore?: string;
+    readonly familyHeadAfter?: string;
+  }>;
+  /**
    * S5 coder-fix, S7 ship, or family-level CMR/ship worker: the human answer that
    * reopened a prior decision-escalate pause (#439). The runner passes it to the
    * re-dispatched worker so the resume instruction is visible without deleting or
    * rewriting the terminal ledger row that paused the run.
    */
   readonly escalationAnswer?: EscalationAnswerPayload;
+  /**
+   * FAMILY worker only: the parent/family issue whose live GitHub context should be
+   * available to clean family workers. The family runner still passes structured
+   * CMR findings separately; this number only lets prompts fetch current issue
+   * prose when needed.
+   */
+  readonly familyIssue?: number;
   /**
    * FAMILY cmr worker only: the child issue numbers whose merge into the family
    * base was LLM-resolved (#295) — forwarded to the integrated cmr 承重闸 so it
@@ -615,6 +637,8 @@ export interface CmrResult {
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   /** Structured CMR findings for family-level defer/suppression classification. */
   readonly findings?: readonly Finding[];
+  /** Worker outcome guard evidence artifacts referenced by this CMR verdict. */
+  readonly evidencePaths?: readonly string[];
   // NOTE: a STUCK cmr worker is the WorkerResult-level `{kind:"escalated"}` case,
   // NOT an `escalate` field on this `completed` payload (codex cmr R3b finding: a
   // payload-level escalate would be silently ignored by the verifyCmr consumer,
@@ -683,6 +707,11 @@ export type WorkerOutput =
  *     (no usable output).
  *   - `malformed` — the worker produced output the seam could not parse into the
  *     declared schema (no completion signal / unparseable).
+ *   - `outcome_protocol_failure` — a malformed/missing/schema-incompatible outcome
+ *     reached the runner and either remained malformed after the bounded same-worker
+ *     rewrite path, or the rewrite produced git-truth movement (HEAD/commits/tracked
+ *     status) while only repairing the control envelope. This is infrastructure
+ *     failure, not a semantic review verdict.
  *   - `escalated` — the worker (model-judged) signalled it is stuck and a human
  *     must answer (carries the resume指引). Crash/timeout/missing-skill map to
  *     `failed`/`malformed`; only a MODEL escalate is `escalated`.
@@ -702,6 +731,12 @@ export type WorkerResult =
         readonly successfulLegs?: readonly string[];
         readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
       };
+    }
+  | {
+      readonly kind: "outcome_protocol_failure";
+      readonly reason: string;
+      readonly attempts: number;
+      readonly sessionId?: string;
     }
   | {
       readonly kind: "escalated";
