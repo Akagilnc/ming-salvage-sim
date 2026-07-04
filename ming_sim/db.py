@@ -2792,9 +2792,11 @@ class GameDB:
         refined = primary_source.get("fields_refined")
         if not isinstance(refined, list) or "军饷" not in refined:
             return None
-        raw_annual = primary_source.get("现额银两_年")
-        if raw_annual is None:
+        if "现额银两_年" not in primary_source:
             return None
+        raw_annual = primary_source.get("现额银两_年")
+        if isinstance(raw_annual, bool) or not isinstance(raw_annual, (int, float)):
+            raise ValueError("primary_source 现额银两_年 非法，无法派生 Due.军饷")
         value = float(raw_annual) / 10000 / 12
         if not math.isfinite(value) or value < 0:
             raise ValueError("primary_source 现额银两_年 非法，无法派生 Due.军饷")
