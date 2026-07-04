@@ -1417,6 +1417,59 @@ def test_budget_lines_read_persisted_substrate_hub_income_source(fresh_game):
     assert expenses["太仓亏空"] == 3
 
 
+def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET controlled_by = 'houjin',
+            fiscal = json_set(fiscal, '$.salt_tax', 0, '$.commerce_tax', 0)
+        """
+    )
+    db.create_fiscal_item(
+        "巡盐加派_base",
+        "国库",
+        "income",
+        "盐税",
+        7,
+        note="display intentionally collides with substrate hub salt tax",
+        commit=False,
+    )
+    db.conn.commit()
+
+    budget = flows_mod.compute_budget_lines(db, state)
+    salt_lines = [row for row in budget["国库"]["income"] if row["name"] == "盐税"]
+    assert any(row.get("internal") == "substrate_hub" for row in salt_lines)
+    assert any(row.get("internal") != "substrate_hub" for row in salt_lines)
+
+    flows_mod.apply_fixed_period_flows(db, state)
+
+    net_pct = int(db.legacy_modifiers(state).get("国库", 0) or 0)
+    expected = db.apply_legacy_pct(7, net_pct) if net_pct else 7
+    rows = db.conn.execute(
+        """
+        SELECT delta, reason
+        FROM economy_ledger
+        WHERE account = '国库' AND category = '盐税'
+        ORDER BY id
+        """
+    ).fetchall()
+    assert [(int(row["delta"]), str(row["reason"])) for row in rows] == [
+        (expected, f"盐税{flows_mod.TURN_UNIT}入")
+    ]
+
+
 def test_treasury_budget_summary_names_substrate_hub_surfaces(fresh_game):
     db, state = fresh_game
     db._mark_substrate_hub_fiscal_engine_enabled()
@@ -4011,6 +4064,32 @@ def test_cutover_taicang_loss_rate_bad_state_uses_settlement_abort_error_pack(
     pack = Path(abort.error_pack_path)
     assert pack.exists()
     assert (pack / "traceback.txt").read_text(encoding="utf-8")
+
+
+def test_cutover_missing_human_loss_rate_uses_settlement_abort_error_pack(
+    fresh_game, monkeypatch, tmp_path
+):
+    import ming_sim.error_pack as error_pack_mod
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    monkeypatch.setattr(error_pack_mod, "user_data_dir", lambda: tmp_path)
+    db.conn.execute(
+        "DELETE FROM fiscal_config WHERE key = 'central_taicang_human_loss_rate'"
+    )
+    db.conn.commit()
+
+    with pytest.raises(SettlementAbort) as exc_info:
+        flows_mod.apply_fixed_period_flows(db, state)
+
+    abort = exc_info.value
+    assert abort.stage == "fixed_fiscal"
+    assert abort.error_pack_path
+    pack = Path(abort.error_pack_path)
+    assert pack.exists()
+    assert "central_taicang_human_loss_rate 缺失" in (
+        pack / "traceback.txt"
+    ).read_text(encoding="utf-8")
 
 
 def test_cutover_structural_sink_rate_zero_uses_settlement_abort_error_pack(
