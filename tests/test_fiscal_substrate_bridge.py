@@ -3372,29 +3372,100 @@ def test_region_loader_rejects_bad_settle_meta_defaults(monkeypatch, settle, def
 ZHONGYUAN_JINGSHI_GOLDEN = {
     "beizhili": {
         "省库库银": 0,
-        "C_地方截留": 2.352,
-        "民欠旧赋": 6.3,
-        "军饷欠": 12,
-        "官俸欠": 0.3,
-        "宗禄欠": 10,
+        "C_地方截留": 0.8624,
+        "民欠旧赋": 2.31,
+        "军饷欠": 0.81,
+        "官俸欠": 0,
+        "宗禄欠": 0,
     },
     "shandong": {
-        "省库库银": 0,
-        "C_地方截留": 2.184,
-        "民欠旧赋": 7.35,
-        "军饷欠": 2.85,
+        "省库库银": 3.605,
+        "C_地方截留": 2.2568,
+        "民欠旧赋": 7.595,
+        "军饷欠": 0,
         "官俸欠": 0,
         "宗禄欠": 0,
     },
     "henan": {
         "省库库银": 0,
-        "C_地方截留": 2.16,
-        "民欠旧赋": 8,
+        "C_地方截留": 2.31768,
+        "民欠旧赋": 8.584,
         "军饷欠": 0,
         "官俸欠": 0,
-        "宗禄欠": 31,
+        "宗禄欠": 28.224,
     },
 }
+
+
+ZHONGYUAN_JINGSHI_PRIMARY_SOURCE = {
+    "beizhili": {
+        "guan_min_tian": 493,
+        "settle_land": 4925.7,
+        "huang_tian": 184,
+        "正赋应征": 4.0,
+        "三饷应征": 3.7,
+        "起运定额": 5.2,
+        "verified": {"官民田", "正赋应征", "起运定额"},
+    },
+    "shandong": {
+        "guan_min_tian": 490,
+        "settle_land": 4900,
+        "huang_tian": 0,
+        "正赋应征": 18,
+        "三饷应征": 3.7,
+        "起运定额": 4.5,
+        "verified": set(),
+    },
+    "henan": {
+        "guan_min_tian": 742,
+        "settle_land": 7415.8,
+        "huang_tian": 0,
+        "正赋应征": 15.9,
+        "三饷应征": 5.56,
+        "起运定额": 10.1,
+        "verified": {"官民田", "正赋应征", "起运定额"},
+    },
+}
+
+
+@pytest.mark.parametrize("region_id,expected", ZHONGYUAN_JINGSHI_PRIMARY_SOURCE.items())
+def test_zhongyuan_jingshi_primary_source_refinement(region_id, expected, fresh_db):
+    row = fresh_db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id = ?", (region_id,)
+    ).fetchone()
+    fiscal = json.loads(str(row["fiscal"]))
+    settle = fiscal["settle"]
+    p = settle["p"]
+    st = settle["st"]
+    meta = settle["_meta"]
+
+    assert fiscal["guan_min_tian"] == pytest.approx(expected["guan_min_tian"])
+    assert fiscal["huang_tian"] == pytest.approx(expected["huang_tian"])
+    assert st["官民田"] == pytest.approx(expected["settle_land"], abs=0.1)
+    assert p["正赋应征"] == pytest.approx(expected["正赋应征"], abs=0.05)
+    assert p["三饷应征"] == pytest.approx(expected["三饷应征"], abs=0.05)
+    assert p["起运定额"] == pytest.approx(expected["起运定额"], abs=0.05)
+
+    provisional = set(meta["provisional"])
+    for field in expected["verified"]:
+        assert field not in provisional
+
+    if region_id == "shandong":
+        assert {"官民田", "正赋应征", "起运定额"} <= provisional
+        assert "卷六《山东布政司田赋》" in meta["notes"]["山东卷六缺口"]
+        assert "正赋应征" in meta["notes"]["山东卷六缺口"]
+    else:
+        source_notes = meta["notes"]["一手核"]
+        assert "《万历会计录》" in source_notes
+        assert "本色" in source_notes
+        assert "扫描图核验" in meta["notes"]
+        assert "识典扫描图" in meta["notes"]["扫描图核验"]
+
+    if region_id in {"beizhili", "shandong", "henan"}:
+        assert p["三饷应征"] == pytest.approx(
+            st["官民田"] * 0.009 / 12,
+            abs=0.05,
+        )
 
 
 SOUTH_SOUTHWEST_SEEDS = {
@@ -3706,11 +3777,14 @@ def test_beizhili_huangzhuang_is_inner_treasury_not_transport_quota(fresh_db):
     ).fetchone()["fiscal"]))
 
     huang_meta = settle["_meta"]["huang_tian"]
-    assert fiscal["huang_tian"] == 35
+    assert fiscal["huang_tian"] == pytest.approx(184)
     assert huang_meta["account"] == "内库"
     assert huang_meta["excluded_from"] == ["正赋应征", "起运到京"]
-    assert settle["st"]["官民田"] == fiscal["guan_min_tian"] * 10
-    assert settle["p"]["起运定额"] == pytest.approx(5)
+    assert settle["st"]["官民田"] == pytest.approx(4925.7, abs=0.1)
+    assert settle["st"]["官民田"] != pytest.approx(
+        fiscal["guan_min_tian"] * 10
+    ), "一手核田亩保留小数，不再用小游戏字段反推"
+    assert settle["p"]["起运定额"] == pytest.approx(5.2)
 
 
 def test_henan_royal_grants_make_zonglu_due_heavy(fresh_db):
@@ -3732,6 +3806,14 @@ def test_zhongyuan_jingshi_settle_province_tick_golden(region_id, expect, fresh_
     after = _read_settle(fresh_db, region_id)["st"]
 
     assert after["军饷欠"] == pytest.approx(_province_pay_arrears(fresh_db, region_id), abs=1e-6)
+    for key, value in expect.items():
+        assert key in after, f"{region_id} golden missing {key}"
+        assert math.isclose(
+            after[key],
+            value,
+            rel_tol=0,
+            abs_tol=1e-3,
+        ), f"{region_id} {key}: {after[key]} != {value}"
     for key, value in res.new_st.items():
         if key == "军饷欠":
             continue
@@ -4695,6 +4777,8 @@ def test_all_settle_substrate_provisional_meta_covers_virtual_fields(fresh_db):
         if isinstance(source, dict) and source.get("title") == "《万历会计录》":
             checked_fields = set(source.get("checked_fields") or [])
             required -= checked_fields
+        if "一手核" in meta.get("notes", {}):
+            required -= {"起运定额", "官民田"}
         assert required <= provisional, f"{region_id} provisional 缺 {sorted(required - provisional)}"
         if "官民田" in required:
             assert "官民田" in st and "隐田" in st, f"{region_id} 田亩虚字段缺 seed"
