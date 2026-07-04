@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 import ming_sim.content as content_mod
+from ming_sim.applier import atomic
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
@@ -4436,6 +4437,24 @@ def test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone(fresh
 
     assert on_disk["军饷欠"] == pytest.approx(in_memory["军饷欠"], abs=1e-3)
     assert on_disk["军饷欠"] == pytest.approx(_province_pay_arrears(db, "shaanxi"), abs=1e-6)
+
+
+def test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    before = _read_settle(db, "shaanxi")["st"]
+
+    with pytest.raises(RuntimeError, match="rollback probe"):
+        with atomic(db):
+            flows_mod._advance_province_fiscal_substrate(db, state)
+            in_transaction = _read_settle(db, "shaanxi")["st"]
+            assert in_transaction["民欠旧赋"] != pytest.approx(before["民欠旧赋"])
+            raise RuntimeError("rollback probe")
+
+    after = _read_settle(db, "shaanxi")["st"]
+    assert after["民欠旧赋"] == pytest.approx(before["民欠旧赋"])
+    assert after["C_地方截留"] == pytest.approx(before["C_地方截留"])
 
 
 def test_apply_fixed_period_flows_advances_and_logs_jiangnan_core(fresh_game, monkeypatch):
