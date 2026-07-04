@@ -87,6 +87,11 @@ let repos: string[] = [];
 // online R1 CodeRabbit: `opts()` mints a temp ledger dir per call — track them too,
 // else they leak across the suite and accumulate over a long CI run.
 let ledgerDirs: string[] = [];
+function trackTempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  ledgerDirs.push(dir);
+  return dir;
+}
 function trackRepo(): string {
   const r = makeRepo();
   repos.push(r);
@@ -512,7 +517,7 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
   it("R1-T1: depsInstalled is STALE (reinstall) when a manifest is newer than node_modules", () => {
     // gemini R1 T1: a bare node_modules-exists check skips installing a dep a child
     // PR added (package.json/lock newer than the last install) → verify on stale deps.
-    const proj = mkdtempSync(join(tmpdir(), "verify-stale-"));
+    const proj = trackTempDir("verify-stale-");
     const nm = join(proj, "node_modules");
     const pkg = join(proj, "package.json");
     mkdirSync(nm, { recursive: true });
@@ -877,7 +882,7 @@ describe("parseMergerOutcome (#291 pure)", () => {
 
 describe("parseCmrOutcome accepted suppression contract", () => {
   it("prefers a runner-owned outcome sidecar over malformed cmr stdout", () => {
-    const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-"));
+    const dir = trackTempDir("cmr-outcome-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
       outcomePath,
@@ -914,7 +919,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
   });
 
   it("treats a guarded cmr sidecar as completion even when Sandcastle omits the completion signal", () => {
-    const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-sidecar-complete-"));
+    const dir = trackTempDir("cmr-outcome-sidecar-complete-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
       outcomePath,
@@ -966,7 +971,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
   });
 
   it("parses cmr sidecar payloads directly when free-form text contains a cmr tag delimiter", () => {
-    const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-delimiter-"));
+    const dir = trackTempDir("cmr-outcome-delimiter-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
       outcomePath,
@@ -993,7 +998,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
   });
 
   it("fails closed instead of falling back to stdout when the cmr outcome sidecar is malformed", () => {
-    const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-bad-"));
+    const dir = trackTempDir("cmr-outcome-bad-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
 
@@ -1205,7 +1210,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
 
 describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
   it("prefers a runner-owned outcome sidecar over malformed merger stdout", () => {
-    const dir = mkdtempSync(join(tmpdir(), "merger-outcome-"));
+    const dir = trackTempDir("merger-outcome-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
       outcomePath,
@@ -1223,7 +1228,7 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
   });
 
   it("parses merger sidecar payloads directly when free-form text contains a merger tag delimiter", () => {
-    const dir = mkdtempSync(join(tmpdir(), "merger-outcome-delimiter-"));
+    const dir = trackTempDir("merger-outcome-delimiter-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
       outcomePath,
@@ -1244,7 +1249,7 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
   });
 
   it("fails closed instead of falling back to stdout when the merger outcome sidecar is malformed", () => {
-    const dir = mkdtempSync(join(tmpdir(), "merger-outcome-bad-"));
+    const dir = trackTempDir("merger-outcome-bad-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
 
