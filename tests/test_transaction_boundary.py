@@ -169,7 +169,7 @@ def test_outside_atomic_commit_is_real(game):
 
 
 def test_set_fiscal_config_respects_caller_owned_transaction(game):
-    db, state, content = game
+    db, _state, _content = game
     key = "官俸_base"
     before = _fiscal_config_value(db, key)
 
@@ -187,7 +187,7 @@ def test_set_fiscal_config_respects_caller_owned_transaction(game):
 
 
 def test_set_fiscal_config_batch_respects_caller_owned_transaction(game):
-    db, state, content = game
+    db, _state, _content = game
     first_key = "官俸_base"
     second_key = "工程_base"
     first_before = _fiscal_config_value(db, first_key)
