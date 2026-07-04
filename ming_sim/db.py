@@ -8696,7 +8696,6 @@ class GameDB:
         target_kind: str | None = None,
         target_id: str | None = None,
         commit: bool = True,
-        apply_legacy_modifier: bool = True,
     ) -> int:
         """记一笔经济流水到 economy_ledger，同步更新 metrics[account]。
 
@@ -8706,14 +8705,13 @@ class GameDB:
         遗产修正：account 上若有 active 遗产百分比修正符，先按 apply_legacy_pct 放大/缩小 delta
         再落账。修正折进本笔流水，不另立账行。
         category=='局势遗产' 时不再二次修正（避免自乘，且当前已无该类调用）。
-        apply_legacy_modifier=False 仅给已经在上游按总账口径结算的程序路径使用。
         帝国修正只对收入（delta>0 正向流水）生效；支出（delta<0）按面值落账（issue #341）——
         即本路径仅以 delta>0 调 apply_legacy_pct（其 base>=0 ×(1+net/100) 分支）；
         apply_legacy_pct 自身的 base<0 ×(1-net/100) 分支由 region/army 等其它调用方使用，本路径不走。
         """
         if isinstance(delta, bool) or not isinstance(delta, int):
             raise TypeError("delta must be an integer")
-        if apply_legacy_modifier and category != "局势遗产":
+        if category != "局势遗产":
             net_pct = int(self.legacy_modifiers(state).get(account, 0) or 0)  # type: ignore[arg-type]
             if net_pct and delta > 0:
                 delta = self.apply_legacy_pct(int(delta), net_pct)
