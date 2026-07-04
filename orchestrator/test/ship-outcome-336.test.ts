@@ -339,7 +339,7 @@ describe("#336 shipOutcomeFromResult — completion-signal gate (mirrors the cmr
     if (o.kind === "malformed") expect(o.reason).toContain("sidecar");
   });
 
-  it("falls back to signaled ship stdout when the prepared outcome sidecar is blank", () => {
+  it("rejects a blank guarded ship sidecar instead of falling back to stdout", () => {
     const dir = mkdtempSync(join(tmpdir(), "ship-outcome-blank-"));
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "   \n", "utf8");
@@ -348,6 +348,16 @@ describe("#336 shipOutcomeFromResult — completion-signal gate (mirrors the cmr
       completionSignal: SHIP_COMPLETION_SIGNAL,
       stdout: '<ship>{"status": "pushed", "branch": "feat/fallback"}</ship>',
       outcomePath,
+    });
+
+    expect(o.kind).toBe("malformed");
+    if (o.kind === "malformed") expect(o.reason).toContain("sidecar");
+  });
+
+  it("falls back to signaled ship stdout only when no outcome sidecar path exists", () => {
+    const o = shipOutcomeFromResult({
+      completionSignal: SHIP_COMPLETION_SIGNAL,
+      stdout: '<ship>{"status": "pushed", "branch": "feat/fallback"}</ship>',
     });
 
     expect(o).toEqual({
