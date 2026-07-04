@@ -3543,6 +3543,7 @@ def test_shanxi_seed_stacks_frontier_pay_and_jin_vassal_dues(fresh_db):
     assert meta["primary_source"]["田赋折银两_年"] == pytest.approx(2118341.95)
     assert meta["primary_source"]["起运折银两_年"] == pytest.approx(828835.62)
     assert meta["primary_source"]["粟米原额石"] == pytest.approx(1722851.38)
+    assert set(meta["primary_source"]["fields_refined"]) >= {"官民田", "起运定额", "正赋应征"}
 
 
 def test_border_slice_raw_content_keeps_primary_source_anchors():
@@ -3552,6 +3553,8 @@ def test_border_slice_raw_content_keeps_primary_source_anchors():
     assert shanxi["st"]["官民田"] == pytest.approx(3680.13, abs=1e-2)
     assert "官民田" not in shanxi["_meta"]["provisional"]
     assert "起运定额" not in shanxi["_meta"]["provisional"]
+    assert "正赋应征" not in shanxi["_meta"]["provisional"]
+    assert set(shanxi["_meta"]["primary_source"]["fields_refined"]) >= {"官民田", "起运定额", "正赋应征"}
     assert shanxi["_meta"]["primary_source"]["田赋折银两_年"] == pytest.approx(2118341.95)
     assert shanxi["_meta"]["primary_source"]["起运米石"] == pytest.approx(640350)
 
@@ -3598,6 +3601,15 @@ def test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile(fres
     settle = _read_settle(fresh_db, "liaodong")
 
     assert settle["p"]["Due"]["军饷"] == pytest.approx(711391 / 10000 / 12)
+
+
+@pytest.mark.parametrize("bad_annual", [True, "711391", float("nan"), float("inf")])
+def test_primary_source_army_pay_due_rejects_dirty_annual_amount(fresh_db, bad_annual):
+    settle = _read_settle(fresh_db, "liaodong")
+    settle["_meta"]["primary_source"]["现额银两_年"] = bad_annual
+
+    with pytest.raises(ValueError, match="primary_source 现额银两_年 非法"):
+        fresh_db._derive_region_army_pay_due("liaodong", settle)
 
 
 JIANGNAN_CORE_EXPECTED = {
