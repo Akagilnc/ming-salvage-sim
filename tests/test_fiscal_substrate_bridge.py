@@ -6,7 +6,7 @@
 2. 桥——`GameDB.settle_province_tick(region_id, actions)` 读 settle.st/p → 跑 settle_tick →
    写回 new_st。**港口锁**：坏输入/守恒破 raise 时 FAIL tick 绝不落库（毒态不钉存档）。
 
-陕西种子 = 低省库 + 正赋15/月 + 辽饷2.5/月 + 逋赋0.45 + 边镇 Due；
+陕西种子 = 低省库 + 正赋5.0563/月 + 辽饷2.1969011325/月 + 逋赋0.45 + 边镇 Due；
 空 action 跑一 tick 应进入欠账螺旋。月末 shadow spine 按 controlled_by==ming 且有 settle
 动态推进，失地/无基座省自然出列。
 """
@@ -3487,25 +3487,34 @@ def test_shaanxi_seed_has_valid_settle_substrate(fresh_db):
 def test_shaanxi_seed_is_relabelled_to_historical_shadow_scale(fresh_db):
     settle = _read_settle(fresh_db)
     p = settle["p"]
-    assert p["正赋应征"] == pytest.approx(15)
-    assert p["三饷应征"] == pytest.approx(2.5)
+    assert p["正赋应征"] == pytest.approx(5.0563, abs=1e-4)
+    assert p["三饷应征"] == pytest.approx(2.1969011325)
     assert p["火耗率"] == pytest.approx(0.18)
     assert p["逋赋率"] == pytest.approx(0.45)
-    assert p["起运定额"] == pytest.approx(3.5)
+    assert p["起运定额"] == pytest.approx(2.1969011325)
     assert p["拨付gross"] == pytest.approx(4)
     assert p["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, "shaanxi"))
     assert {k: p["Due"][k] for k in ("官俸", "宗禄", "赈济")} == {"官俸": 3, "宗禄": 6, "赈济": 0}
     assert settle["st"]["省库库银"] == 0
+    assert settle["st"]["官民田"] == pytest.approx(2929.20151)
+    assert settle["st"]["隐田"] == pytest.approx(1536.6303, abs=1e-4)
 
     meta = settle["_meta"]
     assert "宗禄" in meta["provisional"]
-    assert "起运定额" in meta["provisional"]
-    assert "官民田" in meta["provisional"]
+    assert "起运定额" not in meta["provisional"]
+    assert "官民田" not in meta["provisional"]
     assert "隐田" in meta["provisional"]
     assert meta["levies"]["seeded"] == ["辽饷"]
     assert "剿饷" in meta["levies"]["not_seeded"]
     assert "练饷" in meta["levies"]["not_seeded"]
-    assert "#259 后由饷率通道动态接管" in meta["notes"]["起运定额"]
+    assert meta["辽饷九厘基线"] == pytest.approx(2.1969011325)
+    assert meta["正赋起运基线"] == pytest.approx(0)
+    assert "九厘" in meta["notes"]["辽饷九厘基线"]
+    assert "歲額，悉留本省" in meta["notes"]["正赋起运基线"]
+    primary = meta["primary_sources"]["万历会计录卷九陕西布政司田赋"]
+    assert primary["registered_land_raw"] == "田土官民共貳拾玖萬貳千玖百貳拾頃拾伍畝壹分零"
+    assert primary["regular_tax_raw"]["實徵麥石"] == pytest.approx(688647.2416)
+    assert primary["regular_tax_raw"]["實徵米石"] == pytest.approx(1044943.1241)
 
 
 def test_border_remainder_seeds_have_valid_settle_substrate(fresh_db):
@@ -3677,8 +3686,8 @@ def test_settle_province_tick_persists_shaanxi_historical_shadow_golden(fresh_db
     res = fresh_db.settle_province_tick("shaanxi", [])
     fresh_db.conn.commit()
     after = _read_settle(fresh_db)["st"]
-    assert after["C_地方截留"] == pytest.approx(1.7325, abs=1e-3)
-    assert after["民欠旧赋"] == pytest.approx(7.875, abs=1e-3)
+    assert after["C_地方截留"] == pytest.approx(0.7181, abs=1e-3)
+    assert after["民欠旧赋"] == pytest.approx(3.2639, abs=1e-3)
     assert after["军饷欠"] == pytest.approx(_province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6)
     # 落库逐键 == settle_tick 的 new_st（桥不篡改）
     for k, v in res.new_st.items():
@@ -3724,12 +3733,12 @@ def test_settle_province_tick_qingzhang_action(fresh_db):
         (json.dumps(fiscal, ensure_ascii=False),),
     )
     fresh_db.conn.commit()
-    # 带 action 的桥：清丈挖隐田 300 → 官民田 3050→3350、隐田 1600→1300（土地守恒）
+    # 带 action 的桥：清丈挖隐田 300 → 万历见额官民田 +300、隐田 -300（土地守恒）
     fresh_db.settle_province_tick("shaanxi", [{"type": "清丈", "cost": 2, "挖隐田": 300}])
     fresh_db.conn.commit()
     after = _read_settle(fresh_db)["st"]
-    assert abs(after["官民田"] - 3350) < 1e-3, f"官民田 {after['官民田']} ≠ 3350"
-    assert abs(after["隐田"] - 1300) < 1e-3, f"隐田 {after['隐田']} ≠ 1300"
+    assert abs(after["官民田"] - 3229.20151) < 1e-3, f"官民田 {after['官民田']} ≠ 3229.20151"
+    assert abs(after["隐田"] - 1236.6303) < 1e-3, f"隐田 {after['隐田']} ≠ 1236.6303"
 
 
 def test_settle_province_tick_port_lock_no_persist_on_raise(fresh_db):
@@ -3780,8 +3789,8 @@ def test_apply_fixed_period_flows_advances_shaanxi_substrate(fresh_game):
     after = _read_settle(db)["st"]
     assert after["军饷欠"] == pytest.approx(_province_pay_arrears(db, "shaanxi"), abs=1e-6)
     assert after["省库库银"] == pytest.approx(0, abs=1e-3)
-    assert after["C_地方截留"] == pytest.approx(1.7325, abs=1e-3)
-    assert after["民欠旧赋"] == pytest.approx(7.875, abs=1e-3)
+    assert after["C_地方截留"] == pytest.approx(0.7181, abs=1e-3)
+    assert after["民欠旧赋"] == pytest.approx(3.2639, abs=1e-3)
 
 
 def test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine(fresh_game):
@@ -4617,6 +4626,8 @@ def test_all_settle_substrate_provisional_meta_covers_virtual_fields(fresh_db):
         provisional = set(settle["_meta"].get("provisional", []))
         if p["正赋应征"] == 0 and p["起运定额"] == 0:
             required = {"军饷", "拨付gross", "军饷欠", "起运定额"}
+        elif region_id == "shaanxi":
+            required = {"宗禄", "隐田"}
         else:
             required = {"宗禄", "起运定额", "官民田", "隐田"}
         assert required <= provisional, f"{region_id} provisional 缺 {sorted(required - provisional)}"
