@@ -11,6 +11,7 @@
 动态推进，失地/无基座省自然出列。
 """
 import json
+import math
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
@@ -3367,27 +3368,27 @@ def test_region_loader_rejects_bad_settle_meta_defaults(monkeypatch, settle, def
 ZHONGYUAN_JINGSHI_GOLDEN = {
     "beizhili": {
         "省库库银": 0,
-        "C_地方截留": 2.352,
-        "民欠旧赋": 6.3,
-        "军饷欠": 12,
-        "官俸欠": 0.3,
-        "宗禄欠": 10,
+        "C_地方截留": 0.8624,
+        "民欠旧赋": 2.31,
+        "军饷欠": 0.81,
+        "官俸欠": 0,
+        "宗禄欠": 0,
     },
     "shandong": {
-        "省库库银": 0,
-        "C_地方截留": 2.184,
-        "民欠旧赋": 7.35,
-        "军饷欠": 2.85,
+        "省库库银": 3.605,
+        "C_地方截留": 2.2568,
+        "民欠旧赋": 7.595,
+        "军饷欠": 0,
         "官俸欠": 0,
         "宗禄欠": 0,
     },
     "henan": {
         "省库库银": 0,
-        "C_地方截留": 2.16,
-        "民欠旧赋": 8,
+        "C_地方截留": 2.31768,
+        "民欠旧赋": 8.584,
         "军饷欠": 0,
         "官俸欠": 0,
-        "宗禄欠": 31,
+        "宗禄欠": 28.224,
     },
 }
 
@@ -3407,7 +3408,7 @@ ZHONGYUAN_JINGSHI_PRIMARY_SOURCE = {
         "settle_land": 4900,
         "huang_tian": 0,
         "正赋应征": 18,
-        "三饷应征": 3,
+        "三饷应征": 3.7,
         "起运定额": 4.5,
         "verified": set(),
     },
@@ -3416,7 +3417,7 @@ ZHONGYUAN_JINGSHI_PRIMARY_SOURCE = {
         "settle_land": 7415.8,
         "huang_tian": 0,
         "正赋应征": 15.9,
-        "三饷应征": 6.7,
+        "三饷应征": 5.56,
         "起运定额": 10.1,
         "verified": {"官民田", "正赋应征", "起运定额"},
     },
@@ -3446,12 +3447,21 @@ def test_zhongyuan_jingshi_primary_source_refinement(region_id, expected, fresh_
         assert field not in provisional
 
     if region_id == "shandong":
-        assert {"官民田", "起运定额"} <= provisional
+        assert {"官民田", "正赋应征", "起运定额"} <= provisional
         assert "卷六《山东布政司田赋》" in meta["notes"]["山东卷六缺口"]
+        assert "正赋应征" in meta["notes"]["山东卷六缺口"]
     else:
         source_notes = meta["notes"]["一手核"]
         assert "《万历会计录》" in source_notes
         assert "本色" in source_notes
+        assert "扫描图核验" in meta["notes"]
+        assert "识典扫描图" in meta["notes"]["扫描图核验"]
+
+    if region_id in {"beizhili", "shandong", "henan"}:
+        assert p["三饷应征"] == pytest.approx(
+            st["官民田"] * 0.009 / 12,
+            abs=0.05,
+        )
 
 
 SOUTH_SOUTHWEST_SEEDS = {
@@ -3732,6 +3742,14 @@ def test_zhongyuan_jingshi_settle_province_tick_golden(region_id, expect, fresh_
     after = _read_settle(fresh_db, region_id)["st"]
 
     assert after["军饷欠"] == pytest.approx(_province_pay_arrears(fresh_db, region_id), abs=1e-6)
+    for key, value in expect.items():
+        assert key in after, f"{region_id} golden missing {key}"
+        assert math.isclose(
+            after[key],
+            value,
+            rel_tol=0,
+            abs_tol=1e-3,
+        ), f"{region_id} {key}: {after[key]} != {value}"
     for key, value in res.new_st.items():
         if key == "军饷欠":
             continue
