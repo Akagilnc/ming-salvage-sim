@@ -5095,6 +5095,7 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
         assert source["conversion"]["grain_silver_liang_per_stone"] == 0.25
         effective_rate = source["conversion"]["effective_silver_liang_per_stone"]
         raw = source["raw"]
+        scope_exception = source.get("scope_exception")
         assert raw["官民田_顷"] == pytest.approx(exp["raw_land_qing"], abs=1e-4)
         assert raw["正赋本色_石"] == pytest.approx(exp["raw_grain_stone"], abs=1e-4)
         assert raw["正赋起运本色_石"] == pytest.approx(exp["raw_transport_stone"], abs=1e-4)
@@ -5113,8 +5114,14 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
             assert "起运定额" in meta.get("provisional", [])
         if region_id == "nanzhili":
             assert "正赋应征" in meta.get("provisional", [])
+            assert scope_exception["issue"] == "#272"
+            assert "部分完成" in scope_exception["owner_scope"]
+            assert set(scope_exception["fields"]) == {"正赋应征", "起运定额"}
+            assert "官方折色直推" in scope_exception["fields"]["正赋应征"]
+            assert "全境起运汇总" in scope_exception["fields"]["起运定额"]
         else:
             assert "正赋应征" not in meta.get("provisional", [])
+            assert scope_exception is None
         assert "隐田" in meta.get("provisional", [])
         assert math.isclose(
             settle["p"]["正赋应征"],

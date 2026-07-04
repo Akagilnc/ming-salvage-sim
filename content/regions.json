@@ -180,6 +180,14 @@
               "checked_fields": [
                 "官民田"
               ],
+              "scope_exception": {
+                "issue": "#272",
+                "owner_scope": "Owner-authored #272 Scope shape permits partial field completion across provinces/fields（部分完成）when the unresolved gap is documented; 南直隶 may keep these fields provisional until a source-derived reconstruction is done.",
+                "fields": {
+                  "正赋应征": "卷十六已核正赋本色石数，但当前 30 万两/月仍用江南实际折色负担的有效银率折算，未逐项完成官方折色直推；按 #272 部分完成口径继续 provisional。",
+                  "起运定额": "卷十六全境总项未直接列全境起运汇总，当前正赋起运本色仍为总正赋石数约七成估算；按 #272 部分完成口径继续 provisional。"
+                }
+              },
               "conversion": {
                 "grain_silver_liang_per_stone": 0.25,
                 "effective_silver_liang_per_stone": 0.598816,
