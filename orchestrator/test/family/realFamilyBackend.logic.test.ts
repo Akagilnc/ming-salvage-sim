@@ -913,6 +913,58 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
+  it("treats a guarded cmr sidecar as completion even when Sandcastle omits the completion signal", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-sidecar-complete-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        converged: false,
+        reason: "same-module budget summary label mismatch remains",
+        successfulLegs: ["opus", "gpt-5.5"],
+        skippedLegs: [{ slug: "agy", reason: "no active conversation" }],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        findings: [
+          {
+            severity: "low",
+            category: "correctness",
+            claim_quote: '"中央军饷", "太仓亏空", "宗室禄米", "官俸", "工部",',
+            location: "ming_sim/db.py:3985",
+            suggested_fix: "Use 百官俸禄 as the matched budget item name.",
+            action: "fix_now",
+            disposition: {
+              kind: "same_module",
+              reason: "The exact-name match is in the changed budget summary consumer.",
+            },
+          },
+        ],
+        evidencePaths: ["cmr/step6-correctness/review-summary.json"],
+      }) + "\n",
+      "utf8",
+    );
+
+    const outcome = cmrOutcomeFromResult({
+      completionSignal: undefined,
+      stdout:
+        "CMR correctness gate completed through the outcome guard.\n" +
+        "Reached max iterations (1).\n",
+      outcomePath,
+      cmrReviewLegs: [
+        { family: "claude", slug: "opus" },
+        { family: "codex", slug: "gpt-5.5" },
+        { family: "gemini", slug: "agy" },
+      ],
+    });
+
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: false,
+      reason: "same-module budget summary label mismatch remains",
+      findings: [expect.objectContaining({ location: "ming_sim/db.py:3985" })],
+    });
+  });
+
   it("parses cmr sidecar payloads directly when free-form text contains a cmr tag delimiter", () => {
     const dir = mkdtempSync(join(tmpdir(), "cmr-outcome-delimiter-"));
     const outcomePath = join(dir, "outcome.json");
