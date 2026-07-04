@@ -1796,15 +1796,33 @@ class GameDB:
                 or not isinstance(settle.get("p"), dict):
             raise ValueError(f"region {region_id!r} 无 settle 财政基座（缺 st/p）")
         pay_rows: List[Dict[str, float | str]] = []
+        standalone_pay_component: Optional[Dict[str, float]] = None
         if self.is_army_pay_source_cutover_enabled():
             pay_rows = self._derive_region_army_pay_due(region_id, settle)
+            if pay_rows:
+                primary_source_due = self._primary_source_army_pay_due(settle)
+                if self._has_standalone_army_pay_funnel(settle, primary_source_due):
+                    row_due_total = sum(float(row["due"]) for row in pay_rows)
+                    row_arrears_total = sum(float(row["province_pay_arrears"]) for row in pay_rows)
+                    standalone_pay_component = {
+                        "due": self._standalone_army_pay_due_component(
+                            settle,
+                            row_due_total,
+                            primary_source_due,
+                        ),
+                        "province_pay_arrears": self._standalone_army_pay_arrears_component(
+                            settle,
+                            row_arrears_total,
+                            primary_source_due,
+                        ),
+                    }
         tick_p = settle["p"]
         if p_overrides:
             tick_p = dict(tick_p)
             tick_p.update(p_overrides)
         result = settle_tick(settle["st"], tick_p, actions)  # raise→下方不执行（港口锁）
         if pay_rows:
-            self._apply_region_army_pay_tick(pay_rows, result)
+            self._apply_region_army_pay_tick(pay_rows, result, standalone_pay_component)
         settle["st"] = result.new_st
         if self.is_army_pay_source_cutover_enabled():
             self._refresh_standalone_army_pay_arrears_component(region_id, settle)
@@ -3002,7 +3020,12 @@ class GameDB:
             (json.dumps(fiscal, ensure_ascii=False), region_id),
         )
 
-    def _apply_region_army_pay_tick(self, pay_rows: List[Dict[str, float | str]], result: Any) -> None:
+    def _apply_region_army_pay_tick(
+        self,
+        pay_rows: List[Dict[str, float | str]],
+        result: Any,
+        standalone_pay_component: Optional[Dict[str, float]] = None,
+    ) -> None:
         if not pay_rows:
             return
         from ming_sim.flows import army_pay_morale_delta
@@ -3012,6 +3035,16 @@ class GameDB:
         repaid = float((breakdown.get("Repaid") or {}).get("军饷欠", 0) or 0)
         action_paid = float((breakdown.get("action还") or {}).get("军饷欠", 0) or 0)
         balances = {str(row["id"]): float(row["province_pay_arrears"]) for row in pay_rows}
+        due_by_component = {str(row["id"]): float(row["due"]) for row in pay_rows}
+        standalone_id = "__standalone_military_pay_funnel__"
+        if standalone_pay_component is not None:
+            standalone_due = float(standalone_pay_component.get("due", 0.0) or 0.0)
+            standalone_arrears = float(
+                standalone_pay_component.get("province_pay_arrears", 0.0) or 0.0
+            )
+            if standalone_due > 0 or standalone_arrears > 0:
+                balances[standalone_id] = standalone_arrears
+                due_by_component[standalone_id] = standalone_due
         action_repaid_by_army = {str(row["id"]): 0.0 for row in pay_rows}
         new_debt_by_army = {str(row["id"]): 0.0 for row in pay_rows}
         surplus_repaid_by_army = {str(row["id"]): 0.0 for row in pay_rows}
@@ -3022,23 +3055,25 @@ class GameDB:
                 paid = min(action_paid, basis)
                 for army_id, bal in list(balances.items()):
                     share = paid * bal / basis
-                    action_repaid_by_army[army_id] = share
+                    if army_id in action_repaid_by_army:
+                        action_repaid_by_army[army_id] = share
                     balances[army_id] = max(0.0, bal - share)
-        due_total = sum(float(row["due"]) for row in pay_rows)
+        due_total = sum(due_by_component.values())
         if new_debt > 0 and due_total > 0:
-            for row in pay_rows:
-                army_id = str(row["id"])
-                shortfall = new_debt * float(row["due"]) / due_total
-                province_shortfalls[army_id] = shortfall
-                new_debt_by_army[army_id] = shortfall
-                balances[army_id] += shortfall
+            for component_id, due in due_by_component.items():
+                shortfall = new_debt * due / due_total
+                if component_id in province_shortfalls:
+                    province_shortfalls[component_id] = shortfall
+                    new_debt_by_army[component_id] = shortfall
+                balances[component_id] += shortfall
         if repaid > 0:
             basis = sum(balances.values())
             if basis > 0:
                 paid = min(repaid, basis)
                 for army_id, bal in list(balances.items()):
                     share = paid * bal / basis
-                    surplus_repaid_by_army[army_id] = share
+                    if army_id in surplus_repaid_by_army:
+                        surplus_repaid_by_army[army_id] = share
                     balances[army_id] = max(0.0, bal - share)
         state_row = self.conn.execute(
             "SELECT turn, year, period FROM game_state WHERE id = 1"
