@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -474,13 +474,11 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     }
   });
 
-  it("passes the runner-owned outcome sidecar to fresh agent workers and excludes it from git", async () => {
+  it("does not expose unsupported outcome sidecars to fresh coder/reviewer workers", async () => {
     const worktreePath = mkdtempSync(join(tmpdir(), "dispatch-outcome-worktree-"));
     const stateDir = mkdtempSync(join(tmpdir(), "dispatch-outcome-state-"));
     try {
       execFileSync("git", ["init"], { cwd: worktreePath, stdio: "ignore" });
-      const staleWorkerSidecar = join(worktreePath, ".orchestrator-outcome.json");
-      mkdirSync(staleWorkerSidecar);
       const be = new LegacyBackend();
       const worktree = { ...be.worktree, path: worktreePath };
 
@@ -489,17 +487,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
         stateDir,
       });
 
-      expect(be.runStepOutcomeLandings).toEqual([
-        {
-          path: join(stateDir, "worker-outcome-S2", "outcome.json"),
-          sandboxPath: "/home/agent/workspace/.orchestrator-outcome.json",
-        },
-      ]);
-      expect(readFileSync(join(stateDir, "worker-outcome-S2", "outcome.json"), "utf8")).toBe("");
-      expect(readFileSync(join(worktreePath, ".git", "info", "exclude"), "utf8")).toContain(
-        ".orchestrator-outcome.json",
-      );
-      expect(existsSync(staleWorkerSidecar)).toBe(false);
+      expect(be.runStepOutcomeLandings).toEqual([undefined]);
     } finally {
       rmSync(worktreePath, { recursive: true, force: true });
       rmSync(stateDir, { recursive: true, force: true });
@@ -520,12 +508,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       });
 
       expect(be.resumeCalls).toEqual(["sess-abc"]);
-      expect(be.resumeOutcomeLandings).toEqual([
-        {
-          path: join(stateDir, "worker-outcome-S5", "outcome.json"),
-          sandboxPath: "/home/agent/workspace/.orchestrator-outcome.json",
-        },
-      ]);
+      expect(be.resumeOutcomeLandings).toEqual([undefined]);
     } finally {
       rmSync(worktreePath, { recursive: true, force: true });
       rmSync(stateDir, { recursive: true, force: true });
