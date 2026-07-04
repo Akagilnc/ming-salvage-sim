@@ -57,6 +57,28 @@ _FISCAL_ENGINE_KEY = "__fiscal_engine"
 _FISCAL_ENGINE_LEGACY = 0
 _FISCAL_ENGINE_SUBSTRATE_HUB = 1
 _CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY = "central_army_pay_arrears"
+_STRUCTURAL_FISCAL_MINIMUMS = {
+    "central_taicang_sink_loss_rate": 1,
+    "central_jingyun_sink_loss_rate": 1,
+}
+_CENTRAL_LOSS_RATE_PAIRS = {
+    "central_taicang_human_loss_rate": (
+        "central_taicang_human_loss_rate",
+        "central_taicang_sink_loss_rate",
+    ),
+    "central_taicang_sink_loss_rate": (
+        "central_taicang_human_loss_rate",
+        "central_taicang_sink_loss_rate",
+    ),
+    "central_jingyun_human_loss_rate": (
+        "central_jingyun_human_loss_rate",
+        "central_jingyun_sink_loss_rate",
+    ),
+    "central_jingyun_sink_loss_rate": (
+        "central_jingyun_human_loss_rate",
+        "central_jingyun_sink_loss_rate",
+    ),
+}
 
 
 # #287 S1 seed values: province share : central share. The region is the pay-source
@@ -1406,15 +1428,16 @@ class GameDB:
         """从 content/fiscal_config.json（self.content.fiscal_items）seed 财政科目目录。
 
         base/rate 单位为【月度】万两/%。科目目录与元数据全走 JSON 设定（铁律：设定走 JSON）；
-        加新税源只改 JSON 加两行（base+rate）并升 schema_version，零 Python。
+        新档加税源只改 JSON；若老档也要补新 key，必须登记对应 schema_version 的差量迁移。
 
         ── 版本迁移策略（铁律：fiscal_config 只在建库时整体 seed 一次）──
         每个库带 `__schema_version`。本函数按它与 JSON schema_version 比对，分三种走法：
 
         - `cur == 0`（全新库，无版本行）：整体 seed JSON 全表 → 版本号置 JSON 版。仅此一次。
-        - `cur < json`（老档升版）：逐版跑 `_FISCAL_MIGRATIONS[cur+1 .. json]` 的差量动作，
-          每版只动那版真正变的 key，**未声明的 key 一律不碰**（玩家削减/裁撤全保留），
-          跑完把版本号推到该版。默认迁移＝只 INSERT 老档缺的 key（不覆盖既有值、不复活已删项）。
+        - `cur < json`（老档升版）：逐版跑 `_FISCAL_MIGRATIONS[cur+1 .. json]` 的差量动作。
+          新 schema 若要给老档补 key，必须在对应版本登记；未声明的 key 一律不碰
+          （玩家削减/裁撤全保留）。未登记版本不再按当前 JSON 全表补缺；新 schema 正常迁移
+          必须登记显式版本步。
         - `cur >= json`：**啥都不做**。已是最新，玩家状态神圣。
 
         ⇒ 玩家裁撤的科目读档后保持删除（不再被旧 INSERT OR IGNORE 复活）。
@@ -1437,17 +1460,26 @@ class GameDB:
         cols = "(key, value, kind, note, budget_role, account, direction, display, sort_order)"
 
         def _seed_missing() -> None:
-            """老档升版的默认迁移：只补 JSON 有、库里没有的 key（不覆盖既有值、不复活已删项）。"""
+            """未登记版本步不补当前 JSON 全表；新增 key 必须走显式版本迁移。"""
+            return None
+
+        def _seed_keys(keys: "tuple[str, ...]") -> None:
+            wanted = set(keys)
             self.conn.executemany(
                 f"INSERT OR IGNORE INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [_meta(rec) for rec in rows],
+                [_meta(rec) for rec in rows if str(rec["key"]) in wanted],
             )
 
         # 每版迁移：从 N-1 → N，只动那版真正变的东西。键＝目标版本号 N。
-        # 不在表里的版本步走默认 _seed_missing（只补缺 key）。将来要改某 key 默认 / 删某 key /
-        # 加新 key，就在这里登记一条 lambda，只动那一项，别动其它——这样玩家改过的全保住。
+        # 将来要改某 key 默认 / 删某 key / 加新 key，就在这里登记一条 lambda，只动那一项，
+        # 别动其它——这样玩家改过的全保住。未登记版本只保留旧兼容兜底，不作为正常迁移路径。
         _FISCAL_MIGRATIONS: "Dict[int, Any]" = {
-            # 8: lambda: self._add_fiscal_key("关税_base", ...),   # 例：将来加新税
+            8: lambda: _seed_keys((
+                "central_taicang_human_loss_rate",
+                "central_taicang_sink_loss_rate",
+                "central_jingyun_human_loss_rate",
+                "central_jingyun_sink_loss_rate",
+            )),
         }
 
         cur_ver_row = self.conn.execute(
@@ -1506,11 +1538,85 @@ class GameDB:
         ).fetchall()
         return {str(r["key"]): int(r["value"]) for r in rows}
 
+    def fiscal_config_minimum_value(self, key: str) -> Optional[int]:
+        raw = str(key or "").strip()
+        if raw in _STRUCTURAL_FISCAL_MINIMUMS:
+            return _STRUCTURAL_FISCAL_MINIMUMS[raw]
+        stem = self._stem_of(raw)
+        if not stem:
+            return None
+        return (
+            _STRUCTURAL_FISCAL_MINIMUMS.get(f"{stem}_base")
+            or _STRUCTURAL_FISCAL_MINIMUMS.get(f"{stem}_rate")
+        )
+
+    def is_structural_fiscal_config_key(self, key: str) -> bool:
+        return self.fiscal_config_minimum_value(key) is not None
+
+    def fiscal_config_loss_rate_pair(self, key: str) -> Optional[Tuple[str, str]]:
+        raw = str(key or "").strip()
+        pair = _CENTRAL_LOSS_RATE_PAIRS.get(raw)
+        if pair is not None:
+            return pair
+        stem = self._stem_of(raw)
+        if not stem:
+            return None
+        return (
+            _CENTRAL_LOSS_RATE_PAIRS.get(f"{stem}_base")
+            or _CENTRAL_LOSS_RATE_PAIRS.get(f"{stem}_rate")
+        )
+
+    def validate_fiscal_config_values(self, values: Dict[str, int]) -> None:
+        if not values:
+            return
+        cfg = self.get_fiscal_config()
+        overlay = dict(cfg)
+        normalized: Dict[str, int] = {}
+        for raw_key, raw_value in values.items():
+            key = str(raw_key or "").strip()
+            value = int(raw_value)
+            minimum = self.fiscal_config_minimum_value(key)
+            if minimum is not None and value < minimum:
+                raise ValueError(f"fiscal_config.{key} 不得低于结构地板 {minimum}")
+            pair = _CENTRAL_LOSS_RATE_PAIRS.get(key)
+            if pair is not None and (value < 0 or value > 100):
+                raise ValueError(f"fiscal_config.{key} 须在 0..100")
+            normalized[key] = value
+            overlay[key] = value
+
+        checked_pairs = set()
+        for key in normalized:
+            pair = _CENTRAL_LOSS_RATE_PAIRS.get(key)
+            if pair is None or pair in checked_pairs:
+                continue
+            checked_pairs.add(pair)
+            human_key, sink_key = pair
+            human = int(overlay.get(human_key, 0) or 0)
+            sink = int(overlay.get(sink_key, 0) or 0)
+            if human + sink > 100:
+                raise ValueError(f"{human_key}+{sink_key} 不得超过 100%")
+
+    def validate_fiscal_config_value(self, key: str, value: int) -> None:
+        self.validate_fiscal_config_values({key: value})
+
     def set_fiscal_config(self, key: str, value: int, commit: bool = True) -> None:
+        owns_transaction = self.owns_transaction() if commit else False
+        self.validate_fiscal_config_value(key, value)
         self.conn.execute(
             "UPDATE fiscal_config SET value = ? WHERE key = ?", (value, key)
         )
-        if commit:
+        if commit and owns_transaction:
+            self.conn.commit()
+
+    def set_fiscal_config_batch(self, values: Dict[str, int], commit: bool = True) -> None:
+        owns_transaction = self.owns_transaction() if commit else False
+        normalized = {str(k or "").strip(): int(v) for k, v in values.items()}
+        self.validate_fiscal_config_values(normalized)
+        self.conn.executemany(
+            "UPDATE fiscal_config SET value = ? WHERE key = ?",
+            [(value, key) for key, value in normalized.items()],
+        )
+        if commit and owns_transaction:
             self.conn.commit()
 
     def create_fiscal_item(
@@ -1749,6 +1855,13 @@ class GameDB:
             return None
         base_key = f"{stem}_base"
         rate_key = f"{stem}_rate"
+        if (
+            self.fiscal_config_loss_rate_pair(base_key) is not None
+            or self.fiscal_config_loss_rate_pair(rate_key) is not None
+        ):
+            return None
+        if base_key in _STRUCTURAL_FISCAL_MINIMUMS or rate_key in _STRUCTURAL_FISCAL_MINIMUMS:
+            return None
         # 存在性查 base 或 rate 任一——田赋只有 田赋_rate（无 base），但仍是可裁撤的 dynamic 项。
         exists = self.conn.execute(
             "SELECT 1 FROM fiscal_config WHERE key IN (?, ?)", (base_key, rate_key)
@@ -3899,13 +4012,39 @@ class GameDB:
         def _amt(acc: str, direction: str, name: str) -> int:
             return sum(int(it["amount"]) for it in budget[acc][direction] if it["name"] == name)
 
+        def _parts(acc: str, direction: str, names: tuple[str, ...]) -> str:
+            present = [name for name in names if _amt(acc, direction, name)]
+            return "+".join(present) if present else "无"
+
         gk_in, gk_out = _sum("国库", "income"), _sum("国库", "expense")
         nk_in, nk_out = _sum("内库", "income"), _sum("内库", "expense")
+        gk_income_names = _parts(
+            "国库", "income",
+            ("起运", "田赋辽饷盐商", "盐税", "商税"),
+        )
+        if self.is_substrate_hub_fiscal_engine_enabled():
+            expense_present = [
+                "边饷hub" if _amt("国库", "expense", "各军军饷") else "",
+                *(
+                    name for name in (
+                        "中央军饷", "太仓亏空", "宗室禄米", "百官俸禄", "工部",
+                        "赈灾备用", "建筑维护",
+                    )
+                    if _amt("国库", "expense", name)
+                ),
+            ]
+            gk_expense_names = "+".join(name for name in expense_present if name) or "无"
+        else:
+            gk_expense_names = _parts(
+                "国库", "expense",
+                ("各军军饷", "宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护"),
+            )
         return (
             f"{TURN_UNIT}度预算基准：国库入{format_money(gk_in)}"
-            f"（田赋+辽饷+盐税+商税+建筑产出{format_money(_amt('国库', 'income', '建筑产出'))}）"
+            f"（{gk_income_names}；建筑产出{format_money(_amt('国库', 'income', '建筑产出'))}）"
             f"出{format_money(gk_out)}"
-            f"（军饷{format_money(_amt('国库', 'expense', '各军军饷'))}+宗室+官俸+补给+"
+            f"（{gk_expense_names}；军饷"
+            f"{format_money(_amt('国库', 'expense', '各军军饷') + _amt('国库', 'expense', '边饷hub'))}+"
             f"建筑维护{format_money(_amt('国库', 'expense', '建筑维护'))}）"
             f"净{format_money_delta(gk_in - gk_out)}；"
             f"内库入{format_money(nk_in)}"
