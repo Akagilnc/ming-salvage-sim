@@ -33,7 +33,7 @@
 1. `tools.propose_appointment()` → 返回 `__pending_appointment__<json>`
 2. `session.chat()` 截获哨兵串 → 调 `_apply_appointment(payload, character)`
 3. `_apply_appointment` → 调 `apply_appointment(db, state, content, registry, data)`
-4. `apply_appointment()` 建档入库 + 注册 Agent，**本回合即可召见** 〔此时点已被 0055 修订：任免属经外廷受判类、效果改为结算内判决后落，见 0055〕
+4. `apply_appointment()` 建档入库 + 注册 Agent，**本回合即可召见** 〔此时点已被 ADR 0055 修订：任免属经外廷受判类、效果改为结算内判决后落，见 ADR 0055〕
 
 **payload 字段**：
 ```json
