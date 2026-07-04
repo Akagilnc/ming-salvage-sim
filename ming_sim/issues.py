@@ -6932,6 +6932,13 @@ def apply_score_extraction(
                 "category": "invalid_enum", "item": remove,
             })
             continue
+        if db.fiscal_config_loss_rate_pair(key) is not None:
+            applied_fiscal_removes.append({
+                "rejected": True,
+                "reason": f"裁撤目标「{key}」是中央损耗率成对配置，不可裁撤。",
+                "category": "invalid_enum", "item": remove,
+            })
+            continue
         if db.is_structural_fiscal_config_key(key):
             applied_fiscal_removes.append({
                 "rejected": True,

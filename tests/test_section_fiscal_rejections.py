@@ -103,6 +103,23 @@ def test_remove_structural_sink_loss_rate_rejected(game):
     assert db.get_fiscal_config()[key] == before
 
 
+def test_remove_central_human_loss_rate_rejected_as_loss_pair(game):
+    """中央人为损耗率虽无最低地板，也属于成对损耗率，不可被 fiscal_removes 裁撤。"""
+    db, state, content = game
+    turn = state.turn
+    key = "central_taicang_human_loss_rate"
+    before = db.get_fiscal_config()[key]
+
+    run_settle(db, state, content, {
+        "fiscal_removes": [{"key": key, "reason": "试图裁撤人为损耗"}],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "fiscal_removes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert db.get_fiscal_config()[key] == before
+
+
 # ---- fiscal_creates：重复 key / 非法枚举 / 脏 init_value ----
 
 def test_create_duplicate_key_rejected_good_create_lands(game):
