@@ -39,7 +39,7 @@ single JSON object, and print the completion signal on its own line.
 Success:
 
 ```text
-<coder>{"committed": true, "commitsAdded": 1, "repairEvidence": {"findingScope": {"identityKeys": ["<fixed-finding-identity-key>"], "locations": ["<fixed-location-or-file>"]}, "changedFiles": ["<file-you-changed>"], "tests": ["<test command you ran>"], "patchSummary": "<short summary of the scoped repair>"}}</coder>
+<coder>{"committed": true, "commitsAdded": 1, "repairEvidence": {"findingScope": {"identityKeys": ["<fixed-finding-identity-key>"], "locations": ["<fixed-location-or-file>"]}, "changedFiles": ["<file-you-changed>"], "tests": ["<test command you ran>"], "sameClassBugScan": "<same-class bug scan command or artifact>", "introducedRegressionCheck": "<introduced-regression check command or artifact>", "patchSummary": "<short summary of the scoped repair>"}}</coder>
 CODER_STEP_COMPLETE
 ```
 
@@ -53,6 +53,8 @@ identity keys and locations from the fix-findings JSON when available:
 - `changedFiles`: files actually changed by this fix.
 - `tests` / `fixtures` / `patchSummary`: concise evidence for what changed and
   how it was checked.
+- `sameClassBugScan`: command/log/artifact showing the required same-class bug scan.
+- `introducedRegressionCheck`: command/log/artifact showing the required regression check.
 
 Escalation:
 

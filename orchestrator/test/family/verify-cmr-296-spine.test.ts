@@ -20,10 +20,12 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { findingIdentityKey } from "../../src/findings.js";
 import { recordFamilyEscalated } from "../../src/family/ledger.js";
 import { runFamily } from "../../src/family/runner.js";
 import type {
   Backend,
+  Finding,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
@@ -259,6 +261,430 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
     // Observably verify_failed at the final phase.
     expect(result.status).toBe("verify_failed");
     expect(result.failedPhase).toBe("final");
+  });
+
+  it("resumes after a committed CMR coder-fix with protected finding keys", async () => {
+    const priorKey = "completeness|orchestrator/src/x.ts:12|restart final barrier";
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: (req) => ({
+        converged: true,
+        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        ...(req.priorCmrFindingIdentityKeys !== undefined
+          ? {
+              claimedFixedFindingIdentityKeys: [priorKey],
+              priorFindingDispositions: [
+                {
+                  identityKey: priorKey,
+                  status: "verified-closed" as const,
+                  evidence: "focused regression now passes after coder-fix commit",
+                },
+              ],
+            }
+          : {}),
+      }),
+    });
+    backend.liveHead = "head-after-cmr-fix";
+    backend.ledger.push(
+      {
+        childIssue: 294,
+        status: "merged",
+        childHead: "c294",
+        familyHeadAfter: "head-before-cmr-fix",
+      },
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadBefore: "head-before-cmr-fix",
+        familyHeadAfter: "head-after-cmr-fix",
+        blockingFindingIdentityKeys: [priorKey],
+      } as FamilyLedgerEntry,
+    );
+
+    const result = await runFamily({
+      epic: epicWith(294),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+      reconcileGit: {
+        async liveFamilyHead() {
+          return "head-after-cmr-fix";
+        },
+        async familyBaseStartHead() {
+          return "head-before-cmr-fix";
+        },
+        async childHeadExists() {
+          return { exists: true, childHead: "c294" };
+        },
+        async isAncestor() {
+          return true;
+        },
+      },
+    });
+
+    expect(result.status).toBe("success");
+    expect(backend.cmrCalls[0]).toMatchObject({
+      cmrPass: "completeness",
+      priorCmrFindingIdentityKeys: [priorKey],
+    });
+  });
+
+  it("resumes after multiple committed CMR coder-fixes with all unclosed protected finding keys", async () => {
+    const firstKey = "completeness|orchestrator/src/a.ts:12|first blocker";
+    const secondKey = "completeness|orchestrator/src/b.ts:34|second blocker";
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: (req) => ({
+        converged: true,
+        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        ...(req.priorCmrFindingIdentityKeys !== undefined
+          ? {
+              claimedFixedFindingIdentityKeys: [firstKey, secondKey],
+              priorFindingDispositions: [
+                {
+                  identityKey: firstKey,
+                  status: "verified-closed" as const,
+                  evidence: "first CMR blocker remained protected across resume",
+                },
+                {
+                  identityKey: secondKey,
+                  status: "verified-closed" as const,
+                  evidence: "second CMR blocker remained protected across resume",
+                },
+              ],
+            }
+          : {}),
+      }),
+    });
+    backend.liveHead = "head-after-second-cmr-fix";
+    backend.ledger.push(
+      {
+        childIssue: 294,
+        status: "merged",
+        childHead: "c294",
+        familyHeadAfter: "head-before-cmr-fix",
+      },
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadBefore: "head-before-cmr-fix",
+        familyHeadAfter: "head-after-first-cmr-fix",
+        blockingFindingIdentityKeys: [firstKey],
+      } as FamilyLedgerEntry,
+      {
+        status: "cmr_reviewed",
+        event: "cmr_reviewed",
+        phase: "final",
+        cmrPass: "completeness",
+        reason: "fresh CMR found a second blocker",
+        familyHeadAfter: "head-after-first-cmr-fix",
+        cmrFindingClassification: {
+          blocking: [],
+          deferred: [],
+          dispositions: [],
+          moduleContext: {
+            currentModules: [],
+            childModules: [],
+            undevelopedModules: [],
+          },
+          results: [
+            {
+              identityKey: secondKey,
+              classification: "same_module_still_red",
+              attribution: { method: "family_module" },
+              reason: "second same-module family CMR blocker",
+            },
+          ],
+        },
+      } as FamilyLedgerEntry,
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadBefore: "head-after-first-cmr-fix",
+        familyHeadAfter: "head-after-second-cmr-fix",
+        blockingFindingIdentityKeys: [secondKey],
+      } as FamilyLedgerEntry,
+    );
+
+    const result = await runFamily({
+      epic: epicWith(294),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+      reconcileGit: {
+        async liveFamilyHead() {
+          return "head-after-second-cmr-fix";
+        },
+        async familyBaseStartHead() {
+          return "head-before-cmr-fix";
+        },
+        async childHeadExists() {
+          return { exists: true, childHead: "c294" };
+        },
+        async isAncestor() {
+          return true;
+        },
+      },
+    });
+
+    expect(result.status).toBe("success");
+    expect(backend.cmrCalls[0]).toMatchObject({
+      cmrPass: "completeness",
+      priorCmrFindingIdentityKeys: [firstKey, secondKey],
+    });
+  });
+
+  it("resumes after a CMR coder-fix commit crash window with protected finding keys", async () => {
+    const priorFinding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "family CMR coder-fix must restart the final barrier",
+      location: "orchestrator/src/family/verifyCmr.ts:runCmrCoderFix",
+      suggested_fix: "restart final verify and pass the protected prior key",
+      action: "fix_now",
+    };
+    const priorKey = findingIdentityKey(priorFinding);
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: (req) => ({
+        converged: true,
+        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        ...(req.priorCmrFindingIdentityKeys !== undefined
+          ? {
+              claimedFixedFindingIdentityKeys: [priorKey],
+              priorFindingDispositions: [
+                {
+                  identityKey: priorKey,
+                  status: "verified-closed" as const,
+                  evidence: "resume protected the coder-fix finding key",
+                },
+              ],
+            }
+          : {}),
+      }),
+    });
+    backend.liveHead = "head-after-cmr-fix";
+    backend.ledger.push(
+      {
+        childIssue: 294,
+        status: "merged",
+        childHead: "c294",
+        familyHeadAfter: "head-before-cmr-fix",
+      },
+      {
+        status: "cmr_reviewed",
+        event: "cmr_reviewed",
+        phase: "final",
+        cmrPass: "completeness",
+        reason: "blocking family CMR finding requires coder-fix",
+        familyHeadAfter: "head-before-cmr-fix",
+        cmrFindingClassification: {
+          blocking: [priorFinding],
+          deferred: [],
+          dispositions: [],
+          results: [
+            {
+              identityKey: priorKey,
+              classification: "same_module_still_red",
+              attribution: { method: "family_module" },
+              reason: "same-module family CMR blocker",
+            },
+          ],
+          moduleContext: {
+            currentModules: [],
+            childModules: [],
+            undevelopedModules: [],
+          },
+        },
+      } as FamilyLedgerEntry,
+    );
+
+    const result = await runFamily({
+      epic: epicWith(294),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+      reconcileGit: {
+        async liveFamilyHead() {
+          return "head-after-cmr-fix";
+        },
+        async familyBaseStartHead() {
+          return "head-before-cmr-fix";
+        },
+        async childHeadExists() {
+          return { exists: true, childHead: "c294" };
+        },
+        async isAncestor() {
+          return true;
+        },
+      },
+    });
+
+    expect(result.status).toBe("success");
+    expect(backend.cmrCalls[0]).toMatchObject({
+      cmrPass: "completeness",
+      priorCmrFindingIdentityKeys: [priorKey],
+    });
+  });
+
+  it("does not resurrect older CMR coder-fix keys after a same-head re-review", async () => {
+    const staleKey = "completeness|orchestrator/src/x.ts:12|already re-reviewed";
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({
+        converged: true,
+        successfulLegs: ["opus", "gpt-5.5", "agy"],
+      }),
+    });
+    backend.liveHead = "head-after-cmr-fix";
+    backend.ledger.push(
+      {
+        childIssue: 294,
+        status: "merged",
+        childHead: "c294",
+        familyHeadAfter: "head-before-cmr-fix",
+      },
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadBefore: "head-before-cmr-fix",
+        familyHeadAfter: "head-after-cmr-fix",
+        blockingFindingIdentityKeys: [staleKey],
+      } as FamilyLedgerEntry,
+      {
+        status: "cmr_reviewed",
+        event: "cmr_reviewed",
+        phase: "final",
+        cmrPass: "completeness",
+        reason: "same head has already been re-reviewed after the coder-fix",
+        familyHeadAfter: "head-after-cmr-fix",
+      } as FamilyLedgerEntry,
+    );
+
+    const result = await runFamily({
+      epic: epicWith(294),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+      reconcileGit: {
+        async liveFamilyHead() {
+          return "head-after-cmr-fix";
+        },
+        async familyBaseStartHead() {
+          return "head-before-cmr-fix";
+        },
+        async childHeadExists() {
+          return { exists: true, childHead: "c294" };
+        },
+        async isAncestor() {
+          return true;
+        },
+      },
+    });
+
+    expect(result.status).toBe("success");
+    expect(backend.cmrCalls[0]).toMatchObject({
+      cmrPass: "completeness",
+    });
+    expect(backend.cmrCalls[0]?.priorCmrFindingIdentityKeys).toBeUndefined();
+  });
+
+  it("does not treat an aborted coder-fix evidence failure as a crash-window fix", async () => {
+    const blockedKey =
+      "completeness|orchestrator/src/x.ts:12|repair evidence never passed";
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({
+        converged: true,
+        successfulLegs: ["opus", "gpt-5.5", "agy"],
+      }),
+    });
+    backend.liveHead = "head-after-bad-coder-fix";
+    backend.ledger.push(
+      {
+        childIssue: 294,
+        status: "merged",
+        childHead: "c294",
+        familyHeadAfter: "head-before-cmr-fix",
+      },
+      {
+        status: "cmr_reviewed",
+        event: "cmr_reviewed",
+        phase: "final",
+        cmrPass: "completeness",
+        reason: "blocking family CMR finding requires coder-fix",
+        familyHeadAfter: "head-before-cmr-fix",
+        cmrFindingClassification: {
+          blocking: [],
+          deferred: [],
+          dispositions: [],
+          moduleContext: {
+            currentModules: [],
+            childModules: [],
+            undevelopedModules: [],
+          },
+          results: [
+            {
+              identityKey: blockedKey,
+              classification: "same_module_still_red",
+              attribution: { method: "family_module" },
+              reason: "same-module family CMR blocker",
+            },
+          ],
+        },
+      } as FamilyLedgerEntry,
+      {
+        status: "aborted",
+        event: "aborted",
+        phase: "final",
+        cmrPass: "completeness",
+        reason:
+          "integrated cmr completeness coder-fix repair evidence gate failed after 3 attempts",
+        familyHeadAfter: "head-after-bad-coder-fix",
+        stopSummary: {
+          reason: "contract_drift",
+          summary:
+            "integrated CMR completeness coder-fix failed: repair evidence gate failed",
+          repairHint:
+            "repair the family CMR coder-fix worker contract, then rerun the family CMR gate",
+        },
+      } as FamilyLedgerEntry,
+    );
+
+    const result = await runFamily({
+      epic: epicWith(294),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+      reconcileGit: {
+        async liveFamilyHead() {
+          return "head-after-bad-coder-fix";
+        },
+        async familyBaseStartHead() {
+          return "head-before-cmr-fix";
+        },
+        async childHeadExists() {
+          return { exists: true, childHead: "c294" };
+        },
+        async isAncestor() {
+          return true;
+        },
+      },
+    });
+
+    expect(result.status).toBe("success");
+    expect(backend.cmrCalls[0]).toMatchObject({
+      cmrPass: "completeness",
+    });
+    expect(backend.cmrCalls[0]?.priorCmrFindingIdentityKeys).toBeUndefined();
   });
 
   it("CMR completed/not-converged is a machine abort, not a decision pause", async () => {

@@ -555,6 +555,42 @@ describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
     expect(plan.reconciled).toEqual([]);
     expect(plan.merged.size).toBe(0);
   });
+
+  it("accepts CMR review and coder-fix audit rows with heads as crash-resume baselines", async () => {
+    const baseLedger: FamilyLedgerEntry[] = [
+      { childIssue: 10, status: "merged", childHead: "c10", familyHeadAfter: "base1" },
+    ];
+
+    for (const auditEntry of [
+      {
+        status: "cmr_reviewed",
+        event: "cmr_reviewed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-before-cmr-fix",
+      },
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-after-cmr-fix",
+      },
+    ] as const) {
+      const ledger = [...baseLedger, auditEntry] as FamilyLedgerEntry[];
+      const git = new FakeReconcileGit(
+        auditEntry.familyHeadAfter,
+        { 10: "c10" },
+        new Set(["c10"]),
+      );
+
+      const plan = await reconcileFamilyLedger(ledger, children, git);
+
+      expect(plan.escalate).toBe(false);
+      expect(plan.reconciled).toEqual([]);
+      expect([...plan.merged].sort()).toEqual([10]);
+    }
+  });
 });
 
 describe("reconcileFamilyLedger — full-field merged entries reach branch ② (the prod path)", () => {

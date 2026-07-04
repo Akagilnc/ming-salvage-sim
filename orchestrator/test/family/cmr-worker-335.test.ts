@@ -6,17 +6,17 @@
  * The cmr worker = the 2b container's TOP-LEVEL claude; it `Skill`-invokes
  * `ak-cross-m-review` (which itself fans out 1 Agent + 2 CLI legs inside the
  * container — proven in #333), FRESH each round (cross-model independence). The
- * worker returns a `{converged, reason?, successfulLegs, skippedLegs?}` verdict
- * (PRD #330 R2: the family cmr consumer `verifyCmr.ts` is escalate-on-red, NO
- * fix-loop, so no findings array is required). A `red` verdict is
- * `WorkerResult.completed` (a CmrResult payload), NOT `failed`.
+ * worker returns a `{converged, reason?, findings?, successfulLegs, skippedLegs?}`
+ * verdict (PRD #330 R2: a `red` review outcome is still
+ * `WorkerResult.completed`, and `verifyCmr.ts` decides whether to abort or dispatch
+ * a separate coder-fix worker). A `red` verdict is NOT `failed`.
  *
  * Tested WITHOUT a real container:
  *   - parseCmrOutcome: the `<cmr>` tag → converged / red / escalate / malformed;
  *   - cmrOutcomeFromResult: the completion-signal gate (an unsignaled run is NOT a
  *     pass — mirrors the merger gate);
  *   - RealFamilyBackend.dispatchWorker(cmr): routes ak-cross-m-review + FRESH +
- *     cmr (write/fixer) soul through the injected `runCmrWorker` seam and wraps the verdict
+ *     clean cmr reviewer soul through the injected `runCmrWorker` seam and wraps the verdict
  *     into a WorkerResult (converged → completed; red → completed; escalate →
  *     escalated; malformed → malformed);
  *   - cmrSandboxConfig: wires the agy auth runtime-mount (writable dir) + codex
@@ -51,6 +51,7 @@ import {
   SANDBOX_AGY_DIR,
   type CmrAuth,
   type CmrWorkerOutcome,
+  type ShipAuth,
 } from "../../src/family/realFamilyBackend.js";
 import {
   SANDBOX_CODEX_DIR,
@@ -59,10 +60,14 @@ import {
   SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
 } from "../../src/realBackend.js";
-import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
+import {
+  cmrWorkerSpec,
+  familyCoderFixWorkerSpec,
+  familyShipWorkerSpec,
+} from "../../src/family/dispatchFamilyWorker.js";
 import { cmrLegAccountingFailure } from "../../src/modelRoutes.js";
 import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
-import type { DispatchContext, WorkerSpec } from "../../src/types.js";
+import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
@@ -76,6 +81,14 @@ const STRONG_LEGS = ["opus", "gpt-5.5"] as const;
 const EMPTY_CMR_CLOSURE = {
   claimedFixedFindingIdentityKeys: [],
   priorFindingDispositions: [],
+} as const;
+const CMR_EVIDENCE_PATHS = ["cmr/review-summary.json"] as const;
+const CMR_EVIDENCE = {
+  evidencePaths: CMR_EVIDENCE_PATHS,
+} as const;
+const VALID_CMR_VERDICT_FIELDS = {
+  ...EMPTY_CMR_CLOSURE,
+  ...CMR_EVIDENCE,
 } as const;
 
 const cleanups: string[] = [];
@@ -116,7 +129,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       `noise\n<cmr>${JSON.stringify({
         converged: true,
         successfulLegs: DEFAULT_CMR_LEGS,
-        ...EMPTY_CMR_CLOSURE,
+        ...VALID_CMR_VERDICT_FIELDS,
       })}</cmr>\n`,
     );
     expect(o.kind).toBe("verdict");
@@ -132,7 +145,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         converged: false,
         reason: "cross-slice field-name mismatch",
         successfulLegs: ["gpt-5.5"],
-        ...EMPTY_CMR_CLOSURE,
+        ...VALID_CMR_VERDICT_FIELDS,
         skippedLegs: [
           { slug: "opus", reason: "auth unavailable" },
           { slug: "agy", reason: "quota exhausted" },
@@ -163,7 +176,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       `<cmr>{"converged": false}</cmr>\nlater…\n<cmr>${JSON.stringify({
         converged: true,
         successfulLegs: DEFAULT_CMR_LEGS,
-        ...EMPTY_CMR_CLOSURE,
+        ...VALID_CMR_VERDICT_FIELDS,
       })}</cmr>`,
     );
     expect(o.kind).toBe("verdict");
@@ -202,7 +215,12 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
     it("converged:true carrying an EXTRA key ⇒ malformed (strict)", () => {
       expect(
         parseCmrOutcome(
-          '<cmr>{"converged": true, "successfulLegs": ["opus"], "junk": 1}</cmr>',
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+            junk: 1,
+          })}</cmr>`,
         ).kind,
       ).toBe(
         "malformed",
@@ -214,6 +232,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         `<cmr>${JSON.stringify({
           converged: true,
           successfulLegs: DEFAULT_CMR_LEGS,
+          ...CMR_EVIDENCE,
           claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|closed"],
           priorFindingDispositions: [
             {
@@ -243,6 +262,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         `<cmr>${JSON.stringify({
           converged: true,
           successfulLegs: DEFAULT_CMR_LEGS,
+          ...CMR_EVIDENCE,
           claimedFixedFindingIdentityKeys: [
             "correctness|src/family/verifyCmr.ts:1|closed",
           ],
@@ -271,6 +291,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         `<cmr>${JSON.stringify({
           converged: true,
           successfulLegs: DEFAULT_CMR_LEGS,
+          ...CMR_EVIDENCE,
           claimedFixedFindingIdentityKeys: [
             "correctness|src/family/verifyCmr.ts:1|closed",
           ],
@@ -300,8 +321,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         `<cmr>${JSON.stringify({
           converged: true,
           successfulLegs: DEFAULT_CMR_LEGS,
-          claimedFixedFindingIdentityKeys: [],
-          priorFindingDispositions: [],
+          ...VALID_CMR_VERDICT_FIELDS,
         })}</cmr>`,
       );
 
@@ -309,6 +329,31 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       if (o.kind === "verdict") {
         expect(o.claimedFixedFindingIdentityKeys).toEqual([]);
         expect(o.priorFindingDispositions).toEqual([]);
+      }
+    });
+
+    it("converged:true with fix_now findings ⇒ malformed (unresolved blockers are not green)", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...VALID_CMR_VERDICT_FIELDS,
+          findings: [
+            {
+              severity: "medium",
+              category: "correctness",
+              claim_quote: "green CMR cannot carry unresolved fix_now blockers",
+              location: "orchestrator/src/family/verifyCmr.ts",
+              suggested_fix: "emit converged false while the blocker remains",
+              action: "fix_now",
+            },
+          ],
+        })}</cmr>`,
+      );
+
+      expect(o.kind).toBe("malformed");
+      if (o.kind === "malformed") {
+        expect(o.reason).toContain("fix_now");
       }
     });
 
@@ -330,7 +375,12 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
     it("converged:false with a BLANK reason ⇒ malformed (non-empty required)", () => {
       expect(
         parseCmrOutcome(
-          '<cmr>{"converged": false, "reason": "  ", "successfulLegs": ["opus"]}</cmr>',
+          `<cmr>${JSON.stringify({
+            converged: false,
+            reason: "  ",
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          })}</cmr>`,
         ).kind,
       ).toBe(
         "malformed",
@@ -358,7 +408,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
           `<cmr>${JSON.stringify({
             converged: true,
             successfulLegs: DEFAULT_CMR_LEGS,
-            ...EMPTY_CMR_CLOSURE,
+            ...VALID_CMR_VERDICT_FIELDS,
           })}</cmr>`,
         ).kind,
       ).toBe("verdict");
@@ -374,7 +424,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         `<cmr>${JSON.stringify({
           converged: true,
           successfulLegs: ["gpt-5.5", "agy"],
-          ...EMPTY_CMR_CLOSURE,
+          ...VALID_CMR_VERDICT_FIELDS,
         })}</cmr>`,
       );
 
@@ -383,6 +433,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         converged: true,
         successfulLegs: ["gpt-5.5", "agy"],
         ...EMPTY_CMR_CLOSURE,
+        ...CMR_EVIDENCE,
       });
     });
 
@@ -394,7 +445,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
           `<cmr>${JSON.stringify({
             converged: true,
             successfulLegs: ["agy", "opus"],
-            ...EMPTY_CMR_CLOSURE,
+            ...VALID_CMR_VERDICT_FIELDS,
             skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
           })}</cmr>`,
         ).kind,
@@ -409,7 +460,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
           `<cmr>${JSON.stringify({
             converged: true,
             successfulLegs: ["gpt-5.5", "agy"],
-            ...EMPTY_CMR_CLOSURE,
+            ...VALID_CMR_VERDICT_FIELDS,
             skippedLegs: [{ slug: "opus", reason: "auth unavailable" }],
           })}</cmr>`,
         ).kind,
@@ -421,7 +472,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         `<cmr>${JSON.stringify({
           converged: true,
           successfulLegs: ["opus"],
-          ...EMPTY_CMR_CLOSURE,
+          ...VALID_CMR_VERDICT_FIELDS,
           skippedLegs: [
             { slug: "gpt-5.5", reason: "auth unavailable" },
             { slug: "agy", reason: "quota exhausted" },
@@ -444,7 +495,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
           `<cmr>${JSON.stringify({
             converged: true,
             successfulLegs: DEFAULT_CMR_LEGS,
-            ...EMPTY_CMR_CLOSURE,
+            ...VALID_CMR_VERDICT_FIELDS,
             skippedLegs: [{ slug: "agy", reason: "quota exhausted" }],
           })}</cmr>`,
         ).kind,
@@ -457,7 +508,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
           `<cmr>${JSON.stringify({
             converged: true,
             successfulLegs: DEFAULT_CMR_LEGS,
-            ...EMPTY_CMR_CLOSURE,
+            ...VALID_CMR_VERDICT_FIELDS,
           })}</cmr>`,
         ).kind,
       ).toBe("verdict");
@@ -467,7 +518,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
             converged: false,
             reason: "seam mismatch",
             successfulLegs: ["gpt-5.5"],
-            ...EMPTY_CMR_CLOSURE,
+            ...VALID_CMR_VERDICT_FIELDS,
             skippedLegs: [
               { slug: "opus", reason: "auth unavailable" },
               { slug: "agy", reason: "quota exhausted" },
@@ -509,6 +560,32 @@ describe("integrated CMR pass prompt closure contract", () => {
     });
   }
 
+  for (const promptName of [
+    "integrated_cmr.md",
+    "integrated_cmr_completeness.md",
+    "integrated_cmr_correctness.md",
+  ]) {
+    it(`${promptName} routes same-module still-red examples into the runner coder-fix path`, () => {
+      const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
+      const examples = [...prompt.matchAll(/<cmr>(\{[^\n]*"converged": false[^\n]*\})<\/cmr>/g)];
+
+      expect(examples.length).toBeGreaterThan(0);
+      for (const [, rawJson] of examples) {
+        const output = JSON.parse(rawJson) as {
+          readonly findings?: readonly {
+            readonly action: string;
+            readonly disposition?: { readonly kind?: string };
+          }[];
+        };
+        for (const finding of output.findings ?? []) {
+          if (finding.disposition?.kind === "same_module") {
+            expect(finding.action).toBe("fix_now");
+          }
+        }
+      }
+    });
+  }
+
   it("integrated completeness prompt keeps undeveloped targets out of issue-body YAML", () => {
     const prompt = readFileSync(
       join(realPromptsDir, "integrated_cmr_completeness.md"),
@@ -533,7 +610,7 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
       stdout: `<cmr>${JSON.stringify({
         converged: true,
         successfulLegs: DEFAULT_CMR_LEGS,
-        ...EMPTY_CMR_CLOSURE,
+        ...VALID_CMR_VERDICT_FIELDS,
       })}</cmr>`,
     });
     expect(o.kind).toBe("verdict");
@@ -546,7 +623,7 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
       stdout: `<cmr>${JSON.stringify({
         converged: true,
         successfulLegs: DEFAULT_CMR_LEGS,
-        ...EMPTY_CMR_CLOSURE,
+        ...VALID_CMR_VERDICT_FIELDS,
       })}</cmr>`,
     });
     expect(o.kind).toBe("escalate");
@@ -558,7 +635,7 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
       stdout: `<cmr>${JSON.stringify({
         converged: true,
         successfulLegs: DEFAULT_CMR_LEGS,
-        ...EMPTY_CMR_CLOSURE,
+        ...VALID_CMR_VERDICT_FIELDS,
       })}</cmr>`,
     });
     expect(o.kind).toBe("escalate");
@@ -572,7 +649,7 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
       stdout: `<cmr>${JSON.stringify({
         converged: true,
         successfulLegs: DEFAULT_CMR_LEGS,
-        ...EMPTY_CMR_CLOSURE,
+        ...VALID_CMR_VERDICT_FIELDS,
       })}</cmr>`,
     };
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
@@ -583,7 +660,7 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
       kind: "verdict",
       converged: true,
       successfulLegs: DEFAULT_CMR_LEGS,
-      ...EMPTY_CMR_CLOSURE,
+      ...VALID_CMR_VERDICT_FIELDS,
     });
   });
 });
@@ -594,11 +671,13 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
   /** A backend whose container `runCmrWorker` seam is fixtured (no real sc.run). */
   class FixturedCmrBackend extends RealFamilyBackend {
     runCmrCalls: { spec: ReturnType<typeof cmrWorkerSpec>; ctx: DispatchContext }[] = [];
+    runCoderFixCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
     runShipCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
     outcome: CmrWorkerOutcome = {
       kind: "verdict",
       converged: true,
       successfulLegs: STRONG_LEGS,
+      ...CMR_EVIDENCE,
     };
     protected override async runCmrWorker(
       spec: ReturnType<typeof cmrWorkerSpec>,
@@ -618,6 +697,16 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       this.runShipCalls.push({ spec, ctx });
       return { kind: "shipped", branch: ctx.familyBase!, status: "pr_opened", pr: "https://gh/pr/9" };
     }
+    protected override async runFamilyCoderFixWorker(
+      spec: WorkerSpec,
+      ctx: DispatchContext,
+    ): Promise<WorkerResult> {
+      this.runCoderFixCalls.push({ spec, ctx });
+      return {
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      };
+    }
     protected override verifyFamilyShipPr(): { ok: true; headOid: string } | { ok: false; reason: string } {
       return { ok: true, headOid: "head-1" };
     }
@@ -635,7 +724,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     });
   }
 
-  it("dispatches the cmr pass worker spec to runCmrWorker — ak-cross-m-review + FRESH session + write-capable cmr soul", async () => {
+  it("dispatches the cmr pass worker spec to runCmrWorker — ak-cross-m-review + FRESH clean reviewer cmr soul", async () => {
     const be = fixtured();
     await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "feat/330-pure-scheduler" });
     expect(be.runCmrCalls.length).toBe(1);
@@ -644,15 +733,80 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(spec.skill).toBe("ak-cross-m-review");
     // FRESH session = a new pass-worker session, not a crash/escalate resume.
     expect(spec.session).toBe("fresh");
-    // The pass worker can retain context while producing its terminal verdict, under
-    // the WRITE-capable `cmr` soul.
-    expect(spec.contextRetention).toBe("retain");
+    // The pass worker is a clean reviewer boundary; blocking findings return to the
+    // runner, which dispatches a separate coder-fix worker.
+    expect(spec.contextRetention).toBe("clean");
+    expect(spec.role).toBe("reviewer");
+    expect(spec.maxIter).toBe(1);
     expect(spec.soul).toBe("cmr");
+  });
+
+  it("dispatches the family coder-fix spec to runFamilyCoderFixWorker — /tdd + retained coder context", async () => {
+    const be = fixtured();
+    await be.dispatchWorker(familyCoderFixWorkerSpec(), {
+      familyBase: "feat/330-pure-scheduler",
+      familyIssue: 533,
+      blockingFindingIdentityKeys: ["cmr-key-1"],
+    });
+    expect(be.runCoderFixCalls.length).toBe(1);
+    const { spec, ctx } = be.runCoderFixCalls[0]!;
+    expect(spec.kind).toBe("coder");
+    expect(spec.skill).toBe("/tdd");
+    expect(spec.promptFile).toBe("coder_fix.md");
+    expect(spec.session).toBe("fresh");
+    expect(spec.contextRetention).toBe("retain");
+    expect(ctx.familyIssue).toBe(533);
+    expect(ctx.blockingFindingIdentityKeys).toEqual(["cmr-key-1"]);
+  });
+
+  it("cleans up family coder-fix findings if outcome landing fails", async () => {
+    const repo = realRepo335();
+
+    class FailingOutcomeLandingBackend extends RealFamilyBackend {
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok" };
+      }
+
+      protected override prepareFamilyCoderOutcomeLanding(): {
+        path: string;
+        sandboxPath: string;
+      } {
+        throw new Error("outcome landing failed");
+      }
+
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        if (file === "git" && args[0] === "checkout") return "";
+        return super.sh(file, args, cwd);
+      }
+    }
+
+    const be = new FailingOutcomeLandingBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("family-coder-landing-fail-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+    });
+
+    await expect(
+      be.dispatchWorker(familyCoderFixWorkerSpec(), {
+        familyBase: "fb",
+        blockingFindingIdentityKeys: ["cmr-key-1"],
+      }),
+    ).rejects.toThrow("outcome landing failed");
+    expect(existsSync(join(repo, ".orchestrator-fix-findings.json"))).toBe(false);
   });
 
   it("a converged verdict ⇒ WorkerResult.completed with a bare cmr payload", async () => {
     const be = fixtured();
-    be.outcome = { kind: "verdict", converged: true, successfulLegs: STRONG_LEGS };
+    be.outcome = {
+      kind: "verdict",
+      converged: true,
+      successfulLegs: STRONG_LEGS,
+      ...CMR_EVIDENCE,
+    };
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("completed");
     if (res.kind === "completed" && res.output.kind === "cmr") {
@@ -670,6 +824,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       converged: false,
       reason: "seam mismatch",
       successfulLegs: STRONG_LEGS,
+      ...CMR_EVIDENCE,
     };
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("completed");
@@ -680,6 +835,30 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     } else {
       throw new Error("expected completed cmr payload");
     }
+  });
+
+  it("preserves evidencePaths on the runner-facing cmr output", async () => {
+    const be = fixtured();
+    be.outcome = {
+      kind: "verdict",
+      converged: false,
+      reason: "blocking findings remain",
+      successfulLegs: STRONG_LEGS,
+      ...CMR_EVIDENCE,
+    };
+
+    const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
+
+    expect(res).toEqual({
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: false,
+        reason: "blocking findings remain",
+        successfulLegs: STRONG_LEGS,
+        ...CMR_EVIDENCE,
+      },
+    });
   });
 
   it("an escalate outcome ⇒ WorkerResult.escalated (model-stuck, not a verdict)", async () => {
@@ -697,6 +876,454 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     be.outcome = { kind: "malformed", reason: "no <cmr> tag" };
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("malformed");
+  });
+
+  it("rewrites a malformed CMR outcome by resuming the same worker with the outcome-only prompt", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+
+    class OutcomeRewriteBackend extends RealFamilyBackend {
+      outcomePath: string | undefined;
+      runOptions: Parameters<typeof sc.run>[0] | undefined;
+
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
+        const landing = super.prepareCmrOutcomeLanding(ctx);
+        this.outcomePath = landing.path;
+        return landing;
+      }
+
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        this.runOptions = options;
+        if (this.outcomePath === undefined) throw new Error("missing outcome path");
+        writeFileSync(
+          this.outcomePath,
+          JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          }),
+          "utf8",
+        );
+        return {
+          completionSignal: "CMR_STEP_COMPLETE",
+          stdout: "",
+          iterations: [{ sessionId: "cmr-session-rewritten" }],
+          commits: [],
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+
+    const be = new OutcomeRewriteBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-outcome-rewrite-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    const result = await be.rewriteWorkerOutcome(
+      cmrWorkerSpec("fresh", "completeness"),
+      { familyBase: "fb", cmrPass: "completeness" },
+      {
+        kind: "malformed",
+        reason: "cmr worker outcome sidecar was not valid JSON",
+        sessionId: "cmr-session-original",
+      },
+      1,
+    );
+
+    expect(result).toMatchObject({
+      kind: "completed",
+      sessionId: "cmr-session-rewritten",
+      output: {
+        kind: "cmr",
+        cmrPass: "completeness",
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+      },
+    });
+    expect(be.runOptions).toMatchObject({
+      maxIterations: 1,
+      completionSignal: "CMR_STEP_COMPLETE",
+      resumeSession: "cmr-session-original",
+      promptArgs: {
+        ATTEMPT: "1",
+        WORKER_KIND: "cmr",
+        CMR_PASS: "completeness",
+      },
+    });
+    expect(String(be.runOptions?.promptFile)).toContain("outcome_rewrite.md");
+  });
+
+  it("rejects an outcome rewrite that returns a valid CMR envelope after moving HEAD", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    const beforeHead = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repo,
+      encoding: "utf8",
+    }).trim();
+
+    class MutatingOutcomeRewriteBackend extends RealFamilyBackend {
+      outcomePath: string | undefined;
+
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
+        const landing = super.prepareCmrOutcomeLanding(ctx);
+        this.outcomePath = landing.path;
+        return landing;
+      }
+
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (this.outcomePath === undefined) throw new Error("missing outcome path");
+        execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "illegal rewrite commit"], {
+          cwd: repo,
+        });
+        writeFileSync(
+          this.outcomePath,
+          JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          }),
+          "utf8",
+        );
+        return {
+          completionSignal: "CMR_STEP_COMPLETE",
+          stdout: "",
+          iterations: [{ sessionId: "cmr-session-rewritten" }],
+          commits: [],
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+
+    const be = new MutatingOutcomeRewriteBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-outcome-rewrite-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    const result = await be.rewriteWorkerOutcome(
+      cmrWorkerSpec("fresh", "completeness"),
+      { familyBase: "fb", cmrPass: "completeness" },
+      {
+        kind: "malformed",
+        reason: "cmr worker outcome sidecar was not valid JSON",
+        sessionId: "cmr-session-original",
+      },
+      1,
+    );
+
+    expect(result).toMatchObject({
+      kind: "outcome_protocol_failure",
+      attempts: 1,
+      sessionId: "cmr-session-rewritten",
+    });
+    expect(result.kind === "outcome_protocol_failure" ? result.reason : "").toContain(
+      "outcome rewrite moved HEAD",
+    );
+    expect(result.kind === "outcome_protocol_failure" ? result.reason : "").toContain(
+      beforeHead,
+    );
+    expect(result.kind === "outcome_protocol_failure" ? result.reason : "").toContain(
+      "illegal rewrite commit",
+    );
+  });
+
+  it("runs outcome rewrite git evidence commands in the configured working repo", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+    const gitCalls: Array<{ args: readonly string[]; cwd?: string }> = [];
+
+    class GitCwdOutcomeRewriteBackend extends RealFamilyBackend {
+      outcomePath: string | undefined;
+      revParseCalls = 0;
+
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
+        const landing = super.prepareCmrOutcomeLanding(ctx);
+        this.outcomePath = landing.path;
+        return landing;
+      }
+
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        if (file === "git") {
+          gitCalls.push({ args, cwd });
+          if (args[0] === "status") return "";
+          if (args[0] === "rev-parse") {
+            this.revParseCalls += 1;
+            return this.revParseCalls === 1 ? "head-before-rewrite" : "head-after-rewrite";
+          }
+          if (args[0] === "log") return "head-after-rewrite illegal rewrite";
+        }
+        return "";
+      }
+
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (this.outcomePath === undefined) throw new Error("missing outcome path");
+        writeFileSync(
+          this.outcomePath,
+          JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          }),
+          "utf8",
+        );
+        return {
+          completionSignal: "CMR_STEP_COMPLETE",
+          stdout: "",
+          iterations: [{ sessionId: "cmr-session-rewritten" }],
+          commits: [],
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+
+    const be = new GitCwdOutcomeRewriteBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-outcome-rewrite-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    const result = await be.rewriteWorkerOutcome(
+      cmrWorkerSpec("fresh", "completeness"),
+      { familyBase: "fb", cmrPass: "completeness" },
+      {
+        kind: "malformed",
+        reason: "cmr worker outcome sidecar was not valid JSON",
+        sessionId: "cmr-session-original",
+      },
+      1,
+    );
+
+    expect(result.kind).toBe("outcome_protocol_failure");
+    const evidenceCalls = gitCalls.filter(
+      (call) =>
+        (call.args[0] === "status" && call.args[1] === "--short") ||
+        (call.args[0] === "rev-parse" && call.args[1] === "HEAD") ||
+        call.args[0] === "log",
+    );
+    expect(evidenceCalls.map((call) => call.args[0])).toEqual([
+      "status",
+      "rev-parse",
+      "status",
+      "rev-parse",
+      "log",
+    ]);
+    expect(evidenceCalls.every((call) => call.cwd === repo)).toBe(true);
+  });
+
+  it("trims outcome rewrite git evidence before comparing heads and tracked status", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+
+    class TrimmedGitEvidenceBackend extends RealFamilyBackend {
+      outcomePath: string | undefined;
+      revParseCalls = 0;
+
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
+        const landing = super.prepareCmrOutcomeLanding(ctx);
+        this.outcomePath = landing.path;
+        return landing;
+      }
+
+      protected override sh(file: string, args: string[]): string {
+        if (file === "git") {
+          if (args[0] === "status") return "\r\n";
+          if (args[0] === "rev-parse") {
+            this.revParseCalls += 1;
+            return this.revParseCalls === 1 ? "same-head\n" : "same-head\r\n";
+          }
+        }
+        return "";
+      }
+
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (this.outcomePath === undefined) throw new Error("missing outcome path");
+        writeFileSync(
+          this.outcomePath,
+          JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          }),
+          "utf8",
+        );
+        return {
+          completionSignal: "CMR_STEP_COMPLETE",
+          stdout: "",
+          iterations: [{ sessionId: "cmr-session-rewritten" }],
+          commits: [],
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+
+    const be = new TrimmedGitEvidenceBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-outcome-rewrite-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    const result = await be.rewriteWorkerOutcome(
+      cmrWorkerSpec("fresh", "completeness"),
+      { familyBase: "fb", cmrPass: "completeness" },
+      {
+        kind: "malformed",
+        reason: "cmr worker outcome sidecar was not valid JSON",
+        sessionId: "cmr-session-original",
+      },
+      1,
+    );
+
+    expect(result).toMatchObject({
+      kind: "completed",
+      sessionId: "cmr-session-rewritten",
+      output: {
+        kind: "cmr",
+        cmrPass: "completeness",
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+      },
+    });
+  });
+
+  it("rejects an outcome rewrite that returns a valid CMR envelope with tracked changes left behind", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    writeFileSync(join(repo, "tracked.txt"), "before\n", "utf8");
+    execFileSync("git", ["add", "tracked.txt"], { cwd: repo });
+    execFileSync("git", ["commit", "-q", "-m", "track baseline"], { cwd: repo });
+
+    class DirtyOutcomeRewriteBackend extends RealFamilyBackend {
+      outcomePath: string | undefined;
+
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
+        const landing = super.prepareCmrOutcomeLanding(ctx);
+        this.outcomePath = landing.path;
+        return landing;
+      }
+
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (this.outcomePath === undefined) throw new Error("missing outcome path");
+        writeFileSync(join(repo, "tracked.txt"), "after\n", "utf8");
+        writeFileSync(
+          this.outcomePath,
+          JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          }),
+          "utf8",
+        );
+        return {
+          completionSignal: "CMR_STEP_COMPLETE",
+          stdout: "",
+          iterations: [{ sessionId: "cmr-session-rewritten" }],
+          commits: [],
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+
+    const be = new DirtyOutcomeRewriteBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-outcome-rewrite-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    const result = await be.rewriteWorkerOutcome(
+      cmrWorkerSpec("fresh", "completeness"),
+      { familyBase: "fb", cmrPass: "completeness" },
+      {
+        kind: "malformed",
+        reason: "cmr worker outcome sidecar was not valid JSON",
+        sessionId: "cmr-session-original",
+      },
+      1,
+    );
+
+    expect(result).toMatchObject({
+      kind: "outcome_protocol_failure",
+      attempts: 1,
+      sessionId: "cmr-session-rewritten",
+    });
+    expect(result.kind === "outcome_protocol_failure" ? result.reason : "").toContain(
+      "outcome rewrite left tracked changes",
+    );
+    expect(result.kind === "outcome_protocol_failure" ? result.reason : "").toContain(
+      "M tracked.txt",
+    );
   });
 
   it("forwards llmResolvedChildren on the DispatchContext to the cmr worker", async () => {
@@ -719,7 +1346,12 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     // ship contract — gstack-ship routing, pr_opened narrowing, branch identity — is
     // covered by ship-worker-336.test.ts; here we only assert the cmr seam is untouched.)
     const be = fixtured();
-    be.outcome = { kind: "verdict", converged: true, successfulLegs: STRONG_LEGS };
+    be.outcome = {
+      kind: "verdict",
+      converged: true,
+      successfulLegs: STRONG_LEGS,
+      ...CMR_EVIDENCE,
+    };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("completed"); // the fixtured ship outcome, not the cmr path
     expect(be.runShipCalls.length).toBe(1); // reached the ship worker seam
@@ -1492,6 +2124,65 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     expect(outcome.kind).toBe("escalate");
     expect(outcomePathAtRun).toBeDefined();
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
+  });
+
+  it("a prepared but blank CMR outcome sidecar fails closed instead of accepting legacy stdout", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    let outcomePathAtRun: string | undefined;
+
+    class BlankSidecarBackend extends RealFamilyBackend {
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+        return this.runCmrWorker(spec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
+        const landing = super.prepareCmrOutcomeLanding(ctx);
+        outcomePathAtRun = landing.path;
+        return landing;
+      }
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
+        expect(readFileSync(outcomePathAtRun, "utf8")).toBe("");
+        return {
+          completionSignal: "CMR_STEP_COMPLETE",
+          stdout: `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          })}</cmr>\nCMR_STEP_COMPLETE`,
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+
+    const be = new BlankSidecarBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-blank-sidecar-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
+
+    expect(outcome.kind).toBe("malformed");
+    expect(outcome.kind === "malformed" ? outcome.reason : "").toContain(
+      "outcome sidecar",
+    );
+    expect(outcome.kind === "malformed" ? outcome.reason : "").toMatch(/blank|empty/i);
   });
 });
 

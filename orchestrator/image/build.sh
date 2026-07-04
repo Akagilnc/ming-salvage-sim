@@ -75,7 +75,7 @@ STAGE="$(mktemp -d "${TMPDIR:-/tmp}/ming-coder-img.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 
 echo "[build] staging context at $STAGE"
-mkdir -p "$STAGE/skills" "$STAGE/souls" "$STAGE/hooks"
+mkdir -p "$STAGE/skills" "$STAGE/souls" "$STAGE/hooks" "$STAGE/bin"
 
 # ── 1. Resolve + copy the dev-skill closure (cp -RL dereferences symlinks) ────
 # Prune each skill's run-artifact / eval / test cruft so the image stays lean and
@@ -246,6 +246,13 @@ fi
 # NOTE: macOS ships bash 3.2 (no associative arrays / `declare -A`), and this
 # script's shebang resolves to it — so we map role→env-alias with a portable
 # case, NOT an assoc array, to keep the build reproducible on a macOS host.
+if [ ! -f "$HERE/souls/output_protocol.md" ]; then
+  echo "[build] ERROR: shared worker output protocol not found at $HERE/souls/output_protocol.md" >&2
+  exit 1
+fi
+cp "$HERE/souls/output_protocol.md" "$STAGE/souls/output_protocol.md"
+echo "[build]   baking shared worker output protocol"
+
 soul_env_alias() {
   case "$1" in
     reviewer) echo "READ-ONLY" ;;   # soulForStep → StepSoul "READ-ONLY"
@@ -284,6 +291,17 @@ if [ ! -f "$HERE/hooks/commit-msg" ]; then
 fi
 cp "$HERE/hooks/commit-msg" "$STAGE/hooks/commit-msg"
 chmod +x "$STAGE/hooks/commit-msg"
+
+# ── 3c. Outcome guard binary ─────────────────────────────────────────────────
+# Versioned worker/image infrastructure: workers write a draft and let this guard
+# validate + emit the runner-compatible sidecar/tag/signal. Keep it in image/bin
+# so validation lives in the baked profile, not in copied prompt prose.
+if [ ! -f "$HERE/bin/orchestrator-outcome-guard" ]; then
+  echo "[build] ERROR: outcome guard not found at $HERE/bin/orchestrator-outcome-guard" >&2
+  exit 1
+fi
+cp "$HERE/bin/orchestrator-outcome-guard" "$STAGE/bin/orchestrator-outcome-guard"
+chmod +x "$STAGE/bin/orchestrator-outcome-guard"
 
 # ── 4. Containerfile into the staging context ────────────────────────────────
 cp "$HERE/Containerfile" "$STAGE/Containerfile"

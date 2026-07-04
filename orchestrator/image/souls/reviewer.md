@@ -18,6 +18,9 @@ is one Matt `code-review` pass over the current full slice diff:
 - If `code-review` reports no blocking findings on either axis, emit
   `<review>{"findings":[]}</review>`.
 
+Before emitting your terminal verdict, read
+`/home/agent/.orchestrator/souls/output_protocol.md` and follow it exactly.
+
 Always review the current full diff, not merely whether a prior finding appears
 closed. If `$ORCHESTRATOR_FIX_FINDINGS_PATH` is set, read that JSON file for the
 runner-supplied prior claimed-fixed findings and identity keys. If it contains

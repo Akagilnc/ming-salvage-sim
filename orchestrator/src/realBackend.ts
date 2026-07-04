@@ -108,7 +108,9 @@ import {
   type ShipWorkerOutcome,
 } from "./shipOutcome.js";
 import {
+  WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
+  readRequiredWorkerOutcomeSidecar as readRequiredOutcomeSidecar,
   readWorkerOutcomeSidecar as readOutcomeSidecar,
   stripJsonFence as stripOutcomeJsonFence,
 } from "./workerOutcomeSidecar.js";
@@ -1702,6 +1704,8 @@ const repairEvidenceSchema = z
     changedFiles: z.array(z.string().min(1)).optional(),
     tests: z.array(z.string().min(1)).optional(),
     fixtures: z.array(z.string().min(1)).optional(),
+    sameClassBugScan: z.string().min(1).optional(),
+    introducedRegressionCheck: z.string().min(1).optional(),
     patchSummary: z.string().optional(),
   })
   .superRefine((value, ctx) => {
@@ -1726,6 +1730,11 @@ const coderOutputSchema = z.object({
     .object({ reason: z.string(), diagnosis: z.string() })
     .optional(),
 });
+
+/** Parse a coder worker self-report with the same schema the single-slice path uses. */
+export function parseCoderSelfReport(raw: unknown): SelfReportedCoder {
+  return coderOutputSchema.parse(raw);
+}
 
 export class RealBackend implements Backend {
   private readonly opts: RealBackendOptions;
@@ -2393,9 +2402,10 @@ export class RealBackend implements Backend {
     typedOutputUsed: boolean,
     options?: AgentStepRunOptions,
   ): unknown {
-    let sidecar: unknown | undefined;
     try {
-      sidecar = readWorkerOutcomeSidecar(options?.outcomeLanding?.path);
+      if (options?.outcomeLanding?.path !== undefined) {
+        return readRequiredOutcomeSidecar(options.outcomeLanding.path);
+      }
     } catch (err) {
       if (spec.role === "reviewer") {
         const wrapped = new Error(
@@ -2407,7 +2417,6 @@ export class RealBackend implements Backend {
       }
       throw err;
     }
-    if (sidecar !== undefined) return sidecar;
     if (typedOutputUsed) return result.output;
     // Untyped compatibility path: structured result lives in the role tag.
     return spec.role === "coder"
@@ -2912,7 +2921,7 @@ export class RealBackend implements Backend {
     const dir = mkdtempSync(join(ctx.stateDir, "worker-outcome-ship-"));
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
-    this.excludeRuntimeFileFromGit(ctx.worktree.path, WORKER_OUTCOME_SANDBOX_FILE);
+    this.excludeRuntimeFileFromGit(ctx.worktree.path, WORKER_OUTCOME_REPO_FILE);
     return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
 
