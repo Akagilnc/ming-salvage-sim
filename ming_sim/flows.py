@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 from typing import Dict, List, NamedTuple, Optional, Tuple
@@ -274,7 +275,7 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
             raise ValueError(f"region {region_id!r} 无 settle 财政基座，无法投影起运")
-        result = settle_tick(settle["st"], settle["p"], [])
+        result = settle_tick(copy.deepcopy(settle["st"]), copy.deepcopy(settle["p"]), [])
         remittance_total += float((result.breakdown or {}).get("起运到京", 0.0) or 0.0)
     return remittance_total
 
