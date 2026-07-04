@@ -181,6 +181,10 @@ function writeWorkerOutcomeLandingFile(
   mkdirSync(outcomeDir, { recursive: true });
   const landingPath = join(outcomeDir, "outcome.json");
   writeFileSync(landingPath, "", "utf8");
+  rmSync(join(ctx.worktree.path, WORKER_OUTCOME_REPO_FILE), {
+    recursive: true,
+    force: true,
+  });
   ensureGitExcluded(ctx.worktree.path, WORKER_OUTCOME_REPO_FILE);
   return {
     path: landingPath,
