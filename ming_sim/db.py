@@ -1807,6 +1807,7 @@ class GameDB:
             self._apply_region_army_pay_tick(pay_rows, result)
         settle["st"] = result.new_st
         if self.is_army_pay_source_cutover_enabled():
+            self._refresh_standalone_army_pay_arrears_component(region_id, settle)
             if pay_rows:
                 self._reconcile_region_army_pay_container(region_id, settle)
         self.conn.execute(
@@ -2410,6 +2411,85 @@ class GameDB:
         postures = meta.get("postures")
         return isinstance(postures, list) and "纯军饷漏斗" in postures
 
+    def _has_standalone_army_pay_funnel(
+        self,
+        settle: Dict[str, Any],
+        primary_source_due: Optional[float] = None,
+    ) -> bool:
+        return primary_source_due is not None or self._is_seeded_military_pay_funnel(settle)
+
+    def _standalone_army_pay_due_component(
+        self,
+        settle: Dict[str, Any],
+        row_due_total: float,
+        primary_source_due: Optional[float],
+    ) -> float:
+        if primary_source_due is not None:
+            return primary_source_due
+        if not self._is_seeded_military_pay_funnel(settle):
+            return 0.0
+        meta = settle.setdefault("_meta", {})
+        if not isinstance(meta, dict):
+            raise ValueError("_meta 非字典")
+        existing = meta.get("standalone_military_pay_due")
+        if isinstance(existing, bool):
+            raise ValueError("standalone_military_pay_due 非法")
+        if isinstance(existing, (int, float)):
+            value = float(existing)
+        else:
+            due_obj = settle.get("p", {}).get("Due", {})
+            value = float(due_obj.get("军饷", 0) or 0) - row_due_total
+        if not math.isfinite(value) or value < -1e-9:
+            raise ValueError("standalone_military_pay_due 非法")
+        value = max(0.0, value)
+        meta["standalone_military_pay_due"] = value
+        return value
+
+    def _standalone_army_pay_arrears_component(
+        self,
+        settle: Dict[str, Any],
+        row_arrears_total: float,
+        primary_source_due: Optional[float],
+    ) -> float:
+        if not self._has_standalone_army_pay_funnel(settle, primary_source_due):
+            return 0.0
+        meta = settle.setdefault("_meta", {})
+        if not isinstance(meta, dict):
+            raise ValueError("_meta 非字典")
+        existing = meta.get("standalone_military_pay_arrears")
+        if isinstance(existing, bool):
+            raise ValueError("standalone_military_pay_arrears 非法")
+        if isinstance(existing, (int, float)):
+            value = float(existing)
+        else:
+            st = settle.setdefault("st", {})
+            value = float(st.get("军饷欠", 0) or 0) - row_arrears_total
+        if not math.isfinite(value) or value < -1e-9:
+            raise ValueError("standalone_military_pay_arrears 非法")
+        value = max(0.0, value)
+        meta["standalone_military_pay_arrears"] = value
+        return value
+
+    def _refresh_standalone_army_pay_arrears_component(
+        self,
+        region_id: str,
+        settle: Dict[str, Any],
+    ) -> None:
+        primary_source_due = self._primary_source_army_pay_due(settle)
+        if not self._has_standalone_army_pay_funnel(settle, primary_source_due):
+            return
+        row_arrears_total = sum(
+            float(row["province_pay_arrears"])
+            for row in self._army_pay_source_rows_for_region(region_id)
+        )
+        st = settle.setdefault("st", {})
+        current_total = float(st.get("军饷欠", 0) or 0)
+        standalone_arrears = max(0.0, current_total - row_arrears_total)
+        meta = settle.setdefault("_meta", {})
+        if not isinstance(meta, dict):
+            raise ValueError("_meta 非字典")
+        meta["standalone_military_pay_arrears"] = standalone_arrears
+
     def _standalone_army_pay_container_total(self) -> float:
         total = 0.0
         rows = self.conn.execute(
@@ -2424,14 +2504,18 @@ class GameDB:
             settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
                 continue
-            if (
-                self._primary_source_army_pay_due(settle) is None
-                and not self._is_seeded_military_pay_funnel(settle)
-            ):
+            primary_source_due = self._primary_source_army_pay_due(settle)
+            if not self._has_standalone_army_pay_funnel(settle, primary_source_due):
                 continue
-            if self._army_pay_source_rows_for_region(region_id):
-                continue
-            total += float(settle["st"].get("军饷欠", 0) or 0.0)
+            row_arrears_total = sum(
+                float(row["province_pay_arrears"])
+                for row in self._army_pay_source_rows_for_region(region_id)
+            )
+            total += self._standalone_army_pay_arrears_component(
+                settle,
+                row_arrears_total,
+                primary_source_due,
+            )
         return total
 
     def _primary_source_only_army_pay_container_total(self) -> float:
@@ -2852,15 +2936,29 @@ class GameDB:
         if not isinstance(due_obj, dict):
             raise ValueError("Due 非字典")
         primary_source_due = self._primary_source_army_pay_due(settle)
-        if primary_source_due is not None:
-            due_obj["军饷"] = primary_source_due
+        row_due_total = sum(float(row["due"]) for row in rows)
+        row_arrears_total = sum(float(row["province_pay_arrears"]) for row in rows)
+        if self._has_standalone_army_pay_funnel(settle, primary_source_due):
+            standalone_due = self._standalone_army_pay_due_component(
+                settle,
+                row_due_total,
+                primary_source_due,
+            )
+            due_obj["军饷"] = standalone_due + row_due_total
         elif rows:
-            due_obj["军饷"] = sum(float(row["due"]) for row in rows)
-        elif not self._is_seeded_military_pay_funnel(settle):
+            due_obj["军饷"] = row_due_total
+        else:
             due_obj["军饷"] = 0
-        if rows:
-            settle.setdefault("st", {})["军饷欠"] = sum(float(row["province_pay_arrears"]) for row in rows)
-        elif primary_source_due is None and not self._is_seeded_military_pay_funnel(settle):
+        if self._has_standalone_army_pay_funnel(settle, primary_source_due):
+            standalone_arrears = self._standalone_army_pay_arrears_component(
+                settle,
+                row_arrears_total,
+                primary_source_due,
+            )
+            settle.setdefault("st", {})["军饷欠"] = standalone_arrears + row_arrears_total
+        elif rows:
+            settle.setdefault("st", {})["军饷欠"] = row_arrears_total
+        else:
             settle.setdefault("st", {})["军饷欠"] = 0
         return rows
 
@@ -3032,7 +3130,14 @@ class GameDB:
             """,
             (region_id,),
         ).fetchone()["total"]
-        settle.setdefault("st", {})["军饷欠"] = float(total or 0)
+        row_arrears_total = float(total or 0)
+        primary_source_due = self._primary_source_army_pay_due(settle)
+        standalone_arrears = self._standalone_army_pay_arrears_component(
+            settle,
+            row_arrears_total,
+            primary_source_due,
+        )
+        settle.setdefault("st", {})["军饷欠"] = standalone_arrears + row_arrears_total
 
     def _drop_maintenance_column(self) -> None:
         """#173：物理移除退役的 armies.maintenance_per_turn 列（月饷由 army_needed 按兵力派生）。

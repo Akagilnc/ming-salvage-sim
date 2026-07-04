@@ -3955,6 +3955,34 @@ def test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile(fres
     )
 
 
+def test_liaodong_pay_source_rows_add_to_standalone_military_funnel(fresh_db):
+    state = fresh_db.load_state()
+    settle = _read_settle(fresh_db, "liaodong")
+    opening_arrears = settle["st"]["军饷欠"]
+    standalone_due = settle["p"]["Due"]["军饷"]
+
+    created = fresh_db.create_armies_from_extraction(state, [{
+        "id": "liaodong_new_army",
+        "name": "辽东新增营",
+        "manpower": 1000,
+        "owner_power": "ming",
+        "pay_source_region": "liaodong",
+        "province_pay_share": 1.0,
+        "central_pay_share": 0.0,
+    }], commit=False)
+
+    assert created and created[0].get("created") is True
+    after = _read_settle(fresh_db, "liaodong")
+    assert after["st"]["军饷欠"] == pytest.approx(
+        opening_arrears + _province_pay_arrears(fresh_db, "liaodong"),
+        abs=1e-6,
+    )
+    assert after["p"]["Due"]["军饷"] == pytest.approx(
+        standalone_due + _province_pay_due(fresh_db, "liaodong"),
+        abs=1e-6,
+    )
+
+
 def test_dongjiang_content_pay_funnel_survives_fresh_db_pay_source_reconcile(fresh_db):
     settle = _read_settle(fresh_db, "dongjiang_area")
 
