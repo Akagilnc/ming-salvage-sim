@@ -57,6 +57,30 @@ def _expected_land_share_levy(settle, national_monthly, total_land):
     return national_monthly * land / total_land
 
 
+def test_shaanxi_primary_source_liao_seed_keeps_opening_transport_cap(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1627
+    state.period = 10
+    db.save_state(state)
+
+    apply_historical_fiscal_rates(state, db)
+
+    settle = _settle_payload(db, "shaanxi")
+    meta = settle["_meta"]
+    expected_liao = 2929.20151 * 0.009 / 12.0
+
+    assert math.isclose(settle["p"]["三饷应征"], expected_liao, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(meta["辽饷九厘基线"], expected_liao, rel_tol=1e-9, abs_tol=1e-9)
+    assert meta["正赋起运基线"] == 0
+    assert math.isclose(
+        settle["p"]["起运定额"],
+        meta["正赋起运基线"] + expected_liao,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+
+
 def test_liao_levy_rise_triggers_and_updates_shadow_settle_before_fiscal_tick(game):
     db, state, content = game
     issues.bind_content(content)
