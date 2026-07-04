@@ -10,7 +10,7 @@ import json
 import math
 import re
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ming_sim.applier import atomic
 from ming_sim.constants import (
@@ -7037,6 +7037,10 @@ def apply_score_extraction(
 
     # 7) fiscal_changes：调整月度固定收支系数
     applied_fiscal: List[Dict[str, object]] = []
+    fiscal_config_snapshot = db.get_fiscal_config()
+    deferred_loss_pair_changes: List[Dict[str, object]] = []
+    loss_pair_running: Dict[str, int] = {}
+    loss_pair_final_by_pair: Dict[Tuple[str, str], Dict[str, int]] = {}
     for change in extracted.get("fiscal_changes") or []:
         key = str(change.get("key") or "").strip()
         if not key:
@@ -7084,6 +7088,31 @@ def apply_score_extraction(
                 "category": "missing_ref", "item": change,
             })
             continue
+        loss_pair = db.fiscal_config_loss_rate_pair(key)
+        if loss_pair is not None:
+            current = loss_pair_running.get(key, fiscal_config_snapshot.get(key, current))
+            new_val = max(0, current + delta)
+            loss_pair_running[key] = new_val
+            human_key, sink_key = loss_pair
+            pair_values = loss_pair_final_by_pair.setdefault(loss_pair, {
+                human_key: loss_pair_running.get(
+                    human_key, fiscal_config_snapshot.get(human_key, 0)
+                ),
+                sink_key: loss_pair_running.get(
+                    sink_key, fiscal_config_snapshot.get(sink_key, 0)
+                ),
+            })
+            pair_values[key] = new_val
+            deferred_loss_pair_changes.append({
+                "pair": loss_pair,
+                "key": key,
+                "old": current,
+                "new": new_val,
+                "delta": delta,
+                "reason": str(change.get("reason") or ""),
+                "item": change,
+            })
+            continue
         new_val = max(0, current + delta)
         try:
             db.validate_fiscal_config_value(key, new_val)
@@ -7108,6 +7137,30 @@ def apply_score_extraction(
             "key": key, "old": current, "new": new_val, "delta": delta,
             "reason": str(change.get("reason") or ""),
         })
+    for loss_pair, final_values in loss_pair_final_by_pair.items():
+        pair_changes = [
+            change for change in deferred_loss_pair_changes
+            if change["pair"] == loss_pair
+        ]
+        try:
+            db.set_fiscal_config_batch(final_values, commit=commit_now)
+        except ValueError as exc:
+            for change in pair_changes:
+                applied_fiscal.append({
+                    "rejected": True,
+                    "reason": f"调率目标「{change['key']}」非法：{exc}",
+                    "category": "invalid_enum",
+                    "item": change["item"],
+                })
+            continue
+        for change in pair_changes:
+            applied_fiscal.append({
+                "key": change["key"],
+                "old": change["old"],
+                "new": change["new"],
+                "delta": change["delta"],
+                "reason": change["reason"],
+            })
 
     # 8) appointments：仅收「后宫纳妃」（office_type=后宫）。朝臣的新任/调任已统一
     #    并入 office_changes（section 10），LLM 误把朝臣塞这里的项一律转去 office_changes 处理。
