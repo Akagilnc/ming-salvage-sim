@@ -1442,7 +1442,16 @@ def test_treasury_budget_summary_names_substrate_hub_surfaces(fresh_game):
     assert "起运" in summary
     assert "边饷hub" in summary
     assert "太仓亏空" in summary
+    assert "百官俸禄" in summary
     assert "田赋+辽饷" not in summary
+
+
+def test_treasury_budget_summary_names_fixed_salary_display(fresh_game):
+    db, state = fresh_game
+
+    summary = db.treasury_budget_summary(state)
+
+    assert "百官俸禄" in summary
 
 
 def test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expenses(fresh_game):
