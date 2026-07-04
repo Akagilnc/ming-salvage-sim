@@ -23,7 +23,7 @@ from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
 from ming_sim.exceptions import SettlementAbort
-from ming_sim.fiscal_tick import settle_tick
+from ming_sim.fiscal_tick import FiscalTickResult, settle_tick
 from ming_sim.flows import army_needed
 from ming_sim.issues import sync_opening_legacies
 from tests.fiscal_test_utils import zero_non_meta_fiscal_config
@@ -1377,6 +1377,52 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
             containers.__setitem__("C_太仓挪用", 3),
             containers.__setitem__("C_太仓纯亏空", 0),
         ),
+    )
+
+
+def test_budget_projection_passes_copied_settle_snapshots_to_fiscal_tick(fresh_game, monkeypatch):
+    import ming_sim.fiscal_tick as fiscal_tick_mod
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    original_json_loads = flows_mod.json.loads
+    original_st_objects = []
+    original_p_objects = []
+    seen_tick_args = []
+
+    def tracking_json_loads(raw):
+        parsed = original_json_loads(raw)
+        settle = parsed.get("settle") if isinstance(parsed, dict) else None
+        if isinstance(settle, dict):
+            st = settle.get("st")
+            p = settle.get("p")
+            if isinstance(st, dict):
+                original_st_objects.append(st)
+            if isinstance(p, dict):
+                original_p_objects.append(p)
+        return parsed
+
+    def spy_settle_tick(st, p, actions):
+        seen_tick_args.append((st, p))
+        st["__projection_mutated_st"] = 1
+        p.setdefault("Due", {})["__projection_mutated_due"] = 1
+        return FiscalTickResult(new_st={}, breakdown={"起运到京": 0.0})
+
+    monkeypatch.setattr(flows_mod.json, "loads", tracking_json_loads)
+    monkeypatch.setattr(fiscal_tick_mod, "settle_tick", spy_settle_tick)
+
+    flows_mod.compute_budget_lines(db, state)
+
+    assert seen_tick_args, "substrate hub budget projection should call settle_tick"
+    assert all(
+        tick_st is not original_st
+        for tick_st, _ in seen_tick_args
+        for original_st in original_st_objects
+    )
+    assert all(
+        tick_p is not original_p
+        for _, tick_p in seen_tick_args
+        for original_p in original_p_objects
     )
 
 
