@@ -31,7 +31,7 @@ Status: Accepted（2026-06-15；**务实版**——用户拍板：复用 issue �
 - **`stop_condition TEXT DEFAULT ''`**（「直到补齐」用；存 `_gate_passed` 的 **dict JSON `{寻址key: "比较式"}`、算符在 value**，同 `legacies.clear_gate`）。⚠️ **三处坑（线上三 bot concur）**：① 算符在 **value 不嵌进 key**——`{"army.<id>.arrears": "<=0"}`、多军 `{"army.guanning|jizhen.arrears.sum": "<=0"}`；写成扁平串 `army...<=0` 会解析失败→永不停。② key 须**带表前缀**（裸 `arrears` → `_eval_gate_key` 判 None→恒不过）。③ id 是**英文 slug**（`guanning`/`jizhen`/`xuan_da`… 非中文「关宁军/蓟镇」）。`_eval_gate_key` 按 `armies.id` 查、支持 id 列表 + sum/max/min/avg；创建端须把诏书「边军」映射到 `armies.id` 英文集合。
 - **收尾区分不另加列**：用既有 `resolution_summary`（叙事）+ `issue_advances.trigger_kind`（`expire` vs `cancel`）区分「到期收尾」与「玩家撤销」（R3-medium：避免与 `resolution_summary` 重叠造冗余列）。〔撤回上一版加的 `close_reason` 列。〕
 - **bar = 履行/补齐进度**，立项 **`inertia=0`（显式；`expected_months` 省略即回落 inertia=0）**，bar 由 `stop_condition`/真进度推、不靠 random inertia 自漂——免得假性了结。漂到 100（补齐）=真了结，与 `stop_condition` 一致。〔取代 R1 误加的「bar-exempt」：bar 不剥离、当进度用。〕**注：承诺 `ongoing_effects` 是月度承诺账，metrics 与 economy 都不得被普通 issue 的 bar 折扣抹成 0；补饷（economy）额恒定、无「越补越少」。**
-- **承诺 issue 须 `cancellable='decree'`**（皇帝可无损撤自己的承诺）——否则落 `_normalize_cancellable` 默认 `by_progress`、撤回走「此事非诏可消」+皇威 −2，语义荒谬（R3-high）。创建端写死，不靠 LLM 默认。
+- **承诺 issue 须 `cancellable='decree'`**（皇帝可无损撤自己的承诺）——否则落 `_normalize_cancellable` 默认 `by_progress`、撤回走「此事非诏可消」+皇威 −2，语义荒谬（R3-high）。创建端写死，不靠 LLM 默认。〔0056 修订：机械可撤性 `cancellable='decree'` 不变，但撤回成命另落代价（皇威+当事大臣观感+派系），「无损」指机械可撤性非零代价，见 0056/#226〕
 
 ### D3 三形态 → 载体落点
 | 形态 | 载体 | 终止 |
