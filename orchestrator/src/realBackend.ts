@@ -960,7 +960,7 @@ function extractTaggedJson(
     if (end === -1) continue;
     const body = stdout.slice(bodyStart, end).trim();
     try {
-      return JSON.parse(stripJsonFence(body));
+      return parseTaggedJsonBody(body);
     } catch (err) {
       lastErr = err;
     }
@@ -968,6 +968,56 @@ function extractTaggedJson(
 
   if (lastErr !== undefined) throw lastErr;
   throw new Error(missingMessage);
+}
+
+function parseTaggedJsonBody(body: string): unknown {
+  const stripped = stripJsonFence(body);
+  try {
+    return JSON.parse(stripped);
+  } catch (err) {
+    const prefix = balancedJsonPrefix(stripped);
+    if (prefix !== undefined && /^[}\s]*$/.test(stripped.slice(prefix.length))) {
+      return JSON.parse(prefix);
+    }
+    throw err;
+  }
+}
+
+function balancedJsonPrefix(s: string): string | undefined {
+  let depth = 0;
+  let started = false;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i]!;
+    if (!started) {
+      if (/\s/.test(ch)) continue;
+      if (ch !== "{" && ch !== "[") return undefined;
+      started = true;
+      depth = 1;
+      continue;
+    }
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === "\"") {
+      inString = true;
+    } else if (ch === "{" || ch === "[") {
+      depth += 1;
+    } else if (ch === "}" || ch === "]") {
+      depth -= 1;
+      if (depth === 0) return s.slice(0, i + 1);
+      if (depth < 0) return undefined;
+    }
+  }
+  return undefined;
 }
 
 export function extractCoderTag(stdout: string): unknown {
