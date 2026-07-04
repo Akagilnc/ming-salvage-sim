@@ -342,6 +342,39 @@ def test_change_central_loss_rate_pair_above_100_rejected(game):
     assert cfg["central_taicang_sink_loss_rate"] == before_sink
 
 
+def test_change_central_loss_rate_rebalance_uses_batch_final_total(game):
+    """中央损耗率同批重分配只看批次终态，合法 rebalance 不受行顺序影响。"""
+    db, state, content = game
+    db.conn.execute(
+        "UPDATE fiscal_config SET value = 80 WHERE key = 'central_taicang_human_loss_rate'"
+    )
+    db.conn.execute(
+        "UPDATE fiscal_config SET value = 20 WHERE key = 'central_taicang_sink_loss_rate'"
+    )
+    db.conn.commit()
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [
+            {
+                "key": "central_taicang_human_loss_rate",
+                "delta": 5,
+                "reason": "先记人为损耗调整",
+            },
+            {
+                "key": "central_taicang_sink_loss_rate",
+                "delta": -5,
+                "reason": "再压自然损耗抵扣",
+            },
+        ],
+    }, narrative="x", decree_text="y")
+
+    assert _rejection_rows(db, turn, "fiscal_changes") == []
+    cfg = db.get_fiscal_config()
+    assert cfg["central_taicang_human_loss_rate"] == 85
+    assert cfg["central_taicang_sink_loss_rate"] == 15
+
+
 @pytest.mark.parametrize("bad", [False, 0.0])
 def test_falsy_dirty_delta_still_rejected(game, bad):
     """False==0 / 0.0==0 为真——无操作短路跑在脏值判定之前,把脏 bool/float 静默
