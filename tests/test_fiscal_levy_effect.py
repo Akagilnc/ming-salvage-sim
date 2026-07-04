@@ -1017,6 +1017,47 @@ def test_liao_levy_targets_all_seeded_settles_without_compounding_or_clobbering_
         assert _settle_payload(db, region_id)["p"] == first_p
 
 
+def test_liao_levy_rewrites_numeric_string_targets_to_canonical_numbers(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+
+    apply_historical_fiscal_rates(state, db)
+    stale = _settle_payload(db, "shaanxi")
+    expected_sanxiang = stale["p"]["三饷应征"]
+    expected_transport = stale["p"]["起运定额"]
+    stale["p"]["三饷应征"] = str(expected_sanxiang)
+    stale["p"]["起运定额"] = str(expected_transport)
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()
+    fiscal = json.loads(str(row["fiscal"] or "{}"))
+    fiscal["settle"] = stale
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
+    )
+    db.conn.commit()
+
+    apply_historical_fiscal_rates(state, db)
+
+    after = _settle_payload(db, "shaanxi")
+    assert isinstance(after["p"]["三饷应征"], float)
+    assert isinstance(after["p"]["起运定额"], float)
+    assert math.isclose(
+        after["p"]["三饷应征"],
+        expected_sanxiang,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+    assert math.isclose(
+        after["p"]["起运定额"],
+        expected_transport,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+
+
 def test_jiao_levy_rises_then_stops_and_keeps_base_transport(game):
     db, state, content = game
     issues.bind_content(content)

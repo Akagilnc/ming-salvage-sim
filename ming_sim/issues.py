@@ -1113,6 +1113,10 @@ def _as_float(raw: object, *, ctx: str) -> float:
     return value
 
 
+def _is_stored_number(raw: object) -> bool:
+    return not isinstance(raw, bool) and isinstance(raw, (int, float))
+
+
 def _fiscal_levy_liao_seed(meta: Dict[str, object], p: Dict[str, object], region_id: str) -> float:
     if _SETTLE_META_LIAO_SEED_KEY in meta:
         return _as_float(
@@ -1371,6 +1375,8 @@ def _apply_fiscal_levy_targets(
             meta[_SETTLE_META_LAND_DENOMINATOR_KEY] = land_denominator
         _fiscal_levy_mark_provisional(meta)
         if meta == meta_raw \
+                and _is_stored_number(p.get("三饷应征")) \
+                and _is_stored_number(p.get("起运定额")) \
                 and math.isclose(current_sanxiang, target_sanxiang, rel_tol=0, abs_tol=1e-9) \
                 and math.isclose(current_transport, target_transport, rel_tol=0, abs_tol=1e-9):
             continue
