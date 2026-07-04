@@ -339,6 +339,39 @@ describe("#336 shipOutcomeFromResult — completion-signal gate (mirrors the cmr
     if (o.kind === "malformed") expect(o.reason).toContain("sidecar");
   });
 
+  it("falls back to signaled ship stdout when the prepared outcome sidecar is blank", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ship-outcome-blank-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "   \n", "utf8");
+
+    const o = shipOutcomeFromResult({
+      completionSignal: SHIP_COMPLETION_SIGNAL,
+      stdout: '<ship>{"status": "pushed", "branch": "feat/fallback"}</ship>',
+      outcomePath,
+    });
+
+    expect(o).toEqual({
+      kind: "shipped",
+      status: "pushed",
+      branch: "feat/fallback",
+    });
+  });
+
+  it("keeps malformed ship sidecar from masking a missing completion signal", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ship-outcome-bad-unsignaled-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+
+    const o = shipOutcomeFromResult({
+      completionSignal: undefined,
+      stdout: '<ship>{"status": "pushed", "branch": "feat/fallback"}</ship>',
+      outcomePath,
+    });
+
+    expect(o.kind).toBe("escalate");
+    if (o.kind === "escalate") expect(o.reason).toContain("completion signal");
+  });
+
   it("a signaled shipped run ⇒ a shipped outcome", () => {
     const o = shipOutcomeFromResult({
       completionSignal: SHIP_COMPLETION_SIGNAL,

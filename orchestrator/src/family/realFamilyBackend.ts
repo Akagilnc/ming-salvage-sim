@@ -98,6 +98,7 @@ import {
   WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
   readRequiredWorkerOutcomeSidecar,
+  readWorkerOutcomeSidecar,
 } from "../workerOutcomeSidecar.js";
 import {
   cmrLegAccountingFailure,
@@ -2645,16 +2646,23 @@ export function cmrOutcomeFromResult(result: {
   outcomePath?: string;
   stdout: string;
 }): CmrWorkerOutcome {
+  const signal = result.completionSignal;
+  const signaled = Array.isArray(signal)
+    ? signal.includes(CMR_COMPLETION_SIGNAL)
+    : signal === CMR_COMPLETION_SIGNAL;
   try {
     if (result.outcomePath !== undefined) {
-      const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
-      return classifyCmrOutcomePayload(
-        sidecar,
-        result.cmrReviewLegs ?? process.env,
-        "cmr worker outcome sidecar",
-      );
+      const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
+      if (sidecar !== undefined) {
+        return classifyCmrOutcomePayload(
+          sidecar,
+          result.cmrReviewLegs ?? process.env,
+          "cmr worker outcome sidecar",
+        );
+      }
     }
   } catch (err) {
+    if (!signaled) return missingCmrCompletionSignalOutcome(signal);
     return {
       kind: "malformed",
       reason:
@@ -2663,24 +2671,26 @@ export function cmrOutcomeFromResult(result: {
     };
   }
 
-  const signal = result.completionSignal;
-  const signaled = Array.isArray(signal)
-    ? signal.includes(CMR_COMPLETION_SIGNAL)
-    : signal === CMR_COMPLETION_SIGNAL;
   if (!signaled) {
-    const actual =
-      signal === undefined
-        ? "none (no signal fired before the iteration limit)"
-        : `"${String(signal)}"`;
-    return {
-      kind: "escalate",
-      reason: "cmr worker did not fire its completion signal",
-      diagnosis:
-        `expected "${CMR_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
-        `cmr run is not trusted as a verdict — escalate, never a fabricated pass)`,
-    };
+    return missingCmrCompletionSignalOutcome(signal);
   }
   return parseCmrOutcome(result.stdout, result.cmrReviewLegs);
+}
+
+function missingCmrCompletionSignalOutcome(
+  signal: string | string[] | undefined,
+): CmrWorkerOutcome {
+  const actual =
+    signal === undefined
+      ? "none (no signal fired before the iteration limit)"
+      : `"${String(signal)}"`;
+  return {
+    kind: "escalate",
+    reason: "cmr worker did not fire its completion signal",
+    diagnosis:
+      `expected "${CMR_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
+      `cmr run is not trusted as a verdict — escalate, never a fabricated pass)`,
+  };
 }
 
 /** A trimmed, non-empty string at the schema layer (mirrors shipOutcome.ts). */
@@ -3116,8 +3126,10 @@ export function mergerOutcomeFromResult(result: {
   }
   try {
     if (result.outcomePath !== undefined) {
-      const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
-      return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
+      const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
+      if (sidecar !== undefined) {
+        return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
+      }
     }
   } catch (err) {
     return {
