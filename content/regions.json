@@ -165,6 +165,7 @@
           "_meta": {
             "provisional": [
               "起运定额",
+              "正赋应征",
               "隐田"
             ],
             "postures": [
@@ -177,13 +178,12 @@
               "url": "https://www.shidianguji.com/zh/book/NGJ89241200000038535874/chapter/1luif6qi3a4g9",
               "scan_checked": true,
               "checked_fields": [
-                "官民田",
-                "正赋应征"
+                "官民田"
               ],
               "conversion": {
                 "grain_silver_liang_per_stone": 0.25,
                 "effective_silver_liang_per_stone": 0.598816,
-                "note": "起运京库按正统以来金花银/京库米麦折色锚点：米麦一石折银二钱五分；正赋应征用江南实际折色负担的有效银率折为万两/月。卷十六全境总项未直接列全境起运汇总，正赋起运本色以总正赋石数约七成估算，保留可挑战推导链。"
+                "note": "官民田已按卷十六核验；正赋应征仍用江南实际折色负担的有效银率折为万两/月，尚未逐项重构为官方折色直推，故继续 provisional。卷十六全境总项未直接列全境起运汇总，正赋起运本色以总正赋石数约七成估算，起运定额继续 provisional。"
               },
               "raw": {
                 "官民田_顷": 793846.71,
@@ -1074,7 +1074,17 @@
               "source": "《万历会计录》卷十「四川布政司田赋」",
               "taxable_land_qing": 134827.6723,
               "assessed_grain_shi": 1028545.133,
-              "transport_grain_shi": 404497.2409
+              "transport_grain_shi": 404497.2409,
+              "scan_checked": true,
+              "ocr_status": "识典转录数字已按影印图核验；数字用于 seed 前不依赖未核 OCR。",
+              "conversion": {
+                "official_anchor": "卷十田赋本色/折色合项口径；按官方折色负担反推有效银率。",
+                "assessed_silver_liang_per_stone": 0.26428009,
+                "transport_silver_liang_per_stone": 0.249999233,
+                "assessed_formula": "assessed_grain_shi * assessed_silver_liang_per_stone / 10000 / 12",
+                "transport_formula": "transport_grain_shi * transport_silver_liang_per_stone / 10000 / 12",
+                "remittance_cap_formula": "起运定额 = 正赋起运基线 + 三饷应征"
+              }
             },
             "excluded_from_settle": [
               "salt_tax",
@@ -1173,7 +1183,17 @@
               "source": "《万历会计录》卷五「福建布政司田赋」",
               "taxable_land_qing": 134225.067,
               "assessed_grain_shi": 883121.6379,
-              "transport_grain_shi": 314000.0
+              "transport_grain_shi": 314000.0,
+              "scan_checked": true,
+              "ocr_status": "识典转录数字已按影印图核验；数字用于 seed 前不依赖未核 OCR。",
+              "conversion": {
+                "official_anchor": "卷五田赋本色/折色合项口径；按官方折色负担反推有效银率。",
+                "assessed_silver_liang_per_stone": 0.280486843,
+                "transport_silver_liang_per_stone": 0.285133758,
+                "assessed_formula": "assessed_grain_shi * assessed_silver_liang_per_stone / 10000 / 12",
+                "transport_formula": "transport_grain_shi * transport_silver_liang_per_stone / 10000 / 12",
+                "remittance_cap_formula": "起运定额 = 正赋起运基线 + 三饷应征"
+              }
             },
             "excluded_from_settle": [
               "salt_tax",
@@ -1262,7 +1282,17 @@
               "source": "《万历会计录》卷十一「广东布政司田赋」",
               "taxable_land_qing": 256865.1366,
               "assessed_grain_shi": 999747.6116,
-              "transport_grain_shi": 400000.0
+              "transport_grain_shi": 400000.0,
+              "scan_checked": true,
+              "ocr_status": "识典转录数字已按影印图核验；数字用于 seed 前不依赖未核 OCR。",
+              "conversion": {
+                "official_anchor": "卷十一田赋本色/折色合项口径；按官方折色负担反推有效银率。",
+                "assessed_silver_liang_per_stone": 0.268543777,
+                "transport_silver_liang_per_stone": 0.24999,
+                "assessed_formula": "assessed_grain_shi * assessed_silver_liang_per_stone / 10000 / 12",
+                "transport_formula": "transport_grain_shi * transport_silver_liang_per_stone / 10000 / 12",
+                "remittance_cap_formula": "起运定额 = 正赋起运基线 + 三饷应征"
+              }
             },
             "excluded_from_settle": [
               "salt_tax",
@@ -1351,7 +1381,17 @@
               "source": "《万历会计录》卷十二「广西布政司田赋」",
               "taxable_land_qing": 94020.748,
               "assessed_grain_shi": 373088.3344,
-              "transport_grain_shi": 0.0
+              "transport_grain_shi": 0.0,
+              "scan_checked": true,
+              "ocr_status": "识典转录数字已按影印图核验；数字用于 seed 前不依赖未核 OCR。",
+              "conversion": {
+                "official_anchor": "卷十二田赋本色/折色合项口径；按官方折色负担反推有效银率；源内未形成正赋起运本色。",
+                "assessed_silver_liang_per_stone": 0.253805845,
+                "transport_silver_liang_per_stone": 0.0,
+                "assessed_formula": "assessed_grain_shi * assessed_silver_liang_per_stone / 10000 / 12",
+                "transport_formula": "transport_grain_shi * transport_silver_liang_per_stone / 10000 / 12",
+                "remittance_cap_formula": "起运定额 = 正赋起运基线 + 三饷应征"
+              }
             },
             "excluded_from_settle": [
               "salt_tax",
@@ -1445,7 +1485,17 @@
               "source": "《万历会计录》卷十三「云南布政司田赋」",
               "taxable_land_qing": 17993.588,
               "assessed_grain_shi": 142690.2976,
-              "transport_grain_shi": 0.0
+              "transport_grain_shi": 0.0,
+              "scan_checked": true,
+              "ocr_status": "识典转录数字已按影印图核验；数字用于 seed 前不依赖未核 OCR。",
+              "conversion": {
+                "official_anchor": "卷十三田赋本色/折色合项口径；按官方折色负担反推有效银率；源内未形成正赋起运本色。",
+                "assessed_silver_liang_per_stone": 0.253135641,
+                "transport_silver_liang_per_stone": 0.0,
+                "assessed_formula": "assessed_grain_shi * assessed_silver_liang_per_stone / 10000 / 12",
+                "transport_formula": "transport_grain_shi * transport_silver_liang_per_stone / 10000 / 12",
+                "remittance_cap_formula": "起运定额 = 正赋起运基线 + 三饷应征"
+              }
             },
             "excluded_from_settle": [
               "salt_tax",
@@ -1534,7 +1584,17 @@
               "source": "《万历会计录》卷十四「贵州布政司田赋」",
               "taxable_land_qing": 5166.663,
               "assessed_grain_shi": 50808.5896,
-              "transport_grain_shi": 0.0
+              "transport_grain_shi": 0.0,
+              "scan_checked": true,
+              "ocr_status": "识典转录数字已按影印图核验；数字用于 seed 前不依赖未核 OCR。",
+              "conversion": {
+                "official_anchor": "卷十四田赋本色/折色合项口径；按官方折色负担反推有效银率；源内未形成正赋起运本色。",
+                "assessed_silver_liang_per_stone": 0.250115189,
+                "transport_silver_liang_per_stone": 0.0,
+                "assessed_formula": "assessed_grain_shi * assessed_silver_liang_per_stone / 10000 / 12",
+                "transport_formula": "transport_grain_shi * transport_silver_liang_per_stone / 10000 / 12",
+                "remittance_cap_formula": "起运定额 = 正赋起运基线 + 三饷应征"
+              }
             },
             "excluded_from_settle": [
               "salt_tax",
