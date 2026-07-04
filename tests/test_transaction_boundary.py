@@ -15,6 +15,15 @@ import pytest
 from ming_sim.applier import atomic
 
 
+def _fiscal_config_value(db, key: str) -> int:
+    row = db.conn.execute(
+        "SELECT value FROM fiscal_config WHERE key = ?",
+        (key,),
+    ).fetchone()
+    assert row is not None
+    return int(row["value"])
+
+
 def test_game_db_owns_transaction_tracks_atomic_and_open_transactions(game):
     db, state, content = game
     assert db.owns_transaction() is True
@@ -157,6 +166,49 @@ def test_outside_atomic_commit_is_real(game):
     finally:
         other.close()
     assert row is not None and row[0] == "committed"
+
+
+def test_set_fiscal_config_respects_caller_owned_transaction(game):
+    db, state, content = game
+    key = "官俸_base"
+    before = _fiscal_config_value(db, key)
+
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1_fiscal_cfg_open'")
+    db.conn.commit()
+    db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_fiscal_cfg_open','open')")
+    assert db.conn.in_transaction
+
+    db.set_fiscal_config(key, before + 1)
+
+    assert db.conn.in_transaction
+    assert _fiscal_config_value(db, key) == before + 1
+    db.conn.rollback()
+    assert _fiscal_config_value(db, key) == before
+
+
+def test_set_fiscal_config_batch_respects_caller_owned_transaction(game):
+    db, state, content = game
+    first_key = "官俸_base"
+    second_key = "工程_base"
+    first_before = _fiscal_config_value(db, first_key)
+    second_before = _fiscal_config_value(db, second_key)
+
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1_fiscal_batch_open'")
+    db.conn.commit()
+    db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_fiscal_batch_open','open')")
+    assert db.conn.in_transaction
+
+    db.set_fiscal_config_batch({
+        first_key: first_before + 1,
+        second_key: second_before + 2,
+    })
+
+    assert db.conn.in_transaction
+    assert _fiscal_config_value(db, first_key) == first_before + 1
+    assert _fiscal_config_value(db, second_key) == second_before + 2
+    db.conn.rollback()
+    assert _fiscal_config_value(db, first_key) == first_before
+    assert _fiscal_config_value(db, second_key) == second_before
 
 
 def test_atomic_reraises_original_exception(game):

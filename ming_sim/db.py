@@ -1600,21 +1600,23 @@ class GameDB:
         self.validate_fiscal_config_values({key: value})
 
     def set_fiscal_config(self, key: str, value: int, commit: bool = True) -> None:
+        owns_transaction = self.owns_transaction() if commit else False
         self.validate_fiscal_config_value(key, value)
         self.conn.execute(
             "UPDATE fiscal_config SET value = ? WHERE key = ?", (value, key)
         )
-        if commit:
+        if commit and owns_transaction:
             self.conn.commit()
 
     def set_fiscal_config_batch(self, values: Dict[str, int], commit: bool = True) -> None:
+        owns_transaction = self.owns_transaction() if commit else False
         normalized = {str(k or "").strip(): int(v) for k, v in values.items()}
         self.validate_fiscal_config_values(normalized)
         self.conn.executemany(
             "UPDATE fiscal_config SET value = ? WHERE key = ?",
             [(value, key) for key, value in normalized.items()],
         )
-        if commit:
+        if commit and owns_transaction:
             self.conn.commit()
 
     def create_fiscal_item(

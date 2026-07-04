@@ -252,6 +252,33 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True
     return salt_total, commerce_total
 
 
+def _project_substrate_hub_remittance(db: GameDB) -> float:
+    """Project next fixed-flow remittance without mutating province fiscal state."""
+    from .fiscal_tick import settle_tick
+
+    remittance_total = 0.0
+    rows = db.conn.execute(
+        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
+    ).fetchall()
+    for row in rows:
+        region_id = str(row["id"])
+        try:
+            fiscal = json.loads(str(row["fiscal"] or "{}"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"region {region_id!r} fiscal JSON 非法，无法投影起运") from exc
+        if not isinstance(fiscal, dict):
+            raise ValueError(f"region {region_id!r} fiscal 非字典，无法投影起运")
+        if "settle" not in fiscal:
+            continue
+        settle = fiscal.get("settle")
+        if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
+                or not isinstance(settle.get("p"), dict):
+            raise ValueError(f"region {region_id!r} 无 settle 财政基座，无法投影起运")
+        result = settle_tick(settle["st"], settle["p"], [])
+        remittance_total += float((result.breakdown or {}).get("起运到京", 0.0) or 0.0)
+    return remittance_total
+
+
 def _fiscal_container_value(db: GameDB, key: str) -> float:
     row = db.conn.execute(
         "SELECT value FROM fiscal_containers WHERE key = ?",
@@ -319,12 +346,37 @@ def _central_loss_split(db: GameDB, gross: float, human_key: str, sink_key: str)
     return human, sink
 
 
-def _substrate_hub_budget_income_lines(db: GameDB) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
-    """Read the persisted hub source used by ledger/UI/summary; do not project province formulas."""
-    remittance = _round_nonnegative_amount(_fiscal_container_value(db, "hub_省级起运到京"))
-    salt = _round_nonnegative_amount(_fiscal_container_value(db, "hub_盐税解京"))
-    commerce = _round_nonnegative_amount(_fiscal_container_value(db, "hub_商税解京"))
-    taicang_loss = _round_nonnegative_amount(_fiscal_container_value(db, "hub_太仓亏空"))
+def _substrate_hub_budget_income_lines(
+    db: GameDB, state: GameState, *, project_missing: bool = True
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    """Read persisted hub income, or project first-tick budget before containers exist."""
+    persisted = _fiscal_container_values_when_complete(
+        db, ("hub_省级起运到京", "hub_盐税解京", "hub_商税解京", "hub_太仓亏空")
+    )
+    if persisted is not None:
+        remittance = _round_nonnegative_amount(persisted["hub_省级起运到京"])
+        salt = _round_nonnegative_amount(persisted["hub_盐税解京"])
+        commerce = _round_nonnegative_amount(persisted["hub_商税解京"])
+        taicang_loss = _round_nonnegative_amount(persisted["hub_太仓亏空"])
+    elif project_missing:
+        raw_remittance = _round_nonnegative_amount(_project_substrate_hub_remittance(db))
+        raw_salt, raw_commerce = _substrate_hub_salt_commerce_income_split(db)
+        remittance = _income_amount_after_legacy_modifier(db, state, "国库", raw_remittance)
+        salt = _income_amount_after_legacy_modifier(
+            db, state, "国库", _round_nonnegative_amount(raw_salt)
+        )
+        commerce = _income_amount_after_legacy_modifier(
+            db, state, "国库", _round_nonnegative_amount(raw_commerce)
+        )
+        taicang_human_loss, taicang_sink_loss = _central_loss_split(
+            db,
+            remittance + salt + commerce,
+            _CENTRAL_TAICANG_HUMAN_LOSS_RATE,
+            _CENTRAL_TAICANG_SINK_LOSS_RATE,
+        )
+        taicang_loss = taicang_human_loss + taicang_sink_loss
+    else:
+        remittance = salt = commerce = taicang_loss = 0
     income = [
         {"name": "起运", "amount": remittance, "note": "各省起运到京（hub 持久源）",
          "internal": "substrate_hub"},
@@ -375,7 +427,9 @@ def _add_fiscal_container(db: GameDB, key: str, delta: float, note: str) -> None
 # flows 落账 / UI budget_payload / db.treasury_budget_summary 三处共用，禁止各自重算。
 
 
-def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, list]]:
+def compute_budget_lines(
+    db: GameDB, state: GameState, *, project_substrate_hub: bool = True
+) -> Dict[str, Dict[str, list]]:
     """唯一定额预算源。返回 {"国库":{"income":[{name,amount,note}],"expense":[...]},"内库":{...}}。
     税收/皇庄＝calc_province_fiscal 动态值；legacy 军饷＝SUM(明军应发)；
     substrate_hub 军饷由省级基座 / hub 承载，不再列入旧国库固定支出；
@@ -383,7 +437,9 @@ def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, li
     其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。"""
     cfg = db.get_fiscal_config()
     if db.is_substrate_hub_fiscal_engine_enabled():
-        hub_income_lines, hub_expense_lines = _substrate_hub_budget_income_lines(db)
+        hub_income_lines, hub_expense_lines = _substrate_hub_budget_income_lines(
+            db, state, project_missing=project_substrate_hub
+        )
         nk_huang = 0
     else:
         gk_tax, nk_huang, _ = calc_province_fiscal(state, db)
@@ -448,16 +504,6 @@ def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, li
 
 def _substrate_hub_budget_army_pay(db: GameDB, state: GameState) -> int:
     """Return the fixed-budget army-pay outflow for substrate_hub saves."""
-    persisted = _fiscal_container_values_when_complete(
-        db, ("hub_京运实拨", "hub_中央军饷实拨", "hub_京运损耗")
-    )
-    if persisted is not None:
-        return _round_nonnegative_amount(
-            persisted["hub_京运实拨"]
-            + persisted["hub_中央军饷实拨"]
-            + persisted["hub_京运损耗"]
-        )
-
     rows = db.conn.execute(
         """
         SELECT id, manpower, salary_rate, owner_power, central_pay_share
@@ -1063,6 +1109,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             state.metrics.clear()
             state.metrics.update(metrics_before)
             raise_fixed_period_flow_abort_if_needed(db, state, exc)
+            raise
         except BaseException:
             state.metrics.clear()
             state.metrics.update(metrics_before)
@@ -1245,7 +1292,9 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # ── 固定收支落账（税/皇庄/宗室/官俸/织造…全走唯一定额源 compute_budget_lines）──
     # 军饷与建筑另有逐项落账逻辑（arrears/condition），故下面跳过这两类，仅落其余定额项。
     def _apply_budget_lines(*, skip_substrate_hub_lines: bool = False) -> None:
-        budget = compute_budget_lines(db, state)
+        budget = compute_budget_lines(
+            db, state, project_substrate_hub=not skip_substrate_hub_lines
+        )
         skip = {"各军军饷", "建筑产出", "建筑维护"}
         for account in ("国库", "内库"):
             for it in budget[account]["income"]:
