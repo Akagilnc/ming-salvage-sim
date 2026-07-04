@@ -2782,13 +2782,33 @@ class GameDB:
             })
         return out
 
+    def _primary_source_army_pay_due(self, settle: Dict[str, Any]) -> Optional[float]:
+        meta = settle.get("_meta")
+        if not isinstance(meta, dict):
+            return None
+        primary_source = meta.get("primary_source")
+        if not isinstance(primary_source, dict):
+            return None
+        refined = primary_source.get("fields_refined")
+        if not isinstance(refined, list) or "军饷" not in refined:
+            return None
+        raw_annual = primary_source.get("现额银两_年")
+        if raw_annual is None:
+            return None
+        value = float(raw_annual) / 10000 / 12
+        if not math.isfinite(value) or value < 0:
+            raise ValueError("primary_source 现额银两_年 非法，无法派生 Due.军饷")
+        return value
+
     def _derive_region_army_pay_due(self, region_id: str, settle: Dict[str, Any]) -> List[Dict[str, float | str]]:
         rows = self._army_pay_source_rows_for_region(region_id)
         p = settle.setdefault("p", {})
         due_obj = p.get("Due")
         if not isinstance(due_obj, dict):
             raise ValueError("Due 非字典")
-        due_obj["军饷"] = sum(float(row["due"]) for row in rows)
+        due_obj["军饷"] = self._primary_source_army_pay_due(settle)
+        if due_obj["军饷"] is None:
+            due_obj["军饷"] = sum(float(row["due"]) for row in rows)
         settle.setdefault("st", {})["军饷欠"] = sum(float(row["province_pay_arrears"]) for row in rows)
         return rows
 

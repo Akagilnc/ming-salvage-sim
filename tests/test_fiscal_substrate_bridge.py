@@ -3581,7 +3581,10 @@ def test_liaodong_and_dongjiang_are_pure_military_pay_funnels(fresh_db):
         assert p["三饷应征"] == 0
         assert p["起运定额"] == 0
         assert p["拨付gross"] == pytest.approx(e["grant"])
-        assert p["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, region_id))
+        if region_id == "liaodong":
+            assert p["Due"]["军饷"] == pytest.approx(e["due"])
+        else:
+            assert p["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, region_id))
         assert {k: p["Due"][k] for k in ("官俸", "宗禄", "赈济")} == {"官俸": 0, "宗禄": 0, "赈济": 0}
         assert st["军饷欠"] == pytest.approx(_province_pay_arrears(fresh_db, region_id))
 
@@ -3589,6 +3592,12 @@ def test_liaodong_and_dongjiang_are_pure_military_pay_funnels(fresh_db):
         assert res.breakdown["实征"] == 0
         assert res.breakdown["起运到京"] == 0
         assert res.new_st["军饷欠"] == pytest.approx(max(0, st["军饷欠"] + p["Due"]["军饷"] - e["grant"]))
+
+
+def test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile(fresh_db):
+    settle = _read_settle(fresh_db, "liaodong")
+
+    assert settle["p"]["Due"]["军饷"] == pytest.approx(711391 / 10000 / 12)
 
 
 JIANGNAN_CORE_EXPECTED = {

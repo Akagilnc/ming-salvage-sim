@@ -1133,7 +1133,7 @@
               "粮料原额石": 279212
             },
             "notes": {
-              "军饷": "raw content 以现额合计银711391两/年折月；fresh DB 仍会按 army pay-source spine 重算 Due.军饷。",
+              "军饷": "raw content 以现额合计银711391两/年折月；fresh DB 保留卷十七军镇预算口径，不按 army pay-source 省份额覆盖。",
               "拨付gross": "京运年例银409984两/年折月；hub #261 后动态分配",
               "起运定额": "战区无省级实征，固定为 0"
             }
