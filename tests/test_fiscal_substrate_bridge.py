@@ -11,6 +11,7 @@
 动态推进，失地/无基座省自然出列。
 """
 import json
+import math
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
@@ -3623,24 +3624,24 @@ def test_primary_source_army_pay_due_rejects_dirty_annual_amount(fresh_db, bad_a
 
 JIANGNAN_CORE_EXPECTED = {
     "nanzhili": {
-        "正赋应征": 30, "三饷应征": 8, "起运定额": 24,
+        "正赋应征": 30, "三饷应征": 8, "起运定额": 16.77,
         "Due": {"官俸": 4, "宗禄": 2, "赈济": 0},
-        "first_tick": {"起运到京": 24},
+        "first_tick": {"起运到京": 16.77, "省库库银": 0.39, "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
     },
     "zhejiang": {
-        "正赋应征": 23, "三饷应征": 5.5, "起运定额": 18,
+        "正赋应征": 23, "三饷应征": 5.5, "起运定额": 9.03,
         "Due": {"官俸": 3, "宗禄": 1, "赈济": 0},
-        "first_tick": {"起运到京": 18, "省库库银": 0.8, "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
+        "first_tick": {"起运到京": 9.03, "省库库银": 9.77, "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
     },
     "jiangxi": {
-        "正赋应征": 22, "三饷应征": 4.5, "起运定额": 15,
+        "正赋应征": 22, "三饷应征": 4.5, "起运定额": 9.2,
         "Due": {"官俸": 3, "宗禄": 1, "赈济": 0},
-        "first_tick": {"起运到京": 15, "省库库银": 0.875, "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
+        "first_tick": {"起运到京": 9.2, "省库库银": 6.675, "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
     },
     "huguang": {
-        "正赋应征": 34, "三饷应征": 6, "起运定额": 18,
+        "正赋应征": 34, "三饷应征": 6, "起运定额": 7.91,
         "Due": {"官俸": 3, "宗禄": 5, "赈济": 0},
-        "first_tick": {"起运到京": 18, "省库库银": 5.2, "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
+        "first_tick": {"起运到京": 7.91, "省库库银": 15.29, "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
     },
 }
 
@@ -4690,8 +4691,99 @@ def test_all_settle_substrate_provisional_meta_covers_virtual_fields(fresh_db):
             required = set()
         refined = set((meta.get("primary_source") or {}).get("fields_refined", []))
         required -= refined
+        source = meta.get("source")
+        if isinstance(source, dict) and source.get("title") == "《万历会计录》":
+            checked_fields = set(source.get("checked_fields") or [])
+            required -= checked_fields
         assert required <= provisional, f"{region_id} provisional 缺 {sorted(required - provisional)}"
         if "官民田" in required:
             assert "官民田" in st and "隐田" in st, f"{region_id} 田亩虚字段缺 seed"
 
     assert checked == 17
+
+
+def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
+    expected = {
+        "nanzhili": {
+            "chapter": "卷十六 南直隶田赋",
+            "land": 7938,
+            "raw_land_qing": 793846.71,
+            "raw_grain_stone": 6011862.1734,
+            "raw_transport_stone": 4208303.5214,
+            "zhengfu": 30,
+            "base_transport": 8.77,
+            "sanxiang": 8.0,
+            "transport_checked": False,
+        },
+        "zhejiang": {
+            "chapter": "卷二 浙江布政司田赋",
+            "land": 4670,
+            "raw_land_qing": 466969.8,
+            "raw_grain_stone": 2522626.7288,
+            "raw_transport_stone": 1695738.4281,
+            "zhengfu": 23,
+            "base_transport": 3.53,
+            "sanxiang": 5.5,
+            "transport_checked": True,
+        },
+        "jiangxi": {
+            "chapter": "卷三 江西布政司田赋",
+            "land": 4012,
+            "raw_land_qing": 401151.2711,
+            "raw_grain_stone": 2608352.3826,
+            "raw_transport_stone": 2254000.0,
+            "zhengfu": 22,
+            "base_transport": 4.70,
+            "sanxiang": 4.5,
+            "transport_checked": True,
+        },
+        "huguang": {
+            "chapter": "卷四 湖广布政司田赋",
+            "land": 22162,
+            "raw_land_qing": 2216199.401,
+            "raw_grain_stone": 2142761.2673,
+            "raw_transport_stone": 914400.0,
+            "zhengfu": 34,
+            "base_transport": 1.91,
+            "sanxiang": 6.0,
+            "transport_checked": True,
+        },
+    }
+
+    for region_id, exp in expected.items():
+        settle = _read_settle(fresh_db, region_id)
+        meta = settle["_meta"]
+        source = meta.get("source")
+        assert isinstance(source, dict), region_id
+        assert source["title"] == "《万历会计录》"
+        assert source["chapter"] == exp["chapter"]
+        assert source["scan_checked"] is True
+        expected_checked_fields = {"官民田", "正赋应征"}
+        if exp["transport_checked"]:
+            expected_checked_fields.add("起运定额")
+        assert set(source["checked_fields"]) == expected_checked_fields
+        assert source["conversion"]["grain_silver_liang_per_stone"] == 0.25
+        effective_rate = source["conversion"]["effective_silver_liang_per_stone"]
+        raw = source["raw"]
+        assert raw["官民田_顷"] == pytest.approx(exp["raw_land_qing"], abs=1e-4)
+        assert raw["正赋本色_石"] == pytest.approx(exp["raw_grain_stone"], abs=1e-4)
+        assert raw["正赋起运本色_石"] == pytest.approx(exp["raw_transport_stone"], abs=1e-4)
+
+        assert settle["st"]["官民田"] == exp["land"]
+        assert settle["p"]["正赋应征"] == pytest.approx(exp["zhengfu"], abs=0.01)
+        assert meta["正赋起运基线"] == pytest.approx(exp["base_transport"], abs=0.01)
+        assert settle["p"]["起运定额"] == pytest.approx(
+            exp["base_transport"] + exp["sanxiang"],
+            abs=0.01,
+        )
+        assert "官民田" not in meta.get("provisional", [])
+        if exp["transport_checked"]:
+            assert "起运定额" not in meta.get("provisional", [])
+        else:
+            assert "起运定额" in meta.get("provisional", [])
+        assert "隐田" in meta.get("provisional", [])
+        assert math.isclose(
+            settle["p"]["正赋应征"],
+            raw["正赋本色_石"] * effective_rate / 10000 / 12,
+            abs_tol=0.01,
+        )
