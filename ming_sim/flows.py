@@ -277,7 +277,9 @@ def _fiscal_container_values_when_complete(
 def _fiscal_config_rate(db: GameDB, key: str) -> float:
     cfg = db.get_fiscal_config()
     minimum = db.fiscal_config_minimum_value(key)
-    if key not in cfg and minimum is not None:
+    if key not in cfg and (
+        minimum is not None or db.fiscal_config_loss_rate_pair(key) is not None
+    ):
         raise ValueError(f"fiscal_config.{key} 缺失")
     raw = cfg.get(key, 0)
     if isinstance(raw, bool):
@@ -324,12 +326,16 @@ def _substrate_hub_budget_income_lines(db: GameDB) -> Tuple[List[Dict[str, objec
     commerce = _round_nonnegative_amount(_fiscal_container_value(db, "hub_商税解京"))
     taicang_loss = _round_nonnegative_amount(_fiscal_container_value(db, "hub_太仓亏空"))
     income = [
-        {"name": "起运", "amount": remittance, "note": "各省起运到京（hub 持久源）"},
-        {"name": "盐税", "amount": salt, "note": "盐税中央旁路（hub 持久源）"},
-        {"name": "商税", "amount": commerce, "note": "商税中央旁路（hub 持久源）"},
+        {"name": "起运", "amount": remittance, "note": "各省起运到京（hub 持久源）",
+         "internal": "substrate_hub"},
+        {"name": "盐税", "amount": salt, "note": "盐税中央旁路（hub 持久源）",
+         "internal": "substrate_hub"},
+        {"name": "商税", "amount": commerce, "note": "商税中央旁路（hub 持久源）",
+         "internal": "substrate_hub"},
     ]
     expense = [
-        {"name": "太仓亏空", "amount": taicang_loss, "note": "中央太仓挪用与纯亏空"}
+        {"name": "太仓亏空", "amount": taicang_loss, "note": "中央太仓挪用与纯亏空",
+         "internal": "substrate_hub"}
     ]
     return income, expense
 
@@ -1238,22 +1244,24 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
     # ── 固定收支落账（税/皇庄/宗室/官俸/织造…全走唯一定额源 compute_budget_lines）──
     # 军饷与建筑另有逐项落账逻辑（arrears/condition），故下面跳过这两类，仅落其余定额项。
-    def _apply_budget_lines(*, skip_treasury_tax: bool = False) -> None:
+    def _apply_budget_lines(*, skip_substrate_hub_lines: bool = False) -> None:
         budget = compute_budget_lines(db, state)
         skip = {"各军军饷", "建筑产出", "建筑维护"}
-        if skip_treasury_tax:
-            skip.update({"田赋辽饷盐商", "起运", "盐税", "商税", "太仓亏空"})
         for account in ("国库", "内库"):
             for it in budget[account]["income"]:
-                if it["name"] in skip:
+                if it["name"] in skip or (
+                    skip_substrate_hub_lines and it.get("internal") == "substrate_hub"
+                ):
                     continue
                 _income(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}入")
             for it in budget[account]["expense"]:
-                if it["name"] in skip:
+                if it["name"] in skip or (
+                    skip_substrate_hub_lines and it.get("internal") == "substrate_hub"
+                ):
                     continue
                 _expense(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}支")
 
-    _apply_budget_lines(skip_treasury_tax=db.is_substrate_hub_fiscal_engine_enabled())
+    _apply_budget_lines(skip_substrate_hub_lines=db.is_substrate_hub_fiscal_engine_enabled())
 
     # ── legacy 各军军饷（按优先级，先发当月；不足挂 arrears 累计万两）──
     if db.fiscal_engine() == "legacy":
