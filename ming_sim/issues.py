@@ -50,6 +50,7 @@ _content: Optional[GameContent] = None
 INITIATIVE_ACTIVE_CAP = 15
 INITIATIVE_ACTIVE_CAP_LABEL = "十五"
 COMMITMENT_KIND_UNTIL_STOP = "until_stop"
+_FISCAL_LEVY_TARGET_ABS_TOL = 1e-9
 
 # SQLite 有符号 64-bit 整数边界：超界 int 绑进 SQLite 会抛 OverflowError。
 _SQLITE_INT_MIN, _SQLITE_INT_MAX = -(2 ** 63), 2 ** 63 - 1
@@ -1113,6 +1114,10 @@ def _as_float(raw: object, *, ctx: str) -> float:
     return value
 
 
+def _is_stored_number(raw: object) -> bool:
+    return not isinstance(raw, bool) and isinstance(raw, (int, float))
+
+
 def _fiscal_levy_liao_seed(meta: Dict[str, object], p: Dict[str, object], region_id: str) -> float:
     if _SETTLE_META_LIAO_SEED_KEY in meta:
         return _as_float(
@@ -1355,6 +1360,13 @@ def _apply_fiscal_levy_targets(
         target_jiao = jiao_seed if jiao_in_force else 0.0
         target_lian = lian_seed if lian_levy_approved else 0.0
         target_sanxiang = target_liao + target_jiao + target_lian
+        raw_sanxiang = p.get("三饷应征")
+        raw_transport = p.get("起运定额")
+        current_targets_stored = _is_stored_number(raw_sanxiang) and _is_stored_number(raw_transport)
+        current_sanxiang = current_transport = None
+        if current_targets_stored:
+            current_sanxiang = _as_float(raw_sanxiang, ctx=f"{region_id}.settle.p.三饷应征")
+            current_transport = _as_float(raw_transport, ctx=f"{region_id}.settle.p.起运定额")
         target_transport = base_transport + target_sanxiang
         next_p = dict(p)
         next_p["三饷应征"] = target_sanxiang
@@ -1368,7 +1380,10 @@ def _apply_fiscal_levy_targets(
         if land_denominator > 0:
             meta[_SETTLE_META_LAND_DENOMINATOR_KEY] = land_denominator
         _fiscal_levy_mark_provisional(meta)
-        if next_p == p and meta == meta_raw:
+        if meta == meta_raw \
+                and current_targets_stored \
+                and math.isclose(current_sanxiang, target_sanxiang, rel_tol=0, abs_tol=_FISCAL_LEVY_TARGET_ABS_TOL) \
+                and math.isclose(current_transport, target_transport, rel_tol=0, abs_tol=_FISCAL_LEVY_TARGET_ABS_TOL):
             continue
         settle["p"] = next_p
         settle["_meta"] = meta
