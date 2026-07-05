@@ -70,13 +70,23 @@ Rules:
 - On any converged verdict, `claimedFixedFindingIdentityKeys` and
   `priorFindingDispositions` are REQUIRED. Use empty arrays only when no
   claimed-fixed findings occurred in the CMR loop. If a prior claimed-fixed
-  finding exists, include its stable identity key and an explicit disposition:
-  `still-active`, `verified-closed`, `unable-to-assess`, or
-  `accepted_suppressed`. `accepted_suppressed` requires `source`, `scope`,
-  `reason`, and `boundedReopen`.
+  finding exists, include its stable identity key and an explicit disposition
+  using the exact JSON field name `status`, for example
+  `{"identityKey":"<key>","status":"verified-closed","reason":"<short>"}`.
+  Valid `status` values are `still-active`, `verified-closed`, and
+  `unable-to-assess`. Do not use a field named `disposition`.
+  Runner-supplied claimed-fixed findings are protected blockers: do not use
+  `accepted_suppressed` to close them. If an owner/ADR/issue-backed scope
+  exception is now implemented in code/docs/tests, mark the prior finding
+  `verified-closed` and cite that source in `reason`; otherwise mark it
+  `still-active`.
 - On any not-converged verdict, `reason`, `successfulLegs`,
   `claimedFixedFindingIdentityKeys`, and `priorFindingDispositions` are REQUIRED;
   `findings` is optional but must use reviewer finding shape when present.
+  Any `priorFindingDispositions` entries in this not-converged shape must use the
+  same `{"identityKey":"<key>","status":"...","reason":"<short>"}` contract
+  above; valid `status` values remain `still-active`, `verified-closed`, and
+  `unable-to-assess`. Do not use a field named `disposition`.
 - On any converged or not-converged verdict, `evidencePaths` is REQUIRED and must
   list relative paths to existing review/test artifacts under the repo root. Do
   not use absolute paths or `..`; the guard rejects paths it cannot resolve under
@@ -101,6 +111,8 @@ Rules:
   unless a prior finding key was provided, because the runner derives it from
   category, location, and claim quote. `disposition.reason` is the canonical
   rationale; top-level `disposition_reason` may repeat it but is not required.
+  Use `accepted_suppressed` only for new reviewer findings that are outside the
+  runner-supplied claimed-fixed closure set.
 - When `$ORCHESTRATOR_OUTCOME_PATH` is set, let `orchestrator-outcome-guard` emit
   the `<cmr>` tag and `CMR_STEP_COMPLETE`; do not print them yourself.
 - Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag LAST; if you iterate,
