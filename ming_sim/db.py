@@ -2462,7 +2462,8 @@ class GameDB:
             due_obj = p_obj.get("Due")
             if not isinstance(due_obj, dict):
                 raise ValueError("settle.p.Due 非法")
-            value = float(due_obj.get("军饷", 0) or 0) - row_due_total
+            raw_due = float(due_obj.get("军饷", 0) or 0)
+            value = raw_due if self._is_seeded_military_pay_funnel(settle) else raw_due - row_due_total
         if not math.isfinite(value) or value < -1e-9:
             raise ValueError("standalone_military_pay_due 非法")
         value = max(0.0, value)
