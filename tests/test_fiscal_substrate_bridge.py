@@ -4042,6 +4042,31 @@ def test_dongjiang_content_pay_funnel_survives_fresh_db_pay_source_reconcile(fre
     assert settle["st"]["军饷欠"] == pytest.approx(25)
 
 
+def test_old_dongjiang_pay_funnel_due_backfills_before_new_pay_rows(fresh_db):
+    settle = _read_settle(fresh_db, "dongjiang_area")
+    old_due = settle["p"]["Due"]["军饷"]
+    settle["_meta"].pop("standalone_military_pay_due", None)
+    _write_settle(fresh_db, "dongjiang_area", settle)
+
+    state = fresh_db.load_state()
+    created = fresh_db.create_armies_from_extraction(state, [{
+        "id": "dongjiang_new_army",
+        "name": "东江新增营",
+        "manpower": 1000,
+        "owner_power": "ming",
+        "pay_source_region": "dongjiang_area",
+        "province_pay_share": 1.0,
+        "central_pay_share": 0.0,
+    }], commit=False)
+
+    assert created and created[0].get("created") is True
+    row_due = _province_pay_due(fresh_db, "dongjiang_area")
+    after = _read_settle(fresh_db, "dongjiang_area")
+
+    assert after["_meta"]["standalone_military_pay_due"] == pytest.approx(old_due)
+    assert after["p"]["Due"]["军饷"] == pytest.approx(old_due + row_due)
+
+
 @pytest.mark.parametrize("bad_annual", [True, "711391", float("nan"), float("inf"), -1])
 def test_primary_source_army_pay_due_rejects_dirty_annual_amount(fresh_db, bad_annual):
     settle = _read_settle(fresh_db, "liaodong")
