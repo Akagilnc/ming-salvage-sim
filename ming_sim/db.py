@@ -2520,6 +2520,20 @@ class GameDB:
 
     def _standalone_army_pay_container_total(self) -> float:
         total = 0.0
+        arrears_rows = self.conn.execute(
+            """
+            SELECT pay_source_region, COALESCE(SUM(province_pay_arrears), 0) AS total
+            FROM armies
+            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+              AND province_pay_share > 0
+              AND pay_source_region != ''
+            GROUP BY pay_source_region
+            """
+        ).fetchall()
+        arrears_by_region = {
+            str(row["pay_source_region"]): float(row["total"] or 0.0)
+            for row in arrears_rows
+        }
         rows = self.conn.execute(
             "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
         ).fetchall()
@@ -2529,16 +2543,19 @@ class GameDB:
                 fiscal = json.loads(str(row["fiscal"] or "{}"))
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"region {region_id} fiscal JSON 非法，无法校验军饷容器守恒") from exc
-            settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
-            if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
+            if not isinstance(fiscal, dict):
+                raise ValueError(f"region {region_id} fiscal 非字典，无法校验军饷容器守恒")
+            settle = fiscal.get("settle")
+            if settle is None:
                 continue
+            if not isinstance(settle, dict):
+                raise ValueError(f"region {region_id} settle 非法，无法校验军饷容器守恒")
+            if not isinstance(settle.get("st"), dict):
+                raise ValueError(f"region {region_id} settle.st 非法，无法校验军饷容器守恒")
             primary_source_due = self._primary_source_army_pay_due(settle)
             if not self._has_standalone_army_pay_funnel(settle, primary_source_due):
                 continue
-            row_arrears_total = sum(
-                float(row["province_pay_arrears"])
-                for row in self._army_pay_source_rows_for_region(region_id)
-            )
+            row_arrears_total = arrears_by_region.get(region_id, 0.0)
             total += self._standalone_army_pay_arrears_component(
                 settle,
                 row_arrears_total,
