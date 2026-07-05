@@ -57,6 +57,30 @@ def _expected_land_share_levy(settle, national_monthly, total_land):
     return national_monthly * land / total_land
 
 
+def test_shaanxi_primary_source_liao_seed_keeps_opening_transport_cap(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1627
+    state.period = 10
+    db.save_state(state)
+
+    apply_historical_fiscal_rates(state, db)
+
+    settle = _settle_payload(db, "shaanxi")
+    meta = settle["_meta"]
+    expected_liao = 2929.20151 * 0.009 / 12.0
+
+    assert math.isclose(settle["p"]["三饷应征"], expected_liao, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(meta["辽饷九厘基线"], expected_liao, rel_tol=1e-9, abs_tol=1e-9)
+    assert meta["正赋起运基线"] == 0
+    assert math.isclose(
+        settle["p"]["起运定额"],
+        meta["正赋起运基线"] + expected_liao,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+
+
 def test_liao_levy_rise_triggers_and_updates_shadow_settle_before_fiscal_tick(game):
     db, state, content = game
     issues.bind_content(content)
@@ -342,6 +366,36 @@ def test_fiscal_levy_shadow_skips_bad_settle_shape_without_blocking_other_region
     assert any("[fiscal-levy] shaanxi settle 解析失败" in msg and expected_log in msg for msg in msgs)
     huguang = _settle_payload(db, "huguang")
     assert huguang["p"]["三饷应征"] > before_huguang
+
+
+def test_fiscal_levy_rewrites_nonnumeric_current_targets_from_meta(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    fiscal = json.loads(
+        str(db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()["fiscal"])
+    )
+    fiscal["settle"]["p"]["三饷应征"] = "待重算"
+    fiscal["settle"]["p"]["起运定额"] = "待重算"
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
+    )
+    db.conn.commit()
+
+    apply_historical_fiscal_rates(state, db)
+
+    settle = _settle_payload(db, "shaanxi")
+    expected_sanxiang = settle["_meta"]["辽饷九厘基线"] * 4.0 / 3.0
+    assert math.isclose(settle["p"]["三饷应征"], expected_sanxiang, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(
+        settle["p"]["起运定额"],
+        settle["_meta"]["正赋起运基线"] + expected_sanxiang,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
 
 
 def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game, monkeypatch):
@@ -993,6 +1047,47 @@ def test_liao_levy_targets_all_seeded_settles_without_compounding_or_clobbering_
         assert _settle_payload(db, region_id)["p"] == first_p
 
 
+def test_liao_levy_rewrites_numeric_string_targets_to_canonical_numbers(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+
+    apply_historical_fiscal_rates(state, db)
+    stale = _settle_payload(db, "shaanxi")
+    expected_sanxiang = stale["p"]["三饷应征"]
+    expected_transport = stale["p"]["起运定额"]
+    stale["p"]["三饷应征"] = str(expected_sanxiang)
+    stale["p"]["起运定额"] = str(expected_transport)
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()
+    fiscal = json.loads(str(row["fiscal"] or "{}"))
+    fiscal["settle"] = stale
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
+    )
+    db.conn.commit()
+
+    apply_historical_fiscal_rates(state, db)
+
+    after = _settle_payload(db, "shaanxi")
+    assert isinstance(after["p"]["三饷应征"], float)
+    assert isinstance(after["p"]["起运定额"], float)
+    assert math.isclose(
+        after["p"]["三饷应征"],
+        expected_sanxiang,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+    assert math.isclose(
+        after["p"]["起运定额"],
+        expected_transport,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+
+
 def test_jiao_levy_rises_then_stops_and_keeps_base_transport(game):
     db, state, content = game
     issues.bind_content(content)
@@ -1033,6 +1128,38 @@ def test_jiao_levy_rises_then_stops_and_keeps_base_transport(game):
     assert math.isclose(after_stop["p"]["起运定额"], base_transport + expected_liao + expected_lian, rel_tol=1e-9, abs_tol=1e-9)
     assert after_stop["p"]["起运定额"] >= after_stop["p"]["三饷应征"]
     assert after_stop["p"]["起运定额"] > 0
+
+
+def test_levy_retreat_recomputes_transport_without_active_rate_change(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1640
+    state.period = 1
+    db.save_state(state)
+    db.mark_event_triggered(state, "liao_levy_rise_1631", source="test", terminal_reason="已驳", commit=False)
+    db.mark_event_triggered(state, "jiao_levy_start_1637", source="test", terminal_reason="已准", commit=False)
+    db.mark_event_triggered(state, "jiao_levy_stop_1640", source="test", terminal_reason="已停", commit=False)
+    db.mark_event_triggered(state, "lian_levy_start_1639", source="test", terminal_reason="已驳", commit=False)
+    stale = _settle_payload(db, "shaanxi")
+    base_transport = stale["_meta"]["正赋起运基线"]
+    liao_seed = stale["_meta"]["辽饷九厘基线"]
+    stale_jiao = 9.0
+    stale["p"]["三饷应征"] = liao_seed + stale_jiao
+    stale["p"]["起运定额"] = base_transport + liao_seed + stale_jiao
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()
+    fiscal = json.loads(str(row["fiscal"] or "{}"))
+    fiscal["settle"] = stale
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
+    )
+    db.conn.commit()
+
+    apply_historical_fiscal_rates(state, db)
+
+    after = _settle_payload(db, "shaanxi")
+    assert math.isclose(after["p"]["三饷应征"], liao_seed, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(after["p"]["起运定额"], base_transport + liao_seed, rel_tol=1e-9, abs_tol=1e-9)
 
 
 def test_jiao_levy_stop_rejected_keeps_levy_in_force(game):

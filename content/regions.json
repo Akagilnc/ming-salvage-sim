@@ -63,7 +63,7 @@
       "military_pressure": 70,
       "status": "京师粮价、蓟镇压力、勋贵与京营腐败。",
       "fiscal": {
-        "huang_tian": 35,
+        "huang_tian": 184,
         "wang_tian": 20,
         "guan_min_tian": 365,
         "liao_xiang": 12,
@@ -74,6 +74,10 @@
           "_note": "#269 省级 settle_tick 基座（北直隶 / 京师，#70 全 17 省 seed 之一）。京师皇庄租入内库，独立于起运国库；1627.10 开局三饷仅辽饷九厘，剿饷1637/练饷1639 事件驱动注入见 #259。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "隐田"
+            ],
+            "正赋起运基线": 5.2,
             "huang_tian": {
               "account": "内库",
               "monthly_rent": 20,
@@ -81,10 +85,22 @@
                 "正赋应征",
                 "起运到京"
               ],
-              "note": "皇庄租入内库专路，不混入省级起运国库口径。"
+              "note": "皇庄租入内库专路，不混入省级起运国库口径；面积按《万历会计录》卷十五下慈宁/慈庆/乾清宫子粒官地合计约 184 万亩，预算收入仍读 fiscal_config.皇庄_base。"
             },
             "notes": {
-              "漕粮": "京师为漕粮终点与军需节点；本 slice 先以 shadow tlog 显示，不驱动国库。"
+              "漕粮": "京师为漕粮终点与军需节点；本 slice 先以 shadow tlog 显示，不驱动国库。",
+              "一手核": "《万历会计录》卷十五上/下。见额官民田约 492568 顷，折 4925.7 万亩；正赋保留本色原始数：夏税麦约 178643 石、秋粮米约 419986 石，按官方折色量级折为 4.0 万两/月；起运定额按卷内起运/存留拆分折银估为 5.2 万两/月；辽饷按官民田九厘折 4925.7×0.009/12≈3.7 万两/月。",
+              "扫描图核验": "卷十五上/下 OCR 含异体与疑似误字，官民田、夏税麦、秋粮米、皇庄子粒官地等关键数字已回识典扫描图核验后转录。"
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [],
+              "note": "卷三十二未列北直隶藩府岁用宗禄。"
             }
           },
           "st": {
@@ -97,22 +113,22 @@
             "军饷欠": 12,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 3650,
+            "官民田": 4925.7,
             "隐田": 1400
           },
           "p": {
-            "正赋应征": 18,
-            "三饷应征": 3,
+            "正赋应征": 4.0,
+            "三饷应征": 3.6942749999999993,
             "火耗率": 0.16,
             "逋赋率": 0.3,
-            "起运定额": 5,
+            "起运定额": 8.894275,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 12,
             "Due": {
               "军饷": 24,
               "官俸": 6,
-              "宗禄": 10,
+              "宗禄": 0,
               "赈济": 0
             }
           }
@@ -145,12 +161,47 @@
         "commerce_tax": 15,
         "corruption": 44,
         "settle": {
-          "_note": "#268 江南财赋核心 seed（南直隶）；shadow 期只推进省级账本，不入国库 hub。1627.10 开局三饷仅辽饷，剿饷/练饷由 #259 后续注入。",
+          "_note": "#581 江南财赋核心一手核（南直隶）；田亩/正赋/正赋起运锚定《万历会计录》卷十六，1627.10 开局三饷仅辽饷，剿饷/练饷由 #259 后续注入。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "隐田"
+            ],
             "postures": [
               "江南财赋核心"
-            ]
+            ],
+            "正赋起运基线": 8.77,
+            "source": {
+              "title": "《万历会计录》",
+              "chapter": "卷十六 南直隶田赋",
+              "url": "https://www.shidianguji.com/zh/book/NGJ89241200000038535874/chapter/1luif6qi3a4g9",
+              "scan_checked": true,
+              "checked_fields": [
+                "官民田",
+                "正赋应征",
+                "起运定额"
+              ],
+              "conversion": {
+                "grain_silver_liang_per_stone": 0.25,
+                "effective_silver_liang_per_stone": 0.598816,
+                "note": "官民田、正赋本色石数、正赋起运本色石数已按卷十六核验；正赋应征用南直隶实际折色负担的有效银率折为万两/月，起运定额=正赋起运基线+开局辽饷九厘。"
+              },
+              "raw": {
+                "官民田_顷": 793846.71,
+                "正赋本色_石": 6011862.1734,
+                "正赋起运本色_石": 4208303.5214
+              }
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [],
+              "note": "卷三十二未列南直隶藩府岁用宗禄。"
+            }
           },
           "st": {
             "省库库银": 0,
@@ -162,22 +213,22 @@
             "军饷欠": 0,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 9550,
+            "官民田": 7938,
             "隐田": 1800
           },
           "p": {
             "正赋应征": 30,
-            "三饷应征": 8,
+            "三饷应征": 5.953499999999999,
             "火耗率": 0.14,
             "逋赋率": 0.18,
-            "起运定额": 24,
+            "起运定额": 14.723499999999998,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0,
             "Due": {
               "军饷": 0,
               "官俸": 4,
-              "宗禄": 2,
+              "宗禄": 0,
               "赈济": 0
             }
           }
@@ -213,8 +264,41 @@
           "_note": "#269 省级 settle_tick 基座（山东，#70 全 17 省 seed 之一）。山东为漕运、登莱与辽东支援节点；1627.10 开局三饷仅辽饷九厘，剿饷1637/练饷1639 事件驱动注入见 #259。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "起运定额",
+              "官民田",
+              "正赋应征",
+              "隐田"
+            ],
+            "正赋起运基线": 4.5,
             "notes": {
-              "漕粮": "漕运节点；本 slice 先以 shadow tlog 显示，不驱动国库。"
+              "漕粮": "漕运节点；本 slice 先以 shadow tlog 显示，不驱动国库。",
+              "山东卷六缺口": "目录列卷六《山东布政司田赋》，但识典 catalog 章节列表从卷五跳到卷七；本 slice 不伪造一手数，山东官民田/正赋应征/起运定额继续 provisional。三饷仅按当前 provisional 官民田 4900 万亩的辽饷九厘口径折 4900×0.009/12≈3.7 万两/月，不标作卷六一手核。"
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [
+                {
+                  "house": "鲁府",
+                  "seat": "山东兖州",
+                  "annual_shi": 230203.333
+                },
+                {
+                  "house": "德府",
+                  "seat": "山东济南",
+                  "annual_shi": 13450
+                },
+                {
+                  "house": "衡府",
+                  "seat": "山东青州",
+                  "annual_shi": 40979.999
+                }
+              ]
             }
           },
           "st": {
@@ -232,17 +316,17 @@
           },
           "p": {
             "正赋应征": 18,
-            "三饷应征": 3,
+            "三饷应征": 3.6749999999999994,
             "火耗率": 0.16,
             "逋赋率": 0.35,
-            "起运定额": 4.5,
+            "起运定额": 8.175,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 5,
             "Due": {
               "军饷": 10,
               "官俸": 4,
-              "宗禄": 5,
+              "宗禄": 1.19,
               "赈济": 0
             }
           }
@@ -275,17 +359,62 @@
         "commerce_tax": 4,
         "corruption": 58,
         "settle": {
-          "_note": "#267 省级 settle_tick 基座（山西）。边镇军饷 + 晋/代藩宗禄叠加 posture；1627.10 开局三饷仅辽饷九厘，剿饷1637/练饷1639 事件驱动注入见 #259。",
+          "_note": "#580 省级 settle_tick 基座（山西）。田赋按《万历会计录》卷七/万明侯官响论文表 3 锚定；边镇军饷 + 晋/代藩宗禄仍按 posture 叠加；1627.10 开局三饷仅辽饷九厘，剿饷1637/练饷1639 事件驱动注入见 #259。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "隐田"
+            ],
             "postures": [
               "边镇军饷",
               "晋藩宗禄"
             ],
+            "正赋起运基线": 6.9069635,
+            "primary_source": {
+              "work": "《万历会计录》卷七「山西布政司田赋」",
+              "cross_check": "万明、侯官响《财政视角下的明代田赋折银征收》表3",
+              "fields_refined": [
+                "官民田",
+                "起运定额",
+                "正赋应征"
+              ],
+              "田赋折银两_年": 2118341.95,
+              "起运折银两_年": 828835.62,
+              "存留折银两_年": 1289506.33,
+              "粟米原额石": 1722851.38,
+              "起运米石": 640350,
+              "官民田推导": "表1万历六年山西征收米麦2314802石、亩均6.29升；按1石=100升反推官民田约3680.13万亩。"
+            },
             "notes": {
               "军饷": "宣大边镇军饷按 military_pressure=65 与九边京运年例量级 seed",
               "宗禄": "晋藩/代藩宗禄按 wang_tian=60 与宗藩禄粮量级 seed",
-              "田亩口径": "settle.st.官民田按史实田亩校准口径，可与 fiscal.guan_min_tian 的小游戏字段折算存在小差额。"
+              "田赋折算": "正赋应征=2118341.95两/年/10000/12；起运定额=828835.62两/年/10000/12；保留粟米/起运米原始石数供后续本色轴复用。",
+              "田亩口径": "settle.st.官民田按表1反推万亩口径，可与 fiscal.guan_min_tian 的小游戏字段折算存在小差额。"
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [
+                {
+                  "house": "晋府",
+                  "seat": "山西太原",
+                  "annual_shi": 1359410
+                },
+                {
+                  "house": "代府",
+                  "seat": "山西大同",
+                  "annual_shi": 993266
+                },
+                {
+                  "house": "沈府",
+                  "seat": "山西潞安",
+                  "annual_shi": 284942
+                }
+              ]
             }
           },
           "st": {
@@ -298,22 +427,22 @@
             "军饷欠": 25,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 3500,
+            "官民田": 3680.13,
             "隐田": 1200
           },
           "p": {
-            "正赋应征": 18,
-            "三饷应征": 3,
+            "正赋应征": 17.652849583333335,
+            "三饷应征": 2.7600975,
             "火耗率": 0.17,
             "逋赋率": 0.35,
-            "起运定额": 4,
+            "起运定额": 9.667061,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 10,
             "Due": {
               "军饷": 24,
               "官俸": 4,
-              "宗禄": 10,
+              "宗禄": 10.99,
               "赈济": 0
             }
           }
@@ -346,16 +475,62 @@
         "commerce_tax": 3,
         "corruption": 55,
         "settle": {
-          "_note": "#269 省级 settle_tick 基座（河南，#70 全 17 省 seed 之一）。周王、福王大藩使宗禄 Due 重，按 wang_tian 口径在 shadow seed 中显式标注；1627.10 开局三饷仅辽饷九厘，剿饷1637/练饷1639 事件驱动注入见 #259。",
+          "_note": "#269 省级 settle_tick 基座（河南，#70 全 17 省 seed 之一）。周王、唐王等藩府使宗禄 Due 重，按 wang_tian 口径在 shadow seed 中显式标注；1627.10 开局三饷仅辽饷九厘，剿饷1637/练饷1639 事件驱动注入见 #259。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "隐田"
+            ],
+            "正赋起运基线": 10.1,
             "wang_tian": {
               "basis": "wang_tian",
               "houses": [
                 "周王",
-                "福王"
+                "唐王",
+                "赵王",
+                "郑王",
+                "崇王"
               ],
-              "note": "大藩庄田与宗禄压力共振，河南宗禄 Due 重。"
+              "note": "周、唐、赵、郑、崇等河南藩府庄田与宗禄压力共振，河南宗禄 Due 重。"
+            },
+            "notes": {
+              "一手核": "《万历会计录》卷八。见额官民田约 741579 顷，折 7415.8 万亩；正赋保留本色原始数：夏税小麦约 619054 石、实征秋粮米约 1763437 石，按官方折色量级折为 15.9 万两/月；起运定额按源内起运/存留拆分（实起运麦约 341722 石，起运米约 1174321 石）折为 10.1 万两/月；辽饷按官民田九厘折 7415.8×0.009/12≈5.56 万两/月。",
+              "扫描图核验": "卷八 OCR 含异体与疑似误字，官民田、夏税小麦、实征秋粮米、实起运麦米等关键数字已回识典扫描图核验后转录。"
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [
+                {
+                  "house": "周府",
+                  "seat": "河南开封",
+                  "annual_shi": 1948971.2
+                },
+                {
+                  "house": "唐府",
+                  "seat": "河南南阳",
+                  "annual_shi": 39560.3325
+                },
+                {
+                  "house": "赵府",
+                  "seat": "河南彰德",
+                  "annual_shi": 161601.9889
+                },
+                {
+                  "house": "郑府",
+                  "seat": "河南怀庆",
+                  "annual_shi": 24250
+                },
+                {
+                  "house": "崇府",
+                  "seat": "河南汝宁/汝州",
+                  "annual_shi": 21916.6664
+                }
+              ]
             }
           },
           "st": {
@@ -368,22 +543,22 @@
             "军饷欠": 0,
             "官俸欠": 0,
             "宗禄欠": 8,
-            "官民田": 3800,
+            "官民田": 7415.8,
             "隐田": 1700
           },
           "p": {
-            "正赋应征": 17,
-            "三饷应征": 3,
+            "正赋应征": 15.9,
+            "三饷应征": 5.56185,
             "火耗率": 0.18,
             "逋赋率": 0.4,
-            "起运定额": 4,
+            "起运定额": 15.66185,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 3,
             "Due": {
               "军饷": 8,
               "官俸": 4,
-              "宗禄": 24,
+              "宗禄": 9.15,
               "赈济": 0
             }
           }
@@ -419,8 +594,72 @@
           "_note": "#66 省级 settle_tick 基座（陕西，#70 全 17 省 seed 之一）。#266 已重标到史实量级 shadow seed；1627.10 开局三饷仅辽饷九厘，剿饷1637/练饷1639 事件驱动注入见 #259。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "隐田"
+            ],
             "notes": {
-              "田亩口径": "settle.st.官民田按史实田亩校准口径，可与 fiscal.guan_min_tian 的小游戏字段折算存在小差额。"
+              "田亩口径": "#579 据《万历会计录》卷九陕西布政司田赋万历六年见额：田土官民共292,920.151顷，折2,929.20151万亩；可与 fiscal.guan_min_tian 的小游戏字段折算存在小差额。",
+              "隐田": "#579 结构性无一手源，沿用 #266 placeholder 比率 1600/3050 乘以一手官民田推算，故仍 provisional。",
+              "正赋应征": "#579 本色实征麦688,647.2416石、米1,044,943.1241石；同卷近例税粮每石折银三钱五分，折(麦+米)*0.35/12/10000=5.0563万两/月。",
+              "辽饷九厘基线": "#579 开局三饷仅辽饷九厘：官民田2,929.20151万亩 * 0.009两/亩/年 / 12 = 2.1969011325万两/月。",
+              "正赋起运基线": "#579 同卷按语称“陜西歲額，悉留本省，爲四藩五鎮之費”，正赋起运按源拆分为0。",
+              "起运定额": "#579 总起运 cap = 正赋起运基线0 + 在征辽饷2.1969011325，防开局辽饷被 cap 留在省内池。"
+            },
+            "辽饷九厘基线": 2.1969011325,
+            "正赋起运基线": 0,
+            "primary_sources": {
+              "万历会计录卷九陕西布政司田赋": {
+                "ocr_locator_url": "https://www.shidianguji.com/zh/book/NGJ89241200000038535874/chapter/1luif5x5xle7m",
+                "scan_url": "https://commons.wikimedia.org/wiki/File:NLC892-412000000385-35974_%E8%90%AC%E6%9B%86%E6%9C%83%E8%A8%88%E9%8C%84_%E7%AC%AC10%E5%86%8A.pdf",
+                "registered_land_raw": "田土官民共貳拾玖萬貳千玖百貳拾頃拾伍畝壹分零",
+                "registered_land_derivation": "292,920.151顷 * 100亩/顷 / 10,000 = 2,929.20151万亩",
+                "regular_tax_raw": {
+                  "實徵麥石": 688647.2416,
+                  "實徵米石": 1044943.1241,
+                  "折銀率兩每石": 0.35,
+                  "折銀率依据": "同卷沿革事例：税糧每石折銀叁錢伍分。"
+                },
+                "regular_tax_derivation": "(688,647.2416 + 1,044,943.1241) * 0.35 / 12 / 10,000 = 5.0563052333万两/月",
+                "liao_levy_derivation": "官民田2,929.20151万亩 * 九厘0.009两/亩/年 / 12 = 2.1969011325万两/月。",
+                "remittance_raw": "陜西歲額，悉留本省，爲四藩五鎮之費",
+                "remittance_derivation": "源内正赋起运/存留拆分为全额存留，正赋起运基线=0；总起运定额另加在征辽饷。",
+                "ocr_check": "田土、实征麦米、悉留本省等可疑 OCR 位已回 Commons/NLC 影印扫描图核对。"
+              }
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [
+                {
+                  "house": "秦府",
+                  "seat": "陕西西安",
+                  "annual_shi": 279573.392
+                },
+                {
+                  "house": "肃府",
+                  "seat": "陕西甘肃/肃州",
+                  "annual_shi": 16622
+                },
+                {
+                  "house": "庆府",
+                  "seat": "陕西宁夏",
+                  "annual_shi": 73195.6
+                },
+                {
+                  "house": "韩府",
+                  "seat": "陕西平凉",
+                  "annual_shi": 581454.22026
+                },
+                {
+                  "house": "安王府",
+                  "seat": "陕西平凉支郡王",
+                  "annual_shi": 25816.66
+                }
+              ]
             }
           },
           "st": {
@@ -433,22 +672,22 @@
             "军饷欠": 20,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 3050,
-            "隐田": 1600
+            "官民田": 2929.20151,
+            "隐田": 1536.6303
           },
           "p": {
-            "正赋应征": 15,
-            "三饷应征": 2.5,
+            "正赋应征": 5.0563,
+            "三饷应征": 2.1969011325,
             "火耗率": 0.18,
             "逋赋率": 0.45,
-            "起运定额": 3.5,
+            "起运定额": 2.1969011325,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 4,
             "Due": {
               "军饷": 18,
               "官俸": 3,
-              "宗禄": 6,
+              "宗禄": 4.07,
               "赈济": 0
             }
           }
@@ -481,12 +720,47 @@
         "commerce_tax": 8,
         "corruption": 38,
         "settle": {
-          "_note": "#268 江南财赋核心 seed（浙江）；shadow 期只推进省级账本，不入国库 hub。1627.10 开局三饷仅辽饷，剿饷/练饷由 #259 后续注入。",
+          "_note": "#581 江南财赋核心一手核（浙江）；田亩/正赋/正赋起运锚定《万历会计录》卷二，1627.10 开局三饷仅辽饷，剿饷/练饷由 #259 后续注入。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "隐田"
+            ],
             "postures": [
               "江南财赋核心"
-            ]
+            ],
+            "正赋起运基线": 3.53,
+            "source": {
+              "title": "《万历会计录》",
+              "chapter": "卷二 浙江布政司田赋",
+              "url": "https://www.shidianguji.com/zh/book/NGJ89241200000038535874/chapter/1luif59pgr6zf",
+              "scan_checked": true,
+              "checked_fields": [
+                "官民田",
+                "正赋应征",
+                "起运定额"
+              ],
+              "conversion": {
+                "grain_silver_liang_per_stone": 0.25,
+                "effective_silver_liang_per_stone": 1.094098,
+                "note": "起运京库按卷二明载京库麦、京库米每石折银二钱五分；正赋应征用江南实际折色负担的有效银率折为万两/月。"
+              },
+              "raw": {
+                "官民田_顷": 466969.8,
+                "正赋本色_石": 2522626.7288,
+                "正赋起运本色_石": 1695738.4281
+              }
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [],
+              "note": "卷三十二未列浙江藩府岁用宗禄。"
+            }
           },
           "st": {
             "省库库银": 0,
@@ -498,22 +772,22 @@
             "军饷欠": 0,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 5950,
+            "官民田": 4670,
             "隐田": 1200
           },
           "p": {
             "正赋应征": 23,
-            "三饷应征": 5.5,
+            "三饷应征": 3.5024999999999995,
             "火耗率": 0.13,
             "逋赋率": 0.2,
-            "起运定额": 18,
+            "起运定额": 7.032499999999999,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0,
             "Due": {
               "军饷": 0,
               "官俸": 3,
-              "宗禄": 1,
+              "宗禄": 0,
               "赈济": 0
             }
           }
@@ -546,12 +820,53 @@
         "commerce_tax": 5,
         "corruption": 48,
         "settle": {
-          "_note": "#268 江南财赋核心 seed（江西）；shadow 期只推进省级账本，不入国库 hub。1627.10 开局三饷仅辽饷，剿饷/练饷由 #259 后续注入。",
+          "_note": "#581 江南财赋核心一手核（江西）；田亩/正赋/正赋起运锚定《万历会计录》卷三，1627.10 开局三饷仅辽饷，剿饷/练饷由 #259 后续注入。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "隐田"
+            ],
             "postures": [
               "江南财赋核心"
-            ]
+            ],
+            "正赋起运基线": 4.7,
+            "source": {
+              "title": "《万历会计录》",
+              "chapter": "卷三 江西布政司田赋",
+              "url": "https://www.shidianguji.com/zh/book/NGJ89241200000038535874/chapter/1luif5d0rs183",
+              "scan_checked": true,
+              "checked_fields": [
+                "官民田",
+                "正赋应征",
+                "起运定额"
+              ],
+              "conversion": {
+                "grain_silver_liang_per_stone": 0.25,
+                "effective_silver_liang_per_stone": 1.012134,
+                "note": "起运京库按卷三明载京库麦米、京库米每石折银二钱五分；正赋应征用江南实际折色负担的有效银率折为万两/月。"
+              },
+              "raw": {
+                "官民田_顷": 401151.2711,
+                "正赋本色_石": 2608352.3826,
+                "正赋起运本色_石": 2254000.0
+              }
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [
+                {
+                  "house": "淮府/益府/弋阳王府",
+                  "seat": "江西饶州/建昌等",
+                  "annual_taels": 94430.04,
+                  "source_note": "原文以岁用银列出，不折为石。"
+                }
+              ]
+            }
           },
           "st": {
             "省库库银": 0,
@@ -563,22 +878,22 @@
             "军饷欠": 0,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 4900,
+            "官民田": 4012,
             "隐田": 1150
           },
           "p": {
             "正赋应征": 22,
-            "三饷应征": 4.5,
+            "三饷应征": 3.009,
             "火耗率": 0.15,
             "逋赋率": 0.25,
-            "起运定额": 15,
+            "起运定额": 7.709,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0,
             "Due": {
               "军饷": 0,
               "官俸": 3,
-              "宗禄": 1,
+              "宗禄": 0.79,
               "赈济": 0
             }
           }
@@ -611,13 +926,88 @@
         "commerce_tax": 4,
         "corruption": 50,
         "settle": {
-          "_note": "#268 江南财赋核心 seed（湖广）；shadow 期只推进省级账本，不入国库 hub。1627.10 开局三饷仅辽饷，剿饷/练饷由 #259 后续注入。",
+          "_note": "#581 江南财赋核心一手核（湖广）；田亩/正赋/正赋起运锚定《万历会计录》卷四，1627.10 开局三饷仅辽饷，剿饷/练饷由 #259 后续注入。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "隐田"
+            ],
             "postures": [
               "江南财赋核心",
               "楚藩重宗禄"
-            ]
+            ],
+            "正赋起运基线": 1.91,
+            "source": {
+              "title": "《万历会计录》",
+              "chapter": "卷四 湖广布政司田赋",
+              "url": "https://www.shidianguji.com/zh/book/NGJ89241200000038535874/chapter/1luif5hyjz21m",
+              "scan_checked": true,
+              "checked_fields": [
+                "官民田",
+                "正赋应征",
+                "起运定额"
+              ],
+              "conversion": {
+                "grain_silver_liang_per_stone": 0.25,
+                "effective_silver_liang_per_stone": 1.904086,
+                "note": "起运京库按卷四京库米每石折银二钱五分；正赋应征用湖广实际折色负担的有效银率折为万两/月。湖广田土总项为二百二十一万余顷，已按扫描图核对避免 OCR 漏位。"
+              },
+              "raw": {
+                "官民田_顷": 2216199.401,
+                "正赋本色_石": 2142761.2673,
+                "正赋起运本色_石": 914400.0
+              }
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [
+                {
+                  "house": "楚府",
+                  "seat": "湖广武昌",
+                  "annual_shi": 342097.626
+                },
+                {
+                  "house": "岷府",
+                  "seat": "湖广武冈",
+                  "annual_shi": 71658.3
+                },
+                {
+                  "house": "襄府",
+                  "seat": "湖广襄阳",
+                  "annual_shi": 30650
+                },
+                {
+                  "house": "荆府",
+                  "seat": "湖广蕲州",
+                  "annual_shi": 52951
+                },
+                {
+                  "house": "吉府",
+                  "seat": "湖广长沙",
+                  "annual_shi": 15692
+                },
+                {
+                  "house": "荣府",
+                  "seat": "湖广常德",
+                  "annual_shi": 35000
+                },
+                {
+                  "house": "太和王府",
+                  "seat": "湖广楚藩支府",
+                  "annual_shi": 61779.9994
+                },
+                {
+                  "house": "药阳王府",
+                  "seat": "湖广楚藩支府",
+                  "annual_shi": 21124
+                }
+              ]
+            }
           },
           "st": {
             "省库库银": 0,
@@ -629,22 +1019,22 @@
             "军饷欠": 0,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 6650,
+            "官民田": 22162,
             "隐田": 1450
           },
           "p": {
             "正赋应征": 34,
-            "三饷应征": 6,
+            "三饷应征": 16.6215,
             "火耗率": 0.14,
             "逋赋率": 0.22,
-            "起运定额": 18,
+            "起运定额": 18.5315,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0,
             "Due": {
               "军饷": 0,
               "官俸": 3,
-              "宗禄": 5,
+              "宗禄": 2.63,
               "赈济": 0
             }
           }
@@ -680,12 +1070,52 @@
           "_note": "#70 切片5：华南/西南平省 shadow settle_tick seed（四川）。1627.10 开局三饷仅辽饷九厘；盐/商税源不进 settle。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "隐田"
+            ],
+            "正赋起运基线": 0.8427,
+            "source_grain": {
+              "source": "《万历会计录》卷十「四川布政司田赋」",
+              "taxable_land_qing": 134827.6723,
+              "assessed_grain_shi": 1028545.133,
+              "transport_grain_shi": 404497.2409,
+              "scan_checked": true,
+              "ocr_status": "识典转录数字已按影印图核验；数字用于 seed 前不依赖未核 OCR。",
+              "conversion": {
+                "official_anchor": "卷十田赋本色/折色合项口径；按官方折色负担反推有效银率。",
+                "assessed_silver_liang_per_stone": 0.26428009,
+                "transport_silver_liang_per_stone": 0.249999233,
+                "assessed_formula": "assessed_grain_shi * assessed_silver_liang_per_stone / 10000 / 12",
+                "transport_formula": "transport_grain_shi * transport_silver_liang_per_stone / 10000 / 12",
+                "remittance_cap_formula": "起运定额 = 正赋起运基线 + 三饷应征"
+              }
+            },
             "excluded_from_settle": [
               "salt_tax",
               "commerce_tax"
             ],
             "notes": {
               "量级": "西南土司牵制，田赋低于江南腹地；义务半按低军饷、轻宗禄 seed"
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [
+                {
+                  "house": "蜀府",
+                  "seat": "四川成都",
+                  "annual_shi": 41712
+                },
+                {
+                  "house": "广元王府",
+                  "seat": "四川广元",
+                  "annual_shi": 150504
+                }
+              ]
             }
           },
           "st": {
@@ -698,22 +1128,22 @@
             "军饷欠": 4,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 4150,
+            "官民田": 1348.276723,
             "隐田": 1200
           },
           "p": {
-            "正赋应征": 8,
-            "三饷应征": 1.4,
+            "正赋应征": 2.2652,
+            "三饷应征": 1.01120754225,
             "火耗率": 0.16,
             "逋赋率": 0.38,
-            "起运定额": 1.8,
+            "起运定额": 1.85390754225,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0.5,
             "Due": {
               "军饷": 5,
               "官俸": 1.2,
-              "宗禄": 1.4,
+              "宗禄": 0.8,
               "赈济": 0
             }
           }
@@ -749,12 +1179,42 @@
           "_note": "#70 切片5：华南/西南平省 shadow settle_tick seed（福建）。盐/海商税源是旁路税，不进 settle。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "隐田"
+            ],
+            "正赋起运基线": 0.7461,
+            "source_grain": {
+              "source": "《万历会计录》卷五「福建布政司田赋」",
+              "taxable_land_qing": 134225.067,
+              "assessed_grain_shi": 883121.6379,
+              "transport_grain_shi": 314000.0,
+              "scan_checked": true,
+              "ocr_status": "识典转录数字已按影印图核验；数字用于 seed 前不依赖未核 OCR。",
+              "conversion": {
+                "official_anchor": "卷五田赋本色/折色合项口径；按官方折色负担反推有效银率。",
+                "assessed_silver_liang_per_stone": 0.280486843,
+                "transport_silver_liang_per_stone": 0.285133758,
+                "assessed_formula": "assessed_grain_shi * assessed_silver_liang_per_stone / 10000 / 12",
+                "transport_formula": "transport_grain_shi * transport_silver_liang_per_stone / 10000 / 12",
+                "remittance_cap_formula": "起运定额 = 正赋起运基线 + 三饷应征"
+              }
+            },
             "excluded_from_settle": [
               "salt_tax",
               "commerce_tax"
             ],
             "notes": {
               "量级": "沿海中等田赋；盐商与海贸只影响 corruption/posture，不入 settle"
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [],
+              "note": "卷三十二未列福建藩府岁用宗禄。"
             }
           },
           "st": {
@@ -767,22 +1227,22 @@
             "军饷欠": 2,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 3500,
+            "官民田": 1342.25067,
             "隐田": 900
           },
           "p": {
-            "正赋应征": 11,
-            "三饷应征": 1.7,
+            "正赋应征": 2.0642,
+            "三饷应征": 1.0066880024999998,
             "火耗率": 0.16,
             "逋赋率": 0.28,
-            "起运定额": 2.4,
+            "起运定额": 1.7527880024999998,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0,
             "Due": {
               "军饷": 4,
               "官俸": 1.2,
-              "宗禄": 0.8,
+              "宗禄": 0,
               "赈济": 0
             }
           }
@@ -818,12 +1278,42 @@
           "_note": "#70 切片5：华南/西南平省 shadow settle_tick seed（广东）。盐/商税不进 substrate，只作独立税源。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "隐田"
+            ],
+            "正赋起运基线": 0.8333,
+            "source_grain": {
+              "source": "《万历会计录》卷十一「广东布政司田赋」",
+              "taxable_land_qing": 256865.1366,
+              "assessed_grain_shi": 999747.6116,
+              "transport_grain_shi": 400000.0,
+              "scan_checked": true,
+              "ocr_status": "识典转录数字已按影印图核验；数字用于 seed 前不依赖未核 OCR。",
+              "conversion": {
+                "official_anchor": "卷十一田赋本色/折色合项口径；按官方折色负担反推有效银率。",
+                "assessed_silver_liang_per_stone": 0.268543777,
+                "transport_silver_liang_per_stone": 0.24999,
+                "assessed_formula": "assessed_grain_shi * assessed_silver_liang_per_stone / 10000 / 12",
+                "transport_formula": "transport_grain_shi * transport_silver_liang_per_stone / 10000 / 12",
+                "remittance_cap_formula": "起运定额 = 正赋起运基线 + 三饷应征"
+              }
+            },
             "excluded_from_settle": [
               "salt_tax",
               "commerce_tax"
             ],
             "notes": {
               "量级": "沿海中等田赋；澳门/海贸/商税不计入 settle_tick"
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [],
+              "note": "卷三十二未列广东藩府岁用宗禄。"
             }
           },
           "st": {
@@ -836,22 +1326,22 @@
             "军饷欠": 2,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 4050,
+            "官民田": 2568.651366,
             "隐田": 1000
           },
           "p": {
-            "正赋应征": 10,
-            "三饷应征": 1.5,
+            "正赋应征": 2.2373,
+            "三饷应征": 1.9264885244999999,
             "火耗率": 0.16,
             "逋赋率": 0.3,
-            "起运定额": 2.2,
+            "起运定额": 2.7597885245,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0,
             "Due": {
               "军饷": 3.6,
               "官俸": 1.1,
-              "宗禄": 0.9,
+              "宗禄": 0,
               "赈济": 0
             }
           }
@@ -887,12 +1377,47 @@
           "_note": "#70 切片5：华南/西南平省 shadow settle_tick seed（广西）。土司微税，田赋/辽饷轻量。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "隐田"
+            ],
+            "正赋起运基线": 0.0,
+            "source_grain": {
+              "source": "《万历会计录》卷十二「广西布政司田赋」",
+              "taxable_land_qing": 94020.748,
+              "assessed_grain_shi": 373088.3344,
+              "transport_grain_shi": 0.0,
+              "scan_checked": true,
+              "ocr_status": "识典转录数字已按影印图核验；数字用于 seed 前不依赖未核 OCR。",
+              "conversion": {
+                "official_anchor": "卷十二田赋本色/折色合项口径；按官方折色负担反推有效银率；源内未形成正赋起运本色。",
+                "assessed_silver_liang_per_stone": 0.253805845,
+                "transport_silver_liang_per_stone": 0.0,
+                "assessed_formula": "assessed_grain_shi * assessed_silver_liang_per_stone / 10000 / 12",
+                "transport_formula": "transport_grain_shi * transport_silver_liang_per_stone / 10000 / 12",
+                "remittance_cap_formula": "起运定额 = 正赋起运基线 + 三饷应征"
+              }
+            },
             "excluded_from_settle": [
               "salt_tax",
               "commerce_tax"
             ],
             "notes": {
               "量级": "土司微税，中央汲取能力低；军饷与宗禄均轻"
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [
+                {
+                  "house": "靖江王府",
+                  "seat": "广西桂林",
+                  "annual_shi": 172725.09
+                }
+              ]
             }
           },
           "st": {
@@ -905,22 +1430,22 @@
             "军饷欠": 1,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 2320,
+            "官民田": 940.20748,
             "隐田": 900
           },
           "p": {
-            "正赋应征": 3.2,
-            "三饷应征": 0.6,
+            "正赋应征": 0.7891,
+            "三饷应征": 0.7051556099999999,
             "火耗率": 0.18,
             "逋赋率": 0.5,
-            "起运定额": 0.8,
+            "起运定额": 0.7051556099999999,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0.3,
             "Due": {
               "军饷": 2.2,
               "官俸": 0.5,
-              "宗禄": 0.3,
+              "宗禄": 0.72,
               "赈济": 0
             }
           }
@@ -956,12 +1481,42 @@
           "_note": "#70 切片5：华南/西南平省 shadow settle_tick seed（云南）。边地土司微税，矿税/商税不进 settle。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "隐田"
+            ],
+            "正赋起运基线": 0.0,
+            "source_grain": {
+              "source": "《万历会计录》卷十三「云南布政司田赋」",
+              "taxable_land_qing": 17993.588,
+              "assessed_grain_shi": 142690.2976,
+              "transport_grain_shi": 0.0,
+              "scan_checked": true,
+              "ocr_status": "识典转录数字已按影印图核验；数字用于 seed 前不依赖未核 OCR。",
+              "conversion": {
+                "official_anchor": "卷十三田赋本色/折色合项口径；按官方折色负担反推有效银率；源内未形成正赋起运本色。",
+                "assessed_silver_liang_per_stone": 0.253135641,
+                "transport_silver_liang_per_stone": 0.0,
+                "assessed_formula": "assessed_grain_shi * assessed_silver_liang_per_stone / 10000 / 12",
+                "transport_formula": "transport_grain_shi * transport_silver_liang_per_stone / 10000 / 12",
+                "remittance_cap_formula": "起运定额 = 正赋起运基线 + 三饷应征"
+              }
+            },
             "excluded_from_settle": [
               "salt_tax",
               "commerce_tax"
             ],
             "notes": {
               "量级": "边地土司微税；矿税扰民只作为 posture，不入田赋 substrate"
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [],
+              "note": "卷三十二未列云南藩府岁用宗禄。"
             }
           },
           "st": {
@@ -974,22 +1529,22 @@
             "军饷欠": 1,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 2550,
+            "官民田": 179.93588,
             "隐田": 1100
           },
           "p": {
-            "正赋应征": 3.8,
-            "三饷应征": 0.5,
+            "正赋应征": 0.301,
+            "三饷应征": 0.13495190999999998,
             "火耗率": 0.18,
             "逋赋率": 0.48,
-            "起运定额": 0.7,
+            "起运定额": 0.13495190999999998,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0.4,
             "Due": {
               "军饷": 1.8,
               "官俸": 0.5,
-              "宗禄": 0.2,
+              "宗禄": 0,
               "赈济": 0
             }
           }
@@ -1025,12 +1580,42 @@
           "_note": "#70 切片5：华南/西南平省 shadow settle_tick seed（贵州）。山地军屯衰败，微税。",
           "_meta_defaults": "ming_province",
           "_meta": {
+            "provisional": [
+              "隐田"
+            ],
+            "正赋起运基线": 0.0,
+            "source_grain": {
+              "source": "《万历会计录》卷十四「贵州布政司田赋」",
+              "taxable_land_qing": 5166.663,
+              "assessed_grain_shi": 50808.5896,
+              "transport_grain_shi": 0.0,
+              "scan_checked": true,
+              "ocr_status": "识典转录数字已按影印图核验；数字用于 seed 前不依赖未核 OCR。",
+              "conversion": {
+                "official_anchor": "卷十四田赋本色/折色合项口径；按官方折色负担反推有效银率；源内未形成正赋起运本色。",
+                "assessed_silver_liang_per_stone": 0.250115189,
+                "transport_silver_liang_per_stone": 0.0,
+                "assessed_formula": "assessed_grain_shi * assessed_silver_liang_per_stone / 10000 / 12",
+                "transport_formula": "transport_grain_shi * transport_silver_liang_per_stone / 10000 / 12",
+                "remittance_cap_formula": "起运定额 = 正赋起运基线 + 三饷应征"
+              }
+            },
             "excluded_from_settle": [
               "salt_tax",
               "commerce_tax"
             ],
             "notes": {
               "量级": "山地微税，军屯衰败导致逋赋率高；常设宗禄极轻"
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [],
+              "note": "卷三十二未列贵州藩府岁用宗禄。"
             }
           },
           "st": {
@@ -1043,22 +1628,22 @@
             "军饷欠": 1,
             "官俸欠": 0,
             "宗禄欠": 0,
-            "官民田": 2070,
+            "官民田": 51.66663,
             "隐田": 850
           },
           "p": {
-            "正赋应征": 2.4,
-            "三饷应征": 0.25,
+            "正赋应征": 0.1059,
+            "三饷应征": 0.03874997249999999,
             "火耗率": 0.18,
             "逋赋率": 0.55,
-            "起运定额": 0.4,
+            "起运定额": 0.03874997249999999,
             "漂没率": 0.0,
             "中饱率": 0.0,
             "拨付gross": 0.2,
             "Due": {
               "军饷": 1.6,
               "官俸": 0.4,
-              "宗禄": 0.15,
+              "宗禄": 0,
               "赈济": 0
             }
           }
@@ -1091,17 +1676,42 @@
         "commerce_tax": 0,
         "corruption": 50,
         "settle": {
-          "_note": "#267 省级 settle_tick 基座（辽东/宁锦）。纯军饷漏斗：无可征税基、无起运，军饷欠由京运补缺口驱动；不与陕西税亏死亡螺旋混同。",
+          "_note": "#580 省级 settle_tick 基座（辽东/宁锦）。按《万历会计录》卷十七「辽东镇饷额」精化 raw 军镇预算；纯军饷漏斗：无可征税基、无起运，军饷欠由京运补缺口驱动；不与陕西税亏死亡螺旋混同。",
           "_meta_defaults": "military_pay_funnel",
           "_meta": {
+            "provisional": [
+              "军饷欠",
+              "起运定额"
+            ],
             "postures": [
               "边镇军饷",
               "纯军饷漏斗"
             ],
+            "primary_source": {
+              "work": "《万历会计录》卷十七「辽东镇饷额」",
+              "cross_check": "赖建诚《边镇粮饷》表3-1.2",
+              "fields_refined": [
+                "军饷",
+                "拨付gross"
+              ],
+              "现额银两_年": 711391,
+              "京运年例银两_年": 409984,
+              "粮料原额石": 279212
+            },
             "notes": {
-              "军饷": "关宁前线军饷按 military_pressure=90 与九边京运年例量级 seed",
-              "拨付gross": "京运补静态 seed；hub #261 后动态分配",
+              "军饷": "raw content 以现额合计银711391两/年折月；fresh DB 保留卷十七军镇预算口径，不按 army pay-source 省份额覆盖。",
+              "拨付gross": "京运年例银409984两/年折月；hub #261 后动态分配",
               "起运定额": "战区无省级实征，固定为 0"
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [],
+              "note": "辽东/宁锦无宗藩禄粮；军饷另属卷十七/军饷漏斗。"
             }
           },
           "st": {
@@ -1125,9 +1735,9 @@
             "起运定额": 0,
             "漂没率": 0.0,
             "中饱率": 0.0,
-            "拨付gross": 12,
+            "拨付gross": 3.416533333333333,
             "Due": {
-              "军饷": 32,
+              "军饷": 5.928258333333333,
               "官俸": 0,
               "宗禄": 0,
               "赈济": 0
@@ -1162,17 +1772,35 @@
         "commerce_tax": 0,
         "corruption": 62,
         "settle": {
-          "_note": "#267 省级 settle_tick 基座（东江/皮岛）。海岛战区纯军饷漏斗：实征/起运均为 0，军饷欠随登莱/京运接济缺口累积。",
+          "_note": "#580 省级 settle_tick 基座（东江/皮岛）。晚于《万历会计录》成书年代，天然无对应源；海岛战区纯军饷漏斗维持 #267 posture：实征/起运均为 0，军饷欠随登莱/京运接济缺口累积。",
           "_meta_defaults": "military_pay_funnel",
           "_meta": {
+            "provisional": [
+              "军饷",
+              "拨付gross",
+              "军饷欠",
+              "起运定额"
+            ],
             "postures": [
               "边镇军饷",
               "纯军饷漏斗"
             ],
+            "source_status": "no_wanli_accounting_record",
             "notes": {
+              "史料覆盖": "皮岛/东江晚于万历九年《万历会计录》成书，天然无对应源；本 slice 明确维持现有 posture，并保留军饷漏斗字段的 provisional 标记。",
               "军饷": "东江镇军饷按 military_pressure=80 与皮岛孤悬战区量级 seed",
               "拨付gross": "京运/登莱接济静态 seed；hub #261 后动态分配",
               "起运定额": "海岛无省级实征，固定为 0"
+            },
+            "royal_stipends_source": {
+              "source": "《万历会计录》卷三十二「宗藩禄粮」",
+              "conversion": {
+                "method": "annual_shi * 0.5 liang_per_shi / 10000 / 12; source silver uses annual_taels / 10000 / 12",
+                "liang_per_shi": 0.5,
+                "source_lines": "识典古籍《万历会计录》卷三十二 lines 155-261; 折银参照 issue #272 宗禄口径与同类宗禄折银例"
+              },
+              "items": [],
+              "note": "东江/皮岛晚于《万历会计录》成书，无宗藩禄粮。"
             }
           },
           "st": {
