@@ -953,20 +953,14 @@ function extractTaggedJson(
     throw new Error(missingMessage);
   }
 
-  let lastErr: unknown;
   for (let i = starts.length - 1; i >= 0; i -= 1) {
     const bodyStart = starts[i] + open.length;
     const end = stdout.indexOf(close, bodyStart);
     if (end === -1) continue;
     const body = stdout.slice(bodyStart, end).trim();
-    try {
-      return parseTaggedJsonBody(body);
-    } catch (err) {
-      lastErr = err;
-    }
+    return parseTaggedJsonBody(body);
   }
 
-  if (lastErr !== undefined) throw lastErr;
   throw new Error(missingMessage);
 }
 
@@ -976,7 +970,7 @@ function parseTaggedJsonBody(body: string): unknown {
     return JSON.parse(stripped);
   } catch (err) {
     const prefix = balancedJsonPrefix(stripped);
-    if (prefix !== undefined && /^[}\s]*$/.test(stripped.slice(prefix.length))) {
+    if (prefix !== undefined && /^[}\]\s]*$/.test(stripped.slice(prefix.length))) {
       return JSON.parse(prefix);
     }
     throw err;
