@@ -50,6 +50,7 @@ _content: Optional[GameContent] = None
 INITIATIVE_ACTIVE_CAP = 15
 INITIATIVE_ACTIVE_CAP_LABEL = "十五"
 COMMITMENT_KIND_UNTIL_STOP = "until_stop"
+_FISCAL_LEVY_TARGET_ABS_TOL = 1e-9
 
 # SQLite 有符号 64-bit 整数边界：超界 int 绑进 SQLite 会抛 OverflowError。
 _SQLITE_INT_MIN, _SQLITE_INT_MAX = -(2 ** 63), 2 ** 63 - 1
@@ -1362,6 +1363,7 @@ def _apply_fiscal_levy_targets(
         raw_sanxiang = p.get("三饷应征")
         raw_transport = p.get("起运定额")
         current_targets_stored = _is_stored_number(raw_sanxiang) and _is_stored_number(raw_transport)
+        current_sanxiang = current_transport = None
         if current_targets_stored:
             current_sanxiang = _as_float(raw_sanxiang, ctx=f"{region_id}.settle.p.三饷应征")
             current_transport = _as_float(raw_transport, ctx=f"{region_id}.settle.p.起运定额")
@@ -1380,8 +1382,8 @@ def _apply_fiscal_levy_targets(
         _fiscal_levy_mark_provisional(meta)
         if meta == meta_raw \
                 and current_targets_stored \
-                and math.isclose(current_sanxiang, target_sanxiang, rel_tol=0, abs_tol=1e-9) \
-                and math.isclose(current_transport, target_transport, rel_tol=0, abs_tol=1e-9):
+                and math.isclose(current_sanxiang, target_sanxiang, rel_tol=0, abs_tol=_FISCAL_LEVY_TARGET_ABS_TOL) \
+                and math.isclose(current_transport, target_transport, rel_tol=0, abs_tol=_FISCAL_LEVY_TARGET_ABS_TOL):
             continue
         settle["p"] = next_p
         settle["_meta"] = meta

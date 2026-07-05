@@ -3917,7 +3917,7 @@ def test_border_slice_raw_content_keeps_primary_source_anchors():
     dongjiang = _content_settle("dongjiang_area")
     assert dongjiang["_meta"]["source_status"] == "no_wanli_accounting_record"
     assert "无对应源" in dongjiang["_meta"]["notes"]["史料覆盖"]
-    assert dongjiang["_meta"]["provisional"] == []
+    assert set(dongjiang["_meta"]["provisional"]) >= {"军饷", "拨付gross", "军饷欠", "起运定额"}
 
 
 def test_liaodong_and_dongjiang_are_pure_military_pay_funnels(fresh_db):
@@ -4032,13 +4032,32 @@ def test_dongjiang_content_pay_funnel_survives_fresh_db_pay_source_reconcile(fre
     assert settle["st"]["军饷欠"] == pytest.approx(25)
 
 
-@pytest.mark.parametrize("bad_annual", [True, "711391", float("nan"), float("inf")])
+@pytest.mark.parametrize("bad_annual", [True, "711391", float("nan"), float("inf"), -1])
 def test_primary_source_army_pay_due_rejects_dirty_annual_amount(fresh_db, bad_annual):
     settle = _read_settle(fresh_db, "liaodong")
     settle["_meta"]["primary_source"]["现额银两_年"] = bad_annual
 
     with pytest.raises(ValueError, match="primary_source 现额银两_年 非法"):
         fresh_db._derive_region_army_pay_due("liaodong", settle)
+
+
+@pytest.mark.parametrize(
+    ("region_id", "mutate", "match"),
+    [
+        ("dongjiang_area", lambda settle: settle.__setitem__("p", []), "settle.p 非法"),
+        ("dongjiang_area", lambda settle: settle["p"].__setitem__("Due", []), "settle.p.Due 非法"),
+        ("dongjiang_area", lambda settle: settle.__setitem__("st", []), "settle.st 非法"),
+        ("liaodong", lambda settle: settle.__setitem__("st", []), "settle.st 非法"),
+    ],
+)
+def test_standalone_army_pay_funnel_rejects_malformed_settle_shapes(
+    fresh_db, region_id, mutate, match
+):
+    settle = _read_settle(fresh_db, region_id)
+    mutate(settle)
+
+    with pytest.raises(ValueError, match=match):
+        fresh_db._derive_region_army_pay_due(region_id, settle)
 
 
 JIANGNAN_CORE_EXPECTED = {
@@ -5136,7 +5155,8 @@ def test_all_settle_substrate_provisional_meta_covers_virtual_fields(fresh_db):
             required = {"隐田"}
         else:
             required = {"起运定额", "官民田", "隐田"}
-        if meta.get("source_status") == "no_wanli_accounting_record":
+        if meta.get("source_status") == "no_wanli_accounting_record" \
+                and settle.get("_meta_defaults") != "military_pay_funnel":
             required = set()
         refined = set((meta.get("primary_source") or {}).get("fields_refined", []))
         required -= refined

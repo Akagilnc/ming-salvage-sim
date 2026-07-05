@@ -1775,14 +1775,19 @@
           "_note": "#580 省级 settle_tick 基座（东江/皮岛）。晚于《万历会计录》成书年代，天然无对应源；海岛战区纯军饷漏斗维持 #267 posture：实征/起运均为 0，军饷欠随登莱/京运接济缺口累积。",
           "_meta_defaults": "military_pay_funnel",
           "_meta": {
-            "provisional": [],
+            "provisional": [
+              "军饷",
+              "拨付gross",
+              "军饷欠",
+              "起运定额"
+            ],
             "postures": [
               "边镇军饷",
               "纯军饷漏斗"
             ],
             "source_status": "no_wanli_accounting_record",
             "notes": {
-              "史料覆盖": "皮岛/东江晚于万历九年《万历会计录》成书，天然无对应源；本 slice 明确维持现有 posture，不另标 provisional 待核。",
+              "史料覆盖": "皮岛/东江晚于万历九年《万历会计录》成书，天然无对应源；本 slice 明确维持现有 posture，并保留军饷漏斗字段的 provisional 标记。",
               "军饷": "东江镇军饷按 military_pressure=80 与皮岛孤悬战区量级 seed",
               "拨付gross": "京运/登莱接济静态 seed；hub #261 后动态分配",
               "起运定额": "海岛无省级实征，固定为 0"

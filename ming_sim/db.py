@@ -2455,7 +2455,12 @@ class GameDB:
         if isinstance(existing, (int, float)):
             value = float(existing)
         else:
-            due_obj = settle.get("p", {}).get("Due", {})
+            p_obj = settle.get("p")
+            if not isinstance(p_obj, dict):
+                raise ValueError("settle.p 非法")
+            due_obj = p_obj.get("Due")
+            if not isinstance(due_obj, dict):
+                raise ValueError("settle.p.Due 非法")
             value = float(due_obj.get("军饷", 0) or 0) - row_due_total
         if not math.isfinite(value) or value < -1e-9:
             raise ValueError("standalone_military_pay_due 非法")
@@ -2480,7 +2485,9 @@ class GameDB:
         if isinstance(existing, (int, float)):
             value = float(existing)
         else:
-            st = settle.setdefault("st", {})
+            st = settle.get("st")
+            if not isinstance(st, dict):
+                raise ValueError("settle.st 非法")
             value = float(st.get("军饷欠", 0) or 0) - row_arrears_total
         if not math.isfinite(value) or value < -1e-9:
             raise ValueError("standalone_military_pay_arrears 非法")
@@ -2500,7 +2507,9 @@ class GameDB:
             float(row["province_pay_arrears"])
             for row in self._army_pay_source_rows_for_region(region_id)
         )
-        st = settle.setdefault("st", {})
+        st = settle.get("st")
+        if not isinstance(st, dict):
+            raise ValueError("settle.st 非法")
         current_total = float(st.get("军饷欠", 0) or 0)
         standalone_arrears = max(0.0, current_total - row_arrears_total)
         meta = settle.setdefault("_meta", {})
@@ -2949,10 +2958,15 @@ class GameDB:
 
     def _derive_region_army_pay_due(self, region_id: str, settle: Dict[str, Any]) -> List[Dict[str, float | str]]:
         rows = self._army_pay_source_rows_for_region(region_id)
-        p = settle.setdefault("p", {})
+        p = settle.get("p")
+        if not isinstance(p, dict):
+            raise ValueError("settle.p 非法")
         due_obj = p.get("Due")
         if not isinstance(due_obj, dict):
-            raise ValueError("Due 非字典")
+            raise ValueError("settle.p.Due 非法")
+        st = settle.get("st")
+        if not isinstance(st, dict):
+            raise ValueError("settle.st 非法")
         primary_source_due = self._primary_source_army_pay_due(settle)
         row_due_total = sum(float(row["due"]) for row in rows)
         row_arrears_total = sum(float(row["province_pay_arrears"]) for row in rows)
@@ -2973,11 +2987,11 @@ class GameDB:
                 row_arrears_total,
                 primary_source_due,
             )
-            settle.setdefault("st", {})["军饷欠"] = standalone_arrears + row_arrears_total
+            st["军饷欠"] = standalone_arrears + row_arrears_total
         elif rows:
-            settle.setdefault("st", {})["军饷欠"] = row_arrears_total
+            st["军饷欠"] = row_arrears_total
         else:
-            settle.setdefault("st", {})["军饷欠"] = 0
+            st["军饷欠"] = 0
         return rows
 
     def _reconcile_all_army_pay_source_regions(self) -> None:
@@ -3172,7 +3186,10 @@ class GameDB:
             row_arrears_total,
             primary_source_due,
         )
-        settle.setdefault("st", {})["军饷欠"] = standalone_arrears + row_arrears_total
+        st = settle.get("st")
+        if not isinstance(st, dict):
+            raise ValueError("settle.st 非法")
+        st["军饷欠"] = standalone_arrears + row_arrears_total
 
     def _drop_maintenance_column(self) -> None:
         """#173：物理移除退役的 armies.maintenance_per_turn 列（月饷由 army_needed 按兵力派生）。
