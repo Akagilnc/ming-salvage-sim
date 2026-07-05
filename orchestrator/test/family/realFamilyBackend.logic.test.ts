@@ -620,6 +620,12 @@ describe("family CMR prompt output contract", () => {
       const prompt = readFileSync(join(realPromptsDir, file), "utf8");
       expect(prompt).toContain('"status":"verified-closed"');
       expect(prompt).toContain("Do not use a field named `disposition`");
+      expect(prompt).toContain(
+        "Any `priorFindingDispositions` entries in this not-converged shape must use the",
+      );
+      expect(prompt).toContain(
+        'same `{"identityKey":"<key>","status":"...","reason":"<short>"}` contract',
+      );
       expect(prompt).not.toContain('"disposition":"verified-closed"');
     }
   });
