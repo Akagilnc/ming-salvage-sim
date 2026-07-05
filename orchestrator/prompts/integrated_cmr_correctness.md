@@ -83,6 +83,10 @@ Rules:
 - On any not-converged verdict, `reason`, `successfulLegs`,
   `claimedFixedFindingIdentityKeys`, and `priorFindingDispositions` are REQUIRED;
   `findings` is optional but must use reviewer finding shape when present.
+  Any `priorFindingDispositions` entries in this not-converged shape must use the
+  same `{"identityKey":"<key>","status":"...","reason":"<short>"}` contract
+  above; valid `status` values remain `still-active`, `verified-closed`, and
+  `unable-to-assess`. Do not use a field named `disposition`.
 - On any converged or not-converged verdict, `evidencePaths` is REQUIRED and must
   list relative paths to existing review/test artifacts under the repo root. Do
   not use absolute paths or `..`; the guard rejects paths it cannot resolve under
