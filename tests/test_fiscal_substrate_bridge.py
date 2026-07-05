@@ -60,6 +60,16 @@ def _content_settle(region_id):
     return content_mod.load_region_content()[region_id].fiscal["settle"]
 
 
+def _raw_settle_meta_defaults_by_region():
+    data = content_mod.load_json_asset("regions.json")
+    out = {}
+    for item in data.get("regions", []):
+        fiscal = item.get("fiscal") or {}
+        settle = fiscal.get("settle") or {}
+        out[str(item.get("id"))] = settle.get("_meta_defaults")
+    return out
+
+
 def _write_settle(db, region_id, settle):
     row = db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", (region_id,)).fetchone()
     fiscal = json.loads(str(row["fiscal"] or "{}"))
@@ -5170,6 +5180,7 @@ def test_all_settle_substrate_provisional_meta_covers_virtual_fields(fresh_db):
     rows = fresh_db.conn.execute(
         "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
     ).fetchall()
+    raw_meta_defaults_by_region = _raw_settle_meta_defaults_by_region()
 
     checked = 0
     for row in rows:
@@ -5190,7 +5201,7 @@ def test_all_settle_substrate_provisional_meta_covers_virtual_fields(fresh_db):
         else:
             required = {"起运定额", "官民田", "隐田"}
         if meta.get("source_status") == "no_wanli_accounting_record" \
-                and settle.get("_meta_defaults") != "military_pay_funnel":
+                and raw_meta_defaults_by_region.get(region_id) != "military_pay_funnel":
             required = set()
         refined = set((meta.get("primary_source") or {}).get("fields_refined", []))
         required -= refined
