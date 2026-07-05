@@ -3580,7 +3580,7 @@ def test_all_15_regular_provinces_first_tick_golden(region_id, expected, fresh_d
 
 ZHONGYUAN_JINGSHI_PRIMARY_SOURCE = {
     "beizhili": {
-        "guan_min_tian": 493,
+        "guan_min_tian": 365,
         "settle_land": 4925.7,
         "huang_tian": 184,
         "正赋应征": 4.0,
@@ -3598,7 +3598,7 @@ ZHONGYUAN_JINGSHI_PRIMARY_SOURCE = {
         "verified": set(),
     },
     "henan": {
-        "guan_min_tian": 742,
+        "guan_min_tian": 380,
         "settle_land": 7415.8,
         "huang_tian": 0,
         "正赋应征": 15.9,

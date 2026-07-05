@@ -65,7 +65,7 @@
       "fiscal": {
         "huang_tian": 184,
         "wang_tian": 20,
-        "guan_min_tian": 493,
+        "guan_min_tian": 365,
         "liao_xiang": 12,
         "salt_tax": 5,
         "commerce_tax": 8,
@@ -469,7 +469,7 @@
       "fiscal": {
         "huang_tian": 0,
         "wang_tian": 120,
-        "guan_min_tian": 742,
+        "guan_min_tian": 380,
         "liao_xiang": 10,
         "salt_tax": 0,
         "commerce_tax": 3,
