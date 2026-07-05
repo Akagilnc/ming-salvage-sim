@@ -1784,6 +1784,16 @@ describe("realBackend extractCoderTag", () => {
     expect(extractCoderTag(stdout)).toEqual({ committed: true, commitsAdded: 3 });
   });
 
+  it("fails closed when the final complete <coder> tag is malformed instead of reusing an older tag", () => {
+    const stdout =
+      '<coder>{"committed": true, "commitsAdded": 1}</coder>\n' +
+      "retrying after a validation failure\n" +
+      '<coder>{"committed": true, "commitsAdded": </coder>\n' +
+      "CODER_STEP_COMPLETE";
+
+    expect(() => extractCoderTag(stdout)).toThrow();
+  });
+
   it("ignores inline prose mentions of <coder> before the final JSON tag", () => {
     const stdout =
       "我会保留最终 `<coder>` 输出作为兼容协议。\n" +
@@ -1807,6 +1817,14 @@ describe("realBackend extractCoderTag", () => {
       commitsAdded: 0,
       escalate: { reason: "blocked", diagnosis: "source gap" },
     });
+  });
+
+  it("accepts a final tag with extra trailing brackets after a balanced JSON array", () => {
+    const stdout = '<coder>[{"committed": true, "commitsAdded": 1}]]</coder>';
+
+    expect(extractCoderTag(stdout)).toEqual([
+      { committed: true, commitsAdded: 1 },
+    ]);
   });
 
   it("still rejects non-brace garbage after a balanced coder JSON object", () => {
