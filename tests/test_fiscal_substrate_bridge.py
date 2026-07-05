@@ -4060,6 +4060,40 @@ def test_standalone_army_pay_funnel_rejects_malformed_settle_shapes(
         fresh_db._derive_region_army_pay_due(region_id, settle)
 
 
+def test_standalone_army_pay_container_total_uses_grouped_arrears(fresh_db, monkeypatch):
+    def fail_single_region_lookup(region_id):
+        raise AssertionError(f"unexpected per-region army pay lookup: {region_id}")
+
+    monkeypatch.setattr(
+        fresh_db,
+        "_army_pay_source_rows_for_region",
+        fail_single_region_lookup,
+    )
+
+    assert fresh_db._standalone_army_pay_container_total() >= 0
+
+
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda fiscal: fiscal.__setitem__("settle", []), "region dongjiang_area settle 非法"),
+        (lambda fiscal: fiscal["settle"].__setitem__("st", []), "region dongjiang_area settle.st 非法"),
+    ],
+)
+def test_standalone_army_pay_container_total_rejects_malformed_region_shapes(
+    fresh_db, mutate, match
+):
+    fiscal = _read_fiscal(fresh_db, "dongjiang_area")
+    mutate(fiscal)
+    fresh_db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "dongjiang_area"),
+    )
+
+    with pytest.raises(ValueError, match=match):
+        fresh_db._standalone_army_pay_container_total()
+
+
 JIANGNAN_CORE_EXPECTED = {
     "nanzhili": {
         "正赋应征": 30, "三饷应征": 5.953499999999999, "起运定额": 14.723499999999998,
