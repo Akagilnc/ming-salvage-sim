@@ -57,6 +57,7 @@ _FISCAL_ENGINE_KEY = "__fiscal_engine"
 _FISCAL_ENGINE_LEGACY = 0
 _FISCAL_ENGINE_SUBSTRATE_HUB = 1
 _CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY = "central_army_pay_arrears"
+_STANDALONE_MILITARY_PAY_FUNNEL_ID = "__standalone_military_pay_funnel__"
 _STRUCTURAL_FISCAL_MINIMUMS = {
     "central_taicang_sink_loss_rate": 1,
     "central_jingyun_sink_loss_rate": 1,
@@ -3050,7 +3051,7 @@ class GameDB:
         action_paid = float((breakdown.get("action还") or {}).get("军饷欠", 0) or 0)
         balances = {str(row["id"]): float(row["province_pay_arrears"]) for row in pay_rows}
         due_by_component = {str(row["id"]): float(row["due"]) for row in pay_rows}
-        standalone_id = "__standalone_military_pay_funnel__"
+        standalone_id = _STANDALONE_MILITARY_PAY_FUNNEL_ID
         if standalone_pay_component is not None:
             standalone_due = float(standalone_pay_component.get("due", 0.0) or 0.0)
             standalone_arrears = float(
