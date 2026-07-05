@@ -1343,6 +1343,39 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
+  it("falls back to signaled coder stdout when the outcome sidecar path is an empty directory", async () => {
+    const backend = makeBackend();
+    const dir = mkdtempSync(join(tmpdir(), "worker-outcome-empty-dir-"));
+    const outcomePath = join(dir, "outcome.json");
+    mkdirSync(outcomePath);
+    backend.agentResult = {
+      completionSignal: "CODER_STEP_COMPLETE",
+      stdout: '<coder>{"committed": true, "commitsAdded": 1}</coder>\nCODER_STEP_COMPLETE',
+      commits: [{ sha: "abc123" }],
+      iterations: [{ sessionId: "sess-dir-sidecar" }],
+    } as Awaited<ReturnType<typeof sc.run>>;
+
+    const result = await backend.runStep(
+      coderSpec,
+      {
+        branch: "feat/issue-582",
+        base: "main",
+        path: "/tmp/worktree/issue-582",
+      },
+      {
+        outcomeLanding: {
+          path: outcomePath,
+          sandboxPath: ".orchestrator-outcome.json",
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
+      sessionId: "sess-dir-sidecar",
+    });
+  });
+
   it("prefers a runner-owned outcome sidecar for a fresh reviewer before Sandcastle tag parsing", async () => {
     const backend = makeBackend();
     const dir = mkdtempSync(join(tmpdir(), "worker-review-outcome-"));
@@ -1749,6 +1782,57 @@ describe("realBackend extractCoderTag", () => {
       'iterating…\n' +
       '<coder>{"committed": true, "commitsAdded": 3}</coder>';
     expect(extractCoderTag(stdout)).toEqual({ committed: true, commitsAdded: 3 });
+  });
+
+  it("fails closed when the final complete <coder> tag is malformed instead of reusing an older tag", () => {
+    const stdout =
+      '<coder>{"committed": true, "commitsAdded": 1}</coder>\n' +
+      "retrying after a validation failure\n" +
+      '<coder>{"committed": true, "commitsAdded": </coder>\n' +
+      "CODER_STEP_COMPLETE";
+
+    expect(() => extractCoderTag(stdout)).toThrow();
+  });
+
+  it("ignores inline prose mentions of <coder> before the final JSON tag", () => {
+    const stdout =
+      "我会保留最终 `<coder>` 输出作为兼容协议。\n" +
+      '<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "blocked", "diagnosis": "source gap"}}</coder>\n' +
+      "CODER_STEP_COMPLETE";
+
+    expect(extractCoderTag(stdout)).toEqual({
+      committed: false,
+      commitsAdded: 0,
+      escalate: { reason: "blocked", diagnosis: "source gap" },
+    });
+  });
+
+  it("accepts a final coder tag with extra trailing braces after a balanced JSON object", () => {
+    const stdout =
+      '<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "blocked", "diagnosis": "source gap"}}}</coder>\n' +
+      "CODER_STEP_COMPLETE";
+
+    expect(extractCoderTag(stdout)).toEqual({
+      committed: false,
+      commitsAdded: 0,
+      escalate: { reason: "blocked", diagnosis: "source gap" },
+    });
+  });
+
+  it("accepts a final tag with extra trailing brackets after a balanced JSON array", () => {
+    const stdout = '<coder>[{"committed": true, "commitsAdded": 1}]]</coder>';
+
+    expect(extractCoderTag(stdout)).toEqual([
+      { committed: true, commitsAdded: 1 },
+    ]);
+  });
+
+  it("still rejects non-brace garbage after a balanced coder JSON object", () => {
+    expect(() =>
+      extractCoderTag(
+        '<coder>{"committed": false, "commitsAdded": 0} trailing</coder>',
+      ),
+    ).toThrow();
   });
 
   it("returns an escalate payload when the coder tag carries one", () => {

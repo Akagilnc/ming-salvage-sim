@@ -939,18 +939,79 @@ function extractTaggedJson(
   tag: "coder" | "review",
   missingMessage: string,
 ): unknown {
-  // Scan for ALL role tags; the last one is the final iteration's result.
-  // `[\s\S]` so the body may span newlines; non-greedy so adjacent tags don't
-  // merge.
-  const re = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "g");
-  let last: string | undefined;
-  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) {
-    last = m[1];
+  const open = `<${tag}>`;
+  const close = `</${tag}>`;
+  const starts: number[] = [];
+  for (
+    let idx = stdout.indexOf(open);
+    idx !== -1;
+    idx = stdout.indexOf(open, idx + open.length)
+  ) {
+    starts.push(idx);
   }
-  if (last === undefined) {
+  if (starts.length === 0) {
     throw new Error(missingMessage);
   }
-  return JSON.parse(stripJsonFence(last.trim()));
+
+  for (let i = starts.length - 1; i >= 0; i -= 1) {
+    const bodyStart = starts[i] + open.length;
+    const end = stdout.indexOf(close, bodyStart);
+    if (end === -1) continue;
+    const body = stdout.slice(bodyStart, end).trim();
+    return parseTaggedJsonBody(body);
+  }
+
+  throw new Error(missingMessage);
+}
+
+function parseTaggedJsonBody(body: string): unknown {
+  const stripped = stripJsonFence(body);
+  try {
+    return JSON.parse(stripped);
+  } catch (err) {
+    const prefix = balancedJsonPrefix(stripped);
+    if (prefix !== undefined && /^[}\]\s]*$/.test(stripped.slice(prefix.length))) {
+      return JSON.parse(prefix);
+    }
+    throw err;
+  }
+}
+
+function balancedJsonPrefix(s: string): string | undefined {
+  let depth = 0;
+  let started = false;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i]!;
+    if (!started) {
+      if (/\s/.test(ch)) continue;
+      if (ch !== "{" && ch !== "[") return undefined;
+      started = true;
+      depth = 1;
+      continue;
+    }
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === "\"") {
+      inString = true;
+    } else if (ch === "{" || ch === "[") {
+      depth += 1;
+    } else if (ch === "}" || ch === "]") {
+      depth -= 1;
+      if (depth === 0) return s.slice(0, i + 1);
+      if (depth < 0) return undefined;
+    }
+  }
+  return undefined;
 }
 
 export function extractCoderTag(stdout: string): unknown {
@@ -2404,7 +2465,8 @@ export class RealBackend implements Backend {
   ): unknown {
     try {
       if (options?.outcomeLanding?.path !== undefined) {
-        return readRequiredOutcomeSidecar(options.outcomeLanding.path);
+        const sidecar = readOutcomeSidecar(options.outcomeLanding.path);
+        if (sidecar !== undefined) return sidecar;
       }
     } catch (err) {
       if (spec.role === "reviewer") {
