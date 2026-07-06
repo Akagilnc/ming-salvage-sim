@@ -2,6 +2,8 @@
 
 Status: Accepted（2026-06-21；grill-with-docs 收敛 + 设计 cmr 5 轮 + 线上 bot 收敛 → PR #290 合入 main。前置：ADR 0024 仓库隔离、0016/0017/0018。）
 
+> **前向更正（ADR 0061，2026-07-06 Accepted 起生效）**：下文「决定 4」的"线上 bot cmr + merge 复用现有 pr-review-loop 的独立自治阶段"已被 **ADR 0061 反转**——线上评审 loop 纳入编排器自身，自治边界从"止于 PR"推进到"止于 merge"（#366）。本 ADR 其余决定不受影响。
+
 ## 背景
 
 ADR 0016/0017 把家族层（父 epic → 多子片并行 fan-out + 合回家族 base）显式 deferred。现做。
