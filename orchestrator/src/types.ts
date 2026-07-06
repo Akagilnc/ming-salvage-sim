@@ -848,6 +848,18 @@ export interface LedgerEntry {
   readonly step: StepId;
   /** Structured output for agent steps; undefined for runner-action steps. */
   readonly output?: StepOutput;
+  /**
+   * Per-step sandbox session id (#604 correctness r5, E2). The runner records the
+   * agent step's surfaced session id here on the IN-MEMORY ledger too — not just on
+   * the {@link PersistentLedgerEntry} written to disk — so an in-memory
+   * `RunResult.stepLedger` consumer (the family runner reading a parked child's
+   * escalated agent step, `readChildDecisionEscalation`) can forward the real
+   * session id for 原地 resume. Absent for runner-action steps and when the
+   * provider surfaced no id. {@link PersistentLedgerEntry.sessionId} REQUIRES a
+   * value (run-level UUID fallback); this in-memory field carries it only when the
+   * provider actually surfaced one.
+   */
+  readonly sessionId?: string;
   /** Append-only event marker for non-step ledger facts (#439 / #446). */
   readonly event?: LedgerBookkeepingEvent["event"];
   /** Step this answer reopens when `event === "escalation_answered"` (#439). */

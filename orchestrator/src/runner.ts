@@ -2872,6 +2872,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     ledger.push({
       step,
       ...(output !== undefined ? { output } : {}),
+      // #604 correctness r5 (E2): carry the surfaced per-step session id on the
+      // in-memory entry too. The persisted ledger (emitLedger below) already records
+      // it, but RunResult.stepLedger (the in-memory ledger) previously dropped it —
+      // so the family runner reading a parked child's escalated agent step off the
+      // lean RunResult ledger saw `sessionId: undefined` and never forwarded the
+      // real id for 原地 resume (FamilyChildEscalation.sessionId existed in name only).
+      ...(stepSessionId !== undefined ? { sessionId: stepSessionId } : {}),
       ...(stepFindingDispositions !== undefined
         ? { findingDispositions: stepFindingDispositions }
         : {}),

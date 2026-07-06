@@ -33,6 +33,7 @@ import {
 import type {
   Backend,
   EscalationAnswerPayload,
+  LedgerEntry,
   PersistentLedgerEntry,
   StepId,
 } from "../types.js";
@@ -231,9 +232,14 @@ function familyStopSummary(input: {
  * NOTE: `escalationKindForHandoff` in runner.ts (single-slice) mirrors this exact
  * decision-vs-failure split (a valid Escalation ⇒ "decision", else "failure"); this
  * is the family-layer read of the same truth off the lean RunResult ledger.
+ *
+ * #604 correctness r5 (E2): the in-memory RunResult ledger now carries the escalated
+ * agent step's `sessionId` (the runner records it on the in-memory entry, not only
+ * the persisted one), so the parked escalation FORWARDS the real child session id
+ * for 原地 resume. It is absent only when the provider surfaced no id.
  */
 function readChildDecisionEscalation(
-  ledger: ReadonlyArray<PersistentLedgerEntry>,
+  ledger: ReadonlyArray<LedgerEntry>,
 ): FamilyChildEscalation | undefined {
   // The escalated agent step carries the Escalation payload (the S8 handoff entry
   // in the lean RunResult ledger carries no handoffStatus/escalationKind — those
@@ -363,7 +369,7 @@ async function runChild(
   // `"failure"` escalate (infra / retries exhausted) and every other non-success
   // outcome keep the current `"failed"` behaviour below.
   if (result.status === "escalate") {
-    const escalation = readChildDecisionEscalation(result.stepLedger as ReadonlyArray<PersistentLedgerEntry>);
+    const escalation = readChildDecisionEscalation(result.stepLedger);
     if (escalation !== undefined) {
       return { issue: child.issue, status: "escalated", escalation };
     }

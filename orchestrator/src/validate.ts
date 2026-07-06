@@ -173,11 +173,29 @@ export function isCompleteRepairEvidence(
   );
 }
 
+// #604 correctness r5 (E1): the ONLY keys a disposition-evidence carrier may hold.
+// This hand-written validator is STRICT (parity with the family `.strict()` zod
+// `cmrDispositionEvidenceSchema` and the standalone `findingDispositionSchema`):
+// any extra key — e.g. a deleted routing field like `targetModule` — makes it
+// invalid, rather than being silently tolerated by an allow-list that only
+// type-checked known fields.
+const DISPOSITION_EVIDENCE_KEYS: ReadonlySet<string> = new Set([
+  "kind",
+  "reason",
+  "source",
+  "scope",
+  "findingIdentity",
+  "boundedReopen",
+]);
+
 function isValidDispositionEvidence(
   d: unknown,
 ): d is FindingDispositionEvidence {
   if (d == null || typeof d !== "object") return false;
   const obj = d as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    if (!DISPOSITION_EVIDENCE_KEYS.has(key)) return false;
+  }
   if (typeof obj.kind !== "string" || !DISPOSITION_KINDS.has(obj.kind)) {
     return false;
   }
@@ -322,11 +340,27 @@ export function isValidFinding(f: unknown): f is Finding {
   return true;
 }
 
+// #604 correctness r5 (E1): the ONLY keys a prior-finding disposition may hold.
+// STRICT (parity with the family `.strict()` `cmrFindingDispositionSchema` and the
+// now-`.strict()` standalone `priorFindingDispositionSchema`): an extra key — e.g.
+// a deleted routing field — makes it invalid rather than being silently tolerated.
+const PRIOR_FINDING_DISPOSITION_KEYS: ReadonlySet<string> = new Set([
+  "identityKey",
+  "status",
+  "reason",
+  "source",
+  "scope",
+  "boundedReopen",
+]);
+
 export function isValidPriorFindingDisposition(
   d: unknown,
 ): d is PriorFindingDisposition {
   if (d == null || typeof d !== "object") return false;
   const obj = d as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    if (!PRIOR_FINDING_DISPOSITION_KEYS.has(key)) return false;
+  }
   if (!isFilledString(obj.identityKey)) return false;
   if (
     typeof obj.status !== "string" ||

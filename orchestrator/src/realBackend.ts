@@ -1698,7 +1698,14 @@ function normalizeReviewerFinding(finding: Finding): Finding {
     },
   };
 }
-const priorFindingDispositionSchema = z.object({
+// #604 correctness r5 (E1): `.strict()` so a prior-finding disposition carrying an
+// unknown field (e.g. a deleted routing field like `targetModule`) is REJECTED
+// here rather than silently STRIPPED by zod — parity with the family-side
+// `cmrFindingDispositionSchema` (already `.strict()`) and the standalone
+// `findingDispositionSchema` (r2/C3). Exported so the strict contract is directly
+// exercisable. `.strict()` must go on the `.object()` before `.superRefine()`,
+// since `.superRefine()` returns a `ZodEffects` with no `.strict()`.
+export const priorFindingDispositionSchema = z.object({
   identityKey: z.string().min(1),
   status: z.enum([
     "still-active",
@@ -1710,7 +1717,7 @@ const priorFindingDispositionSchema = z.object({
   source: z.string().optional(),
   scope: z.string().optional(),
   boundedReopen: z.string().optional(),
-}).superRefine((disposition, ctx) => {
+}).strict().superRefine((disposition, ctx) => {
   if (disposition.status !== "accepted_suppressed") return;
   for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
     if (disposition[field] === undefined || disposition[field].trim() === "") {
