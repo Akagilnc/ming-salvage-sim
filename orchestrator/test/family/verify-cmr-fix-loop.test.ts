@@ -2157,15 +2157,28 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     // stop-summary reason for a blocking family finding is the generic
     // `same_module_still_red` StopReason word ("blocking, fix and rerun"), and the
     // blocking-findings reason string keys the finding by its `blocking:` label.
+    // #604 F5 (信封宪法 ADR 0062): the retained stopSummary carries only a THIN
+    // FindingDescriptor (identity + severity + summary), NOT the full Finding —
+    // rich reviewer content never persists on the ledger; it travels in the live
+    // coder-fix landing payload instead.
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_reviewed",
       event: "cmr_reviewed",
       blockingFindingIdentityKeys: [findingIdentityKey(blocker)],
       stopSummary: expect.objectContaining({
         reason: "same_module_still_red",
-        finding: blocker,
+        findingDescriptor: {
+          identityKey: findingIdentityKey(blocker),
+          severity: blocker.severity,
+          summary: expect.any(String),
+        },
       }),
     }));
+    // The full Finding rich content must NOT persist on the ledger stopSummary.
+    const reviewedRow = backend.ledger.find(
+      (entry) => entry.status === "cmr_reviewed",
+    );
+    expect(reviewedRow?.stopSummary).not.toHaveProperty("finding");
     const reviewed = backend.ledger.find((entry) => entry.status === "cmr_reviewed");
     expect(reviewed).not.toHaveProperty("cmrFindingClassification");
     expect(reviewed?.cmrDispositions).toEqual(

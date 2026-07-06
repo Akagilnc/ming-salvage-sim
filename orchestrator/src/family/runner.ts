@@ -831,11 +831,36 @@ export async function runFamily(
     if (unanswered.length > 0) {
       const ledgerMerged = mergedSet(initialFamilyLedger);
       const first = unanswered[0]!;
-      const children: FamilyChildResult[] = epic.children.map((c) =>
-        ledgerMerged.has(c.issue)
-          ? { issue: c.issue, status: "merged" as const }
-          : { issue: c.issue, status: "skipped" as const },
-      );
+      // #604 F8: an UNANSWERED parked child re-entered before the wave loop must
+      // map to `"escalated"` (its decision-gate park state), NOT `"skipped"`. The
+      // wave-loop parking path finalizes these via `finalizeDecisionPark` →
+      // `"escalated"`; the early-exit re-entry path must stay consistent, else the
+      // driver sees the parked child as skipped and mis-reads the run. Carry the
+      // escalation payload read from the `child_decision_parked` ledger row so the
+      // driver has the same reason/diagnosis/sessionId either path.
+      const parkedByIssue = new Map<number, FamilyChildEscalation>();
+      for (const row of unanswered) {
+        parkedByIssue.set(row.childIssue, {
+          reason: row.reason ?? "(no reason recorded)",
+          diagnosis:
+            row.diagnosis ??
+            "Append an escalation_answered ledger row carrying this childIssue to reopen the parked child.",
+          escalationKind: "decision",
+          ...(typeof row.sessionId === "string" && row.sessionId.length > 0
+            ? { sessionId: row.sessionId }
+            : {}),
+        });
+      }
+      const children: FamilyChildResult[] = epic.children.map((c) => {
+        if (ledgerMerged.has(c.issue)) {
+          return { issue: c.issue, status: "merged" as const };
+        }
+        const escalation = parkedByIssue.get(c.issue);
+        if (escalation !== undefined) {
+          return { issue: c.issue, status: "escalated" as const, escalation };
+        }
+        return { issue: c.issue, status: "skipped" as const };
+      });
       const escalationReason = `child #${first.childIssue} decision gate is not answered: ${first.reason ?? "(no reason recorded)"}`;
       return {
         status: "escalated",

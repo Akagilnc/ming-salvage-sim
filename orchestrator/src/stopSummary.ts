@@ -18,11 +18,41 @@ export type StopReason =
   | "already_done"
   | "resumed";
 
+/**
+ * Thin typed description of a finding for persistence on a ledger/StopSummary
+ * (#604 F5, 信封宪法 ADR 0062). A StopSummary is a persisted run-terminus record;
+ * it must carry only the finding's IDENTITY (identityKey), SEVERITY, and a short
+ * human summary — never the full {@link Finding} rich content (claim_quote /
+ * suggested_fix / disposition evidence). The rich Finding travels only in the
+ * live coder-fix landing payload (see verifyCmr `{ blockingFindings }`), never
+ * into the ledger. Keeps the persisted structure thin so rich reviewer content
+ * cannot leak back into durable state.
+ */
+export interface FindingDescriptor {
+  readonly identityKey: string;
+  readonly severity: Finding["severity"];
+  readonly summary: string;
+}
+
+export function findingDescriptor(finding: Finding, summary?: string): FindingDescriptor {
+  return {
+    identityKey: findingIdentityKey(finding),
+    severity: finding.severity,
+    summary: summary ?? finding.claim_quote,
+  };
+}
+
 export interface StopSummary {
   readonly reason: StopReason;
   readonly summary: string;
   readonly repairHint?: string;
-  readonly finding?: Finding;
+  /**
+   * Thin typed descriptor of the finding that drove this stop — identity +
+   * severity + summary only. NOT the full {@link Finding} (#604 F5, ADR 0062):
+   * rich finding content must not be persisted on the ledger; it travels in the
+   * live coder-fix landing payload instead.
+   */
+  readonly findingDescriptor?: FindingDescriptor;
   readonly targetModule?: string;
   readonly owningIssue?: string;
   readonly missingSurface?: string;
@@ -146,42 +176,47 @@ export function stopReasonForFindingDisposition(
   input: FindingDispositionStopInput,
 ): StopSummary {
   switch (input.kind) {
-    case "same_module":
+    case "same_module": {
+      const summary = input.reason ?? "same-module finding is still red";
       return {
         reason: "same_module_still_red",
-        summary: input.reason ?? "same-module finding is still red",
-        finding: input.finding,
+        summary,
+        findingDescriptor: findingDescriptor(input.finding, summary),
       };
-    case "owning_issue_still_red":
+    }
+    case "owning_issue_still_red": {
+      const summary =
+        input.reason ?? "owning issue has not closed the required surface";
       return {
         reason: "owning_issue_still_red",
-        summary: input.reason ?? "owning issue has not closed the required surface",
-        finding: input.finding,
+        summary,
+        findingDescriptor: findingDescriptor(input.finding, summary),
         owningIssue: input.owningIssue,
         ...(input.missingSurface !== undefined
           ? { missingSurface: input.missingSurface }
           : {}),
         ...(input.nextStep !== undefined ? { nextStep: input.nextStep } : {}),
       };
+    }
     case "cross_module":
       return {
         reason: "cross_module_defer",
         summary: input.reason,
-        finding: input.finding,
+        findingDescriptor: findingDescriptor(input.finding, input.reason),
         targetModule: input.targetModule,
       };
     case "spec_conflict":
       return {
         reason: "spec_conflict",
         summary: input.reason,
-        finding: input.finding,
+        findingDescriptor: findingDescriptor(input.finding, input.reason),
         repairHint: input.repairHint ?? "resolve the specification conflict and rerun",
       };
     case "infra_failure":
       return {
         reason: "infra_failure",
         summary: input.reason,
-        finding: input.finding,
+        findingDescriptor: findingDescriptor(input.finding, input.reason),
         repairHint: input.repairHint,
       };
   }
@@ -283,7 +318,7 @@ export function stopSummaryFromFindingDispositionEvidence(input: {
       return {
         reason: "accepted_suppressed",
         summary: evidence.reason,
-        finding,
+        findingDescriptor: findingDescriptor(finding, evidence.reason),
         metadata: {
           acceptedSuppressions: [
             {
