@@ -215,7 +215,13 @@ def validate_disposition_evidence(value: dict, label: str) -> None:
 
     if kind == "accepted_suppressed":
         required = {"kind", "source", "scope", "reason", "boundedReopen"}
-        allowed = required | {"findingIdentity", "targetModule"}
+        # #604 correctness r2 (C3): `targetModule` was deleted from the TS reviewer
+        # contract (findingDispositionSchema / cmrDispositionEvidenceSchema
+        # `.strict()`), so the family parser rejects it. Drop it from the guard's
+        # allowed set too so the guard and the family parser agree (口径 parity /
+        # invariant #3 cross-entry consistency) — no入口 silently swallows a
+        # deleted field.
+        allowed = required | {"findingIdentity"}
     validate_exact_fields(value, allowed, label, required)
     for field in required - {"kind"}:
         if not isinstance(value[field], str) or value[field].strip() == "":

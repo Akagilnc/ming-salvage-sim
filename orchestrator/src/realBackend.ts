@@ -1600,6 +1600,12 @@ const findingDispositionSchema = z
     findingIdentity: z.string().min(1).optional(),
     boundedReopen: z.string().min(1),
   })
+  // #604 correctness r2 (C3): `.strict()` so a reviewer disposition carrying an
+  // unknown field (e.g. the deleted `targetModule`) is REJECTED here rather than
+  // silently stripped — parity with the family-side `cmrDispositionEvidenceSchema`
+  // which is already `.strict()`. Without this, this standalone reviewer entrance
+  // would quietly swallow a deleted field the other entrances now reject.
+  .strict()
   .superRefine((disposition, ctx) => {
     if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
       ctx.addIssue({

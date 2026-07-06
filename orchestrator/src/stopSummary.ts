@@ -53,10 +53,10 @@ export interface StopSummary {
    * live coder-fix landing payload instead.
    */
   readonly findingDescriptor?: FindingDescriptor;
-  readonly targetModule?: string;
-  readonly owningIssue?: string;
-  readonly missingSurface?: string;
-  readonly nextStep?: string;
+  // #604 correctness r2 (C4): targetModule/owningIssue/missingSurface/nextStep
+  // were only ever set by the removed dead route-kind branches of
+  // stopReasonForFindingDisposition — no producer sets them and no consumer
+  // reads them off a StopSummary. Removed with the dead branches (ADR 0062).
   readonly metadata?: StopSummaryMetadata;
 }
 
@@ -139,87 +139,29 @@ export interface TrustBoundarySummary {
   readonly sourceKind: string;
 }
 
-export type FindingDispositionStopInput =
-  | {
-      readonly kind: "same_module";
-      readonly finding: Finding;
-      readonly reason?: string;
-    }
-  | {
-      readonly kind: "owning_issue_still_red";
-      readonly finding: Finding;
-      readonly owningIssue: string;
-      readonly missingSurface?: string;
-      readonly nextStep?: string;
-      readonly reason?: string;
-    }
-  | {
-      readonly kind: "cross_module";
-      readonly finding: Finding;
-      readonly targetModule: string;
-      readonly reason: string;
-    }
-  | {
-      readonly kind: "spec_conflict";
-      readonly finding: Finding;
-      readonly reason: string;
-      readonly repairHint?: string;
-    }
-  | {
-      readonly kind: "infra_failure";
-      readonly finding: Finding;
-      readonly reason: string;
-      readonly repairHint: string;
-    };
+// #604 correctness r2 (C4) / ADR 0062: the routing disposition kinds
+// (owning_issue_still_red / cross_module / spec_conflict / infra_failure) were
+// deleted from the reviewer contract — the runner is a pure scheduler that
+// counts blocking findings, it does not read a route kind. The only live caller
+// (verifyCmr.ts) passes `same_module`, so those four input branches were
+// unreachable dead code (with their derived StopSummary fields
+// targetModule/owningIssue/missingSurface/nextStep). They are removed here. The
+// `StopReason` union keeps its reserved runner terminal-state words unchanged.
+export type FindingDispositionStopInput = {
+  readonly kind: "same_module";
+  readonly finding: Finding;
+  readonly reason?: string;
+};
 
 export function stopReasonForFindingDisposition(
   input: FindingDispositionStopInput,
 ): StopSummary {
-  switch (input.kind) {
-    case "same_module": {
-      const summary = input.reason ?? "same-module finding is still red";
-      return {
-        reason: "same_module_still_red",
-        summary,
-        findingDescriptor: findingDescriptor(input.finding, summary),
-      };
-    }
-    case "owning_issue_still_red": {
-      const summary =
-        input.reason ?? "owning issue has not closed the required surface";
-      return {
-        reason: "owning_issue_still_red",
-        summary,
-        findingDescriptor: findingDescriptor(input.finding, summary),
-        owningIssue: input.owningIssue,
-        ...(input.missingSurface !== undefined
-          ? { missingSurface: input.missingSurface }
-          : {}),
-        ...(input.nextStep !== undefined ? { nextStep: input.nextStep } : {}),
-      };
-    }
-    case "cross_module":
-      return {
-        reason: "cross_module_defer",
-        summary: input.reason,
-        findingDescriptor: findingDescriptor(input.finding, input.reason),
-        targetModule: input.targetModule,
-      };
-    case "spec_conflict":
-      return {
-        reason: "spec_conflict",
-        summary: input.reason,
-        findingDescriptor: findingDescriptor(input.finding, input.reason),
-        repairHint: input.repairHint ?? "resolve the specification conflict and rerun",
-      };
-    case "infra_failure":
-      return {
-        reason: "infra_failure",
-        summary: input.reason,
-        findingDescriptor: findingDescriptor(input.finding, input.reason),
-        repairHint: input.repairHint,
-      };
-  }
+  const summary = input.reason ?? "same-module finding is still red";
+  return {
+    reason: "same_module_still_red",
+    summary,
+    findingDescriptor: findingDescriptor(input.finding, summary),
+  };
 }
 
 export function successStopSummary(input?: {

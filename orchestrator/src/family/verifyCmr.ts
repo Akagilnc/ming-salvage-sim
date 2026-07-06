@@ -1662,6 +1662,45 @@ async function runIntegratedCmrPass(input: {
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
+  // #604 correctness r2 (C2): on a RESTART barrier the runner carries protected
+  // prior finding identity keys (`priorCmrFindingIdentityKeys`) that the fresh
+  // reviewer MUST account for (claimed-fixed or explicitly disposed). If that
+  // closure payload is malformed — e.g. it leaves a protected prior key
+  // unaccounted — this is a contract drift that MUST fail closed and mechanically
+  // rerun, NEVER dispatch coder-fix. Pre-r2 the `blocking.length > 0` branch ran
+  // FIRST, so a fresh pass that also happened to raise a NEW blocker slipped the
+  // unrelated new blocker into coder-fix and bypassed this guard. Run the closure
+  // guard BEFORE the blocking branch whenever protected prior keys are present.
+  // On a FIRST pass (`priorCmrFindingIdentityKeys === undefined`) there is nothing
+  // protected, so this early guard is skipped and the normal blocking→coder-fix
+  // path is preserved (the late guard at the end still runs for the converged path).
+  if (priorCmrFindingIdentityKeys !== undefined) {
+    const earlyClosureFailure = cmrClosureFailureReason({
+      pass,
+      moduleContext,
+      claimedFixedFindingIdentityKeys:
+        cmrResult.output.claimedFixedFindingIdentityKeys,
+      protectedPriorFindingIdentityKeys: priorCmrFindingIdentityKeys,
+      priorFindingDispositions: cmrResult.output.priorFindingDispositions,
+    });
+    if (earlyClosureFailure !== undefined) {
+      await recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason: earlyClosureFailure,
+        familyHeadAfter: postWorkerFamilyHead,
+        stopSummary: contractDriftStopSummary({
+          summary: earlyClosureFailure,
+          repairHint:
+            "repair the integrated CMR claimed-fixed closure payload and rerun the family barrier",
+        }),
+      });
+      return {
+        result: { ok: false, ran: true },
+        familyHeadAfter: postWorkerFamilyHead,
+      };
+    }
+  }
   let cmrFindingClassification: CmrEnvelope | undefined;
   if (
     cmrResult.output.findings !== undefined &&
