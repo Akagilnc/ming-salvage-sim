@@ -11,7 +11,7 @@
  *     `"failed"` — the CURRENT #293 behaviour, NO park/resume (A already exists).
  *   - `escalationKind:"decision"` (撞产品/设计题) → the NEW behaviour: runChild
  *     returns `status:"escalated"` (NOT failed); the wave loop STOPS (no other
- *     sibling in the wave keeps running) + records an INDEPENDENT `child_escalated`
+ *     sibling in the wave keeps running) + records an INDEPENDENT `child_decision_parked`
  *     ledger event; the family returns `status:"escalated"`.
  *
  * Resume (退出-重入): a later `escalation_answered` ledger row bound to the SAME
@@ -26,6 +26,7 @@
 
 import { describe, expect, it } from "vitest";
 import { runFamily } from "../../src/family/runner.js";
+import { recordFamilyEscalationAnswered } from "../../src/family/ledger.js";
 import type {
   Backend,
   CoderOutput,
@@ -197,7 +198,7 @@ function epicWith(...childIssues: number[]): FamilyEpic {
 // ─── test 1: core — decision escalate → parked, wave stops, family escalated ────
 
 describe("#604 slice 5 — child decision escalation parks the family (core)", () => {
-  it("child decision escalate → status:escalated (not failed), wave stops, child_escalated recorded, family escalated", async () => {
+  it("child decision escalate → status:escalated (not failed), wave stops, child_decision_parked recorded, family escalated", async () => {
     const singleSliceBackend = new EscalatingChildBackend(11);
     const familyBackend = new FakeFamilyBackend();
 
@@ -221,9 +222,9 @@ describe("#604 slice 5 — child decision escalation parks the family (core)", (
     // The family run PARKS on the decision escalation, not verify_failed / incomplete.
     expect(result.status).toBe("escalated");
 
-    // An INDEPENDENT child_escalated event was recorded, bound to the child issue.
+    // An INDEPENDENT child_decision_parked event was recorded, bound to the child issue.
     const childEscalated = familyBackend.ledger.filter(
-      (e) => e.event === "child_escalated",
+      (e) => e.event === "child_decision_parked",
     );
     expect(childEscalated).toHaveLength(1);
     expect(childEscalated[0]?.childIssue).toBe(11);
@@ -263,7 +264,7 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
       familyBase: "family/604-base",
     });
     expect(first.status).toBe("escalated");
-    const parked = familyBackend.ledger.find((e) => e.event === "child_escalated");
+    const parked = familyBackend.ledger.find((e) => e.event === "child_decision_parked");
     expect(parked?.childIssue).toBe(11);
 
     // ── human appends an escalation_answered row BOUND to child #11 ──
@@ -295,10 +296,61 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
   });
 });
 
+// ─── test 4: resume via the PRODUCTION answer helper (F1 regression) ────────────
+//
+// The slice-5 tests above hand-push the `escalation_answered` row (with childIssue
+// spelled out inline), which MASKS a real production bug: the production API used
+// to answer a parked child is `recordFamilyEscalationAnswered({ childIssue, ... })`,
+// and its compact() row historically DROPPED `childIssue`. Without childIssue on the
+// row, `isValidChildAnswer` (entry.childIssue === childIssue) never matches, so the
+// parked child is never resumed — the decision gate deadlocks in production even
+// though a human answered. This test writes the answer through the PRODUCTION helper
+// so a dropped-field regression fails here, not just in hand-crafted-row tests.
+
+describe("#604 slice 5 — resume via production helper (F1)", () => {
+  it("recordFamilyEscalationAnswered({childIssue}) → re-entry resumes the child in place → family success", async () => {
+    const singleSliceBackend = new EscalatingChildBackend(11, true);
+    const familyBackend = new FakeFamilyBackend();
+
+    // ── invocation 1: parks on #11's decision escalation ──
+    const first = await runFamily({
+      epic: epicWith(11),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/604-base",
+    });
+    expect(first.status).toBe("escalated");
+    expect(
+      familyBackend.ledger.find((e) => e.event === "child_decision_parked")?.childIssue,
+    ).toBe(11);
+
+    // ── human answers through the PRODUCTION helper (not a hand-crafted row) ──
+    await recordFamilyEscalationAnswered(familyBackend, {
+      childIssue: 11,
+      answer: "field X is optional; proceed with the optional shape",
+      source: "human",
+    });
+
+    // ── invocation 2 (re-entry): must resume #11 in place and reach success ──
+    const second = await runFamily({
+      epic: epicWith(11),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/604-base",
+    });
+
+    expect(second.status).toBe("success");
+    expect(
+      singleSliceBackend.resumeSessionCalls.some(([issue]) => issue === 11),
+    ).toBe(true);
+    expect(familyBackend.merges.some((m) => m.childIssue === 11)).toBe(true);
+  });
+});
+
 // ─── test 3: A/B — a failure-kind escalation stays failed, no park/resume ───────
 
 describe("#604 slice 5 — A/B: failure-kind child outcome is NOT parked", () => {
-  it("a child whose single-slice run FAILS (infra, not a decision) stays failed — no child_escalated, family not escalated", async () => {
+  it("a child whose single-slice run FAILS (infra, not a decision) stays failed — no child_decision_parked, family not escalated", async () => {
     // A coder that produces NOTHING (committed:false) → S8(error), the infra/failure
     // side of A/B — this must remain the CURRENT #293 `"failed"` behaviour.
     class FailingChildBackend extends EscalatingChildBackend {
@@ -330,7 +382,7 @@ describe("#604 slice 5 — A/B: failure-kind child outcome is NOT parked", () =>
 
     // Not parked: no decision escalation event, family is not "escalated".
     expect(
-      familyBackend.ledger.some((e) => e.event === "child_escalated"),
+      familyBackend.ledger.some((e) => e.event === "child_decision_parked"),
     ).toBe(false);
     expect(result.status).not.toBe("escalated");
     // The failing child is honestly recorded as failed/incomplete, never merged.

@@ -3,7 +3,7 @@ import {
   parseModuleDeclaration,
   type FamilyModuleContext,
 } from "./family/moduleDeclaration.js";
-import { classifyFamilyCmrFindings } from "./family/cmrClassification.js";
+import { deriveCmrEnvelope } from "./family/cmrClassification.js";
 import type { FamilyCmrFindingClassification } from "./family/cmrClassification.js";
 import { runFamily } from "./family/runner.js";
 import { parseCmrOutcome } from "./family/realFamilyBackend.js";
@@ -42,6 +42,7 @@ import type {
   StepId,
   StepOutput,
   StepSpec,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -231,7 +232,7 @@ async function familyClassificationScenario(input: {
   // so it recomputes the classification report in-process from the SAME inputs the
   // gate classified (the finding + module context); this mirrors "what the
   // classifier decided" without reaching into content the runner never reads.
-  const result = classifyFamilyCmrFindings({
+  const result = deriveCmrEnvelope({
     familyIssue: input.familyIssue,
     findings: [input.finding],
     moduleContext: input.moduleContext,
@@ -326,6 +327,7 @@ function dogfoodS5CoderOutputForFindings(
 function completeDogfoodS5CoderOutput(
   output: Extract<StepOutput, { kind: "coder" }>,
   ctx?: DispatchContext,
+  landing?: WorkerLandingPayload,
 ): StepOutput {
   const existing = output.repairEvidence;
   return {
@@ -333,7 +335,7 @@ function completeDogfoodS5CoderOutput(
     repairEvidence: {
       ...dogfoodRepairEvidence({
         identityKeys: ctx?.blockingFindingIdentityKeys,
-        findings: ctx?.blockingFindings,
+        findings: landing?.blockingFindings,
         patchSummary: "scripted dogfood coder-fix replay",
       }),
       ...(existing ?? {}),
@@ -341,7 +343,7 @@ function completeDogfoodS5CoderOutput(
         existing?.findingScope ??
         dogfoodRepairEvidence({
           identityKeys: ctx?.blockingFindingIdentityKeys,
-          findings: ctx?.blockingFindings,
+          findings: landing?.blockingFindings,
         }).findingScope,
       tests: existing?.tests ?? [
         "npm test -- --run test/dogfood-replay-451.test.ts",
@@ -480,6 +482,7 @@ class DogfoodSingleSliceBackend implements Backend {
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}`);
     this.dispatchedModels.push(`${spec.id}:${spec.model}`);
@@ -509,7 +512,7 @@ class DogfoodSingleSliceBackend implements Backend {
       kind: "completed",
       output:
         spec.id === "S5" && output.kind === "coder"
-          ? completeDogfoodS5CoderOutput(output, ctx)
+          ? completeDogfoodS5CoderOutput(output, ctx, landing)
           : output,
     };
   }
@@ -520,11 +523,15 @@ class DogfoodSingleSliceBackend implements Backend {
 }
 
 class ThrowingDogfoodSingleSliceBackend extends DogfoodSingleSliceBackend {
-  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+  async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
     if (spec.kind === "coder") {
       throw new Error("Cannot find module 'missing-worker-dependency'");
     }
-    return super.dispatchWorker(spec, ctx);
+    return super.dispatchWorker(spec, ctx, landing);
   }
 }
 
@@ -592,6 +599,7 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    _landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     this.dispatches.push(
       `${spec.kind}:${ctx.cmrPass ?? ctx.familyBase ?? "unknown"}`,
@@ -1198,7 +1206,7 @@ async function familyAttributionReplay(
   // `cmrFindingClassification.results` attribution audit (the runner reads only the
   // thin key envelope). Recompute the attribution report in-process from the same
   // finding + module context the gate classified, for this presentation fixture.
-  const result = classifyFamilyCmrFindings({
+  const result = deriveCmrEnvelope({
     familyIssue: 287,
     findings: [attributedFinding],
     moduleContext,
@@ -1266,8 +1274,9 @@ async function cmrReviewerSelfFixAttemptReplay(): Promise<SeamReplay> {
     override async dispatchWorker(
       spec: WorkerSpec,
       ctx: DispatchContext,
+      landing?: WorkerLandingPayload,
     ): Promise<WorkerResult> {
-      const result = await super.dispatchWorker(spec, ctx);
+      const result = await super.dispatchWorker(spec, ctx, landing);
       if (!this.didSelfFix && spec.kind === "cmr" && ctx.cmrPass === "completeness") {
         this.didSelfFix = true;
         this.forceFamilyHead("head-after-reviewer-self-fix");
@@ -2542,7 +2551,6 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       source: "#303",
       scope: hubLossAcceptedScope,
       reason: hubLossAcceptedReason,
-      targetModule: "#261/ADR0021 hub implementation",
       boundedReopen: hubLossBoundedReopen,
     },
   });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyFamilyCmrFindings } from "../../src/family/cmrClassification.js";
+import { deriveCmrEnvelope } from "../../src/family/cmrClassification.js";
 import { buildFamilyModuleContext } from "../../src/family/moduleDeclaration.js";
 import { classifyFindings } from "../../src/findings.js";
 import type { Finding } from "../../src/types.js";
@@ -40,7 +40,7 @@ describe("#604 slice 4 — route-kind-less findings are blocking, deferred is em
     ],
   });
 
-  it("classifyFamilyCmrFindings sends a would-be cross_module defer to blocking, not deferred", () => {
+  it("deriveCmrEnvelope sends a would-be cross_module defer to blocking, not deferred", () => {
     const finding = {
       severity: "medium",
       category: "correctness",
@@ -56,7 +56,7 @@ describe("#604 slice 4 — route-kind-less findings are blocking, deferred is em
       },
     } as unknown as Finding;
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 604,
       findings: [finding],
       moduleContext: familyModuleContext,
@@ -97,7 +97,7 @@ describe("#604 slice 4 — route-kind-less findings are blocking, deferred is em
       action: "fix_now",
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 604,
       findings: [finding],
       moduleContext: familyModuleContext,

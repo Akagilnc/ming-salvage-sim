@@ -118,6 +118,7 @@ import type {
   Finding,
   PriorFindingDisposition,
   StepSoul,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -1029,6 +1030,7 @@ export class RealFamilyBackend implements FamilyBackend {
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     if (spec.kind === "ship") {
       // #336: the family ship step (止于 PR) is a CONTAINER ship WORKER invoking
@@ -1036,7 +1038,7 @@ export class RealFamilyBackend implements FamilyBackend {
       return this.dispatchShipWorker(spec, ctx);
     }
     if (spec.kind === "coder") {
-      return this.runFamilyCoderFixWorker(spec, ctx);
+      return this.runFamilyCoderFixWorker(spec, ctx, landing);
     }
     if (spec.kind !== "cmr") {
       // Any other family worker kind (merge — B 段) forwards to the legacy seam.
@@ -1388,6 +1390,7 @@ export class RealFamilyBackend implements FamilyBackend {
   protected async runFamilyCoderFixWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     if (ctx.familyBase === undefined) {
       throw new Error(
@@ -1412,7 +1415,7 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
-      const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx);
+      const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx, landing);
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
         try {
@@ -1442,6 +1445,7 @@ export class RealFamilyBackend implements FamilyBackend {
   /** Write the runner-owned blocking CMR findings file into the checked-out family base. */
   protected writeFamilyFixFindingsFile(
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): { path: string; sandboxPath: string } {
     this.excludeOptionalRuntimeFileFromGit(FAMILY_FIX_FINDINGS_FILENAME);
     const path = join(this.opts.workingRepo, FAMILY_FIX_FINDINGS_FILENAME);
@@ -1449,7 +1453,9 @@ export class RealFamilyBackend implements FamilyBackend {
       path,
       `${JSON.stringify(
         {
-          blockingFindings: ctx.blockingFindings ?? [],
+          // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
+          // ADR 0062) — never from the runner's thin DispatchContext.
+          blockingFindings: landing?.blockingFindings ?? [],
           blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
           ...(ctx.repairAttemptFailures !== undefined &&
           ctx.repairAttemptFailures.length > 0
@@ -2776,7 +2782,6 @@ const cmrDispositionEvidenceSchema = z
     scope: nonEmpty,
     reason: nonEmpty,
     findingIdentity: nonEmpty.optional(),
-    targetModule: nonEmpty.optional(),
     boundedReopen: nonEmpty,
   })
   .strict()

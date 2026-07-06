@@ -33,7 +33,6 @@ export interface FamilyCmrFindingResult {
     readonly source?: SourcedModuleDeclaration["source"];
   };
   readonly owningIssue?: string;
-  readonly targetModule?: string;
   readonly source?: string;
   readonly reason: string;
 }
@@ -52,7 +51,7 @@ export interface FamilyModuleContextSnapshot {
   readonly undevelopedModules: ReadonlyArray<FamilyModuleDeclarationSnapshot>;
 }
 
-export interface FamilyCmrClassification {
+export interface CmrEnvelope {
   readonly blocking: ReadonlyArray<Finding>;
   readonly deferred: ReadonlyArray<Finding>;
   readonly dispositions: ReadonlyArray<FindingDisposition>;
@@ -62,30 +61,6 @@ export interface FamilyCmrClassification {
 
 function normalizedModule(value: string): string {
   return value.trim().toLowerCase();
-}
-
-function normalizedModuleSlug(value: string): string {
-  return normalizedModule(value)
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function targetModuleIsOutsideCurrentModules(
-  targetModule: string,
-  currentModules: ReadonlySet<string>,
-): boolean {
-  const targetSlug = normalizedModuleSlug(targetModule);
-  if (targetSlug.length === 0) return false;
-
-  for (const currentModule of currentModules) {
-    const currentSlug = normalizedModuleSlug(currentModule);
-    if (currentSlug.length === 0) continue;
-    if (targetSlug === currentSlug) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 function normalizedEvidenceText(value: string | undefined): string {
@@ -238,24 +213,6 @@ function currentModuleNames(context: FamilyModuleContext): ReadonlySet<string> {
   return new Set(context.currentModules.map((decl) => normalizedModule(decl.module)));
 }
 
-function declaredUndevelopedTarget(
-  targetModule: string | undefined,
-  context: FamilyModuleContext,
-): SourcedModuleDeclaration | undefined {
-  const target = normalizedModule(targetModule ?? "");
-  if (target.length === 0) return undefined;
-  const targetSlug = normalizedModuleSlug(target);
-  return (context.undevelopedModules ?? []).find((decl) => {
-    const moduleName = normalizedModule(decl.module);
-    const moduleSlug = normalizedModuleSlug(decl.module);
-    return (
-      target === moduleName ||
-      targetSlug === moduleSlug ||
-      decl.moduleScope.some((scope) => containsNormalized(scope, target))
-    );
-  });
-}
-
 function suppressionScopeMatchesContext(input: {
   readonly finding: Finding;
   readonly context: FamilyModuleContext;
@@ -359,21 +316,17 @@ function resultForBlocking(
     ...(attribution.issue !== undefined
       ? { owningIssue: `#${attribution.issue}` }
       : {}),
-    // `targetModule` survives only as the optional accepted-suppression target.
-    ...(disposition?.targetModule !== undefined
-      ? { targetModule: disposition.targetModule }
-      : {}),
     ...(disposition?.source !== undefined ? { source: disposition.source } : {}),
     reason: disposition?.reason ?? finding.disposition_reason ?? finding.suggested_fix,
   };
 }
 
-export function classifyFamilyCmrFindings(input: {
+export function deriveCmrEnvelope(input: {
   readonly familyIssue: number;
   readonly findings: ReadonlyArray<Finding>;
   readonly moduleContext: FamilyModuleContext;
   readonly priorDispositions?: ReadonlyArray<FindingDisposition>;
-}): FamilyCmrClassification {
+}): CmrEnvelope {
   const blocking: Finding[] = [];
   const deferred: Finding[] = [];
   const results: FamilyCmrFindingResult[] = [];
@@ -417,9 +370,6 @@ export function classifyFamilyCmrFindings(input: {
         attribution: attributionFor(finding, input.moduleContext),
         ...(finding.disposition?.source !== undefined
           ? { source: finding.disposition.source }
-          : {}),
-        ...(finding.disposition?.targetModule !== undefined
-          ? { targetModule: finding.disposition.targetModule }
           : {}),
         reason: finding.disposition_reason ?? finding.disposition?.reason ?? "",
       });

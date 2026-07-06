@@ -24,6 +24,7 @@ import type {
   FindingDisposition,
 } from "../types.js";
 import {
+  decisionGateParkStopSummary,
   infraFailureStopSummary,
   successStopSummary,
   type StopSummary,
@@ -161,18 +162,19 @@ export interface FamilyEscalationAnswerRecord {
   readonly note?: string;
   /**
    * When set, this answer answers a CHILD decision escalation (#604 slice 5): it
-   * matches the `child_escalated` row carrying the SAME childIssue, so multiple
+   * matches the `child_decision_parked` row carrying the SAME childIssue, so multiple
    * parked children can be answered separately.
    */
   readonly childIssue?: number;
 }
 
 /**
- * A CHILD-LEVEL decision escalation ledger record (#604 slice 5). Recorded when a
+ * A CHILD-LEVEL decision-gate park ledger record (#604 slice 5). Recorded when a
  * child slice's own single-slice run parked on a product/design题
- * (`escalationKind:"decision"`). INDEPENDENT of the family's own `escalated` row.
+ * (`escalationKind:"decision"`). INDEPENDENT of the family's own `escalated` row —
+ * this is a human DECISION GATE (park → resume), not an infra escalation/failure.
  */
-export interface ChildEscalatedRecord {
+export interface ChildDecisionParkedRecord {
   readonly childIssue: number;
   readonly reason: string;
   readonly diagnosis: string;
@@ -430,6 +432,11 @@ export async function recordFamilyEscalationAnswered(
       status: "escalation_answered",
       event: "escalation_answered",
       phase: "final",
+      // #604 F1: carry childIssue so `isValidChildAnswer` (entry.childIssue ===
+      // childIssue) can bind this answer to the parked child. Dropping it here
+      // deadlocked the decision gate — a human-supplied answer never reopened the
+      // parked child because the row could not be matched.
+      childIssue: record.childIssue,
       answer,
       source: record.source,
       note: record.note,
@@ -438,23 +445,24 @@ export async function recordFamilyEscalationAnswered(
 }
 
 /**
- * Append a CHILD-LEVEL decision escalation marker (#604 slice 5).
+ * Append a CHILD-LEVEL decision-gate PARK marker (#604 slice 5).
  *
  * Recorded when a child slice parked on a product/design decision题
- * (`escalationKind:"decision"`). Uses the INDEPENDENT `child_escalated` event (not
- * the family's own `escalated` row) so the two escalation semantics stay distinct.
- * The row carries `childIssue` so several children can park + be answered
- * separately, and the child's `sessionId` so a later resume re-enters IN PLACE.
+ * (`escalationKind:"decision"`). Uses the INDEPENDENT `child_decision_parked`
+ * event (NOT the family's own A-class `escalated` row) so the human decision gate
+ * (park → resume) stays distinct from infra escalation/failure. The row carries
+ * `childIssue` so several children can park + be resumed separately, and the
+ * child's `sessionId` so a later resume re-enters IN PLACE.
  */
-export async function recordChildEscalated(
+export async function recordChildDecisionParked(
   backend: FamilyBackend,
-  record: ChildEscalatedRecord,
+  record: ChildDecisionParkedRecord,
 ): Promise<void> {
   await backend.appendFamilyLedger(
     compact({
       childIssue: record.childIssue,
-      status: "child_escalated",
-      event: "child_escalated",
+      status: "child_decision_parked",
+      event: "child_decision_parked",
       phase: "wave",
       escalationKind: "decision",
       reason: record.reason,
@@ -463,15 +471,15 @@ export async function recordChildEscalated(
       familyHeadAfter: record.familyHeadAfter,
       stopSummary:
         record.stopSummary ??
-        infraFailureStopSummary({
+        decisionGateParkStopSummary({
           summary: record.reason,
           repairHint:
-            "answer this child decision escalation (append an escalation_answered row with the matching childIssue) and rerun the family",
+            "answer this child decision gate (append an escalation_answered row with the matching childIssue) and rerun the family to resume in place",
           ...(record.familyHeadAfter !== undefined
             ? {
                 heads: {
                   actualFamilyHead: record.familyHeadAfter,
-                  sources: { actualFamilyHead: "family child escalation ledger row" },
+                  sources: { actualFamilyHead: "family child decision-park ledger row" },
                 },
               }
             : {}),
@@ -480,13 +488,13 @@ export async function recordChildEscalated(
   );
 }
 
-/** Is this a valid, well-shaped `child_escalated` decision row (#604 slice 5)? */
-function isValidChildEscalated(
+/** Is this a valid, well-shaped `child_decision_parked` decision row (#604 slice 5)? */
+function isValidChildDecisionParked(
   entry: FamilyLedgerEntry,
 ): entry is FamilyLedgerEntry & { readonly childIssue: number } {
   return (
-    entry.status === "child_escalated" &&
-    entry.event === "child_escalated" &&
+    entry.status === "child_decision_parked" &&
+    entry.event === "child_decision_parked" &&
     entry.escalationKind === "decision" &&
     Number.isSafeInteger(entry.childIssue) &&
     (entry.childIssue ?? 0) > 0
@@ -511,9 +519,9 @@ function isValidChildAnswer(
 }
 
 /**
- * The set of child issue numbers whose decision escalation is STILL UNANSWERED
- * (#604 slice 5). A child is unanswered iff it has a `child_escalated` row with no
- * LATER matching `escalation_answered` row. The family runner returns
+ * The set of child issue numbers whose decision gate is STILL UNANSWERED
+ * (#604 slice 5). A child is unanswered iff it has a `child_decision_parked` row
+ * with no LATER matching `escalation_answered` row. The family runner returns
  * `status:"escalated"` while any child is unanswered.
  */
 export function unansweredChildEscalations(
@@ -523,7 +531,7 @@ export function unansweredChildEscalations(
   const seen = new Set<number>();
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
-    if (!isValidChildEscalated(entry)) continue;
+    if (!isValidChildDecisionParked(entry)) continue;
     if (seen.has(entry.childIssue)) continue;
     seen.add(entry.childIssue);
     const answered = entries
@@ -535,9 +543,9 @@ export function unansweredChildEscalations(
 }
 
 /**
- * The human answer that reopens a specific child's parked decision escalation
+ * The human answer that reopens a specific child's parked decision gate
  * (#604 slice 5), or `undefined` when the child is not parked / not yet answered.
- * Reads the LATEST `child_escalated` for the child, then the latest matching
+ * Reads the LATEST `child_decision_parked` for the child, then the latest matching
  * `escalation_answered` after it.
  */
 export function childEscalationAnswer(
@@ -547,7 +555,7 @@ export function childEscalationAnswer(
   let escalatedIdx = -1;
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
-    if (isValidChildEscalated(entry) && entry.childIssue === childIssue) {
+    if (isValidChildDecisionParked(entry) && entry.childIssue === childIssue) {
       escalatedIdx = i;
       break;
     }

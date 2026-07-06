@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyFamilyCmrFindings } from "../../src/family/cmrClassification.js";
+import { deriveCmrEnvelope } from "../../src/family/cmrClassification.js";
 import {
   buildFamilyModuleContext,
   parseModuleDeclaration,
@@ -213,7 +213,7 @@ describe("#449 family CMR finding classification", () => {
   });
 
   it("matches Windows drive-letter finding locations without truncating the path", () => {
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [
         {
@@ -242,7 +242,7 @@ describe("#449 family CMR finding classification", () => {
   });
 
   it("matches finding locations with trailing line-column-symbol suffixes", () => {
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [
         {
@@ -271,7 +271,7 @@ describe("#449 family CMR finding classification", () => {
   });
 
   it("matches Windows absolute finding locations with trailing symbol suffixes", () => {
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [
         {
@@ -327,7 +327,7 @@ describe("#449 family CMR finding classification", () => {
       },
     });
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [parentScopedFinding],
       moduleContext,
@@ -345,7 +345,7 @@ describe("#449 family CMR finding classification", () => {
   });
 
   it("matches directory module_scope values that include a trailing slash", () => {
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [finding],
       moduleContext: buildFamilyModuleContext({
@@ -378,7 +378,7 @@ describe("#449 family CMR finding classification", () => {
       location: "docs/fiscal-reports/summary.md:12",
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [fiscalReportsFinding],
       moduleContext: buildFamilyModuleContext({
@@ -414,7 +414,7 @@ describe("#449 family CMR finding classification", () => {
       location: "docs/hub/central-accounts.md:12",
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [scopeTargetFinding],
       moduleContext: buildFamilyModuleContext({
@@ -448,7 +448,7 @@ describe("#449 family CMR finding classification", () => {
       location: "orchestrator/src/family/verifyCmr.ts:42",
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [scopedOutFinding],
       moduleContext: buildFamilyModuleContext({
@@ -481,7 +481,7 @@ describe("#449 family CMR finding classification", () => {
   });
 
   it("blocks when no module declaration establishes the family module", () => {
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [finding],
       moduleContext: { currentModules: [], childModules: [] },
@@ -503,7 +503,7 @@ describe("#449 family CMR finding classification", () => {
       location: "docs/military-state-machine.md:1",
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [unownedFinding],
       moduleContext: buildFamilyModuleContext({
@@ -555,7 +555,7 @@ describe("#449 family CMR finding classification", () => {
       boundedReopen: "reopen on different scope, higher severity, or new evidence",
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [overlappingFinding],
       moduleContext: buildFamilyModuleContext({
@@ -606,7 +606,7 @@ describe("#449 family CMR finding classification", () => {
       location: "docs/military-state-machine.md:1",
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [sameModule, crossModule],
       moduleContext: {
@@ -656,7 +656,7 @@ describe("#449 family CMR finding classification", () => {
       location: "docs/military-state-machine.md:1",
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [crossModule],
       moduleContext: {
@@ -693,7 +693,7 @@ describe("#449 family CMR finding classification", () => {
   it("blocks a finding whose target aliases the current module name", () => {
     const aliasedModuleFinding: Finding = { ...finding };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [aliasedModuleFinding],
       moduleContext: {
@@ -747,13 +747,12 @@ describe("#449 family CMR finding classification", () => {
             "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
           location: "docs/adr/0023.md:D9",
         }),
-        targetModule: "#261/ADR0021 hub implementation",
         boundedReopen,
       },
     };
     const hubLossIdentity = findingIdentityKey(hubLossFinding);
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 287,
       findings: [hubLossFinding],
       moduleContext: {
@@ -784,13 +783,11 @@ describe("#449 family CMR finding classification", () => {
       {
         status: "accepted_suppressed",
         source: "#303",
-        targetModule: "#261/ADR0021 hub implementation",
       },
     ]);
     expect(classified.results[0]).toMatchObject({
       classification: "accepted_suppressed",
       source: "#303",
-      targetModule: "#261/ADR0021 hub implementation",
     });
   });
 
@@ -803,7 +800,7 @@ describe("#449 family CMR finding classification", () => {
       action: "defer",
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 287,
       findings: [reviewerFinding],
       moduleContext: {
@@ -854,12 +851,11 @@ describe("#449 family CMR finding classification", () => {
         scope: "fiscal",
         reason: "Accepted elsewhere, but not for this finding",
         findingIdentity: "correctness|other.ts:1|a different finding",
-        targetModule: "fiscal",
         boundedReopen: "reopen on severity escalation, new evidence, or different scope",
       },
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [suppressedFinding],
       moduleContext: {
@@ -916,7 +912,7 @@ describe("#449 family CMR finding classification", () => {
       },
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [suppressedFinding],
       moduleContext: buildFamilyModuleContext({
@@ -962,7 +958,7 @@ describe("#449 family CMR finding classification", () => {
       },
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [suppressedFinding],
       moduleContext: buildFamilyModuleContext({
@@ -1014,7 +1010,7 @@ describe("#449 family CMR finding classification", () => {
       boundedReopen: "reopen on different scope",
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [prefixScopeFinding],
       moduleContext: buildFamilyModuleContext({
@@ -1058,7 +1054,7 @@ describe("#449 family CMR finding classification", () => {
       boundedReopen: "reopen on different issue",
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [prefixIssueFinding],
       moduleContext: buildFamilyModuleContext({
@@ -1087,7 +1083,7 @@ describe("#449 family CMR finding classification", () => {
       action: "fix_now",
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [currentFinding],
       moduleContext: {
@@ -1112,7 +1108,6 @@ describe("#449 family CMR finding classification", () => {
           disputeAttempts: 1,
           source: "#445",
           scope: "military-state-machine",
-          targetModule: "military-state-machine",
           boundedReopen: "reopen on different scope",
         },
       ],
@@ -1145,12 +1140,11 @@ describe("#449 family CMR finding classification", () => {
         scope: "military-state-machine follow-up only",
         reason: acceptedSource.reason,
         findingIdentity: acceptedSource.findingIdentity,
-        targetModule: "fiscal",
         boundedReopen: acceptedSource.boundedReopen,
       },
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [suppressedFinding],
       moduleContext: {
@@ -1197,7 +1191,7 @@ describe("#449 family CMR finding classification", () => {
       boundedReopen: "reopen on different scope",
     };
 
-    const classified = classifyFamilyCmrFindings({
+    const classified = deriveCmrEnvelope({
       familyIssue: 445,
       findings: [currentFinding],
       moduleContext: {
@@ -1221,7 +1215,6 @@ describe("#449 family CMR finding classification", () => {
           reopenAttempts: 0,
           source: acceptedSource.source,
           scope: "military-state-machine follow-up only",
-          targetModule: "fiscal",
           boundedReopen: acceptedSource.boundedReopen,
         },
       ],
@@ -1247,7 +1240,7 @@ describe("#449 family CMR finding classification", () => {
         action: "defer",
       };
 
-      const classified = classifyFamilyCmrFindings({
+      const classified = deriveCmrEnvelope({
         familyIssue: 287,
         findings: [escalatedHubLossFinding],
         moduleContext: {

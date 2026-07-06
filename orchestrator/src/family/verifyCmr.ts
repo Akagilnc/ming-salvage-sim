@@ -50,8 +50,8 @@
  */
 
 import {
-  classifyFamilyCmrFindings,
-  type FamilyCmrClassification,
+  deriveCmrEnvelope,
+  type CmrEnvelope,
 } from "./cmrClassification.js";
 import type { FamilyModuleContext } from "./moduleDeclaration.js";
 import {
@@ -516,7 +516,7 @@ function shipWorkerFailedStopSummary(input: {
 }
 
 function familyCmrBlockingStopSummary(
-  classification: FamilyCmrClassification,
+  classification: CmrEnvelope,
   fallbackReason: string,
 ): StopSummary {
   // #604 slice 4 (ADR 0062): routing classification values are gone, so there is
@@ -547,7 +547,7 @@ function familyCmrBlockingStopSummary(
 }
 
 function familyCmrPassStopSummary(input: {
-  readonly classification?: FamilyCmrClassification;
+  readonly classification?: CmrEnvelope;
   readonly familyHeadAfter?: string;
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
 }): StopSummary | undefined {
@@ -969,7 +969,7 @@ async function runCmrCoderFix(input: {
   readonly pass: IntegratedCmrPass;
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
-  readonly classification: FamilyCmrClassification;
+  readonly classification: CmrEnvelope;
   readonly blockingFindingIdentityKeys: readonly string[];
   readonly familyHeadBefore?: string;
   readonly escalationAnswer?: EscalationAnswerPayload;
@@ -1004,14 +1004,17 @@ async function runCmrCoderFix(input: {
       familyCoderFixWorkerSpec(resolvedRoute),
       {
         familyBase,
-        blockingFindings: classification.blocking,
+        // 信封宪法 (ADR 0062): only identity keys + count on the dispatch structure;
+        // rich finding content travels in the separate landing payload below.
         blockingFindingIdentityKeys,
+        blockingFindingCount: classification.blocking.length,
         ...(repairAttemptFailures.length > 0
           ? { repairAttemptFailures }
           : {}),
         ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
         ...(familyIssue !== undefined ? { familyIssue } : {}),
       },
+      { blockingFindings: classification.blocking },
     );
     const familyHeadAfter = await readPostCmrFamilyHead(
       familyBackend,
@@ -1359,9 +1362,10 @@ async function dispatchOrAbort(
   familyBackend: FamilyBackend,
   spec: Parameters<typeof dispatchFamilyWorker>[1],
   ctx: Parameters<typeof dispatchFamilyWorker>[2],
+  landing?: Parameters<typeof dispatchFamilyWorker>[3],
 ): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
   try {
-    return await dispatchFamilyWorker(familyBackend, spec, ctx);
+    return await dispatchFamilyWorker(familyBackend, spec, ctx, landing);
   } catch (err) {
     const reason = `family ${spec.kind} worker threw on startup: ${
       err instanceof Error ? err.message : String(err)
@@ -1658,7 +1662,7 @@ async function runIntegratedCmrPass(input: {
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
-  let cmrFindingClassification: FamilyCmrClassification | undefined;
+  let cmrFindingClassification: CmrEnvelope | undefined;
   if (
     cmrResult.output.findings !== undefined &&
     cmrResult.output.findings.length > 0
@@ -1666,7 +1670,7 @@ async function runIntegratedCmrPass(input: {
     const priorDispositions = latestFamilyCmrDispositions(
       await familyBackend.readFamilyLedger(),
     );
-    cmrFindingClassification = classifyFamilyCmrFindings({
+    cmrFindingClassification = deriveCmrEnvelope({
       familyIssue: familyIssue ?? 0,
       findings: cmrResult.output.findings,
       moduleContext: moduleContext ?? { currentModules: [], childModules: [] },

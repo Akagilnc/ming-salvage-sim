@@ -130,6 +130,7 @@ import type {
   StepSoul,
   StepSpec,
   RepairEvidence,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -1597,7 +1598,6 @@ const findingDispositionSchema = z
     scope: z.string().min(1),
     reason: z.string().min(1),
     findingIdentity: z.string().min(1).optional(),
-    targetModule: z.string().min(1).optional(),
     boundedReopen: z.string().min(1),
   })
   .superRefine((disposition, ctx) => {
@@ -2762,11 +2762,14 @@ export class RealBackend implements Backend {
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     if (spec.kind !== "ship") {
       // #336 owns the ship leg; coder/reviewer agent workers stay on the existing
-      // runStep/resumeSession seam (#334 routes them to /tdd / /code-review).
-      return legacyDispatchWorker(this, spec, ctx);
+      // runStep/resumeSession seam (#334 routes them to /tdd / /code-review). The
+      // rich landing payload (blocking findings) travels straight to the landing
+      // file (信封宪法, ADR 0062).
+      return legacyDispatchWorker(this, spec, ctx, landing);
     }
     if (ctx.worktree === undefined) {
       throw new Error(

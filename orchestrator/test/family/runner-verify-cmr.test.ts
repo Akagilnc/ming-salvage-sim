@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { classifyFamilyCmrFindings } from "../../src/family/cmrClassification.js";
+import { deriveCmrEnvelope } from "../../src/family/cmrClassification.js";
 import {
   pendingPriorCmrFindingIdentityKeysByPass,
   runFamily,
@@ -677,7 +677,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
   });
 
   it("passes the known #287 hub-loss accepted suppression through production CMR context", async () => {
-    const classified: ReturnType<typeof classifyFamilyCmrFindings>[] = [];
+    const classified: ReturnType<typeof deriveCmrEnvelope>[] = [];
     const acceptedScope =
       "#287 hub-loss / central C_ accounts finding only; not #287 local integration or stub-contract failures";
     const acceptedReason =
@@ -698,7 +698,6 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         source: "#303",
         scope: acceptedScope,
         reason: acceptedReason,
-        targetModule: "#261/ADR0021 hub implementation",
         boundedReopen,
       },
     };
@@ -712,7 +711,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
       if (input.phase === "final") {
         classified.push(
-          classifyFamilyCmrFindings({
+          deriveCmrEnvelope({
             familyIssue: 287,
             findings: [hubLossFinding],
             moduleContext: input.moduleContext,
@@ -745,7 +744,6 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(classified[0]?.results[0]).toMatchObject({
       classification: "accepted_suppressed",
       source: "#303",
-      targetModule: "#261/ADR0021 hub implementation",
     });
   });
 

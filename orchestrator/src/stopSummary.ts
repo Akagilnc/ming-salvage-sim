@@ -9,6 +9,10 @@ export type StopReason =
   | "spec_conflict"
   | "cross_module_defer"
   | "infra_failure"
+  // B-class: a HUMAN DECISION GATE parked the run awaiting an answer (#604 F2,
+  // ADR 0062 A/B分家). Distinct from `infra_failure` (A-class真失败): a decision
+  // park is answerable + resumable in place, not a failure to repair.
+  | "decision_gate_park"
   | "provider_degraded"
   | "contract_drift"
   | "already_done"
@@ -323,6 +327,25 @@ export function infraFailureStopSummary(input: {
           },
         }
       : {}),
+  };
+}
+
+/**
+ * B-class stop summary: a HUMAN DECISION GATE parked the run (#604 F2, ADR 0062
+ * A/B分家). Semantically a PARK awaiting an answer — resumable in place — NOT an
+ * A-class infra failure to repair. Kept a separate constructor so decision-gate
+ * parks never reuse the `infra_failure` reason/word.
+ */
+export function decisionGateParkStopSummary(input: {
+  readonly summary: string;
+  readonly repairHint: string;
+  readonly heads?: HeadFreshnessSummary;
+}): StopSummary {
+  return {
+    reason: "decision_gate_park",
+    summary: input.summary,
+    repairHint: input.repairHint,
+    ...(input.heads !== undefined ? { metadata: { heads: input.heads } } : {}),
   };
 }
 
