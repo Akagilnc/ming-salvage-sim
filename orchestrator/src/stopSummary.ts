@@ -254,50 +254,9 @@ export function stopSummaryFromFindingDispositionEvidence(input: {
     }
     return value;
   };
+  // #604 slice 4 (ADR 0062): the only reviewer-emitted disposition kind is
+  // accepted_suppressed — the routing kinds were removed from the contract.
   switch (evidence.kind) {
-    case "same_module":
-      return stopReasonForFindingDisposition({
-        kind: "same_module",
-        finding,
-        reason: evidence.reason,
-      });
-    case "owning_issue_still_red":
-      return stopReasonForFindingDisposition({
-        kind: "owning_issue_still_red",
-        finding,
-        owningIssue: requireField(
-          evidence.owningIssue,
-          "owningIssue",
-          evidence.kind,
-        ),
-        missingSurface: evidence.missingSurface,
-        nextStep: evidence.nextStep,
-        reason: evidence.reason,
-      });
-    case "cross_module":
-      return stopReasonForFindingDisposition({
-        kind: "cross_module",
-        finding,
-        targetModule: requireField(
-          evidence.targetModule,
-          "targetModule",
-          evidence.kind,
-        ),
-        reason: evidence.reason,
-      });
-    case "spec_conflict":
-      return stopReasonForFindingDisposition({
-        kind: "spec_conflict",
-        finding,
-        reason: evidence.reason,
-      });
-    case "infra_failure":
-      return stopReasonForFindingDisposition({
-        kind: "infra_failure",
-        finding,
-        reason: evidence.reason,
-        repairHint: "repair the infrastructure failure and rerun",
-      });
     case "accepted_suppressed":
       {
         const missing = [

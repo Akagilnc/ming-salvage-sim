@@ -148,18 +148,18 @@ module_scope:
   });
 });
 
+// #604 slice 4 (ADR 0062): the `cross_module` routing disposition kind was
+// removed. The base fixture is now a plain blocking finding (fix_now with no
+// disposition) — every non-accepted-suppressed finding is blocking. `fix_now`
+// (rather than `defer`) keeps the fixture valid through parseCmrOutcome, whose
+// schema still rejects a `defer` finding that lacks a non-suppression disposition.
 const finding: Finding = {
   severity: "medium",
   category: "correctness",
   claim_quote: "hub loss accounts are still unimplemented",
   location: "orchestrator/src/family/verifyCmr.ts:42",
   suggested_fix: "close the family CMR gate instead of deferring same-module work",
-  action: "defer",
-  disposition: {
-    kind: "cross_module",
-    targetModule: "fiscal",
-    reason: "claimed as outside the current module",
-  },
+  action: "fix_now",
 };
 
 describe("#449 family CMR finding classification", () => {
@@ -303,11 +303,6 @@ describe("#449 family CMR finding classification", () => {
     const parentScopedFinding: Finding = {
       ...finding,
       location: "docs/fiscal/family-contract.md:12",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "fiscal",
-        reason: "claimed as outside child issue scope",
-      },
     };
     const moduleContext = buildFamilyModuleContext({
       childModules: [
@@ -340,8 +335,10 @@ describe("#449 family CMR finding classification", () => {
 
     expect(classified.blocking).toEqual([parentScopedFinding]);
     expect(classified.deferred).toEqual([]);
+    // #604 slice 4 (ADR 0062): result classification collapsed to "blocking"; the
+    // family-module attribution + owningIssue fallback logic is retained.
     expect(classified.results[0]).toMatchObject({
-      classification: "same_module_still_red",
+      classification: "blocking",
       attribution: { method: "family_module", issue: 445, module: "fiscal" },
       owningIssue: "#445",
     });
@@ -364,21 +361,21 @@ describe("#449 family CMR finding classification", () => {
 
     expect(classified.blocking).toEqual([finding]);
     expect(classified.deferred).toEqual([]);
+    // #604 slice 4 (ADR 0062): result classification collapsed to "blocking"; the
+    // trailing-slash module_scope matching is retained.
     expect(classified.results[0]).toMatchObject({
-      classification: "same_module_still_red",
+      classification: "blocking",
       attribution: { method: "family_module", issue: 445, module: "orchestrator-family" },
     });
   });
 
-  it("treats slug-like target module names as distinct identifiers", () => {
+  // #604 slice 4 (ADR 0062): the cross-module-defer PASS outcome (via slug-distinct
+  // undeveloped-target matching) is gone. The finding is now blocking; only the
+  // attribution/module-context logic is retained, so this asserts the blocking outcome.
+  it("treats a slug-like undeveloped target as a blocking finding", () => {
     const fiscalReportsFinding: Finding = {
       ...finding,
       location: "docs/fiscal-reports/summary.md:12",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "fiscal-reports",
-        reason: "The report surface belongs to a separate undeveloped module.",
-      },
     };
 
     const classified = classifyFamilyCmrFindings({
@@ -402,23 +399,19 @@ describe("#449 family CMR finding classification", () => {
       }),
     });
 
-    expect(classified.blocking).toEqual([]);
-    expect(classified.deferred).toEqual([fiscalReportsFinding]);
+    expect(classified.blocking).toEqual([fiscalReportsFinding]);
+    expect(classified.deferred).toEqual([]);
     expect(classified.results[0]).toMatchObject({
-      classification: "cross_module_defer",
-      targetModule: "fiscal-reports",
+      classification: "blocking",
     });
   });
 
-  it("matches undeveloped module targets by declared module_scope text", () => {
+  // #604 slice 4 (ADR 0062): the undeveloped-module scope-text defer PASS is gone.
+  // The finding is now blocking; the module_scope-text attribution logic is retained.
+  it("treats an undeveloped module scope-text target as a blocking finding", () => {
     const scopeTargetFinding: Finding = {
       ...finding,
       location: "docs/hub/central-accounts.md:12",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "hub",
-        reason: "The hub docs belong to an undeveloped module scope.",
-      },
     };
 
     const classified = classifyFamilyCmrFindings({
@@ -442,11 +435,10 @@ describe("#449 family CMR finding classification", () => {
       }),
     });
 
-    expect(classified.blocking).toEqual([]);
-    expect(classified.deferred).toEqual([scopeTargetFinding]);
+    expect(classified.blocking).toEqual([scopeTargetFinding]);
+    expect(classified.deferred).toEqual([]);
     expect(classified.results[0]).toMatchObject({
-      classification: "cross_module_defer",
-      targetModule: "hub",
+      classification: "blocking",
     });
   });
 
@@ -454,11 +446,6 @@ describe("#449 family CMR finding classification", () => {
     const scopedOutFinding: Finding = {
       ...finding,
       location: "orchestrator/src/family/verifyCmr.ts:42",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "military-state-machine",
-        reason: "claimed outside a docs-only family module",
-      },
     };
 
     const classified = classifyFamilyCmrFindings({
@@ -485,13 +472,15 @@ describe("#449 family CMR finding classification", () => {
 
     expect(classified.blocking).toEqual([scopedOutFinding]);
     expect(classified.deferred).toEqual([]);
+    // #604 slice 4 (ADR 0062): result classification collapsed to "blocking"; the
+    // fail-closed missing-module-context attribution is retained.
     expect(classified.results[0]).toMatchObject({
-      classification: "same_module_still_red",
+      classification: "blocking",
       attribution: { method: "missing_module_context" },
     });
   });
 
-  it("fails closed on cross-module defer when no module declaration establishes the family module", () => {
+  it("blocks when no module declaration establishes the family module", () => {
     const classified = classifyFamilyCmrFindings({
       familyIssue: 445,
       findings: [finding],
@@ -500,8 +489,9 @@ describe("#449 family CMR finding classification", () => {
 
     expect(classified.blocking).toEqual([finding]);
     expect(classified.deferred).toEqual([]);
+    // #604 slice 4 (ADR 0062): result classification collapsed to "blocking".
     expect(classified.results[0]).toMatchObject({
-      classification: "same_module_still_red",
+      classification: "blocking",
       attribution: { method: "missing_module_context" },
     });
   });
@@ -511,11 +501,6 @@ describe("#449 family CMR finding classification", () => {
       ...finding,
       claim_quote: "military state machine is not implemented",
       location: "docs/military-state-machine.md:1",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "military-state-machine",
-        reason: "outside the declared child modules",
-      },
     };
 
     const classified = classifyFamilyCmrFindings({
@@ -541,8 +526,9 @@ describe("#449 family CMR finding classification", () => {
 
     expect(classified.blocking).toEqual([unownedFinding]);
     expect(classified.deferred).toEqual([]);
+    // #604 slice 4 (ADR 0062): result classification collapsed to "blocking".
     expect(classified.results[0]).toMatchObject({
-      classification: "same_module_still_red",
+      classification: "blocking",
       attribution: { method: "missing_module_context" },
     });
   });
@@ -600,30 +586,24 @@ describe("#449 family CMR finding classification", () => {
     expect(classified.blocking).toEqual([overlappingFinding]);
     expect(classified.deferred).toEqual([]);
     expect(classified.dispositions).toEqual([]);
+    // #604 slice 4 (ADR 0062): result classification collapsed to "blocking"; the
+    // ambiguous-child-scope fail-closed attribution is retained.
     expect(classified.results[0]).toMatchObject({
-      classification: "same_module_still_red",
+      classification: "blocking",
       attribution: { method: "ambiguous_child_module_scope" },
     });
   });
 
-  it("allows only target modules outside the declared family module set to defer", () => {
-    const sameModule = {
-      ...finding,
-      disposition: {
-        kind: "cross_module" as const,
-        targetModule: "fiscal",
-        reason: "same family module, despite defer wording",
-      },
-    };
-    const crossModule = {
+  // #604 slice 4 (ADR 0062): the cross-module-defer PASS outcome is gone — a target
+  // outside the family module set no longer defers, it blocks. Both same-module and
+  // formerly-cross-module findings are now blocking; the attribution logic (owningIssue
+  // via child module scope) is retained.
+  it("blocks findings regardless of whether the target is inside or outside the family module", () => {
+    const sameModule: Finding = { ...finding };
+    const crossModule: Finding = {
       ...finding,
       claim_quote: "military state machine is not implemented",
       location: "docs/military-state-machine.md:1",
-      disposition: {
-        kind: "cross_module" as const,
-        targetModule: "military-state-machine",
-        reason: "outside the declared fiscal family module",
-      },
     };
 
     const classified = classifyFamilyCmrFindings({
@@ -657,26 +637,23 @@ describe("#449 family CMR finding classification", () => {
       },
     });
 
-    expect(classified.blocking).toEqual([sameModule]);
-    expect(classified.deferred).toEqual([crossModule]);
+    expect(classified.blocking).toEqual([sameModule, crossModule]);
+    expect(classified.deferred).toEqual([]);
     expect(classified.results.map((r) => r.classification)).toEqual([
-      "same_module_still_red",
-      "cross_module_defer",
+      "blocking",
+      "blocking",
     ]);
     expect(classified.results[0]?.owningIssue).toBe("#449");
-    expect(classified.results[1]?.targetModule).toBe("military-state-machine");
   });
 
-  it("skips blank current module slugs and normalizes undeveloped scope casing", () => {
+  // #604 slice 4 (ADR 0062): the cross-module-defer PASS outcome is gone; a finding
+  // whose location falls under an undeveloped module scope now blocks rather than
+  // deferring. The blank-slug / casing normalization module-context logic is retained.
+  it("blocks findings under undeveloped module scopes, skipping blank current module slugs", () => {
     const crossModule: Finding = {
       ...finding,
       claim_quote: "military state machine is not implemented",
       location: "docs/military-state-machine.md:1",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "military-state-machine",
-        reason: "outside the declared fiscal family module",
-      },
     };
 
     const classified = classifyFamilyCmrFindings({
@@ -708,20 +685,13 @@ describe("#449 family CMR finding classification", () => {
       },
     });
 
-    expect(classified.blocking).toEqual([]);
-    expect(classified.deferred).toEqual([crossModule]);
-    expect(classified.results[0]?.classification).toBe("cross_module_defer");
+    expect(classified.blocking).toEqual([crossModule]);
+    expect(classified.deferred).toEqual([]);
+    expect(classified.results[0]?.classification).toBe("blocking");
   });
 
-  it("fails closed when a cross-module target aliases the current module name", () => {
-    const aliasedModuleFinding: Finding = {
-      ...finding,
-      disposition: {
-        kind: "cross_module",
-        targetModule: "fiscal follow-up",
-        reason: "claimed as an external follow-up bucket",
-      },
-    };
+  it("blocks a finding whose target aliases the current module name", () => {
+    const aliasedModuleFinding: Finding = { ...finding };
 
     const classified = classifyFamilyCmrFindings({
       familyIssue: 445,
@@ -749,7 +719,8 @@ describe("#449 family CMR finding classification", () => {
 
     expect(classified.deferred).toEqual([]);
     expect(classified.blocking).toEqual([aliasedModuleFinding]);
-    expect(classified.results[0]?.classification).toBe("same_module_still_red");
+    // #604 slice 4 (ADR 0062): result classification collapsed to "blocking".
+    expect(classified.results[0]?.classification).toBe("blocking");
   });
 
   it("records accepted suppression for the #287 hub-loss finding with bounded reopen conditions", () => {
@@ -830,11 +801,6 @@ describe("#449 family CMR finding classification", () => {
         "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
       location: "docs/adr/0023.md:D9",
       action: "defer",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "hub",
-        reason: "the hub implementation is outside #287",
-      },
     };
 
     const classified = classifyFamilyCmrFindings({
@@ -867,8 +833,11 @@ describe("#449 family CMR finding classification", () => {
 
     expect(classified.blocking).toEqual([reviewerFinding]);
     expect(classified.deferred).toEqual([]);
+    // #604 slice 4 (ADR 0062): a defer without an accepted_suppressed disposition is
+    // blocking; the suppression-source that does not attach (no matching disposition)
+    // does not suppress it.
     expect(classified.results[0]).toMatchObject({
-      classification: "same_module_still_red",
+      classification: "blocking",
       attribution: { method: "family_module", issue: 287, module: "fiscal" },
     });
     expect(classified.dispositions).toEqual([]);
@@ -917,7 +886,7 @@ describe("#449 family CMR finding classification", () => {
     expect(classified.blocking).toEqual([suppressedFinding]);
     expect(classified.deferred).toEqual([]);
     expect(classified.results[0]).toMatchObject({
-      classification: "same_module_still_red",
+      classification: "blocking", // #604 slice 4 (ADR 0062): was same_module_still_red
       attribution: { method: "family_module", issue: 445, module: "fiscal" },
     });
     expect(classified.dispositions).not.toEqual(
@@ -965,7 +934,7 @@ describe("#449 family CMR finding classification", () => {
     expect(classified.blocking).toEqual([suppressedFinding]);
     expect(classified.deferred).toEqual([]);
     expect(classified.results[0]).toMatchObject({
-      classification: "same_module_still_red",
+      classification: "blocking", // #604 slice 4 (ADR 0062): was same_module_still_red
       attribution: { method: "missing_module_context" },
     });
     expect(classified.dispositions).toEqual([]);
@@ -1063,7 +1032,7 @@ describe("#449 family CMR finding classification", () => {
     expect(classified.blocking).toEqual([prefixScopeFinding]);
     expect(classified.dispositions).toEqual([]);
     expect(classified.results[0]).toMatchObject({
-      classification: "same_module_still_red",
+      classification: "blocking", // #604 slice 4 (ADR 0062): was same_module_still_red
       attribution: { method: "family_module", module: "orchestrator-family" },
     });
   });
@@ -1107,7 +1076,7 @@ describe("#449 family CMR finding classification", () => {
     expect(classified.blocking).toEqual([prefixIssueFinding]);
     expect(classified.dispositions).toEqual([]);
     expect(classified.results[0]).toMatchObject({
-      classification: "same_module_still_red",
+      classification: "blocking", // #604 slice 4 (ADR 0062): was same_module_still_red
       attribution: { method: "family_module", module: "orchestrator-family" },
     });
   });
@@ -1152,7 +1121,7 @@ describe("#449 family CMR finding classification", () => {
     expect(classified.blocking).toEqual([currentFinding]);
     expect(classified.deferred).toEqual([]);
     expect(classified.results[0]).toMatchObject({
-      classification: "same_module_still_red",
+      classification: "blocking", // #604 slice 4 (ADR 0062): was same_module_still_red
       attribution: { method: "family_module", issue: 445, module: "fiscal" },
     });
     expect(classified.dispositions).toEqual([]);
@@ -1209,7 +1178,7 @@ describe("#449 family CMR finding classification", () => {
     expect(classified.blocking).toEqual([suppressedFinding]);
     expect(classified.deferred).toEqual([]);
     expect(classified.results[0]).toMatchObject({
-      classification: "same_module_still_red",
+      classification: "blocking", // #604 slice 4 (ADR 0062): was same_module_still_red
       attribution: { method: "family_module", issue: 445, module: "fiscal" },
     });
     expect(classified.dispositions).toEqual([]);
@@ -1261,7 +1230,7 @@ describe("#449 family CMR finding classification", () => {
     expect(classified.blocking).toEqual([currentFinding]);
     expect(classified.deferred).toEqual([]);
     expect(classified.results[0]).toMatchObject({
-      classification: "same_module_still_red",
+      classification: "blocking", // #604 slice 4 (ADR 0062): was same_module_still_red
       attribution: { method: "family_module", issue: 445, module: "fiscal" },
     });
     expect(classified.dispositions).toEqual([]);
@@ -1276,11 +1245,6 @@ describe("#449 family CMR finding classification", () => {
         claim_quote: "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
         location: "docs/adr/0023.md:D9",
         action: "defer",
-        disposition: {
-          kind: "cross_module",
-          targetModule: "hub",
-          reason: "the hub implementation is outside #287",
-        },
       };
 
       const classified = classifyFamilyCmrFindings({
@@ -1302,7 +1266,7 @@ describe("#449 family CMR finding classification", () => {
       expect(classified.blocking).toEqual([escalatedHubLossFinding]);
       expect(classified.deferred).toEqual([]);
       expect(classified.results[0]).toMatchObject({
-        classification: "same_module_still_red",
+        classification: "blocking", // #604 slice 4 (ADR 0062): was same_module_still_red
         attribution: { method: "family_module", issue: 287, module: "fiscal" },
       });
       expect(classified.dispositions).not.toEqual(
@@ -1460,15 +1424,12 @@ describe("#449 verifyCmr family gate classification", () => {
   });
 
   it("blocks a cross-module defer when the target is outside current modules but not declared undeveloped", async () => {
+    // #604 slice 4 (ADR 0062): the `cross_module` disposition kind is gone; this is
+    // now a plain blocking finding whose location falls outside the declared modules.
     const undeclaredTargetFinding: Finding = {
       ...finding,
       claim_quote: "unregistered target should not pass as cross-module work",
       location: "docs/unregistered-new-module.md:1",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "unregistered-new-module",
-        reason: "outside current module but not declared as an undeveloped target",
-      },
     };
     const backend = new CmrFindingBackend({
       kind: "completed",
@@ -1530,15 +1491,15 @@ module_scope:
       module: "fiscal",
       moduleScope: ["orchestrator/src/family"],
     });
+    // #604 slice 4 (ADR 0062): the cross-module-defer PASS is gone — a finding whose
+    // location falls under a run-option-declared undeveloped module now BLOCKS rather
+    // than passing. The retained behavior under test is that run-option undeveloped
+    // modules still feed into the gate's module context (buildFamilyModuleContext);
+    // the finding classifies as blocking and routes through coder-fix.
     const crossModuleFinding: Finding = {
       ...finding,
       claim_quote: "production parsed undeveloped module should unlock defer",
       location: "docs/military-state-machine.md:1",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "military-state-machine",
-        reason: "outside current module and declared undeveloped in the family issue",
-      },
     };
     const backend = new CmrFindingBackend({
       kind: "completed",
@@ -1576,23 +1537,17 @@ module_scope:
       }),
     });
 
-    expect(result).toEqual({ ok: true, ran: true });
-    expect(backend.dispatched).toEqual(["cmr", "cmr", "ship"]);
-    // #604 slice 3 / ADR 0062: the fat classification blob (deferred[] / results[] /
-    // moduleContext snapshot) no longer persists. The cross-module defer's outcome is
-    // observable via the retained stopSummary (presentation) and the thin
-    // `cmrDispositions` governance channel; no blocking envelope is written.
+    // The blocking finding routes to coder-fix; this backend has no coder-fix worker,
+    // so the family aborts. The preserved invariant is that the finding CLASSIFIES as
+    // blocking (its key on the thin cmr_reviewed envelope), not that it defers.
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatched).toEqual(["cmr", "coder"]);
     expect(backend.ledger[0]).toMatchObject({
-      status: "cmr_passed",
+      status: "cmr_reviewed",
       cmrPass: "completeness",
-      stopSummary: {
-        reason: "cross_module_defer",
-        targetModule: "military-state-machine",
-      },
+      blockingFindingIdentityKeys: [findingIdentityKey(crossModuleFinding)],
     });
-    expect(backend.ledger[0]).toHaveProperty("cmrDispositions");
     expect(backend.ledger[0]).not.toHaveProperty("cmrFindingClassification");
-    expect(backend.ledger[0]).not.toHaveProperty("blockingFindingIdentityKeys");
   });
 
   it("records a CMR worker decision escalation as a spec conflict, not infra failure", async () => {
@@ -1702,74 +1657,12 @@ module_scope:
     });
   });
 
-  it("lets a declared cross-module CMR defer pass and records the classification in the ledger", async () => {
-    const crossModuleFinding: Finding = {
-      ...finding,
-      claim_quote: "military state machine still lacks the combat transition",
-      location: "docs/military-state-machine.md:1",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "military-state-machine",
-        reason: "outside the declared fiscal family module",
-      },
-    };
-    const backend = new CmrFindingBackend({
-      kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: false,
-        reason: "only cross-module follow-up findings remain",
-        successfulLegs: ["opus", "gpt-5.5", "agy"],
-        claimedFixedFindingIdentityKeys: [],
-        priorFindingDispositions: [],
-        ...CMR_EVIDENCE,
-        findings: [crossModuleFinding],
-      },
-    });
-
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/445-base",
-      familyBackend: backend,
-      familyIssue: 445,
-      moduleContext: {
-        currentModules: [
-          {
-            module: "fiscal",
-            moduleScope: ["orchestrator/src/family"],
-            source: "family_issue",
-            issue: 445,
-          },
-        ],
-        childModules: [],
-        undevelopedModules: [
-          {
-            module: "military-state-machine",
-            moduleScope: ["docs/military-state-machine.md"],
-            source: "family_issue",
-            issue: 445,
-          },
-        ],
-      },
-    });
-
-    expect(result).toEqual({ ok: true, ran: true });
-    expect(backend.dispatched).toEqual(["cmr", "cmr", "ship"]);
-    expect(backend.ledger.filter((entry) => entry.status === "aborted")).toEqual([]);
-    expect(backend.ledger[0]).toMatchObject({
-      status: "cmr_passed",
-      cmrPass: "completeness",
-      stopSummary: {
-        reason: "cross_module_defer",
-        targetModule: "military-state-machine",
-        summary: "outside the declared fiscal family module",
-      },
-    });
-    // #604 slice 3 / ADR 0062: the defer classification content (deferred[]/results[])
-    // no longer persists — the retained stopSummary carries the defer target; only the
-    // thin `cmrDispositions` governance channel is kept, no fat blob.
-    expect(backend.ledger[0]).not.toHaveProperty("cmrFindingClassification");
-  });
+  // #604 slice 4 (ADR 0062): DELETED "lets a declared cross-module CMR defer pass and
+  // records the classification in the ledger" — its whole point was the cross-module
+  // defer PASS outcome, which no longer exists (every non-suppressed finding blocks).
+  // The retained "run-option undeveloped module feeds the gate context → blocking"
+  // behavior is covered by "populates run-option undeveloped modules into the family
+  // gate context" above.
 
   it("records accepted_suppressed dispositions in successful CMR stop summary metadata", async () => {
     const suppressedFindingBase: Finding = {
@@ -1855,19 +1748,12 @@ module_scope:
     });
   });
 
-  it("preserves accepted suppression and skipped-leg metadata on cross-module CMR pass rows", async () => {
-    const crossModuleFinding: Finding = {
-      ...finding,
-      severity: "medium",
-      claim_quote: "military state machine follow-up belongs to another module",
-      location: "docs/military-state-machine.md:1",
-      action: "defer",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "military-state-machine",
-        reason: "outside the declared fiscal family module",
-      },
-    };
+  // #604 slice 4 (ADR 0062): the cross-module-defer PASS is gone, so a pass row is no
+  // longer produced alongside a cross_module finding. The retained behavior under test
+  // is that a PASS carrying an accepted-suppression + a skipped (provider-degraded) leg
+  // preserves BOTH on the stop summary metadata. The former cross_module finding is
+  // dropped (it would now block); the pass reason is "success".
+  it("preserves accepted suppression and skipped-leg metadata on CMR pass rows", async () => {
     const suppressedFindingBase: Finding = {
       ...finding,
       severity: "medium",
@@ -1899,7 +1785,7 @@ module_scope:
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         ...CMR_EVIDENCE,
-        findings: [crossModuleFinding, suppressedFinding],
+        findings: [suppressedFinding],
       },
     });
 
@@ -1924,13 +1810,6 @@ module_scope:
           source: "family_issue",
           issue: 445,
         },
-        undevelopedModules: [
-          {
-            module: "military-state-machine",
-            moduleScope: ["docs/military-state-machine.md"],
-            source: "run_option",
-          },
-        ],
         acceptedSuppressionSources: [
           {
             source: "#445",
@@ -1949,8 +1828,7 @@ module_scope:
       status: "cmr_passed",
       cmrPass: "completeness",
       stopSummary: {
-        reason: "cross_module_defer",
-        targetModule: "military-state-machine",
+        reason: "success",
         metadata: {
           acceptedSuppressions: [
             expect.objectContaining({
@@ -1972,81 +1850,14 @@ module_scope:
     });
   });
 
-  it("shipped summary preserves material CMR disposition over later head-only success", async () => {
-    const crossModuleFinding: Finding = {
-      ...finding,
-      severity: "medium",
-      claim_quote: "military state machine follow-up belongs to another module",
-      location: "docs/military-state-machine.md:1",
-      action: "defer",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "military-state-machine",
-        reason: "outside the declared fiscal family module",
-      },
-    };
-    const backend = new SequencedCmrBackend([
-      {
-        kind: "completed",
-        output: {
-          kind: "cmr",
-          converged: false,
-          reason: "only cross-module follow-up findings remain",
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
-          claimedFixedFindingIdentityKeys: [],
-          priorFindingDispositions: [],
-          ...CMR_EVIDENCE,
-          findings: [crossModuleFinding],
-        },
-      },
-      {
-        kind: "completed",
-        output: {
-          kind: "cmr",
-          converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
-          claimedFixedFindingIdentityKeys: [],
-          priorFindingDispositions: [],
-          ...CMR_EVIDENCE,
-        },
-      },
-    ]);
-
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/445-base",
-      familyBackend: backend,
-      familyIssue: 445,
-      moduleContext: buildFamilyModuleContext({
-        childModules: [],
-        familyModule: {
-          module: "fiscal",
-          moduleScope: ["orchestrator/src/family"],
-          source: "family_issue",
-          issue: 445,
-        },
-        undevelopedModules: [
-          {
-            module: "military-state-machine",
-            moduleScope: ["docs/military-state-machine.md"],
-            source: "run_option",
-          },
-        ],
-      }),
-    });
-
-    expect(result).toEqual({ ok: true, ran: true });
-    const shipped = backend.ledger.find((entry) => entry.status === "shipped");
-    expect(shipped?.stopSummary).toMatchObject({
-      reason: "cross_module_defer",
-      targetModule: "military-state-machine",
-      metadata: {
-        heads: expect.objectContaining({
-          verifiedCmrHead: "head-449",
-        }),
-      },
-    });
-  });
+  // #604 slice 4 (ADR 0062): DELETED "shipped summary preserves material CMR
+  // disposition over later head-only success". Its premise was a material
+  // `cross_module_defer` disposition produced by the classifier on the current head
+  // (a passing cross-module defer) surviving to the shipped summary. The classifier
+  // can no longer emit `cross_module_defer` — a cross-module finding now blocks — so
+  // this behavior is unreachable. The complementary head-matching logic (a shipped
+  // summary reflecting the verified head's stop summary) is still covered by
+  // "shipped summary ignores material CMR disposition from an older family head".
 
   it("shipped summary ignores material CMR disposition from an older family head", async () => {
     const backend = new SequencedCmrBackend([

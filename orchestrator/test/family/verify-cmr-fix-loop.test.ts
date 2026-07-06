@@ -2086,18 +2086,17 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         boundedReopen: "reopen on higher severity or different scope",
       },
     };
+    // #604 slice 4 (ADR 0062): route kinds are gone; a blocking finding carries no
+    // routing disposition. (Was `disposition:{kind:"spec_conflict",...}`.) The
+    // blocking-vs-suppression selection invariant is unchanged — this plain
+    // blocking finding is still selected over the earlier accepted suppression.
     const blocker: Finding = {
       severity: "medium",
       category: "correctness",
       claim_quote: "ADR conflicts with implementation",
       location: "orchestrator/src/family/verifyCmr.ts:2",
       suggested_fix: "resolve the accepted contract conflict",
-      action: "defer",
-      disposition: {
-        kind: "spec_conflict",
-        source: "ADR 0030",
-        reason: "ADR and implementation require different CMR outcomes.",
-      },
+      action: "fix_now",
     };
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({
@@ -2151,15 +2150,19 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(result).toEqual({ ok: false, ran: true });
     // #604 slice 3 / ADR 0062: the fat classification blob no longer persists. The
     // blocking-vs-suppression SELECTION invariant now lives on the retained
-    // stopSummary (spec_conflict blocker selected over the earlier suppression), the
-    // BLOCKING key lands on the thin envelope, and the suppression governance is in
-    // `cmrDispositions` — never a results[] audit on the ledger.
+    // stopSummary (the blocking finding is selected over the earlier suppression),
+    // the BLOCKING key lands on the thin envelope, and the suppression governance is
+    // in `cmrDispositions` — never a results[] audit on the ledger.
+    // #604 slice 4 (ADR 0062): the routing classification is gone, so the retained
+    // stop-summary reason for a blocking family finding is the generic
+    // `same_module_still_red` StopReason word ("blocking, fix and rerun"), and the
+    // blocking-findings reason string keys the finding by its `blocking:` label.
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_reviewed",
       event: "cmr_reviewed",
       blockingFindingIdentityKeys: [findingIdentityKey(blocker)],
       stopSummary: expect.objectContaining({
-        reason: "spec_conflict",
+        reason: "same_module_still_red",
         finding: blocker,
       }),
     }));
@@ -2174,7 +2177,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         }),
       ]),
     );
-    expect(reviewed?.reason).toContain("spec_conflict");
+    expect(reviewed?.reason).toContain(`blocking:${findingIdentityKey(blocker)}`);
     expect(reviewed?.reason).not.toContain("accepted_suppressed");
   });
 

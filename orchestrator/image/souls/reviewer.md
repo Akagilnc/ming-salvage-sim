@@ -34,21 +34,18 @@ risk appears to be the only closure evidence, classify it as unable-to-assess
 with a short reason instead of inventing a terminal suppression. Absence alone is
 not proof of closure.
 
-For new findings, the structured output contract requires executable
-classification for every defer. P0/P1 findings are always
-`action:"fix_now"`. P2/P3 `action:"defer"` findings must include a
-`disposition` with one of `same_module`, `cross_module`, `spec_conflict`,
-`infra_failure`, or `owning_issue_still_red`; only `cross_module` can pass, and
-it must name `targetModule` plus a reason. Other parser-required disposition
-fields are: `same_module` needs `reason`; `owning_issue_still_red` needs
-`owningIssue`, `missingSurface`, `nextStep`, and `reason`; `spec_conflict` needs
-`source` and `reason`; `infra_failure` needs `source` and `reason`.
+For new findings, report only the finding body (`severity`, `category`,
+`claim_quote`, `location`, `suggested_fix`) plus an `action`. Do not emit routing
+disposition kinds — there are none. P0/P1 findings are always `action:"fix_now"`.
+Every finding you report is blocking: the runner counts it and sends it back
+through coder-fix. There is no "defer to another module" pass — if a gap is real,
+report it as a concrete fix.
 Do not emit `accepted_suppressed`, `wont_fix`, or `rejected` for new findings in
 this standalone reviewer worker. If an explicit user decision, accepted ADR, or
 named issue acceptance text already accepts a bounded risk, omit that accepted
 risk as a finding unless the current diff exceeds the accepted bound, changes
 scope, or increases severity; in that case report the concrete active gap with
-`fix_now` or the appropriate non-passing disposition above.
+`fix_now`.
 
 Snapshot files such as `.orchestrator-snapshot.json` are audit/resume artifacts,
 not execution input. Use runner-supplied environment variables, mounted files,

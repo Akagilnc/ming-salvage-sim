@@ -1583,61 +1583,39 @@ export interface RealBackendOptions {
   readonly familyBase?: string;
 }
 
-/** zod schema for the reviewer step's structured output (route() consumes it). */
-const findingDispositionSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("same_module"),
-    reason: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal("cross_module"),
-    targetModule: z.string().min(1),
-    reason: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal("spec_conflict"),
+/**
+ * zod schema for the reviewer step's structured output (route() consumes it).
+ *
+ * #604 slice 4 (ADR 0062): the reviewer contract no longer carries routing
+ * disposition kinds — the only disposition a reviewer may emit is the
+ * accepted-suppression governance carrier.
+ */
+const findingDispositionSchema = z
+  .object({
+    kind: z.literal("accepted_suppressed"),
     source: z.string().min(1),
+    scope: z.string().min(1),
     reason: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal("infra_failure"),
-    source: z.string().min(1),
-    reason: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal("owning_issue_still_red"),
-    owningIssue: z.string().min(1),
-    missingSurface: z.string().min(1),
-    nextStep: z.string().min(1),
-    reason: z.string().min(1),
-  }),
-  z
-    .object({
-      kind: z.literal("accepted_suppressed"),
-      source: z.string().min(1),
-      scope: z.string().min(1),
-      reason: z.string().min(1),
-      findingIdentity: z.string().min(1).optional(),
-      targetModule: z.string().min(1).optional(),
-      boundedReopen: z.string().min(1),
-    })
-    .superRefine((disposition, ctx) => {
-      if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["source"],
-          message: "accepted_suppressed requires explicit user/ADR/issue source",
-        });
-      }
-      if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["boundedReopen"],
-          message: "accepted_suppressed requires bounded reopen condition",
-        });
-      }
-    }),
-]);
+    findingIdentity: z.string().min(1).optional(),
+    targetModule: z.string().min(1).optional(),
+    boundedReopen: z.string().min(1),
+  })
+  .superRefine((disposition, ctx) => {
+    if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["source"],
+        message: "accepted_suppressed requires explicit user/ADR/issue source",
+      });
+    }
+    if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["boundedReopen"],
+        message: "accepted_suppressed requires bounded reopen condition",
+      });
+    }
+  });
 const findingSchema = z.object({
   severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
   category: z.string(),

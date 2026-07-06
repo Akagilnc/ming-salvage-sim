@@ -27,7 +27,7 @@ describe("#451 dogfood replay fixture", () => {
         expect.objectContaining({
           id: "287-same-module-cmr-gap",
           issue: 287,
-          classification: "same_module_still_red",
+          classification: "blocking",
           stopReason: "same_module_still_red",
         }),
         expect.objectContaining({
@@ -37,10 +37,12 @@ describe("#451 dogfood replay fixture", () => {
           stopReason: "contract_drift",
         }),
         expect.objectContaining({
-          id: "287-cross-module-defer-with-module",
+          // #604 slice 4 (ADR 0062): the former "cross-module defer" pass is gone;
+          // a declared-target follow-up is now a plain blocking family finding.
+          id: "287-declared-target-follow-up-blocking",
           issue: 287,
-          classification: "cross_module_defer",
-          stopReason: "cross_module_defer",
+          classification: "blocking",
+          stopReason: "same_module_still_red",
         }),
         expect.objectContaining({
           id: "287-known-hub-loss-suppression",
@@ -169,25 +171,26 @@ describe("#451 dogfood replay fixture", () => {
       },
     });
 
+    // #604 slice 4 (ADR 0062): the `cross_module_defer` and `owning_issue_still_red`
+    // stop reasons are no longer produced by any replay scenario — blocking family
+    // findings all stop with the retained `same_module_still_red` word.
     expect(replay.coveredStopReasons).toEqual([
       "already_done",
       "contract_drift",
-      "cross_module_defer",
       "infra_failure",
-      "owning_issue_still_red",
       "provider_degraded",
       "same_module_still_red",
       "spec_conflict",
       "success",
     ]);
-    expect(replay.summary).toContain("9 stop reasons");
+    expect(replay.summary).toContain("7 stop reasons");
   });
 
   it("keeps scripted family CMR finding fixtures valid for the real worker parser", async () => {
     const replay = await issue451DogfoodReplay();
     const scriptedCmrFindingScenarioIds = [
       "287-same-module-cmr-gap",
-      "287-cross-module-defer-with-module",
+      "287-declared-target-follow-up-blocking",
       "287-module-declaration-fenced-yaml",
       "287-family-attribution-child-before-parent",
       "287-coordinator-answer-reclassified",
@@ -294,7 +297,7 @@ describe("#451 dogfood replay fixture", () => {
       "307-continue-fixing-targeted-reset",
       "258-cmr-reviewer-self-fix-attempt",
       "287-same-module-cmr-gap",
-      "287-cross-module-defer-with-module",
+      "287-declared-target-follow-up-blocking",
       "287-module-declaration-fenced-yaml",
       "287-family-attribution-child-before-parent",
       "287-correctness-r3-legacy-disposition",
@@ -436,7 +439,9 @@ describe("#451 dogfood replay fixture", () => {
     });
     expect(rowsById.get("287-same-module-cmr-gap")).toMatchObject({
       source: "family",
-      classification: "same_module_still_red",
+      // #604 slice 4 (ADR 0062): the classifier now reports the single `blocking`
+      // value; the stop summary keeps the retained `same_module_still_red` word.
+      classification: "blocking",
       stopReason: "same_module_still_red",
       sourceEvidence: expect.objectContaining({
         seam: "family_verify_cmr",

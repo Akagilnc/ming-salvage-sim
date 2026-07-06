@@ -519,95 +519,29 @@ function familyCmrBlockingStopSummary(
   classification: FamilyCmrClassification,
   fallbackReason: string,
 ): StopSummary {
-  const blockingClassifications = new Set([
-    "same_module_still_red",
-    "owning_issue_still_red",
-    "spec_conflict",
-    "infra_failure",
-  ]);
-  const result =
-    classification.results.find(
-      (item) =>
-        item.classification === "owning_issue_still_red" ||
-        item.classification === "spec_conflict" ||
-        item.classification === "infra_failure",
-    ) ??
-    classification.results.find((item) =>
-      blockingClassifications.has(item.classification),
-    );
+  // #604 slice 4 (ADR 0062): routing classification values are gone, so there is
+  // one blocking bucket. The stop-summary word stays `same_module_still_red`
+  // (the retained StopReason for "blocking, fix it and rerun" — 岔路 1 A: the
+  // StopReason machinery is untouched).
+  const result = classification.results.find(
+    (item) => item.classification === "blocking",
+  );
   const finding =
     result !== undefined
       ? classification.blocking.find(
           (item) => findingIdentityKey(item) === result.identityKey,
         )
       : undefined;
-  if (result?.classification === "same_module_still_red") {
-    if (finding !== undefined) {
-      return stopReasonForFindingDisposition({
-        kind: "same_module",
-        finding,
-        reason: result.reason || fallbackReason,
-      });
-    }
-    return {
-      reason: "same_module_still_red",
-      summary: result.reason || fallbackReason,
-      repairHint: "fix the same-module family CMR finding and rerun",
-    };
-  }
-  if (result?.classification === "owning_issue_still_red") {
-    if (finding !== undefined && result.owningIssue !== undefined) {
-      return stopReasonForFindingDisposition({
-        kind: "owning_issue_still_red",
-        finding,
-        owningIssue: result.owningIssue,
-        missingSurface: result.missingSurface,
-        nextStep: result.nextStep,
-        reason: result.reason || fallbackReason,
-      });
-    }
-    return {
-      reason: "owning_issue_still_red",
-      summary: result.reason || fallbackReason,
-      ...(result.owningIssue !== undefined ? { owningIssue: result.owningIssue } : {}),
-      ...(result.missingSurface !== undefined
-        ? { missingSurface: result.missingSurface }
-        : {}),
-      ...(result.nextStep !== undefined ? { nextStep: result.nextStep } : {}),
-      repairHint: "close the owning issue surface before rerun",
-    };
-  }
-  if (result?.classification === "spec_conflict") {
-    if (finding !== undefined) {
-      return stopReasonForFindingDisposition({
-        kind: "spec_conflict",
-        finding,
-        reason: result.reason || fallbackReason,
-      });
-    }
-    return {
-      reason: "spec_conflict",
-      summary: result.reason || fallbackReason,
-      repairHint: "resolve the specification conflict and rerun",
-    };
-  }
-  if (result?.classification === "infra_failure") {
-    if (finding !== undefined) {
-      return stopReasonForFindingDisposition({
-        kind: "infra_failure",
-        finding,
-        reason: result.reason || fallbackReason,
-        repairHint: "repair the infrastructure failure and rerun the family CMR gate",
-      });
-    }
-    return infraFailureStopSummary({
-      summary: result.reason || fallbackReason,
-      repairHint: "repair the infrastructure failure and rerun the family CMR gate",
+  if (result !== undefined && finding !== undefined) {
+    return stopReasonForFindingDisposition({
+      kind: "same_module",
+      finding,
+      reason: result.reason || fallbackReason,
     });
   }
   return {
     reason: "same_module_still_red",
-    summary: fallbackReason,
+    summary: result?.reason || fallbackReason,
     repairHint: "fix the blocking family CMR finding and rerun",
   };
 }
@@ -649,25 +583,10 @@ function familyCmrPassStopSummary(input: {
         }
       : {}),
   });
-  const crossModule = input.classification?.results.find(
-    (result) => result.classification === "cross_module_defer",
-  );
-  const finding = input.classification?.deferred[0];
-  if (
-    crossModule !== undefined &&
-    finding !== undefined &&
-    crossModule.targetModule !== undefined
-  ) {
-    const crossModuleSummary = stopReasonForFindingDisposition({
-      kind: "cross_module",
-      finding,
-      targetModule: crossModule.targetModule,
-      reason: crossModule.reason,
-    });
-    return materialPassSummary.metadata !== undefined
-      ? { ...crossModuleSummary, metadata: materialPassSummary.metadata }
-      : crossModuleSummary;
-  }
+  // #604 slice 4 (ADR 0062): the `cross_module_defer` classification is gone and
+  // `deferred` is always empty, so there is no cross-module pass-with-defer path
+  // to emit here — a passing family CMR run reports success/accepted-suppression
+  // metadata only.
   if (
     (acceptedSuppressions === undefined || acceptedSuppressions.length === 0) &&
     (input.skippedLegs === undefined || input.skippedLegs.length === 0)
@@ -1758,9 +1677,9 @@ async function runIntegratedCmrPass(input: {
         `integrated cmr ${pass} found blocking family-scope findings: ` +
         cmrFindingClassification.results
           .filter(
-            (result) =>
-              result.classification !== "cross_module_defer" &&
-              result.classification !== "accepted_suppressed",
+            // #604 slice 4 (ADR 0062): only accepted-suppression is non-blocking;
+            // the routing classifications (incl. cross_module_defer) are gone.
+            (result) => result.classification !== "accepted_suppressed",
           )
           .map((result) => `${result.classification}:${result.identityKey}`)
           .join(", ");

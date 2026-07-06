@@ -47,9 +47,21 @@ import type {
   WorktreeHandle,
 } from "./types.js";
 
+/**
+ * Replay-scenario outcome label.
+ *
+ * #604 slice 4 (ADR 0062): this union used to inherit the family classifier's
+ * routing values via {@link FamilyCmrFindingClassification}. Those routing
+ * values were removed from the classifier, but replay scenarios still describe
+ * the STOP outcomes they exercise (which map to the retained StopReason words —
+ * 岔路 1 A: StopReason is untouched). So the labels are now enumerated here
+ * directly, decoupled from the collapsed classifier enum.
+ */
 export type DogfoodReplayClassification =
   | FamilyCmrFindingClassification
   | "success"
+  | "same_module_still_red"
+  | "spec_conflict"
   | "infra_failure"
   | "contract_drift"
   | "provider_degraded"
@@ -234,24 +246,9 @@ async function familyClassificationScenario(input: {
 
   const runStatus = run.ok ? "success" : stopSummary.reason;
 
-  if (result.classification === "cross_module_defer") {
-    return scenario({
-      id: input.id,
-      issue: input.issue,
-      title: input.title,
-      classification: result.classification,
-      stopSummary,
-      source: "family",
-      sourceStopSummary: stopSummary,
-      sourceEvidence: {
-        seam: "family_verify_cmr",
-        dispatches: backend.dispatches,
-        runStatus,
-        ...cmrWorkerParserEvidence(cmrOutput),
-      },
-    });
-  }
-
+  // #604 slice 4 (ADR 0062): the `cross_module_defer` classification is gone, so
+  // every replayed family CMR outcome flows through the single scenario shape
+  // below (the classifier now reports `blocking` / `accepted_suppressed`).
   return scenario({
     id: input.id,
     issue: input.issue,
@@ -1044,28 +1041,51 @@ module_scope:
   ) {
     throw new Error("dogfood module declaration replay did not exercise parser contract");
   }
-  const crossModuleFinding = finding({
+  // #604 slice 4 (ADR 0062): route kinds are gone, so a declared follow-up is no
+  // longer a "cross-module defer" that lets the family PASS on its own. The only
+  // way a still-open finding lets a family run PASS is a governed
+  // `accepted_suppressed` disposition. This replay's REAL point is the Module
+  // Declaration PARSER seam (fenced YAML accepted, prose ignored) — to keep that
+  // seam exercised on a family run that reaches a real terminal PASS, the
+  // remaining finding is scripted as an accepted suppression, mirroring
+  // `familyAcceptedSuppressionSummaryReplay`. The undeveloped `military-state-machine`
+  // target still rides in the module context (asserted as `undevelopedTargets`),
+  // it just no longer routes the pass.
+  const suppressionScope =
+    "orchestrator-family module declaration follow-up / orchestrator/src/family";
+  const suppressionReason =
+    "declared family-scope follow-up is accepted as bounded out of scope for this family run";
+  const suppressionBoundedReopen =
+    "reopen on scope mismatch, severity escalation, or new evidence";
+  const declaredFollowUpBase = finding({
     severity: "medium",
-    claim_quote: "module declaration undeveloped target unlocks cross-module defer",
-    location: "docs/military-state-machine.md:1",
-    action: "defer",
-    disposition: {
-      kind: "cross_module",
-      targetModule: "military-state-machine",
-      reason: "declared as an undeveloped family target",
-    },
+    claim_quote: "module declaration follow-up is accepted as bounded out of scope",
+    location: "orchestrator/src/family/moduleDeclaration.ts:1",
+    action: "wont_fix",
+    disposition_reason: suppressionReason,
   });
+  const declaredFollowUpFinding: Finding = {
+    ...declaredFollowUpBase,
+    disposition: {
+      kind: "accepted_suppressed",
+      source: "#287 owner answer",
+      scope: suppressionScope,
+      reason: suppressionReason,
+      findingIdentity: findingIdentityKey(declaredFollowUpBase),
+      boundedReopen: suppressionBoundedReopen,
+    },
+  };
   const cmrOutput: WorkerResult = {
     kind: "completed",
     output: {
       kind: "cmr",
       converged: false,
-      reason: "only declared cross-module follow-up remains",
+      reason: "only accepted suppressions remain",
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
       ...CMR_EVIDENCE,
-      findings: [crossModuleFinding],
+      findings: [declaredFollowUpFinding],
     },
   };
   const backend = new DogfoodCmrFamilyBackend("module-declaration-head", [], [
@@ -1101,12 +1121,21 @@ module_scope:
           source: "run_option",
         },
       ],
+      acceptedSuppressionSources: [
+        {
+          source: "#287 owner answer",
+          scope: suppressionScope,
+          reason: suppressionReason,
+          findingIdentity: findingIdentityKey(declaredFollowUpBase),
+          boundedReopen: suppressionBoundedReopen,
+        },
+      ],
     }),
   });
   const pass = backend.ledger.find(
     (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
   );
-  if (!result.ok || pass?.stopSummary?.reason !== "cross_module_defer") {
+  if (!result.ok || pass?.stopSummary?.reason !== "success") {
     throw new Error(
       "dogfood module declaration replay did not pass through runVerifyCmr",
     );
@@ -2480,27 +2509,20 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   const familyAttributionSource = await familyAttributionReplay(moduleContext);
   const cmrReviewerSelfFixAttemptSource =
     await cmrReviewerSelfFixAttemptReplay();
+  // #604 slice 4 (ADR 0062): route kinds are gone; every non-accepted-suppressed
+  // finding is a plain blocking finding. These fixtures keep exercising the
+  // classifier's blocking path, now without a routing disposition.
   const sameModuleFinding = finding({
     severity: "medium",
-    claim_quote: "same-module CMR gap was incorrectly treated as defer",
+    claim_quote: "same-module CMR gap remains red and must be fixed",
     location: "orchestrator/src/family/verifyCmr.ts:42",
-    action: "defer",
-    disposition: {
-      kind: "cross_module",
-      targetModule: "orchestrator-family",
-      reason: "same module gap must stay red",
-    },
+    action: "fix_now",
   });
   const crossModuleFinding = finding({
     severity: "medium",
-    claim_quote: "military state machine follow-up belongs to another module",
+    claim_quote: "military state machine follow-up still blocks the family",
     location: "docs/military-state-machine.md:1",
-    action: "defer",
-    disposition: {
-      kind: "cross_module",
-      targetModule: "military-state-machine",
-      reason: "declared target module is outside the family module",
-    },
+    action: "fix_now",
   });
   const hubLossAcceptedScope =
     "#287 hub-loss / central C_ accounts finding only; not #287 local integration or stub-contract failures";
@@ -2540,23 +2562,12 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     severity: "medium",
     claim_quote: "Agent Brief contradicts the owner-authored acceptance criteria",
     location: "orchestrator/prompts/coder_implement.md:1",
-    action: "defer",
-    disposition: {
-      kind: "spec_conflict",
-      source: "#440 owner-authored Agent Brief",
-      reason: "owner-authored instructions conflict and need human resolution",
-    },
+    action: "fix_now",
   });
   const owningChildFinding = finding({
     claim_quote: "owning child surface remains red",
     location: "orchestrator/src/family/verifyCmr.ts:376",
-    disposition: {
-      kind: "owning_issue_still_red",
-      owningIssue: "#376",
-      missingSurface: "child-owned CMR closure surface",
-      nextStep: "continue the #376 fix loop",
-      reason: "owning issue still has the named surface red",
-    },
+    action: "fix_now",
   });
   const acceptedSuppressionBase = finding({
     severity: "medium",
@@ -2690,9 +2701,11 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       blockingCoderFixFails: true,
     }),
     await familyClassificationScenario({
-      id: "287-cross-module-defer-with-module",
+      // #604 slice 4 (ADR 0062): the former "cross-module defer" outcome is gone;
+      // a declared-target follow-up is now a plain blocking family finding.
+      id: "287-declared-target-follow-up-blocking",
       issue: 287,
-      title: "declared cross-module defer carries the target module",
+      title: "declared-target follow-up remains blocking",
       familyIssue: 287,
       finding: crossModuleFinding,
       moduleContext,
@@ -2757,14 +2770,9 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       issue: 287,
       title: "coordinator-written escalation answer is replayed as evidence, not success",
       familyIssue: 287,
-      finding: {
-        ...specConflictFinding,
-        disposition: {
-          kind: "spec_conflict",
-          source: "#287 coordinator escalation answer",
-          reason: "peripheral coordinator answer requires fresh module/defer classification",
-        },
-      },
+      // #604 slice 4 (ADR 0062): a coordinator-written answer is replayed as a
+      // plain blocking finding — no routing disposition to reclassify.
+      finding: specConflictFinding,
       moduleContext,
     }),
     await familyClassificationScenario({
