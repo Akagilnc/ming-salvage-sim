@@ -1079,14 +1079,22 @@ export async function runFamily(
   // `escalation`; already-merged children in `recorded` keep their status; the rest
   // are `"skipped"`). The family status is `"escalated"` (the answerable pause), NOT
   // verify_failed / incomplete.
-  const finalizeDecisionPark = (
+  const finalizeDecisionPark = async (
     parked: FamilyChildResult & { escalation: FamilyChildEscalation },
     recordedResults: ReadonlyArray<FamilyChildResult>,
-  ): FamilyRunResult => {
+  ): Promise<FamilyRunResult> => {
     const recorded = new Map(recordedResults.map((c) => [c.issue, c]));
-    const children: FamilyChildResult[] = epic.children.map(
-      (c) => recorded.get(c.issue) ?? { issue: c.issue, status: "skipped" as const },
-    );
+    // LEDGER-AWARE (不静默吞, runner.ts ~958-968): a child MERGED in a prior
+    // invocation is skipped by `selectWave`, so it is absent from this run's
+    // `recordedResults`. It must still report "merged" (the durable ledger truth),
+    // not "skipped" — mirroring the early-exit park path (~900) and finalize().
+    const ledgerMerged = await currentMerged(familyBackend);
+    const children: FamilyChildResult[] = epic.children.map((c) => {
+      const rec = recorded.get(c.issue);
+      if (rec !== undefined) return rec;
+      if (ledgerMerged.has(c.issue)) return { issue: c.issue, status: "merged" as const };
+      return { issue: c.issue, status: "skipped" as const };
+    });
     const escalationReason = `child #${parked.issue} escalated a decision: ${parked.escalation.reason}`;
     return {
       status: "escalated",
@@ -1327,7 +1335,7 @@ export async function runFamily(
             ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
           });
         }
-        return finalizeDecisionPark(escalatedChildren[0]!, childResults);
+        return await finalizeDecisionPark(escalatedChildren[0]!, childResults);
       }
       // A real failure is present: finalize honestly as incomplete (A-class). The
       // escalated child's payload is preserved in `childResults` (recorded above
