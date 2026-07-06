@@ -725,7 +725,7 @@ export function latestFamilyCmrDispositions(
   // the masking.
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
-    if (entry.cmrDispositions !== undefined && entry.cmrDispositions.length > 0) {
+    if (entry.cmrDispositions != null && entry.cmrDispositions.length > 0) {
       return entry.cmrDispositions;
     }
   }
