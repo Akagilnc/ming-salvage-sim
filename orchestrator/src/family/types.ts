@@ -23,12 +23,12 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
+import type { FamilyCmrClassification } from "./cmrClassification.js";
 import type {
   AcceptedSuppressionSource,
-  FamilyCmrClassification,
   FamilyModuleContext,
   SourcedModuleDeclaration,
-} from "./cmrClassification.js";
+} from "./moduleDeclaration.js";
 import type {
   VerifyCmrInput,
   VerifyCmrPhase,

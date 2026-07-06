@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { classifyFamilyCmrFindings } from "../../src/family/cmrClassification.js";
 import {
   buildFamilyModuleContext,
-  classifyFamilyCmrFindings,
   parseModuleDeclaration,
-} from "../../src/family/cmrClassification.js";
+} from "../../src/family/moduleDeclaration.js";
 import { findingIdentityKey } from "../../src/findings.js";
 import { recordFamilyEscalated } from "../../src/family/ledger.js";
 import { parseCmrOutcome } from "../../src/family/realFamilyBackend.js";

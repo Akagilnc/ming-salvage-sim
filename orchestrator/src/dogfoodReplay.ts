@@ -1,9 +1,9 @@
 import {
   buildFamilyModuleContext,
   parseModuleDeclaration,
-  type FamilyCmrFindingClassification,
   type FamilyModuleContext,
-} from "./family/cmrClassification.js";
+} from "./family/moduleDeclaration.js";
+import type { FamilyCmrFindingClassification } from "./family/cmrClassification.js";
 import { runFamily } from "./family/runner.js";
 import { parseCmrOutcome } from "./family/realFamilyBackend.js";
 import {
