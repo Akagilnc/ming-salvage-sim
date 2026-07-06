@@ -335,7 +335,6 @@ export function deriveCmrEnvelope(input: {
   const blocking: Finding[] = [];
   const deferred: Finding[] = [];
   const results: FamilyCmrFindingResult[] = [];
-  const seededDispositions: FindingDisposition[] = [];
   const findingsForFinalClassification: Finding[] = [];
   const currentModules = currentModuleNames(input.moduleContext);
 
@@ -379,7 +378,6 @@ export function deriveCmrEnvelope(input: {
         reason: finding.disposition_reason ?? finding.disposition?.reason ?? "",
       });
     }
-    seededDispositions.push(...single.dispositions);
   }
 
   const scopedPriorDispositions = (input.priorDispositions ?? []).filter(
@@ -388,9 +386,19 @@ export function deriveCmrEnvelope(input: {
         priorDispositionMatchesContext(finding, disposition, input.moduleContext),
       ),
   );
+  // #604 correctness r2 (C1): the final classification's PRIOR input is ONLY the
+  // real prior-round dispositions — NEVER this pass's own freshly-generated
+  // suppressions. The pre-r2 code seeded the current-pass per-finding
+  // dispositions back in as `prior`, so a brand-new suppression looked like a
+  // same-severity re-submission against itself: the P1-d reopen/dispute handler
+  // fired and burned the single dispute budget on the FIRST suppression (a later
+  // genuine re-submission was then silently re-suppressed with no budget left).
+  // `classifyFindings` regenerates each finding's fresh disposition itself, so
+  // the seeds were both redundant and harmful. The per-finding pass above stays
+  // authoritative for the blocking/deferred/results buckets.
   const finalClassification = classifyFindings(
     findingsForFinalClassification,
-    [...scopedPriorDispositions, ...seededDispositions],
+    scopedPriorDispositions,
     { acceptedSuppressionSources: input.moduleContext.acceptedSuppressionSources },
   );
   return {

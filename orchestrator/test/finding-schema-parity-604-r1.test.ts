@@ -194,4 +194,30 @@ describe("#604 r1 P2-b — Python outcome-guard口径 parity", () => {
     ]);
     expect(result.status).toBe(0);
   });
+
+  // #604 correctness r2 (C3): `targetModule` was deleted from the TS reviewer
+  // contract (findingDispositionSchema / cmrDispositionEvidenceSchema `.strict()`),
+  // so the family parser now rejects it. The Python guard's `allowed` set still
+  // whitelisted `targetModule`, letting it pass — a cross-entry parity drift
+  // (guard says OK, family parser rejects). The guard must reject an
+  // accepted_suppressed disposition carrying the deleted `targetModule` field.
+  it("rejects an accepted_suppressed disposition carrying the deleted targetModule field", () => {
+    const result = runGuardOnFindings([
+      {
+        severity: "medium",
+        category: "correctness",
+        claim_quote: "deleted targetModule field must no longer validate",
+        location: "orchestrator/src/family/runner.ts:1",
+        suggested_fix: "n/a",
+        action: "wont_fix",
+        disposition_reason: "r",
+        disposition: {
+          ...suppression,
+          findingIdentity: "correctness|x|y",
+          targetModule: "some-module",
+        },
+      },
+    ]);
+    expect(result.status).toBe(1);
+  });
 });

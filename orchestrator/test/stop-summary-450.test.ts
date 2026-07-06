@@ -17,44 +17,23 @@ const FINDING: Finding = {
 };
 
 describe("stop summary vocabulary (#450)", () => {
-  it("maps per-finding dispositions into the canonical run-level stop reason vocabulary", () => {
-    expect(stopReasonForFindingDisposition({ kind: "same_module", finding: FINDING }))
-      .toMatchObject({ reason: "same_module_still_red" });
+  // #604 correctness r2 (C4) / ADR 0062: the routing disposition kinds
+  // (owning_issue_still_red / cross_module / spec_conflict / infra_failure) were
+  // removed from the reviewer contract, so the only live input kind is
+  // `same_module` (verifyCmr.ts). The dead-branch cases are gone with the code.
+  it("maps the same-module finding disposition into the canonical stop reason", () => {
+    expect(
+      stopReasonForFindingDisposition({ kind: "same_module", finding: FINDING }),
+    ).toMatchObject({ reason: "same_module_still_red" });
     expect(
       stopReasonForFindingDisposition({
-        kind: "owning_issue_still_red",
+        kind: "same_module",
         finding: FINDING,
-        owningIssue: "#446",
-      }),
-    ).toMatchObject({ reason: "owning_issue_still_red", owningIssue: "#446" });
-    expect(
-      stopReasonForFindingDisposition({
-        kind: "cross_module",
-        finding: FINDING,
-        targetModule: "family-cmr",
-        reason: "belongs to the integrated gate",
+        reason: "same-module blocker still red after fix",
       }),
     ).toMatchObject({
-      reason: "cross_module_defer",
-      targetModule: "family-cmr",
-    });
-    expect(
-      stopReasonForFindingDisposition({
-        kind: "spec_conflict",
-        finding: FINDING,
-        reason: "issue contradicts itself",
-      }),
-    ).toMatchObject({ reason: "spec_conflict" });
-    expect(
-      stopReasonForFindingDisposition({
-        kind: "infra_failure",
-        finding: FINDING,
-        reason: "git failed",
-        repairHint: "repair git auth and retry",
-      }),
-    ).toMatchObject({
-      reason: "infra_failure",
-      repairHint: "repair git auth and retry",
+      reason: "same_module_still_red",
+      summary: "same-module blocker still red after fix",
     });
   });
 
