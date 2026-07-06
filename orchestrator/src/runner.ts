@@ -2575,14 +2575,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ...(escalationAnswerForStep !== undefined
                     ? { escalationAnswer: escalationAnswerForStep }
                     : {}),
+                  // 信封宪法 (ADR 0062): the dispatch structure carries only the
+                  // identity keys + count; the rich finding content travels in the
+                  // separate landing payload below.
                   ...(step === "S5" || step === "S6"
                     ? {
-                        blockingFindings: pendingBlockingFindings,
                         blockingFindingIdentityKeys:
                           pendingBlockingFindingIdentityKeys,
+                        blockingFindingCount: pendingBlockingFindings.length,
                       }
                     : {}),
                 },
+                step === "S5" || step === "S6"
+                  ? { blockingFindings: pendingBlockingFindings }
+                  : undefined,
               );
             } catch (err) {
               if (

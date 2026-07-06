@@ -150,9 +150,6 @@ function dispositionFromFinding(
       ? {
           source: acceptedSuppression.source,
           scope: acceptedSuppression.scope,
-          ...(acceptedSuppression.targetModule !== undefined
-            ? { targetModule: acceptedSuppression.targetModule }
-            : {}),
           boundedReopen: acceptedSuppression.boundedReopen,
         }
       : {}),

@@ -47,7 +47,7 @@ import {
   isMergedAccountingEntry,
   mergedSet,
   recordAdmissionSkipped,
-  recordChildEscalated,
+  recordChildDecisionParked,
   recordFamilyEscalated,
   recordMerged,
   unansweredChildEscalations,
@@ -126,6 +126,14 @@ function familyStopSummary(input: {
   readonly familyBase: string;
   readonly children: ReadonlyArray<FamilyChildResult>;
   readonly escalationReason?: string;
+  /**
+   * B-class (#604 F2, ADR 0062 A/B分家): a HUMAN DECISION GATE parked this run
+   * awaiting an answer (a child's own single-slice decision题). When true the
+   * `escalated`-status summary carries the `decision_gate_park` reason instead of
+   * the A-class `infra_failure` word — a park is answerable + resumable, not a
+   * failure to repair.
+   */
+  readonly decisionGatePark?: boolean;
   readonly admissionSkipped?: ReadonlyArray<{
     readonly issue: number;
     readonly reason: string;
@@ -179,6 +187,17 @@ function familyStopSummary(input: {
       reason: "owning_issue_still_red",
       summary: `family run is incomplete; unmerged children: ${blocked}`,
       repairHint: "repair or complete the listed child slices and rerun the family",
+    };
+  }
+  // B-class: a human decision gate parked the run (#604 F2). Answerable +
+  // resumable — never the A-class `infra_failure` word.
+  if (input.decisionGatePark === true) {
+    return {
+      reason: "decision_gate_park",
+      summary: input.escalationReason ?? "family run parked on a decision gate",
+      repairHint:
+        "append an escalation_answered ledger row carrying the parked childIssue, then rerun the family to resume in place",
+      ...(metadata !== undefined ? { metadata } : {}),
     };
   }
   return {
@@ -763,7 +782,7 @@ export async function runFamily(
   // S0). Invariant for the run (epic.children is fixed), so computed once.
   const familyChildIssues = new Set(epic.children.map((c) => c.issue));
   // ── #604 slice 5: child decision-escalation re-entry ────────────────────────
-  // Read the family ledger for children PARKED on a decision题 (a `child_escalated`
+  // Read the family ledger for children PARKED on a decision题 (a `child_decision_parked`
   // row). For each, look up whether a later `escalation_answered` row (bound to the
   // SAME childIssue) reopened it:
   //   - ANSWERED → the answer is fed into runChild, which injects it into the
@@ -778,12 +797,12 @@ export async function runFamily(
     // children. To also resume the ANSWERED ones we look up each parked child's
     // answer directly: answered → feed it into runChild (resume in place);
     // unanswered → keep the family paused (return escalated). A parked child is one
-    // with a `child_escalated` row; iterate them by scanning the ledger for that.
+    // with a `child_decision_parked` row; iterate them by scanning the ledger for that.
     const parkedIssues = new Set<number>();
     for (const entry of initialFamilyLedger) {
       if (
-        entry.status === "child_escalated" &&
-        entry.event === "child_escalated" &&
+        entry.status === "child_decision_parked" &&
+        entry.event === "child_decision_parked" &&
         typeof entry.childIssue === "number"
       ) {
         parkedIssues.add(entry.childIssue);
@@ -799,8 +818,8 @@ export async function runFamily(
           .reverse()
           .find(
             (e) =>
-              e.status === "child_escalated" &&
-              e.event === "child_escalated" &&
+              e.status === "child_decision_parked" &&
+              e.event === "child_decision_parked" &&
               e.childIssue === childIssue,
           ) as (FamilyLedgerEntry & { readonly childIssue: number }) | undefined;
         if (row !== undefined) unanswered.push(row);
@@ -817,7 +836,7 @@ export async function runFamily(
           ? { issue: c.issue, status: "merged" as const }
           : { issue: c.issue, status: "skipped" as const },
       );
-      const escalationReason = `child #${first.childIssue} decision escalation is not answered: ${first.reason ?? "(no reason recorded)"}`;
+      const escalationReason = `child #${first.childIssue} decision gate is not answered: ${first.reason ?? "(no reason recorded)"}`;
       return {
         status: "escalated",
         familyBase,
@@ -838,6 +857,7 @@ export async function runFamily(
             : {}),
           children,
           escalationReason,
+          decisionGatePark: true,
         }),
         children,
       };
@@ -988,7 +1008,7 @@ export async function runFamily(
   // `escalation`; already-merged children in `recorded` keep their status; the rest
   // are `"skipped"`). The family status is `"escalated"` (the answerable pause), NOT
   // verify_failed / incomplete.
-  const finalizeEscalated = (
+  const finalizeDecisionPark = (
     parked: FamilyChildResult & { escalation: FamilyChildEscalation },
     recordedResults: ReadonlyArray<FamilyChildResult>,
   ): FamilyRunResult => {
@@ -1011,6 +1031,7 @@ export async function runFamily(
         familyHead,
         children,
         escalationReason,
+        decisionGatePark: true,
       }),
       children,
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
@@ -1203,7 +1224,7 @@ export async function runFamily(
 
     // ── #604 slice 5: a CHILD decision escalation PARKS the family (stop-wave) ───
     // A child that returned `"escalated"` hit a product/design题. Record an
-    // INDEPENDENT `child_escalated` ledger row (bound to childIssue, carrying the
+    // INDEPENDENT `child_decision_parked` ledger row (bound to childIssue, carrying the
     // child's sessionId for 原地 resume) and STOP: do NOT run the wave barrier or
     // select a next wave (sub-decision ②). The `"ran"` siblings this wave already
     // merged above stay durable; the un-answered child pauses the whole family
@@ -1215,7 +1236,7 @@ export async function runFamily(
     );
     if (escalatedChildren.length > 0) {
       for (const child of escalatedChildren) {
-        await recordChildEscalated(familyBackend, {
+        await recordChildDecisionParked(familyBackend, {
           childIssue: child.issue,
           reason: child.escalation.reason,
           diagnosis: child.escalation.diagnosis,
@@ -1225,7 +1246,7 @@ export async function runFamily(
           ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
         });
       }
-      return finalizeEscalated(escalatedChildren[0]!, childResults);
+      return finalizeDecisionPark(escalatedChildren[0]!, childResults);
     }
 
     // ── verify-cmr hook: per-wave barrier (#293 no-op seam, #296 fills) ─────────

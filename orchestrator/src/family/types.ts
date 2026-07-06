@@ -22,6 +22,7 @@ import type {
   Finding,
   FindingDisposition,
   PriorFindingDisposition,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -142,14 +143,13 @@ export interface FamilyLedgerEntry {
    *     escalations are answerable by a later append-only `escalation_answered`
    *     row; failure escalations are terminal until human/manual repair outside
    *     this runner. NOT counted as merged.
-   *   - `"child_escalated"` — (#604 slice 5) a CHILD-LEVEL decision escalation: a
-   *     child slice hit a product/design题 (`escalationKind:"decision"`) and parked
-   *     the family. INDEPENDENT of the family's own `"escalated"` row so the two
-   *     escalation kinds stay semantically distinct (family-level cmr/merge decision
-   *     gates vs a child's own single-slice decision题). Carries `childIssue` so
-   *     multiple children can park + be answered separately; answered by a later
-   *     `escalation_answered` row that ALSO carries the matching `childIssue`. NOT
-   *     counted as merged.
+   *   - `"child_decision_parked"` — (#604 slice 5) a CHILD-LEVEL decision-gate PARK:
+   *     a child slice hit a product/design题 (`escalationKind:"decision"`) and parked
+   *     the family awaiting a human answer. INDEPENDENT of the family's own A-class
+   *     `"escalated"` row so the human decision gate (park → resume) stays distinct
+   *     from infra escalation/failure. Carries `childIssue` so multiple children can
+   *     park + be resumed separately; answered by a later `escalation_answered` row
+   *     that ALSO carries the matching `childIssue`. NOT counted as merged.
    *   - `"escalation_answered"` — a PHASE-LEVEL append-only human answer event
    *     (#439). It reopens a prior decision escalation without editing/deleting
    *     that prior row. NOT counted as merged.
@@ -164,7 +164,7 @@ export interface FamilyLedgerEntry {
     | "cmr_fix_committed"
     | "cmr_passed"
     | "escalated"
-    | "child_escalated"
+    | "child_decision_parked"
     | "escalation_answered"
     | "admission_skipped";
   /**
@@ -186,11 +186,11 @@ export interface FamilyLedgerEntry {
    *     verdict so step5 and step6 are visible in the family ledger (#419).
    *   - `"escalated"` — paired with `status:"escalated"`; records the family
    *     escalation bucket (#439).
-   *   - `"child_escalated"` — paired with `status:"child_escalated"`; records a
-   *     child-level decision escalation that parked the family (#604 slice 5).
+   *   - `"child_decision_parked"` — paired with `status:"child_decision_parked"`;
+   *     records a child-level decision gate that parked the family (#604 slice 5).
    *   - `"escalation_answered"` — paired with `status:"escalation_answered"`; an
-   *     append-only human answer to a prior decision escalation (#439). When it
-   *     carries a `childIssue` it answers a `child_escalated` row (#604 slice 5).
+   *     append-only human answer to a prior decision escalation/park (#439). When it
+   *     carries a `childIssue` it answers a `child_decision_parked` row (#604 slice 5).
    *   - `"admission_skipped"` — paired with `status:"admission_skipped"`; records
    *     production admission skips before scheduling.
    * Not the unblock truth (that is `status`); the tag is for observability.
@@ -203,7 +203,7 @@ export interface FamilyLedgerEntry {
     | "cmr_fix_committed"
     | "cmr_passed"
     | "escalated"
-    | "child_escalated"
+    | "child_decision_parked"
     | "escalation_answered"
     | "admission_skipped";
   /**
@@ -283,13 +283,13 @@ export interface FamilyLedgerEntry {
   /** Decision pauses can be reopened by an answer row; failure escalations cannot. */
   readonly escalationKind?: "decision" | "failure";
   /**
-   * The child Escalation diagnosis on a `child_escalated` row (#604 slice 5) —
+   * The child Escalation diagnosis on a `child_decision_parked` row (#604 slice 5) —
    * the product/design context the human needs to answer. `reason` carries the
    * short escalation reason; `diagnosis` the longer explanation.
    */
   readonly diagnosis?: string;
   /**
-   * The escalated child's single-slice worker session id on a `child_escalated`
+   * The escalated child's single-slice worker session id on a `child_decision_parked`
    * row (#604 slice 5), forwarded so a later resume re-enters the SAME session
    * (原地 resume, ADR 0062 退出-重入). Absent when the child provider surfaced no id.
    */
@@ -489,6 +489,7 @@ export interface FamilyBackend {
   dispatchWorker?(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
   /**
    * Runner fallback for outcome protocol failures (#552).
@@ -920,7 +921,7 @@ export interface FamilyChildResult {
   /**
    * The parked decision escalation when `status==="escalated"` (#604 slice 5).
    * Carries the reason/diagnosis/sessionId the family runner records on the
-   * `child_escalated` ledger row and resumes from.
+   * `child_decision_parked` ledger row and resumes from.
    */
   readonly escalation?: FamilyChildEscalation;
 }

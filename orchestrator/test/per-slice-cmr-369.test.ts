@@ -25,6 +25,7 @@ import type {
   ResumeState,
   StepOutput,
   StepSpec,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -68,6 +69,7 @@ class RetryReviewBackend implements Backend {
   readonly dispatched: string[] = [];
   readonly specs: WorkerSpec[] = [];
   readonly ctxs: DispatchContext[] = [];
+  readonly landings: (WorkerLandingPayload | undefined)[] = [];
   readonly ledgerWrites: PersistentLedgerEntry[] = [];
   reviewerAttempts = 0;
   coderAttempts = 0;
@@ -115,10 +117,15 @@ class RetryReviewBackend implements Backend {
     this.ledgerWrites.push(entry);
   }
 
-  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+  async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}`);
     this.specs.push(spec);
     this.ctxs.push(ctx);
+    this.landings.push(landing);
     if (spec.kind === "coder" && spec.id === "S5") {
       const attempt = this.coderAttempts;
       const scripted = this.coderOutputs[this.coderAttempts];
@@ -197,7 +204,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     expect(result.status).toBe("success");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
-    expect(backend.ctxs[s5Index]?.blockingFindings).toEqual([finding]);
+    expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
     expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys).toEqual([
       "correctness|src/runner.ts:1|fix worker needs structured finding data",
     ]);
@@ -392,7 +399,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     expect(result.status).toBe("success");
     const s6Index = backend.specs.findIndex((spec) => spec.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
-    expect(backend.ctxs[s6Index]?.blockingFindings).toEqual([blocking]);
+    expect(backend.landings[s6Index]?.blockingFindings).toEqual([blocking]);
     expect(backend.ctxs[s6Index]?.blockingFindingIdentityKeys).toEqual([
       blockingKey,
     ]);
@@ -1978,7 +1985,7 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(result.status).toBe("success");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
-    expect(backend.ctxs[s5Index]?.blockingFindings).toEqual([finding]);
+    expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
     expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys).toEqual([
       "correctness|src/runner.ts:1116|s5 needs the persisted blocker after resume",
     ]);
@@ -2051,7 +2058,7 @@ describe("#369 runner resume/retry review fixes", () => {
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
     expect(backend.specs[s5Index]?.session).toBe("resume");
-    expect(backend.ctxs[s5Index]?.blockingFindings).toEqual([finding]);
+    expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
     expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys).toEqual([
       "correctness|src/runner.ts:902|s5 fallback still needs the blocker",
     ]);
@@ -2146,7 +2153,7 @@ describe("#369 runner resume/retry review fixes", () => {
       "S6:reviewer",
       "S7:ship",
     ]);
-    expect(backend.ctxs[0]?.blockingFindings).toEqual([finding]);
+    expect(backend.landings[0]?.blockingFindings).toEqual([finding]);
     expect(backend.ctxs[0]?.blockingFindingIdentityKeys).toEqual([key]);
   });
 
@@ -2662,7 +2669,6 @@ describe("#369 finding identity and classification", () => {
         scope: "cross-module target already tracked",
         reason: "Accepted by issue text as out of scope",
         findingIdentity: findingIdentityKey(finding),
-        targetModule: "family integrated CMR",
         boundedReopen: "reopen on higher severity, new evidence, or different scope",
       },
     };
@@ -2690,7 +2696,6 @@ describe("#369 finding identity and classification", () => {
         reopenAttempts: 0,
         source: "issue #448 acceptance criteria",
         scope: "cross-module target already tracked",
-        targetModule: "family integrated CMR",
         boundedReopen: "reopen on higher severity, new evidence, or different scope",
       },
     ]);
@@ -3123,19 +3128,24 @@ describe("#369 legacy S5 landing file", () => {
       toolchain: [],
     };
 
-    const result = await legacyDispatchWorker(backend, spec, {
-      worktree,
-      stateDir,
-      blockingFindings: [finding],
-      blockingFindingIdentityKeys: ["correctness|src/x.ts:1|fix me"],
-      escalationAnswer: {
-        event: "escalation_answered",
-        forStep: "S4",
-        answer: "continue-same-class",
-        note: "human approved another targeted fix round",
-        source: "human",
+    const result = await legacyDispatchWorker(
+      backend,
+      spec,
+      {
+        worktree,
+        stateDir,
+        blockingFindingIdentityKeys: ["correctness|src/x.ts:1|fix me"],
+        blockingFindingCount: 1,
+        escalationAnswer: {
+          event: "escalation_answered",
+          forStep: "S4",
+          answer: "continue-same-class",
+          note: "human approved another targeted fix round",
+          source: "human",
+        },
       },
-    });
+      { blockingFindings: [finding] },
+    );
 
     expect(result.kind).toBe("completed");
     expect(observedLanding).toEqual({
@@ -3212,12 +3222,17 @@ describe("#369 legacy S5 landing file", () => {
       toolchain: [],
     };
 
-    await legacyDispatchWorker(backend, spec, {
-      worktree,
-      stateDir,
-      blockingFindings: [finding],
-      blockingFindingIdentityKeys: ["correctness|src/x.ts:2|mount me"],
-    });
+    await legacyDispatchWorker(
+      backend,
+      spec,
+      {
+        worktree,
+        stateDir,
+        blockingFindingIdentityKeys: ["correctness|src/x.ts:2|mount me"],
+        blockingFindingCount: 1,
+      },
+      { blockingFindings: [finding] },
+    );
 
     expect(observedLanding).toEqual({
       path: join(stateDir, "fix-findings.json"),
@@ -3295,12 +3310,17 @@ describe("#369 legacy S5 landing file", () => {
       toolchain: [],
     };
 
-    await legacyDispatchWorker(backend, spec, {
-      worktree,
-      stateDir,
-      blockingFindings: [finding],
-      blockingFindingIdentityKeys: ["correctness|src/x.ts:3|verify me"],
-    });
+    await legacyDispatchWorker(
+      backend,
+      spec,
+      {
+        worktree,
+        stateDir,
+        blockingFindingIdentityKeys: ["correctness|src/x.ts:3|verify me"],
+        blockingFindingCount: 1,
+      },
+      { blockingFindings: [finding] },
+    );
 
     expect(observedLanding).toEqual({
       blockingFindings: [finding],

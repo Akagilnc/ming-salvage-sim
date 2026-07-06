@@ -183,7 +183,6 @@ function isValidDispositionEvidence(
   }
   if (!isFilledString(obj.reason)) return false;
   if (
-    !optionalString(obj.targetModule) ||
     !optionalString(obj.source) ||
     !optionalString(obj.scope) ||
     !optionalString(obj.findingIdentity) ||

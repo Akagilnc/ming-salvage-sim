@@ -24,12 +24,14 @@ import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
  *
  *   S0 gate → S1 context → S2 implement → S3 review → S4 classify
  *     → S7 ship when clean
- *     → S5 fix → S6 fresh full-diff review → S4 classify while blocking remains
+ *     → S5 fix → S6 fresh full-diff review → S4 re-check while blocking remains
  *     → S8 handoff
  *
  * S2 and S5 are coder workers. S3 and S6 are fresh read-only reviewer workers.
- * S4 is the runner-owned classification boundary that makes per-round verdicts
- * visible in the ledger instead of hiding the loop inside one coder session.
+ * S4 is the runner-owned ENVELOPE boundary (信封宪法, ADR 0062): it reads only the
+ * blocking findings COUNT (0 → pass, non-0 → fix loop), never the finding content,
+ * making per-round verdicts visible in the ledger instead of hiding the loop inside
+ * one coder session.
  */
 export type StepId =
   | "S0"
@@ -179,8 +181,6 @@ export interface FindingDispositionEvidence {
   readonly kind: FindingDispositionKind;
   /** Why this classification applies. Required for every disposition kind. */
   readonly reason: string;
-  /** Optional module target for accepted suppression. */
-  readonly targetModule?: string;
   /** Required for accepted_suppressed. */
   readonly source?: string;
   /** Required for accepted_suppressed. */
@@ -199,7 +199,6 @@ export interface FindingDisposition {
   readonly reopenAttempts: number;
   readonly source?: string;
   readonly scope?: string;
-  readonly targetModule?: string;
   readonly boundedReopen?: string;
   /** One same-severity fresh-review dispute is allowed before suppression resumes. */
   readonly disputeAttempts?: number;
@@ -504,8 +503,28 @@ export interface WorkerSpec {
 }
 
 /**
- * Everything (besides the {@link WorkerSpec}) the dispatch seam needs to run a
- * worker — PRD #330 [H]: the inputs are part of the contract.
+ * The RICH landing payload the dispatch seam writes STRAIGHT to the worker's
+ * landing file — deliberately SEPARATE from {@link DispatchContext} (信封宪法,
+ * ADR 0062): finding free-text content (`claim_quote` / `suggested_fix`) must NOT
+ * reside in the runner's dispatch structure. The runner never reads these fields
+ * for a fate decision — it only搬运s them into the landing file the coder-fix
+ * worker reads. DispatchContext keeps ONLY the identity keys + count.
+ */
+export interface WorkerLandingPayload {
+  /**
+   * S5 / family coder-fix worker only: the blocking reviewer findings (full
+   * content) selected from the current full-diff review. The dispatch seam writes
+   * them to the landing file; the runner does not read them.
+   */
+  readonly blockingFindings?: ReadonlyArray<Finding>;
+}
+
+/**
+ * Everything (besides the {@link WorkerSpec} and the rich {@link
+ * WorkerLandingPayload}) the dispatch seam needs to run a worker — PRD #330 [H]:
+ * the inputs are part of the contract. Per the信封宪法 (ADR 0062) this THIN
+ * control envelope carries only identity keys + counts + opaque搬运 payloads
+ * (human answer, runner-observed gate failures) — never finding free-text content.
  */
 export interface DispatchContext {
   /**
@@ -540,18 +559,21 @@ export interface DispatchContext {
    */
   readonly issueSnapshot?: IssueSnapshot;
   /**
-   * S5 coder-fix worker only: the blocking reviewer findings selected at S4
-   * from the current full-diff review. This is the structured cross-worker
-   * contract ADR 0030 needs; the runner owns classification and the fix worker
-   * receives data, not hidden session memory.
-   */
-  readonly blockingFindings?: ReadonlyArray<Finding>;
-  /**
-   * Stable identity keys for {@link blockingFindings}. Suppression/reopen logic
-   * must match findings by normalized identity rather than exact object text, so
-   * the runner passes the keys alongside the structured findings.
+   * S5 / family coder-fix worker only: the stable identity keys of the blocking
+   * findings selected from the current full-diff review. This THIN identity list —
+   * plus {@link blockingFindingCount} — is all the runner threads through its
+   * dispatch structure; the rich finding CONTENT travels separately in {@link
+   * WorkerLandingPayload} straight to the landing file (信封宪法, ADR 0062).
+   * Suppression/reopen logic matches findings by normalized identity, not object
+   * text, so the keys are the runner's control-envelope carrier.
    */
   readonly blockingFindingIdentityKeys?: ReadonlyArray<string>;
+  /**
+   * The number of blocking findings this coder-fix dispatch carries — the runner's
+   * count signal (信封宪法: identity keys + 计数). The findings themselves are in the
+   * separate {@link WorkerLandingPayload}, never on this dispatch structure.
+   */
+  readonly blockingFindingCount?: number;
   /**
    * FAMILY CMR coder-fix retry only: runner-observed repair-evidence gate failures
    * from earlier attempts for the SAME blocking finding set. Fresh retry workers
@@ -605,16 +627,17 @@ export type CoderResult = CoderOutput;
 
 /**
  * Per-slice reviewer worker output. ADR 0030 keeps review/fix convergence
- * runner-visible: reviewer workers return structured findings for S4
- * classification rather than a bare verdict.
+ * runner-visible: reviewer workers return structured findings so the S4 envelope
+ * boundary can count blocking findings (信封宪法, ADR 0062) rather than a bare verdict.
  */
 export type ReviewerResult = ReviewerOutput;
 
 /**
  * A family integrated-cmr worker's output (#335/#449). The consumer
  * `verifyCmr.ts` reads `converged`, and when the worker supplies structured
- * findings it classifies defers/suppressions against the declared family module
- * context before deciding whether the pass can proceed.
+ * findings the GATE derives the blocking envelope + accepted-suppression governance
+ * against the declared family module context before deciding whether the pass can
+ * proceed (信封宪法, ADR 0062: typed governance derivation, never free-text fate分叉).
  */
 export interface CmrResult {
   readonly kind: "cmr";
@@ -836,11 +859,12 @@ export interface LedgerEntry {
   /** Optional reason for a bookkeeping event. */
   readonly reason?: string;
   /**
-   * Runner-owned ADR0030 finding dispositions after an S4 classification.
+   * ADR0030 finding dispositions persisted at the S4 review/fix boundary.
    *
    * S4 is the durable review/fix boundary. Persisting dispositions here lets a
-   * resumed run replay accepted suppressions and bounded severity
-   * reopens instead of reclassifying from only the last reviewer payload.
+   * resumed run replay accepted suppressions and bounded severity reopens instead
+   * of re-deriving them from only the last reviewer payload. Governance data
+   * (accepted suppression), not a runner content-classification (信封宪法, ADR 0062).
    */
   readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
   /**
@@ -1078,6 +1102,7 @@ export interface Backend {
   dispatchWorker?(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
   /** S7: push the resident slice branch (no PR, no merge). */
   push(worktree: WorktreeHandle): Promise<void>;

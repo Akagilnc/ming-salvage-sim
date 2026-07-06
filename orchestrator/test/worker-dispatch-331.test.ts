@@ -457,8 +457,8 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
         { ...coderWorker, id: "S5", session: "fresh" },
         {
           worktree,
-          blockingFindings: [],
           blockingFindingIdentityKeys: [],
+          blockingFindingCount: 0,
         },
       );
 
