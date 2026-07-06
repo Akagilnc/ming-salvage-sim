@@ -390,12 +390,13 @@ export function deriveCmrEnvelope(input: {
   // real prior-round dispositions — NEVER this pass's own freshly-generated
   // suppressions. The pre-r2 code seeded the current-pass per-finding
   // dispositions back in as `prior`, so a brand-new suppression looked like a
-  // same-severity re-submission against itself: the P1-d reopen/dispute handler
-  // fired and burned the single dispute budget on the FIRST suppression (a later
-  // genuine re-submission was then silently re-suppressed with no budget left).
-  // `classifyFindings` regenerates each finding's fresh disposition itself, so
-  // the seeds were both redundant and harmful. The per-finding pass above stays
-  // authoritative for the blocking/deferred/results buckets.
+  // re-submission against itself and was wrongly treated as a repeat round of an
+  // already-suppressed finding. `classifyFindings` regenerates each finding's
+  // fresh disposition itself, so the seeds were both redundant and harmful. The
+  // per-finding pass above stays authoritative for the blocking/deferred/results
+  // buckets. (Reopen/dispute budgets are governed by classifyFindings per ADR
+  // 0030: a same/lower-severity maintenance re-submission is a zero-op, only an
+  // upgrade reopens+blocks and only a real fix_now challenge spends a dispute.)
   const finalClassification = classifyFindings(
     findingsForFinalClassification,
     scopedPriorDispositions,

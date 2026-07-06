@@ -90,7 +90,7 @@ describe("#604 r2 C1 — fresh accepted-suppression does not self-dispute", () =
     expect(disposition.reopenAttempts).toBe(0);
   });
 
-  it("a genuine same-severity re-submission (real prior) DOES spend the dispute budget", () => {
+  it("a genuine same-severity re-submission (real prior) MAINTAINS the suppression, spending NO dispute budget (ADR 0030)", () => {
     const finding = suppressedFinding();
     const identity = findingIdentityKey(SUPPRESSED_FINDING);
     // Round 1 produced this persisted disposition (fresh, unspent budgets).
@@ -116,8 +116,13 @@ describe("#604 r2 C1 — fresh accepted-suppression does not self-dispute", () =
 
     expect(classified.blocking).toEqual([]);
     expect(classified.dispositions).toHaveLength(1);
-    // A real same-severity re-submission against a real prior spends the one
-    // dispute allowed before suppression resumes.
-    expect(classified.dispositions[0].disputeAttempts).toBe(1);
+    // #604 rework per ADR 0030 (user定论 2026-07-06): the re-submitted finding is
+    // action=wont_fix — a MAINTENANCE re-submission, not a dispute. Maintaining a
+    // suppression is a ZERO-OP on the disposition, so NO dispute budget is spent.
+    // (The earlier "DOES spend the dispute budget → 1" assertion encoded the
+    // non-ratified "维持花预算" drift from r1 P1-d, which violated ADR 0030 and is
+    // rolled back. Only a real fix_now challenge spends the single bounded
+    // dispute — #369 PRESERVED.) The suppression stands (blocking = []).
+    expect(classified.dispositions[0].disputeAttempts ?? 0).toBe(0);
   });
 });
