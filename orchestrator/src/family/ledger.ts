@@ -18,13 +18,16 @@
  * append-only invariant but does NOT dedup — reconcile is #298.)
  */
 
-import type { EscalationAnswerPayload, EscalationKind } from "../types.js";
+import type {
+  EscalationAnswerPayload,
+  EscalationKind,
+  FindingDisposition,
+} from "../types.js";
 import {
   infraFailureStopSummary,
   successStopSummary,
   type StopSummary,
 } from "../stopSummary.js";
-import type { FamilyCmrClassification } from "./cmrClassification.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -73,8 +76,15 @@ export interface AbortedRecord {
   readonly reason?: string;
   /** The family base HEAD at the time the barrier failed (for triage + baseline). */
   readonly familyHeadAfter?: string;
-  /** Family CMR finding classification audit trail (#449). */
-  readonly cmrFindingClassification?: FamilyCmrClassification;
+  /**
+   * Thin control envelope (#604 slice 3 / ADR 0062): the deduped identity keys of
+   * the blocking findings this abort carries. The runner reads ONLY this off an
+   * aborted row. A `not_converged` sentinel abort carries `[]`; an infra abort
+   * carries nothing (`undefined`), which the runner treats as an unclassified abort.
+   */
+  readonly blockingFindingIdentityKeys?: readonly string[];
+  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
+  readonly cmrDispositions?: readonly FindingDisposition[];
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
 }
@@ -102,8 +112,8 @@ export interface CmrPassedRecord {
   readonly familyHeadAfter?: string;
   /** Resolved route fingerprint for the CMR worker and declared review legs. */
   readonly routeFingerprint?: string;
-  /** Family CMR finding classification audit trail (#449). */
-  readonly cmrFindingClassification?: FamilyCmrClassification;
+  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
+  readonly cmrDispositions?: readonly FindingDisposition[];
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
 }
@@ -113,7 +123,14 @@ export interface CmrReviewedRecord {
   readonly cmrPass: IntegratedCmrPass;
   readonly reason?: string;
   readonly familyHeadAfter?: string;
-  readonly cmrFindingClassification?: FamilyCmrClassification;
+  /**
+   * Thin control envelope (#604 slice 3 / ADR 0062): the deduped identity keys of
+   * the blocking findings the runner must route through coder-fix. The runner
+   * reads ONLY this off a `cmr_reviewed` row.
+   */
+  readonly blockingFindingIdentityKeys?: readonly string[];
+  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
+  readonly cmrDispositions?: readonly FindingDisposition[];
   readonly stopSummary?: StopSummary;
 }
 
@@ -223,7 +240,8 @@ export async function recordAborted(
       cmrPass: record.cmrPass,
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
-      cmrFindingClassification: record.cmrFindingClassification,
+      blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
+      cmrDispositions: record.cmrDispositions,
       stopSummary:
         record.stopSummary ??
         infraFailureStopSummary({
@@ -255,7 +273,7 @@ export async function recordCmrPassed(
       cmrPass: record.cmrPass,
       familyHeadAfter: record.familyHeadAfter,
       routeFingerprint: record.routeFingerprint,
-      cmrFindingClassification: record.cmrFindingClassification,
+      cmrDispositions: record.cmrDispositions,
       stopSummary:
         record.stopSummary ??
         successStopSummary(
@@ -285,7 +303,8 @@ export async function recordCmrReviewed(
       cmrPass: record.cmrPass,
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
-      cmrFindingClassification: record.cmrFindingClassification,
+      blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
+      cmrDispositions: record.cmrDispositions,
       stopSummary:
         record.stopSummary ??
         infraFailureStopSummary({

@@ -3,6 +3,7 @@ import {
   parseModuleDeclaration,
   type FamilyModuleContext,
 } from "./family/moduleDeclaration.js";
+import { classifyFamilyCmrFindings } from "./family/cmrClassification.js";
 import type { FamilyCmrFindingClassification } from "./family/cmrClassification.js";
 import { runFamily } from "./family/runner.js";
 import { parseCmrOutcome } from "./family/realFamilyBackend.js";
@@ -212,8 +213,18 @@ async function familyClassificationScenario(input: {
     backend.ledger.find(
       (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
     );
-  const result = ledgerEntry?.cmrFindingClassification?.results[0];
-  if (result === undefined) {
+  // #604 slice 3 / ADR 0062: the runner-visible ledger no longer carries the fat
+  // `cmrFindingClassification.results` blob — the runner sees only the thin
+  // `blockingFindingIdentityKeys` envelope. This replay is a presentation fixture,
+  // so it recomputes the classification report in-process from the SAME inputs the
+  // gate classified (the finding + module context); this mirrors "what the
+  // classifier decided" without reaching into content the runner never reads.
+  const result = classifyFamilyCmrFindings({
+    familyIssue: input.familyIssue,
+    findings: [input.finding],
+    moduleContext: input.moduleContext,
+  }).results[0];
+  if (ledgerEntry === undefined || result === undefined) {
     throw new Error(`dogfood replay ${input.id} produced no classification`);
   }
   const stopSummary = ledgerEntry?.stopSummary;
@@ -1154,7 +1165,15 @@ async function familyAttributionReplay(
   const passed = backend.ledger.find(
     (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
   );
-  const result = reviewed?.cmrFindingClassification?.results[0];
+  // #604 slice 3 / ADR 0062: the ledger no longer carries the fat
+  // `cmrFindingClassification.results` attribution audit (the runner reads only the
+  // thin key envelope). Recompute the attribution report in-process from the same
+  // finding + module context the gate classified, for this presentation fixture.
+  const result = classifyFamilyCmrFindings({
+    familyIssue: 287,
+    findings: [attributedFinding],
+    moduleContext,
+  }).results[0];
   if (result?.attribution.method !== "child_module_scope") {
     throw new Error("dogfood family attribution replay did not hit child scope");
   }

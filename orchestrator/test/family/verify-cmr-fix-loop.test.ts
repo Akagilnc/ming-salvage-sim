@@ -1276,9 +1276,9 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
           event: "cmr_reviewed",
           cmrPass: "completeness",
           familyHeadAfter: "head-before-cmr-review",
-          cmrFindingClassification: expect.objectContaining({
-            blocking: [BLOCKING_FAMILY_CMR_FINDING],
-          }),
+          // #604 slice 3 / ADR 0062: the review row carries the thin key envelope,
+          // not the fat Finding blob.
+          blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
         }),
         expect.objectContaining({
           status: "cmr_fix_committed",
@@ -2149,24 +2149,31 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     // The blocking-vs-suppression stop-summary selection invariant now lives on the
     // cmr_reviewed row recorded before coder-fix runs.
     expect(result).toEqual({ ok: false, ran: true });
+    // #604 slice 3 / ADR 0062: the fat classification blob no longer persists. The
+    // blocking-vs-suppression SELECTION invariant now lives on the retained
+    // stopSummary (spec_conflict blocker selected over the earlier suppression), the
+    // BLOCKING key lands on the thin envelope, and the suppression governance is in
+    // `cmrDispositions` — never a results[] audit on the ledger.
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_reviewed",
       event: "cmr_reviewed",
-      cmrFindingClassification: expect.objectContaining({
-        results: expect.arrayContaining([
-          expect.objectContaining({
-            identityKey:
-              "correctness|orchestrator/src/family/verifycmr.ts:1|accepted hub-loss gap",
-            classification: "accepted_suppressed",
-          }),
-        ]),
-      }),
+      blockingFindingIdentityKeys: [findingIdentityKey(blocker)],
       stopSummary: expect.objectContaining({
         reason: "spec_conflict",
         finding: blocker,
       }),
     }));
     const reviewed = backend.ledger.find((entry) => entry.status === "cmr_reviewed");
+    expect(reviewed).not.toHaveProperty("cmrFindingClassification");
+    expect(reviewed?.cmrDispositions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          identityKey:
+            "correctness|orchestrator/src/family/verifycmr.ts:1|accepted hub-loss gap",
+          status: "accepted_suppressed",
+        }),
+      ]),
+    );
     expect(reviewed?.reason).toContain("spec_conflict");
     expect(reviewed?.reason).not.toContain("accepted_suppressed");
   });
@@ -2303,34 +2310,26 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         },
       }),
     });
+    // #604 slice 3 / ADR 0062: cross-round prior dispositions are threaded from the
+    // thin `cmrDispositions` governance field, not the retired fat blob.
     backend.ledger.push({
       status: "cmr_passed",
       event: "cmr_passed",
       phase: "final",
       cmrPass: "completeness",
-      cmrFindingClassification: {
-        blocking: [],
-        deferred: [],
-        results: [],
-        dispositions: [
-          {
-            identityKey,
-            status: "accepted_suppressed",
-            reason: trustedSuppression.reason,
-            severity: "medium",
-            reopenAttempts: 0,
-            disputeAttempts: 1,
-            source: trustedSuppression.source,
-            scope: trustedSuppression.scope,
-            boundedReopen: trustedSuppression.boundedReopen,
-          },
-        ],
-        moduleContext: {
-          currentModules: [],
-          childModules: [],
-          undevelopedModules: [],
+      cmrDispositions: [
+        {
+          identityKey,
+          status: "accepted_suppressed",
+          reason: trustedSuppression.reason,
+          severity: "medium",
+          reopenAttempts: 0,
+          disputeAttempts: 1,
+          source: trustedSuppression.source,
+          scope: trustedSuppression.scope,
+          boundedReopen: trustedSuppression.boundedReopen,
         },
-      },
+      ],
     });
 
     const result = await runVerifyCmr({

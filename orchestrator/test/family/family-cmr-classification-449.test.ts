@@ -1448,13 +1448,15 @@ describe("#449 verifyCmr family gate classification", () => {
     // still aborts; the point preserved here is that the finding CLASSIFIES as blocking.
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.dispatched).toEqual(["cmr", "coder"]);
+    // #604 slice 3 / ADR 0062: the classification decision no longer persists to the
+    // ledger — the runner-visible proof that the finding classified as BLOCKING (and
+    // was therefore routed to coder-fix) is its identity key on the thin envelope.
     expect(backend.ledger[0]).toMatchObject({
       status: "cmr_reviewed",
       cmrPass: "completeness",
-      cmrFindingClassification: {
-        results: [{ classification: "same_module_still_red" }],
-      },
+      blockingFindingIdentityKeys: [findingIdentityKey(finding)],
     });
+    expect(backend.ledger[0]).not.toHaveProperty("cmrFindingClassification");
   });
 
   it("blocks a cross-module defer when the target is outside current modules but not declared undeveloped", async () => {
@@ -1506,14 +1508,14 @@ describe("#449 verifyCmr family gate classification", () => {
     // that the undeclared-target defer CLASSIFIES as blocking.
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.dispatched).toEqual(["cmr", "coder"]);
+    // #604 slice 3 / ADR 0062: only the thin key envelope persists; the undeclared-
+    // target defer classifies as BLOCKING, observable as its key on the envelope.
     expect(backend.ledger[0]).toMatchObject({
       status: "cmr_reviewed",
       cmrPass: "completeness",
-      cmrFindingClassification: {
-        blocking: [expect.objectContaining({ claim_quote: undeclaredTargetFinding.claim_quote })],
-        results: [{ classification: "same_module_still_red" }],
-      },
+      blockingFindingIdentityKeys: [findingIdentityKey(undeclaredTargetFinding)],
     });
+    expect(backend.ledger[0]).not.toHaveProperty("cmrFindingClassification");
   });
 
   it("populates run-option undeveloped modules into the family gate context", async () => {
@@ -1576,6 +1578,10 @@ module_scope:
 
     expect(result).toEqual({ ok: true, ran: true });
     expect(backend.dispatched).toEqual(["cmr", "cmr", "ship"]);
+    // #604 slice 3 / ADR 0062: the fat classification blob (deferred[] / results[] /
+    // moduleContext snapshot) no longer persists. The cross-module defer's outcome is
+    // observable via the retained stopSummary (presentation) and the thin
+    // `cmrDispositions` governance channel; no blocking envelope is written.
     expect(backend.ledger[0]).toMatchObject({
       status: "cmr_passed",
       cmrPass: "completeness",
@@ -1583,34 +1589,10 @@ module_scope:
         reason: "cross_module_defer",
         targetModule: "military-state-machine",
       },
-      cmrFindingClassification: {
-        deferred: [expect.objectContaining({ claim_quote: crossModuleFinding.claim_quote })],
-        results: [{ classification: "cross_module_defer", targetModule: "military-state-machine" }],
-        moduleContext: {
-          currentModules: [
-            expect.objectContaining({
-              module: "fiscal",
-              moduleScope: ["orchestrator/src/family"],
-              source: "family_issue",
-              issue: 445,
-            }),
-          ],
-          childModules: [],
-          fallbackModule: expect.objectContaining({
-            module: "fiscal",
-            source: "family_issue",
-            issue: 445,
-          }),
-          undevelopedModules: [
-            expect.objectContaining({
-              module: "military-state-machine",
-              moduleScope: ["docs/military-state-machine.md"],
-              source: "run_option",
-            }),
-          ],
-        },
-      },
     });
+    expect(backend.ledger[0]).toHaveProperty("cmrDispositions");
+    expect(backend.ledger[0]).not.toHaveProperty("cmrFindingClassification");
+    expect(backend.ledger[0]).not.toHaveProperty("blockingFindingIdentityKeys");
   });
 
   it("records a CMR worker decision escalation as a spec conflict, not infra failure", async () => {
@@ -1782,11 +1764,11 @@ module_scope:
         targetModule: "military-state-machine",
         summary: "outside the declared fiscal family module",
       },
-      cmrFindingClassification: {
-        deferred: [expect.objectContaining({ claim_quote: crossModuleFinding.claim_quote })],
-        results: [{ classification: "cross_module_defer", targetModule: "military-state-machine" }],
-      },
     });
+    // #604 slice 3 / ADR 0062: the defer classification content (deferred[]/results[])
+    // no longer persists — the retained stopSummary carries the defer target; only the
+    // thin `cmrDispositions` governance channel is kept, no fat blob.
+    expect(backend.ledger[0]).not.toHaveProperty("cmrFindingClassification");
   });
 
   it("records accepted_suppressed dispositions in successful CMR stop summary metadata", async () => {

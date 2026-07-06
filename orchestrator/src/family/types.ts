@@ -19,11 +19,11 @@ import type {
   Escalation,
   EscalationAnswerPayload,
   Finding,
+  FindingDisposition,
   PriorFindingDisposition,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
-import type { FamilyCmrClassification } from "./cmrClassification.js";
 import type {
   AcceptedSuppressionSource,
   FamilyModuleContext,
@@ -227,14 +227,28 @@ export interface FamilyLedgerEntry {
    * active worker/reviewer route match; old rows without this fail closed.
    */
   readonly routeFingerprint?: string;
-  /** Family CMR finding classification audit trail (#449). */
-  readonly cmrFindingClassification?: FamilyCmrClassification;
   /**
-   * CMR finding identity keys a runner-visible coder-fix commit is expected to
-   * close. Stored structurally on `cmr_fix_committed` rows so crash-resume can
-   * protect the same keys in the next fresh CMR pass.
+   * The THIN control envelope the runner reads on `cmr_reviewed` / `aborted`
+   * rows (#604 slice 3 / ADR 0062): the identity keys of the CURRENT blocking
+   * findings (deduped). The runner is a pure scheduler — it reads this key list
+   * and NOTHING else off a CMR row. It replaces the former fat
+   * `cmrFindingClassification` blob (Finding full text + results[] audit +
+   * dispositions[]), which leaked finding CONTENT the runner must never read.
+   * Also stored on `cmr_fix_committed` rows so crash-resume can protect the same
+   * keys in the next fresh CMR pass. A `not_converged` sentinel row carries `[]`
+   * (defined-but-empty), preserving its "no pending keys" short-circuit.
    */
   readonly blockingFindingIdentityKeys?: readonly string[];
+  /**
+   * The governance side-channel the CMR GATE (not the runner) reads to track
+   * cross-round prior dispositions (#604 slice 3 / ADR 0062). Carries the
+   * accepted-suppression / defer / owning-issue dispositions the classifier
+   * produced this pass, so a later pass can honour a prior accepted suppression
+   * without re-blocking. Split out of the old `cmrFindingClassification` blob so
+   * the runner's control envelope (`blockingFindingIdentityKeys`) and the gate's
+   * governance data live in separate, purpose-scoped fields.
+   */
+  readonly cmrDispositions?: readonly FindingDisposition[];
   /**
    * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
    * ran, #295) rather than land as a clean deterministic merge? Forwarded by the

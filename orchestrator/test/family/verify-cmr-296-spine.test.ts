@@ -382,24 +382,11 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
         cmrPass: "completeness",
         reason: "fresh CMR found a second blocker",
         familyHeadAfter: "head-after-first-cmr-fix",
-        cmrFindingClassification: {
-          blocking: [],
-          deferred: [],
-          dispositions: [],
-          moduleContext: {
-            currentModules: [],
-            childModules: [],
-            undevelopedModules: [],
-          },
-          results: [
-            {
-              identityKey: secondKey,
-              classification: "same_module_still_red",
-              attribution: { method: "family_module" },
-              reason: "second same-module family CMR blocker",
-            },
-          ],
-        },
+        // #604 slice 3 / ADR 0062: this seed's old fat blob had `blocking: []` (the
+        // runner recovered `secondKey` from the following cmr_fix_committed row, not
+        // this review row); the thin equivalent is an empty envelope.
+        blockingFindingIdentityKeys: [],
+        cmrDispositions: [],
       } as FamilyLedgerEntry,
       {
         status: "cmr_fix_committed",
@@ -484,24 +471,10 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
         cmrPass: "completeness",
         reason: "blocking family CMR finding requires coder-fix",
         familyHeadAfter: "head-before-cmr-fix",
-        cmrFindingClassification: {
-          blocking: [priorFinding],
-          deferred: [],
-          dispositions: [],
-          results: [
-            {
-              identityKey: priorKey,
-              classification: "same_module_still_red",
-              attribution: { method: "family_module" },
-              reason: "same-module family CMR blocker",
-            },
-          ],
-          moduleContext: {
-            currentModules: [],
-            childModules: [],
-            undevelopedModules: [],
-          },
-        },
+        // #604 slice 3 / ADR 0062: the runner recovers protected prior keys from the
+        // thin `blockingFindingIdentityKeys` envelope, not the retired fat blob.
+        blockingFindingIdentityKeys: [priorKey],
+        cmrDispositions: [],
       } as FamilyLedgerEntry,
     );
 
@@ -598,8 +571,6 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
   });
 
   it("does not treat an aborted coder-fix evidence failure as a crash-window fix", async () => {
-    const blockedKey =
-      "completeness|orchestrator/src/x.ts:12|repair evidence never passed";
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
       cmr: () => ({
@@ -622,24 +593,10 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
         cmrPass: "completeness",
         reason: "blocking family CMR finding requires coder-fix",
         familyHeadAfter: "head-before-cmr-fix",
-        cmrFindingClassification: {
-          blocking: [],
-          deferred: [],
-          dispositions: [],
-          moduleContext: {
-            currentModules: [],
-            childModules: [],
-            undevelopedModules: [],
-          },
-          results: [
-            {
-              identityKey: blockedKey,
-              classification: "same_module_still_red",
-              attribution: { method: "family_module" },
-              reason: "same-module family CMR blocker",
-            },
-          ],
-        },
+        // #604 slice 3 / ADR 0062: thin equivalent of the old `blocking: []` blob —
+        // an empty envelope yields no recoverable prior keys.
+        blockingFindingIdentityKeys: [],
+        cmrDispositions: [],
       } as FamilyLedgerEntry,
       {
         status: "aborted",
