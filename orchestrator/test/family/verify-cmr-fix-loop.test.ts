@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from "vitest";
 import { findingIdentityKey } from "../../src/findings.js";
+import { isValidFinding } from "../../src/validate.js";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
 import type {
   FamilyBackend,
@@ -153,6 +154,68 @@ const SECOND_BLOCKING_FAMILY_CMR_KEY = findingIdentityKey(
   SECOND_BLOCKING_FAMILY_CMR_FINDING,
 );
 
+/**
+ * A blocking finding the reviewer SELF-LABELS with a non-fix disposition
+ * (`owning_issue_still_red` + `action: "defer"`). Before #604 slice 2 this
+ * content-based label made `fixableCmrFindingKeysFromClassification` return
+ * `undefined`, so the runner terminated the whole family on a single such
+ * finding (#497/#498). ADR 0062: the runner counts findings, it does NOT read
+ * a finding's disposition to decide whether the family lives — every blocking
+ * finding goes through coder-fix.
+ *
+ * #604 correctness r4 (D5 note): this exact shape (`action:"defer"` +
+ * `disposition.kind:"owning_issue_still_red"`) is NO LONGER producible through
+ * the real reviewer contract — `isValidFinding` rejects it (the routing
+ * disposition kinds were removed in ADR 0062, and `defer` may not carry a
+ * non-suppression disposition). It is retained here as a SYNTHETIC belt-and-
+ * suspenders check that even a hand-forged legacy self-label cannot make the
+ * runner read a disposition to spare a blocker. The `...THROUGH_REAL_PARSER`
+ * companion finding + test below exercises the SAME invariant with a
+ * validator-passing payload the real entry point can actually emit.
+ */
+const OWNING_ISSUE_STILL_RED_FINDING: Finding = {
+  severity: "medium",
+  category: "correctness",
+  claim_quote:
+    "reviewer self-labels this blocker as owning-issue-still-red and defers",
+  location: "orchestrator/src/family/verifyCmr.ts:owning-issue-still-red",
+  suggested_fix:
+    "do not terminate the family; route the blocker through coder-fix",
+  action: "defer",
+  disposition: {
+    kind: "owning_issue_still_red",
+    owningIssue: "#498",
+    missingSurface: "the owning issue has not landed its surface yet",
+    nextStep: "wait for the owning issue",
+    reason: "reviewer claims the owning issue is still red",
+  },
+};
+const OWNING_ISSUE_STILL_RED_KEY = findingIdentityKey(
+  OWNING_ISSUE_STILL_RED_FINDING,
+);
+
+/**
+ * #604 correctness r4 (D5): the SAME "runner counts, does not read the
+ * reviewer's self-judgment" invariant, expressed with a payload the real
+ * reviewer contract CAN produce (`isValidFinding === true`). A valid blocking
+ * finding (`action:"fix_now"`, medium) whose CONTENT self-labels the blocker as
+ * owning-issue-still-red (in claim_quote/suggested_fix) must STILL route through
+ * coder-fix — the runner never reads that content to spare it.
+ */
+const OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER: Finding = {
+  severity: "medium",
+  category: "correctness",
+  claim_quote:
+    "reviewer believes this blocker's owning issue #498 is still red, but says so in content only",
+  location: "orchestrator/src/family/verifyCmr.ts:owning-issue-still-red-valid",
+  suggested_fix:
+    "the runner must route this through coder-fix regardless of the owning-issue claim",
+  action: "fix_now",
+};
+const OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER_KEY = findingIdentityKey(
+  OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER,
+);
+
 const EXCESSIVE_CMR_FIX_FINDINGS: readonly Finding[] = Array.from(
   { length: 4 },
   (_, index) => ({
@@ -262,6 +325,137 @@ class ReviewFixRereviewBackend implements FamilyBackend {
             introducedRegressionCheck:
               "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
             patchSummary: "routed family CMR findings through coder-fix",
+          },
+        },
+      };
+    }
+
+    if (spec.kind === "ship") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx.familyBase!,
+          status: "pr_opened",
+          pr: `pr://${ctx.familyBase}`,
+          prHead: this.currentFamilyHead,
+        },
+      };
+    }
+
+    throw new Error(`unexpected worker kind ${spec.kind}`);
+  }
+}
+
+/**
+ * First completeness review returns ONE blocking finding the reviewer
+ * self-labels `owning_issue_still_red` + `action: "defer"`; the coder-fix
+ * closes it and the re-review converges. Exercises the #604 slice 2 rule that
+ * a reviewer's non-fix disposition must NOT terminate the family — the finding
+ * still flows through coder-fix by identity key.
+ */
+class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
+  readonly ledger: FamilyLedgerEntry[] = [];
+  readonly dispatches: DispatchRecord[] = [];
+  readonly verifyRequests: FamilyVerifyRequest[] = [];
+  currentFamilyHead = "head-before-owning-issue-review";
+  private completenessReviewRound = 0;
+  // #604 r4 (D5): parameterize the blocking finding so the same review/fix flow
+  // can be driven with either the synthetic legacy self-label OR the
+  // validator-passing companion.
+  constructor(
+    private readonly blockingFinding: Finding = OWNING_ISSUE_STILL_RED_FINDING,
+    private readonly blockingKey: string = OWNING_ISSUE_STILL_RED_KEY,
+  ) {}
+
+  async mergeChildIntoFamilyBase(): Promise<never> {
+    throw new Error("not used");
+  }
+  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+    this.ledger.push(entry);
+  }
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return this.ledger;
+  }
+  async readFamilyHead(): Promise<string> {
+    return this.currentFamilyHead;
+  }
+  async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
+    this.verifyRequests.push(req);
+    return { ok: true };
+  }
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      role: spec.role,
+      promptFile: spec.promptFile,
+      contextRetention: spec.contextRetention,
+      cmrPass: ctx.cmrPass,
+      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
+      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
+    });
+
+    if (spec.kind === "cmr") {
+      if (ctx.cmrPass === "completeness" && this.completenessReviewRound++ === 0) {
+        return {
+          kind: "completed",
+          output: {
+            kind: "cmr",
+            converged: false,
+            reason:
+              "reviewer self-labeled the blocker owning_issue_still_red and deferred",
+            successfulLegs: ["opus", "gpt-5.5", "agy"],
+            claimedFixedFindingIdentityKeys: [],
+            priorFindingDispositions: [],
+            ...CMR_EVIDENCE,
+            findings: [this.blockingFinding],
+          },
+        };
+      }
+      return {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys:
+            ctx.cmrPass === "completeness" ? [this.blockingKey] : [],
+          priorFindingDispositions:
+            ctx.cmrPass === "completeness"
+              ? [
+                  {
+                    identityKey: this.blockingKey,
+                    status: "verified-closed",
+                    reason: "coder-fix closed the self-deferred blocker",
+                  },
+                ]
+              : [],
+          ...CMR_EVIDENCE,
+        },
+      };
+    }
+
+    if (spec.kind === "coder") {
+      this.currentFamilyHead = "head-after-owning-issue-coder-fix";
+      return {
+        kind: "completed",
+        output: {
+          kind: "coder",
+          committed: true,
+          commitsAdded: 1,
+          repairEvidence: {
+            findingScope: {
+              identityKeys: [this.blockingKey],
+              locations: [this.blockingFinding.location],
+            },
+            changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
+            tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
+            sameClassBugScan:
+              "rg \"fixableCmrFindingKeysFromClassification\" orchestrator/src/family",
+            introducedRegressionCheck:
+              "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
+            patchSummary: "routed the self-deferred blocker through coder-fix",
           },
         },
       };
@@ -1122,9 +1316,9 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
           event: "cmr_reviewed",
           cmrPass: "completeness",
           familyHeadAfter: "head-before-cmr-review",
-          cmrFindingClassification: expect.objectContaining({
-            blocking: [BLOCKING_FAMILY_CMR_FINDING],
-          }),
+          // #604 slice 3 / ADR 0062: the review row carries the thin key envelope,
+          // not the fat Finding blob.
+          blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
         }),
         expect.objectContaining({
           status: "cmr_fix_committed",
@@ -1932,18 +2126,17 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         boundedReopen: "reopen on higher severity or different scope",
       },
     };
+    // #604 slice 4 (ADR 0062): route kinds are gone; a blocking finding carries no
+    // routing disposition. (Was `disposition:{kind:"spec_conflict",...}`.) The
+    // blocking-vs-suppression selection invariant is unchanged — this plain
+    // blocking finding is still selected over the earlier accepted suppression.
     const blocker: Finding = {
       severity: "medium",
       category: "correctness",
       claim_quote: "ADR conflicts with implementation",
       location: "orchestrator/src/family/verifyCmr.ts:2",
       suggested_fix: "resolve the accepted contract conflict",
-      action: "defer",
-      disposition: {
-        kind: "spec_conflict",
-        source: "ADR 0030",
-        reason: "ADR and implementation require different CMR outcomes.",
-      },
+      action: "fix_now",
     };
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({
@@ -1989,27 +2182,56 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       },
     });
 
+    // #604 slice 2 / ADR 0062: the spec_conflict blocker no longer terminates the
+    // family on its content classification — it is counted and routed through
+    // coder-fix (this backend has no coder-fix worker, so the family still fails).
+    // The blocking-vs-suppression stop-summary selection invariant now lives on the
+    // cmr_reviewed row recorded before coder-fix runs.
     expect(result).toEqual({ ok: false, ran: true });
+    // #604 slice 3 / ADR 0062: the fat classification blob no longer persists. The
+    // blocking-vs-suppression SELECTION invariant now lives on the retained
+    // stopSummary (the blocking finding is selected over the earlier suppression),
+    // the BLOCKING key lands on the thin envelope, and the suppression governance is
+    // in `cmrDispositions` — never a results[] audit on the ledger.
+    // #604 slice 4 (ADR 0062): the routing classification is gone, so the retained
+    // stop-summary reason for a blocking family finding is the generic
+    // `same_module_still_red` StopReason word ("blocking, fix and rerun"), and the
+    // blocking-findings reason string keys the finding by its `blocking:` label.
+    // #604 F5 (信封宪法 ADR 0062): the retained stopSummary carries only a THIN
+    // FindingDescriptor (identity + severity + summary), NOT the full Finding —
+    // rich reviewer content never persists on the ledger; it travels in the live
+    // coder-fix landing payload instead.
     expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      cmrFindingClassification: expect.objectContaining({
-        results: expect.arrayContaining([
-          expect.objectContaining({
-            identityKey:
-              "correctness|orchestrator/src/family/verifycmr.ts:1|accepted hub-loss gap",
-            classification: "accepted_suppressed",
-          }),
-        ]),
-      }),
+      status: "cmr_reviewed",
+      event: "cmr_reviewed",
+      blockingFindingIdentityKeys: [findingIdentityKey(blocker)],
       stopSummary: expect.objectContaining({
-        reason: "spec_conflict",
-        finding: blocker,
+        reason: "same_module_still_red",
+        findingDescriptor: {
+          identityKey: findingIdentityKey(blocker),
+          severity: blocker.severity,
+          summary: expect.any(String),
+        },
       }),
     }));
-    const aborted = backend.ledger.find((entry) => entry.status === "aborted");
-    expect(aborted?.reason).toContain("spec_conflict");
-    expect(aborted?.reason).not.toContain("accepted_suppressed");
+    // The full Finding rich content must NOT persist on the ledger stopSummary.
+    const reviewedRow = backend.ledger.find(
+      (entry) => entry.status === "cmr_reviewed",
+    );
+    expect(reviewedRow?.stopSummary).not.toHaveProperty("finding");
+    const reviewed = backend.ledger.find((entry) => entry.status === "cmr_reviewed");
+    expect(reviewed).not.toHaveProperty("cmrFindingClassification");
+    expect(reviewed?.cmrDispositions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          identityKey:
+            "correctness|orchestrator/src/family/verifycmr.ts:1|accepted hub-loss gap",
+          status: "accepted_suppressed",
+        }),
+      ]),
+    );
+    expect(reviewed?.reason).toContain(`blocking:${findingIdentityKey(blocker)}`);
+    expect(reviewed?.reason).not.toContain("accepted_suppressed");
   });
 
   it("fails closed when prior accepted_suppressed closure lacks a trusted suppression source", async () => {
@@ -2144,34 +2366,26 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         },
       }),
     });
+    // #604 slice 3 / ADR 0062: cross-round prior dispositions are threaded from the
+    // thin `cmrDispositions` governance field, not the retired fat blob.
     backend.ledger.push({
       status: "cmr_passed",
       event: "cmr_passed",
       phase: "final",
       cmrPass: "completeness",
-      cmrFindingClassification: {
-        blocking: [],
-        deferred: [],
-        results: [],
-        dispositions: [
-          {
-            identityKey,
-            status: "accepted_suppressed",
-            reason: trustedSuppression.reason,
-            severity: "medium",
-            reopenAttempts: 0,
-            disputeAttempts: 1,
-            source: trustedSuppression.source,
-            scope: trustedSuppression.scope,
-            boundedReopen: trustedSuppression.boundedReopen,
-          },
-        ],
-        moduleContext: {
-          currentModules: [],
-          childModules: [],
-          undevelopedModules: [],
+      cmrDispositions: [
+        {
+          identityKey,
+          status: "accepted_suppressed",
+          reason: trustedSuppression.reason,
+          severity: "medium",
+          reopenAttempts: 0,
+          disputeAttempts: 1,
+          source: trustedSuppression.source,
+          scope: trustedSuppression.scope,
+          boundedReopen: trustedSuppression.boundedReopen,
         },
-      },
+      ],
     });
 
     const result = await runVerifyCmr({
@@ -2252,6 +2466,86 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
     const cmrDispatch = backend.dispatches.find((d) => d.kind === "cmr");
     expect(cmrDispatch?.session).toBe("fresh");
+  });
+
+  it("routes a reviewer-self-deferred (owning_issue_still_red) blocker through coder-fix instead of terminating the family (#604 slice 2)", async () => {
+    const backend = new OwningIssueStillRedThenGoodBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/604-base",
+      familyBackend: backend,
+    });
+
+    // The self-deferred blocker's identity key reaches the coder-fix worker...
+    const coderDispatch = backend.dispatches.find((d) => d.kind === "coder");
+    expect(coderDispatch?.blockingFindingIdentityKeys).toEqual([
+      OWNING_ISSUE_STILL_RED_KEY,
+    ]);
+    // ...and the family is NOT torn down on the reviewer's content label.
+    expect(
+      backend.ledger.find(
+        (entry) =>
+          entry.status === "aborted" &&
+          entry.reason?.includes(OWNING_ISSUE_STILL_RED_KEY),
+      ),
+    ).toBeUndefined();
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        cmrPass: "completeness",
+        familyHeadBefore: "head-before-owning-issue-review",
+        familyHeadAfter: "head-after-owning-issue-coder-fix",
+        blockingFindingIdentityKeys: [OWNING_ISSUE_STILL_RED_KEY],
+      }),
+    );
+  });
+
+  it("routes a VALIDATOR-PASSING content-self-labeled blocker through coder-fix (D5: same invariant via the real reviewer contract)", async () => {
+    // #604 correctness r4 (D5): the same "runner counts, does not read the
+    // reviewer's self-judgment" invariant, driven by a finding the real reviewer
+    // contract CAN emit (`isValidFinding === true`: medium + fix_now, self-label
+    // in content only). It must ROUTE THROUGH coder-fix, never terminate the
+    // family on the owning-issue claim.
+    expect(isValidFinding(OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER)).toBe(true);
+
+    const backend = new OwningIssueStillRedThenGoodBackend(
+      OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER,
+      OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER_KEY,
+    );
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/604-base",
+      familyBackend: backend,
+    });
+
+    const coderDispatch = backend.dispatches.find((d) => d.kind === "coder");
+    expect(coderDispatch?.blockingFindingIdentityKeys).toEqual([
+      OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER_KEY,
+    ]);
+    expect(
+      backend.ledger.find(
+        (entry) =>
+          entry.status === "aborted" &&
+          entry.reason?.includes(
+            OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER_KEY,
+          ),
+      ),
+    ).toBeUndefined();
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        cmrPass: "completeness",
+        blockingFindingIdentityKeys: [
+          OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER_KEY,
+        ],
+      }),
+    );
   });
 });
 

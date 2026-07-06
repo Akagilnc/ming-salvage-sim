@@ -50,17 +50,16 @@
  */
 
 import {
-  classifyFamilyCmrFindings,
-  type FamilyCmrClassification,
-  type FamilyModuleContext,
+  deriveCmrEnvelope,
+  type CmrEnvelope,
 } from "./cmrClassification.js";
+import type { FamilyModuleContext } from "./moduleDeclaration.js";
 import {
   familyCoderFixWorkerSpec,
   cmrWorkerSpec,
   dispatchFamilyWorker,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { fixableCmrFindingKeysFromClassification } from "./cmrFixableFindings.js";
 import {
   cmrLegAccountingFailure,
   modelRouteFingerprint,
@@ -517,104 +516,38 @@ function shipWorkerFailedStopSummary(input: {
 }
 
 function familyCmrBlockingStopSummary(
-  classification: FamilyCmrClassification,
+  classification: CmrEnvelope,
   fallbackReason: string,
 ): StopSummary {
-  const blockingClassifications = new Set([
-    "same_module_still_red",
-    "owning_issue_still_red",
-    "spec_conflict",
-    "infra_failure",
-  ]);
-  const result =
-    classification.results.find(
-      (item) =>
-        item.classification === "owning_issue_still_red" ||
-        item.classification === "spec_conflict" ||
-        item.classification === "infra_failure",
-    ) ??
-    classification.results.find((item) =>
-      blockingClassifications.has(item.classification),
-    );
+  // #604 slice 4 (ADR 0062): routing classification values are gone, so there is
+  // one blocking bucket. The stop-summary word stays `same_module_still_red`
+  // (the retained StopReason for "blocking, fix it and rerun" — 岔路 1 A: the
+  // StopReason machinery is untouched).
+  const result = classification.results.find(
+    (item) => item.classification === "blocking",
+  );
   const finding =
     result !== undefined
       ? classification.blocking.find(
           (item) => findingIdentityKey(item) === result.identityKey,
         )
       : undefined;
-  if (result?.classification === "same_module_still_red") {
-    if (finding !== undefined) {
-      return stopReasonForFindingDisposition({
-        kind: "same_module",
-        finding,
-        reason: result.reason || fallbackReason,
-      });
-    }
-    return {
-      reason: "same_module_still_red",
-      summary: result.reason || fallbackReason,
-      repairHint: "fix the same-module family CMR finding and rerun",
-    };
-  }
-  if (result?.classification === "owning_issue_still_red") {
-    if (finding !== undefined && result.owningIssue !== undefined) {
-      return stopReasonForFindingDisposition({
-        kind: "owning_issue_still_red",
-        finding,
-        owningIssue: result.owningIssue,
-        missingSurface: result.missingSurface,
-        nextStep: result.nextStep,
-        reason: result.reason || fallbackReason,
-      });
-    }
-    return {
-      reason: "owning_issue_still_red",
-      summary: result.reason || fallbackReason,
-      ...(result.owningIssue !== undefined ? { owningIssue: result.owningIssue } : {}),
-      ...(result.missingSurface !== undefined
-        ? { missingSurface: result.missingSurface }
-        : {}),
-      ...(result.nextStep !== undefined ? { nextStep: result.nextStep } : {}),
-      repairHint: "close the owning issue surface before rerun",
-    };
-  }
-  if (result?.classification === "spec_conflict") {
-    if (finding !== undefined) {
-      return stopReasonForFindingDisposition({
-        kind: "spec_conflict",
-        finding,
-        reason: result.reason || fallbackReason,
-      });
-    }
-    return {
-      reason: "spec_conflict",
-      summary: result.reason || fallbackReason,
-      repairHint: "resolve the specification conflict and rerun",
-    };
-  }
-  if (result?.classification === "infra_failure") {
-    if (finding !== undefined) {
-      return stopReasonForFindingDisposition({
-        kind: "infra_failure",
-        finding,
-        reason: result.reason || fallbackReason,
-        repairHint: "repair the infrastructure failure and rerun the family CMR gate",
-      });
-    }
-    return infraFailureStopSummary({
-      summary: result.reason || fallbackReason,
-      repairHint: "repair the infrastructure failure and rerun the family CMR gate",
+  if (result !== undefined && finding !== undefined) {
+    return stopReasonForFindingDisposition({
+      kind: "same_module",
+      finding,
+      reason: result.reason || fallbackReason,
     });
   }
   return {
     reason: "same_module_still_red",
-    summary: fallbackReason,
+    summary: result?.reason || fallbackReason,
     repairHint: "fix the blocking family CMR finding and rerun",
   };
 }
 
 function familyCmrPassStopSummary(input: {
-  readonly classification?: FamilyCmrClassification;
+  readonly classification?: CmrEnvelope;
   readonly familyHeadAfter?: string;
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
 }): StopSummary | undefined {
@@ -650,25 +583,10 @@ function familyCmrPassStopSummary(input: {
         }
       : {}),
   });
-  const crossModule = input.classification?.results.find(
-    (result) => result.classification === "cross_module_defer",
-  );
-  const finding = input.classification?.deferred[0];
-  if (
-    crossModule !== undefined &&
-    finding !== undefined &&
-    crossModule.targetModule !== undefined
-  ) {
-    const crossModuleSummary = stopReasonForFindingDisposition({
-      kind: "cross_module",
-      finding,
-      targetModule: crossModule.targetModule,
-      reason: crossModule.reason,
-    });
-    return materialPassSummary.metadata !== undefined
-      ? { ...crossModuleSummary, metadata: materialPassSummary.metadata }
-      : crossModuleSummary;
-  }
+  // #604 slice 4 (ADR 0062): the `cross_module_defer` classification is gone and
+  // `deferred` is always empty, so there is no cross-module pass-with-defer path
+  // to emit here — a passing family CMR run reports success/accepted-suppression
+  // metadata only.
   if (
     (acceptedSuppressions === undefined || acceptedSuppressions.length === 0) &&
     (input.skippedLegs === undefined || input.skippedLegs.length === 0)
@@ -786,17 +704,29 @@ function trustedAcceptedSuppressionDisposition(
   );
 }
 
-function latestFamilyCmrDispositions(
+export function latestFamilyCmrDispositions(
   ledger: ReadonlyArray<{
-    readonly cmrFindingClassification?: {
-      readonly dispositions: ReadonlyArray<FindingDisposition>;
-    };
+    readonly cmrDispositions?: ReadonlyArray<FindingDisposition>;
   }>,
 ): ReadonlyArray<FindingDisposition> | undefined {
+  // #604 slice 3 / ADR 0062: cross-round prior dispositions are read from the thin
+  // `cmrDispositions` governance field, not the retired `cmrFindingClassification`
+  // blob.
+  //
+  // #604 rework (codexB): SKIP defined-but-EMPTY tombstones. A not_converged
+  // abort used to persist `cmrDispositions: []`; because this scan returned the
+  // first DEFINED array from the end, that empty tombstone masked an earlier
+  // round's real accepted-suppression dispositions → next pass saw no prior →
+  // budget reset (C1-class recurrence). An empty array is never the authoritative
+  // "there were suppressions but now there are none" signal in this codebase, so
+  // skipping it is safe and keeps cross-round budget tracking intact. The
+  // abort-side fix (aborts no longer write `[]` at all) is the root cause; this
+  // read-side guard is defense-in-depth so no other entry point can re-introduce
+  // the masking.
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
-    if (entry.cmrFindingClassification?.dispositions !== undefined) {
-      return entry.cmrFindingClassification.dispositions;
+    if (entry.cmrDispositions != null && entry.cmrDispositions.length > 0) {
+      return entry.cmrDispositions;
     }
   }
   return undefined;
@@ -815,6 +745,17 @@ function cmrClosureFailureReason(input: {
     readonly scope?: string;
     readonly boundedReopen?: string;
   }[];
+  // #604 correctness r4 (D1): the EARLY closure guard (run before the
+  // blocking→coder-fix branch on a RESTART barrier) must only assert the closure
+  // payload is WELL-FORMED — every protected prior key is claimed or disposed, no
+  // stale/duplicate/malformed dispositions. It must NOT assert every prior
+  // disposition is `verified-closed`: a prior finding that is still `still-active`
+  // / `unable-to-assess` is precisely what the coder-fix loop exists to repair, so
+  // aborting on it would over-fire and starve the fix loop (the r2 C2 regression).
+  // `allowStillActive: true` skips ONLY the `stillOpen` closed-status assertion;
+  // every shape/coverage check still runs. The LATE converged-path guard omits
+  // this flag, keeping its full `verified-closed` assertion intact.
+  readonly allowStillActive?: boolean;
 }): string | undefined {
   const claimed = input.claimedFixedFindingIdentityKeys ?? [];
   const priorDispositions = input.priorFindingDispositions ?? [];
@@ -883,21 +824,23 @@ function cmrClosureFailureReason(input: {
       `findings cannot be closed by accepted_suppressed: ${suppressedProtectedPriorKeys.join(", ")}`
     );
   }
-  const stillOpen = priorDispositions
-    .filter(
-      (disposition) =>
-        disposition.status !== "verified-closed" &&
-        !(
-          disposition.status === "accepted_suppressed" &&
-          trustedAcceptedSuppressionDisposition(disposition, input.moduleContext)
-        ),
-    )
-    .map((disposition) => disposition.identityKey);
-  if (stillOpen.length > 0) {
-    return (
-      `integrated cmr ${input.pass} closure failed: prior claimed-fixed ` +
-      `findings are not verified closed: ${stillOpen.join(", ")}`
-    );
+  if (input.allowStillActive !== true) {
+    const stillOpen = priorDispositions
+      .filter(
+        (disposition) =>
+          disposition.status !== "verified-closed" &&
+          !(
+            disposition.status === "accepted_suppressed" &&
+            trustedAcceptedSuppressionDisposition(disposition, input.moduleContext)
+          ),
+      )
+      .map((disposition) => disposition.identityKey);
+    if (stillOpen.length > 0) {
+      return (
+        `integrated cmr ${input.pass} closure failed: prior claimed-fixed ` +
+        `findings are not verified closed: ${stillOpen.join(", ")}`
+      );
+    }
   }
   const dispositions = new Map(priorDispositions.map((d) => [d.identityKey, d.status]));
   const claimedSet = new Set(claimed);
@@ -1050,7 +993,7 @@ async function runCmrCoderFix(input: {
   readonly pass: IntegratedCmrPass;
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
-  readonly classification: FamilyCmrClassification;
+  readonly classification: CmrEnvelope;
   readonly blockingFindingIdentityKeys: readonly string[];
   readonly familyHeadBefore?: string;
   readonly escalationAnswer?: EscalationAnswerPayload;
@@ -1085,14 +1028,17 @@ async function runCmrCoderFix(input: {
       familyCoderFixWorkerSpec(resolvedRoute),
       {
         familyBase,
-        blockingFindings: classification.blocking,
+        // 信封宪法 (ADR 0062): only identity keys + count on the dispatch structure;
+        // rich finding content travels in the separate landing payload below.
         blockingFindingIdentityKeys,
+        blockingFindingCount: classification.blocking.length,
         ...(repairAttemptFailures.length > 0
           ? { repairAttemptFailures }
           : {}),
         ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
         ...(familyIssue !== undefined ? { familyIssue } : {}),
       },
+      { blockingFindings: classification.blocking },
     );
     const familyHeadAfter = await readPostCmrFamilyHead(
       familyBackend,
@@ -1440,9 +1386,10 @@ async function dispatchOrAbort(
   familyBackend: FamilyBackend,
   spec: Parameters<typeof dispatchFamilyWorker>[1],
   ctx: Parameters<typeof dispatchFamilyWorker>[2],
+  landing?: Parameters<typeof dispatchFamilyWorker>[3],
 ): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
   try {
-    return await dispatchFamilyWorker(familyBackend, spec, ctx);
+    return await dispatchFamilyWorker(familyBackend, spec, ctx, landing);
   } catch (err) {
     const reason = `family ${spec.kind} worker threw on startup: ${
       err instanceof Error ? err.message : String(err)
@@ -1681,31 +1628,72 @@ async function runIntegratedCmrPass(input: {
     (cmrResult.output.findings === undefined ||
       cmrResult.output.findings.length === 0)
   ) {
+    // #604 correctness r4 (D2): on a RESTART barrier the protected prior keys must
+    // be accounted for EVEN when the fresh reviewer returns `converged:false` with
+    // NO findings. Without this guard a reviewer could emit `{converged:false,
+    // findings:[]}` while silently dropping the protected prior keys (no
+    // claimedFixed, no disposition) and slip past the ADR 0030 coverage check as an
+    // ordinary thin not_converged envelope. Run the well-formedness closure guard
+    // (shape/coverage only — `allowStillActive:true`, matching the early guard)
+    // BEFORE the thin not_converged abort; a missing-coverage payload fails closed
+    // as contract_drift instead.
+    //
+    // #604 correctness r4 (D3): also run when the reviewer SELF-REPORTS a closure
+    // payload on a first pass (claimed-fixed keys / dispositions with no protected
+    // prior set) so a `converged:false, findings:[]` malformed self-report cannot
+    // masquerade as an ordinary not_converged abort.
+    const notConvergedHasClosurePayload =
+      priorCmrFindingIdentityKeys !== undefined ||
+      (cmrResult.output.claimedFixedFindingIdentityKeys?.length ?? 0) > 0 ||
+      (cmrResult.output.priorFindingDispositions?.length ?? 0) > 0;
+    if (notConvergedHasClosurePayload) {
+      const notConvergedClosureFailure = cmrClosureFailureReason({
+        pass,
+        moduleContext,
+        claimedFixedFindingIdentityKeys:
+          cmrResult.output.claimedFixedFindingIdentityKeys,
+        protectedPriorFindingIdentityKeys: priorCmrFindingIdentityKeys,
+        priorFindingDispositions: cmrResult.output.priorFindingDispositions,
+        allowStillActive: true,
+      });
+      if (notConvergedClosureFailure !== undefined) {
+        await recordDurableAbort(familyBackend, {
+          phase: "final",
+          cmrPass: pass,
+          reason: notConvergedClosureFailure,
+          familyHeadAfter: postWorkerFamilyHead,
+          stopSummary: contractDriftStopSummary({
+            summary: notConvergedClosureFailure,
+            repairHint:
+              "repair the integrated CMR claimed-fixed closure payload and rerun the family barrier",
+          }),
+        });
+        return {
+          result: { ok: false, ran: true },
+          familyHeadAfter: postWorkerFamilyHead,
+        };
+      }
+    }
     const reason =
       cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
+    // #604 slice 3 / ADR 0062: a not_converged abort carries NO blocking findings.
+    // Persist the thin envelope with `blockingFindingIdentityKeys: []` so the
+    // runner keeps it in the classified-abort branch and derives no pending keys
+    // from it.
+    //
+    // #604 rework (codexB): DO NOT write `cmrDispositions: []` here. An empty
+    // tombstone would mask an earlier round's real accepted-suppression
+    // dispositions (`latestFamilyCmrDispositions` returned the latest DEFINED
+    // array), resetting the reopen/dispute budget on the next pass. A
+    // not_converged abort produced no new governance dispositions, so it leaves
+    // the field UNDEFINED (omitted via `compact`), carrying the prior round's
+    // dispositions forward.
     await recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
-      cmrFindingClassification: {
-        blocking: [],
-        deferred: [],
-        dispositions: [],
-        results: [
-          {
-            identityKey: `not_converged|${pass}`,
-            classification: "not_converged",
-            attribution: { method: "reviewer_disposition" },
-            reason,
-          },
-        ],
-        moduleContext: {
-          currentModules: [],
-          childModules: [],
-          undevelopedModules: [],
-        },
-      },
+      blockingFindingIdentityKeys: [],
       stopSummary: notConvergedStopSummary(reason),
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
@@ -1752,7 +1740,74 @@ async function runIntegratedCmrPass(input: {
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
-  let cmrFindingClassification: FamilyCmrClassification | undefined;
+  // #604 correctness r2 (C2): on a RESTART barrier the runner carries protected
+  // prior finding identity keys (`priorCmrFindingIdentityKeys`) that the fresh
+  // reviewer MUST account for (claimed-fixed or explicitly disposed). If that
+  // closure payload is malformed — e.g. it leaves a protected prior key
+  // unaccounted — this is a contract drift that MUST fail closed and mechanically
+  // rerun, NEVER dispatch coder-fix. Pre-r2 the `blocking.length > 0` branch ran
+  // FIRST, so a fresh pass that also happened to raise a NEW blocker slipped the
+  // unrelated new blocker into coder-fix and bypassed this guard. Run the closure
+  // guard BEFORE the blocking branch whenever protected prior keys are present.
+  //
+  // #604 correctness r4 (D3): the early guard must ALSO run on a FIRST pass
+  // (`priorCmrFindingIdentityKeys === undefined`) whenever the reviewer SELF-REPORTS
+  // a closure payload — a non-empty `claimedFixedFindingIdentityKeys` or
+  // `priorFindingDispositions`. Pre-r4 the guard ran only when protected prior keys
+  // existed, so a first-pass reviewer that claimed to have fixed prior findings
+  // (with no runner-supplied prior set → `closure_context_missing`) slipped its NEW
+  // blocker into coder-fix and never tripped the malformed-payload guard. Running
+  // when ANY closure payload is present routes that malformed self-report to
+  // contract_drift. A genuinely payload-free first pass (no claimed, no
+  // dispositions, no protected keys) still skips the guard and preserves the normal
+  // blocking→coder-fix path (the late guard at the end still runs for the converged
+  // path).
+  const hasClosurePayload =
+    priorCmrFindingIdentityKeys !== undefined ||
+    (cmrResult.output.claimedFixedFindingIdentityKeys?.length ?? 0) > 0 ||
+    (cmrResult.output.priorFindingDispositions?.length ?? 0) > 0;
+  // #604 correctness r4 (D3): the early guard is scoped to the NON-converged path.
+  // A converged payload has its own LATE closure guard at the end (with the full
+  // `verified-closed` assertion), so the early guard must NOT preempt it — doing so
+  // would (a) let the early guard's `allowStillActive` skip the late guard's
+  // still-active rejection on the converged path, and (b) change which malformed-
+  // shape message wins there. On the converged path the early guard is a no-op; the
+  // late guard owns the complete assertion.
+  if (hasClosurePayload && !cmrResult.output.converged) {
+    const earlyClosureFailure = cmrClosureFailureReason({
+      pass,
+      moduleContext,
+      claimedFixedFindingIdentityKeys:
+        cmrResult.output.claimedFixedFindingIdentityKeys,
+      protectedPriorFindingIdentityKeys: priorCmrFindingIdentityKeys,
+      priorFindingDispositions: cmrResult.output.priorFindingDispositions,
+      // #604 correctness r4 (D1): the EARLY guard is a WELL-FORMEDNESS gate only.
+      // A prior key that is claimed-fixed but disposed `still-active` /
+      // `unable-to-assess` is a legitimate coder-fix input, NOT a contract drift —
+      // aborting on it (the r2 C2 regression) starves the fix loop. Skip only the
+      // `stillOpen` verified-closed assertion here; the LATE converged-path guard
+      // (no flag) keeps the full closed assertion.
+      allowStillActive: true,
+    });
+    if (earlyClosureFailure !== undefined) {
+      await recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason: earlyClosureFailure,
+        familyHeadAfter: postWorkerFamilyHead,
+        stopSummary: contractDriftStopSummary({
+          summary: earlyClosureFailure,
+          repairHint:
+            "repair the integrated CMR claimed-fixed closure payload and rerun the family barrier",
+        }),
+      });
+      return {
+        result: { ok: false, ran: true },
+        familyHeadAfter: postWorkerFamilyHead,
+      };
+    }
+  }
+  let cmrFindingClassification: CmrEnvelope | undefined;
   if (
     cmrResult.output.findings !== undefined &&
     cmrResult.output.findings.length > 0
@@ -1760,7 +1815,7 @@ async function runIntegratedCmrPass(input: {
     const priorDispositions = latestFamilyCmrDispositions(
       await familyBackend.readFamilyLedger(),
     );
-    cmrFindingClassification = classifyFamilyCmrFindings({
+    cmrFindingClassification = deriveCmrEnvelope({
       familyIssue: familyIssue ?? 0,
       findings: cmrResult.output.findings,
       moduleContext: moduleContext ?? { currentModules: [], childModules: [] },
@@ -1771,9 +1826,9 @@ async function runIntegratedCmrPass(input: {
         `integrated cmr ${pass} found blocking family-scope findings: ` +
         cmrFindingClassification.results
           .filter(
-            (result) =>
-              result.classification !== "cross_module_defer" &&
-              result.classification !== "accepted_suppressed",
+            // #604 slice 4 (ADR 0062): only accepted-suppression is non-blocking;
+            // the routing classifications (incl. cross_module_defer) are gone.
+            (result) => result.classification !== "accepted_suppressed",
           )
           .map((result) => `${result.classification}:${result.identityKey}`)
           .join(", ");
@@ -1781,28 +1836,40 @@ async function runIntegratedCmrPass(input: {
         cmrFindingClassification,
         reason,
       );
-      const fixableKeys = fixableCmrFindingKeysFromClassification(
-        cmrFindingClassification,
-      );
-      if (allowCoderFix && fixableKeys !== undefined && fixableKeys.length > 0) {
+      // #604 slice 2 / ADR 0062: the runner is a PURE SCHEDULER — it counts
+      // blocking findings, it does NOT read a finding's disposition/classification
+      // to decide whether the family lives. EVERY blocking finding's identity key
+      // goes through coder-fix; a reviewer self-labeling a blocker
+      // owning_issue_still_red / defer no longer terminates the whole family
+      // (#497/#498). The only non-fix outpaths are: no blocking findings (handled
+      // above) or the coder-fix round budget being exhausted (below).
+      const blockingFindingIdentityKeys = [
+        ...new Set(cmrFindingClassification.blocking.map(findingIdentityKey)),
+      ];
+      if (allowCoderFix) {
+        // #604 slice 3 / ADR 0062: persist ONLY the thin envelope the runner reads
+        // (blocking identity keys) + the gate's governance data (dispositions).
+        // The fat `cmrFindingClassification` blob no longer lands on the ledger.
         await recordCmrReviewed(familyBackend, {
           cmrPass: pass,
           reason,
           familyHeadAfter: postWorkerFamilyHead,
-          cmrFindingClassification,
+          blockingFindingIdentityKeys,
+          cmrDispositions: cmrFindingClassification.dispositions,
           stopSummary,
         });
         if (remainingCmrCoderFixRounds <= 0) {
           const budgetReason =
             `integrated cmr ${pass} coder-fix round budget exhausted after ` +
             `${MAX_CMR_CODER_FIX_ROUNDS} committed repair rounds: ` +
-            fixableKeys.join(", ");
+            blockingFindingIdentityKeys.join(", ");
           await recordDurableAbort(familyBackend, {
             phase: "final",
             cmrPass: pass,
             reason: budgetReason,
             familyHeadAfter: postWorkerFamilyHead,
-            cmrFindingClassification,
+            blockingFindingIdentityKeys,
+            cmrDispositions: cmrFindingClassification.dispositions,
             stopSummary: coderFixFailureStopSummary({
               pass,
               reason: budgetReason,
@@ -1819,7 +1886,7 @@ async function runIntegratedCmrPass(input: {
           familyBackend,
           familyBase,
           classification: cmrFindingClassification,
-          blockingFindingIdentityKeys: fixableKeys,
+          blockingFindingIdentityKeys,
           familyHeadBefore: postWorkerFamilyHead,
           escalationAnswer,
           familyIssue,
@@ -1828,7 +1895,7 @@ async function runIntegratedCmrPass(input: {
         if (!fixRound.result.ok) return fixRound;
         const remainingAfterFix = remainingCmrCoderFixRounds - 1;
         const updatedPriorKeys = [
-            ...new Set([...(priorCmrFindingIdentityKeys ?? []), ...fixableKeys]),
+            ...new Set([...(priorCmrFindingIdentityKeys ?? []), ...blockingFindingIdentityKeys]),
         ];
         return {
           result: { ok: true, ran: true },
@@ -1848,7 +1915,8 @@ async function runIntegratedCmrPass(input: {
         cmrPass: pass,
         reason,
         familyHeadAfter: postWorkerFamilyHead,
-        cmrFindingClassification,
+        blockingFindingIdentityKeys,
+        cmrDispositions: cmrFindingClassification.dispositions,
         stopSummary,
       });
       return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
@@ -1862,29 +1930,20 @@ async function runIntegratedCmrPass(input: {
   ) {
     const reason =
       cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
+    // #604 slice 3 / ADR 0062: not_converged carries no blocking findings — the
+    // thin envelope keeps `blockingFindingIdentityKeys: []`, staying in the
+    // runner's classified-abort branch while yielding no pending keys.
+    //
+    // #604 rework (codexB): DO NOT write `cmrDispositions: []` — see the twin
+    // not_converged branch above. An empty tombstone masks the prior round's real
+    // accepted-suppression dispositions and resets the reopen/dispute budget. The
+    // field is left UNDEFINED so the prior dispositions carry forward.
     await recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
-      cmrFindingClassification: {
-        blocking: [],
-        deferred: [],
-        dispositions: [],
-        results: [
-          {
-            identityKey: `not_converged|${pass}`,
-            classification: "not_converged",
-            attribution: { method: "reviewer_disposition" },
-            reason,
-          },
-        ],
-        moduleContext: {
-          currentModules: [],
-          childModules: [],
-          undevelopedModules: [],
-        },
-      },
+      blockingFindingIdentityKeys: [],
       stopSummary: notConvergedStopSummary(reason),
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
@@ -1915,7 +1974,11 @@ async function runIntegratedCmrPass(input: {
     cmrPass: pass,
     familyHeadAfter: postWorkerFamilyHead,
     routeFingerprint,
-    cmrFindingClassification,
+    // #604 slice 3 / ADR 0062: carry ONLY the governance dispositions forward for
+    // cross-round prior-disposition tracking — not the fat classification blob.
+    ...(cmrFindingClassification !== undefined
+      ? { cmrDispositions: cmrFindingClassification.dispositions }
+      : {}),
     stopSummary: familyCmrPassStopSummary({
       classification: cmrFindingClassification,
       familyHeadAfter: postWorkerFamilyHead,

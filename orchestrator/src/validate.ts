@@ -56,14 +56,9 @@ const FINDING_STRING_FIELDS = [
   "suggested_fix",
 ] as const;
 
-const DISPOSITION_KINDS: ReadonlySet<string> = new Set([
-  "same_module",
-  "cross_module",
-  "spec_conflict",
-  "infra_failure",
-  "owning_issue_still_red",
-  "accepted_suppressed",
-]);
+// #604 slice 4 (ADR 0062): only the accepted-suppression governance kind
+// survives — the routing kinds were removed from the reviewer contract.
+const DISPOSITION_KINDS: ReadonlySet<string> = new Set(["accepted_suppressed"]);
 
 /**
  * Type-only string guard (intentionally does NOT reject `""`): a Finding's
@@ -178,20 +173,34 @@ export function isCompleteRepairEvidence(
   );
 }
 
+// #604 correctness r5 (E1): the ONLY keys a disposition-evidence carrier may hold.
+// This hand-written validator is STRICT (parity with the family `.strict()` zod
+// `cmrDispositionEvidenceSchema` and the standalone `findingDispositionSchema`):
+// any extra key — e.g. a deleted routing field like `targetModule` — makes it
+// invalid, rather than being silently tolerated by an allow-list that only
+// type-checked known fields.
+const DISPOSITION_EVIDENCE_KEYS: ReadonlySet<string> = new Set([
+  "kind",
+  "reason",
+  "source",
+  "scope",
+  "findingIdentity",
+  "boundedReopen",
+]);
+
 function isValidDispositionEvidence(
   d: unknown,
 ): d is FindingDispositionEvidence {
   if (d == null || typeof d !== "object") return false;
   const obj = d as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    if (!DISPOSITION_EVIDENCE_KEYS.has(key)) return false;
+  }
   if (typeof obj.kind !== "string" || !DISPOSITION_KINDS.has(obj.kind)) {
     return false;
   }
   if (!isFilledString(obj.reason)) return false;
   if (
-    !optionalString(obj.targetModule) ||
-    !optionalString(obj.owningIssue) ||
-    !optionalString(obj.missingSurface) ||
-    !optionalString(obj.nextStep) ||
     !optionalString(obj.source) ||
     !optionalString(obj.scope) ||
     !optionalString(obj.findingIdentity) ||
@@ -199,22 +208,10 @@ function isValidDispositionEvidence(
   ) {
     return false;
   }
+  // #604 slice 4 (ADR 0062): the only disposition kind is accepted_suppressed.
   switch (obj.kind) {
-    case "cross_module":
-      return isFilledString(obj.targetModule);
-    case "owning_issue_still_red":
-      return (
-        isFilledString(obj.owningIssue) &&
-        isFilledString(obj.missingSurface) &&
-        isFilledString(obj.nextStep)
-      );
     case "accepted_suppressed":
       return acceptedSuppressionAuthorityFromRecord(obj);
-    case "spec_conflict":
-    case "infra_failure":
-      return isFilledString(obj.source);
-    case "same_module":
-      return true;
   }
   return false;
 }
@@ -313,6 +310,9 @@ export function isValidFinding(f: unknown): f is Finding {
     return false;
   }
   if (obj.action === "defer") {
+    // #604 correctness r1 (P2-b) / ADR 0062: `defer` can no longer carry a valid
+    // non-suppression disposition (the route kinds are gone), so a stray defer is
+    // malformed — the same fail-closed口径 the zod schemas and Python guard enforce.
     if (!isValidDispositionEvidence(obj.disposition)) return false;
     if (obj.disposition.kind === "accepted_suppressed") return false;
   }
@@ -320,17 +320,47 @@ export function isValidFinding(f: unknown): f is Finding {
     if (!isValidDispositionEvidence(obj.disposition)) return false;
     if (obj.disposition.kind !== "accepted_suppressed") return false;
   }
+  // #604 correctness r1 (P2-a): an accepted_suppressed governance disposition is
+  // ONLY valid on wont_fix/rejected. On any other action (esp. fix_now) it would
+  // slip through and classifyFindings (fix_now ⇒ blocking) would silently turn the
+  // governance suppression into a blocker. Reject it here — parity with the zod
+  // schemas and the Python outcome-guard.
+  if (
+    obj.action !== "wont_fix" &&
+    obj.action !== "rejected" &&
+    obj.disposition !== undefined &&
+    isValidDispositionEvidence(obj.disposition) &&
+    obj.disposition.kind === "accepted_suppressed"
+  ) {
+    return false;
+  }
   for (const field of FINDING_STRING_FIELDS) {
     if (!isString(obj[field])) return false;
   }
   return true;
 }
 
+// #604 correctness r5 (E1): the ONLY keys a prior-finding disposition may hold.
+// STRICT (parity with the family `.strict()` `cmrFindingDispositionSchema` and the
+// now-`.strict()` standalone `priorFindingDispositionSchema`): an extra key — e.g.
+// a deleted routing field — makes it invalid rather than being silently tolerated.
+const PRIOR_FINDING_DISPOSITION_KEYS: ReadonlySet<string> = new Set([
+  "identityKey",
+  "status",
+  "reason",
+  "source",
+  "scope",
+  "boundedReopen",
+]);
+
 export function isValidPriorFindingDisposition(
   d: unknown,
 ): d is PriorFindingDisposition {
   if (d == null || typeof d !== "object") return false;
   const obj = d as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    if (!PRIOR_FINDING_DISPOSITION_KEYS.has(key)) return false;
+  }
   if (!isFilledString(obj.identityKey)) return false;
   if (
     typeof obj.status !== "string" ||

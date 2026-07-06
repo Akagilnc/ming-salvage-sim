@@ -810,9 +810,15 @@ function escalationKindForHandoff(
 ): EscalationKind | undefined {
   if (status !== "escalate") return undefined;
   const escalation = escalateOf(output);
-  return escalation != null && isValidEscalation(escalation)
-    ? "decision"
-    : "failure";
+  // #604 correctness r1 (P1-a) / ADR 0062: the DECISION gate (B-class park) fires
+  // ONLY for a worker-PROACTIVE "需人类拍板" escalate. A well-shaped escalate that
+  // the RUNNER SYNTHESIZED from a protocol failure (malformed reviewer output
+  // exhausted its reruns — marked `synthesizedFailure`) is an infra/protocol
+  // FAILURE (A-class), not a decision, even though its reason/diagnosis are
+  // well-formed strings. So a valid escalate maps to "decision" ONLY when it is
+  // NOT a synthesized failure.
+  if (escalation == null || !isValidEscalation(escalation)) return "failure";
+  return escalation.synthesizedFailure === true ? "failure" : "decision";
 }
 
 /**
@@ -1627,15 +1633,9 @@ function successSummaryForCurrentState(input: {
   readonly deferredFindings: ReadonlyArray<Finding>;
   readonly findingDispositions: ReadonlyArray<FindingDisposition>;
 }): StopSummary {
-  const crossModuleFinding = input.deferredFindings.find(
-    (finding) => finding.disposition?.kind === "cross_module",
-  );
-  if (crossModuleFinding?.disposition !== undefined) {
-    return stopSummaryFromFindingDispositionEvidence({
-      finding: crossModuleFinding,
-      evidence: crossModuleFinding.disposition,
-    });
-  }
+  // #604 slice 4 (ADR 0062): routing disposition kinds are gone and the deferred
+  // bucket is always empty, so there is no cross-module defer to surface here —
+  // a success summary carries accepted-suppression metadata only.
   const acceptedSuppressions = acceptedSuppressionsFromDispositions(
     input.findingDispositions,
   );
@@ -2581,14 +2581,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ...(escalationAnswerForStep !== undefined
                     ? { escalationAnswer: escalationAnswerForStep }
                     : {}),
+                  // 信封宪法 (ADR 0062): the dispatch structure carries only the
+                  // identity keys + count; the rich finding content travels in the
+                  // separate landing payload below.
                   ...(step === "S5" || step === "S6"
                     ? {
-                        blockingFindings: pendingBlockingFindings,
                         blockingFindingIdentityKeys:
                           pendingBlockingFindingIdentityKeys,
+                        blockingFindingCount: pendingBlockingFindings.length,
                       }
                     : {}),
                 },
+                step === "S5" || step === "S6"
+                  ? { blockingFindings: pendingBlockingFindings }
+                  : undefined,
               );
             } catch (err) {
               if (
@@ -2611,6 +2617,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     diagnosis:
                       `step ${step} failed to produce valid reviewer output ` +
                       `${attempts} times; last error: ${errorMessage(err)}`,
+                    // #604 correctness r1 (P1-a): a RUNNER-synthesized escalate from
+                    // exhausted malformed reruns is a PROTOCOL FAILURE, not a
+                    // worker-proactive decision — mark it so the handoff maps to
+                    // escalationKind:"failure" (A-class), never the decision gate.
+                    synthesizedFailure: true,
                   },
                 };
                 stepSessionId = undefined;
@@ -2642,6 +2653,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   diagnosis:
                     `step ${step} produced invalid reviewer output ${attempts} times; ` +
                     "runner stopped instead of retrying indefinitely",
+                  // #604 correctness r1 (P1-a): protocol failure, not a decision —
+                  // synthesized by the runner after exhausted reruns.
+                  synthesizedFailure: true,
                 },
               };
               stepSessionId =
@@ -2858,6 +2872,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     ledger.push({
       step,
       ...(output !== undefined ? { output } : {}),
+      // #604 correctness r5 (E2): carry the surfaced per-step session id on the
+      // in-memory entry too. The persisted ledger (emitLedger below) already records
+      // it, but RunResult.stepLedger (the in-memory ledger) previously dropped it —
+      // so the family runner reading a parked child's escalated agent step off the
+      // lean RunResult ledger saw `sessionId: undefined` and never forwarded the
+      // real id for 原地 resume (FamilyChildEscalation.sessionId existed in name only).
+      ...(stepSessionId !== undefined ? { sessionId: stepSessionId } : {}),
       ...(stepFindingDispositions !== undefined
         ? { findingDispositions: stepFindingDispositions }
         : {}),

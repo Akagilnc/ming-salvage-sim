@@ -25,6 +25,7 @@
 
 import type {
   DispatchContext,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSessionMode,
   WorkerSpec,
@@ -156,9 +157,10 @@ export async function dispatchFamilyWorker(
   familyBackend: FamilyBackend,
   spec: WorkerSpec,
   ctx: DispatchContext,
+  landing?: WorkerLandingPayload,
 ): Promise<WorkerResult> {
   if (familyBackend.dispatchWorker !== undefined) {
-    return familyBackend.dispatchWorker(spec, ctx);
+    return familyBackend.dispatchWorker(spec, ctx, landing);
   }
   return legacyDispatchFamilyWorker(familyBackend, spec, ctx);
 }

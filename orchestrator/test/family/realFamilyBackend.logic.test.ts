@@ -958,11 +958,9 @@ describe("parseCmrOutcome accepted suppression contract", () => {
             claim_quote: '"中央军饷", "太仓亏空", "宗室禄米", "官俸", "工部",',
             location: "ming_sim/db.py:3985",
             suggested_fix: "Use 百官俸禄 as the matched budget item name.",
+            // #604 slice 4 (ADR 0062): route kinds were removed; a fix_now finding
+            // carries no disposition. (Was `disposition:{kind:"same_module"}`.)
             action: "fix_now",
-            disposition: {
-              kind: "same_module",
-              reason: "The exact-name match is in the changed budget summary consumer.",
-            },
           },
         ],
         evidencePaths: ["cmr/step6-correctness/review-summary.json"],

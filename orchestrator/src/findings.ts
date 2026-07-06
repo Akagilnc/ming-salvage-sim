@@ -150,9 +150,6 @@ function dispositionFromFinding(
       ? {
           source: acceptedSuppression.source,
           scope: acceptedSuppression.scope,
-          ...(acceptedSuppression.targetModule !== undefined
-            ? { targetModule: acceptedSuppression.targetModule }
-            : {}),
           boundedReopen: acceptedSuppression.boundedReopen,
         }
       : {}),
@@ -194,20 +191,16 @@ function disputedDisposition(disposition: FindingDisposition): FindingDispositio
   };
 }
 
-function isAllowedCrossModuleDefer(finding: Finding): boolean {
-  return (
-    finding.action === "defer" &&
-    finding.disposition?.kind === "cross_module" &&
-    finding.disposition.targetModule !== undefined &&
-    finding.disposition.targetModule.trim().length > 0 &&
-    finding.disposition.reason.trim().length > 0
-  );
-}
-
 function isBlockingByDisposition(finding: Finding): boolean {
   if (isBlockingFinding(finding)) return true;
-  if (finding.action !== "defer") return false;
-  return !isAllowedCrossModuleDefer(finding);
+  // #604 correctness r1 (P1-c) / ADR 0062: any non-suppression finding that
+  // reaches this predicate is blocking — routing disposition kinds are gone, so
+  // there is no免修 disposition left. This covers `defer` AND a reopened/disputed
+  // `wont_fix`/`rejected` that fell through the accepted-suppression branch
+  // (suppression失配 / dispute exhausted). Only a MATCHING accepted suppression
+  // is suppressed, and that is handled上游 (it never reaches here). The `deferred`
+  // bucket is retained by the return shape but is now PROVABLY always empty.
+  return true;
 }
 
 export function classifyFindings(
@@ -235,8 +228,55 @@ export function classifyFindings(
       ? priorDisposition
       : undefined;
     if (isDispositionAction(finding.action) && !isBlockingFinding(finding)) {
+      // #604 correctness r4 (D4): the disposition-action (wont_fix/rejected)
+      // MAINTAIN/UPGRADE branch is gated by `!isBlockingFinding` ONLY. The
+      // bf0fcfc6 `|| priorSuppression !== undefined` widening was DEAD CODE: a
+      // finding only enters here when its action is wont_fix/rejected AND it is
+      // non-blocking (medium/low). The widening only changed behavior for a
+      // high/critical finding with a wont_fix/rejected action — but that shape is
+      // PRODUCTION-UNREACHABLE: the upstream validate.ts / zod / Python guards
+      // reject `severity ∈ {critical,high}` unless `action === "fix_now"`, and an
+      // `accepted_suppressed` disposition is valid only on wont_fix/rejected. So a
+      // high/critical finding can never be validly suppressed and can never take a
+      // maintenance action; `priorSuppression` (derived from a prior sourced
+      // accepted_suppression) is therefore never high/critical either. The
+      // widening added a branch for an impossible payload and desynced the
+      // classifier from the upstream invariant. Reverted here. A high/critical
+      // finding stays out of this branch and blocks via the general path
+      // (fresh-high cannot self-waive; an upgrade to high blocks with a recorded
+      // reopen).
       if (!isMatchingAcceptedSuppression(finding, key, trustedSources)) {
         blocking.push(finding);
+        continue;
+      }
+      // #604 rework per ADR 0030 (user定论 2026-07-06). A matching accepted
+      // suppression that maintains an existing sourced suppression must NEVER
+      // rewrite governance state, and an UPGRADE must BLOCK rather than be
+      // silently dropped.
+      if (priorSuppression !== undefined) {
+        if (upgradedSeverity(finding, priorSuppression)) {
+          // UPGRADE (severity升级): record the reopen (capped) AND BLOCK. The
+          // higher severity is not covered by the waiver. Both the
+          // budget-available and budget-exhausted subcases block — the old code
+          // recorded a reopen then `continue`d, silently dropping the upgraded
+          // finding (and dropping it entirely once the budget was exhausted).
+          if (priorSuppression.reopenAttempts < MAX_REOPEN_ATTEMPTS) {
+            dispositionByKey.set(
+              key,
+              reopenedDisposition(finding, priorSuppression),
+            );
+          }
+          blocking.push(finding);
+          continue;
+        }
+        // MAINTAIN (same OR lower severity, a maintenance action): ZERO-OP on
+        // the disposition. Do NOT spend disputeAttempts, do NOT refresh severity,
+        // do NOT刷回 a downgrade to the lower severity / reset budgets (ADR 0030
+        // "降级…不刷回"). Keep the prior EXACTLY as-is and stay suppressed. The
+        // "维持花预算" semantic that r1 P1-d introduced was a non-ratified
+        // implementation drift that violated ADR 0030; it is rolled back here.
+        // Only a real fix_now challenge (the general branch below) spends the
+        // single bounded dispute budget (#369 PRESERVED).
         continue;
       }
       dispositionByKey.set(key, dispositionFromFinding(finding, trustedSources));

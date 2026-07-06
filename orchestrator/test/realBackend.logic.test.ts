@@ -1163,6 +1163,55 @@ describe("RealBackend reviewer output contract", () => {
     );
   });
 
+  // #604 correctness r2 (C3): the standalone reviewer disposition schema is
+  // `.strict()`, so a disposition carrying the deleted `targetModule` field (or
+  // any other unknown key) is REJECTED here rather than silently stripped —
+  // parity with the family parser and the Python outcome guard.
+  it("rejects a reviewer disposition carrying the deleted targetModule field", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 445,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "prompts"),
+    });
+
+    expect(() =>
+      (
+        backend as unknown as {
+          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+        }
+      ).decodeOutput(
+        reviewerSpec,
+        {
+          findings: [
+            {
+              severity: "medium",
+              category: "correctness",
+              claim_quote: "deleted field must no longer validate",
+              location: "orchestrator/src/runner.ts:42",
+              suggested_fix: "keep the bounded suppression",
+              action: "wont_fix",
+              disposition_reason: "r",
+              disposition: {
+                kind: "accepted_suppressed",
+                source: "#445 owner answer",
+                scope: "runner review/fix loop",
+                reason: "Owner accepted this bounded risk.",
+                boundedReopen: "reopen if the same finding recurs in this scope",
+                targetModule: "some-module",
+              },
+            },
+          ],
+          priorFindingDispositions: [],
+        },
+        undefined,
+      ),
+    ).toThrow();
+  });
+
   it("rejects repair evidence that only self-reports a patch summary", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const backend = new DecodeOnlyBackend({

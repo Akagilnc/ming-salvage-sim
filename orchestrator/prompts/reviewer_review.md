@@ -31,20 +31,12 @@ With findings:
 REVIEWER_STEP_COMPLETE
 ```
 
-Deferred findings must carry a machine-verifiable `disposition`.
-Use one of:
-`same_module`, `cross_module`, `spec_conflict`, `infra_failure`,
-`owning_issue_still_red`.
-
-P0/P1 findings (`critical`/`high`) must always use `action:"fix_now"`.
-For P2/P3 `action:"defer"`, only `cross_module` may pass without a fix, and it
-must include `targetModule` and `reason`. Other disposition kinds must include
-their parser-required fields: `same_module` needs `reason`;
-`owning_issue_still_red` needs `owningIssue`, `missingSurface`, `nextStep`, and
-`reason`; `spec_conflict` needs `source` and `reason`; `infra_failure` needs
-`source` and `reason`. Same-module gaps, owning-issue still-red gaps, spec
-conflicts, and infra failures fail closed through the runner rather than
-silently passing.
+Report each active finding with only its body (`severity`, `category`,
+`claim_quote`, `location`, `suggested_fix`) plus an `action`. Do not emit routing
+disposition kinds — there are none. P0/P1 findings (`critical`/`high`) must always
+use `action:"fix_now"`. Every finding you report is blocking: the runner counts it
+and sends it back through coder-fix. There is no "defer to another module" pass —
+if a gap is real, report it as a concrete fix.
 
 Do not emit `accepted_suppressed`, `wont_fix`, or `rejected` from this standalone
 reviewer worker. This runner path has no trusted suppression-source input, so an
@@ -52,8 +44,7 @@ accepted suppression emitted here would fail closed and create an unnecessary
 fix loop. If an explicit user decision, accepted ADR, or named issue acceptance
 text already accepts a bounded risk, omit that accepted risk as a finding unless
 the current diff exceeds the accepted bound, changes scope, or increases
-severity; in that case report the concrete active gap with `fix_now` or the
-appropriate non-passing disposition above.
+severity; in that case report the concrete active gap with `fix_now`.
 
 When the runner supplies prior claimed-fixed findings for a fresh re-review,
 it exposes them at `$ORCHESTRATOR_FIX_FINDINGS_PATH` as JSON. Read that file,

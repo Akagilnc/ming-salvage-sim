@@ -9,20 +9,54 @@ export type StopReason =
   | "spec_conflict"
   | "cross_module_defer"
   | "infra_failure"
+  // B-class: a HUMAN DECISION GATE parked the run awaiting an answer (#604 F2,
+  // ADR 0062 A/B分家). Distinct from `infra_failure` (A-class真失败): a decision
+  // park is answerable + resumable in place, not a failure to repair.
+  | "decision_gate_park"
   | "provider_degraded"
   | "contract_drift"
   | "already_done"
   | "resumed";
 
+/**
+ * Thin typed description of a finding for persistence on a ledger/StopSummary
+ * (#604 F5, 信封宪法 ADR 0062). A StopSummary is a persisted run-terminus record;
+ * it must carry only the finding's IDENTITY (identityKey), SEVERITY, and a short
+ * human summary — never the full {@link Finding} rich content (claim_quote /
+ * suggested_fix / disposition evidence). The rich Finding travels only in the
+ * live coder-fix landing payload (see verifyCmr `{ blockingFindings }`), never
+ * into the ledger. Keeps the persisted structure thin so rich reviewer content
+ * cannot leak back into durable state.
+ */
+export interface FindingDescriptor {
+  readonly identityKey: string;
+  readonly severity: Finding["severity"];
+  readonly summary: string;
+}
+
+export function findingDescriptor(finding: Finding, summary?: string): FindingDescriptor {
+  return {
+    identityKey: findingIdentityKey(finding),
+    severity: finding.severity,
+    summary: summary ?? finding.claim_quote,
+  };
+}
+
 export interface StopSummary {
   readonly reason: StopReason;
   readonly summary: string;
   readonly repairHint?: string;
-  readonly finding?: Finding;
-  readonly targetModule?: string;
-  readonly owningIssue?: string;
-  readonly missingSurface?: string;
-  readonly nextStep?: string;
+  /**
+   * Thin typed descriptor of the finding that drove this stop — identity +
+   * severity + summary only. NOT the full {@link Finding} (#604 F5, ADR 0062):
+   * rich finding content must not be persisted on the ledger; it travels in the
+   * live coder-fix landing payload instead.
+   */
+  readonly findingDescriptor?: FindingDescriptor;
+  // #604 correctness r2 (C4): targetModule/owningIssue/missingSurface/nextStep
+  // were only ever set by the removed dead route-kind branches of
+  // stopReasonForFindingDisposition — no producer sets them and no consumer
+  // reads them off a StopSummary. Removed with the dead branches (ADR 0062).
   readonly metadata?: StopSummaryMetadata;
 }
 
@@ -105,82 +139,29 @@ export interface TrustBoundarySummary {
   readonly sourceKind: string;
 }
 
-export type FindingDispositionStopInput =
-  | {
-      readonly kind: "same_module";
-      readonly finding: Finding;
-      readonly reason?: string;
-    }
-  | {
-      readonly kind: "owning_issue_still_red";
-      readonly finding: Finding;
-      readonly owningIssue: string;
-      readonly missingSurface?: string;
-      readonly nextStep?: string;
-      readonly reason?: string;
-    }
-  | {
-      readonly kind: "cross_module";
-      readonly finding: Finding;
-      readonly targetModule: string;
-      readonly reason: string;
-    }
-  | {
-      readonly kind: "spec_conflict";
-      readonly finding: Finding;
-      readonly reason: string;
-      readonly repairHint?: string;
-    }
-  | {
-      readonly kind: "infra_failure";
-      readonly finding: Finding;
-      readonly reason: string;
-      readonly repairHint: string;
-    };
+// #604 correctness r2 (C4) / ADR 0062: the routing disposition kinds
+// (owning_issue_still_red / cross_module / spec_conflict / infra_failure) were
+// deleted from the reviewer contract — the runner is a pure scheduler that
+// counts blocking findings, it does not read a route kind. The only live caller
+// (verifyCmr.ts) passes `same_module`, so those four input branches were
+// unreachable dead code (with their derived StopSummary fields
+// targetModule/owningIssue/missingSurface/nextStep). They are removed here. The
+// `StopReason` union keeps its reserved runner terminal-state words unchanged.
+export type FindingDispositionStopInput = {
+  readonly kind: "same_module";
+  readonly finding: Finding;
+  readonly reason?: string;
+};
 
 export function stopReasonForFindingDisposition(
   input: FindingDispositionStopInput,
 ): StopSummary {
-  switch (input.kind) {
-    case "same_module":
-      return {
-        reason: "same_module_still_red",
-        summary: input.reason ?? "same-module finding is still red",
-        finding: input.finding,
-      };
-    case "owning_issue_still_red":
-      return {
-        reason: "owning_issue_still_red",
-        summary: input.reason ?? "owning issue has not closed the required surface",
-        finding: input.finding,
-        owningIssue: input.owningIssue,
-        ...(input.missingSurface !== undefined
-          ? { missingSurface: input.missingSurface }
-          : {}),
-        ...(input.nextStep !== undefined ? { nextStep: input.nextStep } : {}),
-      };
-    case "cross_module":
-      return {
-        reason: "cross_module_defer",
-        summary: input.reason,
-        finding: input.finding,
-        targetModule: input.targetModule,
-      };
-    case "spec_conflict":
-      return {
-        reason: "spec_conflict",
-        summary: input.reason,
-        finding: input.finding,
-        repairHint: input.repairHint ?? "resolve the specification conflict and rerun",
-      };
-    case "infra_failure":
-      return {
-        reason: "infra_failure",
-        summary: input.reason,
-        finding: input.finding,
-        repairHint: input.repairHint,
-      };
-  }
+  const summary = input.reason ?? "same-module finding is still red";
+  return {
+    reason: "same_module_still_red",
+    summary,
+    findingDescriptor: findingDescriptor(input.finding, summary),
+  };
 }
 
 export function successStopSummary(input?: {
@@ -254,50 +235,9 @@ export function stopSummaryFromFindingDispositionEvidence(input: {
     }
     return value;
   };
+  // #604 slice 4 (ADR 0062): the only reviewer-emitted disposition kind is
+  // accepted_suppressed — the routing kinds were removed from the contract.
   switch (evidence.kind) {
-    case "same_module":
-      return stopReasonForFindingDisposition({
-        kind: "same_module",
-        finding,
-        reason: evidence.reason,
-      });
-    case "owning_issue_still_red":
-      return stopReasonForFindingDisposition({
-        kind: "owning_issue_still_red",
-        finding,
-        owningIssue: requireField(
-          evidence.owningIssue,
-          "owningIssue",
-          evidence.kind,
-        ),
-        missingSurface: evidence.missingSurface,
-        nextStep: evidence.nextStep,
-        reason: evidence.reason,
-      });
-    case "cross_module":
-      return stopReasonForFindingDisposition({
-        kind: "cross_module",
-        finding,
-        targetModule: requireField(
-          evidence.targetModule,
-          "targetModule",
-          evidence.kind,
-        ),
-        reason: evidence.reason,
-      });
-    case "spec_conflict":
-      return stopReasonForFindingDisposition({
-        kind: "spec_conflict",
-        finding,
-        reason: evidence.reason,
-      });
-    case "infra_failure":
-      return stopReasonForFindingDisposition({
-        kind: "infra_failure",
-        finding,
-        reason: evidence.reason,
-        repairHint: "repair the infrastructure failure and rerun",
-      });
     case "accepted_suppressed":
       {
         const missing = [
@@ -320,7 +260,7 @@ export function stopSummaryFromFindingDispositionEvidence(input: {
       return {
         reason: "accepted_suppressed",
         summary: evidence.reason,
-        finding,
+        findingDescriptor: findingDescriptor(finding, evidence.reason),
         metadata: {
           acceptedSuppressions: [
             {
@@ -364,6 +304,25 @@ export function infraFailureStopSummary(input: {
           },
         }
       : {}),
+  };
+}
+
+/**
+ * B-class stop summary: a HUMAN DECISION GATE parked the run (#604 F2, ADR 0062
+ * A/B分家). Semantically a PARK awaiting an answer — resumable in place — NOT an
+ * A-class infra failure to repair. Kept a separate constructor so decision-gate
+ * parks never reuse the `infra_failure` reason/word.
+ */
+export function decisionGateParkStopSummary(input: {
+  readonly summary: string;
+  readonly repairHint: string;
+  readonly heads?: HeadFreshnessSummary;
+}): StopSummary {
+  return {
+    reason: "decision_gate_park",
+    summary: input.summary,
+    repairHint: input.repairHint,
+    ...(input.heads !== undefined ? { metadata: { heads: input.heads } } : {}),
   };
 }
 

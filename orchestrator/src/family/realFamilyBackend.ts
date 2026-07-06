@@ -118,6 +118,7 @@ import type {
   Finding,
   PriorFindingDisposition,
   StepSoul,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -1029,6 +1030,7 @@ export class RealFamilyBackend implements FamilyBackend {
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     if (spec.kind === "ship") {
       // #336: the family ship step (止于 PR) is a CONTAINER ship WORKER invoking
@@ -1036,7 +1038,7 @@ export class RealFamilyBackend implements FamilyBackend {
       return this.dispatchShipWorker(spec, ctx);
     }
     if (spec.kind === "coder") {
-      return this.runFamilyCoderFixWorker(spec, ctx);
+      return this.runFamilyCoderFixWorker(spec, ctx, landing);
     }
     if (spec.kind !== "cmr") {
       // Any other family worker kind (merge — B 段) forwards to the legacy seam.
@@ -1388,6 +1390,7 @@ export class RealFamilyBackend implements FamilyBackend {
   protected async runFamilyCoderFixWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     if (ctx.familyBase === undefined) {
       throw new Error(
@@ -1412,7 +1415,7 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
-      const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx);
+      const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx, landing);
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
         try {
@@ -1442,6 +1445,7 @@ export class RealFamilyBackend implements FamilyBackend {
   /** Write the runner-owned blocking CMR findings file into the checked-out family base. */
   protected writeFamilyFixFindingsFile(
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): { path: string; sandboxPath: string } {
     this.excludeOptionalRuntimeFileFromGit(FAMILY_FIX_FINDINGS_FILENAME);
     const path = join(this.opts.workingRepo, FAMILY_FIX_FINDINGS_FILENAME);
@@ -1449,7 +1453,9 @@ export class RealFamilyBackend implements FamilyBackend {
       path,
       `${JSON.stringify(
         {
-          blockingFindings: ctx.blockingFindings ?? [],
+          // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
+          // ADR 0062) — never from the runner's thin DispatchContext.
+          blockingFindings: landing?.blockingFindings ?? [],
           blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
           ...(ctx.repairAttemptFailures !== undefined &&
           ctx.repairAttemptFailures.length > 0
@@ -2766,66 +2772,35 @@ const cmrClosureSchema = {
   claimedFixedFindingIdentityKeys: z.array(nonEmpty),
   priorFindingDispositions: z.array(cmrFindingDispositionSchema),
 } as const;
-const cmrDispositionEvidenceSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("same_module"), reason: nonEmpty }).strict(),
-  z
-    .object({
-      kind: z.literal("cross_module"),
-      targetModule: nonEmpty,
-      reason: nonEmpty,
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("spec_conflict"),
-      source: nonEmpty,
-      reason: nonEmpty,
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("infra_failure"),
-      source: nonEmpty,
-      reason: nonEmpty,
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("owning_issue_still_red"),
-      owningIssue: nonEmpty,
-      missingSurface: nonEmpty,
-      nextStep: nonEmpty,
-      reason: nonEmpty,
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("accepted_suppressed"),
-      source: nonEmpty,
-      scope: nonEmpty,
-      reason: nonEmpty,
-      findingIdentity: nonEmpty.optional(),
-      targetModule: nonEmpty.optional(),
-      boundedReopen: nonEmpty,
-    })
-    .strict()
-    .superRefine((disposition, ctx) => {
-      if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "accepted_suppressed requires explicit user/ADR/issue source",
-          path: ["source"],
-        });
-      }
-      if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "accepted_suppressed requires bounded reopen condition",
-          path: ["boundedReopen"],
-        });
-      }
-    }),
-]);
+// #604 slice 4 (ADR 0062): the CMR reviewer contract no longer carries routing
+// disposition kinds — the only disposition a reviewer may emit is the
+// accepted-suppression governance carrier.
+const cmrDispositionEvidenceSchema = z
+  .object({
+    kind: z.literal("accepted_suppressed"),
+    source: nonEmpty,
+    scope: nonEmpty,
+    reason: nonEmpty,
+    findingIdentity: nonEmpty.optional(),
+    boundedReopen: nonEmpty,
+  })
+  .strict()
+  .superRefine((disposition, ctx) => {
+    if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "accepted_suppressed requires explicit user/ADR/issue source",
+        path: ["source"],
+      });
+    }
+    if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "accepted_suppressed requires bounded reopen condition",
+        path: ["boundedReopen"],
+      });
+    }
+  });
 const cmrReviewerFindingSchema = z
   .object({
     severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
@@ -2849,15 +2824,33 @@ const cmrReviewerFindingSchema = z
         message: "critical/high findings must be fix_now",
       });
     }
+    // #604 correctness r1 (P2-a): an `accepted_suppressed` governance disposition
+    // is ONLY valid on a wont_fix/rejected finding. On a fix_now finding it would
+    // otherwise validate, and classifyFindings (fix_now ⇒ blocking) would silently
+    // turn the governance suppression into a blocker. Reject it here.
     if (
-      finding.action === "defer" &&
-      (finding.disposition === undefined ||
-        finding.disposition.kind === "accepted_suppressed")
+      finding.action !== "wont_fix" &&
+      finding.action !== "rejected" &&
+      finding.disposition?.kind === "accepted_suppressed"
     ) {
       ctx.addIssue({
         code: "custom",
         path: ["disposition"],
-        message: "deferred findings require a non-suppression disposition",
+        message:
+          "accepted_suppressed disposition is only valid on wont_fix/rejected findings",
+      });
+    }
+    // #604 correctness r1 (P2-b): ADR 0062 removed all non-suppression route
+    // disposition kinds, so `defer` can no longer carry a valid non-suppression
+    // disposition. New reviewer/CMR prompts forbid `defer`; a STRAY defer must
+    // fail closed as malformed (consistent口径 with validate.ts:isValidFinding and
+    // the Python outcome-guard), never be treated as a免修 route.
+    if (finding.action === "defer") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["action"],
+        message:
+          "defer is no longer a supported action (ADR 0062): a stray defer is malformed",
       });
     }
     if (

@@ -18,13 +18,17 @@
  * append-only invariant but does NOT dedup — reconcile is #298.)
  */
 
-import type { EscalationAnswerPayload, EscalationKind } from "../types.js";
+import type {
+  EscalationAnswerPayload,
+  EscalationKind,
+  FindingDisposition,
+} from "../types.js";
 import {
+  decisionGateParkStopSummary,
   infraFailureStopSummary,
   successStopSummary,
   type StopSummary,
 } from "../stopSummary.js";
-import type { FamilyCmrClassification } from "./cmrClassification.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -73,8 +77,15 @@ export interface AbortedRecord {
   readonly reason?: string;
   /** The family base HEAD at the time the barrier failed (for triage + baseline). */
   readonly familyHeadAfter?: string;
-  /** Family CMR finding classification audit trail (#449). */
-  readonly cmrFindingClassification?: FamilyCmrClassification;
+  /**
+   * Thin control envelope (#604 slice 3 / ADR 0062): the deduped identity keys of
+   * the blocking findings this abort carries. The runner reads ONLY this off an
+   * aborted row. A `not_converged` sentinel abort carries `[]`; an infra abort
+   * carries nothing (`undefined`), which the runner treats as an unclassified abort.
+   */
+  readonly blockingFindingIdentityKeys?: readonly string[];
+  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
+  readonly cmrDispositions?: readonly FindingDisposition[];
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
 }
@@ -102,8 +113,8 @@ export interface CmrPassedRecord {
   readonly familyHeadAfter?: string;
   /** Resolved route fingerprint for the CMR worker and declared review legs. */
   readonly routeFingerprint?: string;
-  /** Family CMR finding classification audit trail (#449). */
-  readonly cmrFindingClassification?: FamilyCmrClassification;
+  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
+  readonly cmrDispositions?: readonly FindingDisposition[];
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
 }
@@ -113,7 +124,14 @@ export interface CmrReviewedRecord {
   readonly cmrPass: IntegratedCmrPass;
   readonly reason?: string;
   readonly familyHeadAfter?: string;
-  readonly cmrFindingClassification?: FamilyCmrClassification;
+  /**
+   * Thin control envelope (#604 slice 3 / ADR 0062): the deduped identity keys of
+   * the blocking findings the runner must route through coder-fix. The runner
+   * reads ONLY this off a `cmr_reviewed` row.
+   */
+  readonly blockingFindingIdentityKeys?: readonly string[];
+  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
+  readonly cmrDispositions?: readonly FindingDisposition[];
   readonly stopSummary?: StopSummary;
 }
 
@@ -142,6 +160,28 @@ export interface FamilyEscalationAnswerRecord {
   readonly answer: string;
   readonly source: "human" | "resume_input";
   readonly note?: string;
+  /**
+   * When set, this answer answers a CHILD decision escalation (#604 slice 5): it
+   * matches the `child_decision_parked` row carrying the SAME childIssue, so multiple
+   * parked children can be answered separately.
+   */
+  readonly childIssue?: number;
+}
+
+/**
+ * A CHILD-LEVEL decision-gate park ledger record (#604 slice 5). Recorded when a
+ * child slice's own single-slice run parked on a product/design题
+ * (`escalationKind:"decision"`). INDEPENDENT of the family's own `escalated` row —
+ * this is a human DECISION GATE (park → resume), not an infra escalation/failure.
+ */
+export interface ChildDecisionParkedRecord {
+  readonly childIssue: number;
+  readonly reason: string;
+  readonly diagnosis: string;
+  /** The child's escalated single-slice worker session id, for 原地 resume. */
+  readonly sessionId?: string;
+  readonly familyHeadAfter?: string;
+  readonly stopSummary?: StopSummary;
 }
 
 /** A production-admission child skip audit row (#450/#451). */
@@ -223,7 +263,8 @@ export async function recordAborted(
       cmrPass: record.cmrPass,
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
-      cmrFindingClassification: record.cmrFindingClassification,
+      blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
+      cmrDispositions: record.cmrDispositions,
       stopSummary:
         record.stopSummary ??
         infraFailureStopSummary({
@@ -255,7 +296,7 @@ export async function recordCmrPassed(
       cmrPass: record.cmrPass,
       familyHeadAfter: record.familyHeadAfter,
       routeFingerprint: record.routeFingerprint,
-      cmrFindingClassification: record.cmrFindingClassification,
+      cmrDispositions: record.cmrDispositions,
       stopSummary:
         record.stopSummary ??
         successStopSummary(
@@ -285,7 +326,8 @@ export async function recordCmrReviewed(
       cmrPass: record.cmrPass,
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
-      cmrFindingClassification: record.cmrFindingClassification,
+      blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
+      cmrDispositions: record.cmrDispositions,
       stopSummary:
         record.stopSummary ??
         infraFailureStopSummary({
@@ -390,11 +432,150 @@ export async function recordFamilyEscalationAnswered(
       status: "escalation_answered",
       event: "escalation_answered",
       phase: "final",
+      // #604 F1: carry childIssue so `isValidChildAnswer` (entry.childIssue ===
+      // childIssue) can bind this answer to the parked child. Dropping it here
+      // deadlocked the decision gate — a human-supplied answer never reopened the
+      // parked child because the row could not be matched.
+      childIssue: record.childIssue,
       answer,
       source: record.source,
       note: record.note,
     }) as FamilyLedgerEntry,
   );
+}
+
+/**
+ * Append a CHILD-LEVEL decision-gate PARK marker (#604 slice 5).
+ *
+ * Recorded when a child slice parked on a product/design decision题
+ * (`escalationKind:"decision"`). Uses the INDEPENDENT `child_decision_parked`
+ * event (NOT the family's own A-class `escalated` row) so the human decision gate
+ * (park → resume) stays distinct from infra escalation/failure. The row carries
+ * `childIssue` so several children can park + be resumed separately, and the
+ * child's `sessionId` so a later resume re-enters IN PLACE.
+ */
+export async function recordChildDecisionParked(
+  backend: FamilyBackend,
+  record: ChildDecisionParkedRecord,
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      childIssue: record.childIssue,
+      status: "child_decision_parked",
+      event: "child_decision_parked",
+      phase: "wave",
+      escalationKind: "decision",
+      reason: record.reason,
+      diagnosis: record.diagnosis,
+      sessionId: record.sessionId,
+      familyHeadAfter: record.familyHeadAfter,
+      stopSummary:
+        record.stopSummary ??
+        decisionGateParkStopSummary({
+          summary: record.reason,
+          repairHint:
+            "answer this child decision gate (append an escalation_answered row with the matching childIssue) and rerun the family to resume in place",
+          ...(record.familyHeadAfter !== undefined
+            ? {
+                heads: {
+                  actualFamilyHead: record.familyHeadAfter,
+                  sources: { actualFamilyHead: "family child decision-park ledger row" },
+                },
+              }
+            : {}),
+        }),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/** Is this a valid, well-shaped `child_decision_parked` decision row (#604 slice 5)? */
+function isValidChildDecisionParked(
+  entry: FamilyLedgerEntry,
+): entry is FamilyLedgerEntry & { readonly childIssue: number } {
+  return (
+    entry.status === "child_decision_parked" &&
+    entry.event === "child_decision_parked" &&
+    entry.escalationKind === "decision" &&
+    Number.isSafeInteger(entry.childIssue) &&
+    (entry.childIssue ?? 0) > 0
+  );
+}
+
+/** Is this a valid `escalation_answered` row bound to a specific child (#604 slice 5)? */
+function isValidChildAnswer(
+  entry: FamilyLedgerEntry,
+  childIssue: number,
+): boolean {
+  return (
+    entry.status === "escalation_answered" &&
+    entry.event === "escalation_answered" &&
+    entry.childIssue === childIssue &&
+    typeof entry.answer === "string" &&
+    entry.answer.trim().length > 0 &&
+    // A durable JSONL round-trip can serialize an absent optional field as `null`
+    // rather than omit it; `== null` accepts both null and undefined (the "no
+    // source" intent) without accepting a real bad value.
+    (entry.source == null ||
+      entry.source === "human" ||
+      entry.source === "resume_input")
+  );
+}
+
+/**
+ * The set of child issue numbers whose decision gate is STILL UNANSWERED
+ * (#604 slice 5). A child is unanswered iff it has a `child_decision_parked` row
+ * with no LATER matching `escalation_answered` row. The family runner returns
+ * `status:"escalated"` while any child is unanswered.
+ */
+export function unansweredChildEscalations(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+): ReadonlyArray<FamilyLedgerEntry & { readonly childIssue: number }> {
+  const out: (FamilyLedgerEntry & { readonly childIssue: number })[] = [];
+  const seen = new Set<number>();
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (!isValidChildDecisionParked(entry)) continue;
+    if (seen.has(entry.childIssue)) continue;
+    seen.add(entry.childIssue);
+    const answered = entries
+      .slice(i + 1)
+      .some((later) => isValidChildAnswer(later, entry.childIssue));
+    if (!answered) out.push(entry);
+  }
+  return out.reverse();
+}
+
+/**
+ * The human answer that reopens a specific child's parked decision gate
+ * (#604 slice 5), or `undefined` when the child is not parked / not yet answered.
+ * Reads the LATEST `child_decision_parked` for the child, then the latest matching
+ * `escalation_answered` after it.
+ */
+export function childEscalationAnswer(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  childIssue: number,
+): EscalationAnswerPayload | undefined {
+  let escalatedIdx = -1;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (isValidChildDecisionParked(entry) && entry.childIssue === childIssue) {
+      escalatedIdx = i;
+      break;
+    }
+  }
+  if (escalatedIdx < 0) return undefined;
+  for (let i = entries.length - 1; i > escalatedIdx; i--) {
+    const entry = entries[i]!;
+    if (isValidChildAnswer(entry, childIssue)) {
+      return {
+        event: "escalation_answered",
+        answer: entry.answer!,
+        source: (entry.source ?? "human") as "human" | "resume_input",
+        ...(entry.note != null ? { note: entry.note } : {}),
+      };
+    }
+  }
+  return undefined;
 }
 
 /** Append one production-admission skip audit row. */
@@ -422,12 +603,20 @@ function isValidFamilyAnswer(entry: FamilyLedgerEntry): boolean {
     entry.status === "escalation_answered" &&
     entry.event === "escalation_answered" &&
     entry.phase === "final" &&
+    // #604 correctness r1 (P1-f): a FAMILY-level answer must NOT carry a
+    // childIssue. A child-bound answer row (F1 added childIssue to child answers)
+    // targets a specific parked CHILD via `isValidChildAnswer`; it must never
+    // release an unrelated FAMILY-level decision escalation (which is the
+    // `event:"escalated"` row that carries no childIssue).
+    // `== null` (not `=== undefined`): a family-level answer must carry NO child
+    // binding, and a JSONL round-trip can serialize that absence as `null`.
+    entry.childIssue == null &&
     typeof entry.answer === "string" &&
     entry.answer.trim().length > 0 &&
-    (entry.source === undefined ||
+    (entry.source == null ||
       entry.source === "human" ||
       entry.source === "resume_input") &&
-    (entry.note === undefined || typeof entry.note === "string")
+    (entry.note == null || typeof entry.note === "string")
   );
 }
 
@@ -450,7 +639,7 @@ function familyAnswerPayload(entry: FamilyLedgerEntry): EscalationAnswerPayload 
     event: "escalation_answered",
     answer: entry.answer!,
     source: (entry.source ?? "human") as "human" | "resume_input",
-    ...(entry.note !== undefined ? { note: entry.note } : {}),
+    ...(entry.note != null ? { note: entry.note } : {}),
   };
 }
 
