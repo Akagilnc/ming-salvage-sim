@@ -227,20 +227,24 @@ export function classifyFindings(
     )
       ? priorDisposition
       : undefined;
-    if (
-      isDispositionAction(finding.action) &&
-      (!isBlockingFinding(finding) || priorSuppression !== undefined)
-    ) {
-      // per-slice cmr r1 (agy P1): `!isBlockingFinding` alone excluded HIGH/
-      // CRITICAL maintenance actions from this branch, so a validly-suppressed
-      // high/critical finding re-reported at the SAME severity skipped the ZERO-OP
-      // MAINTAIN path, fell to the general branch, spent the single dispute budget
-      // AND blocked — un-suppressing it (ADR 0030 maintain=zero-op broke for
-      // high/crit). A prior SOURCED suppression already carries the runner's
-      // waiver at that severity, so a matching same/lower-severity re-submission
-      // must stay a zero-op regardless of the finding's own severity. `priorSuppression`
-      // is undefined for a FRESH high/crit (no waiver yet) → it still falls through
-      // to the general blocking path and CANNOT self-waive.
+    if (isDispositionAction(finding.action) && !isBlockingFinding(finding)) {
+      // #604 correctness r4 (D4): the disposition-action (wont_fix/rejected)
+      // MAINTAIN/UPGRADE branch is gated by `!isBlockingFinding` ONLY. The
+      // bf0fcfc6 `|| priorSuppression !== undefined` widening was DEAD CODE: a
+      // finding only enters here when its action is wont_fix/rejected AND it is
+      // non-blocking (medium/low). The widening only changed behavior for a
+      // high/critical finding with a wont_fix/rejected action — but that shape is
+      // PRODUCTION-UNREACHABLE: the upstream validate.ts / zod / Python guards
+      // reject `severity ∈ {critical,high}` unless `action === "fix_now"`, and an
+      // `accepted_suppressed` disposition is valid only on wont_fix/rejected. So a
+      // high/critical finding can never be validly suppressed and can never take a
+      // maintenance action; `priorSuppression` (derived from a prior sourced
+      // accepted_suppression) is therefore never high/critical either. The
+      // widening added a branch for an impossible payload and desynced the
+      // classifier from the upstream invariant. Reverted here. A high/critical
+      // finding stays out of this branch and blocks via the general path
+      // (fresh-high cannot self-waive; an upgrade to high blocks with a recorded
+      // reopen).
       if (!isMatchingAcceptedSuppression(finding, key, trustedSources)) {
         blocking.push(finding);
         continue;

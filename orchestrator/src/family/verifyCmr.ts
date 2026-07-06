@@ -745,6 +745,17 @@ function cmrClosureFailureReason(input: {
     readonly scope?: string;
     readonly boundedReopen?: string;
   }[];
+  // #604 correctness r4 (D1): the EARLY closure guard (run before the
+  // blocking→coder-fix branch on a RESTART barrier) must only assert the closure
+  // payload is WELL-FORMED — every protected prior key is claimed or disposed, no
+  // stale/duplicate/malformed dispositions. It must NOT assert every prior
+  // disposition is `verified-closed`: a prior finding that is still `still-active`
+  // / `unable-to-assess` is precisely what the coder-fix loop exists to repair, so
+  // aborting on it would over-fire and starve the fix loop (the r2 C2 regression).
+  // `allowStillActive: true` skips ONLY the `stillOpen` closed-status assertion;
+  // every shape/coverage check still runs. The LATE converged-path guard omits
+  // this flag, keeping its full `verified-closed` assertion intact.
+  readonly allowStillActive?: boolean;
 }): string | undefined {
   const claimed = input.claimedFixedFindingIdentityKeys ?? [];
   const priorDispositions = input.priorFindingDispositions ?? [];
@@ -813,21 +824,23 @@ function cmrClosureFailureReason(input: {
       `findings cannot be closed by accepted_suppressed: ${suppressedProtectedPriorKeys.join(", ")}`
     );
   }
-  const stillOpen = priorDispositions
-    .filter(
-      (disposition) =>
-        disposition.status !== "verified-closed" &&
-        !(
-          disposition.status === "accepted_suppressed" &&
-          trustedAcceptedSuppressionDisposition(disposition, input.moduleContext)
-        ),
-    )
-    .map((disposition) => disposition.identityKey);
-  if (stillOpen.length > 0) {
-    return (
-      `integrated cmr ${input.pass} closure failed: prior claimed-fixed ` +
-      `findings are not verified closed: ${stillOpen.join(", ")}`
-    );
+  if (input.allowStillActive !== true) {
+    const stillOpen = priorDispositions
+      .filter(
+        (disposition) =>
+          disposition.status !== "verified-closed" &&
+          !(
+            disposition.status === "accepted_suppressed" &&
+            trustedAcceptedSuppressionDisposition(disposition, input.moduleContext)
+          ),
+      )
+      .map((disposition) => disposition.identityKey);
+    if (stillOpen.length > 0) {
+      return (
+        `integrated cmr ${input.pass} closure failed: prior claimed-fixed ` +
+        `findings are not verified closed: ${stillOpen.join(", ")}`
+      );
+    }
   }
   const dispositions = new Map(priorDispositions.map((d) => [d.identityKey, d.status]));
   const claimedSet = new Set(claimed);
@@ -1615,6 +1628,52 @@ async function runIntegratedCmrPass(input: {
     (cmrResult.output.findings === undefined ||
       cmrResult.output.findings.length === 0)
   ) {
+    // #604 correctness r4 (D2): on a RESTART barrier the protected prior keys must
+    // be accounted for EVEN when the fresh reviewer returns `converged:false` with
+    // NO findings. Without this guard a reviewer could emit `{converged:false,
+    // findings:[]}` while silently dropping the protected prior keys (no
+    // claimedFixed, no disposition) and slip past the ADR 0030 coverage check as an
+    // ordinary thin not_converged envelope. Run the well-formedness closure guard
+    // (shape/coverage only — `allowStillActive:true`, matching the early guard)
+    // BEFORE the thin not_converged abort; a missing-coverage payload fails closed
+    // as contract_drift instead.
+    //
+    // #604 correctness r4 (D3): also run when the reviewer SELF-REPORTS a closure
+    // payload on a first pass (claimed-fixed keys / dispositions with no protected
+    // prior set) so a `converged:false, findings:[]` malformed self-report cannot
+    // masquerade as an ordinary not_converged abort.
+    const notConvergedHasClosurePayload =
+      priorCmrFindingIdentityKeys !== undefined ||
+      (cmrResult.output.claimedFixedFindingIdentityKeys?.length ?? 0) > 0 ||
+      (cmrResult.output.priorFindingDispositions?.length ?? 0) > 0;
+    if (notConvergedHasClosurePayload) {
+      const notConvergedClosureFailure = cmrClosureFailureReason({
+        pass,
+        moduleContext,
+        claimedFixedFindingIdentityKeys:
+          cmrResult.output.claimedFixedFindingIdentityKeys,
+        protectedPriorFindingIdentityKeys: priorCmrFindingIdentityKeys,
+        priorFindingDispositions: cmrResult.output.priorFindingDispositions,
+        allowStillActive: true,
+      });
+      if (notConvergedClosureFailure !== undefined) {
+        await recordDurableAbort(familyBackend, {
+          phase: "final",
+          cmrPass: pass,
+          reason: notConvergedClosureFailure,
+          familyHeadAfter: postWorkerFamilyHead,
+          stopSummary: contractDriftStopSummary({
+            summary: notConvergedClosureFailure,
+            repairHint:
+              "repair the integrated CMR claimed-fixed closure payload and rerun the family barrier",
+          }),
+        });
+        return {
+          result: { ok: false, ran: true },
+          familyHeadAfter: postWorkerFamilyHead,
+        };
+      }
+    }
     const reason =
       cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
     // #604 slice 3 / ADR 0062: a not_converged abort carries NO blocking findings.
@@ -1690,10 +1749,31 @@ async function runIntegratedCmrPass(input: {
   // FIRST, so a fresh pass that also happened to raise a NEW blocker slipped the
   // unrelated new blocker into coder-fix and bypassed this guard. Run the closure
   // guard BEFORE the blocking branch whenever protected prior keys are present.
-  // On a FIRST pass (`priorCmrFindingIdentityKeys === undefined`) there is nothing
-  // protected, so this early guard is skipped and the normal blocking→coder-fix
-  // path is preserved (the late guard at the end still runs for the converged path).
-  if (priorCmrFindingIdentityKeys !== undefined) {
+  //
+  // #604 correctness r4 (D3): the early guard must ALSO run on a FIRST pass
+  // (`priorCmrFindingIdentityKeys === undefined`) whenever the reviewer SELF-REPORTS
+  // a closure payload — a non-empty `claimedFixedFindingIdentityKeys` or
+  // `priorFindingDispositions`. Pre-r4 the guard ran only when protected prior keys
+  // existed, so a first-pass reviewer that claimed to have fixed prior findings
+  // (with no runner-supplied prior set → `closure_context_missing`) slipped its NEW
+  // blocker into coder-fix and never tripped the malformed-payload guard. Running
+  // when ANY closure payload is present routes that malformed self-report to
+  // contract_drift. A genuinely payload-free first pass (no claimed, no
+  // dispositions, no protected keys) still skips the guard and preserves the normal
+  // blocking→coder-fix path (the late guard at the end still runs for the converged
+  // path).
+  const hasClosurePayload =
+    priorCmrFindingIdentityKeys !== undefined ||
+    (cmrResult.output.claimedFixedFindingIdentityKeys?.length ?? 0) > 0 ||
+    (cmrResult.output.priorFindingDispositions?.length ?? 0) > 0;
+  // #604 correctness r4 (D3): the early guard is scoped to the NON-converged path.
+  // A converged payload has its own LATE closure guard at the end (with the full
+  // `verified-closed` assertion), so the early guard must NOT preempt it — doing so
+  // would (a) let the early guard's `allowStillActive` skip the late guard's
+  // still-active rejection on the converged path, and (b) change which malformed-
+  // shape message wins there. On the converged path the early guard is a no-op; the
+  // late guard owns the complete assertion.
+  if (hasClosurePayload && !cmrResult.output.converged) {
     const earlyClosureFailure = cmrClosureFailureReason({
       pass,
       moduleContext,
@@ -1701,6 +1781,13 @@ async function runIntegratedCmrPass(input: {
         cmrResult.output.claimedFixedFindingIdentityKeys,
       protectedPriorFindingIdentityKeys: priorCmrFindingIdentityKeys,
       priorFindingDispositions: cmrResult.output.priorFindingDispositions,
+      // #604 correctness r4 (D1): the EARLY guard is a WELL-FORMEDNESS gate only.
+      // A prior key that is claimed-fixed but disposed `still-active` /
+      // `unable-to-assess` is a legitimate coder-fix input, NOT a contract drift —
+      // aborting on it (the r2 C2 regression) starves the fix loop. Skip only the
+      // `stillOpen` verified-closed assertion here; the LATE converged-path guard
+      // (no flag) keeps the full closed assertion.
+      allowStillActive: true,
     });
     if (earlyClosureFailure !== undefined) {
       await recordDurableAbort(familyBackend, {

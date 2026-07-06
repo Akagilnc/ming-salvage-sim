@@ -26,6 +26,7 @@
 import { describe, expect, it } from "vitest";
 
 import { classifyFindings } from "../src/findings.js";
+import { isValidFinding } from "../src/validate.js";
 import type { Finding, FindingDisposition } from "../src/types.js";
 
 const IDENTITY = "correctness|src/x.ts:1|claim";
@@ -103,34 +104,18 @@ describe("#604 ADR 0030 — maintain spends no budget (①)", () => {
     expect(c.dispositions[0]?.reopenAttempts).toBe(2);
   });
 
-  // per-slice cmr r1 (agy P1): the disposition-action branch was gated by
-  // `!isBlockingFinding`, so a HIGH/CRITICAL same-severity maintenance action
-  // skipped the ZERO-OP branch entirely, fell to the general branch, spent the
-  // single dispute budget AND blocked — un-suppressing a validly-suppressed high
-  // finding on re-submission (ADR 0030 maintain=zero-op violated for high/crit).
-  it("HIGH same-severity wont_fix maintenance is zero-op + stays suppressed", () => {
-    const c = classifyFindings([finding("high", "wont_fix")], [
-      priorSuppression("high", 0, 0),
-    ], { acceptedSuppressionSources: [trustedSource] });
-    expect(c.blocking).toEqual([]);
-    expect(c.deferred).toEqual([]);
-    expect(c.dispositions).toHaveLength(1);
-    expect(c.dispositions[0]?.disputeAttempts ?? 0).toBe(0);
-    expect(c.dispositions[0]?.severity).toBe("high");
-    expect(c.dispositions[0]?.reopenAttempts).toBe(0);
-  });
-
-  it("CRITICAL same-severity rejected maintenance with FRESH budget is zero-op + stays suppressed", () => {
-    // fresh dispute budget (disputeAttempts 0): the bug spent it AND blocked.
-    const c = classifyFindings([finding("critical", "rejected")], [
-      priorSuppression("critical", 0, 0),
-    ], { acceptedSuppressionSources: [trustedSource] });
-    expect(c.blocking).toEqual([]);
-    expect(c.dispositions[0]?.disputeAttempts ?? 0).toBe(0);
-    expect(c.dispositions[0]?.reopenAttempts).toBe(0);
-    expect(c.dispositions[0]?.severity).toBe("critical");
-  });
-
+  // #604 correctness r4 (D4): the bf0fcfc6 "HIGH/CRITICAL same-severity
+  // maintenance is zero-op" cases were REMOVED — they tested a
+  // PRODUCTION-UNREACHABLE payload. The upstream validate.ts / zod / Python
+  // guards reject `severity ∈ {critical,high}` unless `action === "fix_now"`, and
+  // an `accepted_suppressed` disposition is valid only on wont_fix/rejected, so a
+  // high/critical finding can NEVER be validly suppressed nor take a
+  // wont_fix/rejected maintenance action. `finding("high","wont_fix")` bypasses
+  // that gate by calling `classifyFindings` directly; asserting a zero-op for it
+  // pinned behavior for a shape the system can never produce. The real invariant
+  // is the positive one below (fresh high/crit blocks; upgrade-to-high blocks
+  // with a recorded reopen), which holds under the reverted `!isBlockingFinding`
+  // guard.
   it("HIGH wont_fix with a MATCHING suppression but NO prior still BLOCKS (fresh high cannot self-waive)", () => {
     // guard fix must NOT let a first-seen high suppression self-suppress: with no
     // prior disposition it falls through to the general blocking path.
@@ -147,6 +132,26 @@ describe("#604 ADR 0030 — maintain spends no budget (①)", () => {
     expect(c.blocking).toHaveLength(1);
     expect(c.dispositions[0]?.reopenAttempts).toBe(1);
     expect(c.dispositions[0]?.severity).toBe("high");
+  });
+
+  // #604 correctness r4 (D4): the invariant that makes a high/critical
+  // maintenance action production-unreachable — the upstream finding validator
+  // rejects `severity ∈ {critical,high}` unless `action === "fix_now"`. This is
+  // WHY the bf0fcfc6 `|| priorSuppression !== undefined` widening was dead code.
+  it("upstream validator rejects high/critical findings that are not fix_now (unreachable maintenance shape)", () => {
+    expect(isValidFinding(finding("high", "wont_fix"))).toBe(false);
+    expect(isValidFinding(finding("critical", "rejected"))).toBe(false);
+    // A high/critical finding is only valid as fix_now (which is BLOCKING, so it
+    // never enters the disposition-action maintenance branch).
+    const highFixNow: Finding = {
+      severity: "high",
+      category: "correctness",
+      claim_quote: "claim",
+      location: "src/x.ts:1",
+      suggested_fix: "fix it",
+      action: "fix_now",
+    };
+    expect(isValidFinding(highFixNow)).toBe(true);
   });
 });
 
