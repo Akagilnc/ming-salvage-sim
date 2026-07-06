@@ -9,4 +9,4 @@ worker 环境（dist/souls/skills/镜像）的新鲜性靠 **无条件重建 by 
 ## 后果
 
 - #372 重写为「无条件重建」薄 issue；#594/#595/#599（检测式三件套）关闭、由其 supersede。
-- 该逻辑属 launcher/入口，不进 runner 循环（runner 三功能见 ADR 0062）。
+- 该逻辑属 launcher/入口（指编排器任务启动器，而非仓库根目录桌面客户端的 `launcher.py`），不进 runner 循环（runner 三功能见 ADR 0062）。
