@@ -704,7 +704,7 @@ function trustedAcceptedSuppressionDisposition(
   );
 }
 
-function latestFamilyCmrDispositions(
+export function latestFamilyCmrDispositions(
   ledger: ReadonlyArray<{
     readonly cmrDispositions?: ReadonlyArray<FindingDisposition>;
   }>,
@@ -712,9 +712,20 @@ function latestFamilyCmrDispositions(
   // #604 slice 3 / ADR 0062: cross-round prior dispositions are read from the thin
   // `cmrDispositions` governance field, not the retired `cmrFindingClassification`
   // blob.
+  //
+  // #604 rework (codexB): SKIP defined-but-EMPTY tombstones. A not_converged
+  // abort used to persist `cmrDispositions: []`; because this scan returned the
+  // first DEFINED array from the end, that empty tombstone masked an earlier
+  // round's real accepted-suppression dispositions → next pass saw no prior →
+  // budget reset (C1-class recurrence). An empty array is never the authoritative
+  // "there were suppressions but now there are none" signal in this codebase, so
+  // skipping it is safe and keeps cross-round budget tracking intact. The
+  // abort-side fix (aborts no longer write `[]` at all) is the root cause; this
+  // read-side guard is defense-in-depth so no other entry point can re-introduce
+  // the masking.
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
-    if (entry.cmrDispositions !== undefined) {
+    if (entry.cmrDispositions !== undefined && entry.cmrDispositions.length > 0) {
       return entry.cmrDispositions;
     }
   }
@@ -1607,15 +1618,23 @@ async function runIntegratedCmrPass(input: {
     const reason =
       cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
     // #604 slice 3 / ADR 0062: a not_converged abort carries NO blocking findings.
-    // Persist the thin envelope as `[]` (defined-but-empty) so the runner keeps it
-    // in the classified-abort branch and derives no pending keys from it.
+    // Persist the thin envelope with `blockingFindingIdentityKeys: []` so the
+    // runner keeps it in the classified-abort branch and derives no pending keys
+    // from it.
+    //
+    // #604 rework (codexB): DO NOT write `cmrDispositions: []` here. An empty
+    // tombstone would mask an earlier round's real accepted-suppression
+    // dispositions (`latestFamilyCmrDispositions` returned the latest DEFINED
+    // array), resetting the reopen/dispute budget on the next pass. A
+    // not_converged abort produced no new governance dispositions, so it leaves
+    // the field UNDEFINED (omitted via `compact`), carrying the prior round's
+    // dispositions forward.
     await recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
       blockingFindingIdentityKeys: [],
-      cmrDispositions: [],
       stopSummary: notConvergedStopSummary(reason),
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
@@ -1825,15 +1844,19 @@ async function runIntegratedCmrPass(input: {
     const reason =
       cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
     // #604 slice 3 / ADR 0062: not_converged carries no blocking findings — the
-    // thin envelope is `[]` (defined-but-empty), keeping it in the runner's
-    // classified-abort branch while yielding no pending keys.
+    // thin envelope keeps `blockingFindingIdentityKeys: []`, staying in the
+    // runner's classified-abort branch while yielding no pending keys.
+    //
+    // #604 rework (codexB): DO NOT write `cmrDispositions: []` — see the twin
+    // not_converged branch above. An empty tombstone masks the prior round's real
+    // accepted-suppression dispositions and resets the reopen/dispute budget. The
+    // field is left UNDEFINED so the prior dispositions carry forward.
     await recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
       blockingFindingIdentityKeys: [],
-      cmrDispositions: [],
       stopSummary: notConvergedStopSummary(reason),
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
