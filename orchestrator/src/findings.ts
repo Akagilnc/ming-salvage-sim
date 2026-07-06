@@ -191,13 +191,43 @@ function disputedDisposition(disposition: FindingDisposition): FindingDispositio
   };
 }
 
+/**
+ * Apply the reopen (severity升级) / dispute (same-severity re-submission)
+ * bookkeeping for a finding that matches a prior sourced accepted suppression.
+ * Shared by the disposition-action branch (#604 P1-d) and the general branch so
+ * both paths increment the same bounded reopen/dispute budgets instead of one of
+ * them silently re-suppressing an upgraded finding.
+ */
+function applyReopenOrDispute(
+  dispositionByKey: Map<string, FindingDisposition>,
+  key: string,
+  finding: Finding,
+  priorSuppression: FindingDisposition,
+): void {
+  if (upgradedSeverity(finding, priorSuppression)) {
+    if (priorSuppression.reopenAttempts < MAX_REOPEN_ATTEMPTS) {
+      dispositionByKey.set(key, reopenedDisposition(finding, priorSuppression));
+    }
+    return;
+  }
+  if (
+    sameSeverity(finding, priorSuppression) &&
+    (priorSuppression.disputeAttempts ?? 0) < 1
+  ) {
+    dispositionByKey.set(key, disputedDisposition(priorSuppression));
+  }
+}
+
 function isBlockingByDisposition(finding: Finding): boolean {
   if (isBlockingFinding(finding)) return true;
-  // #604 slice 4 (ADR 0062): routing disposition kinds are gone, so no defer
-  // can pass without a fix — every `action:"defer"` finding that reaches here
-  // (i.e. is not an accepted suppression) is blocking. The deferred bucket
-  // is retained by the return shape but is now always empty.
-  return finding.action === "defer";
+  // #604 correctness r1 (P1-c) / ADR 0062: any non-suppression finding that
+  // reaches this predicate is blocking — routing disposition kinds are gone, so
+  // there is no免修 disposition left. This covers `defer` AND a reopened/disputed
+  // `wont_fix`/`rejected` that fell through the accepted-suppression branch
+  // (suppression失配 / dispute exhausted). Only a MATCHING accepted suppression
+  // is suppressed, and that is handled上游 (it never reaches here). The `deferred`
+  // bucket is retained by the return shape but is now PROVABLY always empty.
+  return true;
 }
 
 export function classifyFindings(
@@ -227,6 +257,22 @@ export function classifyFindings(
     if (isDispositionAction(finding.action) && !isBlockingFinding(finding)) {
       if (!isMatchingAcceptedSuppression(finding, key, trustedSources)) {
         blocking.push(finding);
+        continue;
+      }
+      // #604 correctness r1 (P1-d): a matching accepted suppression that
+      // ALSO has a prior sourced suppression at a LOWER severity is a REOPEN
+      // (severity升级), not a fresh re-suppression. The old code fell straight
+      // to `dispositionFromFinding` here (reopenAttempts reset to 0), silently
+      // re-suppressing the upgraded finding and NEVER incrementing the bounded
+      // reopen budget. Route it through the shared reopen/dispute handler FIRST
+      // so a low→medium升级 counts against MAX_REOPEN_ATTEMPTS and a
+      // same-severity re-submission counts against the single dispute budget.
+      if (
+        priorSuppression !== undefined &&
+        (upgradedSeverity(finding, priorSuppression) ||
+          sameSeverity(finding, priorSuppression))
+      ) {
+        applyReopenOrDispute(dispositionByKey, key, finding, priorSuppression);
         continue;
       }
       dispositionByKey.set(key, dispositionFromFinding(finding, trustedSources));

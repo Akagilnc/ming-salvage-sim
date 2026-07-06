@@ -317,7 +317,12 @@ function resultForBlocking(
       ? { owningIssue: `#${attribution.issue}` }
       : {}),
     ...(disposition?.source !== undefined ? { source: disposition.source } : {}),
-    reason: disposition?.reason ?? finding.disposition_reason ?? finding.suggested_fix,
+    // #604 correctness r1 (P2-c): a blocking finding's `reason` flows into the
+    // ledger stopSummary/findingDescriptor. It MUST stay generic / identity-only —
+    // `suggested_fix` (and other rich finding text) must NOT驻留 the ledger (F5,
+    // ADR 0062); the rich content travels only in the live coder-fix landing
+    // payload. So do NOT fall back to `finding.suggested_fix` here.
+    reason: "blocking CMR finding requires coder-fix",
   };
 }
 

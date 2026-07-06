@@ -447,6 +447,70 @@ describe("#604 slice 5 (F8) — early-exit re-entry reports the unanswered parke
   });
 });
 
+// ─── test 7 (P1-b): a family answer with MISSING resume state fails closed ───────
+//
+// #604 correctness r1 (P1-b): when a human answered a parked child's decision gate
+// but its single-slice resume state is MISSING (findResumeState returns undefined),
+// runChild must NOT fall through to a fresh `runOrchestrator` (from-scratch re-run,
+// violating 原地-resume). It must fail closed (`"failed"`) so a human repairs the
+// state and reruns — never silently start over.
+
+describe("#604 r1 (P1-b) — a family answer with missing resume state fails closed", () => {
+  it("answer present + findResumeState undefined → child failed, NO fresh runOrchestrator", async () => {
+    // A backend whose findResumeState ALWAYS returns undefined (the parked state
+    // was lost / not persisted), so the resume-injection branch cannot fire.
+    class NoResumeStateBackend extends EscalatingChildBackend {
+      constructor() {
+        super(11);
+      }
+      override async findResumeState(): Promise<ResumeState | undefined> {
+        return undefined; // no resume residue for any child
+      }
+    }
+    const singleSliceBackend = new NoResumeStateBackend();
+    const familyBackend = new FakeFamilyBackend();
+
+    // ── invocation 1: parks on #11's decision escalation ──
+    const first = await runFamily({
+      epic: epicWith(11),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/604-base",
+    });
+    expect(first.status).toBe("escalated");
+
+    // ── human answers #11 ──
+    await recordFamilyEscalationAnswered(familyBackend, {
+      childIssue: 11,
+      answer: "field X is optional; proceed",
+      source: "human",
+    });
+
+    // Witness the S2 dispatch count BEFORE the resume attempt.
+    const s2Before = singleSliceBackend.runStepCalls.filter(
+      (c) => c.issue === 11 && c.step === "S2",
+    ).length;
+
+    // ── invocation 2 (re-entry): resume state missing → must FAIL CLOSED ──
+    const second = await runFamily({
+      epic: epicWith(11),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/604-base",
+    });
+
+    // Fail-closed: NOT a fabricated success, NOT merged.
+    expect(second.status).not.toBe("success");
+    expect(second.children.find((c) => c.issue === 11)?.status).toBe("failed");
+    expect(familyBackend.merges.some((m) => m.childIssue === 11)).toBe(false);
+    // And it did NOT re-run the child from scratch (no new S2 dispatch on resume).
+    const s2After = singleSliceBackend.runStepCalls.filter(
+      (c) => c.issue === 11 && c.step === "S2",
+    ).length;
+    expect(s2After).toBe(s2Before);
+  });
+});
+
 // ─── test 3: A/B — a failure-kind escalation stays failed, no park/resume ───────
 
 describe("#604 slice 5 — A/B: failure-kind child outcome is NOT parked", () => {
@@ -488,5 +552,70 @@ describe("#604 slice 5 — A/B: failure-kind child outcome is NOT parked", () =>
     // The failing child is honestly recorded as failed/incomplete, never merged.
     expect(familyBackend.merges.some((m) => m.childIssue === 11)).toBe(false);
     expect(result.children.find((c) => c.issue === 11)?.status).toBe("failed");
+  });
+});
+
+// ─── test 6 (P1-a ②): a REAL failure in the same wave must NOT be masked by a
+// decision park ────────────────────────────────────────────────────────────────
+//
+// #604 correctness r1 (P1-a ②): a single wave can carry BOTH a real `failed`
+// child (infra/protocol failure — A-class incomplete/failure) AND a
+// decision-escalated child (B-class answerable park). The old runner parked the
+// whole family (B-class `decision_gate_park`) as soon as ANY decision-escalated
+// child existed, silently MASKING the real failure behind an answerable park. The
+// A-class failure must take precedence: the family finalizes as `incomplete`
+// (never `escalated`/`decision_gate_park`), and no `child_decision_parked` row is
+// recorded, so the real failure is not hidden.
+
+describe("#604 r1 (P1-a ②) — a real failure in the wave is not masked by a decision park", () => {
+  it("mixed wave (1 decision-escalated + 1 failed) → incomplete, NOT a decision_gate_park", async () => {
+    // #11 decision-escalates (coder S2 carries STUCK); #12 FAILS (committed:false
+    // → S8 error). Both blockedBy:[] so they run in the SAME wave.
+    class MixedWaveBackend extends EscalatingChildBackend {
+      constructor(private readonly failIssue: number) {
+        super(11); // #11 decision-escalates on its S2
+      }
+      override async runStep(
+        spec: StepSpec,
+        worktree?: WorktreeHandle,
+      ): Promise<StepOutput> {
+        const issue =
+          worktree !== undefined && /child-(\d+)/.test(worktree.branch)
+            ? Number(worktree.branch.match(/child-(\d+)/)![1])
+            : -1;
+        if (spec.id === "S2" && issue === this.failIssue) {
+          // 0 commits → route() sends S2 → S8(error): a real infra/protocol failure.
+          return { kind: "coder", committed: false, commitsAdded: 0 };
+        }
+        return super.runStep(spec, worktree);
+      }
+    }
+    const singleSliceBackend = new MixedWaveBackend(12);
+    const familyBackend = new FakeFamilyBackend();
+
+    const result = await runFamily({
+      epic: {
+        issue: 604,
+        children: [
+          { issue: 11, blockedBy: [] },
+          { issue: 12, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/604-base",
+    });
+
+    // A-class precedence: the run is NOT a B-class decision park.
+    expect(result.status).not.toBe("escalated");
+    expect(result.status).toBe("incomplete");
+    expect(result.stopSummary?.reason).not.toBe("decision_gate_park");
+    // No decision-park row was recorded — the real failure is not hidden behind one.
+    expect(
+      familyBackend.ledger.some((e) => e.event === "child_decision_parked"),
+    ).toBe(false);
+    // The failing child is honestly failed and never merged.
+    expect(result.children.find((c) => c.issue === 12)?.status).toBe("failed");
+    expect(familyBackend.merges.some((m) => m.childIssue === 12)).toBe(false);
   });
 });

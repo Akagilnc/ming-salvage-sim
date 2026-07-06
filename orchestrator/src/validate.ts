@@ -292,12 +292,29 @@ export function isValidFinding(f: unknown): f is Finding {
     return false;
   }
   if (obj.action === "defer") {
+    // #604 correctness r1 (P2-b) / ADR 0062: `defer` can no longer carry a valid
+    // non-suppression disposition (the route kinds are gone), so a stray defer is
+    // malformed — the same fail-closed口径 the zod schemas and Python guard enforce.
     if (!isValidDispositionEvidence(obj.disposition)) return false;
     if (obj.disposition.kind === "accepted_suppressed") return false;
   }
   if (obj.action === "wont_fix" || obj.action === "rejected") {
     if (!isValidDispositionEvidence(obj.disposition)) return false;
     if (obj.disposition.kind !== "accepted_suppressed") return false;
+  }
+  // #604 correctness r1 (P2-a): an accepted_suppressed governance disposition is
+  // ONLY valid on wont_fix/rejected. On any other action (esp. fix_now) it would
+  // slip through and classifyFindings (fix_now ⇒ blocking) would silently turn the
+  // governance suppression into a blocker. Reject it here — parity with the zod
+  // schemas and the Python outcome-guard.
+  if (
+    obj.action !== "wont_fix" &&
+    obj.action !== "rejected" &&
+    obj.disposition !== undefined &&
+    isValidDispositionEvidence(obj.disposition) &&
+    obj.disposition.kind === "accepted_suppressed"
+  ) {
+    return false;
   }
   for (const field of FINDING_STRING_FIELDS) {
     if (!isString(obj[field])) return false;

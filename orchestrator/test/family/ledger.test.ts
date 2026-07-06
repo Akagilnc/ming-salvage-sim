@@ -343,6 +343,61 @@ describe("family-ledger.familyEscalationState", () => {
       source: "human",
     });
   });
+
+  // #604 correctness r1 (P1-f): a CHILD-bound answer row (carrying `childIssue`)
+  // must NOT release an unrelated FAMILY-level decision escalation. The family
+  // escalation is the `event:"escalated"` row that carries NO childIssue; a
+  // family-level answer must therefore also carry no childIssue.
+  it("does not release a family-level escalation with a CHILD-bound answer row", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        escalationKind: "decision",
+        reason: "family-level design decision needs a human",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        childIssue: 11,
+        answer: "field X is optional; proceed",
+        source: "human",
+      } as FamilyLedgerEntry,
+    ];
+
+    // The child-bound answer must not count as the family answer: the family
+    // escalation is returned WITHOUT an answer (still parked).
+    const state = familyEscalationState(entries);
+    expect(state).toBeDefined();
+    expect(state?.answer).toBeUndefined();
+  });
+
+  it("still releases a family-level escalation with an UNBOUND (no childIssue) answer row", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        escalationKind: "decision",
+        reason: "family-level design decision needs a human",
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "proceed with the family flow",
+        source: "human",
+      },
+    ];
+
+    expect(familyEscalationState(entries)?.answer).toEqual({
+      event: "escalation_answered",
+      answer: "proceed with the family flow",
+      source: "human",
+    });
+  });
 });
 
 describe("family-ledger.mergedSet (#293 seam 3)", () => {

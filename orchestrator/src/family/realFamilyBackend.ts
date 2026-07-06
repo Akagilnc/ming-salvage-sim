@@ -2824,15 +2824,33 @@ const cmrReviewerFindingSchema = z
         message: "critical/high findings must be fix_now",
       });
     }
+    // #604 correctness r1 (P2-a): an `accepted_suppressed` governance disposition
+    // is ONLY valid on a wont_fix/rejected finding. On a fix_now finding it would
+    // otherwise validate, and classifyFindings (fix_now ⇒ blocking) would silently
+    // turn the governance suppression into a blocker. Reject it here.
     if (
-      finding.action === "defer" &&
-      (finding.disposition === undefined ||
-        finding.disposition.kind === "accepted_suppressed")
+      finding.action !== "wont_fix" &&
+      finding.action !== "rejected" &&
+      finding.disposition?.kind === "accepted_suppressed"
     ) {
       ctx.addIssue({
         code: "custom",
         path: ["disposition"],
-        message: "deferred findings require a non-suppression disposition",
+        message:
+          "accepted_suppressed disposition is only valid on wont_fix/rejected findings",
+      });
+    }
+    // #604 correctness r1 (P2-b): ADR 0062 removed all non-suppression route
+    // disposition kinds, so `defer` can no longer carry a valid non-suppression
+    // disposition. New reviewer/CMR prompts forbid `defer`; a STRAY defer must
+    // fail closed as malformed (consistent口径 with validate.ts:isValidFinding and
+    // the Python outcome-guard), never be treated as a免修 route.
+    if (finding.action === "defer") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["action"],
+        message:
+          "defer is no longer a supported action (ADR 0062): a stray defer is malformed",
       });
     }
     if (

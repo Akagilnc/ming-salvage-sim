@@ -810,9 +810,15 @@ function escalationKindForHandoff(
 ): EscalationKind | undefined {
   if (status !== "escalate") return undefined;
   const escalation = escalateOf(output);
-  return escalation != null && isValidEscalation(escalation)
-    ? "decision"
-    : "failure";
+  // #604 correctness r1 (P1-a) / ADR 0062: the DECISION gate (B-class park) fires
+  // ONLY for a worker-PROACTIVE "需人类拍板" escalate. A well-shaped escalate that
+  // the RUNNER SYNTHESIZED from a protocol failure (malformed reviewer output
+  // exhausted its reruns — marked `synthesizedFailure`) is an infra/protocol
+  // FAILURE (A-class), not a decision, even though its reason/diagnosis are
+  // well-formed strings. So a valid escalate maps to "decision" ONLY when it is
+  // NOT a synthesized failure.
+  if (escalation == null || !isValidEscalation(escalation)) return "failure";
+  return escalation.synthesizedFailure === true ? "failure" : "decision";
 }
 
 /**
@@ -2611,6 +2617,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     diagnosis:
                       `step ${step} failed to produce valid reviewer output ` +
                       `${attempts} times; last error: ${errorMessage(err)}`,
+                    // #604 correctness r1 (P1-a): a RUNNER-synthesized escalate from
+                    // exhausted malformed reruns is a PROTOCOL FAILURE, not a
+                    // worker-proactive decision — mark it so the handoff maps to
+                    // escalationKind:"failure" (A-class), never the decision gate.
+                    synthesizedFailure: true,
                   },
                 };
                 stepSessionId = undefined;
@@ -2642,6 +2653,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   diagnosis:
                     `step ${step} produced invalid reviewer output ${attempts} times; ` +
                     "runner stopped instead of retrying indefinitely",
+                  // #604 correctness r1 (P1-a): protocol failure, not a decision —
+                  // synthesized by the runner after exhausted reruns.
+                  synthesizedFailure: true,
                 },
               };
               stepSessionId =
