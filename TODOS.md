@@ -207,4 +207,4 @@
 ---
 **修复记录**：（修完的移到这里，注明日期）
 - **[PR #16 / v0.5.1, 2026-06-08]** D2 城防炮 region.cannon delta 落库路径(#4)+ T1 driver.py 固化(#10)：抽确定性结算核 `pre_settle`/`settle_with_delta`（ADR 0004，真实流程与 driver 同核）、城防炮路由 `apply_region_cannon`(city_level×8 clamp)、修 db.py 漏 import `LLMContractError`、driver 多处静默吞守卫。两轮 cross-model + ship review-army + 对抗 review 收敛。
-- **[崇祯元年十二月结算]** B1 阉党 leverage：用手动 SQL `UPDATE factions SET leverage=35 WHERE name='阉党'` 临时修复（叙事支撑=核心退场+四十余党羽清出要津），78→35。**遗留根因未解**：长期应让 `db.set_character_status` 在"握实权官职的核心人物"退场时，自动按官职权重联动扣减所属派系 leverage，而非每回合手动 SQL。下次重构结算管线时一并做。〔2026-07-06 核实：根因已闭环——#9 已落地 `set_character_status`→`recompute_faction_leverage` 联动重算（db.py），2026-06-17 关闭；本条留档。〕
+- **[崇祯元年十二月结算]** B1 阉党 leverage：用手动 SQL `UPDATE factions SET leverage=35 WHERE name='阉党'` 临时修复（叙事支撑=核心退场+四十余党羽清出要津），78→35。〔2026-07-06 核实：根因已闭环——#9 已落地 `set_character_status`→`recompute_faction_leverage` 联动重算（db.py），2026-06-17 关闭；下行为修复前的历史判断，留档勿当现状。〕~~遗留根因未解：长期应让 `db.set_character_status` 在"握实权官职的核心人物"退场时，自动按官职权重联动扣减所属派系 leverage，而非每回合手动 SQL。下次重构结算管线时一并做。~~
