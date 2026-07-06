@@ -1442,10 +1442,14 @@ describe("#449 verifyCmr family gate classification", () => {
       moduleContext: { currentModules: [], childModules: [] },
     });
 
+    // #604 slice 2 / ADR 0062: a blocking finding no longer TERMINATES the family on
+    // its content classification — the runner counts it and routes it through coder-fix.
+    // This backend has no coder-fix worker, so the coder-fix attempt fails and the family
+    // still aborts; the point preserved here is that the finding CLASSIFIES as blocking.
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatched).toEqual(["cmr"]);
+    expect(backend.dispatched).toEqual(["cmr", "coder"]);
     expect(backend.ledger[0]).toMatchObject({
-      status: "aborted",
+      status: "cmr_reviewed",
       cmrPass: "completeness",
       cmrFindingClassification: {
         results: [{ classification: "same_module_still_red" }],
@@ -1496,10 +1500,14 @@ describe("#449 verifyCmr family gate classification", () => {
       },
     });
 
+    // #604 slice 2 / ADR 0062: the blocking finding is counted and routed through
+    // coder-fix rather than terminating the family on its classification. The backend
+    // has no coder-fix worker, so the family still fails; the invariant preserved is
+    // that the undeclared-target defer CLASSIFIES as blocking.
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatched).toEqual(["cmr"]);
+    expect(backend.dispatched).toEqual(["cmr", "coder"]);
     expect(backend.ledger[0]).toMatchObject({
-      status: "aborted",
+      status: "cmr_reviewed",
       cmrPass: "completeness",
       cmrFindingClassification: {
         blocking: [expect.objectContaining({ claim_quote: undeclaredTargetFinding.claim_quote })],
