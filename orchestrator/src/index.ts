@@ -7,6 +7,7 @@ export { route } from "./route.js";
 export type { RouteContext, RouteDecision } from "./route.js";
 export {
   contractDriftStopSummary,
+  findingDescriptor,
   infraFailureStopSummary,
   providerDegradedStopSummary,
   stopReasonForFindingDisposition,
@@ -15,6 +16,7 @@ export {
 } from "./stopSummary.js";
 export type {
   AcceptedSuppressionSummary,
+  FindingDescriptor,
   HeadFreshnessSummary,
   ProviderDegradationSummary,
   ShipFailureSummary,

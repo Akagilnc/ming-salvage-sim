@@ -164,6 +164,32 @@ function issueOfStateDir(stateDir: string): number {
   return m ? Number(m[1]) : -1;
 }
 
+/**
+ * #604 F7: the ORIGINAL escalated session for a parked child — the (step,
+ * sessionId) pair persisted on that child's single-slice ledger entry that
+ * carries the escalate output. Resume MUST reopen THIS exact session in place
+ * (`planResume` threads `resumeSessionId: agentEntry.sessionId`), not a fresh or
+ * arbitrary one. Pinning this closes the half-empty anti-pattern where a resume
+ * test only asserted the child issue matched.
+ */
+function originalEscalatedSession(
+  backend: EscalatingChildBackend,
+  childIssue: number,
+): { step: string; sessionId: string } {
+  const ledger = backend.childLedgers.get(childIssue) ?? [];
+  const escalatedEntry = ledger.find(
+    (entry) =>
+      entry.output?.kind === "coder" &&
+      (entry.output as CoderOutput).escalate !== undefined,
+  );
+  if (escalatedEntry === undefined) {
+    throw new Error(
+      `no escalated ledger entry persisted for child #${childIssue}`,
+    );
+  }
+  return { step: escalatedEntry.step, sessionId: escalatedEntry.sessionId };
+}
+
 /** A FamilyBackend that records merges + ledger writes (the "family base" model). */
 class FakeFamilyBackend implements FamilyBackend {
   readonly merges: MergeRequest[] = [];
@@ -266,6 +292,10 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
     expect(first.status).toBe("escalated");
     const parked = familyBackend.ledger.find((e) => e.event === "child_decision_parked");
     expect(parked?.childIssue).toBe(11);
+    // #604 F7: capture the ORIGINAL escalated session BEFORE resume, so the
+    // post-resume assertion can pin that resumeSession reopened THIS exact
+    // session (not a fresh/arbitrary one).
+    const original = originalEscalatedSession(singleSliceBackend, 11);
 
     // ── human appends an escalation_answered row BOUND to child #11 ──
     familyBackend.ledger.push({
@@ -286,11 +316,15 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
     });
 
     expect(second.status).toBe("success");
-    // The child was RESUMED in its original session (退出-重入, not from scratch):
-    // a resumeSession call happened for child #11 (the answer reopened the paused step).
-    expect(
-      singleSliceBackend.resumeSessionCalls.some(([issue]) => issue === 11),
-    ).toBe(true);
+    // #604 F7: the child was RESUMED in its ORIGINAL session (退出-重入, not from
+    // scratch, and not a WRONG session). Pin the full [issue, step, sessionId]
+    // tuple against the escalated session captured above — injecting a
+    // wrong-session-id into planResume/resumeSession now turns this red.
+    expect(singleSliceBackend.resumeSessionCalls).toContainEqual([
+      11,
+      original.step,
+      original.sessionId,
+    ]);
     // And it merged into the family base.
     expect(familyBackend.merges.some((m) => m.childIssue === 11)).toBe(true);
   });
@@ -323,6 +357,8 @@ describe("#604 slice 5 — resume via production helper (F1)", () => {
     expect(
       familyBackend.ledger.find((e) => e.event === "child_decision_parked")?.childIssue,
     ).toBe(11);
+    // #604 F7: capture the ORIGINAL escalated session before resume.
+    const original = originalEscalatedSession(singleSliceBackend, 11);
 
     // ── human answers through the PRODUCTION helper (not a hand-crafted row) ──
     await recordFamilyEscalationAnswered(familyBackend, {
@@ -340,10 +376,74 @@ describe("#604 slice 5 — resume via production helper (F1)", () => {
     });
 
     expect(second.status).toBe("success");
-    expect(
-      singleSliceBackend.resumeSessionCalls.some(([issue]) => issue === 11),
-    ).toBe(true);
+    // #604 F7: resume reopened the ORIGINAL escalated session in place — pin the
+    // full [issue, step, sessionId] tuple, not just the child issue.
+    expect(singleSliceBackend.resumeSessionCalls).toContainEqual([
+      11,
+      original.step,
+      original.sessionId,
+    ]);
     expect(familyBackend.merges.some((m) => m.childIssue === 11)).toBe(true);
+  });
+});
+
+// ─── test 5 (F8): early-exit re-entry maps an UNANSWERED parked child to escalated ─
+//
+// #604 F8: when a family is RE-ENTERED and the ledger already carries an
+// unanswered `child_decision_parked` row, the runner early-exits BEFORE the wave
+// loop. That early-exit path used to map every non-merged child to
+// `{status:"skipped"}` (because the parked child isn't in the merged set),
+// disagreeing with the wave-loop parking path (`finalizeDecisionPark` →
+// `"escalated"`). The parked child must be reported `"escalated"` (carrying its
+// escalation payload from the ledger row) on BOTH paths, else the driver mis-reads
+// the parked child as skipped.
+
+describe("#604 slice 5 (F8) — early-exit re-entry reports the unanswered parked child as escalated", () => {
+  it("re-entry with an unanswered child_decision_parked row → parked child is escalated (not skipped), sibling stays skipped", async () => {
+    // #11 escalates (decision); #12 is blocked_by #11 so it never runs.
+    const singleSliceBackend = new EscalatingChildBackend(11);
+    const familyBackend = new FakeFamilyBackend();
+    const epic: FamilyEpic = {
+      issue: 604,
+      children: [
+        { issue: 11, blockedBy: [] },
+        { issue: 12, blockedBy: [11] },
+      ],
+    };
+
+    // ── invocation 1: parks on #11 via the wave loop ──
+    const first = await runFamily({
+      epic,
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/604-base",
+    });
+    expect(first.status).toBe("escalated");
+    const parkedRow = familyBackend.ledger.find(
+      (e) => e.event === "child_decision_parked",
+    );
+    expect(parkedRow?.childIssue).toBe(11);
+
+    // ── invocation 2 (re-entry): NO answer appended → the early-exit path fires ──
+    const second = await runFamily({
+      epic,
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/604-base",
+    });
+
+    expect(second.status).toBe("escalated");
+    // F8: the parked child maps to `escalated` (NOT skipped), carrying the
+    // escalation payload read from the child_decision_parked ledger row.
+    const child11 = second.children.find((c) => c.issue === 11);
+    expect(child11?.status).toBe("escalated");
+    expect(child11?.escalation?.escalationKind).toBe("decision");
+    expect(child11?.escalation?.reason).toBe(parkedRow?.reason);
+    // The never-run sibling #12 stays skipped.
+    expect(second.children.find((c) => c.issue === 12)?.status).toBe("skipped");
+    // The family stop summary is a decision-gate park (answerable), not an
+    // A-class infra failure.
+    expect(second.stopSummary?.reason).toBe("decision_gate_park");
   });
 });
 
