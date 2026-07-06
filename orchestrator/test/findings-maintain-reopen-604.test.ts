@@ -102,6 +102,52 @@ describe("#604 ADR 0030 — maintain spends no budget (①)", () => {
     expect(c.dispositions[0]?.disputeAttempts).toBe(1);
     expect(c.dispositions[0]?.reopenAttempts).toBe(2);
   });
+
+  // per-slice cmr r1 (agy P1): the disposition-action branch was gated by
+  // `!isBlockingFinding`, so a HIGH/CRITICAL same-severity maintenance action
+  // skipped the ZERO-OP branch entirely, fell to the general branch, spent the
+  // single dispute budget AND blocked — un-suppressing a validly-suppressed high
+  // finding on re-submission (ADR 0030 maintain=zero-op violated for high/crit).
+  it("HIGH same-severity wont_fix maintenance is zero-op + stays suppressed", () => {
+    const c = classifyFindings([finding("high", "wont_fix")], [
+      priorSuppression("high", 0, 0),
+    ], { acceptedSuppressionSources: [trustedSource] });
+    expect(c.blocking).toEqual([]);
+    expect(c.deferred).toEqual([]);
+    expect(c.dispositions).toHaveLength(1);
+    expect(c.dispositions[0]?.disputeAttempts ?? 0).toBe(0);
+    expect(c.dispositions[0]?.severity).toBe("high");
+    expect(c.dispositions[0]?.reopenAttempts).toBe(0);
+  });
+
+  it("CRITICAL same-severity rejected maintenance with FRESH budget is zero-op + stays suppressed", () => {
+    // fresh dispute budget (disputeAttempts 0): the bug spent it AND blocked.
+    const c = classifyFindings([finding("critical", "rejected")], [
+      priorSuppression("critical", 0, 0),
+    ], { acceptedSuppressionSources: [trustedSource] });
+    expect(c.blocking).toEqual([]);
+    expect(c.dispositions[0]?.disputeAttempts ?? 0).toBe(0);
+    expect(c.dispositions[0]?.reopenAttempts).toBe(0);
+    expect(c.dispositions[0]?.severity).toBe("critical");
+  });
+
+  it("HIGH wont_fix with a MATCHING suppression but NO prior still BLOCKS (fresh high cannot self-waive)", () => {
+    // guard fix must NOT let a first-seen high suppression self-suppress: with no
+    // prior disposition it falls through to the general blocking path.
+    const c = classifyFindings([finding("high", "wont_fix")], [], {
+      acceptedSuppressionSources: [trustedSource],
+    });
+    expect(c.blocking).toHaveLength(1);
+  });
+
+  it("HIGH wont_fix upgrading a prior MEDIUM suppression → reopen recorded AND blocks", () => {
+    const c = classifyFindings([finding("high", "wont_fix")], [
+      priorSuppression("medium", 0, 0),
+    ], { acceptedSuppressionSources: [trustedSource] });
+    expect(c.blocking).toHaveLength(1);
+    expect(c.dispositions[0]?.reopenAttempts).toBe(1);
+    expect(c.dispositions[0]?.severity).toBe("high");
+  });
 });
 
 describe("#604 general fix_now branch PRESERVED — #369 bounded dispute (②③)", () => {

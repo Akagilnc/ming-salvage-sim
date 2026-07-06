@@ -227,7 +227,20 @@ export function classifyFindings(
     )
       ? priorDisposition
       : undefined;
-    if (isDispositionAction(finding.action) && !isBlockingFinding(finding)) {
+    if (
+      isDispositionAction(finding.action) &&
+      (!isBlockingFinding(finding) || priorSuppression !== undefined)
+    ) {
+      // per-slice cmr r1 (agy P1): `!isBlockingFinding` alone excluded HIGH/
+      // CRITICAL maintenance actions from this branch, so a validly-suppressed
+      // high/critical finding re-reported at the SAME severity skipped the ZERO-OP
+      // MAINTAIN path, fell to the general branch, spent the single dispute budget
+      // AND blocked — un-suppressing it (ADR 0030 maintain=zero-op broke for
+      // high/crit). A prior SOURCED suppression already carries the runner's
+      // waiver at that severity, so a matching same/lower-severity re-submission
+      // must stay a zero-op regardless of the finding's own severity. `priorSuppression`
+      // is undefined for a FRESH high/crit (no waiver yet) → it still falls through
+      // to the general blocking path and CANNOT self-waive.
       if (!isMatchingAcceptedSuppression(finding, key, trustedSources)) {
         blocking.push(finding);
         continue;
