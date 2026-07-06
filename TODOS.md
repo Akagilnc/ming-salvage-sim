@@ -109,7 +109,8 @@
 - **代价**：每条新国策月末多一次 ~12s agy 补全（agy 一贯不填→基本每条都触发）。
 - **范围**：仅 CLI 后端 gated。api 后端历史上「大部分有效果」（强模型自觉填），不走此补全。B 方案（国策同步产 fiscal_creates/new_armies 等独立 delta，对治 T3/T4）后续看需要再补。
 
-### B1. 阉党核心退场，faction leverage 不联动下跌 🔧 已临时修复（见底部修复记录，遗留根因未解） → [issue #9](https://github.com/Akagilnc/ming-salvage-sim/issues/9)
+### B1. 阉党核心退场，faction leverage 不联动下跌 ✅ 已修（根因闭环，#9 于 2026-06-17 关闭） → [issue #9](https://github.com/Akagilnc/ming-salvage-sim/issues/9)
+> 修复：`db.set_character_status` 状态变更后按旧属派系调 `recompute_faction_leverage`（leverage = clamp(0,100, offset + 在朝 active 成员官职权重和)，绝对值现算无漂移；另有 `recompute_all_faction_leverage` 兜底）。下方「待查/下回合临时处理」为历史快照（2026-07-06 #473 闸盘点核实）。
 - **现象**：崇祯元年十一月，田尔耕（流放）、崔呈秀（乞休）、王体乾（致仕）三个阉党核心都退场了，但 `factions.阉党.leverage` 仍是 **78（全场第一）**，只有 satisfaction 跌到 32。
 - **根因**：我产 delta 时 `faction_delta` **只改 satisfaction，不改 leverage**（见 DELTA_SCHEMA.md：faction_delta 作用于 satisfaction）。而 `character_status_changes`（人物退场）**没有联动扣减所属派系的 leverage**。
 - **应有行为**：一个派系的核心人物（尤其握实权官职者：兵部尚书/司礼监掌印/锦衣卫都督）退场/下狱/致仕时，该派系的 leverage 应按其官职权重相应下跌。阉党核心尽去，leverage 该从 78 跌到 30-40 区间。
@@ -206,4 +207,4 @@
 ---
 **修复记录**：（修完的移到这里，注明日期）
 - **[PR #16 / v0.5.1, 2026-06-08]** D2 城防炮 region.cannon delta 落库路径(#4)+ T1 driver.py 固化(#10)：抽确定性结算核 `pre_settle`/`settle_with_delta`（ADR 0004，真实流程与 driver 同核）、城防炮路由 `apply_region_cannon`(city_level×8 clamp)、修 db.py 漏 import `LLMContractError`、driver 多处静默吞守卫。两轮 cross-model + ship review-army + 对抗 review 收敛。
-- **[崇祯元年十二月结算]** B1 阉党 leverage：用手动 SQL `UPDATE factions SET leverage=35 WHERE name='阉党'` 临时修复（叙事支撑=核心退场+四十余党羽清出要津），78→35。**遗留根因未解**：长期应让 `db.set_character_status` 在"握实权官职的核心人物"退场时，自动按官职权重联动扣减所属派系 leverage，而非每回合手动 SQL。下次重构结算管线时一并做。
+- **[崇祯元年十二月结算]** B1 阉党 leverage：用手动 SQL `UPDATE factions SET leverage=35 WHERE name='阉党'` 临时修复（叙事支撑=核心退场+四十余党羽清出要津），78→35。**遗留根因未解**：长期应让 `db.set_character_status` 在"握实权官职的核心人物"退场时，自动按官职权重联动扣减所属派系 leverage，而非每回合手动 SQL。下次重构结算管线时一并做。〔2026-07-06 核实：根因已闭环——#9 已落地 `set_character_status`→`recompute_faction_leverage` 联动重算（db.py），2026-06-17 关闭；本条留档。〕
