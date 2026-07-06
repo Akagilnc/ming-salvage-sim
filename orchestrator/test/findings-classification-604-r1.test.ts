@@ -82,7 +82,7 @@ describe("#604 r1 P1-c — non-suppression findings never land in deferred", () 
 });
 
 describe("#604 r1 P1-d — matching suppression at higher severity reopens, not re-suppresses", () => {
-  it("prior low suppression + now medium wont_fix (upgrade) → reopen (reopenAttempts spent, severity升级)", () => {
+  it("prior low suppression + now medium wont_fix (upgrade) → reopen (reopenAttempts spent, severity升级) AND blocks", () => {
     const c = classifyFindings(
       [finding("medium", "wont_fix")],
       [priorSuppression("low", 0)],
@@ -93,17 +93,28 @@ describe("#604 r1 P1-d — matching suppression at higher severity reopens, not 
     expect(c.dispositions).toHaveLength(1);
     expect(c.dispositions[0]?.reopenAttempts).toBe(1);
     expect(c.dispositions[0]?.severity).toBe("medium");
+    // #604 rework (fix silent-drop): the upgraded finding must BLOCK — the old
+    // upgrade subpath recorded a reopen then `continue`d without ever blocking.
+    expect(c.blocking).toHaveLength(1);
     expect(c.deferred).toEqual([]);
   });
 
-  it("same-severity re-submission of a matching suppression counts a dispute (disputeAttempts spent)", () => {
+  it("same-severity wont_fix maintenance keeps the suppression AS-IS — no dispute spent (ADR 0030)", () => {
+    // #604 rework per ADR 0030 (user定论 2026-07-06): a same-severity wont_fix
+    // re-submission MAINTAINS an existing suppression — it is a ZERO-OP on the
+    // disposition (no dispute budget spent, prior kept as-is, stays suppressed).
+    // The earlier "counts a dispute (disputeAttempts→1)" assertion encoded the
+    // non-ratified "维持花预算" drift that r1 P1-d introduced (not on main); it
+    // violated ADR 0030 and is rolled back. Only a real fix_now challenge (the
+    // general branch) spends the single bounded dispute (#369 PRESERVED).
     const c = classifyFindings(
       [finding("medium", "wont_fix")],
       [priorSuppression("medium", 0, 0)],
       { acceptedSuppressionSources: [trustedSource] },
     );
+    expect(c.blocking).toEqual([]);
     expect(c.dispositions).toHaveLength(1);
-    expect(c.dispositions[0]?.disputeAttempts).toBe(1);
+    expect(c.dispositions[0]?.disputeAttempts ?? 0).toBe(0);
     expect(c.deferred).toEqual([]);
   });
 

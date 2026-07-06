@@ -191,33 +191,6 @@ function disputedDisposition(disposition: FindingDisposition): FindingDispositio
   };
 }
 
-/**
- * Apply the reopen (severity升级) / dispute (same-severity re-submission)
- * bookkeeping for a finding that matches a prior sourced accepted suppression.
- * Shared by the disposition-action branch (#604 P1-d) and the general branch so
- * both paths increment the same bounded reopen/dispute budgets instead of one of
- * them silently re-suppressing an upgraded finding.
- */
-function applyReopenOrDispute(
-  dispositionByKey: Map<string, FindingDisposition>,
-  key: string,
-  finding: Finding,
-  priorSuppression: FindingDisposition,
-): void {
-  if (upgradedSeverity(finding, priorSuppression)) {
-    if (priorSuppression.reopenAttempts < MAX_REOPEN_ATTEMPTS) {
-      dispositionByKey.set(key, reopenedDisposition(finding, priorSuppression));
-    }
-    return;
-  }
-  if (
-    sameSeverity(finding, priorSuppression) &&
-    (priorSuppression.disputeAttempts ?? 0) < 1
-  ) {
-    dispositionByKey.set(key, disputedDisposition(priorSuppression));
-  }
-}
-
 function isBlockingByDisposition(finding: Finding): boolean {
   if (isBlockingFinding(finding)) return true;
   // #604 correctness r1 (P1-c) / ADR 0062: any non-suppression finding that
@@ -259,20 +232,34 @@ export function classifyFindings(
         blocking.push(finding);
         continue;
       }
-      // #604 correctness r1 (P1-d): a matching accepted suppression that
-      // ALSO has a prior sourced suppression at a LOWER severity is a REOPEN
-      // (severity升级), not a fresh re-suppression. The old code fell straight
-      // to `dispositionFromFinding` here (reopenAttempts reset to 0), silently
-      // re-suppressing the upgraded finding and NEVER incrementing the bounded
-      // reopen budget. Route it through the shared reopen/dispute handler FIRST
-      // so a low→medium升级 counts against MAX_REOPEN_ATTEMPTS and a
-      // same-severity re-submission counts against the single dispute budget.
-      if (
-        priorSuppression !== undefined &&
-        (upgradedSeverity(finding, priorSuppression) ||
-          sameSeverity(finding, priorSuppression))
-      ) {
-        applyReopenOrDispute(dispositionByKey, key, finding, priorSuppression);
+      // #604 rework per ADR 0030 (user定论 2026-07-06). A matching accepted
+      // suppression that maintains an existing sourced suppression must NEVER
+      // rewrite governance state, and an UPGRADE must BLOCK rather than be
+      // silently dropped.
+      if (priorSuppression !== undefined) {
+        if (upgradedSeverity(finding, priorSuppression)) {
+          // UPGRADE (severity升级): record the reopen (capped) AND BLOCK. The
+          // higher severity is not covered by the waiver. Both the
+          // budget-available and budget-exhausted subcases block — the old code
+          // recorded a reopen then `continue`d, silently dropping the upgraded
+          // finding (and dropping it entirely once the budget was exhausted).
+          if (priorSuppression.reopenAttempts < MAX_REOPEN_ATTEMPTS) {
+            dispositionByKey.set(
+              key,
+              reopenedDisposition(finding, priorSuppression),
+            );
+          }
+          blocking.push(finding);
+          continue;
+        }
+        // MAINTAIN (same OR lower severity, a maintenance action): ZERO-OP on
+        // the disposition. Do NOT spend disputeAttempts, do NOT refresh severity,
+        // do NOT刷回 a downgrade to the lower severity / reset budgets (ADR 0030
+        // "降级…不刷回"). Keep the prior EXACTLY as-is and stay suppressed. The
+        // "维持花预算" semantic that r1 P1-d introduced was a non-ratified
+        // implementation drift that violated ADR 0030; it is rolled back here.
+        // Only a real fix_now challenge (the general branch below) spends the
+        // single bounded dispute budget (#369 PRESERVED).
         continue;
       }
       dispositionByKey.set(key, dispositionFromFinding(finding, trustedSources));
