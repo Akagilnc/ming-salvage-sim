@@ -457,7 +457,7 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
         pass === undefined ||
         closedPasses.has(pass) ||
         blockedByProcessed ||
-        keys === undefined ||
+        keys == null ||
         keys.length === 0
       ) {
         continue;
@@ -506,7 +506,7 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
         currentFamilyHead === undefined ||
         reviewedHead === undefined ||
         currentFamilyHead === reviewedHead ||
-        keys === undefined ||
+        keys == null ||
         keys.length === 0
       ) {
         continue;
@@ -518,7 +518,7 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
     // envelope is an UNCLASSIFIED abort (e.g. an infra failure) — it carries no CMR
     // blocking envelope. A not_converged abort carries `[]` (defined), so it stays
     // in the classified branch below and simply yields no keys.
-    if (entry.status === "aborted" && entry.blockingFindingIdentityKeys === undefined) {
+    if (entry.status === "aborted" && entry.blockingFindingIdentityKeys == null) {
       const pass = entry.cmrPass;
       if (
         pass === undefined ||
@@ -532,7 +532,7 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
       }
       continue;
     }
-    if (entry.status !== "aborted" || entry.blockingFindingIdentityKeys === undefined) {
+    if (entry.status !== "aborted" || entry.blockingFindingIdentityKeys == null) {
       continue;
     }
     if (
