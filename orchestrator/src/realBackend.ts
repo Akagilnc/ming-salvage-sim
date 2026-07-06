@@ -1636,6 +1636,21 @@ const findingSchema = z.object({
       message: "critical/high findings must be fix_now",
     });
   }
+  // #604 correctness r1 (P2-a): an accepted_suppressed governance disposition is
+  // only valid on a wont_fix/rejected finding — never on fix_now (classifyFindings
+  // would turn the governance suppression into a silent blocker).
+  if (
+    finding.action !== "wont_fix" &&
+    finding.action !== "rejected" &&
+    finding.disposition?.kind === "accepted_suppressed"
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["disposition"],
+      message:
+        "accepted_suppressed disposition is only valid on wont_fix/rejected findings",
+    });
+  }
   if (
     (finding.action === "wont_fix" || finding.action === "rejected") &&
     ((!finding.disposition_reason && !finding.disposition?.reason) ||
@@ -1647,15 +1662,16 @@ const findingSchema = z.object({
       message: "suppressed findings require accepted_suppressed disposition",
     });
   }
-  if (
-    finding.action === "defer" &&
-    (finding.disposition === undefined ||
-      finding.disposition.kind === "accepted_suppressed")
-  ) {
+  // #604 correctness r1 (P2-b): ADR 0062 removed all non-suppression route kinds,
+  // so `defer` can no longer carry a valid non-suppression disposition. A stray
+  // defer fails closed as malformed (consistent with validate.ts and the Python
+  // outcome-guard), never a免修 route.
+  if (finding.action === "defer") {
     ctx.addIssue({
       code: "custom",
-      path: ["disposition"],
-      message: "deferred findings require a non-suppression disposition",
+      path: ["action"],
+      message:
+        "defer is no longer a supported action (ADR 0062): a stray defer is malformed",
     });
   }
 });

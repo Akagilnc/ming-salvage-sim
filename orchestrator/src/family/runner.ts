@@ -246,6 +246,12 @@ function readChildDecisionEscalation(
     });
   const escalation = escalateOf(agentEntry?.output);
   if (escalation == null || !isValidEscalation(escalation)) return undefined;
+  // #604 correctness r1 (P1-a): a RUNNER-synthesized failure escalate (malformed
+  // reviewer output exhausted / retries exhausted — marked `synthesizedFailure`)
+  // is a PROTOCOL FAILURE, not a worker-proactive decision. The child must keep
+  // the A-class `"failed"` behaviour (return undefined), never be parked as a
+  // B-class decision. Only a genuine worker-emitted escalate parks.
+  if (escalation.synthesizedFailure === true) return undefined;
   return {
     reason: escalation.reason,
     diagnosis: escalation.diagnosis,
@@ -306,6 +312,15 @@ async function runChild(
         ...(escalationAnswer.note !== undefined ? { note: escalationAnswer.note } : {}),
       } as PersistentLedgerEntry;
       await singleSliceBackend.writeLedger(answerEntry, resumeState.stateDir);
+    } else {
+      // #604 correctness r1 (P1-b): a human answered THIS child's decision gate,
+      // but its parked resume state is MISSING (findResumeState returned undefined,
+      // or no re-openable non-terminal step exists). We MUST NOT fall through to a
+      // fresh `runOrchestrator` (that would re-run the child FROM SCRATCH, losing
+      // committed progress and violating 原地-resume / never-from-scratch, ADR 0062).
+      // Fail-closed: return `"failed"` (A-class incomplete) so a human repairs the
+      // missing state and reruns — never a silent from-scratch run.
+      return { issue: child.issue, status: "failed" };
     }
   }
   const result = await runOrchestrator({
@@ -406,6 +421,11 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
   const keysByPass: Partial<Record<IntegratedCmrPass, string[]>> = {};
   const closedPasses = new Set<string>();
   const processedPasses = new Set<string>();
+  // #604 correctness r1 (P1-e): passes marked processed ONLY by an empty
+  // not_converged classified abort. An OLDER `cmr_fix_committed` for such a pass
+  // still contributes its pending claimed-fixed keys (ADR 0030 closure); a pass in
+  // `processedPasses` for any OTHER reason still blocks the fix-commit as before.
+  const emptyAbortProcessedPasses = new Set<string>();
   const passesWithUnclosedFixCommits = new Set<string>();
   const unclassifiedAbortHeadByPass = new Map<string, string | undefined>();
   for (let index = ledger.length - 1; index >= 0; index--) {
@@ -419,10 +439,18 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
     if (entry.status === "cmr_fix_committed") {
       const pass = entry.cmrPass;
       const keys = entry.blockingFindingIdentityKeys;
+      // #604 correctness r1 (P1-e): a pass that is processed ONLY because of an
+      // empty not_converged abort must NOT block this older fix-commit's pending
+      // keys — they are still awaiting ADR 0030 closure. `processedPasses` for any
+      // other reason (a real classified abort / cmr_reviewed) still blocks it.
+      const blockedByProcessed =
+        pass !== undefined &&
+        processedPasses.has(pass) &&
+        !emptyAbortProcessedPasses.has(pass);
       if (
         pass === undefined ||
         closedPasses.has(pass) ||
-        processedPasses.has(pass) ||
+        blockedByProcessed ||
         keys === undefined ||
         keys.length === 0
       ) {
@@ -514,13 +542,25 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
     if (passesWithUnclosedFixCommits.has(pass)) {
       continue;
     }
+    // #604 correctness r1 (P1-e): a not_converged sentinel abort carries an EMPTY
+    // classified envelope (`blockingFindingIdentityKeys: []`). It yields no keys of
+    // its own. It still marks the pass processed (its short-circuit semantics — an
+    // older `cmr_reviewed` must NOT be revived as stale evidence past a
+    // not_converged abort), but it is tracked as an EMPTY-ABORT processed pass so
+    // it does NOT MASK an OLDER `cmr_fix_committed` row scanned later in this
+    // newest-first loop. Those claimed-fixed keys are still pending ADR 0030
+    // closure and must survive an empty not_converged abort — otherwise the next
+    // fresh reviewer would no longer be told to cover them (silent DROP).
+    if (entry.blockingFindingIdentityKeys.length === 0) {
+      processedPasses.add(pass);
+      emptyAbortProcessedPasses.add(pass);
+      continue;
+    }
     processedPasses.add(pass);
     const keys = keysByPass[pass] ?? [];
     const seen = new Set(keys);
     // #604 slice 2/3 / ADR 0062: pull EVERY blocking finding's identity key straight
-    // off the thin envelope — no content classification is read. A not_converged
-    // sentinel abort carries `[]`, so it yields nothing here, preserving its
-    // short-circuit behaviour.
+    // off the thin envelope — no content classification is read.
     for (const identityKey of entry.blockingFindingIdentityKeys) {
       if (!seen.has(identityKey)) {
         seen.add(identityKey);
@@ -1260,18 +1300,33 @@ export async function runFamily(
         r.status === "escalated" && r.escalation !== undefined,
     );
     if (escalatedChildren.length > 0) {
-      for (const child of escalatedChildren) {
-        await recordChildDecisionParked(familyBackend, {
-          childIssue: child.issue,
-          reason: child.escalation.reason,
-          diagnosis: child.escalation.diagnosis,
-          ...(child.escalation.sessionId !== undefined
-            ? { sessionId: child.escalation.sessionId }
-            : {}),
-          ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
-        });
+      // #604 correctness r1 (P1-a ②): A-class failure优先于 B-class decision park.
+      // A wave can carry BOTH a real `failed` child (infra/protocol failure — the
+      // A-class incomplete/failure outcome) AND a decision-escalated child. The
+      // old code parked (B-class) as soon as ANY decision-escalated child existed,
+      // silently MASKING the real failure behind an answerable park. If this wave
+      // produced a genuine failure, do NOT park: fall through to the honest
+      // `incomplete` finalize (the failed child is never merged, the run is not
+      // shippable) rather than a `decision_gate_park` that hides it.
+      const hasRealFailure = ran.some((r) => r.status === "failed");
+      if (!hasRealFailure) {
+        for (const child of escalatedChildren) {
+          await recordChildDecisionParked(familyBackend, {
+            childIssue: child.issue,
+            reason: child.escalation.reason,
+            diagnosis: child.escalation.diagnosis,
+            ...(child.escalation.sessionId !== undefined
+              ? { sessionId: child.escalation.sessionId }
+              : {}),
+            ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
+          });
+        }
+        return finalizeDecisionPark(escalatedChildren[0]!, childResults);
       }
-      return finalizeDecisionPark(escalatedChildren[0]!, childResults);
+      // A real failure is present: finalize honestly as incomplete (A-class). The
+      // escalated child's payload is preserved in `childResults` (recorded above
+      // via the else branch of the merge loop), so the driver still sees it.
+      return await finalize();
     }
 
     // ── verify-cmr hook: per-wave barrier (#293 no-op seam, #296 fills) ─────────

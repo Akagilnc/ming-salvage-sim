@@ -252,6 +252,16 @@ export interface ReviewerOutput {
 export interface Escalation {
   readonly reason: string;
   readonly diagnosis: string;
+  /**
+   * #604 correctness r1 (P1-a) / ADR 0062: TRUE marks an escalate the RUNNER
+   * SYNTHESIZED from a protocol/infra failure (malformed reviewer output
+   * exhausted its bounded reruns, retries exhausted), NOT a worker-proactive
+   * "需人类拍板" decision signal. The decision gate (B-class park) fires ONLY for
+   * a worker-emitted decision escalate; a synthesized-failure escalate maps to
+   * the A-class `escalationKind:"failure"` bucket. Absent/false ⇒ a genuine
+   * worker-emitted escalate (decision).
+   */
+  readonly synthesizedFailure?: boolean;
 }
 
 /** Escalation bucket recorded on a terminal S8 entry (#439). */

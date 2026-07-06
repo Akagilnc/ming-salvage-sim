@@ -106,4 +106,36 @@ describe("#604 slice 4 — route-kind-less findings are blocking, deferred is em
     expect(classified.blocking).toEqual([finding]);
     expect(classified.deferred).toEqual([]);
   });
+
+  // #604 correctness r1 (P2-c): a blocking finding result's `reason` flows into the
+  // ledger stopSummary/findingDescriptor. It MUST stay generic / identity-only —
+  // it must NOT leak `suggested_fix` (or other rich finding text) onto the ledger
+  // (F5, ADR 0062). The rich content travels only in the live coder-fix landing.
+  it("blocking result reason is generic identity-only, never the suggested_fix rich text", () => {
+    const finding: Finding = {
+      severity: "high",
+      category: "correctness",
+      claim_quote: "guard is missing on the settle path",
+      location: "orchestrator/src/family/verifyCmr.ts:42",
+      suggested_fix:
+        "SECRET-RICH-DETAIL: rewrite the atomic settle block to hold the applier lock across both writes",
+      action: "fix_now",
+    };
+
+    const classified = deriveCmrEnvelope({
+      familyIssue: 604,
+      findings: [finding],
+      moduleContext: familyModuleContext,
+    });
+
+    const result = classified.results.find(
+      (r) => r.classification === "blocking",
+    );
+    expect(result).toBeDefined();
+    // The ledger-bound reason must NOT carry the suggested_fix rich text.
+    expect(result?.reason).not.toContain("SECRET-RICH-DETAIL");
+    expect(result?.reason).not.toBe(finding.suggested_fix);
+    // Identity is still recoverable from the thin result.
+    expect(result?.identityKey).toBeTruthy();
+  });
 });

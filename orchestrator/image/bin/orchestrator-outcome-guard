@@ -176,11 +176,16 @@ def validate_findings(value: list) -> None:
         disposition_kind = disposition.get("kind") if isinstance(disposition, dict) else None
         if finding["severity"] in ["critical", "high"] and finding["action"] != "fix_now":
             raise GuardError(f"findings[{idx}].action must be fix_now for critical/high severity")
+        # #604 correctness r1 (P2-b): ADR 0062 removed all non-suppression route
+        # kinds, so `defer` can no longer carry a valid non-suppression disposition.
+        # A stray defer fails closed as malformed (口径 parity with the TS parser /
+        # validate.ts / realBackend schemas), never a免修 route.
         if finding["action"] == "defer":
-            if disposition is None:
-                raise GuardError(f"findings[{idx}].disposition is required for defer")
-            if disposition_kind == "accepted_suppressed":
-                raise GuardError(f"findings[{idx}].disposition must not be accepted_suppressed for defer")
+            raise GuardError(f"findings[{idx}].action defer is no longer supported (ADR 0062): a stray defer is malformed")
+        # #604 correctness r1 (P2-a): accepted_suppressed is only valid on
+        # wont_fix/rejected — never on fix_now (it would silently become a blocker).
+        if finding["action"] not in ["wont_fix", "rejected"] and disposition_kind == "accepted_suppressed":
+            raise GuardError(f"findings[{idx}].disposition accepted_suppressed is only valid on wont_fix/rejected")
         if finding["action"] in ["wont_fix", "rejected"]:
             if disposition is None:
                 raise GuardError(f"findings[{idx}].disposition is required for wont_fix/rejected")
@@ -198,29 +203,17 @@ def validate_disposition_evidence(value: dict, label: str) -> None:
     if not isinstance(value, dict):
         raise GuardError(f"{label} must be an object")
     kind = value.get("kind")
+    # #604 correctness r1 (P2-b) / ADR 0062: the routing disposition kinds
+    # (same_module / cross_module / spec_conflict / infra_failure /
+    # owning_issue_still_red) were deleted from the reviewer contract. The Python
+    # outcome-guard (slice-4 missed it) now accepts ONLY the accepted_suppressed
+    # governance carrier —口径 parity with the TS validate/isValidFinding path.
     if not isinstance(kind, str) or kind not in [
-        "same_module",
-        "cross_module",
-        "spec_conflict",
-        "infra_failure",
-        "owning_issue_still_red",
         "accepted_suppressed",
     ]:
         raise GuardError(f"{label}.kind is not a supported value")
 
-    if kind == "same_module":
-        required = {"kind", "reason"}
-        allowed = required
-    elif kind == "cross_module":
-        required = {"kind", "targetModule", "reason"}
-        allowed = required
-    elif kind in ["spec_conflict", "infra_failure"]:
-        required = {"kind", "source", "reason"}
-        allowed = required
-    elif kind == "owning_issue_still_red":
-        required = {"kind", "owningIssue", "missingSurface", "nextStep", "reason"}
-        allowed = required
-    elif kind == "accepted_suppressed":
+    if kind == "accepted_suppressed":
         required = {"kind", "source", "scope", "reason", "boundedReopen"}
         allowed = required | {"findingIdentity", "targetModule"}
     validate_exact_fields(value, allowed, label, required)

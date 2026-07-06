@@ -600,6 +600,12 @@ function isValidFamilyAnswer(entry: FamilyLedgerEntry): boolean {
     entry.status === "escalation_answered" &&
     entry.event === "escalation_answered" &&
     entry.phase === "final" &&
+    // #604 correctness r1 (P1-f): a FAMILY-level answer must NOT carry a
+    // childIssue. A child-bound answer row (F1 added childIssue to child answers)
+    // targets a specific parked CHILD via `isValidChildAnswer`; it must never
+    // release an unrelated FAMILY-level decision escalation (which is the
+    // `event:"escalated"` row that carries no childIssue).
+    entry.childIssue === undefined &&
     typeof entry.answer === "string" &&
     entry.answer.trim().length > 0 &&
     (entry.source === undefined ||

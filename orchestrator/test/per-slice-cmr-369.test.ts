@@ -277,6 +277,31 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     expect(s3?.output?.kind).toBe("reviewer");
     expect(s3?.output?.escalate?.reason).toMatch(/bounded reruns/i);
   });
+
+  // #604 correctness r1 (P1-a ①): a RUNNER-synthesized escalate from exhausted
+  // malformed reviewer reruns is a PROTOCOL FAILURE, not a worker-proactive
+  // decision. Its persisted S8 handoff must be escalationKind:"failure"
+  // (A-class), never "decision" (B-class park) — even though its
+  // reason/diagnosis are well-formed strings.
+  it("maps an exhausted-malformed synthesized escalate to escalationKind:failure, not decision", async () => {
+    const backend = new RetryReviewBackend([
+      { kind: "malformed", reason: "truncated JSON" },
+      { kind: "malformed", reason: "truncated JSON again" },
+    ]);
+
+    const result = await runOrchestrator({ issueNumber: 369, backend });
+
+    expect(result.status).toBe("escalate");
+    // The synthesized escalate carries the protocol-failure marker.
+    const s3 = result.stepLedger.find((entry) => entry.step === "S3");
+    expect(s3?.output?.escalate?.synthesizedFailure).toBe(true);
+    // The persisted S8 handoff entry is tagged FAILURE, not decision.
+    const s8Escalate = backend.ledgerWrites.find(
+      (entry) => entry.step === "S8" && entry.handoffStatus === "escalate",
+    );
+    expect(s8Escalate).toBeDefined();
+    expect(s8Escalate?.escalationKind).toBe("failure");
+  });
 });
 
 describe("#427 ADR0030 claimed-fixed adjudication", () => {
@@ -435,7 +460,20 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         kind: "completed",
         output: {
           kind: "reviewer",
-          findings: [{ ...acceptedRisk, action: "fix_now" }],
+          // #604 correctness r1 (P2-a): a REOPENED finding is a plain blocking
+          // `fix_now` — it must NOT carry the accepted_suppressed disposition
+          // (that is only valid on wont_fix/rejected). Strip the disposition when
+          // reopening so the reviewer output stays contract-valid.
+          findings: [
+            {
+              severity: acceptedRisk.severity,
+              category: acceptedRisk.category,
+              claim_quote: acceptedRisk.claim_quote,
+              location: acceptedRisk.location,
+              suggested_fix: acceptedRisk.suggested_fix,
+              action: "fix_now",
+            },
+          ],
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "verified-closed" },
             {
@@ -2216,7 +2254,19 @@ describe("#369 runner resume/retry review fixes", () => {
           kind: "completed",
           output: {
             kind: "reviewer",
-            findings: [{ ...acceptedRisk, action: "fix_now" }],
+            // #604 correctness r1 (P2-a): a reopened finding is a plain blocking
+            // fix_now with NO accepted_suppressed disposition (that is only valid
+            // on wont_fix/rejected).
+            findings: [
+              {
+                severity: acceptedRisk.severity,
+                category: acceptedRisk.category,
+                claim_quote: acceptedRisk.claim_quote,
+                location: acceptedRisk.location,
+                suggested_fix: acceptedRisk.suggested_fix,
+                action: "fix_now",
+              },
+            ],
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "verified-closed" },
               {

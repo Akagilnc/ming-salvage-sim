@@ -1487,6 +1487,55 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       expect(pending.correctness).toEqual([blockerKey]);
     });
 
+    // #604 correctness r1 (P1-e): a coder-fix committed its claimed-fixed keys,
+    // then the re-review NOT_CONVERGED with an EMPTY classified envelope
+    // (`blockingFindingIdentityKeys: []`). The empty abort must NOT MASK the older
+    // fix-commit's pending keys — they are still awaiting ADR 0030 closure and the
+    // next fresh reviewer must be told to cover them.
+    it("keeps committed CMR fix keys after a later not_converged EMPTY classified abort", () => {
+      const pending = pendingPriorCmrFindingIdentityKeysByPass(
+        [
+          { childIssue: 10, status: "merged" },
+          {
+            status: "cmr_reviewed",
+            event: "cmr_reviewed",
+            phase: "final",
+            cmrPass: "correctness",
+            familyHeadAfter: "head-before-coder-fix",
+            blockingFindingIdentityKeys: [blockerKey],
+            cmrDispositions: [],
+          } as FamilyLedgerEntry,
+          {
+            status: "cmr_fix_committed",
+            event: "cmr_fix_committed",
+            phase: "final",
+            cmrPass: "correctness",
+            familyHeadBefore: "head-before-coder-fix",
+            familyHeadAfter: "head-after-coder-fix",
+            blockingFindingIdentityKeys: [blockerKey],
+          } as FamilyLedgerEntry,
+          {
+            // not_converged sentinel: a CLASSIFIED abort carrying an EMPTY envelope.
+            status: "aborted",
+            event: "aborted",
+            phase: "final",
+            cmrPass: "correctness",
+            familyHeadAfter: "head-after-coder-fix",
+            blockingFindingIdentityKeys: [],
+            reason: "integrated cmr correctness did not converge",
+            stopSummary: {
+              reason: "not_converged",
+              summary: "integrated CMR correctness did not converge after coder-fix",
+            },
+          } as FamilyLedgerEntry,
+        ],
+        "head-after-coder-fix",
+      );
+
+      // The pending keys survive the empty not_converged abort.
+      expect(pending.correctness).toEqual([blockerKey]);
+    });
+
     it("reads cross-round prior dispositions from cmrDispositions, not the fat blob", () => {
       const prior: FindingDisposition = {
         identityKey: blockerKey,

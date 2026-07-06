@@ -112,7 +112,10 @@ Rules:
   category, location, and claim quote. `disposition.reason` is the canonical
   rationale; top-level `disposition_reason` may repeat it but is not required.
   Use `accepted_suppressed` only for new reviewer findings that are outside the
-  runner-supplied claimed-fixed closure set.
+  runner-supplied claimed-fixed closure set. An `accepted_suppressed` disposition
+  MUST be paired with `action:"wont_fix"` or `action:"rejected"` — never with
+  `action:"fix_now"` (that would silently turn the governance suppression into a
+  blocker). Never emit `action:"defer"`: it is not a supported action.
 - When `$ORCHESTRATOR_OUTCOME_PATH` is set, let `orchestrator-outcome-guard` emit
   the `<cmr>` tag and `CMR_STEP_COMPLETE`; do not print them yourself.
 - Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag LAST; if you iterate,
