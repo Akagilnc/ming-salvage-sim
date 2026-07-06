@@ -335,7 +335,14 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     }
   });
 
-  it("reviewer and integrated-cmr prompts document every parser-required blocking/defer disposition field", () => {
+  // #604 slice 4 (ADR 0062): the routing disposition kinds — and their
+  // parser-required fields — were removed from the type system, so no reviewer
+  // or CMR prompt may still advertise them. This test used to assert those
+  // route-kind fields WERE documented; it now asserts they are GONE and that the
+  // new thin contract is documented instead (CMR prompts carry the
+  // `accepted_suppressed` governance fields; the standalone reviewer prompt
+  // mandates fix_now-only and emits no disposition).
+  it("reviewer and integrated-cmr prompts no longer advertise removed routing disposition kinds", () => {
     const files = [
       read("reviewer_review.md"),
       read("integrated_cmr.md"),
@@ -345,13 +352,36 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     ];
 
     for (const text of files) {
-      expect(text).toMatch(/cross_module[\s\S]*targetModule[\s\S]*reason/i);
-      expect(text).toMatch(
-        /owning_issue_still_red[\s\S]*owningIssue[\s\S]*missingSurface[\s\S]*nextStep[\s\S]*reason/i,
-      );
-      expect(text).toMatch(/spec_conflict[\s\S]*source[\s\S]*reason/i);
-      expect(text).toMatch(/infra_failure[\s\S]*source[\s\S]*reason/i);
+      // The removed routing kinds must not appear anywhere in the contract text.
+      expect(text).not.toMatch(/cross_module/);
+      expect(text).not.toMatch(/same_module/);
+      expect(text).not.toMatch(/spec_conflict/);
+      expect(text).not.toMatch(/infra_failure/);
+      expect(text).not.toMatch(/owning_issue_still_red/);
+      // Their parser-required routing fields go with them.
+      expect(text).not.toMatch(/targetModule/);
+      expect(text).not.toMatch(/missingSurface/);
     }
+  });
+
+  it("CMR completeness/correctness prompts document the accepted_suppressed governance fields", () => {
+    for (const text of [
+      read("integrated_cmr_completeness.md"),
+      read("integrated_cmr_correctness.md"),
+    ]) {
+      expect(text).toMatch(
+        /accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen/i,
+      );
+    }
+  });
+
+  it("standalone reviewer prompt mandates fix_now-only findings with no routing disposition", () => {
+    const reviewer = read("reviewer_review.md");
+    // Everything is blocking / fix_now; there is no defer-to-another-module pass.
+    expect(reviewer).toMatch(/fix_now/);
+    expect(reviewer).toMatch(/no "defer to another module" pass/i);
+    // And it explicitly does not emit an accepted_suppressed disposition either.
+    expect(reviewer).toMatch(/do not emit `accepted_suppressed`/i);
   });
 
   it("standalone reviewer prompt and soul do not advertise accepted_suppressed as supported output", () => {

@@ -1627,15 +1627,9 @@ function successSummaryForCurrentState(input: {
   readonly deferredFindings: ReadonlyArray<Finding>;
   readonly findingDispositions: ReadonlyArray<FindingDisposition>;
 }): StopSummary {
-  const crossModuleFinding = input.deferredFindings.find(
-    (finding) => finding.disposition?.kind === "cross_module",
-  );
-  if (crossModuleFinding?.disposition !== undefined) {
-    return stopSummaryFromFindingDispositionEvidence({
-      finding: crossModuleFinding,
-      evidence: crossModuleFinding.disposition,
-    });
-  }
+  // #604 slice 4 (ADR 0062): routing disposition kinds are gone and the deferred
+  // bucket is always empty, so there is no cross-module defer to surface here —
+  // a success summary carries accepted-suppression metadata only.
   const acceptedSuppressions = acceptedSuppressionsFromDispositions(
     input.findingDispositions,
   );

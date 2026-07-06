@@ -2766,66 +2766,36 @@ const cmrClosureSchema = {
   claimedFixedFindingIdentityKeys: z.array(nonEmpty),
   priorFindingDispositions: z.array(cmrFindingDispositionSchema),
 } as const;
-const cmrDispositionEvidenceSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("same_module"), reason: nonEmpty }).strict(),
-  z
-    .object({
-      kind: z.literal("cross_module"),
-      targetModule: nonEmpty,
-      reason: nonEmpty,
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("spec_conflict"),
-      source: nonEmpty,
-      reason: nonEmpty,
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("infra_failure"),
-      source: nonEmpty,
-      reason: nonEmpty,
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("owning_issue_still_red"),
-      owningIssue: nonEmpty,
-      missingSurface: nonEmpty,
-      nextStep: nonEmpty,
-      reason: nonEmpty,
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("accepted_suppressed"),
-      source: nonEmpty,
-      scope: nonEmpty,
-      reason: nonEmpty,
-      findingIdentity: nonEmpty.optional(),
-      targetModule: nonEmpty.optional(),
-      boundedReopen: nonEmpty,
-    })
-    .strict()
-    .superRefine((disposition, ctx) => {
-      if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "accepted_suppressed requires explicit user/ADR/issue source",
-          path: ["source"],
-        });
-      }
-      if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "accepted_suppressed requires bounded reopen condition",
-          path: ["boundedReopen"],
-        });
-      }
-    }),
-]);
+// #604 slice 4 (ADR 0062): the CMR reviewer contract no longer carries routing
+// disposition kinds — the only disposition a reviewer may emit is the
+// accepted-suppression governance carrier.
+const cmrDispositionEvidenceSchema = z
+  .object({
+    kind: z.literal("accepted_suppressed"),
+    source: nonEmpty,
+    scope: nonEmpty,
+    reason: nonEmpty,
+    findingIdentity: nonEmpty.optional(),
+    targetModule: nonEmpty.optional(),
+    boundedReopen: nonEmpty,
+  })
+  .strict()
+  .superRefine((disposition, ctx) => {
+    if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "accepted_suppressed requires explicit user/ADR/issue source",
+        path: ["source"],
+      });
+    }
+    if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "accepted_suppressed requires bounded reopen condition",
+        path: ["boundedReopen"],
+      });
+    }
+  });
 const cmrReviewerFindingSchema = z
   .object({
     severity: z.enum(["critical", "high", "medium", "low", "clarity"]),

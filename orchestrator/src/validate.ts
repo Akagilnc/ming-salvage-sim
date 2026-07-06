@@ -56,14 +56,9 @@ const FINDING_STRING_FIELDS = [
   "suggested_fix",
 ] as const;
 
-const DISPOSITION_KINDS: ReadonlySet<string> = new Set([
-  "same_module",
-  "cross_module",
-  "spec_conflict",
-  "infra_failure",
-  "owning_issue_still_red",
-  "accepted_suppressed",
-]);
+// #604 slice 4 (ADR 0062): only the accepted-suppression governance kind
+// survives — the routing kinds were removed from the reviewer contract.
+const DISPOSITION_KINDS: ReadonlySet<string> = new Set(["accepted_suppressed"]);
 
 /**
  * Type-only string guard (intentionally does NOT reject `""`): a Finding's
@@ -189,9 +184,6 @@ function isValidDispositionEvidence(
   if (!isFilledString(obj.reason)) return false;
   if (
     !optionalString(obj.targetModule) ||
-    !optionalString(obj.owningIssue) ||
-    !optionalString(obj.missingSurface) ||
-    !optionalString(obj.nextStep) ||
     !optionalString(obj.source) ||
     !optionalString(obj.scope) ||
     !optionalString(obj.findingIdentity) ||
@@ -199,22 +191,10 @@ function isValidDispositionEvidence(
   ) {
     return false;
   }
+  // #604 slice 4 (ADR 0062): the only disposition kind is accepted_suppressed.
   switch (obj.kind) {
-    case "cross_module":
-      return isFilledString(obj.targetModule);
-    case "owning_issue_still_red":
-      return (
-        isFilledString(obj.owningIssue) &&
-        isFilledString(obj.missingSurface) &&
-        isFilledString(obj.nextStep)
-      );
     case "accepted_suppressed":
       return acceptedSuppressionAuthorityFromRecord(obj);
-    case "spec_conflict":
-    case "infra_failure":
-      return isFilledString(obj.source);
-    case "same_module":
-      return true;
   }
   return false;
 }

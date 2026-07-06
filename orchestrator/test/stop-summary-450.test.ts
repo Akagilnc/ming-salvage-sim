@@ -133,28 +133,12 @@ describe("stop summary vocabulary (#450)", () => {
   });
 
   it("fails closed instead of inventing unknown metadata for incomplete disposition evidence", () => {
-    expect(() =>
-      stopSummaryFromFindingDispositionEvidence({
-        finding: FINDING,
-        evidence: {
-          kind: "owning_issue_still_red",
-          owningIssue: null,
-          reason: "the owning issue still lacks a surface",
-        } as unknown as FindingDispositionEvidence,
-      }),
-    ).toThrow(/owningIssue/i);
-
-    expect(() =>
-      stopSummaryFromFindingDispositionEvidence({
-        finding: FINDING,
-        evidence: {
-          kind: "cross_module",
-          targetModule: null,
-          reason: "belongs elsewhere",
-        } as unknown as FindingDispositionEvidence,
-      }),
-    ).toThrow(/targetModule/i);
-
+    // #604 slice 4 (ADR 0062): the routing disposition kinds (owning_issue_still_red /
+    // cross_module / …) were removed from the reviewer contract, so the only kind
+    // this bridge still handles is accepted_suppressed. The incomplete-evidence
+    // fail-closed guard for accepted suppression is retained and asserted here;
+    // the deleted-kind cases (owningIssue / targetModule throws) are gone with the
+    // kinds themselves.
     expect(() =>
       stopSummaryFromFindingDispositionEvidence({
         finding: FINDING,
@@ -167,16 +151,6 @@ describe("stop summary vocabulary (#450)", () => {
         } as unknown as FindingDispositionEvidence,
       }),
     ).toThrow(/source.*scope.*boundedReopen/i);
-
-    expect(() =>
-      stopSummaryFromFindingDispositionEvidence({
-        finding: FINDING,
-        evidence: {
-          kind: "cross_module",
-          reason: "belongs elsewhere",
-        } as FindingDispositionEvidence,
-      }),
-    ).toThrow(/targetModule/i);
 
     expect(() =>
       stopSummaryFromFindingDispositionEvidence({

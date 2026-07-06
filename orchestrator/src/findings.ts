@@ -194,20 +194,13 @@ function disputedDisposition(disposition: FindingDisposition): FindingDispositio
   };
 }
 
-function isAllowedCrossModuleDefer(finding: Finding): boolean {
-  return (
-    finding.action === "defer" &&
-    finding.disposition?.kind === "cross_module" &&
-    finding.disposition.targetModule !== undefined &&
-    finding.disposition.targetModule.trim().length > 0 &&
-    finding.disposition.reason.trim().length > 0
-  );
-}
-
 function isBlockingByDisposition(finding: Finding): boolean {
   if (isBlockingFinding(finding)) return true;
-  if (finding.action !== "defer") return false;
-  return !isAllowedCrossModuleDefer(finding);
+  // #604 slice 4 (ADR 0062): routing disposition kinds are gone, so no defer
+  // can pass without a fix — every `action:"defer"` finding that reaches here
+  // (i.e. is not an accepted suppression) is blocking. The deferred bucket
+  // is retained by the return shape but is now always empty.
+  return finding.action === "defer";
 }
 
 export function classifyFindings(

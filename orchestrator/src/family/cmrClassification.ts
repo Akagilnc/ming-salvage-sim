@@ -6,14 +6,17 @@ import type {
   SourcedModuleDeclaration,
 } from "./moduleDeclaration.js";
 
+/**
+ * #604 slice 4 (ADR 0062): the routing classification values
+ * (`same_module_still_red` / `owning_issue_still_red` / `cross_module_defer` /
+ * `spec_conflict` / `infra_failure`) were removed along with the reviewer route
+ * kinds. A finding is now either `blocking` (fix it and rerun), an
+ * `accepted_suppressed` governance carrier, or the synthetic `not_converged`.
+ */
 export type FamilyCmrFindingClassification =
   | "not_converged"
-  | "same_module_still_red"
-  | "owning_issue_still_red"
-  | "accepted_suppressed"
-  | "cross_module_defer"
-  | "spec_conflict"
-  | "infra_failure";
+  | "blocking"
+  | "accepted_suppressed";
 
 export interface FamilyCmrFindingResult {
   readonly identityKey: string;
@@ -30,8 +33,6 @@ export interface FamilyCmrFindingResult {
     readonly source?: SourcedModuleDeclaration["source"];
   };
   readonly owningIssue?: string;
-  readonly missingSurface?: string;
-  readonly nextStep?: string;
   readonly targetModule?: string;
   readonly source?: string;
   readonly reason: string;
@@ -347,50 +348,23 @@ function resultForBlocking(
 ): FamilyCmrFindingResult {
   const attribution = attributionFor(finding, context);
   const disposition = finding.disposition;
-  const classification: FamilyCmrFindingClassification =
-    disposition?.kind === "owning_issue_still_red"
-      ? "owning_issue_still_red"
-      : disposition?.kind === "spec_conflict"
-        ? "spec_conflict"
-        : disposition?.kind === "infra_failure"
-          ? "infra_failure"
-          : "same_module_still_red";
+  // #604 slice 4 (ADR 0062): routing disposition kinds are gone, so a blocking
+  // finding is never classified by a route kind — every blocking finding lands
+  // in the single `blocking` bucket ("fix it and rerun").
+  const classification: FamilyCmrFindingClassification = "blocking";
   return {
     identityKey: findingIdentityKey(finding),
     classification,
     attribution,
-    ...(disposition?.kind === "owning_issue_still_red"
-      ? { owningIssue: disposition.owningIssue }
-      : attribution.issue !== undefined
-        ? { owningIssue: `#${attribution.issue}` }
-        : {}),
-    ...(disposition?.kind === "owning_issue_still_red" &&
-    disposition.missingSurface !== undefined
-      ? { missingSurface: disposition.missingSurface }
+    ...(attribution.issue !== undefined
+      ? { owningIssue: `#${attribution.issue}` }
       : {}),
-    ...(disposition?.kind === "owning_issue_still_red" &&
-    disposition.nextStep !== undefined
-      ? { nextStep: disposition.nextStep }
-      : {}),
+    // `targetModule` survives only as the optional accepted-suppression target.
     ...(disposition?.targetModule !== undefined
       ? { targetModule: disposition.targetModule }
       : {}),
     ...(disposition?.source !== undefined ? { source: disposition.source } : {}),
     reason: disposition?.reason ?? finding.disposition_reason ?? finding.suggested_fix,
-  };
-}
-
-function resultForDeferred(
-  finding: Finding,
-  context: FamilyModuleContext,
-): FamilyCmrFindingResult {
-  const disposition = finding.disposition;
-  return {
-    identityKey: findingIdentityKey(finding),
-    classification: "cross_module_defer",
-    attribution: attributionFor(finding, context),
-    targetModule: disposition?.targetModule,
-    reason: disposition?.reason ?? finding.suggested_fix,
   };
 }
 
@@ -416,36 +390,11 @@ export function classifyFamilyCmrFindings(input: {
       continue;
     }
 
-    if (
-      finding.action === "defer" &&
-      finding.disposition?.kind === "cross_module"
-    ) {
-      findingsForFinalClassification.push(finding);
-      const attribution = attributionFor(finding, input.moduleContext);
-      const targetModule = normalizedModule(finding.disposition.targetModule ?? "");
-      const undevelopedTarget = declaredUndevelopedTarget(
-        finding.disposition.targetModule,
-        input.moduleContext,
-      );
-      const findingIsInsideUndevelopedTarget =
-        undevelopedTarget !== undefined &&
-        declarationCoversFinding(undevelopedTarget, finding);
-      if (
-        undevelopedTarget !== undefined &&
-        currentModules.size > 0 &&
-        !currentModules.has(targetModule) &&
-        targetModuleIsOutsideCurrentModules(targetModule, currentModules) &&
-        (attribution.method !== "missing_module_context" ||
-          findingIsInsideUndevelopedTarget)
-      ) {
-        deferred.push(finding);
-        results.push(resultForDeferred(finding, input.moduleContext));
-      } else {
-        blocking.push(finding);
-        results.push(resultForBlocking(finding, input.moduleContext));
-      }
-      continue;
-    }
+    // #604 slice 4 (ADR 0062): the `cross_module` routing kind is gone, so there
+    // is no longer a cross-module deferred bucket — a `defer` finding falls
+    // through to the shared single-finding classifier below, which now classifies
+    // every non-accepted-suppressed defer as blocking (findings.ts). `deferred`
+    // is retained by the return shape but stays empty.
 
     const scopedPriorDispositions = (input.priorDispositions ?? []).filter(
       (disposition) =>
@@ -460,7 +409,7 @@ export function classifyFamilyCmrFindings(input: {
       results.push(resultForBlocking(finding, input.moduleContext));
     } else if (single.deferred.length > 0) {
       deferred.push(finding);
-      results.push(resultForDeferred(finding, input.moduleContext));
+      results.push(resultForBlocking(finding, input.moduleContext));
     } else {
       results.push({
         identityKey: findingIdentityKey(finding),

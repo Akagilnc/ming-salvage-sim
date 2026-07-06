@@ -164,27 +164,24 @@ export interface Finding {
   readonly disposition?: FindingDispositionEvidence;
 }
 
-export type FindingDispositionKind =
-  | "same_module"
-  | "cross_module"
-  | "spec_conflict"
-  | "infra_failure"
-  | "owning_issue_still_red"
-  | "accepted_suppressed";
+/**
+ * The only disposition kind a reviewer/CMR soul may emit (#604 slice 4, ADR
+ * 0062). The purely-routing kinds (`same_module` / `cross_module` /
+ * `spec_conflict` / `infra_failure` / `owning_issue_still_red`) were removed:
+ * the runner no longer reads a route field to decide a finding's fate — every
+ * non-accepted-suppressed finding is blocking (see {@link classifyFindings}).
+ * `accepted_suppressed` remains as the governance carrier for accepted
+ * suppression (source/scope/bounded reopen).
+ */
+export type FindingDispositionKind = "accepted_suppressed";
 
 export interface FindingDispositionEvidence {
   readonly kind: FindingDispositionKind;
   /** Why this classification applies. Required for every disposition kind. */
   readonly reason: string;
-  /** Required for cross-module defer; optional target for accepted suppression. */
+  /** Optional module target for accepted suppression. */
   readonly targetModule?: string;
-  /** Required for owning_issue_still_red. */
-  readonly owningIssue?: string;
-  /** Required for owning_issue_still_red. */
-  readonly missingSurface?: string;
-  /** Required for owning_issue_still_red. */
-  readonly nextStep?: string;
-  /** Required for accepted_suppressed and spec/infra audit trails. */
+  /** Required for accepted_suppressed. */
   readonly source?: string;
   /** Required for accepted_suppressed. */
   readonly scope?: string;
