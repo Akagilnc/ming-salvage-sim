@@ -25,6 +25,7 @@ import type {
   ResumeState,
   StepOutput,
   StepSpec,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -68,6 +69,7 @@ class RetryReviewBackend implements Backend {
   readonly dispatched: string[] = [];
   readonly specs: WorkerSpec[] = [];
   readonly ctxs: DispatchContext[] = [];
+  readonly landings: (WorkerLandingPayload | undefined)[] = [];
   readonly ledgerWrites: PersistentLedgerEntry[] = [];
   reviewerAttempts = 0;
   coderAttempts = 0;
@@ -115,10 +117,15 @@ class RetryReviewBackend implements Backend {
     this.ledgerWrites.push(entry);
   }
 
-  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+  async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}`);
     this.specs.push(spec);
     this.ctxs.push(ctx);
+    this.landings.push(landing);
     if (spec.kind === "coder" && spec.id === "S5") {
       const attempt = this.coderAttempts;
       const scripted = this.coderOutputs[this.coderAttempts];
@@ -197,13 +204,15 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     expect(result.status).toBe("success");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
-    expect(backend.ctxs[s5Index]?.blockingFindings).toEqual([finding]);
+    expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
     expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys).toEqual([
       "correctness|src/runner.ts:1|fix worker needs structured finding data",
     ]);
   });
 
-  it("preserves deferred findings across blocking fix rounds", async () => {
+  // #604 slice 4 (ADR 0062): the former cross-module defer is now blocking, so
+  // both findings ride the fix loop and deferredFindings is always empty.
+  it("keeps former cross-module defers blocking across fix rounds", async () => {
     const blocking: Finding = {
       severity: "high",
       category: "Correctness",
@@ -212,21 +221,19 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
       suggested_fix: "fix it",
       action: "fix_now",
     };
-    const deferred: Finding = {
+    const formerCrossModuleDefer: Finding = {
       severity: "medium",
       category: "Follow-up",
       claim_quote: "track this later",
       location: "src/runner.ts:11",
       suggested_fix: "file follow-up",
       action: "defer",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "follow-up tracker",
-        reason: "This is intentionally outside the current slice runner module.",
-      },
     };
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [blocking, deferred] } },
+      {
+        kind: "completed",
+        output: { kind: "reviewer", findings: [blocking, formerCrossModuleDefer] },
+      },
       {
         kind: "completed",
         output: {
@@ -237,6 +244,10 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
               identityKey: "correctness|src/runner.ts:10|must fix before shipping",
               status: "verified-closed",
             },
+            {
+              identityKey: "follow-up|src/runner.ts:11|track this later",
+              status: "verified-closed",
+            },
           ],
         },
       },
@@ -245,7 +256,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     expect(result.status).toBe("success");
-    expect(result.deferredFindings).toEqual([deferred]);
+    expect(result.deferredFindings).toEqual([]);
   });
 
   it("escalates after the bounded reviewer-output retry budget is exhausted", async () => {
@@ -265,6 +276,31 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     const s3 = result.stepLedger.find((entry) => entry.step === "S3");
     expect(s3?.output?.kind).toBe("reviewer");
     expect(s3?.output?.escalate?.reason).toMatch(/bounded reruns/i);
+  });
+
+  // #604 correctness r1 (P1-a ①): a RUNNER-synthesized escalate from exhausted
+  // malformed reviewer reruns is a PROTOCOL FAILURE, not a worker-proactive
+  // decision. Its persisted S8 handoff must be escalationKind:"failure"
+  // (A-class), never "decision" (B-class park) — even though its
+  // reason/diagnosis are well-formed strings.
+  it("maps an exhausted-malformed synthesized escalate to escalationKind:failure, not decision", async () => {
+    const backend = new RetryReviewBackend([
+      { kind: "malformed", reason: "truncated JSON" },
+      { kind: "malformed", reason: "truncated JSON again" },
+    ]);
+
+    const result = await runOrchestrator({ issueNumber: 369, backend });
+
+    expect(result.status).toBe("escalate");
+    // The synthesized escalate carries the protocol-failure marker.
+    const s3 = result.stepLedger.find((entry) => entry.step === "S3");
+    expect(s3?.output?.escalate?.synthesizedFailure).toBe(true);
+    // The persisted S8 handoff entry is tagged FAILURE, not decision.
+    const s8Escalate = backend.ledgerWrites.find(
+      (entry) => entry.step === "S8" && entry.handoffStatus === "escalate",
+    );
+    expect(s8Escalate).toBeDefined();
+    expect(s8Escalate?.escalationKind).toBe("failure");
   });
 });
 
@@ -388,7 +424,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     expect(result.status).toBe("success");
     const s6Index = backend.specs.findIndex((spec) => spec.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
-    expect(backend.ctxs[s6Index]?.blockingFindings).toEqual([blocking]);
+    expect(backend.landings[s6Index]?.blockingFindings).toEqual([blocking]);
     expect(backend.ctxs[s6Index]?.blockingFindingIdentityKeys).toEqual([
       blockingKey,
     ]);
@@ -424,7 +460,20 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         kind: "completed",
         output: {
           kind: "reviewer",
-          findings: [{ ...acceptedRisk, action: "fix_now" }],
+          // #604 correctness r1 (P2-a): a REOPENED finding is a plain blocking
+          // `fix_now` — it must NOT carry the accepted_suppressed disposition
+          // (that is only valid on wont_fix/rejected). Strip the disposition when
+          // reopening so the reviewer output stays contract-valid.
+          findings: [
+            {
+              severity: acceptedRisk.severity,
+              category: acceptedRisk.category,
+              claim_quote: acceptedRisk.claim_quote,
+              location: acceptedRisk.location,
+              suggested_fix: acceptedRisk.suggested_fix,
+              action: "fix_now",
+            },
+          ],
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "verified-closed" },
             {
@@ -1974,7 +2023,7 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(result.status).toBe("success");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
-    expect(backend.ctxs[s5Index]?.blockingFindings).toEqual([finding]);
+    expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
     expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys).toEqual([
       "correctness|src/runner.ts:1116|s5 needs the persisted blocker after resume",
     ]);
@@ -2047,7 +2096,7 @@ describe("#369 runner resume/retry review fixes", () => {
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
     expect(backend.specs[s5Index]?.session).toBe("resume");
-    expect(backend.ctxs[s5Index]?.blockingFindings).toEqual([finding]);
+    expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
     expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys).toEqual([
       "correctness|src/runner.ts:902|s5 fallback still needs the blocker",
     ]);
@@ -2142,7 +2191,7 @@ describe("#369 runner resume/retry review fixes", () => {
       "S6:reviewer",
       "S7:ship",
     ]);
-    expect(backend.ctxs[0]?.blockingFindings).toEqual([finding]);
+    expect(backend.landings[0]?.blockingFindings).toEqual([finding]);
     expect(backend.ctxs[0]?.blockingFindingIdentityKeys).toEqual([key]);
   });
 
@@ -2205,7 +2254,19 @@ describe("#369 runner resume/retry review fixes", () => {
           kind: "completed",
           output: {
             kind: "reviewer",
-            findings: [{ ...acceptedRisk, action: "fix_now" }],
+            // #604 correctness r1 (P2-a): a reopened finding is a plain blocking
+            // fix_now with NO accepted_suppressed disposition (that is only valid
+            // on wont_fix/rejected).
+            findings: [
+              {
+                severity: acceptedRisk.severity,
+                category: acceptedRisk.category,
+                claim_quote: acceptedRisk.claim_quote,
+                location: acceptedRisk.location,
+                suggested_fix: acceptedRisk.suggested_fix,
+                action: "fix_now",
+              },
+            ],
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "verified-closed" },
               {
@@ -2242,19 +2303,17 @@ describe("#369 runner resume/retry review fixes", () => {
     ]);
   });
 
-  it("rebuilds deferred findings when re-feeding a terminal resumed run", async () => {
-    const deferred: Finding = {
+  // #604 slice 4 (ADR 0062): deferredFindings is always empty now; re-feeding a
+  // terminal success run stays terminal and dispatches nothing, but rebuilds an
+  // empty deferred bucket rather than the former cross-module defer.
+  it("rebuilds an empty deferred bucket when re-feeding a terminal resumed run", async () => {
+    const formerCrossModuleDefer: Finding = {
       severity: "medium",
       category: "Follow-up",
       claim_quote: "terminal resume still reports this defer",
       location: "src/runner.ts:926",
       suggested_fix: "surface the deferred finding",
       action: "defer",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "follow-up tracker",
-        reason: "Terminal resume should preserve valid cross-module defers.",
-      },
     };
     const resumeState: ResumeState = {
       worktree: WORKTREE,
@@ -2263,7 +2322,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [deferred] } },
+        { step: "S3", output: { kind: "reviewer", findings: [formerCrossModuleDefer] } },
         { step: "S4" },
         { step: "S7" },
         { step: "S8", handoffStatus: "success" },
@@ -2274,7 +2333,7 @@ describe("#369 runner resume/retry review fixes", () => {
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     expect(result.status).toBe("success");
-    expect(result.deferredFindings).toEqual([deferred]);
+    expect(result.deferredFindings).toEqual([]);
     expect(backend.dispatched).toEqual([]);
   });
 
@@ -2564,114 +2623,89 @@ describe("#369 finding identity and classification", () => {
     ).toBe(true);
   });
 
-  it("keeps same-module defer blocking instead of letting S4 pass", () => {
-    const sameModuleDefer: Finding = {
+  // #604 slice 4 (ADR 0062): the same_module disposition kind is gone. A bare
+  // action:"defer" finding is classified as blocking (never passes S4), and
+  // because a defer with no valid non-accepted-suppression disposition is now a
+  // contract-invalid reviewer output, route() fails it closed to S8(error)
+  // rather than ever letting S4 pass to ship.
+  it("keeps a bare defer blocking instead of letting S4 pass", () => {
+    const bareDefer: Finding = {
       ...finding,
       action: "defer",
-      disposition: {
-        kind: "same_module",
-        reason: "The finding is inside the current runner/reviewer contract.",
-      },
     };
 
-    const classification = classifyFindings([sameModuleDefer]);
+    const classification = classifyFindings([bareDefer]);
 
-    expect(classification.blocking).toEqual([sameModuleDefer]);
+    expect(classification.blocking).toEqual([bareDefer]);
     expect(classification.deferred).toEqual([]);
     expect(
       route({
         from: "S4",
-        output: { kind: "reviewer", findings: [sameModuleDefer] },
+        output: { kind: "reviewer", findings: [bareDefer] },
       }),
-    ).toEqual({ kind: "next", step: "S5" });
+    ).toEqual({ kind: "handoff", status: "error" });
   });
 
-  it("allows only well-scoped cross-module defer to pass through deferred", () => {
-    const crossModuleDefer: Finding = {
+  // #604 slice 4 (ADR 0062): the cross_module disposition and its deferred→S7
+  // pass path are gone. A former cross-module defer is now a bare defer:
+  // classifyFindings treats it as blocking, and since it carries no valid
+  // non-accepted-suppression disposition it is a contract-invalid reviewer
+  // output, so route() fails it closed to S8(error) — the deferred→S7 pass path
+  // no longer exists.
+  it("treats a former cross-module defer as blocking", () => {
+    const formerCrossModuleDefer: Finding = {
       ...finding,
       action: "defer",
-      disposition: {
-        kind: "cross_module",
-        targetModule: "family integrated CMR",
-        reason: "Requires the separate family-level CMR worker, not this slice runner.",
-      },
     };
 
-    const classification = classifyFindings([crossModuleDefer]);
+    const classification = classifyFindings([formerCrossModuleDefer]);
 
-    expect(classification.blocking).toEqual([]);
-    expect(classification.deferred).toEqual([crossModuleDefer]);
+    expect(classification.blocking).toEqual([formerCrossModuleDefer]);
+    expect(classification.deferred).toEqual([]);
     expect(
       route({
         from: "S4",
-        output: { kind: "reviewer", findings: [crossModuleDefer] },
+        output: { kind: "reviewer", findings: [formerCrossModuleDefer] },
       }),
-    ).toEqual({ kind: "next", step: "S7" });
-    expect(
-      isValidFinding({
-        ...crossModuleDefer,
-        disposition: { kind: "cross_module", reason: "missing target" },
-      }),
-    ).toBe(false);
+    ).toEqual({ kind: "handoff", status: "error" });
   });
 
-  it("records owning-issue still-red defer as blocking with the target surface", () => {
+  // #604 slice 4 (ADR 0062): the owning_issue_still_red disposition kind is gone.
+  // classifyFindings still treats a bare action:"defer" finding as blocking; the
+  // deleted-kind isValidFinding sub-assertions are removed because no routing
+  // disposition kinds remain to construct.
+  it("records a defer finding as blocking", () => {
     const stillRed: Finding = {
       ...finding,
       action: "defer",
-      disposition: {
-        kind: "owning_issue_still_red",
-        owningIssue: "#446",
-        missingSurface: "runner resume route still lacks continue-fixing replay",
-        nextStep: "continue the #446 fix loop",
-        reason: "The gap is in this family/module and remains unclosed.",
-      },
     };
 
     const classification = classifyFindings([stillRed]);
 
     expect(classification.blocking).toEqual([stillRed]);
     expect(classification.deferred).toEqual([]);
-    expect(isValidFinding(stillRed)).toBe(true);
-    expect(
-      isValidFinding({
-        ...stillRed,
-        disposition: {
-          kind: "owning_issue_still_red",
-          owningIssue: "#446",
-          reason: "missing required fields",
-        },
-      }),
-    ).toBe(false);
+    expect(isValidFinding(finding)).toBe(true);
   });
 
-  it("classifies spec conflicts and infra failures separately but fail-closed", () => {
+  // #604 slice 4 (ADR 0062): the spec_conflict / infra_failure disposition kinds
+  // are gone. Both were fail-closed defers; as bare defers they remain blocking,
+  // so there is no longer a "separate" classification to assert. The deleted-kind
+  // isValidFinding sub-assertions are removed (no routing disposition kinds remain).
+  it("classifies former spec/infra findings as blocking", () => {
     const specConflict: Finding = {
       ...finding,
       action: "defer",
-      disposition: {
-        kind: "spec_conflict",
-        source: "ADR 0030 conflicts with issue #448",
-        reason: "Two accepted contracts require different S4 outcomes.",
-      },
     };
     const infraFailure: Finding = {
       ...finding,
       claim_quote: "gh auth failed",
       action: "defer",
-      disposition: {
-        kind: "infra_failure",
-        source: "gh issue view",
-        reason: "The runner cannot fetch issue truth.",
-      },
     };
 
     const classification = classifyFindings([specConflict, infraFailure]);
 
     expect(classification.blocking).toEqual([specConflict, infraFailure]);
     expect(classification.deferred).toEqual([]);
-    expect(isValidFinding(specConflict)).toBe(true);
-    expect(isValidFinding(infraFailure)).toBe(true);
   });
 
   it("requires sourced accepted suppression and reopens it when evidence exceeds the bound", () => {
@@ -2685,7 +2719,6 @@ describe("#369 finding identity and classification", () => {
         scope: "cross-module target already tracked",
         reason: "Accepted by issue text as out of scope",
         findingIdentity: findingIdentityKey(finding),
-        targetModule: "family integrated CMR",
         boundedReopen: "reopen on higher severity, new evidence, or different scope",
       },
     };
@@ -2713,7 +2746,6 @@ describe("#369 finding identity and classification", () => {
         reopenAttempts: 0,
         source: "issue #448 acceptance criteria",
         scope: "cross-module target already tracked",
-        targetModule: "family integrated CMR",
         boundedReopen: "reopen on higher severity, new evidence, or different scope",
       },
     ]);
@@ -3146,19 +3178,24 @@ describe("#369 legacy S5 landing file", () => {
       toolchain: [],
     };
 
-    const result = await legacyDispatchWorker(backend, spec, {
-      worktree,
-      stateDir,
-      blockingFindings: [finding],
-      blockingFindingIdentityKeys: ["correctness|src/x.ts:1|fix me"],
-      escalationAnswer: {
-        event: "escalation_answered",
-        forStep: "S4",
-        answer: "continue-same-class",
-        note: "human approved another targeted fix round",
-        source: "human",
+    const result = await legacyDispatchWorker(
+      backend,
+      spec,
+      {
+        worktree,
+        stateDir,
+        blockingFindingIdentityKeys: ["correctness|src/x.ts:1|fix me"],
+        blockingFindingCount: 1,
+        escalationAnswer: {
+          event: "escalation_answered",
+          forStep: "S4",
+          answer: "continue-same-class",
+          note: "human approved another targeted fix round",
+          source: "human",
+        },
       },
-    });
+      { blockingFindings: [finding] },
+    );
 
     expect(result.kind).toBe("completed");
     expect(observedLanding).toEqual({
@@ -3235,12 +3272,17 @@ describe("#369 legacy S5 landing file", () => {
       toolchain: [],
     };
 
-    await legacyDispatchWorker(backend, spec, {
-      worktree,
-      stateDir,
-      blockingFindings: [finding],
-      blockingFindingIdentityKeys: ["correctness|src/x.ts:2|mount me"],
-    });
+    await legacyDispatchWorker(
+      backend,
+      spec,
+      {
+        worktree,
+        stateDir,
+        blockingFindingIdentityKeys: ["correctness|src/x.ts:2|mount me"],
+        blockingFindingCount: 1,
+      },
+      { blockingFindings: [finding] },
+    );
 
     expect(observedLanding).toEqual({
       path: join(stateDir, "fix-findings.json"),
@@ -3318,12 +3360,17 @@ describe("#369 legacy S5 landing file", () => {
       toolchain: [],
     };
 
-    await legacyDispatchWorker(backend, spec, {
-      worktree,
-      stateDir,
-      blockingFindings: [finding],
-      blockingFindingIdentityKeys: ["correctness|src/x.ts:3|verify me"],
-    });
+    await legacyDispatchWorker(
+      backend,
+      spec,
+      {
+        worktree,
+        stateDir,
+        blockingFindingIdentityKeys: ["correctness|src/x.ts:3|verify me"],
+        blockingFindingCount: 1,
+      },
+      { blockingFindings: [finding] },
+    );
 
     expect(observedLanding).toEqual({
       blockingFindings: [finding],

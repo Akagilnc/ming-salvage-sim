@@ -18,17 +18,19 @@ import type {
   DispatchContext,
   Escalation,
   EscalationAnswerPayload,
+  EscalationKind,
   Finding,
+  FindingDisposition,
   PriorFindingDisposition,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
 import type {
   AcceptedSuppressionSource,
-  FamilyCmrClassification,
   FamilyModuleContext,
   SourcedModuleDeclaration,
-} from "./cmrClassification.js";
+} from "./moduleDeclaration.js";
 import type {
   VerifyCmrInput,
   VerifyCmrPhase,
@@ -141,6 +143,13 @@ export interface FamilyLedgerEntry {
    *     escalations are answerable by a later append-only `escalation_answered`
    *     row; failure escalations are terminal until human/manual repair outside
    *     this runner. NOT counted as merged.
+   *   - `"child_decision_parked"` — (#604 slice 5) a CHILD-LEVEL decision-gate PARK:
+   *     a child slice hit a product/design题 (`escalationKind:"decision"`) and parked
+   *     the family awaiting a human answer. INDEPENDENT of the family's own A-class
+   *     `"escalated"` row so the human decision gate (park → resume) stays distinct
+   *     from infra escalation/failure. Carries `childIssue` so multiple children can
+   *     park + be resumed separately; answered by a later `escalation_answered` row
+   *     that ALSO carries the matching `childIssue`. NOT counted as merged.
    *   - `"escalation_answered"` — a PHASE-LEVEL append-only human answer event
    *     (#439). It reopens a prior decision escalation without editing/deleting
    *     that prior row. NOT counted as merged.
@@ -155,6 +164,7 @@ export interface FamilyLedgerEntry {
     | "cmr_fix_committed"
     | "cmr_passed"
     | "escalated"
+    | "child_decision_parked"
     | "escalation_answered"
     | "admission_skipped";
   /**
@@ -176,8 +186,11 @@ export interface FamilyLedgerEntry {
    *     verdict so step5 and step6 are visible in the family ledger (#419).
    *   - `"escalated"` — paired with `status:"escalated"`; records the family
    *     escalation bucket (#439).
+   *   - `"child_decision_parked"` — paired with `status:"child_decision_parked"`;
+   *     records a child-level decision gate that parked the family (#604 slice 5).
    *   - `"escalation_answered"` — paired with `status:"escalation_answered"`; an
-   *     append-only human answer to a prior decision escalation (#439).
+   *     append-only human answer to a prior decision escalation/park (#439). When it
+   *     carries a `childIssue` it answers a `child_decision_parked` row (#604 slice 5).
    *   - `"admission_skipped"` — paired with `status:"admission_skipped"`; records
    *     production admission skips before scheduling.
    * Not the unblock truth (that is `status`); the tag is for observability.
@@ -190,6 +203,7 @@ export interface FamilyLedgerEntry {
     | "cmr_fix_committed"
     | "cmr_passed"
     | "escalated"
+    | "child_decision_parked"
     | "escalation_answered"
     | "admission_skipped";
   /**
@@ -227,14 +241,28 @@ export interface FamilyLedgerEntry {
    * active worker/reviewer route match; old rows without this fail closed.
    */
   readonly routeFingerprint?: string;
-  /** Family CMR finding classification audit trail (#449). */
-  readonly cmrFindingClassification?: FamilyCmrClassification;
   /**
-   * CMR finding identity keys a runner-visible coder-fix commit is expected to
-   * close. Stored structurally on `cmr_fix_committed` rows so crash-resume can
-   * protect the same keys in the next fresh CMR pass.
+   * The THIN control envelope the runner reads on `cmr_reviewed` / `aborted`
+   * rows (#604 slice 3 / ADR 0062): the identity keys of the CURRENT blocking
+   * findings (deduped). The runner is a pure scheduler — it reads this key list
+   * and NOTHING else off a CMR row. It replaces the former fat
+   * `cmrFindingClassification` blob (Finding full text + results[] audit +
+   * dispositions[]), which leaked finding CONTENT the runner must never read.
+   * Also stored on `cmr_fix_committed` rows so crash-resume can protect the same
+   * keys in the next fresh CMR pass. A `not_converged` sentinel row carries `[]`
+   * (defined-but-empty), preserving its "no pending keys" short-circuit.
    */
   readonly blockingFindingIdentityKeys?: readonly string[];
+  /**
+   * The governance side-channel the CMR GATE (not the runner) reads to track
+   * cross-round prior dispositions (#604 slice 3 / ADR 0062). Carries the
+   * accepted-suppression / defer / owning-issue dispositions the classifier
+   * produced this pass, so a later pass can honour a prior accepted suppression
+   * without re-blocking. Split out of the old `cmrFindingClassification` blob so
+   * the runner's control envelope (`blockingFindingIdentityKeys`) and the gate's
+   * governance data live in separate, purpose-scoped fields.
+   */
+  readonly cmrDispositions?: readonly FindingDisposition[];
   /**
    * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
    * ran, #295) rather than land as a clean deterministic merge? Forwarded by the
@@ -254,6 +282,18 @@ export interface FamilyLedgerEntry {
   readonly pr?: string;
   /** Decision pauses can be reopened by an answer row; failure escalations cannot. */
   readonly escalationKind?: "decision" | "failure";
+  /**
+   * The child Escalation diagnosis on a `child_decision_parked` row (#604 slice 5) —
+   * the product/design context the human needs to answer. `reason` carries the
+   * short escalation reason; `diagnosis` the longer explanation.
+   */
+  readonly diagnosis?: string;
+  /**
+   * The escalated child's single-slice worker session id on a `child_decision_parked`
+   * row (#604 slice 5), forwarded so a later resume re-enters the SAME session
+   * (原地 resume, ADR 0062 退出-重入). Absent when the child provider surfaced no id.
+   */
+  readonly sessionId?: string;
   /** Human answer payload when `event === "escalation_answered"` (#439). */
   readonly answer?: string;
   /** Required executable source for answer rows. */
@@ -449,6 +489,7 @@ export interface FamilyBackend {
   dispatchWorker?(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
   /**
    * Runner fallback for outcome protocol failures (#552).
@@ -838,7 +879,38 @@ export type FamilyChildStatus =
   | "already_done"
   | "resumed"
   | "skipped"
-  | "failed";
+  | "failed"
+  /**
+   * `"escalated"` — (#604 slice 5) the child's single-slice run hit a
+   * product/design DECISION题 (`escalationKind:"decision"`) and PARKED. Distinct
+   * from `"failed"` (an infra `escalationKind:"failure"` / retries-exhausted child,
+   * which is terminal until manual repair): a decision escalation is answerable —
+   * a later `escalation_answered` ledger row bound to this childIssue re-opens it
+   * and the family runner resumes the child IN PLACE (原 sessionId, 退出-重入 per
+   * ADR 0062). runChild returns this ONLY for the decision bucket; the failure
+   * bucket keeps the current `"failed"` behaviour (A/B分家).
+   */
+  | "escalated";
+
+/**
+ * The decision escalation a child slice PARKED on (#604 slice 5).
+ *
+ * Only the `escalationKind:"decision"` bucket produces this — an infra
+ * (`"failure"`) escalation stays `"failed"` and is NOT parked (A/B分家). The
+ * `sessionId` is the child's escalated single-slice worker session, forwarded so
+ * the family resume re-enters the SAME session (原地 resume, never from scratch —
+ * ADR 0062 退出-重入). Absent only when the child provider surfaced no session id.
+ */
+export interface FamilyChildEscalation {
+  /** Why the child paused (the model-supplied Escalation reason). */
+  readonly reason: string;
+  /** The child's Escalation diagnosis (product/design context for the human). */
+  readonly diagnosis: string;
+  /** Decision (answerable, parkable) vs failure (terminal until manual repair). */
+  readonly escalationKind: EscalationKind;
+  /** The child's escalated single-slice worker session id, for 原地 resume. */
+  readonly sessionId?: string;
+}
 
 /** Per-child outcome record in the family result. */
 export interface FamilyChildResult {
@@ -846,6 +918,12 @@ export interface FamilyChildResult {
   readonly status: FamilyChildStatus;
   /** The child's reviewed branch (set when the single-slice run succeeded). */
   readonly branch?: string;
+  /**
+   * The parked decision escalation when `status==="escalated"` (#604 slice 5).
+   * Carries the reason/diagnosis/sessionId the family runner records on the
+   * `child_decision_parked` ledger row and resumes from.
+   */
+  readonly escalation?: FamilyChildEscalation;
 }
 
 /**

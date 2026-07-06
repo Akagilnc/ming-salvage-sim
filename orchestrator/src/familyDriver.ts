@@ -44,7 +44,7 @@ import {
   parseModuleDeclaration,
   sourcedModuleDeclaration,
   type SourcedModuleDeclaration,
-} from "./family/cmrClassification.js";
+} from "./family/moduleDeclaration.js";
 import type { Backend } from "./types.js";
 import type {
   ChildSlice,

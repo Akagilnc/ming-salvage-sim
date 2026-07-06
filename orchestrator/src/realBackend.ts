@@ -130,6 +130,7 @@ import type {
   StepSoul,
   StepSpec,
   RepairEvidence,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -1583,61 +1584,44 @@ export interface RealBackendOptions {
   readonly familyBase?: string;
 }
 
-/** zod schema for the reviewer step's structured output (route() consumes it). */
-const findingDispositionSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("same_module"),
-    reason: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal("cross_module"),
-    targetModule: z.string().min(1),
-    reason: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal("spec_conflict"),
+/**
+ * zod schema for the reviewer step's structured output (route() consumes it).
+ *
+ * #604 slice 4 (ADR 0062): the reviewer contract no longer carries routing
+ * disposition kinds — the only disposition a reviewer may emit is the
+ * accepted-suppression governance carrier.
+ */
+const findingDispositionSchema = z
+  .object({
+    kind: z.literal("accepted_suppressed"),
     source: z.string().min(1),
+    scope: z.string().min(1),
     reason: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal("infra_failure"),
-    source: z.string().min(1),
-    reason: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal("owning_issue_still_red"),
-    owningIssue: z.string().min(1),
-    missingSurface: z.string().min(1),
-    nextStep: z.string().min(1),
-    reason: z.string().min(1),
-  }),
-  z
-    .object({
-      kind: z.literal("accepted_suppressed"),
-      source: z.string().min(1),
-      scope: z.string().min(1),
-      reason: z.string().min(1),
-      findingIdentity: z.string().min(1).optional(),
-      targetModule: z.string().min(1).optional(),
-      boundedReopen: z.string().min(1),
-    })
-    .superRefine((disposition, ctx) => {
-      if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["source"],
-          message: "accepted_suppressed requires explicit user/ADR/issue source",
-        });
-      }
-      if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["boundedReopen"],
-          message: "accepted_suppressed requires bounded reopen condition",
-        });
-      }
-    }),
-]);
+    findingIdentity: z.string().min(1).optional(),
+    boundedReopen: z.string().min(1),
+  })
+  // #604 correctness r2 (C3): `.strict()` so a reviewer disposition carrying an
+  // unknown field (e.g. the deleted `targetModule`) is REJECTED here rather than
+  // silently stripped — parity with the family-side `cmrDispositionEvidenceSchema`
+  // which is already `.strict()`. Without this, this standalone reviewer entrance
+  // would quietly swallow a deleted field the other entrances now reject.
+  .strict()
+  .superRefine((disposition, ctx) => {
+    if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["source"],
+        message: "accepted_suppressed requires explicit user/ADR/issue source",
+      });
+    }
+    if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["boundedReopen"],
+        message: "accepted_suppressed requires bounded reopen condition",
+      });
+    }
+  });
 const findingSchema = z.object({
   severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
   category: z.string(),
@@ -1658,6 +1642,21 @@ const findingSchema = z.object({
       message: "critical/high findings must be fix_now",
     });
   }
+  // #604 correctness r1 (P2-a): an accepted_suppressed governance disposition is
+  // only valid on a wont_fix/rejected finding — never on fix_now (classifyFindings
+  // would turn the governance suppression into a silent blocker).
+  if (
+    finding.action !== "wont_fix" &&
+    finding.action !== "rejected" &&
+    finding.disposition?.kind === "accepted_suppressed"
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["disposition"],
+      message:
+        "accepted_suppressed disposition is only valid on wont_fix/rejected findings",
+    });
+  }
   if (
     (finding.action === "wont_fix" || finding.action === "rejected") &&
     ((!finding.disposition_reason && !finding.disposition?.reason) ||
@@ -1669,15 +1668,16 @@ const findingSchema = z.object({
       message: "suppressed findings require accepted_suppressed disposition",
     });
   }
-  if (
-    finding.action === "defer" &&
-    (finding.disposition === undefined ||
-      finding.disposition.kind === "accepted_suppressed")
-  ) {
+  // #604 correctness r1 (P2-b): ADR 0062 removed all non-suppression route kinds,
+  // so `defer` can no longer carry a valid non-suppression disposition. A stray
+  // defer fails closed as malformed (consistent with validate.ts and the Python
+  // outcome-guard), never a免修 route.
+  if (finding.action === "defer") {
     ctx.addIssue({
       code: "custom",
-      path: ["disposition"],
-      message: "deferred findings require a non-suppression disposition",
+      path: ["action"],
+      message:
+        "defer is no longer a supported action (ADR 0062): a stray defer is malformed",
     });
   }
 });
@@ -1698,7 +1698,14 @@ function normalizeReviewerFinding(finding: Finding): Finding {
     },
   };
 }
-const priorFindingDispositionSchema = z.object({
+// #604 correctness r5 (E1): `.strict()` so a prior-finding disposition carrying an
+// unknown field (e.g. a deleted routing field like `targetModule`) is REJECTED
+// here rather than silently STRIPPED by zod — parity with the family-side
+// `cmrFindingDispositionSchema` (already `.strict()`) and the standalone
+// `findingDispositionSchema` (r2/C3). Exported so the strict contract is directly
+// exercisable. `.strict()` must go on the `.object()` before `.superRefine()`,
+// since `.superRefine()` returns a `ZodEffects` with no `.strict()`.
+export const priorFindingDispositionSchema = z.object({
   identityKey: z.string().min(1),
   status: z.enum([
     "still-active",
@@ -1710,7 +1717,7 @@ const priorFindingDispositionSchema = z.object({
   source: z.string().optional(),
   scope: z.string().optional(),
   boundedReopen: z.string().optional(),
-}).superRefine((disposition, ctx) => {
+}).strict().superRefine((disposition, ctx) => {
   if (disposition.status !== "accepted_suppressed") return;
   for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
     if (disposition[field] === undefined || disposition[field].trim() === "") {
@@ -2784,11 +2791,14 @@ export class RealBackend implements Backend {
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     if (spec.kind !== "ship") {
       // #336 owns the ship leg; coder/reviewer agent workers stay on the existing
-      // runStep/resumeSession seam (#334 routes them to /tdd / /code-review).
-      return legacyDispatchWorker(this, spec, ctx);
+      // runStep/resumeSession seam (#334 routes them to /tdd / /code-review). The
+      // rich landing payload (blocking findings) travels straight to the landing
+      // file (信封宪法, ADR 0062).
+      return legacyDispatchWorker(this, spec, ctx, landing);
     }
     if (ctx.worktree === undefined) {
       throw new Error(

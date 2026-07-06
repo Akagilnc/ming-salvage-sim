@@ -43,6 +43,7 @@ import type {
   StepSpec,
   WorkerContextRetention,
   WorkerKind,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSessionMode,
   WorkerSpec,
@@ -114,6 +115,7 @@ function ensureGitExcluded(worktreePath: string, pattern: string): void {
 function writeFixFindingsLandingFile(
   spec: WorkerSpec,
   ctx: DispatchContext,
+  landing?: WorkerLandingPayload,
 ): (FixFindingsLandingFile & { cleanup: boolean }) | undefined {
   const needsFindingsLanding =
     (spec.id === "S5" && spec.kind === "coder") ||
@@ -137,7 +139,9 @@ function writeFixFindingsLandingFile(
     landingPath,
     `${JSON.stringify(
       {
-        blockingFindings: ctx.blockingFindings ?? [],
+        // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
+        // ADR 0062) — never from the runner's thin DispatchContext.
+        blockingFindings: landing?.blockingFindings ?? [],
         blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
         ...(ctx.escalationAnswer !== undefined
           ? { escalationAnswer: ctx.escalationAnswer }
@@ -256,6 +260,7 @@ export async function legacyDispatchWorker(
   backend: Backend,
   spec: WorkerSpec,
   ctx: DispatchContext,
+  landing?: WorkerLandingPayload,
 ): Promise<WorkerResult> {
   if (spec.kind === "ship") {
     if (ctx.worktree === undefined) {
@@ -292,7 +297,7 @@ export async function legacyDispatchWorker(
   }
   const stepSpec = workerSpecToStepSpec(spec);
   let ret: StepOutput | StepResult;
-  const fixFindingsLanding = writeFixFindingsLandingFile(spec, ctx);
+  const fixFindingsLanding = writeFixFindingsLandingFile(spec, ctx, landing);
   const fixFindingsOptions =
     fixFindingsLanding !== undefined
       ? {
@@ -344,11 +349,12 @@ export async function dispatchWorker(
   backend: Backend,
   spec: WorkerSpec,
   ctx: DispatchContext,
+  landing?: WorkerLandingPayload,
 ): Promise<WorkerResult> {
   if (backend.dispatchWorker !== undefined) {
-    return backend.dispatchWorker(spec, ctx);
+    return backend.dispatchWorker(spec, ctx, landing);
   }
-  return legacyDispatchWorker(backend, spec, ctx);
+  return legacyDispatchWorker(backend, spec, ctx, landing);
 }
 
 /**

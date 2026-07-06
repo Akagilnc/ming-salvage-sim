@@ -39,7 +39,7 @@ CMR_STEP_COMPLETE
 Not converged:
 
 ```text
-<cmr>{"converged": false, "reason": "<short>", "successfulLegs": ["opus", "gpt-5.5"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "findings": [{"severity": "medium", "category": "correctness", "claim_quote": "<stable claim>", "location": "<file-or-scope>", "suggested_fix": "<next step>", "action": "fix_now", "disposition": {"kind": "same_module", "reason": "<why this is still in the family module>"}}], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
+<cmr>{"converged": false, "reason": "<short>", "successfulLegs": ["opus", "gpt-5.5"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "findings": [{"severity": "medium", "category": "correctness", "claim_quote": "<stable claim>", "location": "<file-or-scope>", "suggested_fix": "<next step>", "action": "fix_now"}], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
 CMR_STEP_COMPLETE
 ```
 
@@ -84,23 +84,31 @@ Rules:
   list relative paths to existing review/test artifacts under the repo root. Do
   not use absolute paths or `..`; the guard rejects paths it cannot resolve under
   `$PWD`.
-- For `findings[].disposition.kind`, use exactly one of `same_module`,
-  `cross_module`, `spec_conflict`, `infra_failure`,
-  `owning_issue_still_red`, or `accepted_suppressed`. Only `cross_module`
-  defer may pass without a fix, and only when `.cmr-focus.md` /
-  `.cmr-route.json` contain parsed module context supporting it. Do not infer
-  module boundaries from titles, prose, or logs. Parser-required fields:
-  `same_module` needs `reason`; `cross_module` needs `targetModule` and
-  `reason`; `owning_issue_still_red` needs `owningIssue`, `missingSurface`,
-  `nextStep`, and `reason`; `spec_conflict` needs `source` and `reason`;
-  `infra_failure` needs `source` and `reason`.
+- Report each active finding with only its body (`severity`, `category`,
+  `claim_quote`, `location`, `suggested_fix`) plus an `action`. Do not emit routing
+  disposition kinds — there are none. Every finding you report that is not an
+  accepted suppression is blocking: the runner counts it and routes it through
+  coder-fix. There is no "defer to another module" pass — if a family-scope gap is
+  real, report it with `action:"fix_now"`. The only `findings[].disposition.kind`
+  you may emit is `accepted_suppressed`.
+- Any module-scope judgement you make (which files/surfaces belong to the family
+  module, whether a target is an out-of-scope undeveloped module, whether an
+  `accepted_suppressed` scope matches) draws its module context ONLY from the exact
+  `## Module Declaration` fenced YAML block (supported keys `module` and
+  `module_scope`) or runner-supplied route/run-option metadata. Do not infer module
+  boundaries from issue-body prose, titles, or logs. Undeveloped out-of-scope
+  targets come from runner-supplied metadata, not issue-body prose or extra YAML
+  fields, and must never be written into the issue-body YAML.
 - `accepted_suppressed` requires an explicit user/ADR/issue source, matching
   scope, reason, and `boundedReopen`. `findingIdentity` is optional; omit it
   unless a prior finding key was provided, because the runner derives it from
   category, location, and claim quote. `disposition.reason` is the canonical
   rationale; top-level `disposition_reason` may repeat it but is not required.
   Use `accepted_suppressed` only for new reviewer findings that are outside the
-  runner-supplied claimed-fixed closure set.
+  runner-supplied claimed-fixed closure set. An `accepted_suppressed` disposition
+  MUST be paired with `action:"wont_fix"` or `action:"rejected"` — never with
+  `action:"fix_now"` (that would silently turn the governance suppression into a
+  blocker). Never emit `action:"defer"`: it is not a supported action.
 - When `$ORCHESTRATOR_OUTCOME_PATH` is set, let `orchestrator-outcome-guard` emit
   the `<cmr>` tag and `CMR_STEP_COMPLETE`; do not print them yourself.
 - Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag LAST; if you iterate,

@@ -1,89 +1,22 @@
 import { classifyFindings } from "../findings.js";
 import { findingIdentityKey } from "../findings.js";
 import type { Finding, FindingDisposition } from "../types.js";
+import type {
+  FamilyModuleContext,
+  SourcedModuleDeclaration,
+} from "./moduleDeclaration.js";
 
-export interface ModuleDeclaration {
-  readonly module: string;
-  readonly moduleScope: ReadonlyArray<string>;
-}
-
-export interface SourcedModuleDeclaration extends ModuleDeclaration {
-  readonly source: "child_issue" | "family_issue" | "run_option";
-  readonly issue?: number;
-}
-
-export interface FamilyModuleContext {
-  readonly currentModules: ReadonlyArray<SourcedModuleDeclaration>;
-  readonly childModules: ReadonlyArray<SourcedModuleDeclaration>;
-  readonly fallbackModule?: SourcedModuleDeclaration;
-  readonly undevelopedModules?: ReadonlyArray<SourcedModuleDeclaration>;
-  readonly acceptedSuppressionSources?: ReadonlyArray<AcceptedSuppressionSource>;
-}
-
-export interface AcceptedSuppressionSource {
-  readonly source: string;
-  readonly scope: string;
-  readonly reason: string;
-  readonly findingIdentity: string;
-  readonly boundedReopen: string;
-}
-
-export function sourcedModuleDeclaration(
-  declaration: ModuleDeclaration | undefined,
-  source: SourcedModuleDeclaration["source"],
-  issue?: number,
-): SourcedModuleDeclaration | undefined {
-  if (declaration === undefined) return undefined;
-  return {
-    ...declaration,
-    source,
-    ...(issue !== undefined ? { issue } : {}),
-  };
-}
-
-export function buildFamilyModuleContext(input: {
-  readonly childModules: ReadonlyArray<SourcedModuleDeclaration | undefined>;
-  readonly familyModule?: SourcedModuleDeclaration;
-  readonly runOptionModule?: SourcedModuleDeclaration;
-  readonly undevelopedModules?: ReadonlyArray<SourcedModuleDeclaration | undefined>;
-  readonly acceptedSuppressionSources?: ReadonlyArray<AcceptedSuppressionSource>;
-}): FamilyModuleContext {
-  const childModules = input.childModules.filter(
-    (decl): decl is SourcedModuleDeclaration => decl !== undefined,
-  );
-  const fallbackModule = input.familyModule ?? input.runOptionModule;
-  const undevelopedModules = (input.undevelopedModules ?? []).filter(
-    (decl): decl is SourcedModuleDeclaration => decl !== undefined,
-  );
-  const currentModules =
-    childModules.length > 0
-      ? [
-          ...childModules,
-          ...(fallbackModule !== undefined ? [fallbackModule] : []),
-        ]
-      : fallbackModule !== undefined
-        ? [fallbackModule]
-        : [];
-  return {
-    currentModules,
-    childModules,
-    ...(fallbackModule !== undefined ? { fallbackModule } : {}),
-    ...(undevelopedModules.length > 0 ? { undevelopedModules } : {}),
-    ...(input.acceptedSuppressionSources !== undefined &&
-    input.acceptedSuppressionSources.length > 0
-      ? { acceptedSuppressionSources: input.acceptedSuppressionSources }
-      : {}),
-  };
-}
-
+/**
+ * #604 slice 4 (ADR 0062): the routing classification values
+ * (`same_module_still_red` / `owning_issue_still_red` / `cross_module_defer` /
+ * `spec_conflict` / `infra_failure`) were removed along with the reviewer route
+ * kinds. A finding is now either `blocking` (fix it and rerun), an
+ * `accepted_suppressed` governance carrier, or the synthetic `not_converged`.
+ */
 export type FamilyCmrFindingClassification =
   | "not_converged"
-  | "same_module_still_red"
-  | "owning_issue_still_red"
-  | "accepted_suppressed"
-  | "cross_module_defer"
-  | "spec_conflict"
-  | "infra_failure";
+  | "blocking"
+  | "accepted_suppressed";
 
 export interface FamilyCmrFindingResult {
   readonly identityKey: string;
@@ -100,9 +33,6 @@ export interface FamilyCmrFindingResult {
     readonly source?: SourcedModuleDeclaration["source"];
   };
   readonly owningIssue?: string;
-  readonly missingSurface?: string;
-  readonly nextStep?: string;
-  readonly targetModule?: string;
   readonly source?: string;
   readonly reason: string;
 }
@@ -121,7 +51,7 @@ export interface FamilyModuleContextSnapshot {
   readonly undevelopedModules: ReadonlyArray<FamilyModuleDeclarationSnapshot>;
 }
 
-export interface FamilyCmrClassification {
+export interface CmrEnvelope {
   readonly blocking: ReadonlyArray<Finding>;
   readonly deferred: ReadonlyArray<Finding>;
   readonly dispositions: ReadonlyArray<FindingDisposition>;
@@ -129,140 +59,8 @@ export interface FamilyCmrClassification {
   readonly moduleContext: FamilyModuleContextSnapshot;
 }
 
-const MODULE_DECLARATION_HEADING = /^##\s+Module Declaration\s*$/gim;
-
-function isEscapedQuote(line: string, index: number): boolean {
-  let backslashes = 0;
-  for (let idx = index - 1; idx >= 0; idx -= 1) {
-    if (line[idx] !== "\\") break;
-    backslashes += 1;
-  }
-  return backslashes % 2 === 1;
-}
-
-function trimComment(line: string): string {
-  let inSingleQuote = false;
-  let inDoubleQuote = false;
-  for (let idx = 0; idx < line.length; idx += 1) {
-    const char = line[idx]!;
-    if (char === '"' && !inSingleQuote && !isEscapedQuote(line, idx)) {
-      inDoubleQuote = !inDoubleQuote;
-      continue;
-    }
-    if (char === "'" && !inDoubleQuote && !isEscapedQuote(line, idx)) {
-      inSingleQuote = !inSingleQuote;
-      continue;
-    }
-    if (
-      char === "#" &&
-      !inSingleQuote &&
-      !inDoubleQuote &&
-      (idx === 0 || /\s/.test(line[idx - 1]!))
-    ) {
-      return line.slice(0, idx).trimEnd();
-    }
-  }
-  return line.trimEnd();
-}
-
-function unquoteScalar(value: string): string | undefined {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return undefined;
-  if (
-    trimmed.length >= 2 &&
-    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-      (trimmed.startsWith("'") && trimmed.endsWith("'")))
-  ) {
-    return trimmed.slice(1, -1).trim();
-  }
-  if (trimmed.includes("{") || trimmed.includes("}") || trimmed.includes("[")) {
-    return undefined;
-  }
-  return trimmed;
-}
-
-function parseModuleDeclarationYaml(yaml: string): ModuleDeclaration | undefined {
-  let moduleName: string | undefined;
-  const moduleScope: string[] = [];
-  let inScope = false;
-
-  for (const rawLine of yaml.split(/\r?\n/)) {
-    const line = trimComment(rawLine);
-    if (line.trim().length === 0) continue;
-
-    const topLevel = /^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/.exec(line);
-    if (topLevel !== null && !/^\s/.test(line)) {
-      const [, key, rawValue] = topLevel;
-      if (key !== "module" && key !== "module_scope") return undefined;
-      if (key === "module") {
-        if (moduleName !== undefined) return undefined;
-        moduleName = unquoteScalar(rawValue ?? "");
-        if (moduleName === undefined || moduleName.length === 0) return undefined;
-        inScope = false;
-        continue;
-      }
-      if ((rawValue ?? "").trim().length > 0) return undefined;
-      inScope = true;
-      continue;
-    }
-
-    if (!inScope) return undefined;
-    const item = /^\s*-\s+(.+?)\s*$/.exec(line);
-    if (item === null) return undefined;
-    const scope = unquoteScalar(item[1] ?? "");
-    if (scope === undefined || scope.length === 0) return undefined;
-    moduleScope.push(scope);
-  }
-
-  if (moduleName === undefined || moduleScope.length === 0) return undefined;
-  return { module: moduleName, moduleScope };
-}
-
-/**
- * Parse a family/child issue's structured module declaration.
- *
- * The contract intentionally ignores titles, prose, temporary logs, and any YAML
- * outside the exact `## Module Declaration` section.
- */
-export function parseModuleDeclaration(body: string): ModuleDeclaration | undefined {
-  const headings = [...body.matchAll(MODULE_DECLARATION_HEADING)];
-  if (headings.length !== 1) return undefined;
-  const heading = headings[0];
-  if (heading.index === undefined) return undefined;
-  const afterHeading = body.slice(heading.index + heading[0].length);
-  const fence = /```(?:ya?ml)\s*\n([\s\S]*?)\n```\s*/i.exec(afterHeading);
-  if (fence === null) return undefined;
-  const beforeFence = afterHeading.slice(0, fence.index);
-  if (/(^|\r?\n)#{1,6}\s+\S/.test(beforeFence)) return undefined;
-  return parseModuleDeclarationYaml(fence[1] ?? "");
-}
-
 function normalizedModule(value: string): string {
   return value.trim().toLowerCase();
-}
-
-function normalizedModuleSlug(value: string): string {
-  return normalizedModule(value)
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function targetModuleIsOutsideCurrentModules(
-  targetModule: string,
-  currentModules: ReadonlySet<string>,
-): boolean {
-  const targetSlug = normalizedModuleSlug(targetModule);
-  if (targetSlug.length === 0) return false;
-
-  for (const currentModule of currentModules) {
-    const currentSlug = normalizedModuleSlug(currentModule);
-    if (currentSlug.length === 0) continue;
-    if (targetSlug === currentSlug) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 function normalizedEvidenceText(value: string | undefined): string {
@@ -415,24 +213,6 @@ function currentModuleNames(context: FamilyModuleContext): ReadonlySet<string> {
   return new Set(context.currentModules.map((decl) => normalizedModule(decl.module)));
 }
 
-function declaredUndevelopedTarget(
-  targetModule: string | undefined,
-  context: FamilyModuleContext,
-): SourcedModuleDeclaration | undefined {
-  const target = normalizedModule(targetModule ?? "");
-  if (target.length === 0) return undefined;
-  const targetSlug = normalizedModuleSlug(target);
-  return (context.undevelopedModules ?? []).find((decl) => {
-    const moduleName = normalizedModule(decl.module);
-    const moduleSlug = normalizedModuleSlug(decl.module);
-    return (
-      target === moduleName ||
-      targetSlug === moduleSlug ||
-      decl.moduleScope.some((scope) => containsNormalized(scope, target))
-    );
-  });
-}
-
 function suppressionScopeMatchesContext(input: {
   readonly finding: Finding;
   readonly context: FamilyModuleContext;
@@ -525,63 +305,36 @@ function resultForBlocking(
 ): FamilyCmrFindingResult {
   const attribution = attributionFor(finding, context);
   const disposition = finding.disposition;
-  const classification: FamilyCmrFindingClassification =
-    disposition?.kind === "owning_issue_still_red"
-      ? "owning_issue_still_red"
-      : disposition?.kind === "spec_conflict"
-        ? "spec_conflict"
-        : disposition?.kind === "infra_failure"
-          ? "infra_failure"
-          : "same_module_still_red";
+  // #604 slice 4 (ADR 0062): routing disposition kinds are gone, so a blocking
+  // finding is never classified by a route kind — every blocking finding lands
+  // in the single `blocking` bucket ("fix it and rerun").
+  const classification: FamilyCmrFindingClassification = "blocking";
   return {
     identityKey: findingIdentityKey(finding),
     classification,
     attribution,
-    ...(disposition?.kind === "owning_issue_still_red"
-      ? { owningIssue: disposition.owningIssue }
-      : attribution.issue !== undefined
-        ? { owningIssue: `#${attribution.issue}` }
-        : {}),
-    ...(disposition?.kind === "owning_issue_still_red" &&
-    disposition.missingSurface !== undefined
-      ? { missingSurface: disposition.missingSurface }
-      : {}),
-    ...(disposition?.kind === "owning_issue_still_red" &&
-    disposition.nextStep !== undefined
-      ? { nextStep: disposition.nextStep }
-      : {}),
-    ...(disposition?.targetModule !== undefined
-      ? { targetModule: disposition.targetModule }
+    ...(attribution.issue !== undefined
+      ? { owningIssue: `#${attribution.issue}` }
       : {}),
     ...(disposition?.source !== undefined ? { source: disposition.source } : {}),
-    reason: disposition?.reason ?? finding.disposition_reason ?? finding.suggested_fix,
+    // #604 correctness r1 (P2-c): a blocking finding's `reason` flows into the
+    // ledger stopSummary/findingDescriptor. It MUST stay generic / identity-only —
+    // `suggested_fix` (and other rich finding text) must NOT驻留 the ledger (F5,
+    // ADR 0062); the rich content travels only in the live coder-fix landing
+    // payload. So do NOT fall back to `finding.suggested_fix` here.
+    reason: "blocking CMR finding requires coder-fix",
   };
 }
 
-function resultForDeferred(
-  finding: Finding,
-  context: FamilyModuleContext,
-): FamilyCmrFindingResult {
-  const disposition = finding.disposition;
-  return {
-    identityKey: findingIdentityKey(finding),
-    classification: "cross_module_defer",
-    attribution: attributionFor(finding, context),
-    targetModule: disposition?.targetModule,
-    reason: disposition?.reason ?? finding.suggested_fix,
-  };
-}
-
-export function classifyFamilyCmrFindings(input: {
+export function deriveCmrEnvelope(input: {
   readonly familyIssue: number;
   readonly findings: ReadonlyArray<Finding>;
   readonly moduleContext: FamilyModuleContext;
   readonly priorDispositions?: ReadonlyArray<FindingDisposition>;
-}): FamilyCmrClassification {
+}): CmrEnvelope {
   const blocking: Finding[] = [];
   const deferred: Finding[] = [];
   const results: FamilyCmrFindingResult[] = [];
-  const seededDispositions: FindingDisposition[] = [];
   const findingsForFinalClassification: Finding[] = [];
   const currentModules = currentModuleNames(input.moduleContext);
 
@@ -594,36 +347,11 @@ export function classifyFamilyCmrFindings(input: {
       continue;
     }
 
-    if (
-      finding.action === "defer" &&
-      finding.disposition?.kind === "cross_module"
-    ) {
-      findingsForFinalClassification.push(finding);
-      const attribution = attributionFor(finding, input.moduleContext);
-      const targetModule = normalizedModule(finding.disposition.targetModule ?? "");
-      const undevelopedTarget = declaredUndevelopedTarget(
-        finding.disposition.targetModule,
-        input.moduleContext,
-      );
-      const findingIsInsideUndevelopedTarget =
-        undevelopedTarget !== undefined &&
-        declarationCoversFinding(undevelopedTarget, finding);
-      if (
-        undevelopedTarget !== undefined &&
-        currentModules.size > 0 &&
-        !currentModules.has(targetModule) &&
-        targetModuleIsOutsideCurrentModules(targetModule, currentModules) &&
-        (attribution.method !== "missing_module_context" ||
-          findingIsInsideUndevelopedTarget)
-      ) {
-        deferred.push(finding);
-        results.push(resultForDeferred(finding, input.moduleContext));
-      } else {
-        blocking.push(finding);
-        results.push(resultForBlocking(finding, input.moduleContext));
-      }
-      continue;
-    }
+    // #604 slice 4 (ADR 0062): the `cross_module` routing kind is gone, so there
+    // is no longer a cross-module deferred bucket — a `defer` finding falls
+    // through to the shared single-finding classifier below, which now classifies
+    // every non-accepted-suppressed defer as blocking (findings.ts). `deferred`
+    // is retained by the return shape but stays empty.
 
     const scopedPriorDispositions = (input.priorDispositions ?? []).filter(
       (disposition) =>
@@ -638,7 +366,7 @@ export function classifyFamilyCmrFindings(input: {
       results.push(resultForBlocking(finding, input.moduleContext));
     } else if (single.deferred.length > 0) {
       deferred.push(finding);
-      results.push(resultForDeferred(finding, input.moduleContext));
+      results.push(resultForBlocking(finding, input.moduleContext));
     } else {
       results.push({
         identityKey: findingIdentityKey(finding),
@@ -647,13 +375,9 @@ export function classifyFamilyCmrFindings(input: {
         ...(finding.disposition?.source !== undefined
           ? { source: finding.disposition.source }
           : {}),
-        ...(finding.disposition?.targetModule !== undefined
-          ? { targetModule: finding.disposition.targetModule }
-          : {}),
         reason: finding.disposition_reason ?? finding.disposition?.reason ?? "",
       });
     }
-    seededDispositions.push(...single.dispositions);
   }
 
   const scopedPriorDispositions = (input.priorDispositions ?? []).filter(
@@ -662,9 +386,20 @@ export function classifyFamilyCmrFindings(input: {
         priorDispositionMatchesContext(finding, disposition, input.moduleContext),
       ),
   );
+  // #604 correctness r2 (C1): the final classification's PRIOR input is ONLY the
+  // real prior-round dispositions — NEVER this pass's own freshly-generated
+  // suppressions. The pre-r2 code seeded the current-pass per-finding
+  // dispositions back in as `prior`, so a brand-new suppression looked like a
+  // re-submission against itself and was wrongly treated as a repeat round of an
+  // already-suppressed finding. `classifyFindings` regenerates each finding's
+  // fresh disposition itself, so the seeds were both redundant and harmful. The
+  // per-finding pass above stays authoritative for the blocking/deferred/results
+  // buckets. (Reopen/dispute budgets are governed by classifyFindings per ADR
+  // 0030: a same/lower-severity maintenance re-submission is a zero-op, only an
+  // upgrade reopens+blocks and only a real fix_now challenge spends a dispute.)
   const finalClassification = classifyFindings(
     findingsForFinalClassification,
-    [...scopedPriorDispositions, ...seededDispositions],
+    scopedPriorDispositions,
     { acceptedSuppressionSources: input.moduleContext.acceptedSuppressionSources },
   );
   return {

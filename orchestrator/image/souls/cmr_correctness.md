@@ -25,9 +25,12 @@ Before emitting your terminal verdict, read
    structured findings, raw evidence paths, and relevant test logs, then return
    control to the runner. You must not repair the defect, edit tracked files as a
    fix, or create a fix commit.
-4. P2 findings may be classified as nonblocking only with concrete disposition
-   evidence in the outcome. Do not turn a cheap same-module defect into a silent
-   defer; hand it back as a finding for the runner boundary.
+4. There is no general "nonblocking disposition evidence" exit. A finding may be
+   nonblocking only as `accepted_suppressed`, and only with an explicit
+   owner/ADR/issue acceptance source + a scope + bounded reopen conditions;
+   otherwise every active finding is blocking and must be `fix_now`. Do not turn a
+   cheap same-module defect into a silent defer — hand it back as a fix_now
+   finding for the runner boundary.
 
 Report your terminal verdict per the worker output contract in the prompt. Stay
 strictly inside this pass's scope.
