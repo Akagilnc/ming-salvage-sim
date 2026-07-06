@@ -512,7 +512,10 @@ function isValidChildAnswer(
     entry.childIssue === childIssue &&
     typeof entry.answer === "string" &&
     entry.answer.trim().length > 0 &&
-    (entry.source === undefined ||
+    // A durable JSONL round-trip can serialize an absent optional field as `null`
+    // rather than omit it; `== null` accepts both null and undefined (the "no
+    // source" intent) without accepting a real bad value.
+    (entry.source == null ||
       entry.source === "human" ||
       entry.source === "resume_input")
   );
@@ -568,7 +571,7 @@ export function childEscalationAnswer(
         event: "escalation_answered",
         answer: entry.answer!,
         source: (entry.source ?? "human") as "human" | "resume_input",
-        ...(entry.note !== undefined ? { note: entry.note } : {}),
+        ...(entry.note != null ? { note: entry.note } : {}),
       };
     }
   }
@@ -605,13 +608,15 @@ function isValidFamilyAnswer(entry: FamilyLedgerEntry): boolean {
     // targets a specific parked CHILD via `isValidChildAnswer`; it must never
     // release an unrelated FAMILY-level decision escalation (which is the
     // `event:"escalated"` row that carries no childIssue).
-    entry.childIssue === undefined &&
+    // `== null` (not `=== undefined`): a family-level answer must carry NO child
+    // binding, and a JSONL round-trip can serialize that absence as `null`.
+    entry.childIssue == null &&
     typeof entry.answer === "string" &&
     entry.answer.trim().length > 0 &&
-    (entry.source === undefined ||
+    (entry.source == null ||
       entry.source === "human" ||
       entry.source === "resume_input") &&
-    (entry.note === undefined || typeof entry.note === "string")
+    (entry.note == null || typeof entry.note === "string")
   );
 }
 
@@ -634,7 +639,7 @@ function familyAnswerPayload(entry: FamilyLedgerEntry): EscalationAnswerPayload 
     event: "escalation_answered",
     answer: entry.answer!,
     source: (entry.source ?? "human") as "human" | "resume_input",
-    ...(entry.note !== undefined ? { note: entry.note } : {}),
+    ...(entry.note != null ? { note: entry.note } : {}),
   };
 }
 
