@@ -792,6 +792,11 @@ export async function runFamily(
             typeof escalation.reason === "string" && escalation.reason.trim().length > 0
               ? escalation.reason
               : "family escalation is not answered",
+          // #604 F2 / ADR 0062 A/B分家 (PR#643 R2): an UNANSWERED family-level
+          // DECISION escalation is an answerable park, not an A-class repair
+          // failure — carry `decision_gate_park`, mirroring the child-park path
+          // (F8). A `failure`/missing-kind escalation stays `infra_failure`.
+          decisionGatePark: escalation.escalationKind === "decision",
         }),
         children: input.epic.children.map((child) => ({
           issue: child.issue,
