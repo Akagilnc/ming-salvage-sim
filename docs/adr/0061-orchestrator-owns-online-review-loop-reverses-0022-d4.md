@@ -1,4 +1,4 @@
-Status: Proposed（2026-07-05，grill 收敛于 #366，待 to-prd/to-issues + cmr 评审）
+Status: Accepted（2026-07-06：grill 收敛 #366 → 16-issue 重切 → 本地 kill-axis cmr 2 轮收敛 → 线上 4-bot 3 轮收敛，PR #605 合入）
 
 # 0061: 编排器纳入线上 PR 评审 loop（反转 ADR 0022 decision 4）
 
