@@ -47,8 +47,6 @@ import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import { runVerifyCmr } from "./verifyCmr.js";
 import { buildFamilyModuleContext } from "./moduleDeclaration.js";
-import { findingIdentityKey } from "../findings.js";
-import type { FamilyCmrClassification } from "./cmrClassification.js";
 import {
   infraFailureStopSummary,
   successStopSummary,
@@ -278,19 +276,6 @@ function latestVerifiedCmrHead(
   return undefined;
 }
 
-/**
- * #604 slice 2 / ADR 0062: the runner counts blocking findings; it does NOT read
- * a finding's disposition/classification to decide which keys are pending. Every
- * blocking finding's identity key is a pending runner-owned key. The synthetic
- * `not_converged` sentinel carries no blocking findings (its `blocking` is empty),
- * so its short-circuit behaviour is preserved: it yields no keys here.
- */
-function blockingFindingIdentityKeys(
-  classification: FamilyCmrClassification,
-): readonly string[] {
-  return [...new Set(classification.blocking.map(findingIdentityKey))];
-}
-
 export function pendingPriorCmrFindingIdentityKeysByPass(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
   currentFamilyHead?: string,
@@ -336,10 +321,9 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
     if (entry.status === "cmr_reviewed") {
       const pass = entry.cmrPass;
       const reviewedHead = filled(entry.familyHeadAfter);
-      const keys =
-        entry.cmrFindingClassification !== undefined
-          ? blockingFindingIdentityKeys(entry.cmrFindingClassification)
-          : undefined;
+      // #604 slice 3 / ADR 0062: the runner reads ONLY the thin envelope
+      // (`blockingFindingIdentityKeys`) off a CMR row — never the finding content.
+      const keys = entry.blockingFindingIdentityKeys;
       if (
         pass === undefined ||
         closedPasses.has(pass) ||
@@ -373,7 +357,11 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
       keysByPass[pass] = [...keys];
       continue;
     }
-    if (entry.status === "aborted" && entry.cmrFindingClassification === undefined) {
+    // #604 slice 3 / ADR 0062: an aborted row without a `blockingFindingIdentityKeys`
+    // envelope is an UNCLASSIFIED abort (e.g. an infra failure) — it carries no CMR
+    // blocking envelope. A not_converged abort carries `[]` (defined), so it stays
+    // in the classified branch below and simply yields no keys.
+    if (entry.status === "aborted" && entry.blockingFindingIdentityKeys === undefined) {
       const pass = entry.cmrPass;
       if (
         pass === undefined ||
@@ -387,7 +375,7 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
       }
       continue;
     }
-    if (entry.status !== "aborted" || entry.cmrFindingClassification === undefined) {
+    if (entry.status !== "aborted" || entry.blockingFindingIdentityKeys === undefined) {
       continue;
     }
     if (
@@ -406,13 +394,11 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
     processedPasses.add(pass);
     const keys = keysByPass[pass] ?? [];
     const seen = new Set(keys);
-    // #604 slice 2 / ADR 0062: pull EVERY blocking finding's identity key — do not
-    // exempt keys by content classification (cross_module_defer / accepted_suppressed).
-    // The synthetic not_converged sentinel carries no blocking findings, so it yields
-    // nothing here, preserving its short-circuit behaviour.
-    for (const identityKey of blockingFindingIdentityKeys(
-      entry.cmrFindingClassification,
-    )) {
+    // #604 slice 2/3 / ADR 0062: pull EVERY blocking finding's identity key straight
+    // off the thin envelope — no content classification is read. A not_converged
+    // sentinel abort carries `[]`, so it yields nothing here, preserving its
+    // short-circuit behaviour.
+    for (const identityKey of entry.blockingFindingIdentityKeys) {
       if (!seen.has(identityKey)) {
         seen.add(identityKey);
         keys.push(identityKey);

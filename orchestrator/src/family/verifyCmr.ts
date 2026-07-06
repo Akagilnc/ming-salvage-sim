@@ -787,15 +787,16 @@ function trustedAcceptedSuppressionDisposition(
 
 function latestFamilyCmrDispositions(
   ledger: ReadonlyArray<{
-    readonly cmrFindingClassification?: {
-      readonly dispositions: ReadonlyArray<FindingDisposition>;
-    };
+    readonly cmrDispositions?: ReadonlyArray<FindingDisposition>;
   }>,
 ): ReadonlyArray<FindingDisposition> | undefined {
+  // #604 slice 3 / ADR 0062: cross-round prior dispositions are read from the thin
+  // `cmrDispositions` governance field, not the retired `cmrFindingClassification`
+  // blob.
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
-    if (entry.cmrFindingClassification?.dispositions !== undefined) {
-      return entry.cmrFindingClassification.dispositions;
+    if (entry.cmrDispositions !== undefined) {
+      return entry.cmrDispositions;
     }
   }
   return undefined;
@@ -1682,29 +1683,16 @@ async function runIntegratedCmrPass(input: {
   ) {
     const reason =
       cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
+    // #604 slice 3 / ADR 0062: a not_converged abort carries NO blocking findings.
+    // Persist the thin envelope as `[]` (defined-but-empty) so the runner keeps it
+    // in the classified-abort branch and derives no pending keys from it.
     await recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
-      cmrFindingClassification: {
-        blocking: [],
-        deferred: [],
-        dispositions: [],
-        results: [
-          {
-            identityKey: `not_converged|${pass}`,
-            classification: "not_converged",
-            attribution: { method: "reviewer_disposition" },
-            reason,
-          },
-        ],
-        moduleContext: {
-          currentModules: [],
-          childModules: [],
-          undevelopedModules: [],
-        },
-      },
+      blockingFindingIdentityKeys: [],
+      cmrDispositions: [],
       stopSummary: notConvergedStopSummary(reason),
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
@@ -1791,11 +1779,15 @@ async function runIntegratedCmrPass(input: {
         ...new Set(cmrFindingClassification.blocking.map(findingIdentityKey)),
       ];
       if (allowCoderFix) {
+        // #604 slice 3 / ADR 0062: persist ONLY the thin envelope the runner reads
+        // (blocking identity keys) + the gate's governance data (dispositions).
+        // The fat `cmrFindingClassification` blob no longer lands on the ledger.
         await recordCmrReviewed(familyBackend, {
           cmrPass: pass,
           reason,
           familyHeadAfter: postWorkerFamilyHead,
-          cmrFindingClassification,
+          blockingFindingIdentityKeys,
+          cmrDispositions: cmrFindingClassification.dispositions,
           stopSummary,
         });
         if (remainingCmrCoderFixRounds <= 0) {
@@ -1808,7 +1800,8 @@ async function runIntegratedCmrPass(input: {
             cmrPass: pass,
             reason: budgetReason,
             familyHeadAfter: postWorkerFamilyHead,
-            cmrFindingClassification,
+            blockingFindingIdentityKeys,
+            cmrDispositions: cmrFindingClassification.dispositions,
             stopSummary: coderFixFailureStopSummary({
               pass,
               reason: budgetReason,
@@ -1854,7 +1847,8 @@ async function runIntegratedCmrPass(input: {
         cmrPass: pass,
         reason,
         familyHeadAfter: postWorkerFamilyHead,
-        cmrFindingClassification,
+        blockingFindingIdentityKeys,
+        cmrDispositions: cmrFindingClassification.dispositions,
         stopSummary,
       });
       return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
@@ -1868,29 +1862,16 @@ async function runIntegratedCmrPass(input: {
   ) {
     const reason =
       cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
+    // #604 slice 3 / ADR 0062: not_converged carries no blocking findings — the
+    // thin envelope is `[]` (defined-but-empty), keeping it in the runner's
+    // classified-abort branch while yielding no pending keys.
     await recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
-      cmrFindingClassification: {
-        blocking: [],
-        deferred: [],
-        dispositions: [],
-        results: [
-          {
-            identityKey: `not_converged|${pass}`,
-            classification: "not_converged",
-            attribution: { method: "reviewer_disposition" },
-            reason,
-          },
-        ],
-        moduleContext: {
-          currentModules: [],
-          childModules: [],
-          undevelopedModules: [],
-        },
-      },
+      blockingFindingIdentityKeys: [],
+      cmrDispositions: [],
       stopSummary: notConvergedStopSummary(reason),
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
@@ -1921,7 +1902,11 @@ async function runIntegratedCmrPass(input: {
     cmrPass: pass,
     familyHeadAfter: postWorkerFamilyHead,
     routeFingerprint,
-    cmrFindingClassification,
+    // #604 slice 3 / ADR 0062: carry ONLY the governance dispositions forward for
+    // cross-round prior-disposition tracking — not the fat classification blob.
+    ...(cmrFindingClassification !== undefined
+      ? { cmrDispositions: cmrFindingClassification.dispositions }
+      : {}),
     stopSummary: familyCmrPassStopSummary({
       classification: cmrFindingClassification,
       familyHeadAfter: postWorkerFamilyHead,
