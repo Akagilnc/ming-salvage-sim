@@ -30,9 +30,16 @@ import {
   resolveActiveModelRoute,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
-import type { Backend } from "../types.js";
+import type {
+  Backend,
+  EscalationAnswerPayload,
+  PersistentLedgerEntry,
+  StepId,
+} from "../types.js";
+import { escalateOf, isValidEscalation } from "../validate.js";
 import { assertAcyclic, selectWave } from "./commander.js";
 import {
+  childEscalationAnswer,
   familyEscalationState,
   familyShippedRecordForHead,
   hasBoundShippedMarker,
@@ -40,8 +47,10 @@ import {
   isMergedAccountingEntry,
   mergedSet,
   recordAdmissionSkipped,
+  recordChildEscalated,
   recordFamilyEscalated,
   recordMerged,
+  unansweredChildEscalations,
 } from "./ledger.js";
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
@@ -55,6 +64,7 @@ import {
 import type {
   ChildSlice,
   FamilyBackend,
+  FamilyChildEscalation,
   FamilyChildResult,
   FamilyLedgerEntry,
   FamilyRunInput,
@@ -188,13 +198,97 @@ function familyStopSummary(input: {
  * all-unblocked children so the ledger口径 dependency check (dec.6③) is trivially
  * satisfied (empty blocked_by).
  */
+/**
+ * Read a child's PARKED decision escalation off its single-slice RunResult (#604
+ * slice 5). The caller has already checked `result.status==="escalate"`. This
+ * distinguishes the DECISION bucket (a well-shaped Escalation on the escalated
+ * agent step → answerable, parkable) from the FAILURE bucket (an
+ * infra/retries-exhausted escalate with no valid Escalation → returns undefined,
+ * so the caller keeps the CURRENT `"failed"` behaviour — A/B分家). The reason /
+ * diagnosis come from the escalated agent step's Escalation payload; the sessionId
+ * (for 原地 resume, ADR 0062) is read from the persisted child ledger by the
+ * caller — the lean in-memory RunResult ledger carries no session id.
+ *
+ * NOTE: `escalationKindForHandoff` in runner.ts (single-slice) mirrors this exact
+ * decision-vs-failure split (a valid Escalation ⇒ "decision", else "failure"); this
+ * is the family-layer read of the same truth off the lean RunResult ledger.
+ */
+function readChildDecisionEscalation(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): FamilyChildEscalation | undefined {
+  // The escalated agent step carries the Escalation payload (the S8 handoff entry
+  // in the lean RunResult ledger carries no handoffStatus/escalationKind — those
+  // live only on the PERSISTED ledger written via writeLedger).
+  const agentEntry = [...ledger]
+    .reverse()
+    .find((e) => {
+      const esc = escalateOf(e.output);
+      return esc != null && isValidEscalation(esc);
+    });
+  const escalation = escalateOf(agentEntry?.output);
+  if (escalation == null || !isValidEscalation(escalation)) return undefined;
+  return {
+    reason: escalation.reason,
+    diagnosis: escalation.diagnosis,
+    escalationKind: "decision",
+    ...(agentEntry?.sessionId !== undefined ? { sessionId: agentEntry.sessionId } : {}),
+  };
+}
+
+/**
+ * The escalated (last non-terminal) step in a child's parked single-slice ledger
+ * (#604 slice 5) — the `forStep` a family-level answer must target so the child's
+ * own `planResume` reopens THAT step in its recorded session.
+ */
+function escalatedChildStep(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): StepId | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    if (ledger[i]!.step !== "S8") return ledger[i]!.step;
+  }
+  return undefined;
+}
+
 async function runChild(
   child: ChildSlice,
   singleSliceBackend: Backend,
   parentIssue: number,
   familyBase: string,
   familyChildIssues: ReadonlySet<number>,
+  /**
+   * A family-level human answer to THIS child's parked decision escalation (#604
+   * slice 5). When present, it is INJECTED into the child's own single-slice ledger
+   * (as an `escalation_answered` row targeting the escalated step) BEFORE re-running
+   * `runOrchestrator`, so the child's `planResume` reopens the paused step in its
+   * recorded session (原地 resume). Absent ⇒ a normal fresh/continued child run.
+   */
+  escalationAnswer?: EscalationAnswerPayload,
 ): Promise<FamilyChildResult> {
+  // ── #604 slice 5 resume: inject the answer into the child's single-slice ledger
+  // so the reused runOrchestrator's planResume → resumeSession reopens the paused
+  // step IN PLACE (原 sessionId), never from scratch. We only inject when the child
+  // actually has parked residue (findResumeState returns a ledger) whose last
+  // non-terminal step is the one to reopen.
+  if (escalationAnswer !== undefined) {
+    const resumeState = await singleSliceBackend.findResumeState(child.issue);
+    const forStep =
+      resumeState !== undefined ? escalatedChildStep(resumeState.ledger) : undefined;
+    if (resumeState !== undefined && forStep !== undefined) {
+      const answerEntry: PersistentLedgerEntry = {
+        step: forStep,
+        sessionId: `family-answer-${child.issue}`,
+        prompt_hash: "family-answer",
+        branchHEAD: resumeState.worktree.branch,
+        ts: new Date().toISOString(),
+        event: "escalation_answered",
+        forStep,
+        answer: escalationAnswer.answer,
+        source: "human",
+        ...(escalationAnswer.note !== undefined ? { note: escalationAnswer.note } : {}),
+      } as PersistentLedgerEntry;
+      await singleSliceBackend.writeLedger(answerEntry, resumeState.stateDir);
+    }
+  }
   const result = await runOrchestrator({
     issueNumber: child.issue,
     backend: singleSliceBackend,
@@ -229,9 +323,19 @@ async function runChild(
     // returns the transient "ran", never a premature "merged".
     return { issue: child.issue, status: "ran", branch: result.branch };
   }
-  // #293 thinnest: a non-success child does not merge. (Richer per-child
-  // failure / escalate handling is downstream; the spine records it as failed
-  // so the wave's outcome is honest, not silently dropped.)
+  // #604 slice 5 (A/B分家): a child that PARKED on a product/design DECISION题
+  // (`escalationKind:"decision"`) is `"escalated"`, NOT `"failed"` — an answerable
+  // pause the family can resume IN PLACE. Only the decision bucket parks; a
+  // `"failure"` escalate (infra / retries exhausted) and every other non-success
+  // outcome keep the current `"failed"` behaviour below.
+  if (result.status === "escalate") {
+    const escalation = readChildDecisionEscalation(result.stepLedger as ReadonlyArray<PersistentLedgerEntry>);
+    if (escalation !== undefined) {
+      return { issue: child.issue, status: "escalated", escalation };
+    }
+  }
+  // #293 thinnest: a non-success child does not merge (a failure escalate / error
+  // stays failed). The spine records it honestly, not silently dropped.
   return { issue: child.issue, status: "failed" };
 }
 
@@ -658,6 +762,87 @@ export async function runFamily(
   // admission per `assertExternalBlockersCleared`, online R1 #1 — NOT relied upon at
   // S0). Invariant for the run (epic.children is fixed), so computed once.
   const familyChildIssues = new Set(epic.children.map((c) => c.issue));
+  // ── #604 slice 5: child decision-escalation re-entry ────────────────────────
+  // Read the family ledger for children PARKED on a decision题 (a `child_escalated`
+  // row). For each, look up whether a later `escalation_answered` row (bound to the
+  // SAME childIssue) reopened it:
+  //   - ANSWERED → the answer is fed into runChild, which injects it into the
+  //     child's single-slice ledger so its own planResume → resumeSession reopens
+  //     the paused step IN PLACE (原 sessionId, 退出-重入 per ADR 0062).
+  //   - UNANSWERED → the family stays PAUSED: return `status:"escalated"` before the
+  //     wave loop rather than fruitlessly re-running the parked child (which would
+  //     just re-escalate). Supports multiple children parked + answered separately.
+  const parkedChildAnswers = new Map<number, EscalationAnswerPayload>();
+  {
+    // `unansweredChildEscalations` returns ONLY the still-unanswered parked
+    // children. To also resume the ANSWERED ones we look up each parked child's
+    // answer directly: answered → feed it into runChild (resume in place);
+    // unanswered → keep the family paused (return escalated). A parked child is one
+    // with a `child_escalated` row; iterate them by scanning the ledger for that.
+    const parkedIssues = new Set<number>();
+    for (const entry of initialFamilyLedger) {
+      if (
+        entry.status === "child_escalated" &&
+        entry.event === "child_escalated" &&
+        typeof entry.childIssue === "number"
+      ) {
+        parkedIssues.add(entry.childIssue);
+      }
+    }
+    const unanswered: (FamilyLedgerEntry & { readonly childIssue: number })[] = [];
+    const stillUnanswered = new Set(
+      unansweredChildEscalations(initialFamilyLedger).map((e) => e.childIssue),
+    );
+    for (const childIssue of parkedIssues) {
+      if (stillUnanswered.has(childIssue)) {
+        const row = [...initialFamilyLedger]
+          .reverse()
+          .find(
+            (e) =>
+              e.status === "child_escalated" &&
+              e.event === "child_escalated" &&
+              e.childIssue === childIssue,
+          ) as (FamilyLedgerEntry & { readonly childIssue: number }) | undefined;
+        if (row !== undefined) unanswered.push(row);
+        continue;
+      }
+      const answer = childEscalationAnswer(initialFamilyLedger, childIssue);
+      if (answer !== undefined) parkedChildAnswers.set(childIssue, answer);
+    }
+    if (unanswered.length > 0) {
+      const ledgerMerged = mergedSet(initialFamilyLedger);
+      const first = unanswered[0]!;
+      const children: FamilyChildResult[] = epic.children.map((c) =>
+        ledgerMerged.has(c.issue)
+          ? { issue: c.issue, status: "merged" as const }
+          : { issue: c.issue, status: "skipped" as const },
+      );
+      const escalationReason = `child #${first.childIssue} decision escalation is not answered: ${first.reason ?? "(no reason recorded)"}`;
+      return {
+        status: "escalated",
+        familyBase,
+        ...(typeof first.familyHeadAfter === "string" && first.familyHeadAfter.trim().length > 0
+          ? { familyHead: first.familyHeadAfter }
+          : {}),
+        escalation: {
+          reason: escalationReason,
+          diagnosis:
+            first.diagnosis ??
+            "Append an escalation_answered ledger row carrying this childIssue to reopen the parked child.",
+        },
+        stopSummary: familyStopSummary({
+          status: "escalated",
+          familyBase,
+          ...(typeof first.familyHeadAfter === "string" && first.familyHeadAfter.trim().length > 0
+            ? { familyHead: first.familyHeadAfter }
+            : {}),
+          children,
+          escalationReason,
+        }),
+        children,
+      };
+    }
+  }
   const moduleContext = buildFamilyModuleContext({
     childModules: epic.children.map((child) => child.moduleDeclaration),
     familyModule: epic.moduleDeclaration,
@@ -791,6 +976,42 @@ export async function runFamily(
             summary: "family resume found every child already merged and skipped rerun",
           }
         : resultStopSummary,
+      children,
+      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
+    };
+  };
+
+  // #604 slice 5: build the family result when a CHILD decision escalation parked
+  // the run. Every epic child gets a record (the parked child carries its
+  // `escalation`; already-merged children in `recorded` keep their status; the rest
+  // are `"skipped"`). The family status is `"escalated"` (the answerable pause), NOT
+  // verify_failed / incomplete.
+  const finalizeEscalated = (
+    parked: FamilyChildResult & { escalation: FamilyChildEscalation },
+    recordedResults: ReadonlyArray<FamilyChildResult>,
+  ): FamilyRunResult => {
+    const recorded = new Map(recordedResults.map((c) => [c.issue, c]));
+    const children: FamilyChildResult[] = epic.children.map(
+      (c) => recorded.get(c.issue) ?? { issue: c.issue, status: "skipped" as const },
+    );
+    const escalationReason = `child #${parked.issue} escalated a decision: ${parked.escalation.reason}`;
+    return {
+      status: "escalated",
+      familyBase,
+      familyHead,
+      escalation: {
+        reason: escalationReason,
+        diagnosis: parked.escalation.diagnosis,
+      },
+      stopSummary: familyStopSummary({
+        status: "escalated",
+        familyBase,
+        familyHead,
+        children,
+        escalationReason,
+      }),
       children,
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
@@ -939,6 +1160,8 @@ export async function runFamily(
           epic.issue,
           familyBase,
           familyChildIssues,
+          // #604 slice 5: a parked child that a human answered resumes IN PLACE.
+          parkedChildAnswers.get(child.issue),
         ),
       ),
     );
@@ -969,8 +1192,40 @@ export async function runFamily(
         familyHead = mergeResult.familyHead;
         childResults.push({ issue: r.issue, status: "merged", branch: r.branch });
       } else {
-        childResults.push({ issue: r.issue, status: r.status, branch: r.branch });
+        childResults.push({
+          issue: r.issue,
+          status: r.status,
+          branch: r.branch,
+          ...(r.escalation !== undefined ? { escalation: r.escalation } : {}),
+        });
       }
+    }
+
+    // ── #604 slice 5: a CHILD decision escalation PARKS the family (stop-wave) ───
+    // A child that returned `"escalated"` hit a product/design题. Record an
+    // INDEPENDENT `child_escalated` ledger row (bound to childIssue, carrying the
+    // child's sessionId for 原地 resume) and STOP: do NOT run the wave barrier or
+    // select a next wave (sub-decision ②). The `"ran"` siblings this wave already
+    // merged above stay durable; the un-answered child pauses the whole family
+    // until a later `escalation_answered` row reopens it (退出-重入, ADR 0062). The
+    // failure bucket never reaches here — runChild returned `"failed"` for it.
+    const escalatedChildren = ran.filter(
+      (r): r is FamilyChildResult & { escalation: FamilyChildEscalation } =>
+        r.status === "escalated" && r.escalation !== undefined,
+    );
+    if (escalatedChildren.length > 0) {
+      for (const child of escalatedChildren) {
+        await recordChildEscalated(familyBackend, {
+          childIssue: child.issue,
+          reason: child.escalation.reason,
+          diagnosis: child.escalation.diagnosis,
+          ...(child.escalation.sessionId !== undefined
+            ? { sessionId: child.escalation.sessionId }
+            : {}),
+          ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
+        });
+      }
+      return finalizeEscalated(escalatedChildren[0]!, childResults);
     }
 
     // ── verify-cmr hook: per-wave barrier (#293 no-op seam, #296 fills) ─────────
