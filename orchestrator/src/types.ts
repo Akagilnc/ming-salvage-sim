@@ -13,7 +13,7 @@
  * fill behaviour in, not re-shape these.
  */
 
-import type { FamilyModuleContext } from "./family/cmrClassification.js";
+import type { FamilyModuleContext } from "./family/moduleDeclaration.js";
 import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
 
 // ───────────────────────────── step identifiers ─────────────────────────────

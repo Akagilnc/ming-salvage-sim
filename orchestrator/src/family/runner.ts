@@ -46,9 +46,7 @@ import {
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import { runVerifyCmr } from "./verifyCmr.js";
-import {
-  buildFamilyModuleContext,
-} from "./cmrClassification.js";
+import { buildFamilyModuleContext } from "./moduleDeclaration.js";
 import { fixableCmrFindingKeysFromClassification } from "./cmrFixableFindings.js";
 import {
   infraFailureStopSummary,

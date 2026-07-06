@@ -52,8 +52,8 @@
 import {
   classifyFamilyCmrFindings,
   type FamilyCmrClassification,
-  type FamilyModuleContext,
 } from "./cmrClassification.js";
+import type { FamilyModuleContext } from "./moduleDeclaration.js";
 import {
   familyCoderFixWorkerSpec,
   cmrWorkerSpec,
