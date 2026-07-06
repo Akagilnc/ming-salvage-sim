@@ -159,6 +159,27 @@ export interface FamilyEscalationAnswerRecord {
   readonly answer: string;
   readonly source: "human" | "resume_input";
   readonly note?: string;
+  /**
+   * When set, this answer answers a CHILD decision escalation (#604 slice 5): it
+   * matches the `child_escalated` row carrying the SAME childIssue, so multiple
+   * parked children can be answered separately.
+   */
+  readonly childIssue?: number;
+}
+
+/**
+ * A CHILD-LEVEL decision escalation ledger record (#604 slice 5). Recorded when a
+ * child slice's own single-slice run parked on a product/design题
+ * (`escalationKind:"decision"`). INDEPENDENT of the family's own `escalated` row.
+ */
+export interface ChildEscalatedRecord {
+  readonly childIssue: number;
+  readonly reason: string;
+  readonly diagnosis: string;
+  /** The child's escalated single-slice worker session id, for 原地 resume. */
+  readonly sessionId?: string;
+  readonly familyHeadAfter?: string;
+  readonly stopSummary?: StopSummary;
 }
 
 /** A production-admission child skip audit row (#450/#451). */
@@ -414,6 +435,136 @@ export async function recordFamilyEscalationAnswered(
       note: record.note,
     }) as FamilyLedgerEntry,
   );
+}
+
+/**
+ * Append a CHILD-LEVEL decision escalation marker (#604 slice 5).
+ *
+ * Recorded when a child slice parked on a product/design decision题
+ * (`escalationKind:"decision"`). Uses the INDEPENDENT `child_escalated` event (not
+ * the family's own `escalated` row) so the two escalation semantics stay distinct.
+ * The row carries `childIssue` so several children can park + be answered
+ * separately, and the child's `sessionId` so a later resume re-enters IN PLACE.
+ */
+export async function recordChildEscalated(
+  backend: FamilyBackend,
+  record: ChildEscalatedRecord,
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      childIssue: record.childIssue,
+      status: "child_escalated",
+      event: "child_escalated",
+      phase: "wave",
+      escalationKind: "decision",
+      reason: record.reason,
+      diagnosis: record.diagnosis,
+      sessionId: record.sessionId,
+      familyHeadAfter: record.familyHeadAfter,
+      stopSummary:
+        record.stopSummary ??
+        infraFailureStopSummary({
+          summary: record.reason,
+          repairHint:
+            "answer this child decision escalation (append an escalation_answered row with the matching childIssue) and rerun the family",
+          ...(record.familyHeadAfter !== undefined
+            ? {
+                heads: {
+                  actualFamilyHead: record.familyHeadAfter,
+                  sources: { actualFamilyHead: "family child escalation ledger row" },
+                },
+              }
+            : {}),
+        }),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/** Is this a valid, well-shaped `child_escalated` decision row (#604 slice 5)? */
+function isValidChildEscalated(
+  entry: FamilyLedgerEntry,
+): entry is FamilyLedgerEntry & { readonly childIssue: number } {
+  return (
+    entry.status === "child_escalated" &&
+    entry.event === "child_escalated" &&
+    entry.escalationKind === "decision" &&
+    Number.isSafeInteger(entry.childIssue) &&
+    (entry.childIssue ?? 0) > 0
+  );
+}
+
+/** Is this a valid `escalation_answered` row bound to a specific child (#604 slice 5)? */
+function isValidChildAnswer(
+  entry: FamilyLedgerEntry,
+  childIssue: number,
+): boolean {
+  return (
+    entry.status === "escalation_answered" &&
+    entry.event === "escalation_answered" &&
+    entry.childIssue === childIssue &&
+    typeof entry.answer === "string" &&
+    entry.answer.trim().length > 0 &&
+    (entry.source === undefined ||
+      entry.source === "human" ||
+      entry.source === "resume_input")
+  );
+}
+
+/**
+ * The set of child issue numbers whose decision escalation is STILL UNANSWERED
+ * (#604 slice 5). A child is unanswered iff it has a `child_escalated` row with no
+ * LATER matching `escalation_answered` row. The family runner returns
+ * `status:"escalated"` while any child is unanswered.
+ */
+export function unansweredChildEscalations(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+): ReadonlyArray<FamilyLedgerEntry & { readonly childIssue: number }> {
+  const out: (FamilyLedgerEntry & { readonly childIssue: number })[] = [];
+  const seen = new Set<number>();
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (!isValidChildEscalated(entry)) continue;
+    if (seen.has(entry.childIssue)) continue;
+    seen.add(entry.childIssue);
+    const answered = entries
+      .slice(i + 1)
+      .some((later) => isValidChildAnswer(later, entry.childIssue));
+    if (!answered) out.push(entry);
+  }
+  return out.reverse();
+}
+
+/**
+ * The human answer that reopens a specific child's parked decision escalation
+ * (#604 slice 5), or `undefined` when the child is not parked / not yet answered.
+ * Reads the LATEST `child_escalated` for the child, then the latest matching
+ * `escalation_answered` after it.
+ */
+export function childEscalationAnswer(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  childIssue: number,
+): EscalationAnswerPayload | undefined {
+  let escalatedIdx = -1;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (isValidChildEscalated(entry) && entry.childIssue === childIssue) {
+      escalatedIdx = i;
+      break;
+    }
+  }
+  if (escalatedIdx < 0) return undefined;
+  for (let i = entries.length - 1; i > escalatedIdx; i--) {
+    const entry = entries[i]!;
+    if (isValidChildAnswer(entry, childIssue)) {
+      return {
+        event: "escalation_answered",
+        answer: entry.answer!,
+        source: (entry.source ?? "human") as "human" | "resume_input",
+        ...(entry.note !== undefined ? { note: entry.note } : {}),
+      };
+    }
+  }
+  return undefined;
 }
 
 /** Append one production-admission skip audit row. */
