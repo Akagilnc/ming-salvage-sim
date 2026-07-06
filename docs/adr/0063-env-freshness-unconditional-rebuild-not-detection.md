@@ -1,0 +1,12 @@
+Status: Proposed（2026-07-06 用户拍板，待 cmr + 线上评审）
+
+# 0063: 编排器环境新鲜靠无条件重建，不做检测式 staleness 闸
+
+## 决定
+
+worker 环境（dist/souls/skills/镜像）的新鲜性靠 **无条件重建 by construction**：launcher 派活前无条件 `npx tsc` + `docker build`（Docker layer cache 即内容寻址的增量判断，自有代码零检测逻辑）；souls 等数据文件能 mount 就 mount；base 镜像与 apt/curl 安装工具的慢漂移用人手/定期 `rebake --no-cache` 兜底，不进每次 run 路径。**检测式方案（比 mtime、查 manifest、解析 registry digest、版本 pin 强制）整体否决**——检测要正确必须完备枚举全部漂移源，是无底洞（#372 家族 34 轮 CMR 长出 5 条 staleness 轴即其逻辑终点），而重建在缓存命中时是秒级，符合「不拿免费的换最贵的」。
+
+## 后果
+
+- #372 重写为「无条件重建」薄 issue；#594/#595/#599（检测式三件套）关闭、由其 supersede。
+- 该逻辑属 launcher/入口，不进 runner 循环（runner 三功能见 ADR 0062）。
