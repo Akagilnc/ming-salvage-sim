@@ -60,7 +60,6 @@ import {
   dispatchFamilyWorker,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { fixableCmrFindingKeysFromClassification } from "./cmrFixableFindings.js";
 import {
   cmrLegAccountingFailure,
   modelRouteFingerprint,
@@ -1781,10 +1780,17 @@ async function runIntegratedCmrPass(input: {
         cmrFindingClassification,
         reason,
       );
-      const fixableKeys = fixableCmrFindingKeysFromClassification(
-        cmrFindingClassification,
-      );
-      if (allowCoderFix && fixableKeys !== undefined && fixableKeys.length > 0) {
+      // #604 slice 2 / ADR 0062: the runner is a PURE SCHEDULER — it counts
+      // blocking findings, it does NOT read a finding's disposition/classification
+      // to decide whether the family lives. EVERY blocking finding's identity key
+      // goes through coder-fix; a reviewer self-labeling a blocker
+      // owning_issue_still_red / defer no longer terminates the whole family
+      // (#497/#498). The only non-fix outpaths are: no blocking findings (handled
+      // above) or the coder-fix round budget being exhausted (below).
+      const blockingFindingIdentityKeys = [
+        ...new Set(cmrFindingClassification.blocking.map(findingIdentityKey)),
+      ];
+      if (allowCoderFix) {
         await recordCmrReviewed(familyBackend, {
           cmrPass: pass,
           reason,
@@ -1796,7 +1802,7 @@ async function runIntegratedCmrPass(input: {
           const budgetReason =
             `integrated cmr ${pass} coder-fix round budget exhausted after ` +
             `${MAX_CMR_CODER_FIX_ROUNDS} committed repair rounds: ` +
-            fixableKeys.join(", ");
+            blockingFindingIdentityKeys.join(", ");
           await recordDurableAbort(familyBackend, {
             phase: "final",
             cmrPass: pass,
@@ -1819,7 +1825,7 @@ async function runIntegratedCmrPass(input: {
           familyBackend,
           familyBase,
           classification: cmrFindingClassification,
-          blockingFindingIdentityKeys: fixableKeys,
+          blockingFindingIdentityKeys,
           familyHeadBefore: postWorkerFamilyHead,
           escalationAnswer,
           familyIssue,
@@ -1828,7 +1834,7 @@ async function runIntegratedCmrPass(input: {
         if (!fixRound.result.ok) return fixRound;
         const remainingAfterFix = remainingCmrCoderFixRounds - 1;
         const updatedPriorKeys = [
-            ...new Set([...(priorCmrFindingIdentityKeys ?? []), ...fixableKeys]),
+            ...new Set([...(priorCmrFindingIdentityKeys ?? []), ...blockingFindingIdentityKeys]),
         ];
         return {
           result: { ok: true, ran: true },

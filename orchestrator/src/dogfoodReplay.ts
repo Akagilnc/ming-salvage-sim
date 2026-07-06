@@ -159,6 +159,16 @@ async function familyClassificationScenario(input: {
   readonly familyIssue: number;
   readonly finding: Finding;
   readonly moduleContext: FamilyModuleContext;
+  /**
+   * #604 slice 2 / ADR 0062: a blocking finding is counted and routed through
+   * coder-fix (no longer terminated on its classification). This replay fixture
+   * reproduces the HISTORICAL ACCIDENT — an unresolved same-module gap — so it
+   * scripts the coder-fix to fail, leaving the run aborted while the
+   * `cmr_reviewed` row carries the same-module blocking classification. Passing
+   * (declared cross-module defer) findings never reach coder-fix, so this flag
+   * stays false for them.
+   */
+  readonly blockingCoderFixFails?: boolean;
 }): Promise<DogfoodReplayScenario> {
   const cmrOutput: WorkerResult = {
     kind: "completed",
@@ -173,23 +183,21 @@ async function familyClassificationScenario(input: {
       findings: [input.finding],
     },
   };
+  // #604 slice 2 / ADR 0062: a BLOCKING family finding no longer terminates the
+  // family on its content classification — the runner counts it and routes it
+  // through coder-fix (recording a `cmr_reviewed` row that carries the
+  // classification + blocking stop summary). Script only the first blocking CMR
+  // output; the default backend responses cover the coder-fix, re-review, and
+  // ship dispatches for both the blocking (same-module) and passing
+  // (cross-module defer) scenarios.
+  const coderFixFailure: WorkerResult = {
+    kind: "failed",
+    reason: "dogfood historical accident: same-module gap has no landed repair",
+  };
   const backend = new DogfoodCmrFamilyBackend(
     "dogfood-classification-head",
     [],
-    [
-      cmrOutput,
-      cmrOutput,
-      {
-        kind: "completed",
-        output: {
-          kind: "ship",
-          branch: "family/dogfood-classification",
-          status: "pr_opened",
-          pr: "pr://family/dogfood-classification",
-          prHead: "dogfood-classification-head",
-        },
-      },
-    ],
+    input.blockingCoderFixFails ? [cmrOutput, coderFixFailure] : [cmrOutput],
   );
   const run = await runVerifyCmr({
     phase: "final",
@@ -199,6 +207,7 @@ async function familyClassificationScenario(input: {
     moduleContext: input.moduleContext,
   });
   const ledgerEntry =
+    backend.ledger.find((entry) => entry.status === "cmr_reviewed") ??
     backend.ledger.find((entry) => entry.status === "aborted") ??
     backend.ledger.find(
       (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
@@ -2659,6 +2668,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       familyIssue: 287,
       finding: sameModuleFinding,
       moduleContext,
+      blockingCoderFixFails: true,
     }),
     await familyClassificationScenario({
       id: "287-cross-module-defer-with-module",

@@ -47,7 +47,8 @@ import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import { runVerifyCmr } from "./verifyCmr.js";
 import { buildFamilyModuleContext } from "./moduleDeclaration.js";
-import { fixableCmrFindingKeysFromClassification } from "./cmrFixableFindings.js";
+import { findingIdentityKey } from "../findings.js";
+import type { FamilyCmrClassification } from "./cmrClassification.js";
 import {
   infraFailureStopSummary,
   successStopSummary,
@@ -277,6 +278,19 @@ function latestVerifiedCmrHead(
   return undefined;
 }
 
+/**
+ * #604 slice 2 / ADR 0062: the runner counts blocking findings; it does NOT read
+ * a finding's disposition/classification to decide which keys are pending. Every
+ * blocking finding's identity key is a pending runner-owned key. The synthetic
+ * `not_converged` sentinel carries no blocking findings (its `blocking` is empty),
+ * so its short-circuit behaviour is preserved: it yields no keys here.
+ */
+function blockingFindingIdentityKeys(
+  classification: FamilyCmrClassification,
+): readonly string[] {
+  return [...new Set(classification.blocking.map(findingIdentityKey))];
+}
+
 export function pendingPriorCmrFindingIdentityKeysByPass(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
   currentFamilyHead?: string,
@@ -324,7 +338,7 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
       const reviewedHead = filled(entry.familyHeadAfter);
       const keys =
         entry.cmrFindingClassification !== undefined
-          ? fixableCmrFindingKeysFromClassification(entry.cmrFindingClassification)
+          ? blockingFindingIdentityKeys(entry.cmrFindingClassification)
           : undefined;
       if (
         pass === undefined ||
@@ -392,17 +406,16 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
     processedPasses.add(pass);
     const keys = keysByPass[pass] ?? [];
     const seen = new Set(keys);
-    for (const result of entry.cmrFindingClassification.results) {
-      if (
-        result.classification === "cross_module_defer" ||
-        result.classification === "accepted_suppressed" ||
-        result.classification === "not_converged"
-      ) {
-        continue;
-      }
-      if (!seen.has(result.identityKey)) {
-        seen.add(result.identityKey);
-        keys.push(result.identityKey);
+    // #604 slice 2 / ADR 0062: pull EVERY blocking finding's identity key — do not
+    // exempt keys by content classification (cross_module_defer / accepted_suppressed).
+    // The synthetic not_converged sentinel carries no blocking findings, so it yields
+    // nothing here, preserving its short-circuit behaviour.
+    for (const identityKey of blockingFindingIdentityKeys(
+      entry.cmrFindingClassification,
+    )) {
+      if (!seen.has(identityKey)) {
+        seen.add(identityKey);
+        keys.push(identityKey);
       }
     }
     keysByPass[pass] = keys;

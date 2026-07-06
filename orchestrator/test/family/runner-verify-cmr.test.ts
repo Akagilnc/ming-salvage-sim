@@ -274,8 +274,18 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
   });
 
   it("keeps pending correctness CMR finding keys across a newer unrelated completeness pass", async () => {
-    const priorKey =
-      "correctness|orchestrator/src/family/verifycmr.ts:42|correctness blocker";
+    // #604 slice 2 / ADR 0062: the runner derives pending keys from the classification's
+    // `blocking` findings (counted, not content-classified), so the seeded aborted row
+    // carries the blocker as a real Finding whose identity key drives recovery.
+    const priorFinding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "correctness blocker",
+      location: "orchestrator/src/family/verifyCmr.ts:42",
+      suggested_fix: "close the correctness blocker",
+      action: "fix_now",
+    };
+    const priorKey = findingIdentityKey(priorFinding);
     const calls: VerifyCmrInput[] = [];
     class PreSeededFamilyBackend extends FakeFamilyBackend {
       constructor() {
@@ -288,7 +298,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             phase: "final",
             cmrPass: "correctness",
             cmrFindingClassification: {
-              blocking: [],
+              blocking: [priorFinding],
               deferred: [],
               dispositions: [],
               moduleContext: {
@@ -336,12 +346,36 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
   });
 
   it("keeps only the newest aborted finding set for a CMR pass", async () => {
-    const oldKey =
-      "correctness|orchestrator/src/family/verifycmr.ts:41|old blocker";
-    const newKey =
-      "correctness|orchestrator/src/family/verifycmr.ts:42|new blocker";
-    const newerKey =
-      "correctness|orchestrator/src/family/verifycmr.ts:43|newer blocker";
+    // #604 slice 2 / ADR 0062: pending keys are derived from the classification's
+    // `blocking` findings, so each seeded aborted row carries its blockers as real
+    // Findings whose identity keys the runner recovers.
+    const oldFinding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "old blocker",
+      location: "orchestrator/src/family/verifyCmr.ts:41",
+      suggested_fix: "close the old blocker",
+      action: "fix_now",
+    };
+    const newFinding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "new blocker",
+      location: "orchestrator/src/family/verifyCmr.ts:42",
+      suggested_fix: "close the new blocker",
+      action: "fix_now",
+    };
+    const newerFinding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "newer blocker",
+      location: "orchestrator/src/family/verifyCmr.ts:43",
+      suggested_fix: "close the newer blocker",
+      action: "fix_now",
+    };
+    const oldKey = findingIdentityKey(oldFinding);
+    const newKey = findingIdentityKey(newFinding);
+    const newerKey = findingIdentityKey(newerFinding);
     const calls: VerifyCmrInput[] = [];
     class PreSeededFamilyBackend extends FakeFamilyBackend {
       constructor() {
@@ -354,7 +388,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             phase: "final",
             cmrPass: "correctness",
             cmrFindingClassification: {
-              blocking: [],
+              blocking: [oldFinding],
               deferred: [],
               dispositions: [],
               moduleContext: {
@@ -378,7 +412,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             phase: "final",
             cmrPass: "correctness",
             cmrFindingClassification: {
-              blocking: [],
+              blocking: [newFinding, newerFinding],
               deferred: [],
               dispositions: [],
               moduleContext: {
