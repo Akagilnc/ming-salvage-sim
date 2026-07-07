@@ -35,8 +35,8 @@ Report each active finding with only its body (`severity`, `category`,
 `claim_quote`, `location`, `suggested_fix`) plus an `action`. Do not emit routing
 disposition kinds — there are none. P0/P1 findings (`critical`/`high`) must always
 use `action:"fix_now"`. Every finding you report is blocking: the runner counts it
-and sends it back through coder-fix. There is no "defer to another module" pass —
-if a gap is real, report it as a concrete fix.
+and sends it back through coder-fix. There is no pass to another module — if a
+gap is real, report it as a concrete fix.
 
 Do not emit `accepted_suppressed`, `wont_fix`, or `rejected` from this standalone
 reviewer worker. This runner path has no trusted suppression-source input, so an

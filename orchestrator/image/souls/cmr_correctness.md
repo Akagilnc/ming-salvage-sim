@@ -29,8 +29,8 @@ Before emitting your terminal verdict, read
    nonblocking only as `accepted_suppressed`, and only with an explicit
    owner/ADR/issue acceptance source + a scope + bounded reopen conditions;
    otherwise every active finding is blocking and must be `fix_now`. Do not turn a
-   cheap same-module defect into a silent defer — hand it back as a fix_now
-   finding for the runner boundary.
+    cheap same-module defect into a silent non-blocking finding — hand it back
+    as a fix_now finding for the runner boundary.
 5. Non-convergence is itself an escalation trigger. The runner supplies the prior
    claimed-fixed finding identity keys each round and applies NO round cap: a
    non-converging fix loop stops ONLY when you escalate. So if a blocking defect

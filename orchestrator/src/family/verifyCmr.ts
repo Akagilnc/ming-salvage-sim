@@ -150,7 +150,7 @@ export interface VerifyCmrInput {
   readonly familyHeadAfter?: string;
   /** Parent/family issue number, used for issue-specific accepted suppressions. */
   readonly familyIssue?: number;
-  /** Parsed module declarations for family-CMR defer classification (#449). */
+  /** Parsed module declarations for family-CMR scope classification (#449). */
   readonly moduleContext?: FamilyModuleContext;
   /**
    * Runner-owned prior finding identity keys that the integrated CMR worker may

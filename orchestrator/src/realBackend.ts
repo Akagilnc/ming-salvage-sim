@@ -1749,13 +1749,13 @@ const findingDispositionSchema = z
       });
     }
   });
-const findingSchema = z.object({
+export const findingSchema = z.object({
   severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
   category: z.string(),
   claim_quote: z.string(),
   location: z.string(),
   suggested_fix: z.string(),
-  action: z.enum(["fix_now", "defer", "wont_fix", "rejected"]),
+  action: z.enum(["fix_now", "wont_fix", "rejected"]),
   disposition_reason: z.string().optional(),
   disposition: findingDispositionSchema.optional(),
 }).superRefine((finding, ctx) => {
@@ -1793,18 +1793,6 @@ const findingSchema = z.object({
       code: "custom",
       path: ["disposition"],
       message: "suppressed findings require accepted_suppressed disposition",
-    });
-  }
-  // #604 correctness r1 (P2-b): ADR 0062 removed all non-suppression route kinds,
-  // so `defer` can no longer carry a valid non-suppression disposition. A stray
-  // defer fails closed as malformed (consistent with validate.ts and the Python
-  // outcome-guard), never a免修 route.
-  if (finding.action === "defer") {
-    ctx.addIssue({
-      code: "custom",
-      path: ["action"],
-      message:
-        "defer is no longer a supported action (ADR 0062): a stray defer is malformed",
     });
   }
 });
