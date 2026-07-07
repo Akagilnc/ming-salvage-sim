@@ -1,6 +1,6 @@
 # 血债棘轮 schema（ADR 0011 决定2 子 ADR · 0011-2）
 
-Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定2，由 design-dig `dig-4`/`dig-5`/`dig-6`/`dig-7`/`dig-9` fold 而成。**评审收敛**——本地 ship-pre cmr R1–R8 4/4 concur（2026-06-15）+ 线上 PR #123 R1–R3 评审收敛；merge 即转 Accepted。实现属编码活、spawn 隔壁。）
+Status: Accepted（承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定2，由 design-dig `dig-4`/`dig-5`/`dig-6`/`dig-7`/`dig-9` fold 而成。**评审收敛**——本地 ship-pre cmr R1–R8 4/4 concur（2026-06-15）+ 线上 PR #123 R1–R3 评审收敛；PR #123 已 merge（`847dc3da5`，2026-06-15）转 Accepted。实现属编码活、spawn 隔壁。）
 
 承 GitHub #112 tracker。本 ADR 收口母 ADR 留给子机制的「血债精确 schema」，并应用母 ADR CMR r2 parked 的三项最低契约（provisional / H5 / 净负）。
 

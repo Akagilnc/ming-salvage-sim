@@ -32,6 +32,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "prompts");
+const realSoulsDir = join(here, "..", "image", "souls");
 
 const ISSUE = 256;
 const BRANCH = `feat/issue-${ISSUE}`; // #1: neutral prefix (matches branchForIssue)
@@ -95,6 +96,7 @@ function newBackend(): RecordingBackend {
     imageName: "img",
     skillsMount: "/tmp/skills",
     promptsDir: realPromptsDir,
+    soulsDir: realSoulsDir,
     home: HOME,
   });
 }
