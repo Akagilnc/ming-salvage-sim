@@ -19,9 +19,17 @@
 import type { DispatchContext, WorkerResult, WorkerSpec } from "./types.js";
 
 /**
- * Total dispatch attempts for one step (1 initial + retries). Aligned with the
- * reviewer's existing `MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS` small bound so no
- * role is treated specially (#592). #598 owns this number.
+ * Total dispatch attempts for one step (1 initial + retries) for a PROCESS-LEVEL
+ * failure (crash / no-output). #598 owns this number.
+ *
+ * This is a DIFFERENT, independent bound from the reviewer's
+ * `MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS` (= 2, runner.ts): that one bounds SEMANTIC
+ * reruns of a reviewer that produced INVALID OUTPUT (a model/prompt problem that a
+ * 3rd try rarely fixes → deliberately tighter), whereas this bounds a transient
+ * process crash (retrying more is worth it). #592 ("no role treated specially")
+ * means no role gets ZERO retry — NOT that the two bounds must be equal; a reviewer
+ * crash that surfaces as a THROW still uses this generic bound (3) via the runner's
+ * reviewer predicate. (The two are intentionally unequal; do not conflate them.)
  */
 export const MAX_DISPATCH_ATTEMPTS = 3;
 
@@ -150,9 +158,16 @@ export async function withMechanicalRetry(
   // Exhausted. If the last attempt threw and the caller owns the throw→result
   // conversion, re-throw so its domain converter surfaces the failure.
   if (opts?.rethrowOnExhaustion === true && lastAttemptThrew) throw lastError;
-  // Otherwise return the last process-level failure verbatim so the caller's
-  // existing durable-abort path surfaces it (no new supervisor / stop reason).
-  return last!;
+  // Otherwise return the last process-level failure, ANNOTATING the reason with the
+  // generic dispatch attempt count (#598 crit 6 — durable abort names the failed
+  // step [added by the caller] AND the attempt count, using the existing
+  // stop-reason vocabulary, no new field). Reached only when every bounded attempt
+  // was a process failure.
+  const attempts = MAX_DISPATCH_ATTEMPTS;
+  return {
+    ...(last as Extract<WorkerResult, { reason: string }>),
+    reason: `${(last as { reason: string }).reason} (after ${attempts} dispatch attempts)`,
+  };
 }
 
 /**
