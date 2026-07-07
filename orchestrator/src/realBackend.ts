@@ -1628,7 +1628,7 @@ const findingSchema = z.object({
   claim_quote: z.string(),
   location: z.string(),
   suggested_fix: z.string(),
-    action: z.enum(["fix_now", "wont_fix", "rejected"]),
+  action: z.enum(["fix_now", "wont_fix", "rejected"]),
   disposition_reason: z.string().optional(),
   disposition: findingDispositionSchema.optional(),
 }).superRefine((finding, ctx) => {

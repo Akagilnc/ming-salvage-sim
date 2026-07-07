@@ -162,7 +162,7 @@ export interface Finding {
   readonly action: "fix_now" | "wont_fix" | "rejected";
   /** Required when action is `wont_fix` or `rejected`; optional otherwise. */
   readonly disposition_reason?: string;
-  /** Machine-verifiable classification evidence for defer/suppression outcomes. */
+  /** Machine-verifiable classification evidence for suppression outcomes. */
   readonly disposition?: FindingDispositionEvidence;
 }
 

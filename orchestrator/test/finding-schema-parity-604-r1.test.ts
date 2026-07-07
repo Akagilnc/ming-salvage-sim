@@ -1,10 +1,17 @@
 /**
- * #604 ship-pre CMR correctness r1 — P2-a finding-contract parity.
+ * #604 ship-pre CMR correctness r1 — P2-a / P2-b finding-contract parity.
  *
  * P2-a: an `accepted_suppressed` governance disposition is ONLY valid on
  *   wont_fix/rejected. On fix_now (or any other action) it must be rejected —
  *   classifyFindings treats fix_now as blocking, so a fix_now + accepted_suppressed
  *   would silently turn the governance suppression into a blocker.
+ *
+ * P2-b: ADR 0062 removed all non-suppression route disposition kinds, so `defer`
+ *   can no longer carry a valid non-suppression disposition. A stray defer fails
+ *   closed as MALFORMED across every real entry — the TS validate path AND the
+ *   Python outcome-guard (which slice-4 missed, and which still accepted the old
+ *   route kinds same_module / cross_module / spec_conflict / infra_failure /
+ *   owning_issue_still_red).
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
@@ -121,6 +128,21 @@ describe("#604 r1 P2-b — Python outcome-guard口径 parity", () => {
     ]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("kind is not a supported value");
+  });
+
+  it("rejects a stray defer as unsupported by the action allowlist", () => {
+    const result = runGuardOnFindings([
+      {
+        severity: "medium",
+        category: "correctness",
+        claim_quote: "stray defer must be rejected by the allowlist",
+        location: "orchestrator/src/family/runner.ts:1",
+        suggested_fix: "report it fix_now",
+        action: "defer",
+      },
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("findings[0].action is not a supported value");
   });
 
   it("rejects a fix_now finding carrying an accepted_suppressed disposition", () => {
