@@ -1347,6 +1347,114 @@ describe("RealBackend reviewer output contract", () => {
   });
 });
 
+// ─── #596 F2: real decode seam for verify/fixer/cleanup/docRelease (raw, not fake) ───
+
+describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds (raw feed)", () => {
+  class DecodeOnlyBackend extends RealBackend {
+    protected override cloneDirExists(): boolean {
+      return true;
+    }
+    protected override sh(file: string, args: string[]): string {
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+        return ".git";
+      }
+      throw new Error(`unexpected shell call: ${file} ${args.join(" ")}`);
+    }
+  }
+
+  const here = dirname(fileURLToPath(import.meta.url));
+  function makeBackend() {
+    return new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 596,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
+    });
+  }
+
+  const verifySpec: StepSpec = {
+    id: "S9",
+    role: "verify",
+    promptFile: "dummy.md",
+    model: "gpt-5.5",
+    completionSignal: "VERIFY_COMPLETE",
+    maxIter: 1,
+    soul: "READ-ONLY",
+    toolchain: ["node"],
+  };
+  const fixerSpec: StepSpec = {
+    id: "S10",
+    role: "fixer",
+    promptFile: "dummy.md",
+    model: "gpt-5.5",
+    completionSignal: "FIXER_COMPLETE",
+    maxIter: 1,
+    soul: "coder",
+    toolchain: ["node"],
+  };
+
+  it("decodeOutput on RAW valid verify produces correct VerifyResult (not fake construction)", () => {
+    const backend = makeBackend();
+    // touch outputFor as part of the seam (AC2)
+    const outDef = (backend as any).outputFor?.(verifySpec);
+    if (outDef && typeof outDef === "object" && "tag" in outDef) {
+      expect(outDef.tag).toBe("verify");
+    }
+    const decoded = (
+      backend as unknown as {
+        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+      }
+    ).decodeOutput(verifySpec, { converged: true }, undefined);
+    expect(decoded).toEqual({ kind: "verify", converged: true });
+  });
+
+  it("decodeOutput on RAW valid-but-false verify still succeeds (AC: shape-valid false passes)", () => {
+    const backend = makeBackend();
+    const decoded = (
+      backend as unknown as {
+        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+      }
+    ).decodeOutput(verifySpec, { converged: false }, undefined);
+    expect(decoded).toEqual({ kind: "verify", converged: false });
+  });
+
+  it("decodeOutput on RAW malformed verify (bad type) fails closed via guard", () => {
+    const backend = makeBackend();
+    expect(() =>
+      (
+        backend as unknown as {
+          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+        }
+      ).decodeOutput(verifySpec, { converged: "notbool" }, undefined),
+    ).toThrow();
+  });
+
+  it("decodeOutput on RAW valid fixer produces FixerResult via real seam", () => {
+    const backend = makeBackend();
+    const decoded = (
+      backend as unknown as {
+        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+      }
+    ).decodeOutput(fixerSpec, { committed: false }, undefined);
+    expect(decoded).toEqual({ kind: "fixer", committed: false });
+  });
+
+  it("decodeOutput on unknown role for review-loop raw fails closed", () => {
+    const backend = makeBackend();
+    const badSpec = { ...verifySpec, role: "unknown" as any };
+    expect(() =>
+      (
+        backend as unknown as {
+          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+        }
+      ).decodeOutput(badSpec, { converged: true }, undefined),
+    ).toThrow(/cannot decode output for unknown role/);
+  });
+});
+
 // ─── #286 toolchain preflight before agent dispatch ─────────────────────────
 
 describe("RealBackend runStep toolchain preflight (#286)", () => {

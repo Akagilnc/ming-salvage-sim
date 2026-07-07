@@ -98,6 +98,18 @@ import {
   type SelfReportedCoder,
 } from "../realBackend.js";
 import {
+  isValidCleanupResult,
+  isValidDocReleaseResult,
+  isValidFixerResult,
+  isValidVerifyResult,
+} from "../reviewLoopOutcome.js";
+import type {
+  CleanupResult,
+  DocReleaseResult,
+  FixerResult,
+  VerifyResult,
+} from "../types.js";
+import {
   WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
   readRequiredWorkerOutcomeSidecar,
@@ -3356,4 +3368,128 @@ function decodeChildOutput(v: unknown): string {
 function gitExitStatus(err: unknown): number | undefined {
   const status = (err as { status?: unknown } | null)?.status;
   return typeof status === "number" ? status : undefined;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// #596 F2: family-side real decode/transport path for the 4 review-loop kinds.
+// Mirror cmr/ship/merger parse style (last <tag> wins, JSON, explicit malformed on
+// bad shape). Use isValid*Result guards (from reviewLoopOutcome) as decode validation.
+// Raw (tag string) fed in tests — not fake WorkerOutput construction. Shape-valid
+// false flags pass (no semantic branching). Malformed fails closed.
+// Single-slice uses RealBackend outputFor/decodeOutput + extract*Tag; this is family eqv.
+// ════════════════════════════════════════════════════════════════════════════
+
+function extractLastTag(stdout: string, tag: string): string | undefined {
+  const re = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "g");
+  let last: string | undefined;
+  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
+  return last;
+}
+
+export function parseVerifyOutcome(
+  stdout: string,
+): VerifyResult | { kind: "malformed"; reason: string } {
+  const last = extractLastTag(stdout, "verify");
+  if (last === undefined) {
+    return { kind: "malformed", reason: "verify worker emitted no <verify> tag" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(last.trim());
+  } catch {
+    return { kind: "malformed", reason: "verify worker <verify> tag was not valid JSON" };
+  }
+  if (parsed === null || typeof parsed !== "object") {
+    return { kind: "malformed", reason: "verify worker <verify> tag was not a JSON object" };
+  }
+  const c = parsed as Record<string, unknown>;
+  if (typeof c.converged !== "boolean") {
+    return { kind: "malformed", reason: "verify worker <verify> tag converged was not boolean" };
+  }
+  const candidate: VerifyResult = { kind: "verify", converged: c.converged };
+  if (!isValidVerifyResult(candidate)) {
+    return { kind: "malformed", reason: "verify worker <verify> tag did not satisfy isValidVerifyResult guard" };
+  }
+  return candidate;
+}
+
+export function parseFixerOutcome(
+  stdout: string,
+): FixerResult | { kind: "malformed"; reason: string } {
+  const last = extractLastTag(stdout, "fixer");
+  if (last === undefined) {
+    return { kind: "malformed", reason: "fixer worker emitted no <fixer> tag" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(last.trim());
+  } catch {
+    return { kind: "malformed", reason: "fixer worker <fixer> tag was not valid JSON" };
+  }
+  if (parsed === null || typeof parsed !== "object") {
+    return { kind: "malformed", reason: "fixer worker <fixer> tag was not a JSON object" };
+  }
+  const c = parsed as Record<string, unknown>;
+  if (typeof c.committed !== "boolean") {
+    return { kind: "malformed", reason: "fixer worker <fixer> tag committed was not boolean" };
+  }
+  const candidate: FixerResult = { kind: "fixer", committed: c.committed };
+  if (!isValidFixerResult(candidate)) {
+    return { kind: "malformed", reason: "fixer worker <fixer> tag did not satisfy isValidFixerResult guard" };
+  }
+  return candidate;
+}
+
+export function parseCleanupOutcome(
+  stdout: string,
+): CleanupResult | { kind: "malformed"; reason: string } {
+  const last = extractLastTag(stdout, "cleanup");
+  if (last === undefined) {
+    return { kind: "malformed", reason: "cleanup worker emitted no <cleanup> tag" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(last.trim());
+  } catch {
+    return { kind: "malformed", reason: "cleanup worker <cleanup> tag was not valid JSON" };
+  }
+  if (parsed === null || typeof parsed !== "object") {
+    return { kind: "malformed", reason: "cleanup worker <cleanup> tag was not a JSON object" };
+  }
+  const c = parsed as Record<string, unknown>;
+  if (typeof c.ok !== "boolean") {
+    return { kind: "malformed", reason: "cleanup worker <cleanup> tag ok was not boolean" };
+  }
+  const candidate: CleanupResult = { kind: "cleanup", ok: c.ok };
+  if (!isValidCleanupResult(candidate)) {
+    return { kind: "malformed", reason: "cleanup worker <cleanup> tag did not satisfy isValidCleanupResult guard" };
+  }
+  return candidate;
+}
+
+export function parseDocReleaseOutcome(
+  stdout: string,
+): DocReleaseResult | { kind: "malformed"; reason: string } {
+  const last = extractLastTag(stdout, "docRelease");
+  if (last === undefined) {
+    return { kind: "malformed", reason: "docRelease worker emitted no <docRelease> tag" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(last.trim());
+  } catch {
+    return { kind: "malformed", reason: "docRelease worker <docRelease> tag was not valid JSON" };
+  }
+  if (parsed === null || typeof parsed !== "object") {
+    return { kind: "malformed", reason: "docRelease worker <docRelease> tag was not a JSON object" };
+  }
+  const c = parsed as Record<string, unknown>;
+  if (typeof c.released !== "boolean") {
+    return { kind: "malformed", reason: "docRelease worker <docRelease> tag released was not boolean" };
+  }
+  const candidate: DocReleaseResult = { kind: "docRelease", released: c.released };
+  if (!isValidDocReleaseResult(candidate)) {
+    return { kind: "malformed", reason: "docRelease worker <docRelease> tag did not satisfy isValidDocReleaseResult guard" };
+  }
+  return candidate;
 }

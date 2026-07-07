@@ -1047,6 +1047,37 @@ describe("parseMergerOutcome (#291 pure)", () => {
   });
 });
 
+// #596 F2: family-side decode seam test (raw through parse*Outcome, using isValid* guards)
+describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-loop kinds (raw, not fake)", () => {
+  // import here via the file's re-export or direct (the test file imports some parses)
+  // we will require the module symbols via the existing pattern; use dynamic to avoid top-edit
+  it("feeds RAW valid verify tag through real parseVerifyOutcome (family seam)", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const raw = `<verify>{"converged": true}</verify>`;
+    const out = mod.parseVerifyOutcome(raw);
+    expect(out).toEqual({ kind: "verify", converged: true });
+  });
+
+  it("feeds RAW valid-but-false verify through real parse (AC2: false flag passes shape)", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const out = mod.parseVerifyOutcome(`<verify>{"converged": false}</verify>`);
+    expect(out).toEqual({ kind: "verify", converged: false });
+  });
+
+  it("RAW malformed (no tag / bad json / bad type) fails closed on family parseVerifyOutcome", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    expect(mod.parseVerifyOutcome("no tag here").kind).toBe("malformed");
+    expect(mod.parseVerifyOutcome("<verify>notjson</verify>").kind).toBe("malformed");
+    expect(mod.parseVerifyOutcome(`<verify>{"converged": 1}</verify>`).kind).toBe("malformed");
+  });
+
+  it("feeds RAW valid fixer through real parseFixerOutcome (family-side kind)", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const out = mod.parseFixerOutcome(`<fixer>{"committed": true}</fixer>`);
+    expect(out).toEqual({ kind: "fixer", committed: true });
+  });
+});
+
 describe("parseCmrOutcome accepted suppression contract", () => {
   it("prefers a runner-owned outcome sidecar over malformed cmr stdout", () => {
     const dir = trackTempDir("cmr-outcome-");
