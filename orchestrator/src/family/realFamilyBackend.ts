@@ -74,7 +74,7 @@ import { runExclusive } from "../gitMutex.js";
 import {
   agentForSlug,
   assertCompletionSignal,
-  branchForIssue,
+  candidateBranches,
   extractCoderTag,
   lastSessionId,
   parseCoderSelfReport,
@@ -2557,23 +2557,32 @@ export class RealFamilyBackend implements FamilyBackend {
         // make the crash-window 补账 predicate dead in production: every already-landed
         // child would read as absent → reconcile re-merges it (a double-merge — the
         // exact failure MergeResult.childHead's contract exists to prevent — codex R1).
-        // So derive the branch from the issue via the single-slice runner's own
-        // `feat/issue-<n>` convention (branchForIssue) when no explicit branch is given.
+        // When an explicit branch is given, try it directly. Otherwise try the
+        // candidate branch names in order (current `feat/issue-<n>` first, then old
+        // `feat/244-orchestrator-issue-<n>`), so a child resumed in place under the old
+        // name is still recognised as already-merged — avoiding a double-merge bug.
         // (The proper end-state is to thread `childBranch` through ChildSlice/reconcile
         // — flagged to the driver unit; this fallback makes the seam WORK meanwhile.)
-        const branch = childBranch ?? branchForIssue(childIssue);
-        try {
-          const childHead = sh(["rev-parse", "--verify", `${branch}^{commit}`]);
-          return { exists: true, childHead };
-        } catch {
-          // NOTE (online R1 CodeRabbit): unlike the `--is-ancestor` predicates below,
-          // `rev-parse --verify` exits 128 for BOTH a missing ref AND an operational
-          // failure — the exit code cannot tell them apart. An absent child branch is
-          // the EXPECTED reconcile case (ADR 0022 dec5 agy R4: "branch尚不存在 → 当未合
-          // 从头跑"), so we keep the swallow → `{exists:false}`; a genuine repo fault
-          // then surfaces loudly when the re-run child operates on the broken repo.
-          return { exists: false };
+        // Explicit branch: only when a non-empty string was provided. `null` from
+        // JSON/db round-trips and `undefined` (omitted) both fall through to the
+        // candidate-list path; empty string is treated as absent too.
+        if (typeof childBranch === "string" && childBranch.length > 0) {
+          try {
+            const childHead = sh(["rev-parse", "--verify", `${childBranch}^{commit}`]);
+            return { exists: true, childHead };
+          } catch {
+            return { exists: false };
+          }
         }
+        for (const branch of candidateBranches(childIssue)) {
+          try {
+            const childHead = sh(["rev-parse", "--verify", `${branch}^{commit}`]);
+            return { exists: true, childHead };
+          } catch {
+            // continue to next candidate
+          }
+        }
+        return { exists: false };
       },
       isAncestor: async (childHead: string, liveHead: string) => {
         try {
