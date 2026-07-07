@@ -48,6 +48,7 @@ import {
   type RealFamilyBackendOptions,
 } from "../../src/family/realFamilyBackend.js";
 import { familyEscalationState } from "../../src/family/ledger.js";
+import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { SANDBOX_SKILLS_DIR, SANDBOX_SOUL_ENV } from "../../src/realBackend.js";
 import type {
   ConflictResolveRequest,
@@ -790,6 +791,65 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     b.childLandedFake = true; // and the child IS an ancestor of that wrong HEAD
     const res = await b.resolveMergeConflict({ childIssue: 15, childBranch: "feat/child-15" });
     expect(res.conflicted).toBe(true);
+  });
+
+  // ── #598: generic mechanical retry at the merge-resolver call site ──────────────
+
+  it("#598 a merger agent that CRASHES (throws) once then resolves is retried fresh, resetting the conflict between attempts", async () => {
+    class CrashOnceBackend extends FakeSeamsBackend {
+      crashesLeft = 1;
+      resetCalls = 0;
+      protected override async runMergerAgent(req: ConflictResolveRequest) {
+        if (this.crashesLeft > 0) {
+          this.crashesLeft -= 1;
+          this.mergerCalls.push(req);
+          throw new Error("merger container connection dropped mid-resolve");
+        }
+        return super.runMergerAgent(req);
+      }
+      protected override async reestablishConflictForRetry(): Promise<void> {
+        this.resetCalls += 1;
+      }
+    }
+    const b = new CrashOnceBackend(opts(trackRepo()));
+    b.mergerOutcome = { resolved: true };
+    b.mergeInProgressFake = false;
+    const res = await b.resolveMergeConflict({ childIssue: 20, childBranch: "feat/child-20" });
+    // The crash was retried fresh → a clean landed resolve (not conflicted).
+    expect(res.conflicted ?? false).toBe(false);
+    expect(b.mergerCalls).toHaveLength(2);
+    // The half-resolved conflict was re-established before the retry (idempotency).
+    expect(b.resetCalls).toBe(1);
+  });
+
+  it("#598 a merger agent that RETURNS {resolved:false} is NOT retried (a judged non-resolve, one call)", async () => {
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    b.mergerOutcome = { resolved: false, reason: "needs a product decision on field X" };
+    await expect(
+      b.resolveMergeConflict({ childIssue: 21, childBranch: "feat/child-21" }),
+    ).rejects.toThrow(/did not resolve|product decision/i);
+    // A judged non-resolve is surfaced, never retried.
+    expect(b.mergerCalls).toHaveLength(1);
+  });
+
+  it("#598 a persistently CRASHING merger agent re-throws after the bounded attempts", async () => {
+    class AlwaysCrashBackend extends FakeSeamsBackend {
+      resetCalls = 0;
+      protected override async runMergerAgent(req: ConflictResolveRequest) {
+        this.mergerCalls.push(req);
+        throw new Error("merger keeps crashing");
+      }
+      protected override async reestablishConflictForRetry(): Promise<void> {
+        this.resetCalls += 1;
+      }
+    }
+    const b = new AlwaysCrashBackend(opts(trackRepo()));
+    await expect(
+      b.resolveMergeConflict({ childIssue: 22, childBranch: "feat/child-22" }),
+    ).rejects.toThrow(/keeps crashing/);
+    expect(b.mergerCalls).toHaveLength(MAX_DISPATCH_ATTEMPTS);
+    // A reset ran before each of the bounded retries.
+    expect(b.resetCalls).toBe(MAX_DISPATCH_ATTEMPTS - 1);
   });
 });
 
