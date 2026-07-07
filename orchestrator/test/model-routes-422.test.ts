@@ -126,10 +126,10 @@ describe("#422 model route presets", () => {
     expect(() =>
       resolveRouteModels("normal", { verify: "does-not-exist" }),
     ).toThrow(/unknown model slug/i);
-    // Also: empty override for verify must not silently take a cheap default (preset "opus" wins or throws on bad)
-    vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "   ");
-    expect(() => resolveRouteModels("normal", {})).not.toThrow(); // preset provides it
-    // but bad explicit still caught above; the targeted proves verify slot participates in fail-closed
+    // default preset for verify on "normal" is "opus" (no env read in resolveRouteModels)
+    const resolved = resolveRouteModels("normal", {});
+    expect(resolved.slots.verify).toBe("opus");
+    // bad explicit still caught above; the targeted proves verify slot participates in fail-closed
   });
 
   it("claude-tight has no Claude-family slots across every slot", () => {
