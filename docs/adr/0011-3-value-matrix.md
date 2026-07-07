@@ -1,6 +1,6 @@
 # 派系价值画像矩阵 schema（ADR 0011 决定3 子 ADR · 0011-3）
 
-Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定3，由 design-dig `dig-5` fold 而成。**评审收敛**——本地 ship-pre cmr R1–R8 4/4 concur（2026-06-15）+ 线上 PR #123 R1–R3 评审收敛；merge 即转 Accepted。实现属编码活、spawn 隔壁。）
+Status: Accepted（承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定3，由 design-dig `dig-5` fold 而成。**评审收敛**——本地 ship-pre cmr R1–R8 4/4 concur（2026-06-15）+ 线上 PR #123 R1–R3 评审收敛；PR #123 已 merge（`847dc3da5`，2026-06-15）转 Accepted。实现属编码活、spawn 隔壁。）
 
 承 GitHub #112 tracker。本 ADR 收口母 ADR 决定3 留给子机制的「7 派 × 6 轴价值立场精确值 + 入轴判据 + 史实不对称 + P4 哨兵契约」。它是血债棘轮（`0011-2`）与四层票拟 resolve（`0011-5`/dig-8）读取的**离心方向真源**：血债按「动作轴方向 × 派系立场」决定累到哪些 `(faction, axis)` 格、符号可相反（悲剧引擎）。
 
