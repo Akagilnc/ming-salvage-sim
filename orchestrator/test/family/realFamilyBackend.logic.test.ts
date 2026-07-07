@@ -1076,6 +1076,30 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     const out = mod.parseFixerOutcome(`<fixer>{"committed": true}</fixer>`);
     expect(out).toEqual({ kind: "fixer", committed: true });
   });
+
+  it("RAW extra keys on verify is malformed (strict, matches single-slice .strict())", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const out = mod.parseVerifyOutcome(`<verify>{"converged": true, "extra": "nope"}</verify>`);
+    expect(out.kind).toBe("malformed");
+  });
+
+  it("RAW extra keys on fixer is malformed (strict)", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const out = mod.parseFixerOutcome(`<fixer>{"committed": false, "foo": 1, "bar": {}}</fixer>`);
+    expect(out.kind).toBe("malformed");
+  });
+
+  it("RAW extra keys on cleanup is malformed (strict)", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const out = mod.parseCleanupOutcome(`<cleanup>{"ok": true, "unexpected": true}</cleanup>`);
+    expect(out.kind).toBe("malformed");
+  });
+
+  it("RAW extra keys on docRelease is malformed (strict)", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const out = mod.parseDocReleaseOutcome(`<docRelease>{"released": true, "x": 9}</docRelease>`);
+    expect(out.kind).toBe("malformed");
+  });
 });
 
 describe("parseCmrOutcome accepted suppression contract", () => {

@@ -1979,16 +1979,16 @@ const coderOutputSchema = z.object({
 // #596 F2: minimal schemas for the 4 review-loop kinds. Used for outputFor (Sandcastle typed)
 // and initial parse in decodeOutput; final decode validation uses the isValid*Result guards
 // from reviewLoopOutcome.ts (per AC2). .strict() so off-shape (extra keys, wrong types) fails closed.
-const verifyOutputSchema = z
+export const verifyOutputSchema = z
   .object({ converged: z.boolean() })
   .strict();
-const fixerOutputSchema = z
+export const fixerOutputSchema = z
   .object({ committed: z.boolean() })
   .strict();
-const cleanupOutputSchema = z
+export const cleanupOutputSchema = z
   .object({ ok: z.boolean() })
   .strict();
-const docReleaseOutputSchema = z
+export const docReleaseOutputSchema = z
   .object({ released: z.boolean() })
   .strict();
 

@@ -96,6 +96,10 @@ import {
   REQUIRED_SOUL_FILES,
   soulsDirError,
   type SelfReportedCoder,
+  verifyOutputSchema,
+  fixerOutputSchema,
+  cleanupOutputSchema,
+  docReleaseOutputSchema,
 } from "../realBackend.js";
 import {
   isValidCleanupResult,
@@ -3402,11 +3406,17 @@ export function parseVerifyOutcome(
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "malformed", reason: "verify worker <verify> tag was not a JSON object" };
   }
-  const c = parsed as Record<string, unknown>;
-  if (typeof c.converged !== "boolean") {
-    return { kind: "malformed", reason: "verify worker <verify> tag converged was not boolean" };
+  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
+  // single-slice side (realBackend decodeOutput). Extra keys → malformed (fail-closed),
+  // matching parseCmrOutcome / parse* style and the header claim to "Mirror cmr…parse style".
+  const shape = verifyOutputSchema.safeParse(parsed);
+  if (!shape.success) {
+    return {
+      kind: "malformed",
+      reason: "verify worker <verify> tag did not satisfy verifyOutputSchema (extra keys or wrong types)",
+    };
   }
-  const candidate: VerifyResult = { kind: "verify", converged: c.converged };
+  const candidate: VerifyResult = { kind: "verify", converged: shape.data.converged };
   if (!isValidVerifyResult(candidate)) {
     return { kind: "malformed", reason: "verify worker <verify> tag did not satisfy isValidVerifyResult guard" };
   }
@@ -3429,11 +3439,16 @@ export function parseFixerOutcome(
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "malformed", reason: "fixer worker <fixer> tag was not a JSON object" };
   }
-  const c = parsed as Record<string, unknown>;
-  if (typeof c.committed !== "boolean") {
-    return { kind: "malformed", reason: "fixer worker <fixer> tag committed was not boolean" };
+  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
+  // single-slice side. Extra keys → malformed (fail-closed).
+  const shape = fixerOutputSchema.safeParse(parsed);
+  if (!shape.success) {
+    return {
+      kind: "malformed",
+      reason: "fixer worker <fixer> tag did not satisfy fixerOutputSchema (extra keys or wrong types)",
+    };
   }
-  const candidate: FixerResult = { kind: "fixer", committed: c.committed };
+  const candidate: FixerResult = { kind: "fixer", committed: shape.data.committed };
   if (!isValidFixerResult(candidate)) {
     return { kind: "malformed", reason: "fixer worker <fixer> tag did not satisfy isValidFixerResult guard" };
   }
@@ -3456,11 +3471,16 @@ export function parseCleanupOutcome(
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "malformed", reason: "cleanup worker <cleanup> tag was not a JSON object" };
   }
-  const c = parsed as Record<string, unknown>;
-  if (typeof c.ok !== "boolean") {
-    return { kind: "malformed", reason: "cleanup worker <cleanup> tag ok was not boolean" };
+  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
+  // single-slice side. Extra keys → malformed (fail-closed).
+  const shape = cleanupOutputSchema.safeParse(parsed);
+  if (!shape.success) {
+    return {
+      kind: "malformed",
+      reason: "cleanup worker <cleanup> tag did not satisfy cleanupOutputSchema (extra keys or wrong types)",
+    };
   }
-  const candidate: CleanupResult = { kind: "cleanup", ok: c.ok };
+  const candidate: CleanupResult = { kind: "cleanup", ok: shape.data.ok };
   if (!isValidCleanupResult(candidate)) {
     return { kind: "malformed", reason: "cleanup worker <cleanup> tag did not satisfy isValidCleanupResult guard" };
   }
@@ -3483,11 +3503,16 @@ export function parseDocReleaseOutcome(
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "malformed", reason: "docRelease worker <docRelease> tag was not a JSON object" };
   }
-  const c = parsed as Record<string, unknown>;
-  if (typeof c.released !== "boolean") {
-    return { kind: "malformed", reason: "docRelease worker <docRelease> tag released was not boolean" };
+  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
+  // single-slice side. Extra keys → malformed (fail-closed).
+  const shape = docReleaseOutputSchema.safeParse(parsed);
+  if (!shape.success) {
+    return {
+      kind: "malformed",
+      reason: "docRelease worker <docRelease> tag did not satisfy docReleaseOutputSchema (extra keys or wrong types)",
+    };
   }
-  const candidate: DocReleaseResult = { kind: "docRelease", released: c.released };
+  const candidate: DocReleaseResult = { kind: "docRelease", released: shape.data.released };
   if (!isValidDocReleaseResult(candidate)) {
     return { kind: "malformed", reason: "docRelease worker <docRelease> tag did not satisfy isValidDocReleaseResult guard" };
   }

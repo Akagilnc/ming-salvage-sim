@@ -28,6 +28,7 @@ import type {
   FamilyLedgerEntry,
   MergeRequest,
 } from "../../src/family/types.js";
+import { resolveActiveModelRoute } from "../../src/modelRoutes.js";
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
 
@@ -73,7 +74,7 @@ class ChildBackend implements Backend {
 class FakeFamilyBackend implements FamilyBackend {
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
-  private head = "family-base-0";
+  head = "family-base-0";
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
     this.merges.push(child);
     this.head = `+${child.childIssue}`;
@@ -91,6 +92,11 @@ class FakeFamilyBackend implements FamilyBackend {
   async readFamilyHead(_familyBase: string): Promise<string> {
     return this.head;
   }
+
+  // #596 r2 support for full final barrier in spine tests (runVerifyCmr fresh path)
+  runFamilyVerify?: (req: any) => Promise<any>;
+  dispatchWorker?: (spec: any, ctx?: any) => Promise<any>;
+  verifyFamilyShippedPr?: (req: any) => Promise<{ ok: boolean }>;
 }
 
 function epicWith(...childIssues: number[]): FamilyEpic {
@@ -264,6 +270,69 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     );
     // No child re-work
     expect(singleSliceBackend.prepareBases).toEqual([]);
+  });
+
+  it("fresh-ship path (no pre-seeded shipped row) lets runVerifyCmr run the write at verifyCmr.ts and produces review_loop_converged carrying metadata.heads.verifiedCmrHead + material stopSummary (pins the actual fixed path, not resume copy)", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+
+    // NO shipped row pre-seeded (and no converged). runFamily will merge then hit real runVerifyCmr fresh-ship path.
+    // Pre-seed nothing for final markers; the cmr dispatch below will cause cmr_passed to be written with material.
+    familyBackend.runFamilyVerify = async (_req: any): Promise<any> => ({ ok: true });
+
+    const resolvedRoute = resolveActiveModelRoute();
+    const declared = resolvedRoute.legCollections.cmrReview.map((l: { slug: string }) => l.slug);
+    const cmrOutput = {
+      kind: "cmr",
+      converged: true,
+      successfulLegs: declared.length > 0 ? declared : ["opus"],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      evidencePaths: [],
+    };
+    familyBackend.dispatchWorker = async (spec: any, _ctx?: any): Promise<any> => {
+      if (spec.kind === "cmr") {
+        return { kind: "completed", output: cmrOutput };
+      }
+      if (spec.kind === "ship") {
+        const prHead = familyBackend.head;
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: "family/293-base",
+            status: "pr_opened",
+            pr: "pr://family/293-base-fresh",
+            prHead,
+          },
+        };
+      }
+      return { kind: "failed", reason: "unexpected kind in #596 r2 fresh-ship spine test" };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+      // verifyCmr left default → real runVerifyCmr executes the fresh ship + recordReviewLoopConverged path
+    });
+
+    expect(result.status).toBe("success");
+    const convergedRows = familyBackend.ledger.filter(
+      (e) => e.status === "review_loop_converged",
+    );
+    expect(convergedRows).toHaveLength(1);
+    // must carry the verifiedCmrHead from the material cmr_passed stopSummary threaded through shipped → converged
+    const written = convergedRows[0];
+    expect(written?.stopSummary?.metadata?.heads?.verifiedCmrHead).toBe("+10");
+    // also carries material stopSummary metadata (from familyCmrPassStopSummary threaded via fresh-ship)
+    expect(written?.stopSummary?.reason).toBe("success");
+    expect(written?.stopSummary?.metadata?.heads?.sources?.verifiedCmrHead).toBe(
+      "latest cmr_passed ledger row",
+    );
+    // Child work happened (fresh run, not resume short-circuit); final barrier ran via real runVerifyCmr
+    expect(singleSliceBackend.prepareBases).toEqual(["family/293-base"]);
   });
 
   it("each child is cut from the FAMILY base (not main) and does NOT push remotely", async () => {
