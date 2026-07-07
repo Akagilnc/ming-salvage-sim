@@ -249,13 +249,19 @@ export interface RealFamilyBackendOptions {
   readonly base: string;
   /** Dir holding the versioned promptFiles (the merger conflict prompt). */
   readonly promptsDir: string;
-  /** The profile image (souls + CLIs baked in) for the merger agent sandbox. */
+  /**
+   * Host dir of souls to bind-mount live (souls/*.md). #372 unconditional:
+   * souls mounted rather than baked so source changes visible immediately.
+   */
+  readonly soulsDir?: string;
+  /** The profile image (skills + CLIs baked in; souls mounted live #372) for the merger agent sandbox. */
   readonly imageName: string;
   /**
    * DEPRECATED (#334): host dir of dev skills to bind-mount for the merger. The
    * 2b image bakes `resolving-merge-conflicts`; `mergerSandboxConfig()` no longer
    * mounts host skills (a runtime mount would SHADOW the baked skill). Kept
    * OPTIONAL for back-compat; no longer read. Remove once callers drop it.
+   * (Souls are mounted live per #372, not baked.)
    */
   readonly skillsMount?: string;
   /**
@@ -910,6 +916,13 @@ export class RealFamilyBackend implements FamilyBackend {
         sandboxPath: outcomeLanding.sandboxPath,
       });
     }
+    // #372: souls mount live for merger worker (data files not baked).
+    if (this.opts.soulsDir) {
+      mounts.push({
+        hostPath: this.opts.soulsDir,
+        sandboxPath: "/home/agent/.orchestrator/souls",
+      });
+    }
     return {
       imageName: this.opts.imageName,
       env,
@@ -1047,23 +1060,15 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Is the Node project at `cwd` already installed AND its install fresh? A bare
-   * `node_modules`-exists check (R1 T1, gemini) skips installing when `package.json`
-   * / `package-lock.json` changed AFTER the last install — e.g. a child PR added a
-   * dependency, or a resume after a coder updated deps — so verify would run against
-   * STALE deps and fail on missing/outdated packages. Treat node_modules as stale
-   * (→ reinstall) when either manifest's mtime is newer than node_modules'.
-   * `protected` so a unit test drives the install / skip branch without a real FS.
+   * Is the Node project at `cwd` already installed? (Bare existence check only.)
+   * #372: removed mtime-based staleness detection (no manifest mtime compare,
+   * no "stale deps" logic in codebase). Install decision is simple presence;
+   * unconditional launcher rebuild ensures env freshness at dispatch time.
+   * `protected` for test seam.
    */
   protected depsInstalled(cwd: string): boolean {
     const nodeModules = join(cwd, "node_modules");
-    if (!existsSync(nodeModules)) return false;
-    const installedAt = statSync(nodeModules).mtimeMs;
-    for (const manifest of ["package.json", "package-lock.json"]) {
-      const p = join(cwd, manifest);
-      if (existsSync(p) && statSync(p).mtimeMs > installedAt) return false;
-    }
-    return true;
+    return existsSync(nodeModules);
   }
 
   /**
@@ -1599,6 +1604,13 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
+    // #372: mount souls live for family coder-fix worker.
+    if (this.opts.soulsDir) {
+      mounts.push({
+        hostPath: this.opts.soulsDir,
+        sandboxPath: "/home/agent/.orchestrator/souls",
+      });
+    }
     return { imageName: this.opts.imageName, env, mounts };
   }
 
@@ -2031,6 +2043,14 @@ export class RealFamilyBackend implements FamilyBackend {
         sandboxPath: outcomeLanding.sandboxPath,
       });
     }
+    // #372: souls mount live for integrated cmr worker (souls not baked).
+    if (this.opts.soulsDir) {
+      mounts.push({
+        hostPath: this.opts.soulsDir,
+        sandboxPath: "/home/agent/.orchestrator/souls",
+        readonly: true,
+      });
+    }
     return { imageName: this.opts.imageName, env, mounts };
   }
 
@@ -2424,6 +2444,13 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts.push({
         hostPath: outcomeLanding.path,
         sandboxPath: outcomeLanding.sandboxPath,
+      });
+    }
+    // #372: souls mount live for family ship worker.
+    if (this.opts.soulsDir) {
+      mounts.push({
+        hostPath: this.opts.soulsDir,
+        sandboxPath: "/home/agent/.orchestrator/souls",
       });
     }
     return { imageName: this.opts.imageName, env, mounts };

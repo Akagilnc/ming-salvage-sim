@@ -28,7 +28,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -515,13 +514,10 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     ).toThrow(/not a Node project/i);
   });
 
-  it("R1-T1: depsInstalled is STALE (reinstall) when a manifest is newer than node_modules", () => {
-    // gemini R1 T1: a bare node_modules-exists check skips installing a dep a child
-    // PR added (package.json/lock newer than the last install) → verify on stale deps.
-    const proj = trackTempDir("verify-stale-");
+  it("R1-T1: depsInstalled returns true iff node_modules exists (no mtime staleness check; #372)", () => {
+    const proj = trackTempDir("verify-installed-");
     const nm = join(proj, "node_modules");
     const pkg = join(proj, "package.json");
-    mkdirSync(nm, { recursive: true });
     writeFileSync(pkg, "{}");
     class Probe extends RealFamilyBackend {
       depsInstalledForTest(cwd: string): boolean {
@@ -529,13 +525,8 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       }
     }
     const be = new Probe(opts("/clone/root"));
-    // Deterministic mtimes (R3 coderabbit: don't rely on write-order timing — equal
-    // mtimes are possible on some filesystems). manifest NEWER than node_modules → stale.
-    utimesSync(nm, new Date(1000), new Date(1000));
-    utimesSync(pkg, new Date(2000), new Date(2000));
-    expect(be.depsInstalledForTest(proj)).toBe(false); // stale → reinstall
-    // node_modules NEWER than the manifest → fresh.
-    utimesSync(nm, new Date(3000), new Date(3000));
+    expect(be.depsInstalledForTest(proj)).toBe(false);
+    mkdirSync(nm, { recursive: true });
     expect(be.depsInstalledForTest(proj)).toBe(true);
   });
 

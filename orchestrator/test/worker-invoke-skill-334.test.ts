@@ -168,7 +168,7 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
 
 // ─── (2) the versioned prompts are THIN — invoke the skill, not hand-copy it ──
 
-describe("#334 thin prompts read baked souls and do not hand-copy methodology", () => {
+describe("#334 thin prompts read souls (mounted live per #372) and do not hand-copy methodology", () => {
   const read = (f: string): string => readFileSync(join(promptsDir, f), "utf8");
   const readSoul = (f: string): string =>
     readFileSync(join(here, "..", "image", "souls", f), "utf8");
@@ -207,7 +207,8 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     const end = build.indexOf(")", start);
     const closureBlock = build.slice(start, end);
     expect(closureBlock).toMatch(/\bcode-review\b/);
-    expect(build).toMatch(/output_protocol\.md/);
+    // #372: souls (incl output_protocol.md) are mounted live, not staged/copied in build.sh.
+    // The presence in source souls/ is asserted by other reads; build no longer bakes souls.
   });
 
   it("the coder soul carries implementation/fix process but not the per-slice review loop", () => {
