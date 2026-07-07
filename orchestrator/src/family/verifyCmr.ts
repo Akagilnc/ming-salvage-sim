@@ -1040,6 +1040,7 @@ async function runCmrCoderFix(input: {
         ...(familyIssue !== undefined ? { familyIssue } : {}),
       },
       { blockingFindings: classification.blocking },
+      { writeCapable: true },
     );
     const familyHeadAfter = await readPostCmrFamilyHead(
       familyBackend,
@@ -1388,30 +1389,40 @@ async function dispatchOrAbort(
   spec: Parameters<typeof dispatchFamilyWorker>[1],
   ctx: Parameters<typeof dispatchFamilyWorker>[2],
   landing?: Parameters<typeof dispatchFamilyWorker>[3],
+  opts?: { readonly writeCapable?: boolean },
 ): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
+  // The READ-ONLY cmr reviewer leaves no local residue, so a thrown crash is safe to
+  // re-dispatch fresh. The WRITE-capable family coder-fix / ship can throw AFTER a
+  // partial edit/stage/commit, so a fresh re-dispatch would run on that residue — the
+  // exact idempotency violation #598 forbids ("reset local git residue before each
+  // retry"), and here there is no safe reset hook yet (a naive cleanResidue would
+  // `git clean -fd` the runner-written, NON-gitignored `.cmr-focus.md`). So a
+  // write-capable worker's crash is NOT retried on residue: it aborts (bubbles to the
+  // catch → the gate's INCOMPLETE_GATE), which vacuously satisfies "reset before
+  // retry" (no retry happens). Enabling a runner-param-preserving reset so these CAN
+  // retry safely is #661 (write-worker retry idempotency, ADR 0024 tension).
+  const writeCapable = opts?.writeCapable === true;
   try {
     // #598: a family worker that CRASHES (throws) re-dispatches FRESH up to
-    // MAX_DISPATCH_ATTEMPTS. Every RESOLVED result (failed / malformed / completed /
-    // escalated) is DEFERRED to this gate's own rich terminal handling — the gate
-    // classifies `failed` (provider_degraded / infra_failure), rewrites cmr
-    // `malformed` (the rewrite loop + its outer re-dispatch), and treats a
-    // ship/coder-fix `malformed` as a CONTRACT violation → contract_drift (a ship
-    // that emits no valid verdict is not a transient protocol failure; #451 dogfood
-    // replay). So the generic layer keeps its own counter and never double-counts.
-    // A persistent crash is re-thrown so the catch below stamps the domain "threw on
-    // startup" message the gate surfaces as INCOMPLETE_GATE.
-    //
-    // DEFERRED (#661, needs-design): no resetBeforeRetry hook here. The CMR worker is
-    // read-only so it needs none, but the WRITE-capable family coder-fix / ship (both
-    // reached via dispatchOrAbort) can throw after a partial write/commit, so a crash
-    // retry may run on the prior attempt's residue. Same write-worker idempotency class
-    // as the single-slice coder (#661, ADR 0024 committed-preservation tension); a
-    // family-repo residue cleanup hook is the fix once that design lands.
+    // MAX_DISPATCH_ATTEMPTS — ONLY for the read-only reviewer (see above). Every
+    // RESOLVED result (failed / malformed / completed / escalated) is DEFERRED to this
+    // gate's own rich terminal handling — the gate classifies `failed`
+    // (provider_degraded / infra_failure), rewrites cmr `malformed` (the rewrite loop +
+    // its outer re-dispatch), and treats a ship/coder-fix `malformed` as a CONTRACT
+    // violation → contract_drift (a ship that emits no valid verdict is not a transient
+    // protocol failure; #451 dogfood replay). So the generic layer keeps its own
+    // counter and never double-counts. A crash that is not retried (reviewer exhausted,
+    // or a write-capable worker's first throw) is re-thrown so the catch below stamps
+    // the domain "threw on startup" message the gate surfaces as INCOMPLETE_GATE.
     return await withMechanicalRetry(
       spec,
       ctx,
       (s, c) => dispatchFamilyWorker(familyBackend, s, c, landing),
-      { callerOwns: (o) => "result" in o, rethrowOnExhaustion: true },
+      {
+        callerOwns: (o) =>
+          "result" in o || (writeCapable && o.kind === "thrown"),
+        rethrowOnExhaustion: true,
+      },
     );
   } catch (err) {
     const reason = `family ${spec.kind} worker threw on startup: ${
@@ -2304,6 +2315,8 @@ export async function runVerifyCmr(
       familyBase,
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     },
+    undefined,
+    { writeCapable: true },
   );
   // An ESCALATED family ship worker (gstack-ship STOP/HITL) is the family
   // escalate续跑 path, not a false success — call the escalate seam (codex cmr R4
