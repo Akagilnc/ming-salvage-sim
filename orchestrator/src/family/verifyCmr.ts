@@ -2590,6 +2590,9 @@ export async function runVerifyCmr(
   await recordReviewLoopConverged(familyBackend, {
     pr: ship.pr,
     familyHeadAfter: exactPostShipFamilyHead,
+    ...(shippedStopSummary !== undefined
+      ? { stopSummary: shippedStopSummary }
+      : {}),
   });
   return { ok: true, ran: true };
 }

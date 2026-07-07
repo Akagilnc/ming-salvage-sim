@@ -216,6 +216,56 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     expect(singleSliceBackend.prepareBases).toEqual([]);
   });
 
+  it("shipped stopSummary with verifiedCmrHead is copied into review_loop_converged terminal marker and visible on resume (F1 regression: makes fresh-ship path consistent)", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    const richStopSummary = {
+      reason: "success",
+      summary: "family shipped+loop",
+      metadata: {
+        heads: {
+          actualFamilyHead: "family-base-0",
+          verifiedCmrHead: "verified-cmr-from-fresh",
+          sources: { verifiedCmrHead: "cmr_passed" },
+        },
+      },
+    };
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "pr://family/293-base",
+        familyHeadAfter: "family-base-0",
+        stopSummary: richStopSummary,
+      },
+    );
+    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("success");
+    // regression: terminal marker preserves verifiedCmrHead (the bug was fresh-ship write omitted stopSummary; resume sibling already copied; now both paths consistent)
+    expect(result.stopSummary.metadata?.heads?.verifiedCmrHead).toBe(
+      "verified-cmr-from-fresh",
+    );
+    const convergedRows = familyBackend.ledger.filter(
+      (e) => e.status === "review_loop_converged",
+    );
+    expect(convergedRows).toHaveLength(1);
+    expect(convergedRows[0]?.stopSummary?.metadata?.heads?.verifiedCmrHead).toBe(
+      "verified-cmr-from-fresh",
+    );
+    // No child re-work
+    expect(singleSliceBackend.prepareBases).toEqual([]);
+  });
+
   it("each child is cut from the FAMILY base (not main) and does NOT push remotely", async () => {
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();

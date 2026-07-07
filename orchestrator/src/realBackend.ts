@@ -135,6 +135,18 @@ import type {
   WorkerSpec,
   WorktreeHandle,
 } from "./types.js";
+import {
+  isValidCleanupResult,
+  isValidDocReleaseResult,
+  isValidFixerResult,
+  isValidVerifyResult,
+} from "./reviewLoopOutcome.js";
+import type {
+  CleanupResult,
+  DocReleaseResult,
+  FixerResult,
+  VerifyResult,
+} from "./types.js";
 
 // ════════════════════════════════════════════════════════════════════════════
 // PURE host-side logic (unit-tested in realBackend.logic.test.ts; no container)
@@ -1012,7 +1024,7 @@ export function assertCompletionSignal(
  */
 function extractTaggedJson(
   stdout: string,
-  tag: "coder" | "review",
+  tag: "coder" | "review" | "verify" | "fixer" | "cleanup" | "docRelease",
   missingMessage: string,
 ): unknown {
   const open = `<${tag}>`;
@@ -1107,6 +1119,41 @@ function extractReviewerTag(stdout: string): unknown {
     "review",
     "realBackend: reviewer step stdout carried no <review>…</review> tag — " +
       "the reviewer must emit its structured result in a <review> tag.",
+  );
+}
+
+// #596 F2: tag extractors for the 4 review-loop kinds (untyped maxIter>1 path + raw decode tests).
+// Mirror reviewer/coder error wording exactly for fail-closed on missing tag.
+export function extractVerifyTag(stdout: string): unknown {
+  return extractTaggedJson(
+    stdout,
+    "verify",
+    "realBackend: verify step stdout carried no <verify>…</verify> tag — " +
+      "the verify worker must emit its structured result in a <verify> tag.",
+  );
+}
+export function extractFixerTag(stdout: string): unknown {
+  return extractTaggedJson(
+    stdout,
+    "fixer",
+    "realBackend: fixer step stdout carried no <fixer>…</fixer> tag — " +
+      "the fixer worker must emit its structured result in a <fixer> tag.",
+  );
+}
+export function extractCleanupTag(stdout: string): unknown {
+  return extractTaggedJson(
+    stdout,
+    "cleanup",
+    "realBackend: cleanup step stdout carried no <cleanup>…</cleanup> tag — " +
+      "the cleanup worker must emit its structured result in a <cleanup> tag.",
+  );
+}
+export function extractDocReleaseTag(stdout: string): unknown {
+  return extractTaggedJson(
+    stdout,
+    "docRelease",
+    "realBackend: docRelease step stdout carried no <docRelease>…</docRelease> tag — " +
+      "the docRelease worker must emit its structured result in a <docRelease> tag.",
   );
 }
 
@@ -1929,6 +1976,22 @@ const coderOutputSchema = z.object({
     .optional(),
 });
 
+// #596 F2: minimal schemas for the 4 review-loop kinds. Used for outputFor (Sandcastle typed)
+// and initial parse in decodeOutput; final decode validation uses the isValid*Result guards
+// from reviewLoopOutcome.ts (per AC2). .strict() so off-shape (extra keys, wrong types) fails closed.
+const verifyOutputSchema = z
+  .object({ converged: z.boolean() })
+  .strict();
+const fixerOutputSchema = z
+  .object({ committed: z.boolean() })
+  .strict();
+const cleanupOutputSchema = z
+  .object({ ok: z.boolean() })
+  .strict();
+const docReleaseOutputSchema = z
+  .object({ released: z.boolean() })
+  .strict();
+
 /** Parse a coder worker self-report with the same schema the single-slice path uses. */
 export function parseCoderSelfReport(raw: unknown): SelfReportedCoder {
   return coderOutputSchema.parse(raw);
@@ -2600,9 +2663,23 @@ export class RealBackend implements Backend {
 
   /** Build the output definition for a step's role. */
   private outputFor(spec: StepSpec): sc.OutputDefinition {
-    return spec.role === "reviewer"
-      ? sc.Output.object({ tag: "review", schema: reviewerOutputSchema })
-      : sc.Output.object({ tag: "coder", schema: coderOutputSchema });
+    if (spec.role === "reviewer") {
+      return sc.Output.object({ tag: "review", schema: reviewerOutputSchema });
+    }
+    if (spec.role === "verify") {
+      return sc.Output.object({ tag: "verify", schema: verifyOutputSchema });
+    }
+    if (spec.role === "fixer") {
+      return sc.Output.object({ tag: "fixer", schema: fixerOutputSchema });
+    }
+    if (spec.role === "cleanup") {
+      return sc.Output.object({ tag: "cleanup", schema: cleanupOutputSchema });
+    }
+    if (spec.role === "docRelease") {
+      return sc.Output.object({ tag: "docRelease", schema: docReleaseOutputSchema });
+    }
+    // default (and legacy coder path)
+    return sc.Output.object({ tag: "coder", schema: coderOutputSchema });
   }
 
   /**
@@ -2640,9 +2717,17 @@ export class RealBackend implements Backend {
     }
     if (typedOutputUsed) return result.output;
     // Untyped compatibility path: structured result lives in the role tag.
-    return spec.role === "coder"
-      ? extractCoderTag(result.stdout)
-      : extractReviewerTag(result.stdout);
+    // #596 F2: extended for the 4 review-loop roles (single-slice real decode seam).
+    if (spec.role === "coder") return extractCoderTag(result.stdout);
+    if (spec.role === "reviewer") return extractReviewerTag(result.stdout);
+    if (spec.role === "verify") return extractVerifyTag(result.stdout);
+    if (spec.role === "fixer") return extractFixerTag(result.stdout);
+    if (spec.role === "cleanup") return extractCleanupTag(result.stdout);
+    if (spec.role === "docRelease") return extractDocReleaseTag(result.stdout);
+    // Unknown role: fail closed (no silent misroute to wrong extractor).
+    throw new Error(
+      `realBackend: unknown role '${spec.role}' for raw tag extraction`,
+    );
   }
 
   /**
@@ -2686,33 +2771,91 @@ export class RealBackend implements Backend {
     // Coder: parse the self-report for shape, then TRUTH the commit count from
     // git. Fresh runs use result.commits.length; resumed runs pass a cumulative
     // ledger-baseline count. A contradiction throws → S8(error) at the runner.
-    const c = coderOutputSchema.parse(raw);
-    if (gitCommitCount === undefined) {
-      throw new Error(
-        "realBackend: coder output decoded without git commit truth. " +
-          "Fresh and resumed coder steps must reconcile committed/commitsAdded " +
-          "against git; trusting the model self-report would bypass S8(error).",
-      );
+    if (spec.role === "coder") {
+      const c = coderOutputSchema.parse(raw);
+      if (gitCommitCount === undefined) {
+        throw new Error(
+          "realBackend: coder output decoded without git commit truth. " +
+            "Fresh and resumed coder steps must reconcile committed/commitsAdded " +
+            "against git; trusting the model self-report would bypass S8(error).",
+        );
+      }
+      const out = reconcileCoderCommits(c, gitCommitCount);
+      const repairEvidence =
+        out.repairEvidence !== undefined
+          ? { repairEvidence: out.repairEvidence }
+          : {};
+      return out.escalate
+        ? {
+            kind: "coder",
+            committed: out.committed,
+            commitsAdded: out.commitsAdded,
+            ...repairEvidence,
+            escalate: out.escalate,
+          }
+        : {
+            kind: "coder",
+            committed: out.committed,
+            commitsAdded: out.commitsAdded,
+            ...repairEvidence,
+          };
     }
-    const out = reconcileCoderCommits(c, gitCommitCount);
-    const repairEvidence =
-      out.repairEvidence !== undefined
-        ? { repairEvidence: out.repairEvidence }
-        : {};
-    return out.escalate
-      ? {
-          kind: "coder",
-          committed: out.committed,
-          commitsAdded: out.commitsAdded,
-          ...repairEvidence,
-          escalate: out.escalate,
-        }
-      : {
-          kind: "coder",
-          committed: out.committed,
-          commitsAdded: out.commitsAdded,
-          ...repairEvidence,
-        };
+
+    // #596 F2 AC2: wire the 4 new kinds into real decodeOutput using isValid*Result
+    // guards from reviewLoopOutcome.ts as the decode validation. Malformed raw fails closed
+    // (zod parse throws; or explicit guard fail) mirroring reviewer/coder style+wording.
+    // Shape-valid but false flags (converged:false etc) pass this layer (no semantic).
+    if (spec.role === "verify") {
+      const v = verifyOutputSchema.parse(raw);
+      const candidate: VerifyResult = { kind: "verify", converged: v.converged };
+      if (!isValidVerifyResult(candidate)) {
+        const err = new Error(
+          "realBackend: verify output did not satisfy isValidVerifyResult guard",
+        );
+        err.name = "StructuredOutputError";
+        throw err;
+      }
+      return candidate;
+    }
+    if (spec.role === "fixer") {
+      const f = fixerOutputSchema.parse(raw);
+      const candidate: FixerResult = { kind: "fixer", committed: f.committed };
+      if (!isValidFixerResult(candidate)) {
+        const err = new Error(
+          "realBackend: fixer output did not satisfy isValidFixerResult guard",
+        );
+        err.name = "StructuredOutputError";
+        throw err;
+      }
+      return candidate;
+    }
+    if (spec.role === "cleanup") {
+      const c = cleanupOutputSchema.parse(raw);
+      const candidate: CleanupResult = { kind: "cleanup", ok: c.ok };
+      if (!isValidCleanupResult(candidate)) {
+        const err = new Error(
+          "realBackend: cleanup output did not satisfy isValidCleanupResult guard",
+        );
+        err.name = "StructuredOutputError";
+        throw err;
+      }
+      return candidate;
+    }
+    if (spec.role === "docRelease") {
+      const d = docReleaseOutputSchema.parse(raw);
+      const candidate: DocReleaseResult = { kind: "docRelease", released: d.released };
+      if (!isValidDocReleaseResult(candidate)) {
+        const err = new Error(
+          "realBackend: docRelease output did not satisfy isValidDocReleaseResult guard",
+        );
+        err.name = "StructuredOutputError";
+        throw err;
+      }
+      return candidate;
+    }
+
+    // Unknown role after the ifs: fail closed (should not reach if outputFor is consistent).
+    throw new Error(`realBackend: cannot decode output for unknown role ${spec.role}`);
   }
 
   private resumeCoderCommitCount(
