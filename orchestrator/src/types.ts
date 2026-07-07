@@ -665,7 +665,7 @@ export interface CmrResult {
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   /** Explicit closure disposition for claimed-fixed integrated CMR findings. */
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
-  /** Structured CMR findings for family-level defer/suppression classification. */
+  /** Structured CMR findings for family-level suppression classification. */
   readonly findings?: readonly Finding[];
   /** Worker outcome guard evidence artifacts referenced by this CMR verdict. */
   readonly evidencePaths?: readonly string[];

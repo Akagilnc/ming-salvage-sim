@@ -1622,7 +1622,7 @@ const findingDispositionSchema = z
       });
     }
   });
-const findingSchema = z.object({
+export const findingSchema = z.object({
   severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
   category: z.string(),
   claim_quote: z.string(),
