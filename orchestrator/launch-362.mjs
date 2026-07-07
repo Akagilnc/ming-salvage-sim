@@ -14,13 +14,24 @@ const REPO = dirname(ORCH); // the repo root this orchestrator lives in
 // docker build BEFORE any worker dispatch (and before dynamic import of driver).
 // Docker layer cache makes no-op near-zero cost; changed layers rebuild only
 // affected parts. No staleness/ drift checks ever.
+//
+// When IMAGE_TAG is set, resolve once via shared resolver (exported from
+// familyDriver) and pin the exact same tag for build.sh (env) + dispatch (imageName).
+// Single source of truth prevents tag mismatch breaking the freshness guarantee.
 console.log("[launcher] #372 unconditional: npx tsc + image build (before dispatch)");
 execFileSync("npx", ["tsc"], { cwd: ORCH, stdio: "inherit" });
-execFileSync("bash", [join(ORCH, "image", "build.sh")], { cwd: ORCH, stdio: "inherit" });
 
 // Dynamic import AFTER recompile so this process gets fresh dist (static top
 // import would have loaded stale compiled code even after disk rebuild).
-const { runFamilyDriver } = await import("./dist/familyDriver.js");
+// Import resolver too so launcher + driver share the exact same tag resolution.
+const { runFamilyDriver, resolveImageTag } = await import("./dist/familyDriver.js");
+const imageTag = resolveImageTag(process.env.IMAGE_TAG);
+
+execFileSync("bash", [join(ORCH, "image", "build.sh")], {
+  cwd: ORCH,
+  stdio: "inherit",
+  env: { ...process.env, IMAGE_TAG: imageTag },
+});
 
 const result = await runFamilyDriver({
   epicIssue: 362,
@@ -35,7 +46,7 @@ const result = await runFamilyDriver({
   familyPromptsDir: `${ORCH}/prompts`,
   soulsDir: `${ORCH}/image/souls`,
   ledgerDir: join(homedir(), ".sc-orchestrator", "dogfood-362-ledger"),
-  imageName: "ming-orchestrator-coder:latest",
+  imageName: imageTag,
   skillsMount: join(homedir(), ".claude", "skills"),
   // 无 sh override、无 backend factory override = 真编排器 vanilla 跑
 });
