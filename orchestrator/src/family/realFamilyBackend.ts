@@ -1018,14 +1018,15 @@ export class RealFamilyBackend implements FamilyBackend {
       // repo, non-Node-only diff) ⇒ nothing to verify, skip.
       if (cwd === undefined) return;
     }
-    // #3 (dogfood death): the family clone is FRESH — no node_modules. Running
-    // `npx tsc` against a depless project errors with "This is not the tsc
-    // command you are looking for" (npx resolves a stub), so verify ALWAYS failed
-    // on a real run. Install deps FIRST. Idempotent: skip when node_modules is
-    // already present (a resume / re-verify must not re-install on every call).
-    if (!this.depsInstalled(cwd)) {
-      this.installDeps(cwd);
-    }
+    // #3 (dogfood death) + #372 P2: ALWAYS install deps before running the
+    // project's verify scripts. Freshness by construction (npm ci is idempotent
+    // and lockfile-exact). Do NOT condition on node_modules presence or any
+    // manifest/mtime detection — #372 ratified "freshness by construction, never
+    // by detection". A later wave inside the family clone can mutate
+    // package.json/package-lock.json; the launcher unconditional rebuild only
+    // covers the *orchestrator* dist/image, not the family clone's project deps.
+    // Therefore verify path must unconditionally ensure the cwd's deps.
+    this.installDeps(cwd);
     // #5 (dogfood): run the PROJECT'S OWN package.json scripts, NOT a hardcoded
     // `npx tsc`/`npx vitest`. web/'s test script is `vitest run --environment jsdom`
     // — a bare `npx vitest run` DROPS `--environment jsdom`, so every jsdom render
@@ -1055,8 +1056,8 @@ export class RealFamilyBackend implements FamilyBackend {
    * {@link runVerifyCommands} runs the project's OWN `typecheck`/`test` commands
    * (#5) instead of a hardcoded `npx`. `protected` so a unit test drives the
    * branches without a real FS. Returns [] on any read/parse failure (a non-Node
-   * dir verifies nothing — the deps install already failed loudly if it WAS a Node
-   * project missing deps).
+   * dir verifies nothing — installDeps would have failed earlier for a Node project
+   * lacking a lockfile or package context).
    */
   /**
    * Does `cwd` hold a Node project (a `package.json`)? The verify-skip guard (R1 T2)
@@ -1079,22 +1080,10 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Is the Node project at `cwd` already installed? (Bare existence check only.)
-   * #372: removed mtime-based staleness detection (no manifest mtime compare,
-   * no "stale deps" logic in codebase). Install decision is simple presence;
-   * unconditional launcher rebuild ensures env freshness at dispatch time.
-   * `protected` for test seam.
-   */
-  protected depsInstalled(cwd: string): boolean {
-    const nodeModules = join(cwd, "node_modules");
-    return existsSync(nodeModules);
-  }
-
-  /**
    * Install the Node project's deps in `cwd` before verify (#3). Prefer `npm ci`
    * (a lockfile-exact, reproducible install) when a `package-lock.json` is
    * present; fall back to `npm install` when it is not (`npm ci` REQUIRES a
-   * lockfile). `protected` for the same test-seam reason as {@link depsInstalled}.
+   * lockfile). `protected` for test seam (used by verify tests).
    */
   protected installDeps(cwd: string): void {
     const hasLock = existsSync(join(cwd, "package-lock.json"));
