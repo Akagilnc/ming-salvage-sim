@@ -231,6 +231,25 @@ const EXCESSIVE_CMR_FIX_KEYS = EXCESSIVE_CMR_FIX_FINDINGS.map((finding) =>
   findingIdentityKey(finding),
 );
 
+// #597 drift guard: the removed round cap wrote a "coder-fix round budget
+// exhausted" abort. After the cap is gone, no ledger entry may carry that
+// wording — the loop's only steady-state exits are convergence or a
+// worker-raised human-decision-gate signal, never a runner-side budget. Both
+// no-cap convergence tests assert this, so the wording lives in one place.
+const BUDGET_EXHAUSTED_ABORT_REASON = "coder-fix round budget exhausted";
+function expectNoBudgetExhaustedAbort(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+): void {
+  expect(
+    ledger.some(
+      (entry) =>
+        entry.status === "aborted" &&
+        typeof entry.reason === "string" &&
+        entry.reason.includes(BUDGET_EXHAUSTED_ABORT_REASON),
+    ),
+  ).toBe(false);
+}
+
 class ReviewFixRereviewBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
@@ -1578,17 +1597,8 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(
       backend.ledger.filter((entry) => entry.status === "cmr_fix_committed"),
     ).toHaveLength(EXCESSIVE_CMR_FIX_FINDINGS.length);
-    // The removed cap wrote a "coder-fix round budget exhausted" abort — that
-    // word MUST be gone now (the loop's only exits are convergence or a
-    // worker-raised human-decision-gate signal, not a runner-side budget).
-    expect(
-      backend.ledger.some(
-        (entry) =>
-          entry.status === "aborted" &&
-          typeof entry.reason === "string" &&
-          entry.reason.includes("coder-fix round budget exhausted"),
-      ),
-    ).toBe(false);
+    // The removed cap wrote a budget-exhausted abort — that wording MUST be gone.
+    expectNoBudgetExhaustedAbort(backend.ledger);
     // Convergence forwarded the run to the terminal ship worker.
     expect(
       backend.dispatches.some((dispatch) => dispatch.kind === "ship"),
@@ -1616,15 +1626,8 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(
       backend.ledger.filter((entry) => entry.status === "cmr_fix_committed"),
     ).toHaveLength(DOGFOOD_272_BLOCKING_ROUNDS);
-    // The removed-budget abort word MUST be gone.
-    expect(
-      backend.ledger.some(
-        (entry) =>
-          entry.status === "aborted" &&
-          typeof entry.reason === "string" &&
-          entry.reason.includes("coder-fix round budget exhausted"),
-      ),
-    ).toBe(false);
+    // The removed-budget abort wording MUST be gone.
+    expectNoBudgetExhaustedAbort(backend.ledger);
     // Convergence forwarded the run to the terminal ship worker.
     expect(
       backend.dispatches.some((dispatch) => dispatch.kind === "ship"),
