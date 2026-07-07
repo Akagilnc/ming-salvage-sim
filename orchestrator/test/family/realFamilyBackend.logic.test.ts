@@ -1100,6 +1100,43 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     const out = mod.parseDocReleaseOutcome(`<docRelease>{"released": true, "x": 9}</docRelease>`);
     expect(out.kind).toBe("malformed");
   });
+
+  // === pinning the canonical last-complete-block semantics (now mirrored from single-slice) ===
+  it("conversational prefix mentioning the tag before the real block → still decodes the real block", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    // prose mention of <verify> (as in real model chatter) must not poison extraction
+    const raw =
+      '我会把最终结果放在 <verify> 里。\n' +
+      '<verify>{"converged": true}</verify>\n' +
+      'done';
+    const out = mod.parseVerifyOutcome(raw);
+    expect(out).toEqual({ kind: "verify", converged: true });
+  });
+
+  it("multiple complete tag blocks → last one wins (verify matches extractVerifyTag on single-slice side)", async () => {
+    const fam = await import("../../src/family/realFamilyBackend.js");
+    const single = await import("../../src/realBackend.js");
+    const raw =
+      '<verify>{"converged": false}</verify>\n' +
+      'chatter between\n' +
+      '<verify>{"converged": true}</verify>';
+    // family parse path
+    const outFam = fam.parseVerifyOutcome(raw);
+    expect(outFam).toEqual({ kind: "verify", converged: true });
+    // single-slice mirror (extractTaggedJson path) must pick same last block
+    const outSingle = single.extractVerifyTag(raw);
+    expect(outSingle).toEqual({ converged: true });
+  });
+
+  it("unclosed trailing tag mention after a complete block → last complete wins (actual observed behavior)", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    // trailing open-mention with no close must be ignored; we take the prior complete
+    const raw =
+      '<verify>{"converged": false}</verify>\n' +
+      'later mention without close: see <verify> for details';
+    const out = mod.parseVerifyOutcome(raw);
+    expect(out).toEqual({ kind: "verify", converged: false });
+  });
 });
 
 describe("parseCmrOutcome accepted suppression contract", () => {
