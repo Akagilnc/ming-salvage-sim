@@ -29,6 +29,7 @@ import {
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
   SHIP_FOCUS_FILENAME,
+  soulsMount,
   SPAWNED_WORKER_ENV,
 } from "../src/realBackend.js";
 import type { ShipAuth } from "../src/realBackend.js";
@@ -223,7 +224,7 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     public config(auth: ShipAuth): {
       imageName: string;
       env: Record<string, string>;
-      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
       return this.shipSandboxConfig(auth);
     }
@@ -248,6 +249,12 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     // ORCHESTRATOR_REPO is exported so the ship soul's `gh issue create
     // --repo "$ORCHESTRATOR_REPO"` defer path works (codex #384).
     expect(c.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
+  });
+
+  it("shipSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {
+    const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
+    const expected = soulsMount(realSoulsDir);
+    expect(c.mounts).toContainEqual(expected);
   });
 
   it("exports the gh token as GH_TOKEN so the in-container `gh pr create` / push over https is authenticated (cmr S336 r10 P1)", () => {

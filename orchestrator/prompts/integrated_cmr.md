@@ -1,13 +1,13 @@
 # Integrated CMR worker entrypoint
 
-Read the baked role soul first:
+Read the role soul first (live-mounted):
 
 ```text
 /home/agent/.orchestrator/souls/cmr.md
 ```
 
 Then follow that soul and the worktree's `CLAUDE.md`. The runner only schedules
-you and writes `.cmr-focus.md`; the CMR method lives in the baked soul and skill,
+you and writes `.cmr-focus.md`; the CMR method lives in the role soul (live-mounted) and baked skill,
 not in this prompt.
 
 ## Required output

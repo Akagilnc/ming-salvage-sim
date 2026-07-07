@@ -826,8 +826,9 @@ export function soulForStep(spec: Pick<StepSpec, "role" | "soul">): StepSoul {
   if (spec.soul !== expected) {
     throw new Error(
       `realBackend: step role "${spec.role}" requires the "${expected}" soul ` +
-        `but the StepSpec carries "${spec.soul}". v0.1 selects the baked soul ` +
-        `by role (#244 "role 决定注哪份 soul"; ADR 0017 §4 one-image-two-roles); ` +
+        `but the StepSpec carries "${spec.soul}". v0.1 selects the role soul ` +
+        `(live-mounted at /home/agent/.orchestrator/souls per #372) by role ` +
+        `(#244 "role 决定注哪份 soul"; ADR 0017 §4 one-image-two-roles); ` +
         `a spec.soul that contradicts its role is misconfigured.`,
     );
   }

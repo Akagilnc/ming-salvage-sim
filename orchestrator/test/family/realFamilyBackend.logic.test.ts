@@ -48,7 +48,7 @@ import {
 } from "../../src/family/realFamilyBackend.js";
 import { familyEscalationState } from "../../src/family/ledger.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
-import { SANDBOX_SKILLS_DIR, SANDBOX_SOUL_ENV } from "../../src/realBackend.js";
+import { SANDBOX_SKILLS_DIR, SANDBOX_SOUL_ENV, soulsMount } from "../../src/realBackend.js";
 import type {
   ConflictResolveRequest,
   FamilyVerifyRequest,
@@ -680,6 +680,15 @@ class FakeSeamsBackend extends RealFamilyBackend {
     return this.mergerSandboxConfig({});
   }
 
+  // Expose for family-coder souls mount assertion (#372).
+  public familyCoderConfig() {
+    return this.familyCoderSandboxConfig(
+      { codexAuthDir: "/tmp/codex", claudeToken: "tok" } as any,
+      {} as any,
+      { path: "/tmp/land.json", sandboxPath: ".land.json" },
+    );
+  }
+
   public verifyShipPr(pr: string, familyBase: string) {
     return this.verifyFamilyShipPr({ pr, familyBase });
   }
@@ -886,18 +895,32 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
   });
 });
 
-describe("RealFamilyBackend mergerSandbox baked-soul injection (#291 F28 / ADR 0022)", () => {
+describe("RealFamilyBackend mergerSandbox soul injection (#291 F28 / ADR 0022)", () => {
   // F28: the merger conflict fallback follows the "one mirror new soul" model —
-  // the merger soul must be selected the SAME way coder/reviewer are: a baked soul
-  // ACTIVATED via the ORCHESTRATOR_SOUL env (RealBackend.box), NOT a prompt-only
-  // role. Before the fix mergerSandbox() injected NO env, so ORCHESTRATOR_SOUL was
+  // the merger soul must be selected the SAME way coder/reviewer are: activated
+  // via the ORCHESTRATOR_SOUL env (RealBackend.box), NOT a prompt-only role.
+  // Before the fix mergerSandbox() injected NO env, so ORCHESTRATOR_SOUL was
   // never set → the merger ran under whatever default soul the image entrypoint
-  // picked, not the merger soul.
+  // picked, not the merger soul. (Souls themselves are live-mounted per #372.)
   it("injects ORCHESTRATOR_SOUL=merger via the same env mechanism as coder/reviewer", () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
     const cfg = b.sandboxConfig();
     expect(cfg.env?.[SANDBOX_SOUL_ENV]).toBe(MERGER_SOUL);
     expect(MERGER_SOUL).toBe("merger");
+  });
+
+  it("mergerSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    const cfg = b.sandboxConfig();
+    const expected = soulsMount(realSoulsDir);
+    expect(cfg.mounts).toContainEqual(expected);
+  });
+
+  it("familyCoderSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    const cfg = b.familyCoderConfig();
+    const expected = soulsMount(realSoulsDir);
+    expect(cfg.mounts).toContainEqual(expected);
   });
 
   it("uses the profile image and does NOT mount host skills (baked skills win, #334)", () => {
