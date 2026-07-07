@@ -2386,7 +2386,7 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(backend.reviewerAttempts).toBe(2);
   });
 
-  it("preserves generic reviewer backend exceptions as S8 errors without retrying", async () => {
+  it("retries a reviewer non-structured crash, then surfaces a persistent one as an S8 error (#598)", async () => {
     class FailingReviewBackend implements Backend {
       reviewerAttempts = 0;
 
@@ -2428,7 +2428,11 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(result.status).toBe("error");
     expect(result.errorPackage?.failedStep).toBe("S3");
     expect(result.errorPackage?.reason).toContain("container failed to start");
-    expect(backend.reviewerAttempts).toBe(1);
+    // #598: a reviewer NON-structured crash (a container/connection failure, not a
+    // structured-output error) is now retried by the generic mechanical layer up to
+    // MAX_DISPATCH_ATTEMPTS before the reviewer loop surfaces the persistent crash as
+    // S8 — a transient crash would recover instead of aborting on the first failure.
+    expect(backend.reviewerAttempts).toBe(3);
   });
 });
 

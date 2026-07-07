@@ -233,3 +233,62 @@ describe("#598 integration — a coder (S2) process crash retries fresh (the #59
     expect(backend.coderDispatches).toBe(2);
   });
 });
+
+/**
+ * A backend whose S3 reviewer dispatch THROWS a non-structured crash (a container/
+ * connection failure) `reviewerFailures` times before completing; everything else
+ * completes. The reviewer's own structured-output loop does NOT own a non-structured
+ * crash, so the generic layer retries it (#598 replay: connection drops recover).
+ */
+class ReviewerCrashBackend implements Backend {
+  reviewerDispatches = 0;
+  constructor(private readonly reviewerFailures: number) {}
+
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {}
+  async resumeSession(): Promise<StepOutput> {
+    return { kind: "coder", committed: true, commitsAdded: 1 };
+  }
+  async fetchIssueMeta(n: number): Promise<IssueMeta> {
+    return { number: n, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
+  }
+  async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+    return { number: n, body: "body", comments: [], agentBrief: "" };
+  }
+  async prepareWorktree(): Promise<WorktreeHandle> {
+    return RUN_WORKTREE;
+  }
+  async writeSnapshot(): Promise<void> {}
+  async runStep(): Promise<StepOutput> {
+    return { kind: "coder", committed: true, commitsAdded: 1 };
+  }
+  async push(): Promise<void> {}
+  async writeLedger(): Promise<void> {}
+
+  async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+    if (spec.kind === "reviewer") {
+      this.reviewerDispatches += 1;
+      if (this.reviewerDispatches <= this.reviewerFailures) {
+        throw new Error("reviewer container connection dropped mid-run");
+      }
+      return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+    }
+    if (spec.kind === "ship") {
+      return { kind: "completed", output: { kind: "ship", branch: RUN_WORKTREE.branch, status: "pushed" } };
+    }
+    return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+  }
+}
+
+describe("#598 integration — a transient reviewer non-structured crash recovers (replay)", () => {
+  it("a reviewer whose container drops once then succeeds does not abort — the run proceeds", async () => {
+    const backend = new ReviewerCrashBackend(1);
+    const result = await runOrchestrator({ issueNumber: 598, backend });
+    // A transient reviewer connection drop is retried instead of aborting on the
+    // first crash; the run proceeds past S3.
+    expect(result.status).not.toBe("error");
+    expect(backend.reviewerDispatches).toBeGreaterThanOrEqual(2);
+  });
+});
