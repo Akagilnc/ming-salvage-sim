@@ -144,3 +144,31 @@ export async function withMechanicalRetry(
   // existing durable-abort path surfaces it (no new supervisor / stop reason).
   return last!;
 }
+
+/**
+ * The generic mechanical retry for a NON-WorkerResult seam that signals a process
+ * crash by THROWING (#598 — the merge-conflict resolver's own call site). Retries
+ * `fn` up to a bound when it throws; a RETURNED value (even a judged not-ok, e.g. a
+ * merger `{resolved:false}`) is never retried — the caller surfaces it. A local
+ * side effect the crashed attempt left is reset before each retry via
+ * `resetBeforeRetry`. Persistent crash re-throws the last error.
+ */
+export async function retryProcessCrash<T>(
+  fn: () => Promise<T>,
+  opts?: {
+    readonly maxAttempts?: number;
+    readonly resetBeforeRetry?: () => Promise<void>;
+  },
+): Promise<T> {
+  const max = opts?.maxAttempts ?? MAX_DISPATCH_ATTEMPTS;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= max; attempt++) {
+    if (attempt > 1) await opts?.resetBeforeRetry?.();
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
