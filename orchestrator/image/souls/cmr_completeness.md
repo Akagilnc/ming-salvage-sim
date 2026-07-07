@@ -28,6 +28,17 @@ Before emitting your terminal verdict, read
    fix, or create a fix commit.
 4. A gap whose fix needs an out-of-slice architecture or design decision must be
    classified/escalated in the outcome rather than silently downgraded.
+5. Non-convergence is itself an escalation trigger, not only design gaps. The
+   runner supplies the prior claimed-fixed finding identity keys each round and
+   applies NO round cap: a non-converging fix loop stops ONLY when you escalate.
+   So if a blocking gap you would report is one a prior fix round already claimed
+   to close and it has RECURRED, and you judge that further fix rounds will not
+   converge it (it is stuck / not making progress — even when no design
+   decision is strictly needed and the fix is nominally in-scope), raise the
+   escalation verdict with a diagnosis instead of re-reporting it as `fix_now`.
+   Base this on recurrence + your convergence judgment, NEVER on an elapsed round
+   count (a round counter is exactly the runner-side cap that was removed — do not
+   re-create it inside the worker).
 
 Report your terminal verdict per the worker output contract in the prompt. Stay
 strictly inside this pass's scope.

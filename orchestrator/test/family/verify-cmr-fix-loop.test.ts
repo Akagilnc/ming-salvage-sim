@@ -1064,6 +1064,147 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
   }
 }
 
+// #597 R2 (Codex P1): worker-raised non-convergence escalate is the bounded stop
+// once the runner-side round cap is gone. This backend drives 2 blocking
+// coder-fix rounds, then — instead of a 3rd fix_now — the fresh reviewer
+// ESCALATES (it judged the loop will not converge, per the cmr soul's
+// non-convergence escalation rule). The run must stop bounded: escalateFamily,
+// ok:false, exactly 2 coder-fix dispatches (NOT unbounded), no ship.
+const ESCALATE_NONCONV_FINDINGS: readonly Finding[] = Array.from(
+  { length: 2 },
+  (_, index) => ({
+    severity: "medium",
+    category: "correctness",
+    claim_quote: `non-converging family CMR blocker round ${index + 1}`,
+    location: `orchestrator/src/family/verifyCmr.ts:cmr-nonconv-${index + 1}`,
+    suggested_fix: "coder-fix keeps committing but the blocker will not converge",
+    action: "fix_now",
+  }),
+);
+const ESCALATE_NONCONV_KEYS = ESCALATE_NONCONV_FINDINGS.map((finding) =>
+  findingIdentityKey(finding),
+);
+
+class EscalateOnNonConvergenceBackend implements FamilyBackend {
+  readonly ledger: FamilyLedgerEntry[] = [];
+  readonly dispatches: DispatchRecord[] = [];
+  readonly escalations: FamilyEscalation[] = [];
+  currentFamilyHead = "head-before-nonconv-escalate";
+  private completenessReviewRound = 0;
+  private coderFixRound = 0;
+
+  async mergeChildIntoFamilyBase(): Promise<never> {
+    throw new Error("not used");
+  }
+  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+    this.ledger.push(entry);
+  }
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return this.ledger;
+  }
+  async readFamilyHead(): Promise<string> {
+    return this.currentFamilyHead;
+  }
+  async runFamilyVerify(): Promise<FamilyVerifyResult> {
+    return { ok: true };
+  }
+  async escalateFamily(esc: FamilyEscalation): Promise<void> {
+    this.escalations.push(esc);
+  }
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      role: spec.role,
+      promptFile: spec.promptFile,
+      contextRetention: spec.contextRetention,
+      cmrPass: ctx.cmrPass,
+      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
+      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
+    });
+
+    if (spec.kind === "cmr") {
+      if (ctx.cmrPass === "completeness") {
+        const reviewRound = this.completenessReviewRound++;
+        if (reviewRound < ESCALATE_NONCONV_FINDINGS.length) {
+          const closedPriorKeys = ESCALATE_NONCONV_KEYS.slice(0, reviewRound);
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: false,
+              reason: `non-converging blocker round ${reviewRound + 1}`,
+              successfulLegs: ["opus", "gpt-5.5", "agy"],
+              claimedFixedFindingIdentityKeys: closedPriorKeys,
+              priorFindingDispositions: closedPriorKeys.map((identityKey) => ({
+                identityKey,
+                status: "verified-closed",
+                reason: "prior coder-fix committed",
+              })),
+              ...CMR_EVIDENCE,
+              findings: [ESCALATE_NONCONV_FINDINGS[reviewRound]!],
+            },
+          };
+        }
+        // The fresh reviewer has now seen the loop fail to converge across the
+        // prior fix rounds and raises the escalation verdict instead of a 3rd
+        // fix_now (cmr soul non-convergence rule). No runner-side round cap did
+        // this — the worker's own judgment is the stop.
+        return {
+          kind: "escalated",
+          escalation: {
+            reason: "family CMR fix loop is not converging on the same blocker",
+            diagnosis:
+              "two committed coder-fix rounds and the blocker still recurs; further rounds will not converge — needs a human decision",
+          },
+        };
+      }
+      return {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          ...CMR_EVIDENCE,
+        },
+      };
+    }
+
+    if (spec.kind === "coder") {
+      const fixedKeys = [...(ctx.blockingFindingIdentityKeys ?? [])];
+      this.coderFixRound += 1;
+      this.currentFamilyHead = `head-after-nonconv-fix-${this.coderFixRound}`;
+      return {
+        kind: "completed",
+        output: {
+          kind: "coder",
+          committed: true,
+          commitsAdded: 1,
+          repairEvidence: {
+            findingScope: {
+              identityKeys: fixedKeys,
+              locations: ESCALATE_NONCONV_FINDINGS.filter((finding) =>
+                fixedKeys.includes(findingIdentityKey(finding)),
+              ).map((finding) => finding.location),
+            },
+            changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
+            tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
+            sameClassBugScan: "rg \"escalate\" orchestrator/image/souls/cmr_completeness.md",
+            introducedRegressionCheck:
+              "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
+          },
+        },
+      };
+    }
+
+    if (spec.kind === "ship") {
+      throw new Error("ship must never be dispatched on a non-converging escalate");
+    }
+
+    throw new Error(`unexpected worker kind ${spec.kind}`);
+  }
+}
+
 class ReviewerMutatesHeadBeforeFindingBackend extends ReviewFixRereviewBackend {
   protected readonly mutatedHead = "head-mutated-by-cmr-reviewer";
 
@@ -1632,6 +1773,40 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(
       backend.dispatches.some((dispatch) => dispatch.kind === "ship"),
     ).toBe(true);
+  });
+
+  it("mid-loop worker escalate on non-convergence stops the run BOUNDED — not an endless coder-fix loop (#597 R2 / Codex P1)", async () => {
+    const backend = new EscalateOnNonConvergenceBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/nonconv-base",
+      familyBackend: backend,
+    });
+
+    // Removing the round cap did NOT make a non-converging loop unbounded: the
+    // fresh reviewer's own escalate is the stop. The run halts as escalated.
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.escalations).toHaveLength(1);
+    expect(backend.escalations[0]?.reason).toContain("not converging");
+    // Exactly the two committed fix rounds ran before the escalate — bounded,
+    // not endless. (Pre-#597 the cap would have aborted at 3; here the WORKER
+    // stops the loop on its own non-convergence judgment, no runner counter.)
+    expect(
+      backend.dispatches.filter((dispatch) => dispatch.kind === "coder"),
+    ).toHaveLength(ESCALATE_NONCONV_FINDINGS.length);
+    // Three completeness reviews: two blocking rounds + the escalate round.
+    expect(
+      backend.dispatches.filter(
+        (dispatch) => dispatch.kind === "cmr" && dispatch.cmrPass === "completeness",
+      ),
+    ).toHaveLength(ESCALATE_NONCONV_FINDINGS.length + 1);
+    // A non-converging escalate never reaches ship, and never falls back to a
+    // budget-exhausted abort.
+    expect(
+      backend.dispatches.some((dispatch) => dispatch.kind === "ship"),
+    ).toBe(false);
+    expectNoBudgetExhaustedAbort(backend.ledger);
   });
 
   it("continues at correctness when a correctness coder-fix commits", async () => {
