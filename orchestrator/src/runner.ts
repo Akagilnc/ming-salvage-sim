@@ -2571,13 +2571,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             try {
               const workerSpec = stepSpecToWorkerSpec(
                 stepSpecs[step],
-                resumeSessionId !== undefined ? "resume" : "fresh",
+                resumeSessionId != null ? "resume" : "fresh",
               );
               const dispatchCtx = {
                 worktree,
                 stateDir,
-                ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
-                ...(escalationAnswerForStep !== undefined
+                ...(resumeSessionId != null ? { resumeSessionId } : {}),
+                ...(escalationAnswerForStep != null
                   ? { escalationAnswer: escalationAnswerForStep }
                   : {}),
                 // 信封宪法 (ADR 0062): the dispatch structure carries only the
@@ -2820,13 +2820,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             resumedEscalationAnswer?.forStep === "S7"
               ? resumedEscalationAnswer
               : undefined;
-          if (escalationAnswerForStep !== undefined) {
+          if (escalationAnswerForStep != null) {
             resumedEscalationAnswer = undefined;
           }
           const shipCtx = {
             worktree,
             stateDir,
-            ...(escalationAnswerForStep !== undefined
+            ...(escalationAnswerForStep != null
               ? { escalationAnswer: escalationAnswerForStep }
               : {}),
           };

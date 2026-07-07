@@ -49,7 +49,7 @@ function forceFreshSpec(spec: WorkerSpec): WorkerSpec {
 
 /** Strip the resume session id so a retry opens a brand-new session (#598). */
 function stripResume(ctx: DispatchContext): DispatchContext {
-  if (ctx.resumeSessionId === undefined) return ctx;
+  if (ctx.resumeSessionId == null) return ctx;
   const { resumeSessionId: _drop, ...rest } = ctx;
   return rest;
 }
@@ -195,6 +195,13 @@ export async function retryProcessCrash<T>(
   },
 ): Promise<T> {
   const max = opts?.maxAttempts ?? MAX_DISPATCH_ATTEMPTS;
+  // Sourcery r2: fail loudly on a misconfigured bound rather than silently skipping
+  // the loop and throwing on an uninitialized error.
+  if (max <= 0) {
+    throw new Error(
+      `retryProcessCrash: maxAttempts must be a positive integer (received ${max})`,
+    );
+  }
   let lastError: unknown;
   for (let attempt = 1; attempt <= max; attempt++) {
     if (attempt > 1) {
@@ -217,9 +224,15 @@ export async function retryProcessCrash<T>(
   }
   // #598 crit 6: name the generic dispatch attempt count on exhaustion (the
   // merge-resolver seam re-throws; its caller stamps the domain message).
+  // Sourcery r2: preserve the original error (stack/object) via `cause` so infra
+  // failures stay debuggable.
   const annotated =
     lastError instanceof Error
-      ? new Error(`${lastError.message} (after ${max} dispatch attempts)`)
-      : new Error(`${String(lastError)} (after ${max} dispatch attempts)`);
+      ? new Error(`${lastError.message} (after ${max} dispatch attempts)`, {
+          cause: lastError,
+        })
+      : new Error(`${String(lastError)} (after ${max} dispatch attempts)`, {
+          cause: lastError,
+        });
   throw annotated;
 }
