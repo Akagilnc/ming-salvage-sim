@@ -60,6 +60,7 @@ import {
   dispatchFamilyWorker,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
+import { withMechanicalRetry } from "../dispatchRetry.js";
 import {
   cmrLegAccountingFailure,
   modelRouteFingerprint,
@@ -1389,7 +1390,20 @@ async function dispatchOrAbort(
   landing?: Parameters<typeof dispatchFamilyWorker>[3],
 ): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
   try {
-    return await dispatchFamilyWorker(familyBackend, spec, ctx, landing);
+    // #598: a family worker that CRASHES (throws) re-dispatches FRESH up to
+    // MAX_DISPATCH_ATTEMPTS. Every RESOLVED result (failed / malformed / completed /
+    // escalated) is DEFERRED to this gate's own rich terminal handling — the gate
+    // classifies `failed` (provider_degraded / infra_failure), rewrites `malformed`
+    // (OUTCOME_REWRITE_RETRY_CAP), and reads `completed`/`escalated` — so the generic
+    // layer keeps its own counter and never double-counts those. A persistent crash
+    // is re-thrown so the catch below stamps the domain "threw on startup" message
+    // the gate surfaces as INCOMPLETE_GATE.
+    return await withMechanicalRetry(
+      spec,
+      ctx,
+      (s, c) => dispatchFamilyWorker(familyBackend, s, c, landing),
+      { callerOwns: (o) => "result" in o, rethrowOnExhaustion: true },
+    );
   } catch (err) {
     const reason = `family ${spec.kind} worker threw on startup: ${
       err instanceof Error ? err.message : String(err)

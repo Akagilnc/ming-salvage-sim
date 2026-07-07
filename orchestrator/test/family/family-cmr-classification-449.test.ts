@@ -1341,7 +1341,10 @@ class CmrFindingBackend implements FamilyBackend {
         },
       };
     }
-    throw new Error(`unexpected ${spec.kind}`);
+    // #598: a coder-fix that cannot fix returns a `failed` RESULT (a judged
+    // not-ok, not a process crash); the generic mechanical retry defers judged
+    // results to the gate, so this is one dispatch with no retry.
+    return { kind: "failed", reason: `coder-fix reached (probe): ${spec.kind}` };
   }
 }
 
@@ -1371,7 +1374,10 @@ class SequencedCmrBackend extends CmrFindingBackend {
         },
       };
     }
-    throw new Error(`unexpected ${spec.kind}`);
+    // #598: a coder-fix that cannot fix returns a `failed` RESULT (a judged
+    // not-ok, not a process crash); the generic mechanical retry defers judged
+    // results to the gate, so this is one dispatch with no retry.
+    return { kind: "failed", reason: `coder-fix reached (probe): ${spec.kind}` };
   }
 }
 
