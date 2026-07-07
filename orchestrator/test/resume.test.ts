@@ -34,6 +34,7 @@
 
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
+import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
   Finding,
@@ -278,6 +279,11 @@ class DispatchRecordingResumeBackend extends ResumeBackend {
       };
     }
 
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) {
+      return skeleton;
+    }
+
     const stepSpec = spec as unknown as StepSpec;
     if (spec.id === "S6") {
       return {
@@ -321,7 +327,7 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
     expect(result.status).toBe("success");
     // Full happy path executed (ADR 0030: gate + load + implement + review + classify + ship).
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S10", "S11", "S12", "S8",
     ]);
     // Fresh cut: prepareWorktree called once; cleanResidue never called.
     expect(backend.prepareWorktreeCount).toBe(1);
@@ -419,7 +425,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     // the resumed steps are appended after them.
     const steps = result.stepLedger.map((e) => e.step);
     // Prior S0/S1/S2 + resumed S3/S4/S7/S8.
-    expect(steps).toEqual(["S0", "S1", "S2", "S3", "S4", "S7", "S8"]);
+    expect(steps).toEqual(["S0", "S1", "S2", "S3", "S4", "S7", "S9", "S10", "S11", "S12", "S8"]);
     // The preserved S2 entry still carries its committed output.
     const s2 = result.stepLedger.find((e) => e.step === "S2");
     expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
@@ -468,6 +474,10 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       "S6",
       "S4",
       "S7",
+      "S9",
+      "S10",
+      "S11",
+      "S12",
       "S8",
     ]);
     const s5 = result.stepLedger.find((e) => e.step === "S5");
@@ -509,6 +519,10 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       "S3",
       "S4",
       "S7",
+      "S9",
+      "S10",
+      "S11",
+      "S12",
       "S8",
     ]);
     const s2 = result.stepLedger.find((e) => e.step === "S2");
@@ -1424,7 +1438,7 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     expect(s7Entries[0]!.output).toBeDefined();
     // The full re-opened ledger has the clean happy-path shape (ADR 0030), no S7 twice.
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S10", "S11", "S12", "S8",
     ]);
   });
 
@@ -1443,7 +1457,7 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     expect(s7Entries).toHaveLength(1);
     expect(s7Entries[0]!.output).toBeDefined();
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S10", "S11", "S12", "S8",
     ]);
     expect(result.stepLedger).not.toEqual(
       expect.arrayContaining([
@@ -1536,7 +1550,7 @@ describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", (
     expect(backend.pushCount).toBe(1);
     expect(result.status).toBe("success");
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S10", "S11", "S12", "S8",
     ]);
   });
 

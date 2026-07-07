@@ -2989,6 +2989,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           }
           output = result.output;
           stepSessionId = result.sessionId;
+          // Mirror the agent-step contract (lines above): route() is called with
+          // `lastOutput`, so each step whose route() case reads its output must
+          // publish it here. The S9–S12 route cases validate ctx.output against
+          // the verify/fixer/cleanup/docRelease schemas — without this assignment
+          // route() would re-validate the stale pre-S7 agent output and fail
+          // closed (#596).
+          lastOutput = output;
         } catch (err) {
           return await errorTermination(step, err);
         }

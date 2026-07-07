@@ -9,6 +9,7 @@ import {
   printableRouteLineup,
   resolveRouteModels,
 } from "../src/modelRoutes.js";
+import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
   DispatchContext,
@@ -47,6 +48,10 @@ describe("#422 model route presets", () => {
       merger: "sonnet",
       cmrCompleteness: "opus",
       cmrCorrectness: "opus",
+      verify: "sonnet",
+      fixer: "sonnet",
+      cleanup: "sonnet",
+      docRelease: "sonnet",
     });
     expect(printableRouteLineup(resolved)).toEqual(
       [
@@ -58,6 +63,10 @@ describe("#422 model route presets", () => {
         "merger=sonnet",
         "cmrCompleteness=opus",
         "cmrCorrectness=opus",
+        "verify=sonnet",
+        "fixer=sonnet",
+        "cleanup=sonnet",
+        "docRelease=sonnet",
         "cmrReview=[codex:gpt-5.5,claude:opus,agy:agy]",
       ].join("\n"),
     );
@@ -347,6 +356,10 @@ describe("#422 model route presets", () => {
         }
         if (spec.kind === "reviewer") {
           return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) {
+          return skeleton;
         }
         return {
           kind: "completed",

@@ -16,6 +16,8 @@ import type {
   FixerResult,
   StepOutput,
   VerifyResult,
+  WorkerKind,
+  WorkerResult,
 } from "./types.js";
 
 export function isValidVerifyResult(
@@ -66,4 +68,31 @@ export function stubCleanupResult(): CleanupResult {
 /** Deterministic skeleton verdict used by the legacy dispatch path for S12. */
 export function stubDocReleaseResult(): DocReleaseResult {
   return { kind: "docRelease", released: true };
+}
+
+/**
+ * The deterministic `completed` WorkerResult the #596 skeleton returns for a
+ * review-loop kind (verify/fixer/cleanup/docRelease) when no real worker is
+ * wired. Returns `undefined` for any other kind, so callers (the legacy
+ * dispatchers + test/family spy backends that implement the unified seam) can
+ * fall through to their own handling. The single-slice and family paths share
+ * the SAME stub verdicts (#596: "single-slice and family paths share one kind
+ * set"); real bot-polling logic lands in later slices and will override these
+ * by handling the kind before calling this helper.
+ */
+export function skeletonReviewLoopWorkerResult(
+  kind: WorkerKind,
+): WorkerResult | undefined {
+  switch (kind) {
+    case "verify":
+      return { kind: "completed", output: stubVerifyResult() };
+    case "fixer":
+      return { kind: "completed", output: stubFixerResult() };
+    case "cleanup":
+      return { kind: "completed", output: stubCleanupResult() };
+    case "docRelease":
+      return { kind: "completed", output: stubDocReleaseResult() };
+    default:
+      return undefined;
+  }
 }

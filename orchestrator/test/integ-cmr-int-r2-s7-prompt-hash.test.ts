@@ -20,6 +20,7 @@
 import { describe, expect, it } from "vitest";
 import { shipWorkerSpec } from "../src/dispatchWorker.js";
 import { runOrchestrator } from "../src/runner.js";
+import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
   DispatchContext,
@@ -100,6 +101,10 @@ class ShipLedgerBackend implements Backend {
     }
     if (spec.kind === "reviewer") {
       return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+    }
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) {
+      return skeleton;
     }
     // ship (S7)
     if (this.shipEscalation !== undefined) {
