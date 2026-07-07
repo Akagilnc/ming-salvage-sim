@@ -259,6 +259,24 @@ export async function legacyDispatchFamilyWorker(
     };
   }
 
+  // #596 skeleton: deterministic no-op stubs for the family review-loop workers
+  // when the backend has no real implementation.
+  if (spec.kind === "verify") {
+    return { kind: "completed", output: { kind: "verify", converged: true } };
+  }
+  if (spec.kind === "fixer") {
+    return { kind: "completed", output: { kind: "fixer", committed: true } };
+  }
+  if (spec.kind === "cleanup") {
+    return { kind: "completed", output: { kind: "cleanup", ok: true } };
+  }
+  if (spec.kind === "docRelease") {
+    return {
+      kind: "completed",
+      output: { kind: "docRelease", released: true },
+    };
+  }
+
   throw new Error(
     `legacyDispatchFamilyWorker: unsupported family worker kind ${spec.kind}`,
   );

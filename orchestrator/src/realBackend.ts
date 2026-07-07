@@ -806,7 +806,18 @@ export function checkOwnGitDir(
  * Pure (a check on the role/soul pair): unit-tested without a container.
  */
 export function soulForStep(spec: Pick<StepSpec, "role" | "soul">): StepSoul {
-  const expected: StepSoul = spec.role === "reviewer" ? "READ-ONLY" : "coder";
+  const expected: StepSoul =
+    spec.role === "reviewer"
+      ? "READ-ONLY"
+      : spec.role === "verify"
+        ? "verify"
+        : spec.role === "fixer"
+          ? "fixer"
+          : spec.role === "cleanup"
+            ? "cleanup"
+            : spec.role === "docRelease"
+              ? "docRelease"
+              : "coder";
   if (spec.soul !== expected) {
     throw new Error(
       `realBackend: step role "${spec.role}" requires the "${expected}" soul ` +
@@ -1265,7 +1276,7 @@ export function isLikelySha(s: string): boolean {
  * filesystem.
  */
 /**
- * Valid step ids (S0–S8). A persisted ledger record must carry one of these in
+ * Valid step ids (S0–S12). A persisted ledger record must carry one of these in
  * `step`: {@link planResume} dereferences `lastEntry.step` to route the resume,
  * so a record whose `step` is missing / non-string / out-of-range is unusable.
  */
@@ -1279,6 +1290,10 @@ const STEP_IDS: ReadonlySet<string> = new Set([
   "S6",
   "S7",
   "S8",
+  "S9",
+  "S10",
+  "S11",
+  "S12",
 ]);
 
 /**
@@ -1328,7 +1343,7 @@ export function parseLedgerJsonl(raw: string): ResumeState["ledger"] {
     if (!isLedgerEntryShape(parsed)) {
       throw new Error(
         "corrupt ledger: a steps.jsonl line parsed but is not a valid ledger " +
-          "entry (must be an object with a valid step S0–S8) — refusing to " +
+          "entry (must be an object with a valid step S0–S12) — refusing to " +
           "resume on a malformed ledger (fail closed). Accepting it could crash " +
           "the resume route or re-report the wrong terminal state; bailing to " +
           "S8(error) instead.",
