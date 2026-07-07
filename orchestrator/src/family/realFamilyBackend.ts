@@ -718,10 +718,15 @@ export class RealFamilyBackend implements FamilyBackend {
     const msg = `Merge child #${req.childIssue} (${req.childBranch}) into ${this.opts.familyBase}`;
     try {
       this.sh("git", ["merge", "--no-ff", "-m", msg, req.childBranch], repo);
-    } catch {
-      // A real content conflict exits non-zero and LEAVES MERGE_HEAD — that is the
-      // re-established state the retry resolves. A non-conflict git failure leaves no
-      // MERGE_HEAD; the retry's runMergerAgent surfaces it. We do not rethrow here.
+    } catch (err) {
+      // #598 r5 (codexA/B, mirroring mergeChildLocked): only a REAL content conflict
+      // exits non-zero AND leaves MERGE_HEAD — that is the re-established state the
+      // retry resolves, so swallow it. A NON-conflict git failure (dirty worktree /
+      // lock / bad ref) leaves NO MERGE_HEAD; swallowing it would let the retry's
+      // merger run with no conflict re-established. Rethrow so retryProcessCrash counts
+      // this as a reset failure and SKIPS the merger dispatch (never runs on an
+      // un-re-established state), retrying the reset next attempt / exhausting.
+      if (!this.mergeInProgress(repo)) throw err;
     }
   }
 
