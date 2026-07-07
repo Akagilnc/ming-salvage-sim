@@ -2,7 +2,7 @@
 
 > ⚠️ **底稿（scratch / 过程史）**：本文已被正式 sub-ADR **0011-4 B 部分** fold + 覆盖（如高起潜 faction → 0011-4 定为「中立」保 7 派封闭集，非本文旧措辞）；凡与 0011-4 冲突一律**以 0011-4 为准（later-doc-wins）**。本文留作设计 provenance、**非实现真源**。
 
-> 全量在 task 输出：`/private/tmp/claude-501/.../tasks/wo1l0n2bf.output`（9-agent：ground定逆案六等 + 7派各assign + 合成）。**开局 seed 数据，待用户拍 5 争议 + 几处数据修后定稿。** 落库=characters.json per-人加 seed_guilt/identity 字段。
+> 全量原存 task 输出 `wo1l0n2bf.output`（/private/tmp 临时文件，9-agent：ground定逆案六等 + 7派各assign + 合成）——**该临时文件已被系统清理（2026-07-08 发现断链）**，全值已自持久 workflow journal（session 1986c12f / wf_2a218c5f-f4c）恢复：**真源 = [#112 恢复评论](https://github.com/Akagilnc/ming-salvage-sim/issues/112#issuecomment-4905431192)（机器可读 JSON、未截断）**，本地备份 `~/.gstack/projects/Akagilnc-ming-salvage-sim/recovered/seed-guilt-74-recovered.json`（含 ground 腿逆案罪谱）。⚠️ 恢复版是**拍板前合成原始版**：落库版 = 原始版 + 下方「✅ 5 争议已拍」中的两处改动（高起潜 faction→中立、吴昌时 seed_guilt 不填；处置措辞以 0011-4 B 为准），余 72 条原样。本段原文「待用户拍 5 争议」系写作时快照，5 争议已于 2026-06-14 全拍（见下）。落库=characters.json per-人加 seed_guilt/identity 字段。
 
 ## 自检（全过）
 - **罪稀疏**：74人中 15人(20%)带罪、59人(80%)无罪；**重+中 9人全在阉党**；非阉党仅 **2人轻** + 福王1轻(吴昌时降无后定稿；真源见 0011-4 B 部分，本散稿为历史 scratch)。
@@ -46,4 +46,4 @@
 → **名单定稿**。非阉党带罪者最终仅 2 人轻(钱谦益党争 + 郑芝龙海盗出身)+ 福王轻(贪吝)；重+中 9 人全阉党。**罪极稀疏、重罪全集中阉党 = 开局清算阉党=正当靶子、清完即缺正当靶的悲剧弧地基立住。**
 
 ## 落库注（实现）
-characters.json per-人加 `seed_guilt`(crime/severity)+`identity`(int)；走 content.py int_field 链 + ensure_column 老档补默认(identity DEFAULT 50/severity 无)。74人值见 task 输出 full_list。
+characters.json per-人加 `seed_guilt`(crime/severity)+`identity`(int)；走 content.py int_field 链 + ensure_column 老档补默认(identity DEFAULT 50/severity 无)。74人全值见 [#112 恢复评论](https://github.com/Akagilnc/ming-salvage-sim/issues/112#issuecomment-4905431192)（原 task 输出临时文件已被系统清理，自 workflow journal 捞回；落库前按已拍争议打两补丁，见头注）。

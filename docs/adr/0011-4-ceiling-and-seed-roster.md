@@ -190,7 +190,7 @@ per_layer_resistance = max( min(cap, α×血债项) , 命门合法性floor , min
 
 ### 落库注（实现）
 
-characters.json per-人加 `seed_guilt`(crime / severity) + `identity`(int)；走 `content.py int_field` 链 + `ensure_column` 老档补默认（`identity DEFAULT 50` / severity 无）。74 人全值见 dig-7 task 输出 `full_list`。
+characters.json per-人加 `seed_guilt`(crime / severity) + `identity`(int)；走 `content.py int_field` 链 + `ensure_column` 老档补默认（`identity DEFAULT 50` / severity 无）。74 人全值见 [#112 恢复评论](https://github.com/Akagilnc/ming-salvage-sim/issues/112#issuecomment-4905431192)（机器可读 JSON；原 dig-7 task 输出 `full_list` 为 /private/tmp 临时文件、已被系统清理，2026-07-08 自持久 workflow journal 恢复，本地备份 `~/.gstack/projects/Akagilnc-ming-salvage-sim/recovered/seed-guilt-74-recovered.json`）。⚠️ 恢复版是拍板前合成原始版：**落库版 = 原始版 + 上方争议 4/5 两处改动**（高起潜 faction→中立、吴昌时 seed_guilt 不填），余 72 条原样。
 
 **⚠️ 与 0011-2 H5 治本步骤③同批改 characters.json（P2-6）**：seed 落库与 0011-2 H5 的「先洗跨派别名」改的是**同一个 characters.json**，须**同一 PR 点检**：① 加 `seed_guilt`/`identity` 列；② 洗「袁巡抚」类纯官衔跨派别名（袁可立东林 / 袁崇焕军队 共用，加人名前缀或剔除）；③ 后置 startup「无跨 faction 别名映射」断言（断言须后于清洗，否则开局即崩）。三者同批、避免漏洗。
 
