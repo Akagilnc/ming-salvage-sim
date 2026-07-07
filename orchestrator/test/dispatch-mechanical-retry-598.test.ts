@@ -20,7 +20,19 @@
 
 import { describe, expect, it } from "vitest";
 import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../src/dispatchRetry.js";
-import type { DispatchContext, WorkerResult, WorkerSpec } from "../src/types.js";
+import { runOrchestrator } from "../src/runner.js";
+import type {
+  Backend,
+  DispatchContext,
+  IssueMeta,
+  IssueSnapshot,
+  PersistentLedgerEntry,
+  StepOutput,
+  WorkerLandingPayload,
+  WorkerResult,
+  WorkerSpec,
+  WorktreeHandle,
+} from "../src/types.js";
 
 function coderSpec(session: WorkerSpec["session"] = "fresh"): WorkerSpec {
   return {
@@ -126,5 +138,98 @@ describe("#598 withMechanicalRetry", () => {
     // The RETRY stripped the resume id and forced a fresh session.
     expect(seen[1]!.ctx.resumeSessionId).toBeUndefined();
     expect(seen[1]!.spec.session).toBe("fresh");
+  });
+
+  it("callerOwns re-throws a caller-owned thrown error instead of retrying it", async () => {
+    let calls = 0;
+    const dispatch = async (): Promise<WorkerResult> => {
+      calls += 1;
+      throw new Error("reviewer structured output error");
+    };
+    await expect(
+      withMechanicalRetry(coderSpec(), {}, dispatch, {
+        callerOwns: (o) => o.kind === "thrown",
+      }),
+    ).rejects.toThrow("reviewer structured output error");
+    // Deferred to the caller on the FIRST attempt — never retried here.
+    expect(calls).toBe(1);
+  });
+
+  it("callerOwns returns a caller-owned process-failure result without retrying", async () => {
+    const { dispatch, seen } = scripted([{ kind: "malformed", reason: "reviewer output invalid" }]);
+    const result = await withMechanicalRetry(coderSpec(), {}, dispatch, {
+      callerOwns: (o) => "result" in o && o.result.kind === "malformed",
+    });
+    expect(result.kind).toBe("malformed");
+    // Deferred to the caller's own bounded loop — one dispatch, no generic retry.
+    expect(seen).toHaveLength(1);
+  });
+});
+
+// ── #598 integration: coder/ship inherit the generic retry (the #592 asymmetry) ──
+
+const RUN_WORKTREE: WorktreeHandle = {
+  branch: "feat/issue-598",
+  base: "main",
+  path: "/resident/worktrees/issue-598",
+};
+
+/**
+ * A runOrchestrator backend where the S2 coder dispatch fails (a process-level
+ * crash) `coderFailures` times before completing; every other worker completes
+ * cleanly. Counts coder dispatches so the test can assert a retry happened.
+ */
+class CoderCrashBackend implements Backend {
+  coderDispatches = 0;
+  constructor(private readonly coderFailures: number) {}
+
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {}
+  async resumeSession(): Promise<StepOutput> {
+    return { kind: "coder", committed: true, commitsAdded: 1 };
+  }
+  async fetchIssueMeta(n: number): Promise<IssueMeta> {
+    return { number: n, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
+  }
+  async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+    return { number: n, body: "body", comments: [], agentBrief: "" };
+  }
+  async prepareWorktree(): Promise<WorktreeHandle> {
+    return RUN_WORKTREE;
+  }
+  async writeSnapshot(): Promise<void> {}
+  async runStep(): Promise<StepOutput> {
+    return { kind: "coder", committed: true, commitsAdded: 1 };
+  }
+  async push(): Promise<void> {}
+  async writeLedger(): Promise<void> {}
+
+  async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+    if (spec.kind === "coder" && spec.id === "S2") {
+      this.coderDispatches += 1;
+      if (this.coderDispatches <= this.coderFailures) {
+        return { kind: "failed", reason: "coder container crashed mid-run" };
+      }
+      return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+    }
+    if (spec.kind === "reviewer") {
+      return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+    }
+    if (spec.kind === "ship") {
+      return { kind: "completed", output: { kind: "ship", branch: RUN_WORKTREE.branch, status: "pushed" } };
+    }
+    return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+  }
+}
+
+describe("#598 integration — a coder (S2) process crash retries fresh (the #592 asymmetry)", () => {
+  it("a coder that crashes once then succeeds no longer aborts the run — S2 dispatched twice", async () => {
+    const backend = new CoderCrashBackend(1);
+    const result = await runOrchestrator({ issueNumber: 598, backend });
+    // Before #598 a single coder crash durably aborted (zero retry). Now it retries.
+    expect(result.status).not.toBe("error");
+    expect(backend.coderDispatches).toBe(2);
   });
 });

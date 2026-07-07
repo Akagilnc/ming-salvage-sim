@@ -53,6 +53,7 @@ import {
   stepSpecToWorkerSpec,
   workerResultToStep,
 } from "./dispatchWorker.js";
+import { withMechanicalRetry } from "./dispatchRetry.js";
 import {
   applyRuntimeTightRoutePolicy,
   modelForSlot,
@@ -2568,33 +2569,44 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             attempts += 1;
             let result: Awaited<ReturnType<typeof dispatchWorker>>;
             try {
-              result = await dispatchWorker(
-                backend,
-                stepSpecToWorkerSpec(
-                  stepSpecs[step],
-                  resumeSessionId !== undefined ? "resume" : "fresh",
-                ),
-                {
-                  worktree,
-                  stateDir,
-                  ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
-                  ...(escalationAnswerForStep !== undefined
-                    ? { escalationAnswer: escalationAnswerForStep }
-                    : {}),
-                  // 信封宪法 (ADR 0062): the dispatch structure carries only the
-                  // identity keys + count; the rich finding content travels in the
-                  // separate landing payload below.
-                  ...(step === "S5" || step === "S6"
-                    ? {
-                        blockingFindingIdentityKeys:
-                          pendingBlockingFindingIdentityKeys,
-                        blockingFindingCount: pendingBlockingFindings.length,
-                      }
-                    : {}),
-                },
+              const workerSpec = stepSpecToWorkerSpec(
+                stepSpecs[step],
+                resumeSessionId !== undefined ? "resume" : "fresh",
+              );
+              const dispatchCtx = {
+                worktree,
+                stateDir,
+                ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
+                ...(escalationAnswerForStep !== undefined
+                  ? { escalationAnswer: escalationAnswerForStep }
+                  : {}),
+                // 信封宪法 (ADR 0062): the dispatch structure carries only the
+                // identity keys + count; the rich finding content travels in the
+                // separate landing payload below.
+                ...(step === "S5" || step === "S6"
+                  ? {
+                      blockingFindingIdentityKeys:
+                        pendingBlockingFindingIdentityKeys,
+                      blockingFindingCount: pendingBlockingFindings.length,
+                    }
+                  : {}),
+              };
+              const landingPayload =
                 step === "S5" || step === "S6"
                   ? { blockingFindings: pendingBlockingFindings }
-                  : undefined,
+                  : undefined;
+              // #598: the generic mechanical retry re-dispatches a process-level
+              // crash (failed/malformed/outcome_protocol_failure/throw) with a fresh
+              // worker. The REVIEWER keeps its OWN bounded semantic-retry loop below
+              // (MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS) — so for a reviewer step the
+              // generic layer DEFERS every failure to that loop (no double-count).
+              // Coder/ship have no such loop, so they inherit the generic retry
+              // (the #592 asymmetry: coder/ship previously got zero retries).
+              result = await withMechanicalRetry(
+                workerSpec,
+                dispatchCtx,
+                (s, c) => dispatchWorker(backend, s, c, landingPayload),
+                expectedKind === "reviewer" ? { callerOwns: () => true } : undefined,
               );
             } catch (err) {
               if (
