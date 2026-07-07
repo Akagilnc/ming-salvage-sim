@@ -603,6 +603,22 @@ export const WORKER_IDLE_TIMEOUT_SECONDS = 604_800;
 export const SPAWNED_WORKER_ENV: Record<string, string> = { OPENCLAW_SESSION: "1" };
 
 /**
+ * Build the souls mount spec. Hardcodes the sandbox path once.
+ * ALWAYS returns readonly:true so container workers cannot mutate the host
+ * souls truth source (the image's baked souls are no longer present; host
+ * souls/*.md are the single source of truth).
+ * Used at all 6 dispatch sites (RealBackend box/ship + RealFamilyBackend's
+ * 4 workers: merger, coder-fix, integrated-cmr, family-ship).
+ */
+export function soulsMount(soulsDir: string): { hostPath: string; sandboxPath: string; readonly: true } {
+  return {
+    hostPath: soulsDir,
+    sandboxPath: "/home/agent/.orchestrator/souls",
+    readonly: true,
+  };
+}
+
+/**
  * Host paths for the per-issue codex auth copy + the claude token (spike
  * contract). codex auth MUST live under $HOME (colima shares $HOME into the
  * Docker VM; $TMPDIR is NOT shared → a tmp copy mounts root-owned/empty →
@@ -1574,8 +1590,9 @@ export interface RealBackendOptions {
    * into the container at /home/agent/.orchestrator/souls . #372: souls are
    * mounted live (rather than baked) so source edits take effect on next dispatch
    * without a full image layer change for data files.
+   * REQUIRED: souls are no longer baked into the image.
    */
-  readonly soulsDir?: string;
+  readonly soulsDir: string;
   /** Override $HOME for auth path construction (tests). */
   readonly home?: string;
   /**
@@ -1829,6 +1846,7 @@ export class RealBackend implements Backend {
     this.opts = opts;
     this.ownerLogin = opts.ownerLogin ?? repoOwnerLogin(opts.repo);
     this.validatePromptsDir();
+    this.validateSoulsDir();
     this.workingRepo = this.buildOrReuseClone();
     this.assertIndependentClone();
   }
@@ -1915,6 +1933,26 @@ export class RealBackend implements Backend {
       : [];
     const err = promptsDirError(dir, isAbsolute(dir), dirExists, missing);
     if (err !== undefined) throw new Error(err);
+  }
+
+  /**
+   * Fail loudly at construction if soulsDir is missing or not a usable dir.
+   * Souls are no longer baked (#372); omitting would produce soul-less workers
+   * with no fallback. Mirrors the promptsDir validation.
+   */
+  private validateSoulsDir(): void {
+    const dir = this.opts.soulsDir;
+    if (typeof dir !== "string" || dir.length === 0) {
+      throw new Error(
+        "RealBackend: soulsDir is required (souls are no longer baked into the image; " +
+          "a missing soulsDir would yield soul-less container workers with no fallback).",
+      );
+    }
+    if (!isAbsolute(dir) || !existsSync(dir) || !statSync(dir).isDirectory()) {
+      throw new Error(
+        `RealBackend: soulsDir must be an absolute path to an existing directory (got "${dir}").`,
+      );
+    }
   }
 
   /**
@@ -2433,14 +2471,8 @@ export class RealBackend implements Backend {
     ];
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.
-    // Mount is read-only; shadows any baked copy (souls no longer baked in build).
-    if (this.opts.soulsDir) {
-      mounts.push({
-        hostPath: this.opts.soulsDir,
-        sandboxPath: "/home/agent/.orchestrator/souls",
-        readonly: true,
-      });
-    }
+    // Uses shared helper which hardcodes sandbox path and forces readonly:true.
+    mounts.push(soulsMount(this.opts.soulsDir));
     if (options?.fixFindingsLanding !== undefined) {
       mounts.push({
         hostPath: options.fixFindingsLanding.path,
@@ -3152,7 +3184,7 @@ export class RealBackend implements Backend {
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     // The ship worker runs under the dedicated "ship" soul (delivery discipline:
     // gstack-ship, stop-at-PR, defer→tracker not PR body) — souls/ship.md covers
@@ -3174,18 +3206,14 @@ export class RealBackend implements Backend {
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
-    const mounts: { hostPath: string; sandboxPath: string }[] = [];
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     // #334: codex auth ONLY — baked skills win (no host skills mount).
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
     // #372: souls mount for ship worker too (live source, shadows baked if any).
-    if (this.opts.soulsDir) {
-      mounts.push({
-        hostPath: this.opts.soulsDir,
-        sandboxPath: "/home/agent/.orchestrator/souls",
-      });
-    }
+    // Shared helper forces readonly:true at all sites.
+    mounts.push(soulsMount(this.opts.soulsDir));
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,

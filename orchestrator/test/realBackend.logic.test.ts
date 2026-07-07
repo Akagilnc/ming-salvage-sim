@@ -997,6 +997,7 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
   // file's location so the assertion is path-independent.
   const here = dirname(fileURLToPath(import.meta.url));
   const realPromptsDir = join(here, "..", "prompts");
+  const realSoulsDir = join(here, "..", "image", "souls");
 
   // #292: the driver now feeds sourceRepo (+remote) + a deterministic runKey;
   // RealBackend builds its own dedicated clone. Stub the clone seams so these
@@ -1020,6 +1021,7 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     runKey: 999,
     repo: "owner/name",
     imageName: "img",
+    soulsDir: realSoulsDir,
     skillsMount: "/tmp/skills",
   };
 
@@ -1089,6 +1091,7 @@ describe("RealBackend reviewer output contract", () => {
       repo: "owner/name",
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
     });
 
     expect(() =>
@@ -1124,6 +1127,7 @@ describe("RealBackend reviewer output contract", () => {
       repo: "owner/name",
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
     });
 
     const decoded = (
@@ -1176,6 +1180,7 @@ describe("RealBackend reviewer output contract", () => {
       repo: "owner/name",
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
     });
 
     expect(() =>
@@ -1221,6 +1226,7 @@ describe("RealBackend reviewer output contract", () => {
       repo: "owner/name",
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
     });
 
     expect(() =>
@@ -1251,6 +1257,7 @@ describe("RealBackend reviewer output contract", () => {
 describe("RealBackend runStep toolchain preflight (#286)", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const realPromptsDir = join(here, "..", "prompts");
+  const realSoulsDir = join(here, "..", "image", "souls");
 
   const coderSpec: StepSpec = {
     id: "S2",
@@ -1316,6 +1323,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       repo: "owner/name",
       imageName: "ming-worker:bad",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
     });
   }
 
@@ -1684,6 +1692,7 @@ describe("realBackend parseBlockedBy", () => {
 describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const realPromptsDir = join(here, "..", "prompts");
+  const realSoulsDir = join(here, "..", "image", "souls");
 
   // Records every gh/git invocation and serves canned JSON so fetchIssueMeta
   // runs without touching the network. The clone seams are stubbed (same as the
@@ -1746,6 +1755,7 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
       imageName: "img",
       skillsMount: "/tmp/skills",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
     });
   }
 
@@ -2089,6 +2099,7 @@ describe("realBackend resume coder commit truth", () => {
       repo: "owner/name",
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
     });
 
     expect(() =>

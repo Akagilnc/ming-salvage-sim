@@ -36,6 +36,7 @@ import { SANDBOX_CODEX_DIR, SANDBOX_SOUL_ENV, SPAWNED_WORKER_ENV } from "../../s
 import type { ConflictResolveRequest } from "../../src/family/types.js";
 
 const here = join(import.meta.dirname ?? ".", "..", "..", "prompts");
+const soulsDir = join(import.meta.dirname ?? ".", "..", "..", "image", "souls");
 
 let tmpDirs: string[] = [];
 function mkDir(prefix: string): string {
@@ -62,6 +63,7 @@ function baseOpts(over: Partial<RealFamilyBackendOptions> = {}): RealFamilyBacke
     repo: "Akagilnc/ming-salvage-sim",
     base: "main",
     promptsDir: here,
+    soulsDir,
     imageName: "img",
     ...over,
   };

@@ -55,6 +55,7 @@ import type {
 const here = dirname(fileURLToPath(import.meta.url));
 const promptsDir = join(here, "..", "prompts");
 const imageDir = join(here, "..", "image");
+const soulsDir = join(here, "..", "image", "souls");
 
 // ─── (1) RealBackend.boxConfig drops the runtime skillsMount (#334) ───────────
 
@@ -108,6 +109,7 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
       repo: "owner/name",
       imageName: "ming-orchestrator-coder:latest",
       promptsDir,
+      soulsDir,
     });
   }
 

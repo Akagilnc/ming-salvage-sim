@@ -61,6 +61,7 @@ function modelOfAgent(agent: unknown): string {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
+const realSoulsDir = join(here, "..", "..", "image", "souls");
 
 const cleanups: string[] = [];
 afterEach(() => {
@@ -116,6 +117,7 @@ function fixtured(): FixturedShipBackend {
     repo: "Akagilnc/ming-salvage-sim",
     base: "main",
     promptsDir: realPromptsDir,
+    soulsDir: realSoulsDir,
     imageName: "ming-orchestrator-coder:latest",
   });
 }
@@ -275,6 +277,7 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
     });
   }
@@ -359,6 +362,7 @@ describe("#336 family runShipWorker — fail-closed when the top-level Claude wo
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
     });
   }
@@ -429,6 +433,7 @@ describe("#336 family runShipWorker — fail-closed when gh auth is missing", ()
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
     });
   }
@@ -480,6 +485,7 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       repo: over.repo ?? "Akagilnc/ming-salvage-sim",
       base: over.base ?? "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
     });
   }
@@ -566,6 +572,7 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       repo: "Akagilnc/ming-salvage-sim",
       base: "integ/291-wave3",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
     });
     await expect(
@@ -621,6 +628,7 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
     });
 
@@ -656,6 +664,7 @@ describe("#336 family workers — model id is spec-derived via modelIdForSlug (c
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
     });
   }
@@ -720,6 +729,7 @@ describe("#378 family mountShipAuth — writes a minimal danger-full-access conf
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       home: hostHomeWithCodexConfig(),
     });

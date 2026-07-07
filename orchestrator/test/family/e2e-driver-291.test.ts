@@ -61,6 +61,7 @@ import type {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const familyPromptsDir = join(here, "..", "..", "prompts");
+const familySoulsDir = join(here, "..", "..", "image", "souls");
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -259,6 +260,7 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
       base: "main",
       promptsDir: familyPromptsDir,
       familyPromptsDir,
+      soulsDir: familySoulsDir,
       ledgerDir,
       imageName: "img",
       skillsMount: join(home, "skills"),
@@ -273,6 +275,7 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
           repo: "Akagilnc/ming-salvage-sim",
           base: "main",
           promptsDir: familyPromptsDir,
+          soulsDir: familySoulsDir,
           imageName: "img",
           skillsMount: join(home, "skills"),
           familyBaseStartHead: startHead,

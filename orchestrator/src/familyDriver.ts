@@ -594,7 +594,7 @@ export interface FamilyDriverOptions {
   /** Dir holding the family-layer promptFiles (the merger conflict prompt). */
   readonly familyPromptsDir: string;
   /** Host dir of souls/*.md to mount live (unconditional rebuild #372). */
-  readonly soulsDir?: string;
+  readonly soulsDir: string;
   /** Where the append-only family ledger + escalation records live (outside the worktree). */
   readonly ledgerDir: string;
   /** The profile image (toolchain + skills + model CLIs baked in; souls mounted #372). */
