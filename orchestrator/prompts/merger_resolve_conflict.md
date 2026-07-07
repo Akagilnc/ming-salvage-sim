@@ -1,6 +1,6 @@
 # Merger worker entrypoint — resolve one family-merge conflict
 
-Read the baked role soul first:
+Read the role soul first (live-mounted):
 
 ```text
 /home/agent/.orchestrator/souls/merger.md

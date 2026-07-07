@@ -47,6 +47,8 @@ import {
   parseCoderSelfReport,
   parseSubIssueCount,
   promptsDirError,
+  soulsDirError,
+  REQUIRED_SOUL_FILES,
   realCommitCount,
   reconcileCoderCommits,
   reconcileResumeCoderCommits,
@@ -1019,11 +1021,52 @@ describe("realBackend promptsDirError (F4)", () => {
   });
 });
 
+describe("realBackend soulsDirError (#372)", () => {
+  const abs = "/abs/souls";
+
+  it("rejects empty soulsDir (required)", () => {
+    const err = soulsDirError("", false, false, []);
+    expect(err).toMatch(/soulsDir is required/);
+  });
+
+  it("rejects a non-absolute soulsDir", () => {
+    const err = soulsDirError("./souls", false, true, []);
+    expect(err).toMatch(/absolute path to an existing directory/);
+  });
+
+  it("rejects a non-existent absolute soulsDir", () => {
+    expect(soulsDirError(abs, true, false, [])).toMatch(/absolute path to an existing directory/);
+  });
+
+  it("dir-exists-but-missing-souls throws with the missing filenames", () => {
+    // dir exists but points at wrong/incomplete set (e.g. image/ instead of image/souls,
+    // or partial checkout missing reviewer.md / output_protocol.md etc).
+    const err = soulsDirError(abs, true, true, ["reviewer.md", "output_protocol.md"]);
+    expect(err).toMatch(/missing required soul file\(s\)/);
+    expect(err).toMatch(/reviewer\.md/);
+    expect(err).toMatch(/output_protocol\.md/);
+    expect(err).toMatch(/All of \[/);
+    expect(err).not.toMatch(/promptFile/); // distinct from prompts error
+  });
+
+  it("accepts an absolute existing dir with zero missing (all 8 present)", () => {
+    expect(soulsDirError(abs, true, true, [])).toBeUndefined();
+  });
+
+  it("REQUIRED_SOUL_FILES lists exactly the 8 under image/souls", () => {
+    expect(new Set(REQUIRED_SOUL_FILES).size).toBe(8);
+    expect(REQUIRED_SOUL_FILES).toContain("output_protocol.md");
+    expect(REQUIRED_SOUL_FILES).toContain("coder.md");
+    expect(REQUIRED_SOUL_FILES).toContain("ship.md");
+  });
+});
+
 describe("RealBackend construction validates promptsDir (F4)", () => {
   // The checked-in prompts/ dir lives next to src/ — resolve it from this test
   // file's location so the assertion is path-independent.
   const here = dirname(fileURLToPath(import.meta.url));
   const realPromptsDir = join(here, "..", "prompts");
+  const realSoulsDir = join(here, "..", "image", "souls");
 
   // #292: the driver now feeds sourceRepo (+remote) + a deterministic runKey;
   // RealBackend builds its own dedicated clone. Stub the clone seams so these
@@ -1047,6 +1090,7 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     runKey: 999,
     repo: "owner/name",
     imageName: "img",
+    soulsDir: realSoulsDir,
     skillsMount: "/tmp/skills",
   };
 
@@ -1070,6 +1114,32 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
           promptsDir: "/definitely/not/a/real/dir/xyz",
         }),
     ).toThrow(/does not exist/);
+  });
+
+  it("dir-exists-but-missing-souls throws with the missing filenames", () => {
+    // Use a real existing dir (mkdtemp) that has no soul files inside.
+    // Ctor must reject before any clone/git work (validateSoulsDir runs early).
+    const badSouls = mkdtempSync(join(tmpdir(), "dir-exists-missing-souls-"));
+    expect(() =>
+      new StubCloneBackend({
+        ...baseOpts,
+        promptsDir: realPromptsDir,
+        soulsDir: badSouls,
+      }),
+    ).toThrow(/missing required soul file\(s\):/);
+    let msg = "";
+    try {
+      new StubCloneBackend({
+        ...baseOpts,
+        promptsDir: realPromptsDir,
+        soulsDir: badSouls,
+      });
+    } catch (e: any) {
+      msg = String(e?.message ?? e);
+    }
+    expect(msg).toMatch(/cmr\.md/);
+    expect(msg).toMatch(/output_protocol\.md/);
+    expect(msg).toMatch(/All of \[/);
   });
 });
 
@@ -1116,6 +1186,7 @@ describe("RealBackend reviewer output contract", () => {
       repo: "owner/name",
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
     });
 
     expect(() =>
@@ -1151,6 +1222,7 @@ describe("RealBackend reviewer output contract", () => {
       repo: "owner/name",
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
     });
 
     const decoded = (
@@ -1203,6 +1275,7 @@ describe("RealBackend reviewer output contract", () => {
       repo: "owner/name",
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
     });
 
     expect(() =>
@@ -1248,6 +1321,7 @@ describe("RealBackend reviewer output contract", () => {
       repo: "owner/name",
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
     });
 
     expect(() =>
@@ -1278,6 +1352,7 @@ describe("RealBackend reviewer output contract", () => {
 describe("RealBackend runStep toolchain preflight (#286)", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const realPromptsDir = join(here, "..", "prompts");
+  const realSoulsDir = join(here, "..", "image", "souls");
 
   const coderSpec: StepSpec = {
     id: "S2",
@@ -1343,6 +1418,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       repo: "owner/name",
       imageName: "ming-worker:bad",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
     });
   }
 
@@ -1711,6 +1787,7 @@ describe("realBackend parseBlockedBy", () => {
 describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const realPromptsDir = join(here, "..", "prompts");
+  const realSoulsDir = join(here, "..", "image", "souls");
 
   // Records every gh/git invocation and serves canned JSON so fetchIssueMeta
   // runs without touching the network. The clone seams are stubbed (same as the
@@ -1773,6 +1850,7 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
       imageName: "img",
       skillsMount: "/tmp/skills",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
     });
   }
 
@@ -2116,6 +2194,7 @@ describe("realBackend resume coder commit truth", () => {
       repo: "owner/name",
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
     });
 
     expect(() =>

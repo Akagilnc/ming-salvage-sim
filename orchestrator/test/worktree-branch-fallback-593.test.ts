@@ -23,6 +23,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "prompts");
+const realSoulsDir = join(here, "..", "image", "souls");
 
 const cleanups: string[] = [];
 afterEach(() => {
@@ -102,6 +103,7 @@ function newBackend(porcelain = porcelainForBranch(NEW_BRANCH)): RecordingBacken
     imageName: "img",
     skillsMount: "/tmp/skills",
     promptsDir: realPromptsDir,
+    soulsDir: realSoulsDir,
     home: HOME,
   });
   b.porcelain = porcelain;

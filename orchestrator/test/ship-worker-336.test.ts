@@ -29,6 +29,7 @@ import {
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
   SHIP_FOCUS_FILENAME,
+  soulsMount,
   SPAWNED_WORKER_ENV,
 } from "../src/realBackend.js";
 import type { ShipAuth } from "../src/realBackend.js";
@@ -38,6 +39,7 @@ import type { DispatchContext, WorkerSpec, WorktreeHandle } from "../src/types.j
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "prompts");
+const realSoulsDir = join(here, "..", "image", "souls");
 
 const cleanups: string[] = [];
 afterEach(() => {
@@ -102,6 +104,7 @@ function fixtured(): FixturedShipBackend {
     repo: "Akagilnc/ming-salvage-sim",
     base: "main",
     promptsDir: realPromptsDir,
+    soulsDir: realSoulsDir,
     imageName: "ming-orchestrator-coder:latest",
     runKey: "k336",
   });
@@ -221,7 +224,7 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     public config(auth: ShipAuth): {
       imageName: string;
       env: Record<string, string>;
-      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
       return this.shipSandboxConfig(auth);
     }
@@ -232,6 +235,7 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336cfg",
     });
@@ -245,6 +249,12 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     // ORCHESTRATOR_REPO is exported so the ship soul's `gh issue create
     // --repo "$ORCHESTRATOR_REPO"` defer path works (codex #384).
     expect(c.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
+  });
+
+  it("shipSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {
+    const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
+    const expected = soulsMount(realSoulsDir);
+    expect(c.mounts).toContainEqual(expected);
   });
 
   it("exports the gh token as GH_TOKEN so the in-container `gh pr create` / push over https is authenticated (cmr S336 r10 P1)", () => {
@@ -334,6 +344,7 @@ describe("#336 single-slice runShipWorker — fail-closed when the top-level Cla
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336noauth",
     });
@@ -404,6 +415,7 @@ describe("#336 single-slice runShipWorker — fail-closed when gh auth is missin
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336nogh",
     });
@@ -444,6 +456,7 @@ describe("#336 single-slice runShipWorker — fail-closed when gh auth is missin
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336ghok",
     });
@@ -509,6 +522,7 @@ describe("#336 single-slice runShipWorker — outcome sidecar cleanup", () => {
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336outcome",
     });
@@ -562,6 +576,7 @@ describe("#439 single-slice ship worker resume answer focus", () => {
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k439shipanswer",
     });
@@ -628,6 +643,7 @@ describe("#378 RealBackend auth mounts — write a minimal danger-full-access co
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k378",
       home,
