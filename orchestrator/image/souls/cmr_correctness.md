@@ -31,6 +31,17 @@ Before emitting your terminal verdict, read
    otherwise every active finding is blocking and must be `fix_now`. Do not turn a
    cheap same-module defect into a silent defer — hand it back as a fix_now
    finding for the runner boundary.
+5. Non-convergence is itself an escalation trigger. The runner supplies the prior
+   claimed-fixed finding identity keys each round and applies NO round cap: a
+   non-converging fix loop stops ONLY when you escalate. So if a blocking defect
+   you would report is one a prior fix round already claimed to close and it has
+   RECURRED, and you judge that further fix rounds will not converge it (it is
+   stuck / not making progress — even when the fix is nominally in-scope and
+   needs no design decision), raise the escalation verdict with a diagnosis
+   instead of re-reporting it as `fix_now`. Base this on recurrence + your
+   convergence judgment, NEVER on an elapsed round count (a round counter is
+   exactly the runner-side cap that was removed — do not re-create it inside the
+   worker).
 
 Report your terminal verdict per the worker output contract in the prompt. Stay
 strictly inside this pass's scope.
