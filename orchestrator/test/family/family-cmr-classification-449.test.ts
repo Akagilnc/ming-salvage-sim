@@ -150,9 +150,7 @@ module_scope:
 
 // #604 slice 4 (ADR 0062): the `cross_module` routing disposition kind was
 // removed. The base fixture is now a plain blocking finding (fix_now with no
-// disposition) — every non-accepted-suppressed finding is blocking. `fix_now`
-// (rather than `defer`) keeps the fixture valid through parseCmrOutcome, whose
-// schema still rejects a `defer` finding that lacks a non-suppression disposition.
+// disposition) — every non-accepted-suppressed finding is blocking.
 const finding: Finding = {
   severity: "medium",
   category: "correctness",
@@ -797,7 +795,7 @@ describe("#449 family CMR finding classification", () => {
       claim_quote:
         "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
       location: "docs/adr/0023.md:D9",
-      action: "defer",
+      action: "fix_now",
     };
 
     const classified = deriveCmrEnvelope({
@@ -830,9 +828,9 @@ describe("#449 family CMR finding classification", () => {
 
     expect(classified.blocking).toEqual([reviewerFinding]);
     expect(classified.deferred).toEqual([]);
-    // #604 slice 4 (ADR 0062): a defer without an accepted_suppressed disposition is
-    // blocking; the suppression-source that does not attach (no matching disposition)
-    // does not suppress it.
+    // #617: `defer` was removed from the action union. A non-accepted-suppressed
+    // finding is blocking; the suppression-source that does not attach (no matching
+    // disposition) does not suppress it.
     expect(classified.results[0]).toMatchObject({
       classification: "blocking",
       attribution: { method: "family_module", issue: 287, module: "fiscal" },
@@ -1237,7 +1235,7 @@ describe("#449 family CMR finding classification", () => {
         severity,
         claim_quote: "ADR0023 D9 central transport-loss C_ accounts still wait for ADR0021 hub oracle",
         location: "docs/adr/0023.md:D9",
-        action: "defer",
+        action: "fix_now",
       };
 
       const classified = deriveCmrEnvelope({

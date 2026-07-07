@@ -37,7 +37,6 @@ const SEVERITIES: ReadonlySet<string> = new Set([
 /** Exact action enum. */
 const ACTIONS: ReadonlySet<string> = new Set([
   "fix_now",
-  "defer",
   "wont_fix",
   "rejected",
 ]);
@@ -265,7 +264,8 @@ export function escalateOf(
  * A single reviewer finding is valid iff:
  *   - `severity` is EXACTLY one of the five enum values (no trailing space, no
  *     case drift — the route() severity comparison is exact-string),
- *   - `action` is EXACTLY `'fix_now'` or `'defer'`,
+ *   - `action` is EXACTLY one of the three enum values (`fix_now`, `wont_fix`,
+ *     `rejected`),
  *   - every required string field is present and a string.
  *
  * Anything else is a contract violation: the route() severity/action test would
@@ -308,13 +308,6 @@ export function isValidFinding(f: unknown): f is Finding {
     obj.action !== "fix_now"
   ) {
     return false;
-  }
-  if (obj.action === "defer") {
-    // #604 correctness r1 (P2-b) / ADR 0062: `defer` can no longer carry a valid
-    // non-suppression disposition (the route kinds are gone), so a stray defer is
-    // malformed — the same fail-closed口径 the zod schemas and Python guard enforce.
-    if (!isValidDispositionEvidence(obj.disposition)) return false;
-    if (obj.disposition.kind === "accepted_suppressed") return false;
   }
   if (obj.action === "wont_fix" || obj.action === "rejected") {
     if (!isValidDispositionEvidence(obj.disposition)) return false;
@@ -384,12 +377,12 @@ export function isValidPriorFindingDisposition(
  *
  * integ-cmr 256 confirm r1 (high, #244 铁律): a finding is blocking iff it is a
  * P0/P1 (`severity` critical or high) OR a reviewer-judged `fix_now`. Severity
- * trumps action — a reviewer CANNOT defer a P0/P1 ("P0/P1 必修不许私自降级",
- * route-s4.test.ts "P0 still trumps even when all deferred"). The earlier
- * delivery seam filtered on `action === 'fix_now'` ALONE, so a
- * `{severity:'critical'|'high', action:'defer'}` finding routed to S5 (severity
- * branch) yet reached the coder as an EMPTY set — silently re-deferring a P0/P1
- * on the coder side. Sharing this predicate closes that gap.
+ * trumps action — a reviewer CANNOT downgrade a P0/P1 to a non-fix action
+ * ("P0/P1 必修不许私自降级", route-s4.test.ts). The earlier delivery seam
+ * filtered on `action === 'fix_now'` ALONE, so a `{severity:'critical'|'high',
+ * action:'wont_fix'}` finding routed to S5 (severity branch) yet reached the
+ * coder as an EMPTY set — silently waiving a P0/P1 on the coder side. Sharing
+ * this predicate closes that gap.
  */
 export function isBlockingFinding(f: Finding): boolean {
   return (

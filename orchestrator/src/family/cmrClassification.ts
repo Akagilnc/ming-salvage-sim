@@ -348,10 +348,10 @@ export function deriveCmrEnvelope(input: {
     }
 
     // #604 slice 4 (ADR 0062): the `cross_module` routing kind is gone, so there
-    // is no longer a cross-module deferred bucket — a `defer` finding falls
-    // through to the shared single-finding classifier below, which now classifies
-    // every non-accepted-suppressed defer as blocking (findings.ts). `deferred`
-    // is retained by the return shape but stays empty.
+    // is no longer a cross-module deferred bucket — every non-accepted-suppressed
+    // finding falls through to the shared single-finding classifier below, which
+    // classifies it as blocking (findings.ts). `deferred` is retained by the
+    // return shape but stays empty.
 
     const scopedPriorDispositions = (input.priorDispositions ?? []).filter(
       (disposition) =>

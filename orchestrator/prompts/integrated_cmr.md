@@ -88,9 +88,9 @@ Rules:
   `claim_quote`, `location`, `suggested_fix`) plus an `action`. Do not emit routing
   disposition kinds — there are none. Every finding you report that is not an
   accepted suppression is blocking: the runner counts it and routes it through
-  coder-fix. There is no "defer to another module" pass — if a family-scope gap is
-  real, report it with `action:"fix_now"`. The only `findings[].disposition.kind`
-  you may emit is `accepted_suppressed`.
+  coder-fix. There is no pass to another module — if a family-scope gap is real,
+  report it with `action:"fix_now"`. The only `findings[].disposition.kind` you may
+  emit is `accepted_suppressed`.
 - Any module-scope judgement you make (which files/surfaces belong to the family
   module, whether a target is an out-of-scope undeveloped module, whether an
   `accepted_suppressed` scope matches) draws its module context ONLY from the exact
@@ -108,7 +108,7 @@ Rules:
   runner-supplied claimed-fixed closure set. An `accepted_suppressed` disposition
   MUST be paired with `action:"wont_fix"` or `action:"rejected"` — never with
   `action:"fix_now"` (that would silently turn the governance suppression into a
-  blocker). Never emit `action:"defer"`: it is not a supported action.
+  blocker).
 - When `$ORCHESTRATOR_OUTCOME_PATH` is set, let `orchestrator-outcome-guard` emit
   the `<cmr>` tag and `CMR_STEP_COMPLETE`; do not print them yourself.
 - Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag LAST; if you iterate,

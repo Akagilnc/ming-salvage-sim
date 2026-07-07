@@ -250,10 +250,9 @@ describe("#549 worker outcome guard", () => {
   it.each([
     {
       // #604 correctness r1 (P2-b): critical/high must be fix_now — the guard
-      // rejects the severity/action mismatch first. (Was a defer + same_module
-      // case; ADR 0062 removed defer + all route kinds, so we assert the
-      // severity gate on a plain fix_now-required finding.)
-      name: "critical/high findings cannot be deferred",
+      // rejects the severity/action mismatch first. (ADR 0062 removed all route
+      // kinds, so we assert the severity gate on a plain fix_now-required finding.)
+      name: "critical/high findings cannot be waived",
       finding: {
         severity: "high",
         category: "correctness",
@@ -271,40 +270,6 @@ describe("#549 worker outcome guard", () => {
         },
       },
       error: "findings[0].action must be fix_now for critical/high severity",
-    },
-    {
-      // #604 correctness r1 (P2-b): a stray defer is now malformed (ADR 0062
-      // deleted the action). Was "defer requires an explicit disposition".
-      name: "defer requires an explicit disposition",
-      finding: {
-        severity: "medium",
-        category: "standards",
-        claim_quote: "defer needs an auditable reason",
-        location: "orchestrator/src/family/verifyCmr.ts",
-        suggested_fix: "include a non-suppression disposition",
-        action: "defer",
-      },
-      error: "findings[0].action defer is no longer supported",
-    },
-    {
-      // #604 correctness r1 (P2-b): defer is malformed regardless of disposition.
-      name: "defer cannot use accepted_suppressed",
-      finding: {
-        severity: "medium",
-        category: "standards",
-        claim_quote: "defer is not an accepted suppression",
-        location: "orchestrator/src/family/verifyCmr.ts",
-        suggested_fix: "use wont_fix/rejected or report it fix_now",
-        action: "defer",
-        disposition: {
-          kind: "accepted_suppressed",
-          source: "issue #549 owner instruction",
-          scope: "outcome guard",
-          reason: "accepted only for this example",
-          boundedReopen: "reopen if this scope changes",
-        },
-      },
-      error: "findings[0].action defer is no longer supported",
     },
     {
       // #604 correctness r1 (P2-b): the deleted route kind `same_module` is no

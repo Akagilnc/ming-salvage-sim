@@ -38,8 +38,8 @@ For new findings, report only the finding body (`severity`, `category`,
 `claim_quote`, `location`, `suggested_fix`) plus an `action`. Do not emit routing
 disposition kinds — there are none. P0/P1 findings are always `action:"fix_now"`.
 Every finding you report is blocking: the runner counts it and sends it back
-through coder-fix. There is no "defer to another module" pass — if a gap is real,
-report it as a concrete fix.
+through coder-fix. There is no pass to another module — if a gap is real, report
+it as a concrete fix.
 Do not emit `accepted_suppressed`, `wont_fix`, or `rejected` for new findings in
 this standalone reviewer worker. If an explicit user decision, accepted ADR, or
 named issue acceptance text already accepts a bounded risk, omit that accepted

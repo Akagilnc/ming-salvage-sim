@@ -377,9 +377,9 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
 
   it("standalone reviewer prompt mandates fix_now-only findings with no routing disposition", () => {
     const reviewer = read("reviewer_review.md");
-    // Everything is blocking / fix_now; there is no defer-to-another-module pass.
+    // Everything is blocking / fix_now; there is no pass to another module.
     expect(reviewer).toMatch(/fix_now/);
-    expect(reviewer).toMatch(/no "defer to another module" pass/i);
+    expect(reviewer).toMatch(/no pass to another module/i);
     // And it explicitly does not emit an accepted_suppressed disposition either.
     expect(reviewer).toMatch(/do not emit `accepted_suppressed`/i);
   });
