@@ -104,7 +104,7 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 **决定**（母 ADR 决定4 阶段二 + 决定8 FF-5 承重功能负片）：旨意过四层颁出后，执行层按承办派 satisfaction/血债 + kinship(identity) 软判执行保真度 `exec_fidelity`——忠实 / 打折扭曲 / 阳奉阴违 / 反噬。后果落 issues 停滞 + factions 离心，**不扩 status enum**。
 
-**⚠️ 与现存密令核议的边界（P2，防平行造第二套）**：`season_simulator.md:79-82` 已实装**密令核议** LLM 软判（可行性 / 能力忠诚 / 目标反制 / 暴露 / 陈词真伪），母 ADR line91 明说密令「复用密令核议」。执行层四态软判（第二刀）**与密令核议是同一套执行软判、吃 resolve 算出的账本约束，不另起平行核议**。**第一刀诚实标 = 分裂裁判态**：edict 走 resolve 确定性（LLM 零算账）、密令仍走 simulator LLM 自判 done/failed（密令结构化裁判 = 第二刀收口）；**第一刀 simulator prompt 不因 edict 改 resolve 而改动密令『核议』章**（隔离两条裁判路径防渗漏）。
+**⚠️ 与现存密令核议的边界（P2，防平行造第二套）**：`season_simulator.md:84-90`「密旨动向」章已实装**密令核议** LLM 软判（核议五项在 :88——可行性 / 能力忠诚 / 目标反制 / 暴露 / 陈词真伪；本行原引 :79-82、后因文件插章漂移，2026-07-08 M12 闸勘正），母 ADR line91 明说密令「复用密令核议」。执行层四态软判（第二刀）**与密令核议是同一套执行软判、吃 resolve 算出的账本约束，不另起平行核议**。**第一刀诚实标 = 分裂裁判态**：edict 走 resolve 确定性（LLM 零算账）、密令仍走 simulator LLM 自判 done/failed（密令结构化裁判 = 第二刀收口）；**第一刀 simulator prompt 不因 edict 改 resolve 而改动密令『核议』章**（隔离两条裁判路径防渗漏）。
 
 **弃案**：执行层第一刀就做四态（超 scope）；执行层另起一套平行于密令核议的软判（违 dont-overbuild）；反咬后果扩 status enum。
 
@@ -170,7 +170,7 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 - **中旨闸整套**（provisional 生命周期 / edict_overdraw 螺旋 / MIDZHI 真闸量级）= 第二刀（最低契约在 0011-2 D2-8）。
 - **执行层四态细分 + 密令结构化裁判**（与现存密令核议合一）= 第二刀。
-- **召对 location 闸**（FF-4，决定8）= 单独切片（依赖 0009 location）。
+- **召对 location 闸**（FF-4，决定8）= 单独切片（依赖 0009 location）。〔**取代注（2026-07-08 M12 闸回标）**：本行系写作时快照——FF-4 已由 **ADR 0096**（召对 travel-gating＋候见制）兑现，不再单独立片；母 ADR line125/133 取代注同源。〕
 - **actor 取证引擎 + 认同度叛变（破局回路后半截）= #89 / 单独切片**（D5-5 诚实标）。
 
 ---
