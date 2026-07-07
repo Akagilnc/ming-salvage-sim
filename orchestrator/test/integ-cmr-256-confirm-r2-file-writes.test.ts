@@ -29,6 +29,7 @@ import type { WorktreeHandle } from "../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "prompts");
+const realSoulsDir = join(here, "..", "image", "souls");
 
 /**
  * Test subclass that stubs the clone seams so construction never touches real
@@ -56,6 +57,7 @@ function newBackend(home: string): FileWriteBackend {
     imageName: "img",
     skillsMount: "/tmp/skills",
     promptsDir: realPromptsDir,
+    soulsDir: realSoulsDir,
     home,
   });
 }

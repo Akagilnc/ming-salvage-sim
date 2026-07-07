@@ -7,7 +7,9 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "rebake": "bash image/build.sh",
+    "rebake:no-cache": "bash image/build.sh --no-cache"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",
