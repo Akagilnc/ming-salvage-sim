@@ -23,6 +23,7 @@ import {
   assertCompletionSignal,
   attributeFailure,
   branchForIssue,
+  candidateBranches,
   buildAuthPaths,
   buildIssueMeta,
   buildIssueSnapshot,
@@ -498,6 +499,32 @@ describe("realBackend branchForIssue (neutral, no fake epic number)", () => {
   it("round-trips through issueNumberFromBranch (the inverse must still parse it)", () => {
     for (const n of [12, 71, 256, 327]) {
       expect(issueNumberFromBranch(branchForIssue(n))).toBe(n);
+    }
+  });
+});
+
+// ─── candidateBranches (#593: old-name fallback for resume/worktree lookup) ──
+
+describe("realBackend candidateBranches (ordered candidate branch names)", () => {
+  it("returns the current convention first", () => {
+    const candidates = candidateBranches(256);
+    expect(candidates[0]).toBe("feat/issue-256");
+  });
+
+  it("includes the old convention as fallback", () => {
+    const candidates = candidateBranches(256);
+    expect(candidates[1]).toBe("feat/244-orchestrator-issue-256");
+  });
+
+  it("returns exactly two candidates (no more conventions)", () => {
+    expect(candidateBranches(99)).toHaveLength(2);
+  });
+
+  it("both candidates round-trip through issueNumberFromBranch", () => {
+    for (const n of [12, 71, 256]) {
+      for (const b of candidateBranches(n)) {
+        expect(issueNumberFromBranch(b)).toBe(n);
+      }
     }
   });
 });
