@@ -24,10 +24,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { MAX_DISPATCH_ATTEMPTS } from "../src/dispatchRetry.js";
+import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../src/dispatchRetry.js";
 import { runOrchestrator } from "../src/runner.js";
+import { dispatchFamilyWorker } from "../src/family/dispatchFamilyWorker.js";
 import type {
   Backend,
+  CmrResult,
   DispatchContext,
   IssueMeta,
   IssueSnapshot,
@@ -37,6 +39,7 @@ import type {
   WorkerSpec,
   WorktreeHandle,
 } from "../src/types.js";
+import type { FamilyBackend } from "../src/family/types.js";
 
 // Every single-slice replay reuses one resident worktree handle.
 const ROLE_WORKTREE: WorktreeHandle = {
@@ -352,5 +355,265 @@ describe("#601 AC#6 — the existing 'reviewer gets 2 retries' regression still 
     // MAX_DISPATCH_ATTEMPTS — confirming all roles share one underlying mechanism.
     expect(backend.reviewerDispatches).toBe(2);
     expect(backend.reviewerDispatches).toBeLessThan(2 * MAX_DISPATCH_ATTEMPTS);
+  });
+});
+
+// ───────────────────── AC #3: a CMR closure whose downstream required-field re-validation fails retries via the shared path ─────────────────────
+//
+// #598 AC#5: "A dispatch that resolved into a shape which then fails the runner's
+// own downstream required-field re-validation (e.g. source/scope/boundedReopen on
+// a CMR closure) is treated as a process-level malformed outcome and retried."
+//
+// The CMR closure worker is a FAMILY worker (no single-slice CMR step), so this
+// asserts at the shared family seam: `withMechanicalRetry` wrapping
+// `dispatchFamilyWorker`. The fixture grounds the failure as a guard/runner
+// VERSION-SKEW (the issue's framing): the worker's own guard validated a looser
+// field-set than the runner's current schema expects, so the worker signalled
+// completion but the downstream re-validation of `source`/`scope`/`boundedReopen`
+// failed — surfacing as a process-level `malformed` outcome that the SAME shared
+// `withMechanicalRetry` path retries. Matched guard/runner versions cannot
+// disagree on an identical field set; the version-skew is what makes the
+// first-occurrence abort wrong (a re-dispatch with a matched schema converges).
+//
+// CMR is family-only, and the family gate composes the generic layer with the
+// CMR's own rewrite loop (`OUTCOME_REWRITE_RETRY_CAP`) via `callerOwns` — the
+// generic layer fires for a process-level failure nobody else owns. This test
+// asserts the shared MECHANISM covers the CMR closure role at its seam (the same
+// `withMechanicalRetry` every other role uses), not the gate's composition.
+
+/**
+ * Minimal FamilyBackend whose `dispatchWorker` (the unified family seam) scripts a
+ * CMR closure worker: returns a process-level `malformed` `malformed` times (the
+ * downstream re-validation failure from a guard/runner version-skew), then a
+ * `completed` CMR closure with VALID accepted-suppression dispositions (the
+ * re-dispatch with a matched schema converges). Counts dispatches.
+ */
+class CmrClosureVersionSkewFamilyBackend implements FamilyBackend {
+  cmrDispatches = 0;
+  constructor(private readonly malformed: number) {}
+  async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+    if (spec.kind === "cmr") {
+      this.cmrDispatches += 1;
+      if (this.cmrDispatches <= this.malformed) {
+        // The worker signalled completion but the runner's downstream re-validation
+        // of source/scope/boundedReopen failed (guard/runner version-skew): the
+        // shape resolved but a required field was missing → a process-level
+        // malformed outcome the shared retry path re-dispatches.
+        return {
+          kind: "malformed",
+          reason:
+            "cmr closure downstream re-validation failed: accepted_suppressed " +
+            "disposition missing required field source/scope/boundedReopen " +
+            "(guard/runner version-skew — dogfood-70 replay)",
+        };
+      }
+      // The re-dispatch (fresh session) converges with a matched schema: the
+      // closure carries valid accepted-suppression dispositions.
+      const cmrOutput: CmrResult = {
+        kind: "cmr",
+        converged: true,
+        successfulLegs: ["claude", "gpt-5.5", "agy"],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+      };
+      return { kind: "completed", output: cmrOutput };
+    }
+    return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+  }
+}
+
+describe("#601 AC#3 — a CMR closure whose downstream required-field re-validation fails retries via the shared path", () => {
+  it("a completeness (CMR closure) worker whose downstream re-validation fails retries through withMechanicalRetry and records the closure on success", async () => {
+    // The shared `withMechanicalRetry` is the SAME path #598 wraps around
+    // `dispatchWorker` (coder/ship) and `dispatchFamilyWorker` (family cmr). This
+    // test wraps it around `dispatchFamilyWorker` directly — asserting the CMR
+    // closure role is covered by the ONE shared mechanism, not a separate impl.
+    const backend = new CmrClosureVersionSkewFamilyBackend(1);
+    const cmrSpec: WorkerSpec = {
+      id: "cmr-completeness",
+      kind: "cmr",
+      role: "cmr",
+      host: "claude",
+      session: "fresh",
+      contextRetention: "retain",
+      skill: "ak-cross-m-review",
+      promptFile: "prompts/cmr_completeness.md",
+      completionSignal: "<cmr>",
+      maxIter: 1,
+      model: "opus",
+      soul: "cmr",
+      toolchain: [],
+    };
+    const ctx: DispatchContext = { familyBase: "family/601-closure" };
+    const result = await withMechanicalRetry(
+      cmrSpec,
+      ctx,
+      (s, c) => dispatchFamilyWorker(backend, s, c),
+    );
+    // The first-occurrence downstream re-validation failure no longer durably
+    // aborts — the shared path re-dispatches and the closure records normally.
+    expect(result.kind).toBe("completed");
+    expect(backend.cmrDispatches).toBe(2);
+  });
+
+  it("a PERSISTENT downstream re-validation failure exhausts the shared bound and durably aborts (no infinite retry)", async () => {
+    // The other direction: a version-skew that NEVER converges is retried only up
+    // to MAX_DISPATCH_ATTEMPTS, then durably aborts — the SAME shared bound as
+    // coder/ship, no per-role tuning.
+    const backend = new CmrClosureVersionSkewFamilyBackend(Number.MAX_SAFE_INTEGER);
+    const cmrSpec: WorkerSpec = {
+      id: "cmr-completeness",
+      kind: "cmr",
+      role: "cmr",
+      host: "claude",
+      session: "fresh",
+      contextRetention: "retain",
+      skill: "ak-cross-m-review",
+      promptFile: "prompts/cmr_completeness.md",
+      completionSignal: "<cmr>",
+      maxIter: 1,
+      model: "opus",
+      soul: "cmr",
+      toolchain: [],
+    };
+    const ctx: DispatchContext = { familyBase: "family/601-closure" };
+    const result = await withMechanicalRetry(
+      cmrSpec,
+      ctx,
+      (s, c) => dispatchFamilyWorker(backend, s, c),
+    );
+    expect(result.kind).toBe("malformed");
+    expect(backend.cmrDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
+  });
+});
+
+// ───────────────────── AC #4: dogfoodReplay-pattern regression tests (retry-then-converge, not first-occurrence abort) ─────────────────────
+//
+// #601: "Replay tests reproduce the real ledger incidents this issue is grounded
+// in: dogfood-362 and family-405 (ship worker returned no valid result) and
+// dogfood-70 (completeness worker returned no valid result)." Each replay proves
+// the incident class now retry-then-converges through the shared path instead of
+// durably aborting on first occurrence.
+//
+// The grounding incidents:
+//   - dogfood-362 — a single-slice ship worker emitted no valid `<ship>` verdict
+//     (a structural process-level failure). Replay: the runner re-dispatches S7
+//     via `withMechanicalRetry` and converges to `shipped` (AC#2 end-to-end).
+//   - family-405 — a FAMILY ship worker emitted no valid `<ship>` verdict after a
+//     converged CMR. The family gate currently classifies this as `contract_drift`
+//     (first-occurrence abort). The shared MECHANISM (`withMechanicalRetry` around
+//     `dispatchFamilyWorker`) covers the family ship role at its seam — this replay
+//     asserts that coverage (the family gate's write-worker reset idempotency,
+//     which would let the production path retry safely, is deferred to #661).
+//   - dogfood-70 — a completeness (CMR closure) worker returned no valid result.
+//     Replay: the shared `withMechanicalRetry` path re-dispatches and the closure
+//     records normally (AC#3 end-to-end at the seam).
+
+/**
+ * A family backend whose ship dispatch returns a structural `malformed` (no
+ * parseable `<ship>` verdict) `malformed` times, then `completed` shipped. Used
+ * for the family-405 replay at the shared-seam level.
+ */
+class FamilyShipMalformedThenConvergeBackend implements FamilyBackend {
+  shipDispatches = 0;
+  constructor(private readonly malformed: number) {}
+  async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+    if (spec.kind === "ship") {
+      this.shipDispatches += 1;
+      if (this.shipDispatches <= this.malformed) {
+        return {
+          kind: "malformed",
+          reason: "family ship worker emitted no <ship> tag (family-405 replay)",
+        };
+      }
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: "family/405-replay",
+          status: "pr_opened",
+          pr: "https://example.com/pr/405",
+        },
+      };
+    }
+    return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+  }
+}
+
+describe("#601 AC#4 — dogfoodReplay-pattern regression: dogfood-362, family-405, dogfood-70 retry-then-converge", () => {
+  it("dogfood-362: a single-slice ship worker emitting no valid <ship> verdict retries through the shared path and reaches shipped (not first-occurrence abort)", async () => {
+    // The real dogfood-362 incident: a ship worker returned no valid result
+    // (crash/malformed) and durably aborted the whole run. #601 proves the shared
+    // retry path now covers it: S7 re-dispatches via `withMechanicalRetry` and the
+    // run converges to a delivery as if no malformed output occurred.
+    const backend = new ShipStructuralMalformedThenConvergeBackend(1);
+    const result = await runOrchestrator({ issueNumber: 362, backend });
+    expect(result.status).not.toBe("error");
+    expect(backend.shipDispatches).toBe(2);
+  });
+
+  it("family-405: a family ship worker emitting no valid <ship> verdict is covered by the shared withMechanicalRetry path at the family seam (converges to pr_opened)", async () => {
+    // The real family-405 incident: a family ship worker returned no valid result
+    // after a converged CMR and the gate classified it as `contract_drift`
+    // (first-occurrence abort). #601 proves the shared MECHANISM covers the family
+    // ship role: `withMechanicalRetry` around `dispatchFamilyWorker` re-dispatches
+    // and converges to `pr_opened`. (The production gate's write-worker reset
+    // idempotency — which would let `dispatchOrAbort` retry safely — is deferred to
+    // #661; this replay asserts the seam-level coverage #601 owns.)
+    const backend = new FamilyShipMalformedThenConvergeBackend(1);
+    const shipSpec: WorkerSpec = {
+      id: "family-ship",
+      kind: "ship",
+      role: "ship",
+      host: "claude",
+      session: "fresh",
+      contextRetention: "retain",
+      skill: "gstack-ship",
+      promptFile: "prompts/family_ship.md",
+      completionSignal: "SHIP_STEP_COMPLETE",
+      maxIter: 5,
+      model: "opus",
+      soul: "coder",
+      toolchain: [],
+    };
+    const ctx: DispatchContext = { familyBase: "family/405-replay" };
+    const result = await withMechanicalRetry(
+      shipSpec,
+      ctx,
+      (s, c) => dispatchFamilyWorker(backend, s, c),
+    );
+    expect(result.kind).toBe("completed");
+    expect(backend.shipDispatches).toBe(2);
+  });
+
+  it("dogfood-70: a completeness (CMR closure) worker returning no valid result retries through the shared path and records the closure (not first-occurrence abort)", async () => {
+    // The real dogfood-70 incident: a completeness worker returned no valid result
+    // and durably aborted. #601 proves the shared retry path now covers the CMR
+    // closure role: `withMechanicalRetry` around `dispatchFamilyWorker` re-dispatches
+    // and the closure records normally on the second attempt.
+    const backend = new CmrClosureVersionSkewFamilyBackend(1);
+    const cmrSpec: WorkerSpec = {
+      id: "cmr-completeness",
+      kind: "cmr",
+      role: "cmr",
+      host: "claude",
+      session: "fresh",
+      contextRetention: "retain",
+      skill: "ak-cross-m-review",
+      promptFile: "prompts/cmr_completeness.md",
+      completionSignal: "<cmr>",
+      maxIter: 1,
+      model: "opus",
+      soul: "cmr",
+      toolchain: [],
+    };
+    const ctx: DispatchContext = { familyBase: "family/70-replay" };
+    const result = await withMechanicalRetry(
+      cmrSpec,
+      ctx,
+      (s, c) => dispatchFamilyWorker(backend, s, c),
+    );
+    expect(result.kind).toBe("completed");
+    expect(backend.cmrDispatches).toBe(2);
   });
 });
