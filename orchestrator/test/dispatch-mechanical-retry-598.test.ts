@@ -164,6 +164,24 @@ describe("#598 withMechanicalRetry", () => {
     // Deferred to the caller's own bounded loop — one dispatch, no generic retry.
     expect(seen).toHaveLength(1);
   });
+
+  it("idempotency: resetBeforeRetry runs before EACH retry, never before the first attempt", async () => {
+    const events: string[] = [];
+    let calls = 0;
+    const dispatch = async (): Promise<WorkerResult> => {
+      calls += 1;
+      events.push(`dispatch#${calls}`);
+      return { kind: "failed", reason: "crash" };
+    };
+    await withMechanicalRetry(coderSpec(), {}, dispatch, {
+      resetBeforeRetry: async () => {
+        events.push("reset");
+      },
+    });
+    // A reset is interleaved before every retry (attempts 2..N), never before the
+    // first — so a retry never runs on top of the prior attempt's residue.
+    expect(events).toEqual(["dispatch#1", "reset", "dispatch#2", "reset", "dispatch#3"]);
+  });
 });
 
 // ── #598 integration: coder/ship inherit the generic retry (the #592 asymmetry) ──
