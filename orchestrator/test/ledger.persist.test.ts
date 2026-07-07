@@ -137,7 +137,7 @@ describe("persisted step ledger (#249)", () => {
     const { backend } = await runAndCapture();
 
     const steps = backend.ledgerCalls.map((c) => c.entry.step);
-    expect(steps).toEqual(["S0", "S1", "S2", "S3", "S4", "S7", "S8"]);
+    expect(steps).toEqual(["S0", "S1", "S2", "S3", "S4", "S7", "S9", "S10", "S11", "S12", "S8"]);
   });
 
   it("every ledger entry carries prompt_hash and sessionId (audit fields)", async () => {
@@ -240,7 +240,7 @@ describe("persisted step ledger (#249)", () => {
     const allSteps = backend.ledgerCalls.map((c) => c.entry.step);
 
     // Every step in the canonical order must appear exactly once (ADR 0030).
-    const canonicalOrder = ["S0", "S1", "S2", "S3", "S4", "S7", "S8"];
+    const canonicalOrder = ["S0", "S1", "S2", "S3", "S4", "S7", "S9", "S10", "S11", "S12", "S8"];
     expect(allSteps).toEqual(canonicalOrder);
 
     // Cross-check: no step is absent.
@@ -254,7 +254,7 @@ describe("persisted step ledger (#249)", () => {
 
     // The in-memory ledger (#247 contract) must still be present and consistent.
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S10", "S11", "S12", "S8",
     ]);
   });
 

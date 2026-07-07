@@ -31,6 +31,7 @@ import {
   type StopReason,
   type StopSummary,
 } from "./stopSummary.js";
+import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
 import type {
   Backend,
   DispatchContext,
@@ -503,6 +504,13 @@ class DogfoodSingleSliceBackend implements Backend {
         kind: "completed",
         output: scripted ?? { kind: "reviewer", findings: [] },
       };
+    }
+    // #596 review-loop skeleton support for dogfood replays (and any path that
+    // reaches S7 ship + S9+): return the shared deterministic stubs so S9–S12
+    // succeed without fake 'coder' output (which route/runner rejects).
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton != null) {
+      return skeleton;
     }
     const scripted =
       spec.id === "S5" ? this.coderOutputs[this.coderAttempt] : undefined;

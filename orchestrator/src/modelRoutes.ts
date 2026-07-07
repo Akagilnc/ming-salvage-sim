@@ -15,6 +15,10 @@ export const MODEL_ROUTE_SLOTS = [
   "merger",
   "cmrCompleteness",
   "cmrCorrectness",
+  "verify",
+  "fixer",
+  "cleanup",
+  "docRelease",
 ] as const;
 
 export const MODEL_ROUTE_LEG_COLLECTIONS = ["cmrReview"] as const;
@@ -80,6 +84,10 @@ const NORMAL_SLOTS: ModelSlotMap = {
   merger: "sonnet",
   cmrCompleteness: "opus",
   cmrCorrectness: "opus",
+  verify: "opus",
+  fixer: "sonnet",
+  cleanup: "sonnet",
+  docRelease: "sonnet",
 };
 
 const NORMAL_LEG_COLLECTIONS: ModelRouteLegCollectionMap = {
@@ -101,6 +109,10 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
       merger: "sonnet",
       cmrCompleteness: "opus",
       cmrCorrectness: "opus",
+      verify: "opus",
+      fixer: "sonnet",
+      cleanup: "sonnet",
+      docRelease: "sonnet",
     },
     legCollections: {
       cmrReview: [
@@ -120,6 +132,10 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
       merger: "sonnet",
       cmrCompleteness: "opus",
       cmrCorrectness: "opus",
+      verify: "opus",
+      fixer: "sonnet",
+      cleanup: "sonnet",
+      docRelease: "sonnet",
     },
     legCollections: {
       cmrReview: [
@@ -137,6 +153,10 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
       merger: "gpt-5.5",
       cmrCompleteness: "gpt-5.5",
       cmrCorrectness: "gpt-5.5",
+      verify: "gpt-5.5",
+      fixer: "gpt-5.5",
+      cleanup: "gpt-5.5",
+      docRelease: "gpt-5.5",
     },
     legCollections: {
       cmrReview: [
@@ -156,6 +176,10 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
       merger: "gpt-5.5",
       cmrCompleteness: "gpt-5.5",
       cmrCorrectness: "gpt-5.5",
+      verify: "gpt-5.5",
+      fixer: "gpt-5.5",
+      cleanup: "gpt-5.5",
+      docRelease: "gpt-5.5",
     },
     legCollections: {
       cmrReview: [
@@ -176,6 +200,10 @@ const ENV_BY_SLOT: Readonly<Record<ModelRouteSlot, string>> = {
   merger: "ORCHESTRATOR_MERGER_MODEL",
   cmrCompleteness: "ORCHESTRATOR_CMR_COMPLETENESS_MODEL",
   cmrCorrectness: "ORCHESTRATOR_CMR_CORRECTNESS_MODEL",
+  verify: "ORCHESTRATOR_VERIFY_MODEL",
+  fixer: "ORCHESTRATOR_FIXER_MODEL",
+  cleanup: "ORCHESTRATOR_CLEANUP_MODEL",
+  docRelease: "ORCHESTRATOR_DOCRELEASE_MODEL",
 };
 const ENV_BY_LEG_COLLECTION: Readonly<Record<ModelRouteLegCollection, string>> = {
   cmrReview: "ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS",

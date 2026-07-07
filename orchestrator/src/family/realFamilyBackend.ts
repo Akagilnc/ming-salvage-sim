@@ -96,7 +96,23 @@ import {
   REQUIRED_SOUL_FILES,
   soulsDirError,
   type SelfReportedCoder,
+  verifyOutputSchema,
+  fixerOutputSchema,
+  cleanupOutputSchema,
+  docReleaseOutputSchema,
 } from "../realBackend.js";
+import {
+  isValidCleanupResult,
+  isValidDocReleaseResult,
+  isValidFixerResult,
+  isValidVerifyResult,
+} from "../reviewLoopOutcome.js";
+import type {
+  CleanupResult,
+  DocReleaseResult,
+  FixerResult,
+  VerifyResult,
+} from "../types.js";
 import {
   WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
@@ -3356,4 +3372,172 @@ function decodeChildOutput(v: unknown): string {
 function gitExitStatus(err: unknown): number | undefined {
   const status = (err as { status?: unknown } | null)?.status;
   return typeof status === "number" ? status : undefined;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// #596 F2: family-side real decode/transport path for the 4 review-loop kinds.
+// Mirror cmr/ship/merger parse style (last <tag> wins, JSON, explicit malformed on
+// bad shape). Use isValid*Result guards (from reviewLoopOutcome) as decode validation.
+// Raw (tag string) fed in tests — not fake WorkerOutput construction. Shape-valid
+// false flags pass (no semantic branching). Malformed fails closed.
+// Single-slice uses RealBackend outputFor/decodeOutput + extract*Tag; this is family eqv.
+// ════════════════════════════════════════════════════════════════════════════
+
+function extractLastTag(stdout: string, tag: string): string | undefined {
+  // Mirror single-slice extractTaggedJson semantics exactly (indexOf collection +
+  // backward scan for last start that has a close after it). This avoids:
+  // (1) prose/conversational <tag> mentions before the real block poisoning the
+  //     span (regex from mention open to first close), (2) regex perf on large
+  //     stdout, (3) divergence from the realBackend.ts side of the seam.
+  // lastIndexOf alone is insufficient (must fallback from unclosed trailing opens).
+  const open = `<${tag}>`;
+  const close = `</${tag}>`;
+  const starts: number[] = [];
+  for (
+    let idx = stdout.indexOf(open);
+    idx !== -1;
+    idx = stdout.indexOf(open, idx + open.length)
+  ) {
+    starts.push(idx);
+  }
+  if (starts.length === 0) {
+    return undefined;
+  }
+  for (let i = starts.length - 1; i >= 0; i -= 1) {
+    const bodyStart = starts[i] + open.length;
+    const end = stdout.indexOf(close, bodyStart);
+    if (end === -1) continue;
+    const body = stdout.slice(bodyStart, end);
+    return body;
+  }
+  return undefined;
+}
+
+export function parseVerifyOutcome(
+  stdout: string,
+): VerifyResult | { kind: "malformed"; reason: string } {
+  const last = extractLastTag(stdout, "verify");
+  if (last === undefined) {
+    return { kind: "malformed", reason: "verify worker emitted no <verify> tag" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(last.trim());
+  } catch {
+    return { kind: "malformed", reason: "verify worker <verify> tag was not valid JSON" };
+  }
+  if (parsed === null || typeof parsed !== "object") {
+    return { kind: "malformed", reason: "verify worker <verify> tag was not a JSON object" };
+  }
+  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
+  // single-slice side (realBackend decodeOutput). Extra keys → malformed (fail-closed),
+  // matching parseCmrOutcome / parse* style and the header claim to "Mirror cmr…parse style".
+  const shape = verifyOutputSchema.safeParse(parsed);
+  if (!shape.success) {
+    return {
+      kind: "malformed",
+      reason: "verify worker <verify> tag did not satisfy verifyOutputSchema (extra keys or wrong types)",
+    };
+  }
+  const candidate: VerifyResult = { kind: "verify", converged: shape.data.converged };
+  if (!isValidVerifyResult(candidate)) {
+    return { kind: "malformed", reason: "verify worker <verify> tag did not satisfy isValidVerifyResult guard" };
+  }
+  return candidate;
+}
+
+export function parseFixerOutcome(
+  stdout: string,
+): FixerResult | { kind: "malformed"; reason: string } {
+  const last = extractLastTag(stdout, "fixer");
+  if (last === undefined) {
+    return { kind: "malformed", reason: "fixer worker emitted no <fixer> tag" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(last.trim());
+  } catch {
+    return { kind: "malformed", reason: "fixer worker <fixer> tag was not valid JSON" };
+  }
+  if (parsed === null || typeof parsed !== "object") {
+    return { kind: "malformed", reason: "fixer worker <fixer> tag was not a JSON object" };
+  }
+  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
+  // single-slice side. Extra keys → malformed (fail-closed).
+  const shape = fixerOutputSchema.safeParse(parsed);
+  if (!shape.success) {
+    return {
+      kind: "malformed",
+      reason: "fixer worker <fixer> tag did not satisfy fixerOutputSchema (extra keys or wrong types)",
+    };
+  }
+  const candidate: FixerResult = { kind: "fixer", committed: shape.data.committed };
+  if (!isValidFixerResult(candidate)) {
+    return { kind: "malformed", reason: "fixer worker <fixer> tag did not satisfy isValidFixerResult guard" };
+  }
+  return candidate;
+}
+
+export function parseCleanupOutcome(
+  stdout: string,
+): CleanupResult | { kind: "malformed"; reason: string } {
+  const last = extractLastTag(stdout, "cleanup");
+  if (last === undefined) {
+    return { kind: "malformed", reason: "cleanup worker emitted no <cleanup> tag" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(last.trim());
+  } catch {
+    return { kind: "malformed", reason: "cleanup worker <cleanup> tag was not valid JSON" };
+  }
+  if (parsed === null || typeof parsed !== "object") {
+    return { kind: "malformed", reason: "cleanup worker <cleanup> tag was not a JSON object" };
+  }
+  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
+  // single-slice side. Extra keys → malformed (fail-closed).
+  const shape = cleanupOutputSchema.safeParse(parsed);
+  if (!shape.success) {
+    return {
+      kind: "malformed",
+      reason: "cleanup worker <cleanup> tag did not satisfy cleanupOutputSchema (extra keys or wrong types)",
+    };
+  }
+  const candidate: CleanupResult = { kind: "cleanup", ok: shape.data.ok };
+  if (!isValidCleanupResult(candidate)) {
+    return { kind: "malformed", reason: "cleanup worker <cleanup> tag did not satisfy isValidCleanupResult guard" };
+  }
+  return candidate;
+}
+
+export function parseDocReleaseOutcome(
+  stdout: string,
+): DocReleaseResult | { kind: "malformed"; reason: string } {
+  const last = extractLastTag(stdout, "docRelease");
+  if (last === undefined) {
+    return { kind: "malformed", reason: "docRelease worker emitted no <docRelease> tag" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(last.trim());
+  } catch {
+    return { kind: "malformed", reason: "docRelease worker <docRelease> tag was not valid JSON" };
+  }
+  if (parsed === null || typeof parsed !== "object") {
+    return { kind: "malformed", reason: "docRelease worker <docRelease> tag was not a JSON object" };
+  }
+  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
+  // single-slice side. Extra keys → malformed (fail-closed).
+  const shape = docReleaseOutputSchema.safeParse(parsed);
+  if (!shape.success) {
+    return {
+      kind: "malformed",
+      reason: "docRelease worker <docRelease> tag did not satisfy docReleaseOutputSchema (extra keys or wrong types)",
+    };
+  }
+  const candidate: DocReleaseResult = { kind: "docRelease", released: shape.data.released };
+  if (!isValidDocReleaseResult(candidate)) {
+    return { kind: "malformed", reason: "docRelease worker <docRelease> tag did not satisfy isValidDocReleaseResult guard" };
+  }
+  return candidate;
 }

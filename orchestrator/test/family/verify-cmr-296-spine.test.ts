@@ -815,8 +815,8 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
       { childIssue: 294, status: "merged" },
       { childIssue: 295, status: "merged" },
       {
-        status: "shipped",
-        event: "shipped",
+        status: "review_loop_converged",
+        event: "review_loop_converged",
         phase: "final",
         pr: "pr://family/291-base",
         familyHeadAfter: "ship-head",
@@ -857,7 +857,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
       },
     ]);
     // No NEW ship: the prior marker stands, exactly one on the ledger (no re-bump).
-    expect(backend.ledger.filter((e) => e.status === "shipped")).toHaveLength(1);
+    expect(backend.ledger.filter((e) => e.status === "review_loop_converged")).toHaveLength(1);
     // Honest: every child is ledger-merged ⇒ already delivered = success.
     expect(result.status).toBe("success");
     expect(result.children.every((c) => c.status === "already_done")).toBe(true);
@@ -877,8 +877,8 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
       { childIssue: 294, status: "merged" },
       { childIssue: 295, status: "merged" },
       {
-        status: "shipped",
-        event: "shipped",
+        status: "review_loop_converged",
+        event: "review_loop_converged",
         phase: "final",
         pr: "pr://family/291-base",
         familyHeadAfter: "ship-head",
@@ -908,7 +908,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
       event: "escalated",
       phase: "final",
       escalationKind: "failure",
-      reason: "family shipped marker no longer verifies: PR is CLOSED but must be OPEN",
+      reason: "family review_loop_converged marker no longer verifies: PR is CLOSED but must be OPEN",
       familyHeadAfter: "ship-head",
     }));
     expect(result.status).toBe("escalated");
@@ -925,8 +925,8 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
       { childIssue: 294, status: "merged" },
       { childIssue: 295, status: "merged" },
       {
-        status: "shipped",
-        event: "shipped",
+        status: "review_loop_converged",
+        event: "review_loop_converged",
         phase: "final",
         pr: "pr://family/291-base",
         familyHeadAfter: "ship-head",
@@ -950,7 +950,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
       phase: "final",
       escalationKind: "failure",
       reason:
-        "family ledger contains a shipped marker but this backend cannot verify the PR still covers the current family HEAD",
+        "family ledger contains a review_loop_converged marker but this backend cannot verify the PR still covers the current family HEAD",
       familyHeadAfter: "ship-head",
     }));
     expect(result.status).toBe("escalated");
@@ -1035,8 +1035,8 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
       { childIssue: 294, status: "merged" },
       { childIssue: 295, status: "merged" },
       {
-        status: "shipped",
-        event: "shipped",
+        status: "review_loop_converged",
+        event: "review_loop_converged",
         phase: "final",
         pr: "pr://current",
         familyHeadAfter: "ship-head",
@@ -1056,7 +1056,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
     expect(backend.verifyShippedPrCalls).toEqual([
       { pr: "pr://current", familyBase: "family/291-base", expectedHead: "ship-head" },
     ]);
-    expect(backend.ledger.filter((e) => e.status === "shipped")).toHaveLength(1);
+    expect(backend.ledger.filter((e) => e.status === "review_loop_converged")).toHaveLength(1);
     expect(result.status).toBe("success");
     expect(result.familyHead).toBe("ship-head");
   });

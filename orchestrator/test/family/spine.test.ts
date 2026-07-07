@@ -28,6 +28,7 @@ import type {
   FamilyLedgerEntry,
   MergeRequest,
 } from "../../src/family/types.js";
+import { resolveActiveModelRoute } from "../../src/modelRoutes.js";
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
 
@@ -73,7 +74,7 @@ class ChildBackend implements Backend {
 class FakeFamilyBackend implements FamilyBackend {
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
-  private head = "family-base-0";
+  head = "family-base-0";
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
     this.merges.push(child);
     this.head = `+${child.childIssue}`;
@@ -91,6 +92,11 @@ class FakeFamilyBackend implements FamilyBackend {
   async readFamilyHead(_familyBase: string): Promise<string> {
     return this.head;
   }
+
+  // #596 r2 support for full final barrier in spine tests (runVerifyCmr fresh path)
+  runFamilyVerify?: (req: any) => Promise<any>;
+  dispatchWorker?: (spec: any, ctx?: any) => Promise<any>;
+  verifyFamilyShippedPr?: (req: any) => Promise<{ ok: boolean }>;
 }
 
 function epicWith(...childIssues: number[]): FamilyEpic {
@@ -139,8 +145,8 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     familyBackend.ledger.push(
       { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
       {
-        status: "shipped",
-        event: "shipped",
+        status: "review_loop_converged",
+        event: "review_loop_converged",
         phase: "final",
         pr: "pr://family/293-base",
         familyHeadAfter: "family-base-0",
@@ -158,7 +164,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     expect(result.status).toBe("success");
     expect(result.stopSummary).toMatchObject({
       reason: "already_done",
-      summary: "family run already shipped for the current family HEAD",
+      summary: "family run already converged for the current family HEAD",
       metadata: {
         heads: expect.objectContaining({
           actualFamilyHead: "family-base-0",
@@ -166,6 +172,168 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       },
     });
     expect(singleSliceBackend.prepareBases).toEqual([]);
+  });
+
+  it("shipped-only (bound to current head, no review_loop_converged) continues into review-loop: writes converged marker, reports already_done, no re-ship (F2)", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "pr://family/293-base",
+        familyHeadAfter: "family-base-0",
+      },
+    );
+    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.children.every((c) => c.status === "already_done")).toBe(true);
+    expect(result.stopSummary).toMatchObject({
+      reason: "already_done",
+      summary: "family review-loop converged during resume for the current family HEAD",
+      metadata: {
+        heads: expect.objectContaining({
+          actualFamilyHead: "family-base-0",
+        }),
+      },
+    });
+    // Key assertion: review_loop_converged was WRITTEN by the resume path (was only pre-seeded before)
+    const convergedRows = familyBackend.ledger.filter(
+      (e) => e.status === "review_loop_converged",
+    );
+    expect(convergedRows).toHaveLength(1);
+    expect(convergedRows[0]).toMatchObject({
+      status: "review_loop_converged",
+      event: "review_loop_converged",
+      phase: "final",
+      pr: "pr://family/293-base",
+      familyHeadAfter: "family-base-0",
+    });
+    // No child re-work (shipped resume short-circuits before verifyCmr barrier)
+    expect(singleSliceBackend.prepareBases).toEqual([]);
+  });
+
+  it("shipped stopSummary with verifiedCmrHead is copied into review_loop_converged terminal marker and visible on resume (F1 regression: makes fresh-ship path consistent)", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    const richStopSummary = {
+      reason: "success",
+      summary: "family shipped+loop",
+      metadata: {
+        heads: {
+          actualFamilyHead: "family-base-0",
+          verifiedCmrHead: "verified-cmr-from-fresh",
+          sources: { verifiedCmrHead: "cmr_passed" },
+        },
+      },
+    };
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "pr://family/293-base",
+        familyHeadAfter: "family-base-0",
+        stopSummary: richStopSummary,
+      },
+    );
+    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("success");
+    // regression: terminal marker preserves verifiedCmrHead (the bug was fresh-ship write omitted stopSummary; resume sibling already copied; now both paths consistent)
+    expect(result.stopSummary.metadata?.heads?.verifiedCmrHead).toBe(
+      "verified-cmr-from-fresh",
+    );
+    const convergedRows = familyBackend.ledger.filter(
+      (e) => e.status === "review_loop_converged",
+    );
+    expect(convergedRows).toHaveLength(1);
+    expect(convergedRows[0]?.stopSummary?.metadata?.heads?.verifiedCmrHead).toBe(
+      "verified-cmr-from-fresh",
+    );
+    // No child re-work
+    expect(singleSliceBackend.prepareBases).toEqual([]);
+  });
+
+  it("fresh-ship path (no pre-seeded shipped row) lets runVerifyCmr run the write at verifyCmr.ts and produces review_loop_converged carrying metadata.heads.verifiedCmrHead + material stopSummary (pins the actual fixed path, not resume copy)", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+
+    // NO shipped row pre-seeded (and no converged). runFamily will merge then hit real runVerifyCmr fresh-ship path.
+    // Pre-seed nothing for final markers; the cmr dispatch below will cause cmr_passed to be written with material.
+    familyBackend.runFamilyVerify = async (_req: any): Promise<any> => ({ ok: true });
+
+    const resolvedRoute = resolveActiveModelRoute();
+    const declared = resolvedRoute.legCollections.cmrReview.map((l: { slug: string }) => l.slug);
+    const cmrOutput = {
+      kind: "cmr",
+      converged: true,
+      successfulLegs: declared.length > 0 ? declared : ["opus"],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      evidencePaths: [],
+    };
+    familyBackend.dispatchWorker = async (spec: any, _ctx?: any): Promise<any> => {
+      if (spec.kind === "cmr") {
+        return { kind: "completed", output: cmrOutput };
+      }
+      if (spec.kind === "ship") {
+        const prHead = familyBackend.head;
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: "family/293-base",
+            status: "pr_opened",
+            pr: "pr://family/293-base-fresh",
+            prHead,
+          },
+        };
+      }
+      return { kind: "failed", reason: "unexpected kind in #596 r2 fresh-ship spine test" };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+      // verifyCmr left default → real runVerifyCmr executes the fresh ship + recordReviewLoopConverged path
+    });
+
+    expect(result.status).toBe("success");
+    const convergedRows = familyBackend.ledger.filter(
+      (e) => e.status === "review_loop_converged",
+    );
+    expect(convergedRows).toHaveLength(1);
+    // must carry the verifiedCmrHead from the material cmr_passed stopSummary threaded through shipped → converged
+    const written = convergedRows[0];
+    expect(written?.stopSummary?.metadata?.heads?.verifiedCmrHead).toBe("+10");
+    // also carries material stopSummary metadata (from familyCmrPassStopSummary threaded via fresh-ship)
+    expect(written?.stopSummary?.reason).toBe("success");
+    expect(written?.stopSummary?.metadata?.heads?.sources?.verifiedCmrHead).toBe(
+      "latest cmr_passed ledger row",
+    );
+    // Child work happened (fresh run, not resume short-circuit); final barrier ran via real runVerifyCmr
+    expect(singleSliceBackend.prepareBases).toEqual(["family/293-base"]);
   });
 
   it("each child is cut from the FAMILY base (not main) and does NOT push remotely", async () => {

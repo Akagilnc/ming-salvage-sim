@@ -21,6 +21,7 @@
 import { describe, expect, it } from "vitest";
 import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../src/dispatchRetry.js";
 import { runOrchestrator } from "../src/runner.js";
+import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
   DispatchContext,
@@ -273,6 +274,8 @@ class CoderCrashBackend implements Backend {
   async writeLedger(): Promise<void> {}
 
   async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) return skeleton;
     if (spec.kind === "coder" && spec.id === "S2") {
       this.coderDispatches += 1;
       if (this.coderDispatches <= this.coderFailures) {
@@ -334,6 +337,8 @@ class ReviewerCrashBackend implements Backend {
   async writeLedger(): Promise<void> {}
 
   async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) return skeleton;
     if (spec.kind === "reviewer") {
       this.reviewerDispatches += 1;
       if (this.reviewerDispatches <= this.reviewerFailures) {
@@ -420,6 +425,8 @@ class ShipScriptBackend implements Backend {
   async push(): Promise<void> {}
   async writeLedger(): Promise<void> {}
   async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) return skeleton;
     if (spec.kind === "ship") {
       this.shipDispatches += 1;
       if (this.shipDispatches <= this.crashes) {

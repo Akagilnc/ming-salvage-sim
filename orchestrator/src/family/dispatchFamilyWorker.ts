@@ -35,6 +35,7 @@ import {
   modelForSlot,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
+import { skeletonReviewLoopWorkerResult } from "../reviewLoopOutcome.js";
 import type {
   FamilyBackend,
   IntegratedCmrPass,
@@ -257,6 +258,14 @@ export async function legacyDispatchFamilyWorker(
         status: "pr_opened",
       },
     };
+  }
+
+  // #596 skeleton: deterministic no-op stubs for the family review-loop workers
+  // when the backend has no real implementation. Shared resolver (single-slice
+  // + family + spy backends return the SAME stub verdicts).
+  const skeletonResult = skeletonReviewLoopWorkerResult(spec.kind);
+  if (skeletonResult !== undefined) {
+    return skeletonResult;
   }
 
   throw new Error(

@@ -9,6 +9,7 @@ import {
   printableRouteLineup,
   resolveRouteModels,
 } from "../src/modelRoutes.js";
+import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
   DispatchContext,
@@ -47,6 +48,10 @@ describe("#422 model route presets", () => {
       merger: "sonnet",
       cmrCompleteness: "opus",
       cmrCorrectness: "opus",
+      verify: "opus",
+      fixer: "sonnet",
+      cleanup: "sonnet",
+      docRelease: "sonnet",
     });
     expect(printableRouteLineup(resolved)).toEqual(
       [
@@ -58,6 +63,10 @@ describe("#422 model route presets", () => {
         "merger=sonnet",
         "cmrCompleteness=opus",
         "cmrCorrectness=opus",
+        "verify=opus",
+        "fixer=sonnet",
+        "cleanup=sonnet",
+        "docRelease=sonnet",
         "cmrReview=[codex:gpt-5.5,claude:opus,agy:agy]",
       ].join("\n"),
     );
@@ -111,6 +120,16 @@ describe("#422 model route presets", () => {
     expect(() =>
       resolveRouteModels("normal", { coder: "does-not-exist" }),
     ).toThrow(/unknown model slug/i);
+  });
+
+  it("verify-TARGETED: mis/unconfigured verify slot fails closed (no silent fallback to cheap tier per AC3)", () => {
+    expect(() =>
+      resolveRouteModels("normal", { verify: "does-not-exist" }),
+    ).toThrow(/unknown model slug/i);
+    // default preset for verify on "normal" is "opus" (no env read in resolveRouteModels)
+    const resolved = resolveRouteModels("normal", {});
+    expect(resolved.slots.verify).toBe("opus");
+    // bad explicit still caught above; the targeted proves verify slot participates in fail-closed
   });
 
   it("claude-tight has no Claude-family slots across every slot", () => {
@@ -347,6 +366,10 @@ describe("#422 model route presets", () => {
         }
         if (spec.kind === "reviewer") {
           return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) {
+          return skeleton;
         }
         return {
           kind: "completed",
