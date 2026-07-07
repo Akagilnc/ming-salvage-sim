@@ -858,6 +858,39 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     expect(b.resetCalls).toBe(MAX_DISPATCH_ATTEMPTS - 1);
   });
 
+  it("#598 r5: a NON-conflict re-merge failure in the reset hook rethrows → the merger is NOT re-dispatched on an un-re-established state", async () => {
+    // The merger crashes (needs retry); the reset hook's re-establishing
+    // `git merge --no-ff` then fails as a NON-conflict git error leaving NO MERGE_HEAD
+    // (dirty worktree / lock). reestablishConflictForRetry must RETHROW (not swallow) —
+    // so retryProcessCrash counts it as a reset failure and SKIPS the merger dispatch,
+    // never running the agent with no conflict re-established.
+    class ResetRemergeFailsBackend extends FakeSeamsBackend {
+      crashesLeft = 1;
+      protected override async runMergerAgent(req: ConflictResolveRequest) {
+        this.mergerCalls.push(req);
+        if (this.crashesLeft > 0) {
+          this.crashesLeft -= 1;
+          throw new Error("merger crashed");
+        }
+        return this.mergerOutcome;
+      }
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        if (file === "git" && args[0] === "merge" && args[1] === "--no-ff") {
+          throw new Error("git merge: fatal (dirty worktree / lock)");
+        }
+        return super.sh(file, args, cwd);
+      }
+    }
+    const b = new ResetRemergeFailsBackend(opts(trackRepo()));
+    b.mergeInProgressFake = false; // no MERGE_HEAD after the failed re-merge
+    await expect(
+      b.resolveMergeConflict({ childIssue: 24, childBranch: "feat/child-24" }),
+    ).rejects.toThrow();
+    // Merger crashed on attempt 1; retries 2..N skipped its dispatch because the reset
+    // (re-merge) rethrew without re-establishing the conflict.
+    expect(b.mergerCalls).toHaveLength(1);
+  });
+
   it("#598 idempotency: a merger that COMMITTED the merge then crashed is NOT re-run — the landed child is recognized", async () => {
     // The dangerous idempotency gap (cmr codexB): the agent resolves + COMMITS the
     // merge (advances the family base ref), then the sc.run crashes before returning.

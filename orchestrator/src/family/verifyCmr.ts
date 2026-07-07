@@ -1400,6 +1400,13 @@ async function dispatchOrAbort(
     // replay). So the generic layer keeps its own counter and never double-counts.
     // A persistent crash is re-thrown so the catch below stamps the domain "threw on
     // startup" message the gate surfaces as INCOMPLETE_GATE.
+    //
+    // DEFERRED (#661, needs-design): no resetBeforeRetry hook here. The CMR worker is
+    // read-only so it needs none, but the WRITE-capable family coder-fix / ship (both
+    // reached via dispatchOrAbort) can throw after a partial write/commit, so a crash
+    // retry may run on the prior attempt's residue. Same write-worker idempotency class
+    // as the single-slice coder (#661, ADR 0024 committed-preservation tension); a
+    // family-repo residue cleanup hook is the fix once that design lands.
     return await withMechanicalRetry(
       spec,
       ctx,
