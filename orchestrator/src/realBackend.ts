@@ -2823,7 +2823,10 @@ export class RealBackend implements Backend {
       return { kind: "failed", reason: `${outcome.reason} — ${outcome.diagnosis}` };
     }
     if (outcome.kind === "malformed") {
-      // No parseable verdict / no completion signal ⇒ malformed (never a success).
+      // No parseable verdict / no completion signal ⇒ a STRUCTURAL process-level
+      // failure (the worker emitted no valid `<ship>` output). #601: this retries via
+      // the shared `withMechanicalRetry` path (the dogfood-362 / family-405 incident
+      // class), so it maps to the retryable `malformed` kind — NOT a judged verdict.
       return { kind: "malformed", reason: outcome.reason };
     }
     // Branch-identity check (cmr S336 r3 F1): the worker self-reports `branch`, and
@@ -2832,10 +2835,13 @@ export class RealBackend implements Backend {
     // the worker to report THE shipped branch — the resident slice branch already
     // checked out (`branchStrategy:{type:"head"}`), with no legitimate rename path —
     // so an `outcome.branch` ≠ the worktree branch it was asked to deliver is
-    // off-contract → malformed (never trust the self-reported branch identity).
+    // off-contract. #601: this is a JUDGED off-contract delivery (the worker shipped
+    // something we can rule on), NOT a structural process failure → map to `failed`
+    // so the runner's `callerOwns` claims it and it passes through with ZERO retry
+    // (never re-running a decided wrong-branch delivery).
     if (outcome.branch !== ctx.worktree.branch) {
       return {
-        kind: "malformed",
+        kind: "failed",
         reason: `ship worker reported branch "${outcome.branch}" but was asked to deliver "${ctx.worktree.branch}" (a ship of a different branch is not the slice delivery)`,
       };
     }
