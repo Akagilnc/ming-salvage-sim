@@ -1,4 +1,8 @@
-# 下一步执行顺序（临时备忘 · 2026-07-07 更新）
+# 下一步执行顺序（临时备忘 · 2026-07-08 凌晨更新）
+
+**✅ 四片 bench 之夜全 ship(2026-07-07/08)：#593(PR #680)、#372(PR #682)、#617(PR #679)、#601(PR #681) 全部 merge 进 main**——四个真实切片由便宜 coder（GLM-5.2 / kimi-k2.7-code / grok-build / grok-composer）打穿完整评审链（双轴评审→per-slice cmr→线上 bot→threads 全 resolve），runner 全程零改码，bench 数据/缺陷人格/角色×池子矩阵全在 **#424**。#681 尾单 codex P2（无信号 ship→escalate 零重试）经 GLM 证据裁决 DEFER→**#661** 备案（用户 2026-07-08 拍板），`realBackend.ts:2825-2831` 注释 doc bug 随 kind-mapping 决定原子改。#440 epic 剩 3 open 子片：#366（#596 走闸中→#600→#602→#603）/ #367 / #592 已由 #601 交付关闭待核。
+
+**▶ 当前动作（2026-07-08）：#596 skeleton 走闸中**（三手接力 kimi→GLM→grok，双轴评审 r1/r2 已全 clear、9/9 AC MET，per-slice cmr 在跑）→ PR → 落 main 后 **#600 派 grok-composer 裸 issue（判断地形大考，主力 coder 加冕战，数据入 #424）**。
 
 **✅ #597 全 ship(2026-07-07):删 family CMR round-cap——PR #664 merge 进 main(merge commit `59d4bcfd`)。删掉 `MAX_CMR_CODER_FIX_ROUNDS=3` + `remainingCmrCoderFixRounds` 全线穿线;有 blocking 就一直派 coder-fix+fresh re-review,退出只剩收敛(→ship)或 worker-raised escalate。coder = opencode `zai/glm-5.2`(派发腿),runner=Claude(验 DoD+评审+ship)。本地双闸(completeness 3/3,含 Claude 差分执行证非空壳 + correctness 2/2)+ 线上 3 轮:Codex 把「删 cap 后无界循环」P2→P1、抓出 **#597 criterion 4 没真落地**——worker 契约只对 out-of-slice 设计 gap escalate、不覆盖「反复修不好 in-scope bug」→ 无限循环。R2 修复:往两个 CMR pass soul(`cmr_completeness.md`/`cmr_correctness.md`)加 item 5——**非收敛本身即 escalate 触发**,锚复现+worker 判断、明禁轮数计数(否则=把删掉的 cap 搬进 worker);runner 侧本就每轮接(`verifyCmr.ts:1632`)。加 `EscalateOnNonConvergenceBackend` 测试(2 轮修后 escalate → 有界停)。Codex R3 +1 approve、Gemini clean、Sourcery 处置、CodeRabbit provisional。全测 1318 passed,tsc 0,2 thread resolved。#597 CLOSED,#590 两个 sub-issue(#597/#598)均 closed。worker-escalate 落进 **#604 已建好的 `decision_gate_park`**(B-class,answerable+resumable,ADR 0062 退出-重入+durable ledger 模型、原地 resume——非长活挂起、非 terminal abort;runner.ts:131-206 / realFamilyBackend:2489)。#590 韧性三半(#597 删 cap、#598 重试、#604 A/B 分家+park-resume)均已落地,**#590 已 CLOSED(2026-07-07,7 验收逐条对交付 issue,close comment 有表)**。#440 epic 剩 4 片:#366 / #367 / #372 / #592。**
 
@@ -27,7 +31,7 @@
 **执行顺序（按依赖杠杆）：**
 1. ~~**#598 通用机械重试**（关键石，解锁 #600+#601）~~ ✅ **shipped(PR #646, `72e88bbd`)** → 2. **#597 删 round-cap**（#590 韧性核心另一半，`blocked_by #604` 已闭=现可做）→ 3. **#601**（#592 role 回归测试，#598 解锁后现可做）→ 4. **#596→#600→#602→#603**（#366 线上评审 loop 链）→ 独立快赢 **#593 / #372** 可随时插。
 
-**当前动作：#598 已 ship（关键石）→ 下一片 = #597 删 round-cap（reviewer 判断驱动续/停，#590 韧性核心另一半）**，orchestrator 自身开发、非 dogfood 跑，开新分支起 /tdd。#601（#592）在 #598 解锁后亦可并行做。
+**~~当前动作：#598 已 ship（关键石）→ 下一片 = #597 删 round-cap~~（已完成，见文首）**：#597 ✅、#601（#592）✅、#593（#367）✅、#372 ✅、#617 ✅ 均已 merge；现行动作见文首「▶ 当前动作（2026-07-08）」段（#596 走闸中 → #600 composer 大考）。
 
 （备选更高层轴：#485 线 = 大方向 #472 角色视角,见下方「顺序」段。）
 
