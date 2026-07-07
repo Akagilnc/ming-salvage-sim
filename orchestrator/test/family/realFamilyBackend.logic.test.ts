@@ -55,6 +55,7 @@ import type {
   IntegratedCmrRequest,
   IntegratedCmrResult,
 } from "../../src/family/types.js";
+import { DEFAULT_IMAGE_TAG, resolveImageTag } from "../../src/familyDriver.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
@@ -1847,5 +1848,18 @@ describe("RealFamilyBackend runtime file git excludes", () => {
     b.excludeCmr(".cmr-route.json");
 
     expect(readFileSync(excludePath, "utf8")).toBe(".cmr-route.json\r\n");
+  });
+});
+
+describe("resolveImageTag / DEFAULT_IMAGE_TAG pin (#372 R2)", () => {
+  it("provides identical tag for build and dispatch (single source of truth)", () => {
+    // Small assertion: launcher + driver read the same resolver/default.
+    // Ensures when IMAGE_TAG=... is set, dispatch uses it (not a different default).
+    expect(resolveImageTag(undefined)).toBe(DEFAULT_IMAGE_TAG);
+    expect(resolveImageTag("")).toBe(DEFAULT_IMAGE_TAG);
+    expect(resolveImageTag("ming-orchestrator-coder:latest")).toBe("ming-orchestrator-coder:latest");
+    expect(resolveImageTag("custom:tag-xyz")).toBe("custom:tag-xyz");
+    // The default is the one build.sh also defaults to.
+    expect(DEFAULT_IMAGE_TAG).toBe("ming-orchestrator-coder:latest");
   });
 });

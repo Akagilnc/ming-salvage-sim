@@ -1995,16 +1995,10 @@ export class RealBackend implements Backend {
    * containing the full REQUIRED_SOUL_FILES set. Souls are no longer baked (#372);
    * an incomplete/wrong dir (e.g. orchestrator/image/ or missing reviewer.md
    * / output_protocol.md) would now sail through to runtime (no more baked copies).
-   * Mirrors the promptsDir validation (pure {@link soulsDirError} + fs verdicts here).
+   * Delegates to the pure {@link soulsDirError} (single source of messages/checks).
    */
   private validateSoulsDir(): void {
     const dir = this.opts.soulsDir;
-    if (typeof dir !== "string" || dir.length === 0) {
-      throw new Error(
-        "RealBackend: soulsDir is required (souls are no longer baked into the image; " +
-          "a missing soulsDir would yield soul-less container workers with no fallback).",
-      );
-    }
     const dirExists = isAbsolute(dir) && existsSync(dir) && statSync(dir).isDirectory();
     const missing = dirExists
       ? REQUIRED_SOUL_FILES.filter((f) => !existsSync(join(dir, f)))

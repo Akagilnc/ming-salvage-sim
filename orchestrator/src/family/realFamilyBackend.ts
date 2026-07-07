@@ -94,6 +94,7 @@ import {
   modelFamilyForSlug,
   soulsMount,
   REQUIRED_SOUL_FILES,
+  soulsDirError,
   type SelfReportedCoder,
 } from "../realBackend.js";
 import {
@@ -376,29 +377,17 @@ export class RealFamilyBackend implements FamilyBackend {
    * Fail loudly at construction if soulsDir missing or invalid or incomplete.
    * Souls are no longer baked (#372); an existing but wrong/incomplete dir
    * (missing e.g. reviewer.md / output_protocol.md) would sail to runtime.
-   * Mirrors promptsDir-style file-set validation (and the single-slice soulsDir).
+   * Delegates to the pure {@link soulsDirError} from realBackend (single source;
+   * identical messages for both backends).
    */
   private validateSoulsDir(): void {
     const dir = this.opts.soulsDir;
-    if (typeof dir !== "string" || dir.length === 0) {
-      throw new Error(
-        "RealFamilyBackend: soulsDir is required (souls are no longer baked into the image; " +
-          "omitting it would yield soul-less container workers with no fallback).",
-      );
-    }
-    if (!isAbsolute(dir) || !existsSync(dir) || !statSync(dir).isDirectory()) {
-      throw new Error(
-        `RealFamilyBackend: soulsDir must be an absolute path to an existing directory (got "${dir}").`,
-      );
-    }
-    const missing = REQUIRED_SOUL_FILES.filter((f) => !existsSync(join(dir, f)));
-    if (missing.length > 0) {
-      throw new Error(
-        `RealFamilyBackend: soulsDir "${dir}" is missing required soul file(s): ` +
-          `${missing.join(", ")}. All of [${REQUIRED_SOUL_FILES.join(", ")}] ` +
-          `must be present (the 8 files under image/souls, incl. output_protocol.md).`,
-      );
-    }
+    const dirExists = isAbsolute(dir) && existsSync(dir) && statSync(dir).isDirectory();
+    const missing = dirExists
+      ? REQUIRED_SOUL_FILES.filter((f) => !existsSync(join(dir, f)))
+      : [];
+    const err = soulsDirError(dir, isAbsolute(dir), dirExists, missing);
+    if (err !== undefined) throw new Error(err);
   }
 
   /**

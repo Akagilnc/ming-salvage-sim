@@ -753,6 +753,21 @@ export async function runFamilyDriver(
 export const FAMILY_BASE_START_HEAD_FILENAME = "family-base-start-head";
 
 /**
+ * Single source of truth for the default worker image tag (#372).
+ * Both build.sh (via IMAGE_TAG env) and dispatch (via imageName) must use the
+ * same resolved value so unconditional rebuild + dispatch always hit the just-built tag.
+ */
+export const DEFAULT_IMAGE_TAG = "ming-orchestrator-coder:latest";
+
+/**
+ * Resolve one tag for end-to-end: launcher reads IMAGE_TAG (or default) once,
+ * passes to build (explicit env) and to driver.imageName.
+ */
+export function resolveImageTag(envTag: string | undefined): string {
+  return envTag && envTag.length > 0 ? envTag : DEFAULT_IMAGE_TAG;
+}
+
+/**
  * Cut the LOCAL family base branch from the just-fetched `origin/<base>` on the
  * family clone and return its START HEAD (the reconcile baseline). `base` is the
  * PR TARGET branch the family run was configured with (`options.base`) — NOT a
