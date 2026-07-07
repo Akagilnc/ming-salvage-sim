@@ -197,6 +197,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     });
 
     expect(result.status).toBe("success");
+    expect(result.children.every((c) => c.status === "already_done")).toBe(true);
     expect(result.stopSummary).toMatchObject({
       reason: "already_done",
       summary: "family review-loop converged during resume for the current family HEAD",
