@@ -285,11 +285,19 @@ describe("#601 AC#2 — a ship worker returning 'no valid result (crash/malforme
     // The AC names both `shipped`/`pr_opened` as the convergent state. A retry that
     // opens a PR on the second attempt must be read as a delivery, not an abort.
     class ShipMalformedThenPrOpenedBackend extends ShipStructuralMalformedThenConvergeBackend {
+      // Guard is `>= 1` (not `> 1`): super increments the counter on the 1st
+      // (malformed) dispatch, so on the 2nd dispatch the count is already 1.
+      // The counter is incremented INSIDE this branch too — an early return
+      // without incrementing would leave the count at 1 and flip the
+      // `dispatches === 2` assertion (cmr R2 finding 1 CAUTION).
+      prOpenedReturned = false;
       constructor() {
         super(1);
       }
       override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        if (spec.kind === "ship" && this.shipDispatches > 1) {
+        if (spec.kind === "ship" && this.shipDispatches >= 1) {
+          this.shipDispatches += 1;
+          this.prOpenedReturned = true;
           return {
             kind: "completed",
             output: {
@@ -307,6 +315,10 @@ describe("#601 AC#2 — a ship worker returning 'no valid result (crash/malforme
     const result = await runOrchestrator({ issueNumber: 601, backend });
     expect(result.status).not.toBe("error");
     expect(backend.shipDispatches).toBe(2);
+    // The pr_opened branch must actually fire — the prior `> 1` guard was dead
+    // code (super increments the counter), so the run converged via super's
+    // `pushed` return, silently re-testing the sibling fixture's case.
+    expect(backend.prOpenedReturned).toBe(true);
   });
 });
 
@@ -762,6 +774,13 @@ describe("#601 AC#4 — dogfoodReplay-pattern regression: dogfood-362, family-40
       familyBackend: backend,
     });
     expect(result.ok).toBe(false);
+    // PIN the dispatch count: without this the test can't detect what it
+    // claims to pin — a future retrying family gate would still pass because
+    // exhausted scripted outputs fall back to a completed-coder result that
+    // verifyCmr.ts still classifies as no-valid-result (→ contract_drift, see
+    // verifyCmr.ts:2351). Symmetric with the dogfood-70 pin's
+    // `cmrDispatches === 1`.
+    expect(backend.dispatches.filter((d) => d.startsWith("ship:"))).toHaveLength(1);
     const abort = backend.ledger.find((e) => e.status === "aborted");
     expect(abort?.stopSummary?.reason).toBe("contract_drift");
   });
