@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { legacyDispatchWorker } from "../src/dispatchWorker.js";
+import { MAX_DISPATCH_ATTEMPTS } from "../src/dispatchRetry.js";
 import {
   adjudicatePriorClaimedFixedFindings,
   classifyFindings,
@@ -2432,7 +2433,7 @@ describe("#369 runner resume/retry review fixes", () => {
     // structured-output error) is now retried by the generic mechanical layer up to
     // MAX_DISPATCH_ATTEMPTS before the reviewer loop surfaces the persistent crash as
     // S8 — a transient crash would recover instead of aborting on the first failure.
-    expect(backend.reviewerAttempts).toBe(3);
+    expect(backend.reviewerAttempts).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 });
 

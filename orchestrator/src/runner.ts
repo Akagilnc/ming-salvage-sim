@@ -2626,11 +2626,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // should override that committed-preservation is a design decision.
               const worktreeForReset = worktree;
               const resetBeforeRetry =
-                worktreeForReset !== undefined
+                worktreeForReset != null
                   ? () => backend.cleanResidue(worktreeForReset)
                   : undefined;
               const baseReset =
-                resetBeforeRetry !== undefined ? { resetBeforeRetry } : {};
+                resetBeforeRetry != null ? { resetBeforeRetry } : {};
               const retryOpts: MechanicalRetryOptions =
                 expectedKind === "reviewer"
                   ? {
@@ -2839,13 +2839,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // retries. The worktree's uncommitted residue is reset before each retry
           // (idempotency); gstack-ship's re-runnable design keeps push/PR idempotent.
           const shipWorktree = worktree;
+          // Mirror the coder/reviewer reset guard: only wire cleanResidue when a
+          // worktree exists (a worktree-less worker has no local residue), so a retry
+          // never calls cleanResidue(undefined). (gemini R1 — the coder path already
+          // guards; the ship path must match.)
+          const shipResetOpt =
+            shipWorktree != null
+              ? { resetBeforeRetry: () => backend.cleanResidue(shipWorktree) }
+              : {};
           const shipResult = await withMechanicalRetry(
             shipSpec,
             shipCtx,
             (s, c) => dispatchWorker(backend, s, c),
             {
               callerOwns: (o) => "result" in o,
-              resetBeforeRetry: () => backend.cleanResidue(shipWorktree),
+              ...shipResetOpt,
             },
           );
           // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
