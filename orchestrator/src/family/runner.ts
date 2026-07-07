@@ -1597,7 +1597,7 @@ export async function runFamily(
       preFinalFamilyHead;
     const alreadyDoneSummary: StopSummary = {
       reason: "already_done",
-      summary: "family run already converged for the current family HEAD",
+      summary: "family review-loop converged during resume for the current family HEAD",
       metadata: {
         heads: {
           actualFamilyHead: preFinalFamilyHead,
