@@ -269,6 +269,57 @@ describe("#331 the S7 ship worker must return a SHIP payload (codex R2 guard)", 
   });
 });
 
+describe("#596 S9 (verify) worker must return a valid verify payload — finding 6 defensive (runner r7b)", () => {
+  /**
+   * A backend that returns a *completed* result for S9 but with *undefined* output.
+   * This exercises the !outputValid branch in the S9–S12 case (result.output may be
+   * nullish even on "completed"). The guard must produce a clean errorTermination
+   * (with message) and not throw TypeError on `result.output.kind`.
+   */
+  class S9UndefinedOutputBackend extends DispatchBackend {
+    override async dispatchWorker(
+      spec: WorkerSpec,
+      ctx: DispatchContext,
+    ): Promise<WorkerResult> {
+      this.specs.push(spec);
+      this.ctxs.push(ctx);
+      if (spec.kind === "coder") {
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      }
+      if (spec.kind === "reviewer") {
+        return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+      }
+      if (spec.id === "S9") {
+        // Simulate a misbehaving / malformed S9 worker that "completed" but
+        // yielded no output (or undefined). The runner's isValidVerifyResult
+        // will reject; the error message construction must be null-safe.
+        return { kind: "completed", output: undefined as unknown as StepOutput };
+      }
+      // For S10+ in this test path we can fall to skeleton or minimal; the run
+      // will hit the S9 bad case first and terminate.
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      if (skeleton != null) return skeleton;
+      return {
+        kind: "completed",
+        output: { kind: "ship", branch: this.worktree.branch, status: "pushed" },
+      };
+    }
+  }
+
+  it("S9 worker returning completed-with-undefined-output → errorTermination with the non-crash message, not a TypeError", async () => {
+    const backend = new S9UndefinedOutputBackend();
+    const result = await runOrchestrator({ issueNumber: 331, backend });
+    expect(result.status).toBe("error");
+    // Must be the clean message from the !outputValid branch (defensive String()).
+    expect(result.errorPackage?.reason).toContain("S9 worker returned non-S9 output kind 'undefined'");
+    // Sanity: did not surface a TypeError string.
+    expect(result.errorPackage?.reason).not.toMatch(/TypeError/i);
+  });
+});
+
 describe("#331 an escalated SHIP worker → S8(escalate), not S8(error) (codex R4)", () => {
   class ShipEscalatesBackend extends DispatchBackend {
     override async dispatchWorker(
