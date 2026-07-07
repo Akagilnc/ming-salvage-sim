@@ -168,6 +168,54 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     expect(singleSliceBackend.prepareBases).toEqual([]);
   });
 
+  it("shipped-only (bound to current head, no review_loop_converged) continues into review-loop: writes converged marker, reports already_done, no re-ship (F2)", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "pr://family/293-base",
+        familyHeadAfter: "family-base-0",
+      },
+    );
+    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.stopSummary).toMatchObject({
+      reason: "already_done",
+      summary: "family run already converged for the current family HEAD",
+      metadata: {
+        heads: expect.objectContaining({
+          actualFamilyHead: "family-base-0",
+        }),
+      },
+    });
+    // Key assertion: review_loop_converged was WRITTEN by the resume path (was only pre-seeded before)
+    const convergedRows = familyBackend.ledger.filter(
+      (e) => e.status === "review_loop_converged",
+    );
+    expect(convergedRows).toHaveLength(1);
+    expect(convergedRows[0]).toMatchObject({
+      status: "review_loop_converged",
+      event: "review_loop_converged",
+      phase: "final",
+      pr: "pr://family/293-base",
+      familyHeadAfter: "family-base-0",
+    });
+    // No child re-work (shipped resume short-circuits before verifyCmr barrier)
+    expect(singleSliceBackend.prepareBases).toEqual([]);
+  });
+
   it("each child is cut from the FAMILY base (not main) and does NOT push remotely", async () => {
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();

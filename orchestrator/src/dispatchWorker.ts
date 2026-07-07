@@ -55,8 +55,9 @@ const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
 
 /**
  * The wiki skill each worker kind invokes (ADR 0026):
- *   coder/fix → `/tdd`, reviewer → `/code-review`, cmr → `ak-cross-m-review`,
- *   ship → `gstack-ship`, merge → none (may use no skill — US#9).
+ *   coder → `/tdd`, reviewer → `/code-review`, cmr → `ak-cross-m-review`,
+ *   ship → `gstack-ship`, merge → none; review-loop: verify/fixer/cleanup/docRelease
+ *   (stubs only in #596; real in #600/#603).
  *
  * #331 PREFACTOR: this is only the DECLARED routing on the spec (so #337's "coder
  * 手搓 TDD 不 invoke /tdd" regression assertion has a target). The legacy wrapper
@@ -68,9 +69,13 @@ const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
   cmr: "ak-cross-m-review",
   ship: "gstack-ship",
   merge: undefined,
+  // TODO(#600/#603): real /verify skill + prompt (verify.md) lands later; skeleton only.
   verify: "/verify",
+  // TODO(#600/#603): real /fixer skill + prompt (fixer.md) lands later; skeleton only.
   fixer: "/fixer",
+  // TODO(#600/#603): real /cleanup skill + prompt (cleanup.md) lands later; skeleton only.
   cleanup: "/cleanup",
+  // TODO(#600/#603): real /doc-release skill + prompt (docRelease.md) lands later; skeleton only.
   docRelease: "/doc-release",
 };
 
@@ -252,12 +257,15 @@ export function shipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   };
 }
 
+// TODO(#600/#603): placeholder prompts for review-loop workers; real impl + files
+// live in #600 (verify/fixer) / #603 (cleanup/docRelease). Do not remove markers.
 export const VERIFY_PROMPT_FILE = "verify.md";
 export const FIXER_PROMPT_FILE = "fixer.md";
 export const CLEANUP_PROMPT_FILE = "cleanup.md";
 export const DOCRELEASE_PROMPT_FILE = "docRelease.md";
 
 /** S9 online-review / PR-check worker spec (#596 skeleton). */
+// TODO(#600/#603): skill/prompt wiring is inert placeholder here.
 export function verifyWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S9",
@@ -277,6 +285,7 @@ export function verifyWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
 }
 
 /** S10 post-review fixer worker spec (#596 skeleton). */
+// TODO(#600/#603): skill/prompt wiring is inert placeholder here.
 export function fixerWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S10",
@@ -296,6 +305,7 @@ export function fixerWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
 }
 
 /** S11 cleanup worker spec (#596 skeleton). */
+// TODO(#600/#603): skill/prompt wiring is inert placeholder here.
 export function cleanupWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S11",
@@ -315,6 +325,7 @@ export function cleanupWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
 }
 
 /** S12 documentation / release worker spec (#596 skeleton). */
+// TODO(#600/#603): skill/prompt wiring is inert placeholder here.
 export function docReleaseWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S12",

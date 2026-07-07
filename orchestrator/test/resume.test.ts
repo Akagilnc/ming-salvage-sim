@@ -1299,6 +1299,48 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     const [, sessionId] = backend.resumeSessionCalls[0]!;
     expect(sessionId).toBe("session-escalated-S2");
   });
+
+  it("AC2: crash inside review-loop (ledger truncated at S10) resumes from S11 — S9 skipped, run completes S10→S12→S8 (F3)", async () => {
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7"),
+      entry("S9", { kind: "verify", converged: true }),
+      entry("S10", { kind: "fixer", committed: true }),
+      // truncated before S11; no S8 yet
+    ];
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    const steps = result.stepLedger.map((e) => e.step);
+    expect(steps).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S7",
+      "S9",
+      "S10",
+      "S11",
+      "S12",
+      "S8",
+    ]);
+    // S9 (and prior) were skipped on this resume; only S11/S12 newly dispatched in review-loop
+    const reviewLoopDispatched = backend.dispatchSpecs
+      .filter((s) => ["S9", "S10", "S11", "S12"].includes(s.id))
+      .map((s) => s.id);
+    expect(reviewLoopDispatched).toEqual(["S11", "S12"]);
+  });
 });
 
 // ─── C-1 (integ-cmr int-r1): S7 SHIP escalate-resume re-dispatches the ship worker
