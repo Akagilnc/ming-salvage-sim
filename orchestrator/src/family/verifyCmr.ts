@@ -60,6 +60,7 @@ import {
   dispatchFamilyWorker,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
+import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../dispatchRetry.js";
 import {
   cmrLegAccountingFailure,
   modelRouteFingerprint,
@@ -1039,6 +1040,7 @@ async function runCmrCoderFix(input: {
         ...(familyIssue !== undefined ? { familyIssue } : {}),
       },
       { blockingFindings: classification.blocking },
+      { writeCapable: true },
     );
     const familyHeadAfter = await readPostCmrFamilyHead(
       familyBackend,
@@ -1387,9 +1389,41 @@ async function dispatchOrAbort(
   spec: Parameters<typeof dispatchFamilyWorker>[1],
   ctx: Parameters<typeof dispatchFamilyWorker>[2],
   landing?: Parameters<typeof dispatchFamilyWorker>[3],
+  opts?: { readonly writeCapable?: boolean },
 ): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
+  // The READ-ONLY cmr reviewer leaves no local residue, so a thrown crash is safe to
+  // re-dispatch fresh. The WRITE-capable family coder-fix / ship can throw AFTER a
+  // partial edit/stage/commit, so a fresh re-dispatch would run on that residue — the
+  // exact idempotency violation #598 forbids ("reset local git residue before each
+  // retry"), and here there is no safe reset hook yet (a naive cleanResidue would
+  // `git clean -fd` the runner-written, NON-gitignored `.cmr-focus.md`). So a
+  // write-capable worker's crash is NOT retried on residue: it aborts (bubbles to the
+  // catch → the gate's INCOMPLETE_GATE), which vacuously satisfies "reset before
+  // retry" (no retry happens). Enabling a runner-param-preserving reset so these CAN
+  // retry safely is #661 (write-worker retry idempotency, ADR 0024 tension).
+  const writeCapable = opts?.writeCapable === true;
   try {
-    return await dispatchFamilyWorker(familyBackend, spec, ctx, landing);
+    // #598: a family worker that CRASHES (throws) re-dispatches FRESH up to
+    // MAX_DISPATCH_ATTEMPTS — ONLY for the read-only reviewer (see above). Every
+    // RESOLVED result (failed / malformed / completed / escalated) is DEFERRED to this
+    // gate's own rich terminal handling — the gate classifies `failed`
+    // (provider_degraded / infra_failure), rewrites cmr `malformed` (the rewrite loop +
+    // its outer re-dispatch), and treats a ship/coder-fix `malformed` as a CONTRACT
+    // violation → contract_drift (a ship that emits no valid verdict is not a transient
+    // protocol failure; #451 dogfood replay). So the generic layer keeps its own
+    // counter and never double-counts. A crash that is not retried (reviewer exhausted,
+    // or a write-capable worker's first throw) is re-thrown so the catch below stamps
+    // the domain "threw on startup" message the gate surfaces as INCOMPLETE_GATE.
+    return await withMechanicalRetry(
+      spec,
+      ctx,
+      (s, c) => dispatchFamilyWorker(familyBackend, s, c, landing),
+      {
+        callerOwns: (o) =>
+          "result" in o || (writeCapable && o.kind === "thrown"),
+        rethrowOnExhaustion: true,
+      },
+    );
   } catch (err) {
     const reason = `family ${spec.kind} worker threw on startup: ${
       err instanceof Error ? err.message : String(err)
@@ -1523,28 +1557,74 @@ async function runIntegratedCmrPass(input: {
       ? { priorCmrFindingIdentityKeys }
       : {}),
   };
-  const rawCmrResult = await dispatchOrAbort(familyBackend, spec, dispatchCtx);
-  if (rawCmrResult.kind === "malformed") {
-    const postReviewFamilyHead = await readPostCmrFamilyHead(
+  // #598: one "logical cmr attempt" = a fresh dispatch + the same-worker
+  // `rewriteOutcomeProtocolFailure` counter (OUTCOME_REWRITE_RETRY_CAP). When that
+  // counter exhausts into `outcome_protocol_failure`, the GENERIC mechanical layer
+  // fires ONLY AFTER it — a FRESH (non-resume) cmr re-dispatch, up to
+  // MAX_DISPATCH_ATTEMPTS, before the durable abort below (crit 2 "generic fires
+  // after the rewrite counter"; crit 1 "returned outcome_protocol_failure retries").
+  // The cmr worker is READ-ONLY (reviews the family base) → no local residue to
+  // reset between attempts. The HEAD-movement git guards stay per attempt.
+  let rawCmrResult: WorkerResult;
+  let cmrResult: WorkerResult;
+  for (let cmrAttempt = 1; ; cmrAttempt++) {
+    rawCmrResult = await dispatchOrAbort(familyBackend, spec, dispatchCtx);
+    if (rawCmrResult.kind === "malformed") {
+      const postReviewFamilyHead = await readPostCmrFamilyHead(
+        familyBackend,
+        familyBase,
+        resolvedFamilyHeadAfter,
+      );
+      const postReviewGitAbort = await guardPostCmrReviewerGitState({
+        familyBackend,
+        familyBase,
+        pass,
+        expectedFamilyHead: resolvedFamilyHeadAfter,
+        familyHeadAfter: postReviewFamilyHead,
+      });
+      if (postReviewGitAbort !== undefined) return postReviewGitAbort;
+    }
+    cmrResult = await rewriteOutcomeProtocolFailure({
       familyBackend,
-      familyBase,
-      resolvedFamilyHeadAfter,
-    );
-    const postReviewGitAbort = await guardPostCmrReviewerGitState({
-      familyBackend,
-      familyBase,
-      pass,
-      expectedFamilyHead: resolvedFamilyHeadAfter,
-      familyHeadAfter: postReviewFamilyHead,
+      spec,
+      ctx: dispatchCtx,
+      result: rawCmrResult,
     });
-    if (postReviewGitAbort !== undefined) return postReviewGitAbort;
+    if (
+      cmrResult.kind === "outcome_protocol_failure" &&
+      cmrAttempt < MAX_DISPATCH_ATTEMPTS
+    ) {
+      // #598 r3 (codexA): an `outcome_protocol_failure` can also come from the
+      // rewrite worker MOVING HEAD / leaving tracked changes (outcomeRewriteGitFailure).
+      // Guard git state BEFORE the fresh re-dispatch so the next cmr attempt never runs
+      // on top of a moved/dirty family base — if the reviewer moved HEAD, abort (not a
+      // retryable state); otherwise re-dispatch on the clean expected head.
+      const reDispatchFamilyHead = await readPostCmrFamilyHead(
+        familyBackend,
+        familyBase,
+        resolvedFamilyHeadAfter,
+      );
+      const reDispatchGitAbort = await guardPostCmrReviewerGitState({
+        familyBackend,
+        familyBase,
+        pass,
+        expectedFamilyHead: resolvedFamilyHeadAfter,
+        familyHeadAfter: reDispatchFamilyHead,
+      });
+      if (reDispatchGitAbort !== undefined) return reDispatchGitAbort;
+      continue;
+    }
+    break;
   }
-  const cmrResult = await rewriteOutcomeProtocolFailure({
-    familyBackend,
-    spec,
-    ctx: dispatchCtx,
-    result: rawCmrResult,
-  });
+  // #598 crit 6 (r4 codexA): the manual cmr re-dispatch loop names its generic
+  // attempt count on exhaustion too (parity with withMechanicalRetry) — reached only
+  // when the loop exhausted MAX_DISPATCH_ATTEMPTS all on outcome_protocol_failure.
+  if (cmrResult.kind === "outcome_protocol_failure") {
+    cmrResult = {
+      ...cmrResult,
+      reason: `${cmrResult.reason} (after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts)`,
+    };
+  }
   const postWorkerFamilyHead = await readPostCmrFamilyHead(
     familyBackend,
     familyBase,
@@ -2235,6 +2315,8 @@ export async function runVerifyCmr(
       familyBase,
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     },
+    undefined,
+    { writeCapable: true },
   );
   // An ESCALATED family ship worker (gstack-ship STOP/HITL) is the family
   // escalate续跑 path, not a false success — call the escalate seam (codex cmr R4
