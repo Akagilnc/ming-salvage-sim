@@ -43,6 +43,7 @@ import type {
   MergeRequest,
 } from "../../src/family/types.js";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
+import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import type { VerifyCmrInput, VerifyCmrResult } from "../../src/family/verifyCmr.js";
 import type { FindingDisposition } from "../../src/types.js";
 
@@ -900,7 +901,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     );
   });
 
-  it("escalates repeated outcome rewrite failures as infrastructure protocol failure", async () => {
+  it("#598 re-dispatches a FRESH cmr worker after each same-worker rewrite exhaustion, then aborts after the bounded generic attempts", async () => {
     class RepeatedRewriteFailureBackend extends FakeFamilyBackend {
       readonly dispatchCalls: Array<{ spec: WorkerSpec; ctx: DispatchContext }> = [];
       readonly rewriteCalls: Array<{ attempt: number; protocolFailure: WorkerResult }> = [];
@@ -949,10 +950,20 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
 
     expect(result.status).toBe("verify_failed");
     expect(result.failedPhase).toBe("final");
-    expect(familyBackend.rewriteCalls.map((call) => call.attempt)).toEqual([1, 2]);
-    expect(familyBackend.dispatchCalls.map(({ spec, ctx }) => `${spec.kind}:${ctx.cmrPass ?? "none"}`)).toEqual([
-      "cmr:completeness",
-    ]);
+    // #598: the same-worker rewrite counter runs its OWN bounded [1,2] budget per
+    // dispatch (not swallowed), and the generic layer fires ONLY AFTER it exhausts —
+    // a fresh non-resume cmr re-dispatch, up to MAX_DISPATCH_ATTEMPTS. So the cmr
+    // worker is dispatched MAX_DISPATCH_ATTEMPTS times, each running rewrite [1,2],
+    // before the durable outcome-protocol-failure abort. (Was: 1 dispatch, no fresh
+    // retry after rewrite — the composition gap the cmr caught.)
+    const cmrDispatches = familyBackend.dispatchCalls.filter(
+      ({ spec, ctx }) => spec.kind === "cmr" && ctx.cmrPass === "completeness",
+    );
+    expect(cmrDispatches).toHaveLength(MAX_DISPATCH_ATTEMPTS);
+    // Each fresh dispatch restarts the same-worker rewrite counter at 1.
+    expect(familyBackend.rewriteCalls.map((call) => call.attempt)).toEqual(
+      Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => [1, 2]).flat(),
+    );
     const abort = familyBackend.ledger.find(
       (entry) => entry.status === "aborted" && entry.cmrPass === "completeness",
     );

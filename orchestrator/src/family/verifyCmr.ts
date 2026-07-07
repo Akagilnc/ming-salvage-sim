@@ -60,7 +60,7 @@ import {
   dispatchFamilyWorker,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { withMechanicalRetry } from "../dispatchRetry.js";
+import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../dispatchRetry.js";
 import {
   cmrLegAccountingFailure,
   modelRouteFingerprint,
@@ -1537,28 +1537,47 @@ async function runIntegratedCmrPass(input: {
       ? { priorCmrFindingIdentityKeys }
       : {}),
   };
-  const rawCmrResult = await dispatchOrAbort(familyBackend, spec, dispatchCtx);
-  if (rawCmrResult.kind === "malformed") {
-    const postReviewFamilyHead = await readPostCmrFamilyHead(
+  // #598: one "logical cmr attempt" = a fresh dispatch + the same-worker
+  // `rewriteOutcomeProtocolFailure` counter (OUTCOME_REWRITE_RETRY_CAP). When that
+  // counter exhausts into `outcome_protocol_failure`, the GENERIC mechanical layer
+  // fires ONLY AFTER it — a FRESH (non-resume) cmr re-dispatch, up to
+  // MAX_DISPATCH_ATTEMPTS, before the durable abort below (crit 2 "generic fires
+  // after the rewrite counter"; crit 1 "returned outcome_protocol_failure retries").
+  // The cmr worker is READ-ONLY (reviews the family base) → no local residue to
+  // reset between attempts. The HEAD-movement git guards stay per attempt.
+  let rawCmrResult: WorkerResult;
+  let cmrResult: WorkerResult;
+  for (let cmrAttempt = 1; ; cmrAttempt++) {
+    rawCmrResult = await dispatchOrAbort(familyBackend, spec, dispatchCtx);
+    if (rawCmrResult.kind === "malformed") {
+      const postReviewFamilyHead = await readPostCmrFamilyHead(
+        familyBackend,
+        familyBase,
+        resolvedFamilyHeadAfter,
+      );
+      const postReviewGitAbort = await guardPostCmrReviewerGitState({
+        familyBackend,
+        familyBase,
+        pass,
+        expectedFamilyHead: resolvedFamilyHeadAfter,
+        familyHeadAfter: postReviewFamilyHead,
+      });
+      if (postReviewGitAbort !== undefined) return postReviewGitAbort;
+    }
+    cmrResult = await rewriteOutcomeProtocolFailure({
       familyBackend,
-      familyBase,
-      resolvedFamilyHeadAfter,
-    );
-    const postReviewGitAbort = await guardPostCmrReviewerGitState({
-      familyBackend,
-      familyBase,
-      pass,
-      expectedFamilyHead: resolvedFamilyHeadAfter,
-      familyHeadAfter: postReviewFamilyHead,
+      spec,
+      ctx: dispatchCtx,
+      result: rawCmrResult,
     });
-    if (postReviewGitAbort !== undefined) return postReviewGitAbort;
+    if (
+      cmrResult.kind === "outcome_protocol_failure" &&
+      cmrAttempt < MAX_DISPATCH_ATTEMPTS
+    ) {
+      continue;
+    }
+    break;
   }
-  const cmrResult = await rewriteOutcomeProtocolFailure({
-    familyBackend,
-    spec,
-    ctx: dispatchCtx,
-    result: rawCmrResult,
-  });
   const postWorkerFamilyHead = await readPostCmrFamilyHead(
     familyBackend,
     familyBase,

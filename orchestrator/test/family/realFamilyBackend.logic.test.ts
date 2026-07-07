@@ -851,6 +851,39 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     // A reset ran before each of the bounded retries.
     expect(b.resetCalls).toBe(MAX_DISPATCH_ATTEMPTS - 1);
   });
+
+  it("#598 idempotency: a merger that COMMITTED the merge then crashed is NOT re-run — the landed child is recognized", async () => {
+    // The dangerous idempotency gap (cmr codexB): the agent resolves + COMMITS the
+    // merge (advances the family base ref), then the sc.run crashes before returning.
+    // A naive retry would `git merge --abort` (no-op after a commit) + re-merge
+    // ("already up to date", no conflict) and run the merger agent on a NO-CONFLICT
+    // state — failing a child that was already correctly merged. The retry must
+    // instead recognize the child already landed (git truth) and NOT re-run the merger.
+    class CommitThenCrashBackend extends FakeSeamsBackend {
+      crashesLeft = 1;
+      protected override async runMergerAgent(req: ConflictResolveRequest) {
+        this.mergerCalls.push(req);
+        // The agent committed the merge (the family base ref advances) …
+        this.familyBaseHeadFake = this.resolvedHeadFake;
+        this.mergeInProgressFake = false;
+        // … then the sc.run crashed before returning.
+        if (this.crashesLeft > 0) {
+          this.crashesLeft -= 1;
+          throw new Error("sc.run crashed after the merge commit landed");
+        }
+        return this.mergerOutcome;
+      }
+    }
+    const b = new CommitThenCrashBackend(opts(trackRepo()));
+    b.mergerOutcome = { resolved: true };
+    b.childLandedFake = true; // the committed child is an ancestor of the advanced base
+    const res = await b.resolveMergeConflict({ childIssue: 23, childBranch: "feat/child-23" });
+    // The already-landed merge is returned as a clean (non-conflicted) resolve …
+    expect(res.conflicted ?? false).toBe(false);
+    expect(res.familyHead).toBe("resolved-head");
+    // … WITHOUT re-running the merger agent on the no-conflict state.
+    expect(b.mergerCalls).toHaveLength(1);
+  });
 });
 
 describe("RealFamilyBackend mergerSandbox baked-soul injection (#291 F28 / ADR 0022)", () => {
