@@ -139,8 +139,8 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     familyBackend.ledger.push(
       { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
       {
-        status: "shipped",
-        event: "shipped",
+        status: "review_loop_converged",
+        event: "review_loop_converged",
         phase: "final",
         pr: "pr://family/293-base",
         familyHeadAfter: "family-base-0",
@@ -158,7 +158,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     expect(result.status).toBe("success");
     expect(result.stopSummary).toMatchObject({
       reason: "already_done",
-      summary: "family run already shipped for the current family HEAD",
+      summary: "family run already converged for the current family HEAD",
       metadata: {
         heads: expect.objectContaining({
           actualFamilyHead: "family-base-0",
