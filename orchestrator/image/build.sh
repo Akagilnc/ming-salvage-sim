@@ -7,6 +7,7 @@
 # review / fix / merger workers can each invoke their skill — including each
 # skill's internal-call closure (a missing internally-invoked skill breaks the
 # chain). Non-cherry-pick: the coherent set the wiki + ADR 0016/0026 reference.
+# Souls live-mounted (#372); not copied into image.
 #
 # Reproducible: this script stages a clean build context (resolving the host skill
 # SYMLINKS into real dirs via `cp -RL`, so the closure is materialised into the
@@ -21,6 +22,15 @@
 # ~/.claude/skills/{...} (symlinks ok), + the gstack plugin at ~/gstack
 # (gstack-ship's closure lives under ~/.claude/skills/gstack -> ~/gstack).
 set -euo pipefail
+
+# #372: support `rebake --no-cache` (or image/build.sh --no-cache) for full
+# base image / apt / toolchain refresh. Passed through to docker build.
+# (Base slow-drift tools stay manual; souls now mounted live.)
+NO_CACHE_FLAG=()
+if [ "${1:-}" = "--no-cache" ]; then
+  NO_CACHE_FLAG=(--no-cache)
+  shift
+fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
@@ -68,14 +78,12 @@ SKILL_CLOSURE=(
 # the ~/gstack plugin and it hardcodes ~/.claude/skills/gstack/... helper paths,
 # so it needs its closure subtree baked at that exact path — not a flat cp.
 GSTACK_SRC="${GSTACK_SRC:-$HOME/gstack}"
-# The roles whose souls we bake (all worker roles — ADR 0026 / #333 "全部角色 soul").
-SOUL_ROLES=(coder reviewer merger cmr cmr_completeness cmr_correctness ship)
 
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/ming-coder-img.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 
 echo "[build] staging context at $STAGE"
-mkdir -p "$STAGE/skills" "$STAGE/souls" "$STAGE/hooks" "$STAGE/bin"
+mkdir -p "$STAGE/skills" "$STAGE/hooks" "$STAGE/bin"
 
 # ── 1. Resolve + copy the dev-skill closure (cp -RL dereferences symlinks) ────
 # Prune each skill's run-artifact / eval / test cruft so the image stays lean and
@@ -204,12 +212,12 @@ if [ ! -f "$STAGE/skills/gstack-ship/SKILL.md" ]; then
   exit 1
 fi
 
-# ── 1c. Skill content manifest (reproducibility pin) ─────────────────────────
+# ── 1c. Skill content manifest (audit trail only) ────────────────────────────
 # The skill SOURCE is mutable host state ($HOME/.claude/skills symlinks +
 # ~/gstack), so the same git commit can bake different skill bytes on a different
 # machine / after a skill update. Emit a content hash of exactly what we baked so
-# a built image is auditable + a CI check can fail against an expected manifest.
-# EXPECTED_SKILLS_SHA, if set, is enforced here → fail-closed on drift.
+# a built image is auditable. (No EXPECTED compare / drift gate — #372
+# unconditional rebuild at launcher + Docker cache replaces detection.)
 (
   cd "$STAGE/skills"
   find . -type f | LC_ALL=C sort | while read -r f; do
@@ -225,56 +233,12 @@ else
 fi
 echo "$MANIFEST_SHA" > "$STAGE/skills-manifest.sha256"
 echo "[build]   baked-skills manifest sha256: $MANIFEST_SHA"
-if [ -n "${EXPECTED_SKILLS_SHA:-}" ] && [ "$EXPECTED_SKILLS_SHA" != "$MANIFEST_SHA" ]; then
-  echo "[build] ERROR: baked skills sha256 $MANIFEST_SHA != expected $EXPECTED_SKILLS_SHA (skill drift)" >&2
-  exit 1
-fi
+# #372: no staleness/drift gate here (EXPECTED_* compare removed; unconditional
+# rebuild + layer cache at launcher; manifest kept only for audit trail).
+# Souls are mounted live at runtime (see sandbox mounts) rather than baked into
+# image — edits take effect immediately without image layer for souls.
 
-# ── 2. All worker-role souls ─────────────────────────────────────────────────
-# Bake each role's soul TEXT. We key the file BOTH by role name (human-clear,
-# e.g. reviewer.md) AND by the ORCHESTRATOR_SOUL env VALUE the orchestrator
-# actually injects, so a future entrypoint (#335/#336 soul activation) can map
-# either to a file without surprise:
-#   role "coder"    → env "coder"     (soulForStep)        → coder.md
-#   role "reviewer" → env "READ-ONLY" (soulForStep)        → reviewer.md + READ-ONLY.md
-#   role "merger"   → env "merger"    (MERGER_SOUL)        → merger.md
-#   (cmr worker)    → env "cmr"       (CMR_SOUL)           → cmr.md (split-pass index)
-#   (cmr pass docs) → prompt-read direct paths             → cmr_completeness.md / cmr_correctness.md
-# Prompt entrypoints read the baked soul files directly, and ORCHESTRATOR_SOUL is
-# also kept as the runtime role signal. Keep the env-value alias so either lookup
-# path resolves to the same reviewed role text.
-# NOTE: macOS ships bash 3.2 (no associative arrays / `declare -A`), and this
-# script's shebang resolves to it — so we map role→env-alias with a portable
-# case, NOT an assoc array, to keep the build reproducible on a macOS host.
-if [ ! -f "$HERE/souls/output_protocol.md" ]; then
-  echo "[build] ERROR: shared worker output protocol not found at $HERE/souls/output_protocol.md" >&2
-  exit 1
-fi
-cp "$HERE/souls/output_protocol.md" "$STAGE/souls/output_protocol.md"
-echo "[build]   baking shared worker output protocol"
-
-soul_env_alias() {
-  case "$1" in
-    reviewer) echo "READ-ONLY" ;;   # soulForStep → StepSoul "READ-ONLY"
-    *)        echo "$1" ;;          # coder→coder, merger→merger (MERGER_SOUL)
-  esac
-}
-for role in "${SOUL_ROLES[@]}"; do
-  if [ ! -f "$HERE/souls/$role.md" ]; then
-    echo "[build] ERROR: soul '$role' not found at $HERE/souls/$role.md" >&2
-    exit 1
-  fi
-  cp "$HERE/souls/$role.md" "$STAGE/souls/$role.md"
-  alias_name="$(soul_env_alias "$role")"
-  if [ "$alias_name" != "$role" ]; then
-    cp "$HERE/souls/$role.md" "$STAGE/souls/$alias_name.md"
-    echo "[build]   baking soul: $role (+ env-value alias $alias_name.md)"
-  else
-    echo "[build]   baking soul: $role"
-  fi
-done
-
-# ── 3. Repo-root CLAUDE.md (carries the machine-executable ## Skill routing) ──
+# ── 2. Repo-root CLAUDE.md (carries the machine-executable ## Skill routing) ──
 cp "$REPO_ROOT/CLAUDE.md" "$STAGE/CLAUDE.routing.md"
 if ! grep -q '^## Skill routing' "$STAGE/CLAUDE.routing.md"; then
   echo "[build] ERROR: repo CLAUDE.md is missing the '## Skill routing' section (#332)" >&2
@@ -308,6 +272,7 @@ cp "$HERE/Containerfile" "$STAGE/Containerfile"
 
 echo "[build] docker build -> $IMAGE_TAG (base $BASE_IMAGE)"
 docker build \
+  ${NO_CACHE_FLAG[@]+"${NO_CACHE_FLAG[@]}"} \
   --build-arg "BASE_IMAGE=$BASE_IMAGE" \
   -f "$STAGE/Containerfile" \
   -t "$IMAGE_TAG" \
@@ -315,4 +280,4 @@ docker build \
 
 echo "[build] done: $IMAGE_TAG"
 echo "[build] baked dev skills:" "${SKILL_CLOSURE[@]}" "gstack-ship"
-echo "[build] baked souls:" "${SOUL_ROLES[@]}"
+echo "[build] souls mounted live (not baked) per #372"

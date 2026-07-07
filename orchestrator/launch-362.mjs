@@ -3,12 +3,24 @@
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runFamilyDriver } from "./dist/familyDriver.js";
+import { execFileSync } from "node:child_process";
 
 // Derive paths from the script location + $HOME (gemini #384 R4: no hard-coded
 // absolute home path, so it runs on any machine / for any user).
 const ORCH = dirname(fileURLToPath(import.meta.url)); // .../orchestrator
 const REPO = dirname(ORCH); // the repo root this orchestrator lives in
+
+// #372 unconditional rebuild by construction: launcher always runs npx tsc +
+// docker build BEFORE any worker dispatch (and before dynamic import of driver).
+// Docker layer cache makes no-op near-zero cost; changed layers rebuild only
+// affected parts. No staleness/ drift checks ever.
+console.log("[launcher] #372 unconditional: npx tsc + image build (before dispatch)");
+execFileSync("npx", ["tsc"], { cwd: ORCH, stdio: "inherit" });
+execFileSync("bash", [join(ORCH, "image", "build.sh")], { cwd: ORCH, stdio: "inherit" });
+
+// Dynamic import AFTER recompile so this process gets fresh dist (static top
+// import would have loaded stale compiled code even after disk rebuild).
+const { runFamilyDriver } = await import("./dist/familyDriver.js");
 
 const result = await runFamilyDriver({
   epicIssue: 362,
@@ -21,6 +33,7 @@ const result = await runFamilyDriver({
   base: "main",
   promptsDir: `${ORCH}/prompts`,
   familyPromptsDir: `${ORCH}/prompts`,
+  soulsDir: `${ORCH}/image/souls`,
   ledgerDir: join(homedir(), ".sc-orchestrator", "dogfood-362-ledger"),
   imageName: "ming-orchestrator-coder:latest",
   skillsMount: join(homedir(), ".claude", "skills"),

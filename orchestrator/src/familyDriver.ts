@@ -593,9 +593,11 @@ export interface FamilyDriverOptions {
   readonly promptsDir: string;
   /** Dir holding the family-layer promptFiles (the merger conflict prompt). */
   readonly familyPromptsDir: string;
+  /** Host dir of souls/*.md to mount live (unconditional rebuild #372). */
+  readonly soulsDir?: string;
   /** Where the append-only family ledger + escalation records live (outside the worktree). */
   readonly ledgerDir: string;
-  /** The profile image (toolchain + souls + model CLIs baked in). */
+  /** The profile image (toolchain + skills + model CLIs baked in; souls mounted #372). */
   readonly imageName: string;
   /** Host dir holding the baked dev skills to bind-mount. */
   readonly skillsMount: string;
@@ -662,6 +664,7 @@ export async function runFamilyDriver(
     imageName: options.imageName,
     skillsMount: options.skillsMount,
     promptsDir: options.promptsDir,
+    soulsDir: options.soulsDir,
     home: options.home,
     familyBase: options.familyBase,
   });
@@ -720,6 +723,7 @@ export async function runFamilyDriver(
           repo: options.repo,
           base: options.base,
           promptsDir: options.familyPromptsDir,
+          soulsDir: options.soulsDir,
           imageName: options.imageName,
           familyBaseStartHead,
           home: options.home,

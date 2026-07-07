@@ -1,21 +1,24 @@
 # Ming orchestrator worker image — 2b full pack (#333, ADR 0026 / ADR 0016 bake).
 #
 # 2a (#332) baked the minimal /tdd closure + coder soul so the coder worker runs.
-# 2b (#333) EXTENDS 2a to the FULL coherent dev-skill pack + all role souls +
+# 2b (#333) EXTENDS 2a to the FULL coherent dev-skill pack +
 # the multi-model review CLIs (codex already in base, + agy/Gemini installed here),
 # so the cmr / ship / review / fix / merger workers can each invoke their skill
 # from the IMAGE (the bake gap ADR 0026 / #330 calls out).
+# Souls live via mount (unconditional-rebuild #372); only skills + CLIs + hooks baked.
 #
 # NOTE: the runner must NOT bind-mount host skills over
-# /home/agent/.claude/skills. The baked image is the skill/soul truth source; a
-# runtime skill mount would shadow it and reintroduce host-state drift. Runtime
-# mounts are limited to the worked-on worktree and live auth material.
+# /home/agent/.claude/skills. The baked image is the skill truth source; a
+# runtime skill mount would shadow it and reintroduce host-state drift. Souls
+# (and similar data) are mounted live from host (see #372 unconditional rebuild)
+# so edits take effect immediately without requiring image rebuild for them.
+# Runtime mounts limited to worktree + live auth + souls.
 #
 # FROM the existing sc-pipeline base (claude + codex CLIs + node + python + bash +
 # git + curl + jq already baked); this layer ADDS:
 #   - the full dev-skill closure (see SKILL CLOSURE GRAPH below)
-#   - all worker-role souls (coder / reviewer / merger / cmr)
 #   - agy (Gemini CLI, Linux build) + gh + bun (gstack-ship + cmr deps)
+# Souls (coder/reviewer/... .md) are mounted live at runtime (#372), not baked.
 #
 # Build context is a STAGING dir prepared by build.sh, NOT this directory: build.sh
 # `cp -RL`-resolves the host skill symlinks into staging/skills/, bakes the gstack
@@ -110,21 +113,14 @@ RUN set -eux; \
 # gstack/ closure subtree at the path gstack-ship hardcodes).
 COPY skills/ /home/agent/.claude/skills/
 # Bake the content manifest of exactly what was baked, so a built image is
-# auditable (skill source is mutable host state — build.sh pins it via a sha256;
-# CI can fail-closed via EXPECTED_SKILLS_SHA).
+# auditable (skill source is mutable host state — build.sh writes the sha256).
 COPY skills-manifest.txt skills-manifest.sha256 /home/agent/.orchestrator/
-
-# ── Bake all worker-role souls ───────────────────────────────────────────────
-# The orchestrator selects the role's soul at runtime (ORCHESTRATOR_SOUL env:
-# "coder" / "READ-ONLY" reviewer / "merger" / "cmr" integrated-cmr fixer); baking the soul TEXT here makes each
-# role's discipline reproducible (no runtime bind-mount of the soul). The
-# entrypoint / prompt reads the matching file.
-COPY souls/ /home/agent/.orchestrator/souls/
 
 # ── Bake the workspace skill-routing CLAUDE.md as a fallback reference ────────
 # The live worktree CLAUDE.md (mounted at runtime) is what the agent reads in
 # normal operation; baking a copy here documents the routing the image was built
 # against and lets a bare `docker run` demo route without a mounted worktree.
+# (Souls are mounted live at /home/agent/.orchestrator/souls per #372; not baked.)
 COPY CLAUDE.routing.md /home/agent/.orchestrator/CLAUDE.routing.md
 
 # ── Bake the commit-msg git hook ─────────────────────────────────────────────
