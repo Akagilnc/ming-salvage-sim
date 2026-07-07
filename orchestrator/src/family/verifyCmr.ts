@@ -1576,6 +1576,24 @@ async function runIntegratedCmrPass(input: {
       cmrResult.kind === "outcome_protocol_failure" &&
       cmrAttempt < MAX_DISPATCH_ATTEMPTS
     ) {
+      // #598 r3 (codexA): an `outcome_protocol_failure` can also come from the
+      // rewrite worker MOVING HEAD / leaving tracked changes (outcomeRewriteGitFailure).
+      // Guard git state BEFORE the fresh re-dispatch so the next cmr attempt never runs
+      // on top of a moved/dirty family base — if the reviewer moved HEAD, abort (not a
+      // retryable state); otherwise re-dispatch on the clean expected head.
+      const reDispatchFamilyHead = await readPostCmrFamilyHead(
+        familyBackend,
+        familyBase,
+        resolvedFamilyHeadAfter,
+      );
+      const reDispatchGitAbort = await guardPostCmrReviewerGitState({
+        familyBackend,
+        familyBase,
+        pass,
+        expectedFamilyHead: resolvedFamilyHeadAfter,
+        familyHeadAfter: reDispatchFamilyHead,
+      });
+      if (reDispatchGitAbort !== undefined) return reDispatchGitAbort;
       continue;
     }
     break;

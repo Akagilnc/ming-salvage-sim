@@ -115,11 +115,15 @@ describe("#598 withMechanicalRetry", () => {
     expect(seen).toHaveLength(2);
   });
 
-  it("persistent process failure → durably returns the failure after the bounded attempts", async () => {
+  it("persistent process failure → durably returns the failure after the bounded attempts, naming the attempt count", async () => {
     const { dispatch, seen } = scripted([{ kind: "malformed", reason: "no completion signal" }]);
     const result = await withMechanicalRetry(coderSpec(), {}, dispatch);
     expect(result.kind).toBe("malformed");
     expect(seen).toHaveLength(MAX_DISPATCH_ATTEMPTS);
+    // #598 crit 6: the durable-abort reason names the generic dispatch attempt count.
+    expect((result as { reason: string }).reason).toContain(
+      `after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`,
+    );
   });
 
   it("a retry originating from a RESUME dispatch is forced fresh (resume id stripped)", async () => {
