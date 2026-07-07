@@ -113,7 +113,17 @@ export async function withMechanicalRetry(
     const useCtx = attempt === 1 ? ctx : stripResume(ctx);
     // Idempotency: before a RETRY, reset local git residue the crashed attempt may
     // have left, so the fresh re-dispatch starts from the pre-attempt state.
-    if (attempt > 1) await opts?.resetBeforeRetry?.();
+    // #598: a transient reset failure (git lock / permissions) must NOT abort the
+    // loop — a later attempt may still succeed. Swallow it and proceed (worst case
+    // the residue lingers and this attempt fails too, which is retried/aborted
+    // through the normal path).
+    if (attempt > 1) {
+      try {
+        await opts?.resetBeforeRetry?.();
+      } catch {
+        /* reset best-effort; do not terminate the retry loop */
+      }
+    }
     let result: WorkerResult;
     try {
       result = await dispatch(useSpec, useCtx);
@@ -163,7 +173,14 @@ export async function retryProcessCrash<T>(
   const max = opts?.maxAttempts ?? MAX_DISPATCH_ATTEMPTS;
   let lastError: unknown;
   for (let attempt = 1; attempt <= max; attempt++) {
-    if (attempt > 1) await opts?.resetBeforeRetry?.();
+    if (attempt > 1) {
+      // A transient reset failure must not abort the loop (#598 r2).
+      try {
+        await opts?.resetBeforeRetry?.();
+      } catch {
+        /* reset best-effort */
+      }
+    }
     try {
       return await fn();
     } catch (err) {
