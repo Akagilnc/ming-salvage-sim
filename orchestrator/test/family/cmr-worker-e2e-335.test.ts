@@ -30,6 +30,7 @@ import { cmrWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const promptsDir = join(here, "..", "..", "prompts");
+const soulsDir = join(here, "..", "..", "image", "souls");
 
 const RUN = process.env.RUN_CMR_E2E !== undefined;
 
@@ -90,6 +91,7 @@ describe.skipIf(!RUN)("#335 cmr worker e2e — real 2b container fan-out", () =>
         repo: "Akagilnc/ming-salvage-sim",
         base: "main",
         promptsDir,
+        soulsDir,
         imageName: "ming-orchestrator-coder:latest",
         familyBaseStartHead: startHead,
       });

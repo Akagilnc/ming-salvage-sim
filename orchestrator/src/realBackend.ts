@@ -473,6 +473,14 @@ export function cutRefFor(
 }
 
 /**
+ * Normalize `git worktree list --porcelain` output for CRLF / trailing-whitespace
+ * robustness before parsing. Pure so line-ending handling is unit-tested without git.
+ */
+export function normalizePorcelainOutput(porcelainOut: string): string {
+  return porcelainOut.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+/**
  * Find the worktree path bound to `branch` in `git worktree list --porcelain`
  * output. Porcelain blocks are blank-line-separated; the branch line is exactly
  * `branch refs/heads/<ref>`.
@@ -487,8 +495,8 @@ export function matchWorktreeForBranch(
   branch: string,
 ): string | undefined {
   const wanted = `branch refs/heads/${branch}`;
-  for (const block of porcelainOut.split("\n\n")) {
-    const lines = block.split("\n");
+  for (const block of normalizePorcelainOutput(porcelainOut).split("\n\n")) {
+    const lines = block.split("\n").map((l) => l.trimEnd());
     if (lines.some((l) => l === wanted)) {
       const wt = lines.find((l) => l.startsWith("worktree "));
       if (wt) return wt.slice("worktree ".length).trim();
@@ -518,16 +526,55 @@ export function matchWorktreeForBranch(
  * NEUTRAL prefix (dogfood #327 #1): the earlier `feat/244-orchestrator-issue-<n>`
  * baked in a hardcoded `244` (the #244 epic) — wrong for every other issue, and
  * `issueNumberFromBranch`'s fallback could mis-read that leading run as the issue.
- *
- * RESUME-COMPAT DEFERRED (R1 T2 codex): `findResumeState`/`prepareWorktree` locate
- * the resident worktree by EXACT branch name, so a run cut under the OLD name and
- * resumed after this rename would be re-cut fresh (lost ledger/progress). No such
- * in-flight run exists across this rename (issue numbers are unique; the dogfood's
- * old-name worktrees are closed), so it does not trigger here — but a migration
- * old-alias lookup is tracked for if cross-upgrade resume becomes a need.
  */
 export function branchForIssue(issueNumber: number): string {
   return `feat/issue-${issueNumber}`;
+}
+
+/**
+ * Ordered list of candidate branch names for a given issue number — current
+ * naming convention first (`feat/issue-<n>`), then the prior convention
+ * (`feat/244-orchestrator-issue-<n>`, from before PR #365). The fallback
+ * supports resume of worktrees cut under the old name: they are reused IN PLACE
+ * with no rename or migration. `issueNumberFromBranch` already parses the issue
+ * number from either convention, so this list is the single source for lookups
+ * that go the OTHER direction (issue → branch name candidates).
+ */
+export function candidateBranches(issueNumber: number): string[] {
+  return [
+    `feat/issue-${issueNumber}`,
+    `feat/244-orchestrator-issue-${issueNumber}`,
+  ];
+}
+
+/**
+ * Scan `git worktree list --porcelain` output for a resident worktree bound to
+ * one of {@link candidateBranches} for `issueNumber`. Returns the first exact
+ * branch-line match and how many candidate names were tried (#593 call-count
+ * tests). Pure (string parsing) so the fallback strategy is unit-tested without git.
+ */
+export function scanPorcelainForIssueWorktree(
+  porcelainOut: string,
+  issueNumber: number,
+): {
+  worktree: { path: string; branch: string } | undefined;
+  matchAttempts: number;
+} {
+  let matchAttempts = 0;
+  for (const branch of candidateBranches(issueNumber)) {
+    matchAttempts += 1;
+    const path = matchWorktreeForBranch(porcelainOut, branch);
+    if (path !== undefined) return { worktree: { path, branch }, matchAttempts };
+  }
+  return { worktree: undefined, matchAttempts };
+}
+
+/** First-match resident worktree for `issueNumber`, if any (#593). */
+export function resolveExistingWorktreeFromPorcelain(
+  porcelainOut: string,
+  issueNumber: number,
+): { path: string; branch: string } | undefined {
+  return scanPorcelainForIssueWorktree(porcelainOut, issueNumber).worktree;
 }
 
 export function issueNumberFromBranch(branch: string): number {
@@ -601,6 +648,22 @@ export const WORKER_IDLE_TIMEOUT_SECONDS = 604_800;
  * worker-level prompt). Central set: add future tools' spawned-detection keys here.
  */
 export const SPAWNED_WORKER_ENV: Record<string, string> = { OPENCLAW_SESSION: "1" };
+
+/**
+ * Build the souls mount spec. Hardcodes the sandbox path once.
+ * ALWAYS returns readonly:true so container workers cannot mutate the host
+ * souls truth source (the image's baked souls are no longer present; host
+ * souls/*.md are the single source of truth).
+ * Used at all 6 dispatch sites (RealBackend box/ship + RealFamilyBackend's
+ * 4 workers: merger, coder-fix, integrated-cmr, family-ship).
+ */
+export function soulsMount(soulsDir: string): { hostPath: string; sandboxPath: string; readonly: true } {
+  return {
+    hostPath: soulsDir,
+    sandboxPath: "/home/agent/.orchestrator/souls",
+    readonly: true,
+  };
+}
 
 /**
  * Host paths for the per-issue codex auth copy + the claude token (spike
@@ -810,8 +873,9 @@ export function soulForStep(spec: Pick<StepSpec, "role" | "soul">): StepSoul {
   if (spec.soul !== expected) {
     throw new Error(
       `realBackend: step role "${spec.role}" requires the "${expected}" soul ` +
-        `but the StepSpec carries "${spec.soul}". v0.1 selects the baked soul ` +
-        `by role (#244 "role 决定注哪份 soul"; ADR 0017 §4 one-image-two-roles); ` +
+        `but the StepSpec carries "${spec.soul}". v0.1 selects the role soul ` +
+        `(live-mounted at /home/agent/.orchestrator/souls per #372) by role ` +
+        `(#244 "role 决定注哪份 soul"; ADR 0017 §4 one-image-two-roles); ` +
         `a spec.soul that contradicts its role is misconfigured.`,
     );
   }
@@ -1498,6 +1562,61 @@ export function promptsDirError(
   return undefined;
 }
 
+/**
+ * The complete set of soul files that must exist under soulsDir.
+ * These are the 8 files under orchestrator/image/souls (no longer baked into
+ * the image post #372; the ctor must verify presence so an incomplete/wrong
+ * dir (e.g. pointing at image/ or a partial checkout) fails fast with names,
+ * mirroring promptsDir validation.
+ */
+export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
+  "cmr.md",
+  "cmr_completeness.md",
+  "cmr_correctness.md",
+  "coder.md",
+  "merger.md",
+  "output_protocol.md",
+  "reviewer.md",
+  "ship.md",
+];
+
+/**
+ * Build the construction-time `soulsDir` validation error message, or
+ * `undefined` when the dir is valid (#372).
+ *
+ * soulsDir MUST be absolute + exist + be a directory + contain every
+ * {@link REQUIRED_SOUL_FILES} (the 8 souls). Pure so the message logic is
+ * unit-testable without I/O; the validate* wrapper supplies the fs verdicts.
+ * Mirrors {@link promptsDirError}.
+ */
+export function soulsDirError(
+  soulsDir: string,
+  isAbs: boolean,
+  dirExists: boolean,
+  missingFiles: ReadonlyArray<string>,
+): string | undefined {
+  if (typeof soulsDir !== "string" || soulsDir.length === 0) {
+    return (
+      "RealBackend: soulsDir is required (souls are no longer baked into the image; " +
+        "a missing soulsDir would yield soul-less container workers with no fallback)."
+    );
+  }
+  if (!isAbs) {
+    return `RealBackend: soulsDir must be an absolute path to an existing directory (got "${soulsDir}").`;
+  }
+  if (!dirExists) {
+    return `RealBackend: soulsDir must be an absolute path to an existing directory (got "${soulsDir}").`;
+  }
+  if (missingFiles.length > 0) {
+    return (
+      `RealBackend: soulsDir "${soulsDir}" is missing required soul file(s): ` +
+      `${missingFiles.join(", ")}. All of [${REQUIRED_SOUL_FILES.join(", ")}] ` +
+      `must be present (the 8 files under image/souls, incl. output_protocol.md).`
+    );
+  }
+  return undefined;
+}
+
 function toolchainVersionCommand(tool: string): string[] {
   if (tool === "typescript") return ["tsc", "--version"];
   return [tool, "--version"];
@@ -1545,7 +1664,7 @@ export interface RealBackendOptions {
    * source can grow into an allowlist later without changing parser callers.
    */
   readonly ownerLogin?: string;
-  /** The profile image (#253): toolchain + souls + model CLIs baked in. */
+  /** The profile image (#253): toolchain + skills + model CLIs baked in. Souls mounted live (#372). */
   readonly imageName: string;
   /**
    * DEPRECATED (#334): host dir of dev skills to bind-mount. The 2b worker image
@@ -1569,6 +1688,14 @@ export interface RealBackendOptions {
    * {@link REFERENCED_PROMPT_FILES} entry, or the constructor throws.
    */
   readonly promptsDir: string;
+  /**
+   * Host dir containing souls (coder.md etc + output_protocol.md) to bind-mount
+   * into the container at /home/agent/.orchestrator/souls . #372: souls are
+   * mounted live (rather than baked) so source edits take effect on next dispatch
+   * without a full image layer change for data files.
+   * REQUIRED: souls are no longer baked into the image.
+   */
+  readonly soulsDir: string;
   /** Override $HOME for auth path construction (tests). */
   readonly home?: string;
   /**
@@ -1622,13 +1749,13 @@ const findingDispositionSchema = z
       });
     }
   });
-const findingSchema = z.object({
+export const findingSchema = z.object({
   severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
   category: z.string(),
   claim_quote: z.string(),
   location: z.string(),
   suggested_fix: z.string(),
-  action: z.enum(["fix_now", "defer", "wont_fix", "rejected"]),
+  action: z.enum(["fix_now", "wont_fix", "rejected"]),
   disposition_reason: z.string().optional(),
   disposition: findingDispositionSchema.optional(),
 }).superRefine((finding, ctx) => {
@@ -1666,18 +1793,6 @@ const findingSchema = z.object({
       code: "custom",
       path: ["disposition"],
       message: "suppressed findings require accepted_suppressed disposition",
-    });
-  }
-  // #604 correctness r1 (P2-b): ADR 0062 removed all non-suppression route kinds,
-  // so `defer` can no longer carry a valid non-suppression disposition. A stray
-  // defer fails closed as malformed (consistent with validate.ts and the Python
-  // outcome-guard), never a免修 route.
-  if (finding.action === "defer") {
-    ctx.addIssue({
-      code: "custom",
-      path: ["action"],
-      message:
-        "defer is no longer a supported action (ADR 0062): a stray defer is malformed",
     });
   }
 });
@@ -1822,6 +1937,7 @@ export class RealBackend implements Backend {
     this.opts = opts;
     this.ownerLogin = opts.ownerLogin ?? repoOwnerLogin(opts.repo);
     this.validatePromptsDir();
+    this.validateSoulsDir();
     this.workingRepo = this.buildOrReuseClone();
     this.assertIndependentClone();
   }
@@ -1907,6 +2023,23 @@ export class RealBackend implements Backend {
       ? REFERENCED_PROMPT_FILES.filter((f) => !existsSync(join(dir, f)))
       : [];
     const err = promptsDirError(dir, isAbsolute(dir), dirExists, missing);
+    if (err !== undefined) throw new Error(err);
+  }
+
+  /**
+   * Fail loudly at construction if soulsDir is missing or not a usable dir
+   * containing the full REQUIRED_SOUL_FILES set. Souls are no longer baked (#372);
+   * an incomplete/wrong dir (e.g. orchestrator/image/ or missing reviewer.md
+   * / output_protocol.md) would now sail through to runtime (no more baked copies).
+   * Delegates to the pure {@link soulsDirError} (single source of messages/checks).
+   */
+  private validateSoulsDir(): void {
+    const dir = this.opts.soulsDir;
+    const dirExists = isAbsolute(dir) && existsSync(dir) && statSync(dir).isDirectory();
+    const missing = dirExists
+      ? REQUIRED_SOUL_FILES.filter((f) => !existsSync(join(dir, f)))
+      : [];
+    const err = soulsDirError(dir, isAbsolute(dir), dirExists, missing);
     if (err !== undefined) throw new Error(err);
   }
 
@@ -2086,7 +2219,6 @@ export class RealBackend implements Backend {
     issueNumber: number,
     base: string,
   ): Promise<WorktreeHandle> {
-    const branch = branchForIssue(issueNumber);
     // Idempotent reuse: if the resident worktree exists, reuse it (the runner's
     // #255 resume path drives this); else cut a fresh one from `base` (main).
     //
@@ -2099,11 +2231,12 @@ export class RealBackend implements Backend {
     // returning, so a no-ledger old branch can never masquerade as a clean fresh
     // cut and leak residue into the pushed branch. (Repo-level prune handed back
     // to Sandcastle — ADR 0024 dec. 2.)
-    const existing = this.findExistingWorktree(branch);
+    const existing = this.findExistingWorktree(issueNumber);
     if (existing !== undefined) {
-      this.cleanResidueAt(existing);
-      return { branch, base, path: existing };
+      this.cleanResidueAt(existing.path);
+      return { branch: existing.branch, base, path: existing.path };
     }
+    const branch = branchForIssue(issueNumber);
     // Cut the slice branch from `base` (= "main", runner.ts SLICE_BASE), NOT the
     // working clone's current HEAD. NamedBranchStrategy.baseBranch defaults to HEAD
     // when omitted (Sandcastle d.ts:213), so omitting it silently derived the
@@ -2179,10 +2312,10 @@ export class RealBackend implements Backend {
     }
   }
 
-  private findExistingWorktree(branch: string): string | undefined {
+  private findExistingWorktree(issueNumber: number): { path: string; branch: string } | undefined {
     try {
       const out = this.sh("git", ["worktree", "list", "--porcelain"], this.workingRepo);
-      return matchWorktreeForBranch(out, branch);
+      return resolveExistingWorktreeFromPorcelain(out, issueNumber);
     } catch {
       // no worktrees / git error ⇒ none existing.
       return undefined;
@@ -2375,10 +2508,10 @@ export class RealBackend implements Backend {
    * worker image (#333) BAKES the full dev-skill closure at that exact path, so
    * mounting host skills there at runtime would SHADOW the baked skills — pulling
    * the worker back to host state (the ADR 0026 reproducibility regression). The
-   * baked image is now the single source of skills; the only mount left is the
-   * per-issue codex auth dir (a live secret, not bakeable).
+   * baked image is now the single source of skills; souls are mounted live (#372).
+   * The only other mounts are per-issue auth + outcome files.
    *
-   * ship-pre 256 r1: `soulForStep(spec)` selects the role's baked soul and
+   * ship-pre 256 r1: `soulForStep(spec)` selects the role's soul and
    * injects it via {@link SANDBOX_SOUL_ENV} so the v0.1 one-image-two-roles
    * profile activates the right one (#244 "role 决定注哪份 soul"); it throws on a
    * spec whose `soul` contradicts its `role` → S8(error). Still a soul ENV
@@ -2424,6 +2557,10 @@ export class RealBackend implements Backend {
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
       { hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR },
     ];
+    // #372: mount souls live (from host source tree) so edits to souls/*.md take
+    // effect immediately on next launch/dispatch without baking into image.
+    // Uses shared helper which hardcodes sandbox path and forces readonly:true.
+    mounts.push(soulsMount(this.opts.soulsDir));
     if (options?.fixFindingsLanding !== undefined) {
       mounts.push({
         hostPath: options.fixFindingsLanding.path,
@@ -2440,7 +2577,7 @@ export class RealBackend implements Backend {
     return {
       imageName: this.opts.imageName,
       env,
-      // #334: codex auth stays the only always-on runtime mount; S5 adds the
+      // #334: codex auth always-on; #372 adds souls mount (live data); S5 adds
       // runner-owned fix findings file as a narrow read-only overlay.
       mounts,
     };
@@ -3141,7 +3278,7 @@ export class RealBackend implements Backend {
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     // The ship worker runs under the dedicated "ship" soul (delivery discipline:
     // gstack-ship, stop-at-PR, defer→tracker not PR body) — souls/ship.md covers
@@ -3163,11 +3300,14 @@ export class RealBackend implements Backend {
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
-    const mounts: { hostPath: string; sandboxPath: string }[] = [];
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     // #334: codex auth ONLY — baked skills win (no host skills mount).
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
+    // #372: souls mount for ship worker too (live source, shadows baked if any).
+    // Shared helper forces readonly:true at all sites.
+    mounts.push(soulsMount(this.opts.soulsDir));
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -3218,13 +3358,12 @@ export class RealBackend implements Backend {
 
   // ── #255: detect resume residue ────────────────────────────────────────────
   async findResumeState(issueNumber: number): Promise<ResumeState | undefined> {
-    const branch = branchForIssue(issueNumber);
-    const wtPath = this.findExistingWorktree(branch);
-    if (wtPath === undefined) return undefined;
-    const stateDir = this.stateDirFor(wtPath, issueNumber);
+    const existing = this.findExistingWorktree(issueNumber);
+    if (existing === undefined) return undefined;
+    const stateDir = this.stateDirFor(existing.path, issueNumber);
     const ledger = this.readLedger(stateDir);
     if (ledger === undefined) return undefined;
-    const worktree = { branch, base: "main", path: wtPath };
+    const worktree = { branch: existing.branch, base: "main", path: existing.path };
 
     // codex#2 — before reusing the resident branch, verify the LAST recorded
     // branchHEAD SHA still matches the live worktree HEAD (integ-cmr 256 r1,

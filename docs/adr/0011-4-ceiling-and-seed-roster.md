@@ -1,6 +1,6 @@
 # 敏感度天花板 ceiling + seed 名册 schema（ADR 0011 决定1/4 子 ADR · 0011-4）
 
-Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定1（敏感度天花板查表）+ 决定4（议题敏感度 = 阻力天花板），由 design-dig `dig-9`（ceiling）+ `dig-7`（seed 名册）fold 而成。**评审收敛**——本地 ship-pre cmr R1–R8 4/4 concur（2026-06-15）+ 线上 PR #123 R1–R3 评审收敛；merge 即转 Accepted。实现属编码活、spawn 隔壁。）
+Status: Accepted（承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定1（敏感度天花板查表）+ 决定4（议题敏感度 = 阻力天花板），由 design-dig `dig-9`（ceiling）+ `dig-7`（seed 名册）fold 而成。**评审收敛**——本地 ship-pre cmr R1–R8 4/4 concur（2026-06-15）+ 线上 PR #123 R1–R3 评审收敛；PR #123 已 merge（`847dc3da5`，2026-06-15）转 Accepted。实现属编码活、spawn 隔壁。）
 
 承 GitHub #112 tracker。本 ADR 收口两块第一刀 substrate：① **敏感度天花板 ceiling 表 + 目标 tag modifier + 命门 = 合法性 floor + 出路恒可达机理**（dig-9）；② **seed 名册数据 spec**（dig-7：开局朝堂 74 人 seed-guilt / identity），它是失称度（0011-2 失称度公式的 `crime_weight`）与认同度（0011-2 kinship 的 `k_id`）的真源，并入本 ADR 一并收口（substrate 同批、少一个独立评审周期）。
 

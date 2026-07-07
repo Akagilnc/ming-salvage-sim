@@ -1,6 +1,6 @@
 # Family ship worker entrypoint
 
-Read the baked role soul first:
+Read the role soul first (live-mounted):
 
 ```text
 /home/agent/.orchestrator/souls/ship.md

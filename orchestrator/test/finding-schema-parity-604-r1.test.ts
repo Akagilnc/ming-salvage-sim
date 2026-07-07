@@ -64,23 +64,7 @@ describe("#604 r1 P2-a — accepted_suppressed only valid on wont_fix/rejected (
   });
 });
 
-describe("#604 r1 P2-b — a stray defer is malformed (validate.ts)", () => {
-  it("rejects a defer finding with an accepted_suppressed disposition", () => {
-    const finding = {
-      ...baseFinding(),
-      action: "defer",
-      disposition: suppression,
-    };
-    expect(isValidFinding(finding)).toBe(false);
-  });
-
-  it("rejects a defer finding with no disposition", () => {
-    const finding = { ...baseFinding(), action: "defer" };
-    expect(isValidFinding(finding)).toBe(false);
-  });
-});
-
-// ─── Python outcome-guard parity (P2-b: guard slice-4 miss) ─────────────────────
+// ─── Python outcome-guard parity (unsupported actions / dispositions) ───────────
 
 function runGuardOnFindings(findings: unknown[]): ReturnType<typeof spawnSync> {
   const dir = mkdtempSync(join(tmpdir(), "guard-parity-604-r1-"));
@@ -146,20 +130,19 @@ describe("#604 r1 P2-b — Python outcome-guard口径 parity", () => {
     expect(result.stderr).toContain("kind is not a supported value");
   });
 
-  it("rejects a stray defer as malformed", () => {
+  it("rejects a stray defer as unsupported by the action allowlist", () => {
     const result = runGuardOnFindings([
       {
         severity: "medium",
         category: "correctness",
-        claim_quote: "stray defer must be malformed",
+        claim_quote: "stray defer must be rejected by the allowlist",
         location: "orchestrator/src/family/runner.ts:1",
         suggested_fix: "report it fix_now",
         action: "defer",
-        disposition: suppression,
       },
     ]);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("defer");
+    expect(result.stderr).toContain("findings[0].action is not a supported value");
   });
 
   it("rejects a fix_now finding carrying an accepted_suppressed disposition", () => {
