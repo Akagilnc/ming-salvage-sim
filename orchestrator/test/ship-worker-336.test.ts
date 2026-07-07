@@ -172,12 +172,17 @@ describe("#336 RealBackend.dispatchWorker — the single-slice ship worker", () 
   // read as a completed delivery. ship.md asks the worker to report THE shipped branch
   // (the slice branch already checked out, branchStrategy:{type:"head"}) — there is no
   // legitimate rename path, so an outcome.branch ≠ ctx.worktree.branch is off-contract.
-  it("a shipped outcome whose branch ≠ the worktree branch ⇒ malformed (branch identity)", async () => {
+  it("a shipped outcome whose branch ≠ the worktree branch ⇒ failed (a JUDGED off-contract delivery, #601)", async () => {
+    // #601: a branch-identity mismatch is a JUDGED outcome (the worker shipped
+    // something we can rule on), NOT a structural process failure → maps to `failed`
+    // so the runner's `callerOwns` claims it and it passes through with ZERO retry
+    // (never re-running a decided wrong-branch delivery). A structural `malformed`
+    // (no parseable `<ship>` tag) is the retryable case; a branch mismatch is not.
     const be = fixtured();
     be.outcome = { kind: "shipped", branch: "main", status: "pr_opened", pr: "u" };
     const res = await be.dispatchWorker!(shipWorkerSpec(), { worktree });
-    expect(res.kind).toBe("malformed");
-    if (res.kind === "malformed") expect(res.reason).toMatch(/branch/);
+    expect(res.kind).toBe("failed");
+    if (res.kind === "failed") expect(res.reason).toMatch(/branch/);
   });
 
   it("a shipped outcome on the correct worktree branch ⇒ completed (identity holds)", async () => {
