@@ -34,6 +34,10 @@ import {
   ensureExcluded,
   extractAgentBrief,
   extractCoderTag,
+  extractVerifyTag,
+  extractFixerTag,
+  extractCleanupTag,
+  extractDocReleaseTag,
   isLikelySha,
   isReadyForAgent,
   issueNumberFromBranch,
@@ -1349,7 +1353,7 @@ describe("RealBackend reviewer output contract", () => {
 
 // ─── #596 F2: real decode seam for verify/fixer/cleanup/docRelease (raw, not fake) ───
 
-describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds (raw feed)", () => {
+describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds via raw tag-extract + decodeOutput (verify/fixer/cleanup/docRelease; valid shapes pass to typed; extra-key/malformed fail-closed; also covers outputFor for verify)", () => {
   class DecodeOnlyBackend extends RealBackend {
     protected override cloneDirExists(): boolean {
       return true;
@@ -1395,6 +1399,26 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     soul: "coder",
     toolchain: ["node"],
   };
+  const cleanupSpec: StepSpec = {
+    id: "S11",
+    role: "cleanup",
+    promptFile: "dummy.md",
+    model: "gpt-5.5",
+    completionSignal: "CLEANUP_COMPLETE",
+    maxIter: 1,
+    soul: "READ-ONLY",
+    toolchain: ["node"],
+  };
+  const docReleaseSpec: StepSpec = {
+    id: "S12",
+    role: "docRelease",
+    promptFile: "dummy.md",
+    model: "gpt-5.5",
+    completionSignal: "DOCRELEASE_COMPLETE",
+    maxIter: 1,
+    soul: "READ-ONLY",
+    toolchain: ["node"],
+  };
 
   it("decodeOutput on RAW valid verify produces correct VerifyResult (not fake construction)", () => {
     const backend = makeBackend();
@@ -1403,21 +1427,23 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     if (outDef && typeof outDef === "object" && "tag" in outDef) {
       expect(outDef.tag).toBe("verify");
     }
+    const raw = extractVerifyTag('<verify>{"converged": true}</verify>');
     const decoded = (
       backend as unknown as {
         decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
       }
-    ).decodeOutput(verifySpec, { converged: true }, undefined);
+    ).decodeOutput(verifySpec, raw, undefined);
     expect(decoded).toEqual({ kind: "verify", converged: true });
   });
 
   it("decodeOutput on RAW valid-but-false verify still succeeds (AC: shape-valid false passes)", () => {
     const backend = makeBackend();
+    const raw = extractVerifyTag('<verify>{"converged": false}</verify>');
     const decoded = (
       backend as unknown as {
         decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
       }
-    ).decodeOutput(verifySpec, { converged: false }, undefined);
+    ).decodeOutput(verifySpec, raw, undefined);
     expect(decoded).toEqual({ kind: "verify", converged: false });
   });
 
@@ -1428,18 +1454,63 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
         backend as unknown as {
           decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
         }
-      ).decodeOutput(verifySpec, { converged: "notbool" }, undefined),
+      ).decodeOutput(verifySpec, extractVerifyTag('<verify>{"converged": "notbool"}</verify>'), undefined),
     ).toThrow();
   });
 
   it("decodeOutput on RAW valid fixer produces FixerResult via real seam", () => {
     const backend = makeBackend();
+    const raw = extractFixerTag('<fixer>{"committed": false}</fixer>');
     const decoded = (
       backend as unknown as {
         decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
       }
-    ).decodeOutput(fixerSpec, { committed: false }, undefined);
+    ).decodeOutput(fixerSpec, raw, undefined);
     expect(decoded).toEqual({ kind: "fixer", committed: false });
+  });
+
+  it("decodeOutput on RAW valid cleanup produces CleanupResult via real seam", () => {
+    const backend = makeBackend();
+    const raw = extractCleanupTag('<cleanup>{"ok": true}</cleanup>');
+    const decoded = (
+      backend as unknown as {
+        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+      }
+    ).decodeOutput(cleanupSpec, raw, undefined);
+    expect(decoded).toEqual({ kind: "cleanup", ok: true });
+  });
+
+  it("decodeOutput on RAW valid docRelease produces DocReleaseResult via real seam", () => {
+    const backend = makeBackend();
+    const raw = extractDocReleaseTag('<docRelease>{"released": false}</docRelease>');
+    const decoded = (
+      backend as unknown as {
+        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+      }
+    ).decodeOutput(docReleaseSpec, raw, undefined);
+    expect(decoded).toEqual({ kind: "docRelease", released: false });
+  });
+
+  it("decodeOutput on RAW extra-key cleanup fails closed (strict schema)", () => {
+    const backend = makeBackend();
+    expect(() =>
+      (
+        backend as unknown as {
+          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+        }
+      ).decodeOutput(cleanupSpec, extractCleanupTag('<cleanup>{"ok": true, "extra": 1}</cleanup>'), undefined),
+    ).toThrow();
+  });
+
+  it("decodeOutput on RAW malformed docRelease (bad type) fails closed via guard", () => {
+    const backend = makeBackend();
+    expect(() =>
+      (
+        backend as unknown as {
+          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+        }
+      ).decodeOutput(docReleaseSpec, extractDocReleaseTag('<docRelease>{"released": "no"}</docRelease>'), undefined),
+    ).toThrow();
   });
 
   it("decodeOutput on unknown role for review-loop raw fails closed", () => {
