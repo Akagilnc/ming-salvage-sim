@@ -91,16 +91,31 @@ export interface AbortedRecord {
 }
 
 /**
- * The fields a PHASE-LEVEL `shipped` event (terminal 止于-PR success) carries
- * (online review r2, codex P1). Like {@link AbortedRecord} it is a phase-level
- * event (NOT a child), so it carries NO `childIssue`. It records the family `pr`
- * URL and the exact family HEAD covered by that PR. The spine may skip a later
- * final barrier only when the current family HEAD still equals this head.
+ * The fields a PHASE-LEVEL `shipped` event (止于-PR success) carries (online
+ * review r2, codex P1). Like {@link AbortedRecord} it is a phase-level event
+ * (NOT a child), so it carries NO `childIssue`. It records the family `pr` URL
+ * and the exact family HEAD covered by that PR. As of #596 `shipped` is
+ * INTERMEDIATE: the spine skips the final barrier only when a matching
+ * `review_loop_converged` marker exists for the current head.
  */
 export interface ShippedRecord {
-  /** The family PR URL the terminal ship opened. */
+  /** The family PR URL the ship opened. */
   readonly pr: string;
-  /** The family base HEAD covered by the terminal ship / PR. */
+  /** The family base HEAD covered by the ship / PR. */
+  readonly familyHeadAfter: string;
+  /** Unified stop reason summary (#450). */
+  readonly stopSummary?: StopSummary;
+}
+
+/**
+ * The fields a PHASE-LEVEL `review_loop_converged` terminal event carries
+ * (#596). Written after the family PR has passed the online review/PR-check
+ * loop. The spine's final-barrier resume guard reads this marker.
+ */
+export interface ReviewLoopConvergedRecord {
+  /** The family PR URL that has converged. */
+  readonly pr: string;
+  /** The family base HEAD covered by the converged review loop. */
   readonly familyHeadAfter: string;
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
@@ -634,6 +649,20 @@ function isValidFamilyShipped(
   );
 }
 
+function isValidReviewLoopConverged(
+  entry: FamilyLedgerEntry,
+): entry is FamilyLedgerEntry & { readonly pr: string; readonly familyHeadAfter: string } {
+  return (
+    entry.status === "review_loop_converged" &&
+    entry.event === "review_loop_converged" &&
+    entry.phase === "final" &&
+    typeof entry.pr === "string" &&
+    entry.pr.trim().length > 0 &&
+    typeof entry.familyHeadAfter === "string" &&
+    entry.familyHeadAfter.trim().length > 0
+  );
+}
+
 function familyAnswerPayload(entry: FamilyLedgerEntry): EscalationAnswerPayload {
   return {
     event: "escalation_answered",
@@ -676,6 +705,7 @@ export function familyEscalationState(
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
     if (isValidFamilyShipped(entry)) return undefined;
+    if (isValidReviewLoopConverged(entry)) return undefined;
     if (entry.status !== "escalated") continue;
     if (entry.event !== "escalated") return { escalation: entry };
     const answer =
@@ -789,8 +819,8 @@ export function familyShippedRecordForHead(
   // the final barrier on this, so a corrupt/hand-edited `status:"shipped"` row with
   // no real delivery must NOT bypass verify/cmr/ship. Require the COMPLETE shape
   // `recordShipped` writes — status + event + final phase + a non-blank `pr` URL
-  // + a non-blank `familyHeadAfter` — so only a genuine terminal ship for the
-  // current HEAD counts as delivered.
+  // + a non-blank `familyHeadAfter` — so only a genuine ship for the current HEAD
+  // counts.
   if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) return undefined;
   const shipped = entries.find(
     (e): e is FamilyLedgerEntry & { readonly pr: string; readonly familyHeadAfter: string } =>
@@ -802,6 +832,75 @@ export function familyShippedRecordForHead(
     familyHeadAfter: shipped.familyHeadAfter,
     ...(shipped.stopSummary !== undefined
       ? { stopSummary: shipped.stopSummary }
+      : {}),
+  };
+}
+
+/**
+ * Append the PHASE-LEVEL `review_loop_converged` terminal marker to the family
+ * ledger (#596).
+ *
+ * The verify-cmr hook calls this AFTER the online review/PR-check loop has
+ * converged for the shipped PR. Without it, the family spine would treat the
+ * intermediate `shipped` marker as terminal and skip re-running the final
+ * barrier on a later live HEAD advance.
+ */
+export async function recordReviewLoopConverged(
+  backend: FamilyBackend,
+  record: ReviewLoopConvergedRecord,
+): Promise<void> {
+  const pr = record.pr.trim();
+  const familyHeadAfter = record.familyHeadAfter.trim();
+  if (pr.length === 0) {
+    throw new Error("family review_loop_converged marker must include a non-empty PR URL");
+  }
+  if (familyHeadAfter.length === 0) {
+    throw new Error(
+      "family review_loop_converged marker must include a non-empty familyHeadAfter",
+    );
+  }
+  await backend.appendFamilyLedger(
+    compact({
+      status: "review_loop_converged",
+      event: "review_loop_converged",
+      phase: "final",
+      pr,
+      familyHeadAfter,
+      stopSummary:
+        record.stopSummary ??
+        successStopSummary({
+          heads: {
+            actualFamilyHead: familyHeadAfter,
+            sources: { actualFamilyHead: "review_loop_converged ledger row" },
+          },
+        }),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/**
+ * Did the terminal family review loop already converge for THIS family HEAD?
+ * True only when a complete `status:"review_loop_converged"` marker is on the
+ * ledger and its `familyHeadAfter` equals the current family HEAD. The spine
+ * reads this BEFORE the final barrier so a fully-converged family run is not
+ * re-run, while a later live HEAD advance is re-verified / re-shipped / re-looped
+ * instead of being hidden by an older marker.
+ */
+export function familyReviewLoopConvergedForHead(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
+): ReviewLoopConvergedRecord | undefined {
+  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) return undefined;
+  const converged = entries.find(
+    (e): e is FamilyLedgerEntry & { readonly pr: string; readonly familyHeadAfter: string } =>
+      isValidReviewLoopConverged(e) && e.familyHeadAfter === familyHeadAfter,
+  );
+  if (converged === undefined) return undefined;
+  return {
+    pr: converged.pr,
+    familyHeadAfter: converged.familyHeadAfter,
+    ...(converged.stopSummary !== undefined
+      ? { stopSummary: converged.stopSummary }
       : {}),
   };
 }

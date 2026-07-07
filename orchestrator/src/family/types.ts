@@ -126,12 +126,16 @@ export interface FamilyLedgerEntry {
    *   - `"aborted"` — a verify/cmr barrier failed; this PHASE-LEVEL event carries
    *     the family head at the time (`familyHeadAfter`) + the `phase` + a `reason`
    *     for triage (#291 缺口 2). NOT counted as merged.
-   *   - `"shipped"` — the terminal family ship (止于-PR) SUCCEEDED (online review r2,
-   *     codex P1). A PHASE-LEVEL terminal marker carrying the family `pr` URL and
-   *     the covered `familyHeadAfter`; the spine's resume guard reads it so only
-   *     the same already-delivered HEAD skips re-verify / re-cmr / re-ship. NOT
-   *     counted as merged (no `childIssue`).
- *   - `"cmr_reviewed"` — a PHASE-LEVEL audit event recording one red integrated
+   *   - `"shipped"` — the family ship (止于-PR) SUCCEEDED (online review r2,
+   *     codex P1). A PHASE-LEVEL marker carrying the family `pr` URL and the
+   *     covered `familyHeadAfter`. As of #596 it is INTERMEDIATE, not terminal:
+   *     the spine skips re-run only when a matching `"review_loop_converged"`
+   *     marker exists for the current head. NOT counted as merged (no `childIssue`).
+   *   - `"review_loop_converged"` — the TERMINAL family review-loop marker (#596).
+   *     Written after the shipped PR has passed the online review/PR-check loop.
+   *     The spine's resume guard reads it so only a fully-converged HEAD skips
+   *     re-verify / re-cmr / re-ship / re-loop. NOT counted as merged.
+  *   - `"cmr_reviewed"` — a PHASE-LEVEL audit event recording one red integrated
  *     CMR review outcome before the runner dispatches coder-fix (#550). NOT
  *     counted as merged.
  *   - `"cmr_fix_committed"` — a PHASE-LEVEL audit event recording the separate
@@ -160,6 +164,7 @@ export interface FamilyLedgerEntry {
     | "merged"
     | "aborted"
     | "shipped"
+    | "review_loop_converged"
     | "cmr_reviewed"
     | "cmr_fix_committed"
     | "cmr_passed"
@@ -175,9 +180,13 @@ export interface FamilyLedgerEntry {
    *   - `"aborted"` — a PHASE-LEVEL verify/cmr-failure durable entry (#291 缺口 2),
    *     paired with `status:"aborted"`; written by the verify-cmr hook so the abort
    *     reaches the durable ledger reconcile reads (not just the in-memory seam).
-   *   - `"shipped"` — the terminal family ship succeeded (online review r2, codex
-   *     P1), paired with `status:"shipped"`; written by the verify-cmr hook at the
-   *     止于-PR success so a resume sees the family is already delivered.
+   *   - `"shipped"` — the family ship succeeded (online review r2, codex P1),
+   *     paired with `status:"shipped"`; written by the verify-cmr hook at the
+   *     止于-PR success. As of #596 this is an INTERMEDIATE marker; the terminal
+   *     resume guard looks for `"review_loop_converged"`.
+   *   - `"review_loop_converged"` — paired with `status:"review_loop_converged"`;
+   *     the terminal marker written after the online review/PR-check loop converged
+   *     (#596).
    *   - `"cmr_reviewed"` — paired with `status:"cmr_reviewed"`; records a red
    *     reviewer outcome before the runner sends it to coder-fix (#550).
    *   - `"cmr_fix_committed"` — paired with `status:"cmr_fix_committed"`; records
@@ -199,6 +208,7 @@ export interface FamilyLedgerEntry {
     | "reconciled"
     | "aborted"
     | "shipped"
+    | "review_loop_converged"
     | "cmr_reviewed"
     | "cmr_fix_committed"
     | "cmr_passed"

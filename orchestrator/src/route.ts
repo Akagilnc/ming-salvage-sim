@@ -9,7 +9,7 @@
  * worker boundaries:
  *
  *   S0→S1→S2(implement)→S3(review)→S4(classify)
- *     clean/deferred only → S7(ship)→S8(success)
+ *     clean/deferred only → S7(ship)→S9(verify)→S10(fixer)→S11(cleanup)→S12(docRelease)→S8(success)
  *     blocking → S5(fix)→S6(fresh full-diff review)→S4
  *
  * Escalate stays the global stop edge (checked FIRST).
@@ -30,6 +30,12 @@ import {
   isValidEscalation,
   isValidReviewerOutput,
 } from "./validate.js";
+import {
+  isValidCleanupResult,
+  isValidDocReleaseResult,
+  isValidFixerResult,
+  isValidVerifyResult,
+} from "./reviewLoopOutcome.js";
 
 /** What route() decides: the next step to run, or a terminal handoff. */
 export type RouteDecision =
@@ -147,12 +153,40 @@ export function route(ctx: RouteContext): RouteDecision {
     }
 
     case "S7":
-      // S7 ship succeeded → success handoff.
+      // S7 ship succeeded → enter the runner-visible review-loop skeleton.
       // NOTE: ship failure is caught in runner.ts (the ship worker
       // throws/escalates) and converted to S8(error)/S8(escalate) there — it
       // does not flow through route() because route() is only called after a
       // successful step body.
+      return { kind: "next", step: "S9" };
+
+    case "S9": {
+      if (!isValidVerifyResult(ctx.output)) {
+        return { kind: "handoff", status: "error" };
+      }
+      return { kind: "next", step: "S10" };
+    }
+
+    case "S10": {
+      if (!isValidFixerResult(ctx.output)) {
+        return { kind: "handoff", status: "error" };
+      }
+      return { kind: "next", step: "S11" };
+    }
+
+    case "S11": {
+      if (!isValidCleanupResult(ctx.output)) {
+        return { kind: "handoff", status: "error" };
+      }
+      return { kind: "next", step: "S12" };
+    }
+
+    case "S12": {
+      if (!isValidDocReleaseResult(ctx.output)) {
+        return { kind: "handoff", status: "error" };
+      }
       return { kind: "handoff", status: "success" };
+    }
 
     case "S8":
       // S8 is terminal — route() is never called to leave it.

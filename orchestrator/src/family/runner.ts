@@ -42,6 +42,7 @@ import { assertAcyclic, selectWave } from "./commander.js";
 import {
   childEscalationAnswer,
   familyEscalationState,
+  familyReviewLoopConvergedForHead,
   familyShippedRecordForHead,
   hasBoundShippedMarker,
   hasUnboundLegacyShippedMarker,
@@ -51,6 +52,7 @@ import {
   recordChildDecisionParked,
   recordFamilyEscalated,
   recordMerged,
+  recordReviewLoopConverged,
   unansweredChildEscalations,
 } from "./ledger.js";
 import { mergeChild } from "./merger.js";
@@ -1391,22 +1393,22 @@ export async function runFamily(
     return await finalize();
   }
 
-  // ── already-shipped resume guard (online review r2, codex P1) ────────────────
-  // If a prior invocation already ran the terminal 止于-PR family ship for the SAME
-  // family HEAD (a complete `shipped` ledger entry with matching `familyHeadAfter`),
-  // the family PR is open and covers the current base. Re-running the final barrier
-  // would re-verify, re-cmr, and re-invoke the ship worker — a duplicate VERSION bump
-  // / PR attempt. But an older shipped marker for a different head must NOT hide a
-  // later live-base advance; that new head needs a fresh final barrier / ship.
+  // ── already-converged resume guard (#596) ───────────────────────────────────
+  // If a prior invocation already ran the full final barrier (verify → cmr →
+  // ship → review loop) for the SAME family HEAD, a complete
+  // `review_loop_converged` ledger entry exists. Re-running the final barrier
+  // would re-verify, re-cmr, re-ship, and re-loop — duplicating work. An older
+  // converged marker for a different head must NOT hide a later live-base
+  // advance; that new head needs a fresh final barrier.
   const preFinalLedger = await familyBackend.readFamilyLedger();
   const preFinalLedgerLength = preFinalLedger.length;
   const preFinalFamilyHead =
     familyHead ?? (await readCurrentFamilyHead(familyBackend, familyBase));
-  const shippedRecord = familyShippedRecordForHead(
+  const convergedRecord = familyReviewLoopConvergedForHead(
     preFinalLedger,
     preFinalFamilyHead,
   );
-  if (shippedRecord !== undefined) {
+  if (convergedRecord !== undefined) {
     const ledgerMerged = await currentMerged(familyBackend);
     const children: FamilyChildResult[] = epic.children.map((c) =>
       ledgerMerged.has(c.issue)
@@ -1418,7 +1420,7 @@ export async function runFamily(
         escalationKind: "failure",
         phase: "final",
         reason:
-          "family ledger contains a shipped marker but this backend cannot verify the PR still covers the current family HEAD",
+          "family ledger contains a review_loop_converged marker but this backend cannot verify the PR still covers the current family HEAD",
         familyHeadAfter: preFinalFamilyHead,
       });
       return {
@@ -1431,13 +1433,13 @@ export async function runFamily(
           familyHead: preFinalFamilyHead,
           children,
           escalationReason:
-            "family ledger contains a shipped marker but this backend cannot verify the PR still covers the current family HEAD",
+            "family ledger contains a review_loop_converged marker but this backend cannot verify the PR still covers the current family HEAD",
         }),
         children,
       };
     }
     const shippedPr = await familyBackend.verifyFamilyShippedPr({
-      pr: shippedRecord.pr,
+      pr: convergedRecord.pr,
       familyBase,
       expectedHead: preFinalFamilyHead!,
     });
@@ -1445,7 +1447,7 @@ export async function runFamily(
       await recordFamilyEscalated(familyBackend, {
         escalationKind: "failure",
         phase: "final",
-        reason: `family shipped marker no longer verifies: ${shippedPr.reason}`,
+        reason: `family review_loop_converged marker no longer verifies: ${shippedPr.reason}`,
         familyHeadAfter: preFinalFamilyHead,
       });
       return {
@@ -1457,30 +1459,30 @@ export async function runFamily(
           familyBase,
           familyHead: preFinalFamilyHead,
           children,
-          escalationReason: `family shipped marker no longer verifies: ${shippedPr.reason}`,
+          escalationReason: `family review_loop_converged marker no longer verifies: ${shippedPr.reason}`,
         }),
         children,
       };
     }
     familyHead = preFinalFamilyHead;
-    const shippedVerifiedCmrHead =
-      shippedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
+    const convergedVerifiedCmrHead =
+      convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
       preFinalFamilyHead;
     const alreadyDoneSummary: StopSummary = {
       reason: "already_done",
-      summary: "family run already shipped for the current family HEAD",
+      summary: "family run already converged for the current family HEAD",
       metadata: {
         heads: {
           actualFamilyHead: preFinalFamilyHead,
-          reportedFamilyHead: shippedRecord.familyHeadAfter,
-          verifiedCmrHead: shippedVerifiedCmrHead,
+          reportedFamilyHead: convergedRecord.familyHeadAfter,
+          verifiedCmrHead: convergedVerifiedCmrHead,
           sources: {
             actualFamilyHead: "current family head",
-            reportedFamilyHead: "shipped ledger row",
+            reportedFamilyHead: "review_loop_converged ledger row",
             verifiedCmrHead:
-              shippedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead !== undefined
-                ? "shipped ledger stop summary"
-                : "shipped ledger row",
+              convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead !== undefined
+                ? "review_loop_converged ledger stop summary"
+                : "review_loop_converged ledger row",
           },
         },
       },

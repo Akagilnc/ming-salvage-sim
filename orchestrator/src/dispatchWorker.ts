@@ -67,6 +67,10 @@ const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
   cmr: "ak-cross-m-review",
   ship: "gstack-ship",
   merge: undefined,
+  verify: "/verify",
+  fixer: "/fixer",
+  cleanup: "/cleanup",
+  docRelease: "/doc-release",
 };
 
 /**
@@ -75,7 +79,9 @@ const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
  * directly, not from a role StepSpec.)
  */
 function workerKindForRole(role: StepSpec["role"]): WorkerKind {
-  return role === "coder" ? "coder" : "reviewer";
+  if (role === "coder") return "coder";
+  if (role === "reviewer") return "reviewer";
+  return role;
 }
 
 /**
@@ -87,7 +93,9 @@ function workerKindForRole(role: StepSpec["role"]): WorkerKind {
  * normal fix keeps git-truthing + maxIter, NOT the crash/escalate resume path).
  */
 function retentionForKind(kind: WorkerKind): WorkerContextRetention {
-  return kind === "coder" ? "retain" : "clean";
+  // Production workers (coder + post-review fixer) retain context across rounds;
+  // review-like workers start each round clean.
+  return kind === "coder" || kind === "fixer" ? "retain" : "clean";
 }
 
 function ensureGitExcluded(worktreePath: string, pattern: string): void {
@@ -243,6 +251,87 @@ export function shipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   };
 }
 
+export const VERIFY_PROMPT_FILE = "verify.md";
+export const FIXER_PROMPT_FILE = "fixer.md";
+export const CLEANUP_PROMPT_FILE = "cleanup.md";
+export const DOCRELEASE_PROMPT_FILE = "docRelease.md";
+
+/** S9 online-review / PR-check worker spec (#596 skeleton). */
+export function verifyWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
+  return {
+    id: "S9",
+    kind: "verify",
+    role: "verify",
+    host: "claude",
+    session: "fresh",
+    contextRetention: "clean",
+    skill: SKILL_FOR_KIND.verify,
+    promptFile: VERIFY_PROMPT_FILE,
+    completionSignal: "VERIFY_STEP_COMPLETE",
+    maxIter: 1,
+    model: route?.slots.verify ?? modelForSlot("verify"),
+    soul: "verify",
+    toolchain: [],
+  };
+}
+
+/** S10 post-review fixer worker spec (#596 skeleton). */
+export function fixerWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
+  return {
+    id: "S10",
+    kind: "fixer",
+    role: "fixer",
+    host: "claude",
+    session: "fresh",
+    contextRetention: "retain",
+    skill: SKILL_FOR_KIND.fixer,
+    promptFile: FIXER_PROMPT_FILE,
+    completionSignal: "FIXER_STEP_COMPLETE",
+    maxIter: 5,
+    model: route?.slots.fixer ?? modelForSlot("fixer"),
+    soul: "fixer",
+    toolchain: [],
+  };
+}
+
+/** S11 cleanup worker spec (#596 skeleton). */
+export function cleanupWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
+  return {
+    id: "S11",
+    kind: "cleanup",
+    role: "cleanup",
+    host: "claude",
+    session: "fresh",
+    contextRetention: "clean",
+    skill: SKILL_FOR_KIND.cleanup,
+    promptFile: CLEANUP_PROMPT_FILE,
+    completionSignal: "CLEANUP_STEP_COMPLETE",
+    maxIter: 1,
+    model: route?.slots.cleanup ?? modelForSlot("cleanup"),
+    soul: "cleanup",
+    toolchain: [],
+  };
+}
+
+/** S12 documentation / release worker spec (#596 skeleton). */
+export function docReleaseWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
+  return {
+    id: "S12",
+    kind: "docRelease",
+    role: "docRelease",
+    host: "claude",
+    session: "fresh",
+    contextRetention: "clean",
+    skill: SKILL_FOR_KIND.docRelease,
+    promptFile: DOCRELEASE_PROMPT_FILE,
+    completionSignal: "DOCRELEASE_STEP_COMPLETE",
+    maxIter: 1,
+    model: route?.slots.docRelease ?? modelForSlot("docRelease"),
+    soul: "docRelease",
+    toolchain: [],
+  };
+}
+
 /**
  * The #331 PREFACTOR thin wrapper: forward a worker to the EXISTING backend
  * methods and wrap the return into a {@link WorkerResult}. Behaviour-preserving.
@@ -273,19 +362,40 @@ export async function legacyDispatchWorker(
     };
   }
 
+  // #596 skeleton: when the backend has no real review-loop implementation, the
+  // legacy path returns deterministic `completed` stubs so the runner can still
+  // exercise S9–S12 end-to-end. Real workers will override via the unified
+  // `dispatchWorker` seam.
+  if (spec.kind === "verify") {
+    return { kind: "completed", output: { kind: "verify", converged: true } };
+  }
+  if (spec.kind === "fixer") {
+    return { kind: "completed", output: { kind: "fixer", committed: true } };
+  }
+  if (spec.kind === "cleanup") {
+    return { kind: "completed", output: { kind: "cleanup", ok: true } };
+  }
+  if (spec.kind === "docRelease") {
+    return {
+      kind: "completed",
+      output: { kind: "docRelease", released: true },
+    };
+  }
+
   // FAIL-CLOSED on the worker kind (online review r1, 3 bots): only the legacy
   // AGENT workers (coder/reviewer) belong on the `runStep`/`resumeSession` path
   // below. `cmr`/`merge` are family-only worker kinds with NO legacy backend
   // method — if such a spec reached this public seam it would be silently
   // mis-dispatched as a coder/reviewer StepSpec (workerSpecToStepSpec drops
   // kind/skill, so a cmr review would run as a plain reviewer step). Reject it
-  // explicitly rather than coerce. (`ship` is handled above.)
+  // explicitly rather than coerce. (`ship` is handled above; review-loop stubs
+  // are handled just above.)
   if (spec.kind !== "coder" && spec.kind !== "reviewer") {
     throw new Error(
       `legacyDispatchWorker: worker kind '${spec.kind}' (${spec.id}) has no legacy ` +
-        `dispatch path — only coder/reviewer (agent) and ship are forwarded. A ` +
-        `cmr/merge worker must go through a backend implementing the unified ` +
-        `dispatchWorker seam.`,
+        `dispatch path — only coder/reviewer (agent), ship, and the #596 ` +
+        `review-loop stubs are forwarded. A cmr/merge worker must go through a ` +
+        `backend implementing the unified dispatchWorker seam.`,
     );
   }
 
