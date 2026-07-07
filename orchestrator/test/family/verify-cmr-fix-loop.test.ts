@@ -831,12 +831,22 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
           kind: "cmr",
           converged: true,
           successfulLegs: ["opus", "gpt-5.5", "agy"],
-          claimedFixedFindingIdentityKeys: EXCESSIVE_CMR_FIX_KEYS,
-          priorFindingDispositions: EXCESSIVE_CMR_FIX_KEYS.map((identityKey) => ({
-            identityKey,
-            status: "verified-closed",
-            reason: "all repeated coder-fixes closed",
-          })),
+          // #597: the converged response is pass-aware — completeness closes its
+          // OWN accumulated keys; correctness starts with an empty protected prior
+          // set and must claim NO keys fixed (a correctness reviewer that claimed
+          // completeness's keys would trip the closure_context_missing guard, which
+          // is a contract guard, not a round cap — and previously unreachable
+          // because MAX_CMR_CODER_FIX_ROUNDS aborted before correctness ran).
+          claimedFixedFindingIdentityKeys:
+            ctx.cmrPass === "completeness" ? EXCESSIVE_CMR_FIX_KEYS : [],
+          priorFindingDispositions:
+            ctx.cmrPass === "completeness"
+              ? EXCESSIVE_CMR_FIX_KEYS.map((identityKey) => ({
+                  identityKey,
+                  status: "verified-closed",
+                  reason: "all repeated coder-fixes closed",
+                }))
+              : [],
           ...CMR_EVIDENCE,
         },
       };
@@ -862,7 +872,155 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
             changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
             tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
             sameClassBugScan:
-              "rg \"remainingCmrCoderFixRounds|MAX_CMR_CODER_FIX_ROUNDS\" orchestrator/src/family/verifyCmr.ts",
+              "rg \"runIntegratedCmrPass|restartFinalBarrier\" orchestrator/src/family/verifyCmr.ts",
+            introducedRegressionCheck:
+              "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
+          },
+        },
+      };
+    }
+
+    if (spec.kind === "ship") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx.familyBase!,
+          status: "pr_opened",
+          pr: `pr://${ctx.familyBase}`,
+          prHead: this.currentFamilyHead,
+        },
+      };
+    }
+
+    throw new Error(`unexpected worker kind ${spec.kind}`);
+  }
+}
+
+/**
+ * #597 dogfood #272 replay: ~9 consecutive blocking coder-fix rounds before the
+ * fresh reviewer finally converges. Proves the family integrated-CMR loop has no
+ * fixed round cap — it keeps dispatching coder-fix + fresh re-review while a
+ * blocking finding remains, and converges inside a SINGLE `runVerifyCmr` call
+ * (no manual relaunch). The previous `MAX_CMR_CODER_FIX_ROUNDS=3` cap would have
+ * aborted this run after round 3.
+ */
+const DOGFOOD_272_BLOCKING_ROUNDS = 9;
+const DOGFOOD_272_FINDINGS: readonly Finding[] = Array.from(
+  { length: DOGFOOD_272_BLOCKING_ROUNDS },
+  (_, index) => ({
+    severity: "medium",
+    category: "correctness",
+    claim_quote: `dogfood #272 round ${index + 1} still reports a blocker`,
+    location: `orchestrator/src/family/verifyCmr.ts:dogfood-272-round-${index + 1}`,
+    suggested_fix: "keep dispatching coder-fix until the fresh reviewer converges",
+    action: "fix_now",
+  }),
+);
+const DOGFOOD_272_KEYS = DOGFOOD_272_FINDINGS.map((finding) =>
+  findingIdentityKey(finding),
+);
+
+class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
+  readonly ledger: FamilyLedgerEntry[] = [];
+  readonly dispatches: DispatchRecord[] = [];
+  currentFamilyHead = "head-before-dogfood-272";
+  private completenessReviewRound = 0;
+  private coderFixRound = 0;
+
+  async mergeChildIntoFamilyBase(): Promise<never> {
+    throw new Error("not used");
+  }
+  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+    this.ledger.push(entry);
+  }
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return this.ledger;
+  }
+  async readFamilyHead(): Promise<string> {
+    return this.currentFamilyHead;
+  }
+  async runFamilyVerify(): Promise<FamilyVerifyResult> {
+    return { ok: true };
+  }
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      role: spec.role,
+      promptFile: spec.promptFile,
+      contextRetention: spec.contextRetention,
+      cmrPass: ctx.cmrPass,
+      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
+      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
+    });
+
+    if (spec.kind === "cmr") {
+      if (ctx.cmrPass === "completeness") {
+        const reviewRound = this.completenessReviewRound++;
+        if (reviewRound < DOGFOOD_272_BLOCKING_ROUNDS) {
+          const closedPriorKeys = DOGFOOD_272_KEYS.slice(0, reviewRound);
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: false,
+              reason: `dogfood #272 fresh re-review still has blocker round ${reviewRound + 1}`,
+              successfulLegs: ["opus", "gpt-5.5", "agy"],
+              claimedFixedFindingIdentityKeys: closedPriorKeys,
+              priorFindingDispositions: closedPriorKeys.map((identityKey) => ({
+                identityKey,
+                status: "verified-closed",
+                reason: "prior coder-fix stayed closed",
+              })),
+              ...CMR_EVIDENCE,
+              findings: [DOGFOOD_272_FINDINGS[reviewRound]!],
+            },
+          };
+        }
+      }
+      return {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          claimedFixedFindingIdentityKeys:
+            ctx.cmrPass === "completeness" ? DOGFOOD_272_KEYS : [],
+          priorFindingDispositions:
+            ctx.cmrPass === "completeness"
+              ? DOGFOOD_272_KEYS.map((identityKey) => ({
+                  identityKey,
+                  status: "verified-closed",
+                  reason: "dogfood #272 all prior coder-fixes closed",
+                }))
+              : [],
+          ...CMR_EVIDENCE,
+        },
+      };
+    }
+
+    if (spec.kind === "coder") {
+      const fixedKeys = [...(ctx.blockingFindingIdentityKeys ?? [])];
+      this.coderFixRound += 1;
+      this.currentFamilyHead = `head-after-dogfood-272-fix-${this.coderFixRound}`;
+      return {
+        kind: "completed",
+        output: {
+          kind: "coder",
+          committed: true,
+          commitsAdded: 1,
+          repairEvidence: {
+            findingScope: {
+              identityKeys: fixedKeys,
+              locations: DOGFOOD_272_FINDINGS.filter((finding) =>
+                fixedKeys.includes(findingIdentityKey(finding)),
+              ).map((finding) => finding.location),
+            },
+            changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
+            tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
+            sameClassBugScan:
+              "rg \"runIntegratedCmrPass|restartFinalBarrier\" orchestrator/src/family/verifyCmr.ts",
             introducedRegressionCheck:
               "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
           },
@@ -1394,7 +1552,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     ).toHaveLength(2);
   });
 
-  it("fails closed instead of restarting coder-fix forever when fresh CMR keeps finding blockers", async () => {
+  it("keeps dispatching coder-fix + re-review across 4+ consecutive blocking rounds and eventually converges (#597: no round cap)", async () => {
     const backend = new ExcessiveReviewFixRestartsBackend();
 
     const result = await runVerifyCmr({
@@ -1403,23 +1561,74 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(
-      backend.dispatches.filter((dispatch) => dispatch.kind === "coder"),
-    ).toHaveLength(3);
+    // #597: the fixed `MAX_CMR_CODER_FIX_ROUNDS=3` cap is gone. While the fresh
+    // reviewer keeps reporting a blocking finding, the runner keeps dispatching
+    // coder-fix + fresh re-review. This script produces 4 consecutive blocking
+    // rounds before converging — strictly more than the removed cap of 3, so a
+    // leftover budget abort would have terminated at exactly 3 coder-fixes.
+    expect(result).toEqual({ ok: true, ran: true });
+    const coderDispatches = backend.dispatches.filter(
+      (dispatch) => dispatch.kind === "coder",
+    );
+    expect(coderDispatches.length).toBeGreaterThan(3);
+    expect(coderDispatches).toHaveLength(
+      EXCESSIVE_CMR_FIX_FINDINGS.length,
+    );
+    // Each blocking round landed exactly one coder-fix commit ledger record.
     expect(
       backend.ledger.filter((entry) => entry.status === "cmr_fix_committed"),
-    ).toHaveLength(3);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      cmrPass: "completeness",
-      familyHeadAfter: "head-after-excessive-coder-fix-3",
-      reason: expect.stringContaining("coder-fix round budget exhausted"),
-    }));
+    ).toHaveLength(EXCESSIVE_CMR_FIX_FINDINGS.length);
+    // The removed cap wrote a "coder-fix round budget exhausted" abort — that
+    // word MUST be gone now (the loop's only exits are convergence or a
+    // worker-raised human-decision-gate signal, not a runner-side budget).
+    expect(
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          typeof entry.reason === "string" &&
+          entry.reason.includes("coder-fix round budget exhausted"),
+      ),
+    ).toBe(false);
+    // Convergence forwarded the run to the terminal ship worker.
     expect(
       backend.dispatches.some((dispatch) => dispatch.kind === "ship"),
+    ).toBe(true);
+  });
+
+  it("dogfood #272: ~9 blocking coder-fix rounds converge inside a single runVerifyCmr call (#597)", async () => {
+    const backend = new Dogfood272ReviewFixRereviewBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/272-dogfood",
+      familyBackend: backend,
+    });
+
+    // The run converges WITHOUT a manual relaunch — the removed cap would have
+    // aborted after round 3 of 9. Single call, eventual convergence.
+    expect(result).toEqual({ ok: true, ran: true });
+    const coderDispatches = backend.dispatches.filter(
+      (dispatch) => dispatch.kind === "coder",
+    );
+    expect(coderDispatches).toHaveLength(DOGFOOD_272_BLOCKING_ROUNDS);
+    // Each blocking round landed one coder-fix commit ledger record (no round
+    // was silently skipped or coalesced).
+    expect(
+      backend.ledger.filter((entry) => entry.status === "cmr_fix_committed"),
+    ).toHaveLength(DOGFOOD_272_BLOCKING_ROUNDS);
+    // The removed-budget abort word MUST be gone.
+    expect(
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          typeof entry.reason === "string" &&
+          entry.reason.includes("coder-fix round budget exhausted"),
+      ),
     ).toBe(false);
+    // Convergence forwarded the run to the terminal ship worker.
+    expect(
+      backend.dispatches.some((dispatch) => dispatch.kind === "ship"),
+    ).toBe(true);
   });
 
   it("continues at correctness when a correctness coder-fix commits", async () => {
@@ -2561,6 +2770,12 @@ describe("the verifyCmr seam keeps cmr pass outcomes at the WorkerResult boundar
     expect(src).not.toMatch(/NO_PROGRESS_LIMIT/);
     expect(src).not.toMatch(/noProgressStreak/);
     expect(src).not.toMatch(/prevReasonKey/);
+    // #597: the fixed CMR coder-fix round cap is gone — the loop continues while
+    // a blocking finding remains, exiting only on convergence or a worker-raised
+    // human-decision-gate signal. No round counter, no budget, no threading.
+    expect(src).not.toMatch(/MAX_CMR_CODER_FIX_ROUNDS/);
+    expect(src).not.toMatch(/remainingCmrCoderFixRounds/);
+    expect(src).not.toMatch(/coder-fix round budget exhausted/);
     // No ad-hoc unbounded iteration in this hook.
     expect(src).not.toMatch(/for\s*\(;;\)/);
     // No legacy priorFindings/cmrReason threading through the family hook.
