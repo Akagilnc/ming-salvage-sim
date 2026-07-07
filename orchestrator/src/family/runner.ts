@@ -1524,7 +1524,7 @@ export async function runFamily(
       const ledgerMerged = await currentMerged(familyBackend);
       const children: FamilyChildResult[] = epic.children.map((c) =>
         ledgerMerged.has(c.issue)
-          ? { issue: c.issue, status: "merged" as const }
+          ? { issue: c.issue, status: "already_done" as const }
           : { issue: c.issue, status: "skipped" as const },
       );
       return {
@@ -1557,7 +1557,7 @@ export async function runFamily(
       const ledgerMerged = await currentMerged(familyBackend);
       const children: FamilyChildResult[] = epic.children.map((c) =>
         ledgerMerged.has(c.issue)
-          ? { issue: c.issue, status: "merged" as const }
+          ? { issue: c.issue, status: "already_done" as const }
           : { issue: c.issue, status: "skipped" as const },
       );
       return {
@@ -1589,7 +1589,7 @@ export async function runFamily(
     const ledgerMerged = await currentMerged(familyBackend);
     const children: FamilyChildResult[] = epic.children.map((c) =>
       ledgerMerged.has(c.issue)
-        ? { issue: c.issue, status: "merged" as const }
+        ? { issue: c.issue, status: "already_done" as const }
         : { issue: c.issue, status: "skipped" as const },
     );
     const shippedVerifiedCmrHead =
