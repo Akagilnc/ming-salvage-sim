@@ -3,12 +3,38 @@
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runFamilyDriver } from "./dist/familyDriver.js";
+import { execFileSync } from "node:child_process";
 
 // Derive paths from the script location + $HOME (gemini #384 R4: no hard-coded
 // absolute home path, so it runs on any machine / for any user).
 const ORCH = dirname(fileURLToPath(import.meta.url)); // .../orchestrator
 const REPO = dirname(ORCH); // the repo root this orchestrator lives in
+
+// #372 unconditional rebuild by construction: launcher always runs npx tsc +
+// docker build BEFORE any worker dispatch (and before dynamic import of driver).
+// Docker layer cache makes no-op near-zero cost; changed layers rebuild only
+// affected parts. No staleness/ drift checks ever.
+//
+// When IMAGE_TAG is set, resolve once via shared resolver (exported from
+// familyDriver) and pin the exact same tag for build.sh (env) + dispatch (imageName).
+// Single source of truth prevents tag mismatch breaking the freshness guarantee.
+console.log("[launcher] #372 unconditional: npx tsc + image build (before dispatch)");
+// Minimal dist clean before tsc: prevents orphaned dist/*.js (from deleted/renamed
+// sources) from being resolved by the later dynamic import. Fresh-dist guarantee.
+execFileSync("rm", ["-rf", "dist"], { cwd: ORCH, stdio: "inherit" });
+execFileSync("npx", ["tsc"], { cwd: ORCH, stdio: "inherit" });
+
+// Dynamic import AFTER recompile so this process gets fresh dist (static top
+// import would have loaded stale compiled code even after disk rebuild).
+// Import resolver too so launcher + driver share the exact same tag resolution.
+const { runFamilyDriver, resolveImageTag } = await import("./dist/familyDriver.js");
+const imageTag = resolveImageTag(process.env.IMAGE_TAG);
+
+execFileSync("bash", [join(ORCH, "image", "build.sh")], {
+  cwd: ORCH,
+  stdio: "inherit",
+  env: { ...process.env, IMAGE_TAG: imageTag },
+});
 
 const result = await runFamilyDriver({
   epicIssue: 362,
@@ -21,8 +47,9 @@ const result = await runFamilyDriver({
   base: "main",
   promptsDir: `${ORCH}/prompts`,
   familyPromptsDir: `${ORCH}/prompts`,
+  soulsDir: `${ORCH}/image/souls`,
   ledgerDir: join(homedir(), ".sc-orchestrator", "dogfood-362-ledger"),
-  imageName: "ming-orchestrator-coder:latest",
+  imageName: imageTag,
   skillsMount: join(homedir(), ".claude", "skills"),
   // 无 sh override、无 backend factory override = 真编排器 vanilla 跑
 });

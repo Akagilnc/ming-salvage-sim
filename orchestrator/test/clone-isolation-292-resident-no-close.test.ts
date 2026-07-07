@@ -25,6 +25,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "prompts");
+const realSoulsDir = join(here, "..", "image", "souls");
 
 const SOURCE = "/tmp/source";
 const REMOTE = "https://github.com/owner/name.git";
@@ -76,6 +77,7 @@ function newBackend(override?: Partial<RealBackendOptions>): StubCloneBackend {
     imageName: "img",
     skillsMount: "/tmp/skills",
     promptsDir: realPromptsDir,
+    soulsDir: realSoulsDir,
     home: HOME,
     ...override,
   });

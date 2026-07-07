@@ -30,6 +30,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "prompts");
+const realSoulsDir = join(here, "..", "image", "souls");
 
 const SOURCE = "/Users/me/WorkSpace/Ming_LLM";
 const REMOTE = "https://github.com/Akagilnc/ming-salvage-sim.git";
@@ -79,6 +80,7 @@ function build(cfg: ShCfg, override?: Partial<RealBackendOptions>): RecordingBac
     imageName: "img",
     skillsMount: "/tmp/skills",
     promptsDir: realPromptsDir,
+    soulsDir: realSoulsDir,
     home: HOME,
     ...override,
   });

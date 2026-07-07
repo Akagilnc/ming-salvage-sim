@@ -22,6 +22,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
+const realSoulsDir = join(here, "..", "..", "image", "souls");
 
 import {
   assertExternalBlockersCleared,
@@ -658,6 +659,7 @@ describe("#335 runIntegratedCmr legacy per-method seam (the real cmr is the cont
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       skillsMount: "/tmp/skills",
     });

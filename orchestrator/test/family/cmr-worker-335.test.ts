@@ -71,6 +71,7 @@ import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
+const realSoulsDir = join(here, "..", "..", "image", "souls");
 const DEFAULT_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
 const FROZEN_NORMAL_CMR_REVIEW_LEGS = [
   { family: "codex", slug: "gpt-5.5" },
@@ -116,6 +117,7 @@ function makeBackend(over?: {
     repo: "Akagilnc/ming-salvage-sim",
     base: "main",
     promptsDir: realPromptsDir,
+    soulsDir: realSoulsDir,
     imageName: "ming-orchestrator-coder:latest",
     home: over?.home,
   });
@@ -720,6 +722,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
     });
   }
@@ -787,6 +790,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
     });
 
@@ -932,6 +936,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -1029,6 +1034,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -1123,6 +1129,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -1215,6 +1222,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -1298,6 +1306,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -1384,6 +1393,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
     });
   }
@@ -1452,10 +1462,12 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(noClaude.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("cmr");
 
-    // ALL auth absent ⇒ zero mounts, only the soul env — still no throw (the skill
-    // runs and will degrade/escalate in-container, never a host crash).
+    // ALL auth absent ⇒ souls mount is still present (souls always mounted #372),
+    // no other mounts, only the soul env — still no throw (the skill runs and will
+    // degrade/escalate in-container, never a host crash).
     const none = cfgBackend().config({});
-    expect(none.mounts.length).toBe(0);
+    expect(none.mounts.length).toBe(1);
+    expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.orchestrator/souls")).toBe(true);
     expect(none.env[SANDBOX_SOUL_ENV]).toBe("cmr");
   });
 
@@ -1519,6 +1531,7 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       home: emptyHome,
     });
@@ -1552,6 +1565,7 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       home: mkDir("cmr-gh-home-"),
     });
@@ -1572,6 +1586,7 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       home: emptyHome,
     });
@@ -1632,6 +1647,7 @@ describe("#378 mountCmrAuth — writes a minimal danger-full-access config, neve
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       home: hostHomeWithCodexConfig(),
     });
@@ -1697,6 +1713,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -1721,6 +1738,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -1747,6 +1765,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       // no familyBaseStartHead
     });
@@ -1768,6 +1787,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -1791,6 +1811,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -1822,6 +1843,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -1847,6 +1869,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -1869,6 +1892,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -1914,6 +1938,7 @@ describe("#335 runCmrWorker — fail-closed when no cut SHA was recorded", () =>
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       // no familyBaseStartHead
     });
@@ -1935,6 +1960,7 @@ describe("#335 runCmrWorker — fail-closed when no cut SHA was recorded", () =>
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       // no familyBaseStartHead
     });
@@ -1983,6 +2009,7 @@ describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -2004,6 +2031,7 @@ describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -2056,6 +2084,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         repo: "Akagilnc/ming-salvage-sim",
         base: "main",
         promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
         imageName: "img",
         familyBaseStartHead: "abc123",
       },
@@ -2115,6 +2144,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
@@ -2172,6 +2202,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
       familyBaseStartHead: "abc123",
     });

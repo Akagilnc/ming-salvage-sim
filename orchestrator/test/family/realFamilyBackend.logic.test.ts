@@ -28,7 +28,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -49,16 +48,18 @@ import {
 } from "../../src/family/realFamilyBackend.js";
 import { familyEscalationState } from "../../src/family/ledger.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
-import { SANDBOX_SKILLS_DIR, SANDBOX_SOUL_ENV } from "../../src/realBackend.js";
+import { SANDBOX_SKILLS_DIR, SANDBOX_SOUL_ENV, soulsMount } from "../../src/realBackend.js";
 import type {
   ConflictResolveRequest,
   FamilyVerifyRequest,
   IntegratedCmrRequest,
   IntegratedCmrResult,
 } from "../../src/family/types.js";
+import { DEFAULT_IMAGE_TAG, resolveImageTag } from "../../src/familyDriver.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
+const realSoulsDir = join(here, "..", "..", "image", "souls");
 
 /** Run a real git command in `cwd` and return trimmed stdout. */
 function git(cwd: string, ...args: string[]): string {
@@ -116,6 +117,7 @@ function opts(workingRepo: string, over: Partial<RealFamilyBackendOptions> = {})
     repo: "Akagilnc/ming-salvage-sim",
     base: "main",
     promptsDir: realPromptsDir,
+    soulsDir: realSoulsDir,
     imageName: "img",
     skillsMount: "/tmp/skills",
     ...over,
@@ -349,9 +351,6 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
         calls.push({ file, args, cwd });
         return "";
       }
-      protected override depsInstalled(_cwd: string): boolean {
-        return true; // deps present → focus the assertion on the verify commands
-      }
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["typecheck", "test"]; // orchestrator's scripts
       }
@@ -363,43 +362,11 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       }
     }
     new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
-    expect(calls.map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
-      "npm run typecheck",
-      "npm test",
-    ]);
-    expect(calls.every((c) => c.cwd === "/clone/root/orchestrator")).toBe(true);
-  });
-
-  it("#3: installs deps (npm ci) in verifyCwd BEFORE the npm verify scripts when node_modules is absent", async () => {
-    // The dogfood death (#3): verify ran against a FRESH clone with no node_modules
-    // → "This is not the tsc command..." → always verify_failed. The fix installs
-    // deps first. The spy reports node_modules ABSENT, so a `npm ci` (or install)
-    // must precede the project's verify scripts, in the SAME cwd.
-    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
-    class SpyBackend extends RealFamilyBackend {
-      protected override sh(file: string, args: string[], cwd?: string): string {
-        calls.push({ file, args, cwd });
-        return "";
-      }
-      protected override depsInstalled(_cwd: string): boolean {
-        return false; // node_modules ABSENT in the fresh clone
-      }
-      protected override packageScripts(_cwd: string): readonly string[] {
-        return ["typecheck", "test"];
-      }
-      protected override isNodeProject(_cwd: string): boolean {
-        return true;
-      }
-      runVerifyForTest(): void {
-        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
-      }
-    }
-    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
-    // First command must be the dep install in verifyCwd.
+    // Unconditional install first (by construction), then project's scripts.
+    // (installDeps chooses "ci" or "install" based on whether lockfile exists at the cwd path.)
     expect(calls[0].file).toBe("npm");
     expect(["ci", "install"]).toContain(calls[0].args[0]);
     expect(calls[0].cwd).toBe("/clone/root/orchestrator");
-    // Then the project's verify scripts, still in verifyCwd.
     expect(calls.slice(1).map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
       "npm run typecheck",
       "npm test",
@@ -407,15 +374,29 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(calls.slice(1).every((c) => c.cwd === "/clone/root/orchestrator")).toBe(true);
   });
 
-  it("#3: skips the dep install when node_modules already exists (idempotent, no re-install churn)", async () => {
+  it("#3 + #372 P2: ALWAYS runs installDeps (unconditional, by construction) even when node_modules EXISTS and manifest changed after a wave", async () => {
+    // #372 P2: runVerifyCommands must not condition install on depsInstalled presence.
+    // Freshness by construction: later waves in family can change package.json / package-lock.json
+    // inside the (shared) family clone; verify must still run install (npm ci idempotent) on
+    // the (now potentially stale) node_modules. We simulate "node_modules exists + manifest changed"
+    // by creating a temp Node project dir with node_modules present, then updating the lock manifest
+    // (post-"wave" mutation), and asserting install is STILL invoked before scripts.
+    // No mtime/manifest compare is re-introduced (per direction).
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    const proj = trackTempDir("verify-uncond-install-");
+    const pkg = join(proj, "package.json");
+    const lock = join(proj, "package-lock.json");
+    const nm = join(proj, "node_modules");
+    writeFileSync(pkg, JSON.stringify({ name: "test-proj", version: "0.0.0" }));
+    writeFileSync(lock, JSON.stringify({ name: "test-proj", version: "0.0.0", lockfileVersion: 3 }));
+    mkdirSync(nm, { recursive: true });
+    // Simulate a later wave mutating the manifest (new lock content after node_modules was laid).
+    writeFileSync(lock, JSON.stringify({ name: "test-proj", version: "0.0.1", lockfileVersion: 3, "updated-by-wave": true }));
+
     class SpyBackend extends RealFamilyBackend {
       protected override sh(file: string, args: string[], cwd?: string): string {
         calls.push({ file, args, cwd });
         return "";
-      }
-      protected override depsInstalled(_cwd: string): boolean {
-        return true; // node_modules present → no install
       }
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["typecheck", "test"];
@@ -427,15 +408,19 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
         this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
-    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
-    // No `npm ci`/`npm install` ran — only the project's verify scripts.
-    expect(
-      calls.some((c) => c.file === "npm" && (c.args[0] === "ci" || c.args[0] === "install")),
-    ).toBe(false);
-    expect(calls.map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
+    // Note: pass verifyCwd=proj so run reaches install+scripts (isNode true by override).
+    // We do NOT override depsInstalled (it no longer exists).
+    new SpyBackend(opts("/clone/root", { verifyCwd: proj })).runVerifyForTest();
+    // Install MUST run (first) even though node_modules existed + manifest mutated post-wave.
+    expect(calls[0].file).toBe("npm");
+    expect(["ci", "install"]).toContain(calls[0].args[0]);
+    expect(calls[0].cwd).toBe(proj);
+    // Then the project's verify scripts, still in cwd.
+    expect(calls.slice(1).map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
       "npm run typecheck",
       "npm test",
     ]);
+    expect(calls.slice(1).every((c) => c.cwd === proj)).toBe(true);
   });
 
   it("#5/R1-T3: runs web's OWN scripts — `npm run build` (its tsc check) then `npm test` (jsdom), never raw npx", async () => {
@@ -450,9 +435,6 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
         calls.push({ file, args, cwd });
         return "";
       }
-      protected override depsInstalled(_cwd: string): boolean {
-        return true;
-      }
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["dev", "build", "test", "preview"]; // web's scripts — NO `typecheck`
       }
@@ -464,14 +446,16 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       }
     }
     new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/web" })).runVerifyForTest();
-    // No `typecheck` script → fall back to `npm run build` (web's tsc check), THEN
-    // `npm test` (its own --environment jsdom). NEVER a raw `npx`.
-    expect(calls.map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
+    // Unconditional install first (even if node_modules "existed"), then web's scripts.
+    expect(calls[0].file).toBe("npm");
+    expect(["ci", "install"]).toContain(calls[0].args[0]);
+    expect(calls[0].cwd).toBe("/clone/root/web");
+    expect(calls.slice(1).map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
       "npm run build",
       "npm test",
     ]);
     expect(calls.some((c) => c.file === "npx")).toBe(false);
-    expect(calls.every((c) => c.cwd === "/clone/root/web")).toBe(true);
+    expect(calls.slice(1).every((c) => c.cwd === "/clone/root/web")).toBe(true);
   });
 
   it("R1-T2: a diff touching NO Node subproject (cwd undefined) → verify is a no-op, never npm in the clone root", async () => {
@@ -507,9 +491,6 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override isNodeProject(_cwd: string): boolean {
         return true; // the clone root has a package.json (single-project repo)
       }
-      protected override depsInstalled(_cwd: string): boolean {
-        return true;
-      }
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["test"];
       }
@@ -519,8 +500,12 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     }
     // No verifyCwd; resolver undefined (no subproject) → root is Node → verify at root.
     new SpyBackend(opts("/clone/root", { resolveVerifyCwd: () => undefined })).runVerifyForTest();
-    expect(calls.map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual(["npm test"]);
-    expect(calls.every((c) => c.cwd === "/clone/root")).toBe(true);
+    // Unconditional: install first, then test.
+    expect(calls[0].file).toBe("npm");
+    expect(["ci", "install"]).toContain(calls[0].args[0]);
+    expect(calls[0].cwd).toBe("/clone/root");
+    expect(calls.slice(1).map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual(["npm test"]);
+    expect(calls.slice(1).every((c) => c.cwd === "/clone/root")).toBe(true);
   });
 
   it("R1-T3: an EXPLICIT verifyCwd that is NOT a Node project FAILS CLOSED (throws), never silent-passes", () => {
@@ -543,30 +528,6 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(() =>
       new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/not-node" })).runVerifyForTest(),
     ).toThrow(/not a Node project/i);
-  });
-
-  it("R1-T1: depsInstalled is STALE (reinstall) when a manifest is newer than node_modules", () => {
-    // gemini R1 T1: a bare node_modules-exists check skips installing a dep a child
-    // PR added (package.json/lock newer than the last install) → verify on stale deps.
-    const proj = trackTempDir("verify-stale-");
-    const nm = join(proj, "node_modules");
-    const pkg = join(proj, "package.json");
-    mkdirSync(nm, { recursive: true });
-    writeFileSync(pkg, "{}");
-    class Probe extends RealFamilyBackend {
-      depsInstalledForTest(cwd: string): boolean {
-        return this.depsInstalled(cwd);
-      }
-    }
-    const be = new Probe(opts("/clone/root"));
-    // Deterministic mtimes (R3 coderabbit: don't rely on write-order timing — equal
-    // mtimes are possible on some filesystems). manifest NEWER than node_modules → stale.
-    utimesSync(nm, new Date(1000), new Date(1000));
-    utimesSync(pkg, new Date(2000), new Date(2000));
-    expect(be.depsInstalledForTest(proj)).toBe(false); // stale → reinstall
-    // node_modules NEWER than the manifest → fresh.
-    utimesSync(nm, new Date(3000), new Date(3000));
-    expect(be.depsInstalledForTest(proj)).toBe(true);
   });
 
   it("familyBaseStartHead returns the recorded start head", async () => {
@@ -747,6 +708,15 @@ class FakeSeamsBackend extends RealFamilyBackend {
   // skills-mount path are unit-testable without a real container.
   public sandboxConfig() {
     return this.mergerSandboxConfig({});
+  }
+
+  // Expose for family-coder souls mount assertion (#372).
+  public familyCoderConfig() {
+    return this.familyCoderSandboxConfig(
+      { codexAuthDir: "/tmp/codex", claudeToken: "tok" } as any,
+      {} as any,
+      { path: "/tmp/land.json", sandboxPath: ".land.json" },
+    );
   }
 
   public verifyShipPr(pr: string, familyBase: string) {
@@ -955,18 +925,32 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
   });
 });
 
-describe("RealFamilyBackend mergerSandbox baked-soul injection (#291 F28 / ADR 0022)", () => {
+describe("RealFamilyBackend mergerSandbox soul injection (#291 F28 / ADR 0022)", () => {
   // F28: the merger conflict fallback follows the "one mirror new soul" model —
-  // the merger soul must be selected the SAME way coder/reviewer are: a baked soul
-  // ACTIVATED via the ORCHESTRATOR_SOUL env (RealBackend.box), NOT a prompt-only
-  // role. Before the fix mergerSandbox() injected NO env, so ORCHESTRATOR_SOUL was
+  // the merger soul must be selected the SAME way coder/reviewer are: activated
+  // via the ORCHESTRATOR_SOUL env (RealBackend.box), NOT a prompt-only role.
+  // Before the fix mergerSandbox() injected NO env, so ORCHESTRATOR_SOUL was
   // never set → the merger ran under whatever default soul the image entrypoint
-  // picked, not the merger soul.
+  // picked, not the merger soul. (Souls themselves are live-mounted per #372.)
   it("injects ORCHESTRATOR_SOUL=merger via the same env mechanism as coder/reviewer", () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
     const cfg = b.sandboxConfig();
     expect(cfg.env?.[SANDBOX_SOUL_ENV]).toBe(MERGER_SOUL);
     expect(MERGER_SOUL).toBe("merger");
+  });
+
+  it("mergerSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    const cfg = b.sandboxConfig();
+    const expected = soulsMount(realSoulsDir);
+    expect(cfg.mounts).toContainEqual(expected);
+  });
+
+  it("familyCoderSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    const cfg = b.familyCoderConfig();
+    const expected = soulsMount(realSoulsDir);
+    expect(cfg.mounts).toContainEqual(expected);
   });
 
   it("uses the profile image and does NOT mount host skills (baked skills win, #334)", () => {
@@ -1917,5 +1901,18 @@ describe("RealFamilyBackend runtime file git excludes", () => {
     b.excludeCmr(".cmr-route.json");
 
     expect(readFileSync(excludePath, "utf8")).toBe(".cmr-route.json\r\n");
+  });
+});
+
+describe("resolveImageTag / DEFAULT_IMAGE_TAG pin (#372 R2)", () => {
+  it("provides identical tag for build and dispatch (single source of truth)", () => {
+    // Small assertion: launcher + driver read the same resolver/default.
+    // Ensures when IMAGE_TAG=... is set, dispatch uses it (not a different default).
+    expect(resolveImageTag(undefined)).toBe(DEFAULT_IMAGE_TAG);
+    expect(resolveImageTag("")).toBe(DEFAULT_IMAGE_TAG);
+    expect(resolveImageTag("ming-orchestrator-coder:latest")).toBe("ming-orchestrator-coder:latest");
+    expect(resolveImageTag("custom:tag-xyz")).toBe("custom:tag-xyz");
+    // The default is the one build.sh also defaults to.
+    expect(DEFAULT_IMAGE_TAG).toBe("ming-orchestrator-coder:latest");
   });
 });

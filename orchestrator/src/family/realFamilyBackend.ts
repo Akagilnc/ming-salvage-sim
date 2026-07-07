@@ -92,6 +92,9 @@ import {
   SPAWNED_WORKER_ENV,
   WORKER_IDLE_TIMEOUT_SECONDS,
   modelFamilyForSlug,
+  soulsMount,
+  REQUIRED_SOUL_FILES,
+  soulsDirError,
   type SelfReportedCoder,
 } from "../realBackend.js";
 import {
@@ -249,13 +252,20 @@ export interface RealFamilyBackendOptions {
   readonly base: string;
   /** Dir holding the versioned promptFiles (the merger conflict prompt). */
   readonly promptsDir: string;
-  /** The profile image (souls + CLIs baked in) for the merger agent sandbox. */
+  /**
+   * Host dir of souls to bind-mount live (souls/*.md). #372 unconditional:
+   * souls mounted rather than baked so source changes visible immediately.
+   * REQUIRED (souls no longer baked).
+   */
+  readonly soulsDir: string;
+  /** The profile image (skills + CLIs baked in; souls mounted live #372) for the merger agent sandbox. */
   readonly imageName: string;
   /**
    * DEPRECATED (#334): host dir of dev skills to bind-mount for the merger. The
    * 2b image bakes `resolving-merge-conflicts`; `mergerSandboxConfig()` no longer
    * mounts host skills (a runtime mount would SHADOW the baked skill). Kept
    * OPTIONAL for back-compat; no longer read. Remove once callers drop it.
+   * (Souls are mounted live per #372, not baked.)
    */
   readonly skillsMount?: string;
   /**
@@ -323,6 +333,7 @@ export class RealFamilyBackend implements FamilyBackend {
   constructor(opts: RealFamilyBackendOptions) {
     this.opts = opts;
     this.validateFamilyPromptsDir();
+    this.validateSoulsDir();
   }
 
   /**
@@ -360,6 +371,23 @@ export class RealFamilyBackend implements FamilyBackend {
           `family cmr / ship / merger workers reference them).`,
       );
     }
+  }
+
+  /**
+   * Fail loudly at construction if soulsDir missing or invalid or incomplete.
+   * Souls are no longer baked (#372); an existing but wrong/incomplete dir
+   * (missing e.g. reviewer.md / output_protocol.md) would sail to runtime.
+   * Delegates to the pure {@link soulsDirError} from realBackend (single source;
+   * identical messages for both backends).
+   */
+  private validateSoulsDir(): void {
+    const dir = this.opts.soulsDir;
+    const dirExists = isAbsolute(dir) && existsSync(dir) && statSync(dir).isDirectory();
+    const missing = dirExists
+      ? REQUIRED_SOUL_FILES.filter((f) => !existsSync(join(dir, f)))
+      : [];
+    const err = soulsDirError(dir, isAbsolute(dir), dirExists, missing);
+    if (err !== undefined) throw new Error(err);
   }
 
   /**
@@ -890,14 +918,14 @@ export class RealFamilyBackend implements FamilyBackend {
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
-    const mounts: { hostPath: string; sandboxPath: string }[] = [];
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     if (
       auth.codexAuthDir !== undefined &&
       modelFamilyForSlug(mergerModel()) === "codex"
@@ -910,6 +938,9 @@ export class RealFamilyBackend implements FamilyBackend {
         sandboxPath: outcomeLanding.sandboxPath,
       });
     }
+    // #372: souls mount live for merger worker (data files not baked).
+    // Use shared helper (forces readonly:true, single hard-coded sandbox path).
+    mounts.push(soulsMount(this.opts.soulsDir));
     return {
       imageName: this.opts.imageName,
       env,
@@ -986,14 +1017,15 @@ export class RealFamilyBackend implements FamilyBackend {
       // repo, non-Node-only diff) ⇒ nothing to verify, skip.
       if (cwd === undefined) return;
     }
-    // #3 (dogfood death): the family clone is FRESH — no node_modules. Running
-    // `npx tsc` against a depless project errors with "This is not the tsc
-    // command you are looking for" (npx resolves a stub), so verify ALWAYS failed
-    // on a real run. Install deps FIRST. Idempotent: skip when node_modules is
-    // already present (a resume / re-verify must not re-install on every call).
-    if (!this.depsInstalled(cwd)) {
-      this.installDeps(cwd);
-    }
+    // #3 (dogfood death) + #372 P2: ALWAYS install deps before running the
+    // project's verify scripts. Freshness by construction (npm ci is idempotent
+    // and lockfile-exact). Do NOT condition on node_modules presence or any
+    // manifest/mtime detection — #372 ratified "freshness by construction, never
+    // by detection". A later wave inside the family clone can mutate
+    // package.json/package-lock.json; the launcher unconditional rebuild only
+    // covers the *orchestrator* dist/image, not the family clone's project deps.
+    // Therefore verify path must unconditionally ensure the cwd's deps.
+    this.installDeps(cwd);
     // #5 (dogfood): run the PROJECT'S OWN package.json scripts, NOT a hardcoded
     // `npx tsc`/`npx vitest`. web/'s test script is `vitest run --environment jsdom`
     // — a bare `npx vitest run` DROPS `--environment jsdom`, so every jsdom render
@@ -1023,8 +1055,8 @@ export class RealFamilyBackend implements FamilyBackend {
    * {@link runVerifyCommands} runs the project's OWN `typecheck`/`test` commands
    * (#5) instead of a hardcoded `npx`. `protected` so a unit test drives the
    * branches without a real FS. Returns [] on any read/parse failure (a non-Node
-   * dir verifies nothing — the deps install already failed loudly if it WAS a Node
-   * project missing deps).
+   * dir verifies nothing — installDeps would have failed earlier for a Node project
+   * lacking a lockfile or package context).
    */
   /**
    * Does `cwd` hold a Node project (a `package.json`)? The verify-skip guard (R1 T2)
@@ -1047,30 +1079,10 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Is the Node project at `cwd` already installed AND its install fresh? A bare
-   * `node_modules`-exists check (R1 T1, gemini) skips installing when `package.json`
-   * / `package-lock.json` changed AFTER the last install — e.g. a child PR added a
-   * dependency, or a resume after a coder updated deps — so verify would run against
-   * STALE deps and fail on missing/outdated packages. Treat node_modules as stale
-   * (→ reinstall) when either manifest's mtime is newer than node_modules'.
-   * `protected` so a unit test drives the install / skip branch without a real FS.
-   */
-  protected depsInstalled(cwd: string): boolean {
-    const nodeModules = join(cwd, "node_modules");
-    if (!existsSync(nodeModules)) return false;
-    const installedAt = statSync(nodeModules).mtimeMs;
-    for (const manifest of ["package.json", "package-lock.json"]) {
-      const p = join(cwd, manifest);
-      if (existsSync(p) && statSync(p).mtimeMs > installedAt) return false;
-    }
-    return true;
-  }
-
-  /**
    * Install the Node project's deps in `cwd` before verify (#3). Prefer `npm ci`
    * (a lockfile-exact, reproducible install) when a `package-lock.json` is
    * present; fall back to `npm install` when it is not (`npm ci` REQUIRES a
-   * lockfile). `protected` for the same test-seam reason as {@link depsInstalled}.
+   * lockfile). `protected` for test seam (used by verify tests).
    */
   protected installDeps(cwd: string): void {
     const hasLock = existsSync(join(cwd, "package-lock.json"));
@@ -1577,7 +1589,7 @@ export class RealFamilyBackend implements FamilyBackend {
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
@@ -1599,6 +1611,9 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
+    // #372: mount souls live for family coder-fix worker.
+    // Shared helper forces readonly:true.
+    mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
   }
 
@@ -2031,6 +2046,9 @@ export class RealFamilyBackend implements FamilyBackend {
         sandboxPath: outcomeLanding.sandboxPath,
       });
     }
+    // #372: souls mount live for integrated cmr worker (souls not baked).
+    // Shared helper (single source for the mount + readonly:true).
+    mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
   }
 
@@ -2397,7 +2415,7 @@ export class RealFamilyBackend implements FamilyBackend {
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     // ORCHESTRATOR_REPO too: the ship soul records a deferred finding with
     // `gh issue create --repo "$ORCHESTRATOR_REPO"`, so the family ship sandbox must
@@ -2416,7 +2434,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
-    const mounts: { hostPath: string; sandboxPath: string }[] = [];
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
@@ -2426,6 +2444,9 @@ export class RealFamilyBackend implements FamilyBackend {
         sandboxPath: outcomeLanding.sandboxPath,
       });
     }
+    // #372: souls mount live for family ship worker.
+    // Shared helper forces readonly:true at every site.
+    mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
   }
 
