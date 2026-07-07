@@ -309,6 +309,36 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(r.childHead).toBe(childHead);
   });
 
+  it("childHeadExists with NO branch falls back to old convention (feat/244-orchestrator-issue-<n>) when current misses (#593)", async () => {
+    // A child slice that was cut and merged under the OLD branch-name convention
+    // (before PR #365) must still be recognised as already-merged by reconcile —
+    // otherwise it would be double-merged (the bug this gate prevents). The old
+    // `feat/244-orchestrator-issue-<n>` branch exists, the current
+    // `feat/issue-<n>` does NOT, and childHeadExists is called with only the
+    // issue number (the `reconcile.ts` production call shape).
+    const repo = trackRepo();
+    git(repo, "checkout", "-q", "-b", "family/593-base");
+    git(repo, "checkout", "-q", "-b", "feat/244-orchestrator-issue-88", "family/593-base");
+    const childHead = commitFile(repo, "c88.txt", "old-convention");
+    git(repo, "checkout", "-q", "family/593-base");
+    const recon = new RealFamilyBackend(opts(repo)).reconcileGit();
+    const r = await recon.childHeadExists(88); // NO branch — falls back to old convention
+    expect(r.exists).toBe(true);
+    expect(r.childHead).toBe(childHead);
+  });
+
+  it("childHeadExists returns exists:false when NEITHER convention matches (#593)", async () => {
+    // A genuinely new child slice: neither the current nor the old convention
+    // branch exists. Must still return exists:false (the 补账 predicate must NOT
+    // break — an absent child is the EXPECTED reconcile case).
+    const repo = trackRepo();
+    git(repo, "checkout", "-q", "-b", "family/593-base");
+    const recon = new RealFamilyBackend(opts(repo)).reconcileGit();
+    const r = await recon.childHeadExists(99);
+    expect(r.exists).toBe(false);
+    expect(r.childHead).toBeUndefined();
+  });
+
   it("runFamilyVerify runs the project's npm typecheck+test from verifyCwd, NOT the clone root (online R2 Codex P1 / #5)", async () => {
     // The clone is the FULL repo; a project's package.json/scripts live under a
     // subdir (e.g. `<clone>/orchestrator`). The verify commands must run from
