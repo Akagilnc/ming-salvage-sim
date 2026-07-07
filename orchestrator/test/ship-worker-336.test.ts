@@ -38,6 +38,7 @@ import type { DispatchContext, WorkerSpec, WorktreeHandle } from "../src/types.j
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "prompts");
+const realSoulsDir = join(here, "..", "image", "souls");
 
 const cleanups: string[] = [];
 afterEach(() => {
@@ -102,6 +103,7 @@ function fixtured(): FixturedShipBackend {
     repo: "Akagilnc/ming-salvage-sim",
     base: "main",
     promptsDir: realPromptsDir,
+    soulsDir: realSoulsDir,
     imageName: "ming-orchestrator-coder:latest",
     runKey: "k336",
   });
@@ -232,6 +234,7 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336cfg",
     });
@@ -334,6 +337,7 @@ describe("#336 single-slice runShipWorker — fail-closed when the top-level Cla
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336noauth",
     });
@@ -404,6 +408,7 @@ describe("#336 single-slice runShipWorker — fail-closed when gh auth is missin
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336nogh",
     });
@@ -444,6 +449,7 @@ describe("#336 single-slice runShipWorker — fail-closed when gh auth is missin
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336ghok",
     });
@@ -509,6 +515,7 @@ describe("#336 single-slice runShipWorker — outcome sidecar cleanup", () => {
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336outcome",
     });
@@ -562,6 +569,7 @@ describe("#439 single-slice ship worker resume answer focus", () => {
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k439shipanswer",
     });
@@ -628,6 +636,7 @@ describe("#378 RealBackend auth mounts — write a minimal danger-full-access co
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k378",
       home,

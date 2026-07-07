@@ -22,9 +22,10 @@
 #
 # Build context is a STAGING dir prepared by build.sh, NOT this directory: build.sh
 # `cp -RL`-resolves the host skill symlinks into staging/skills/, bakes the gstack
-# closure subtree, copies the souls, and copies the repo-root CLAUDE.md (which
-# carries the machine-executable `## Skill routing` section). Run via
-# `image/build.sh`, never `docker build image/` directly.
+# closure subtree, and copies the repo-root CLAUDE.md (which carries the
+# machine-executable `## Skill routing` section). Souls are NOT copied (mounted
+# live at runtime per #372 unconditional rebuild). Run via `image/build.sh`,
+# never `docker build image/` directly.
 #
 # ── SKILL CLOSURE GRAPH (what is baked + why; closed under internal invocation) ─
 #   tdd                            → codebase-design          (refactor step)
@@ -44,8 +45,9 @@
 # 2a (improve not baked); 2b closes it. Every internally-invoked skill is present.
 #
 # Reproducibility: pin the base by digest in CI; locally we ride sc-pipeline:latest.
-# Skill content is pinned by build.sh's skills-manifest.sha256 (fail-closed via
-# EXPECTED_SKILLS_SHA).
+# Skill content manifest (skills-manifest.sha256) is emitted by build.sh for
+# audit only (no fail-closed EXPECTED_SKILLS_SHA gate; the gate was removed in
+# #372 unconditional rebuild — manifest is emit-only).
 ARG BASE_IMAGE=sc-pipeline:latest
 FROM ${BASE_IMAGE}
 

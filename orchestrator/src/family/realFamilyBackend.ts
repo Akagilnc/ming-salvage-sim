@@ -92,6 +92,7 @@ import {
   SPAWNED_WORKER_ENV,
   WORKER_IDLE_TIMEOUT_SECONDS,
   modelFamilyForSlug,
+  soulsMount,
   type SelfReportedCoder,
 } from "../realBackend.js";
 import {
@@ -252,8 +253,9 @@ export interface RealFamilyBackendOptions {
   /**
    * Host dir of souls to bind-mount live (souls/*.md). #372 unconditional:
    * souls mounted rather than baked so source changes visible immediately.
+   * REQUIRED (souls no longer baked).
    */
-  readonly soulsDir?: string;
+  readonly soulsDir: string;
   /** The profile image (skills + CLIs baked in; souls mounted live #372) for the merger agent sandbox. */
   readonly imageName: string;
   /**
@@ -329,6 +331,7 @@ export class RealFamilyBackend implements FamilyBackend {
   constructor(opts: RealFamilyBackendOptions) {
     this.opts = opts;
     this.validateFamilyPromptsDir();
+    this.validateSoulsDir();
   }
 
   /**
@@ -364,6 +367,26 @@ export class RealFamilyBackend implements FamilyBackend {
           `promptFile(s): ${missing.join(", ")}. All of ` +
           `[${REFERENCED_FAMILY_PROMPT_FILES.join(", ")}] must be present (the ` +
           `family cmr / ship / merger workers reference them).`,
+      );
+    }
+  }
+
+  /**
+   * Fail loudly at construction if soulsDir missing or invalid.
+   * Souls are no longer baked (#372); a missing value silently produces
+   * soul-less workers. Mirrors prompts validation.
+   */
+  private validateSoulsDir(): void {
+    const dir = this.opts.soulsDir;
+    if (typeof dir !== "string" || dir.length === 0) {
+      throw new Error(
+        "RealFamilyBackend: soulsDir is required (souls are no longer baked into the image; " +
+          "omitting it would yield soul-less container workers with no fallback).",
+      );
+    }
+    if (!isAbsolute(dir) || !existsSync(dir) || !statSync(dir).isDirectory()) {
+      throw new Error(
+        `RealFamilyBackend: soulsDir must be an absolute path to an existing directory (got "${dir}").`,
       );
     }
   }
@@ -896,14 +919,14 @@ export class RealFamilyBackend implements FamilyBackend {
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
-    const mounts: { hostPath: string; sandboxPath: string }[] = [];
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     if (
       auth.codexAuthDir !== undefined &&
       modelFamilyForSlug(mergerModel()) === "codex"
@@ -917,12 +940,8 @@ export class RealFamilyBackend implements FamilyBackend {
       });
     }
     // #372: souls mount live for merger worker (data files not baked).
-    if (this.opts.soulsDir) {
-      mounts.push({
-        hostPath: this.opts.soulsDir,
-        sandboxPath: "/home/agent/.orchestrator/souls",
-      });
-    }
+    // Use shared helper (forces readonly:true, single hard-coded sandbox path).
+    mounts.push(soulsMount(this.opts.soulsDir));
     return {
       imageName: this.opts.imageName,
       env,
@@ -1582,7 +1601,7 @@ export class RealFamilyBackend implements FamilyBackend {
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
@@ -1605,12 +1624,8 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
     // #372: mount souls live for family coder-fix worker.
-    if (this.opts.soulsDir) {
-      mounts.push({
-        hostPath: this.opts.soulsDir,
-        sandboxPath: "/home/agent/.orchestrator/souls",
-      });
-    }
+    // Shared helper forces readonly:true.
+    mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
   }
 
@@ -2044,13 +2059,8 @@ export class RealFamilyBackend implements FamilyBackend {
       });
     }
     // #372: souls mount live for integrated cmr worker (souls not baked).
-    if (this.opts.soulsDir) {
-      mounts.push({
-        hostPath: this.opts.soulsDir,
-        sandboxPath: "/home/agent/.orchestrator/souls",
-        readonly: true,
-      });
-    }
+    // Shared helper (single source for the mount + readonly:true).
+    mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
   }
 
@@ -2417,7 +2427,7 @@ export class RealFamilyBackend implements FamilyBackend {
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     // ORCHESTRATOR_REPO too: the ship soul records a deferred finding with
     // `gh issue create --repo "$ORCHESTRATOR_REPO"`, so the family ship sandbox must
@@ -2436,7 +2446,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
-    const mounts: { hostPath: string; sandboxPath: string }[] = [];
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
@@ -2447,12 +2457,8 @@ export class RealFamilyBackend implements FamilyBackend {
       });
     }
     // #372: souls mount live for family ship worker.
-    if (this.opts.soulsDir) {
-      mounts.push({
-        hostPath: this.opts.soulsDir,
-        sandboxPath: "/home/agent/.orchestrator/souls",
-      });
-    }
+    // Shared helper forces readonly:true at every site.
+    mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
   }
 

@@ -58,6 +58,7 @@ import type {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
+const realSoulsDir = join(here, "..", "..", "image", "souls");
 
 /** Run a real git command in `cwd` and return trimmed stdout. */
 function git(cwd: string, ...args: string[]): string {
@@ -115,6 +116,7 @@ function opts(workingRepo: string, over: Partial<RealFamilyBackendOptions> = {})
     repo: "Akagilnc/ming-salvage-sim",
     base: "main",
     promptsDir: realPromptsDir,
+    soulsDir: realSoulsDir,
     imageName: "img",
     skillsMount: "/tmp/skills",
     ...over,
