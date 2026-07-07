@@ -81,6 +81,14 @@ export interface MechanicalRetryOptions {
    * returns the last synthesized `failed`.
    */
   readonly rethrowOnExhaustion?: boolean;
+  /**
+   * Idempotency hook (#598): reset LOCAL side effects (git HEAD/worktree residue)
+   * to the pre-attempt state BEFORE each retry, so a retry never runs on top of an
+   * uncleaned side effect the previous crashed attempt left behind. Called only
+   * before a retry (never before the first attempt). Remote side effects (pushed
+   * branch, opened PR) must be made idempotent or excluded by the caller.
+   */
+  readonly resetBeforeRetry?: () => Promise<void>;
 }
 
 /**
@@ -103,6 +111,9 @@ export async function withMechanicalRetry(
   for (let attempt = 1; attempt <= MAX_DISPATCH_ATTEMPTS; attempt++) {
     const useSpec = attempt === 1 ? spec : forceFreshSpec(spec);
     const useCtx = attempt === 1 ? ctx : stripResume(ctx);
+    // Idempotency: before a RETRY, reset local git residue the crashed attempt may
+    // have left, so the fresh re-dispatch starts from the pre-attempt state.
+    if (attempt > 1) await opts?.resetBeforeRetry?.();
     let result: WorkerResult;
     try {
       result = await dispatch(useSpec, useCtx);

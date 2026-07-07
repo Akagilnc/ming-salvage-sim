@@ -2607,6 +2607,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // crash (connection drop / container start failure), recovering a
               // transient one; a persistent crash is re-thrown so the reviewer loop's
               // catch surfaces it exactly as before.
+              // Idempotency (#598): before any retry, reset the worktree's local git
+              // residue the crashed attempt may have left, so the fresh re-dispatch
+              // starts from the pre-attempt state (never runs on top of a half-done
+              // commit / dirty index). A worktree-less family worker has no local
+              // residue to reset.
+              const worktreeForReset = worktree;
+              const resetBeforeRetry =
+                worktreeForReset !== undefined
+                  ? () => backend.cleanResidue(worktreeForReset)
+                  : undefined;
               result = await withMechanicalRetry(
                 workerSpec,
                 dispatchCtx,
@@ -2618,8 +2628,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                           ? true
                           : isReviewerStructuredOutputError(o.error),
                       rethrowOnExhaustion: true,
+                      ...(resetBeforeRetry !== undefined ? { resetBeforeRetry } : {}),
                     }
-                  : undefined,
+                  : resetBeforeRetry !== undefined
+                    ? { resetBeforeRetry }
+                    : undefined,
               );
             } catch (err) {
               if (
