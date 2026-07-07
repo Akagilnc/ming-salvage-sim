@@ -626,9 +626,23 @@ export class RealFamilyBackend implements FamilyBackend {
     // the half-resolved conflict is re-established so the retry starts from the same
     // clean conflicted state (idempotency). A RETURNED `{resolved:false}` is a JUDGED
     // non-resolve — surfaced below, never retried. A persistent crash re-throws.
-    const outcome = await retryProcessCrash(() => this.runMergerAgent(req), {
-      resetBeforeRetry: () => this.reestablishConflictForRetry(req),
-    });
+    const outcome = await retryProcessCrash(
+      async () => {
+        // #598 idempotency: if a PRIOR crashed attempt already COMMITTED the merge,
+        // the child is LANDED (git truth). Do NOT re-run the merger on a no-conflict
+        // state — `reestablishConflictForRetry` would `git merge --abort` (a no-op
+        // after a commit) then re-merge "already up to date", leaving the merger to
+        // run with nothing to resolve and FAIL a child that was already correctly
+        // merged. Recognize the landed merge instead (the post-state check below
+        // then returns it clean). On attempt 1 the merge is still in-progress, so
+        // this is false and the merger runs normally.
+        if (this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo)) {
+          return { resolved: true };
+        }
+        return await this.runMergerAgent(req);
+      },
+      { resetBeforeRetry: () => this.reestablishConflictForRetry(req) },
+    );
     if (!outcome.resolved) {
       // The resolver could not resolve (escalated / failed) → surface it; the
       // merger does NOT write a `merged` entry (an unresolved conflict never looks
@@ -655,15 +669,31 @@ export class RealFamilyBackend implements FamilyBackend {
     // ancestor does the merge count as landed. Anything else → `conflicted:true` so
     // the merger refuses to record `merged` (invariant: "an unresolved conflict
     // never looks clean").
-    const stillInProgress = this.mergeInProgress(repo);
     const familyHead = this.sh("git", ["rev-parse", this.opts.familyBase], repo);
-    const childLanded =
-      !stillInProgress &&
-      familyHead !== familyHeadBefore &&
-      this.isAncestorOf(childHead, familyHead, repo);
+    const childLanded = this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo);
     return childLanded
       ? { familyHead, familyHeadBefore, childHead }
       : { familyHead, familyHeadBefore, childHead, conflicted: true };
+  }
+
+  /**
+   * Git-truth check (#295 / codex R2/R3, reused by the #598 idempotency retry
+   * guard): the child's merge has LANDED iff there is no in-progress merge AND the
+   * FAMILY BASE REF itself moved past `familyHeadBefore` AND `childHead` is now an
+   * ancestor of it. Reading the FAMILY BASE REF (not HEAD) rejects a wrong-ref /
+   * detached-HEAD landing (codex R3).
+   */
+  private childLandedOnFamilyBase(
+    familyHeadBefore: string,
+    childHead: string,
+    repo: string,
+  ): boolean {
+    if (this.mergeInProgress(repo)) return false;
+    const familyHead = this.sh("git", ["rev-parse", this.opts.familyBase], repo);
+    return (
+      familyHead !== familyHeadBefore &&
+      this.isAncestorOf(childHead, familyHead, repo)
+    );
   }
 
   /**

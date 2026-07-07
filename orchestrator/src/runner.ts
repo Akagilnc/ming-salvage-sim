@@ -2616,6 +2616,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // dirty index / untracked junk. Committed progress on the resident branch
               // HEAD is deliberately preserved (cleanResidue contract / ADR 0024 — it is
               // the resume anchor). A worktree-less family worker has no local residue.
+              //
+              // DEFERRED (#661, needs-design): a coder that COMMITTED a partial attempt
+              // then crashed keeps that commit at HEAD, so the retry continues on it
+              // rather than a strict pre-attempt HEAD. Unlike the merge-resolver's
+              // committed-then-crashed case (data loss — fixed in this PR), a coder
+              // continuing on preserved progress is bounded (the reviewer catches broken
+              // partial work) and is what ADR 0024 intends; whether a mechanical retry
+              // should override that committed-preservation is a design decision.
               const worktreeForReset = worktree;
               const resetBeforeRetry =
                 worktreeForReset !== undefined
