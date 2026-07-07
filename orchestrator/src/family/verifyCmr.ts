@@ -162,11 +162,6 @@ export interface VerifyCmrInput {
   readonly priorCmrFindingIdentityKeysByPass?: Partial<
     Record<IntegratedCmrPass, readonly string[]>
   >;
-  /**
-   * Internal final-barrier budget threaded across CMR coder-fix restarts. Public
-   * callers omit it; recursive restarts decrement it after each accepted fix.
-   */
-  readonly remainingCmrCoderFixRounds?: number;
 }
 
 /** The verify-cmr hook result. */
@@ -873,12 +868,10 @@ interface IntegratedCmrPassOutcome {
     readonly priorCmrFindingIdentityKeysByPass: Partial<
       Record<IntegratedCmrPass, readonly string[]>
     >;
-    readonly remainingCmrCoderFixRounds: number;
   };
 }
 
 const MAX_CODER_FIX_REPAIR_EVIDENCE_ATTEMPTS = 3;
-const MAX_CMR_CODER_FIX_ROUNDS = 3;
 
 function coderFixFailureStopSummary(input: {
   readonly pass: IntegratedCmrPass;
@@ -1509,7 +1502,6 @@ async function runIntegratedCmrPass(input: {
   >;
   readonly resolvedRoute: ResolvedModelRoute;
   readonly allowCoderFix: boolean;
-  readonly remainingCmrCoderFixRounds: number;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -1524,7 +1516,6 @@ async function runIntegratedCmrPass(input: {
     priorCmrFindingIdentityKeys,
     priorCmrFindingIdentityKeysByPass,
     allowCoderFix,
-    remainingCmrCoderFixRounds,
   } = input;
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
   const resolvedFamilyHeadAfter = await readPostCmrFamilyHead(
@@ -1921,8 +1912,28 @@ async function runIntegratedCmrPass(input: {
       // to decide whether the family lives. EVERY blocking finding's identity key
       // goes through coder-fix; a reviewer self-labeling a blocker
       // owning_issue_still_red / defer no longer terminates the whole family
-      // (#497/#498). The only non-fix outpaths are: no blocking findings (handled
-      // above) or the coder-fix round budget being exhausted (below).
+      // (#497/#498).
+      //
+      // #597: the fixed CMR coder-fix round cap (formerly 3) is gone. While the
+      // fresh reviewer keeps reporting a blocking finding, the runner keeps
+      // dispatching coder-fix + fresh re-review — with NO runner-side round
+      // counter or "same finding recurring" bookkeeping to replace the removed
+      // cap; the runner only counts findings (0 vs. non-0).
+      //
+      // The two INTENDED steady-state exits: convergence (handled below —
+      // findings == 0) or a worker-raised human-decision-gate signal. The stop
+      // condition for a non-converging loop is therefore the WORKER's judgment,
+      // not a runner budget: every fresh re-review dispatch can emit
+      // `<cmr>{"escalate": …}` when it judges no convergence path (soul
+      // cmr_completeness.md item 4), which lands as `cmrResult.kind ===
+      // "escalated"` at the top of this pass (~L1632) → `escalateFamily` → park
+      // for HITL. That per-round escalate is what prevents an endless loop; a
+      // runner-side round/no-progress threshold is deliberately NOT re-added
+      // (#597 acceptance #3; human-gate plumbing owned by #590/#604).
+      // Beyond those two steady-state exits, the flow can still abort early on
+      // operational failures (e.g. `runCmrCoderFix` returning `{ ok: false }`,
+      // or worker/infra errors bubbling up) — those are error paths, not the
+      // removed budget cap.
       const blockingFindingIdentityKeys = [
         ...new Set(cmrFindingClassification.blocking.map(findingIdentityKey)),
       ];
@@ -1938,29 +1949,6 @@ async function runIntegratedCmrPass(input: {
           cmrDispositions: cmrFindingClassification.dispositions,
           stopSummary,
         });
-        if (remainingCmrCoderFixRounds <= 0) {
-          const budgetReason =
-            `integrated cmr ${pass} coder-fix round budget exhausted after ` +
-            `${MAX_CMR_CODER_FIX_ROUNDS} committed repair rounds: ` +
-            blockingFindingIdentityKeys.join(", ");
-          await recordDurableAbort(familyBackend, {
-            phase: "final",
-            cmrPass: pass,
-            reason: budgetReason,
-            familyHeadAfter: postWorkerFamilyHead,
-            blockingFindingIdentityKeys,
-            cmrDispositions: cmrFindingClassification.dispositions,
-            stopSummary: coderFixFailureStopSummary({
-              pass,
-              reason: budgetReason,
-              familyHeadAfter: postWorkerFamilyHead,
-            }),
-          });
-          return {
-            result: { ok: false, ran: true },
-            familyHeadAfter: postWorkerFamilyHead,
-          };
-        }
         const fixRound = await runCmrCoderFix({
           pass,
           familyBackend,
@@ -1973,7 +1961,6 @@ async function runIntegratedCmrPass(input: {
           resolvedRoute,
         });
         if (!fixRound.result.ok) return fixRound;
-        const remainingAfterFix = remainingCmrCoderFixRounds - 1;
         const updatedPriorKeys = [
             ...new Set([...(priorCmrFindingIdentityKeys ?? []), ...blockingFindingIdentityKeys]),
         ];
@@ -1986,7 +1973,6 @@ async function runIntegratedCmrPass(input: {
               ...(priorCmrFindingIdentityKeysByPass ?? {}),
               [pass]: updatedPriorKeys,
             },
-            remainingCmrCoderFixRounds: remainingAfterFix,
           },
         };
       }
@@ -2093,7 +2079,6 @@ export async function runVerifyCmr(
     moduleContext,
     priorCmrFindingIdentityKeys,
     priorCmrFindingIdentityKeysByPass,
-    remainingCmrCoderFixRounds,
   } = input;
 
   // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
@@ -2176,8 +2161,6 @@ export async function runVerifyCmr(
     pass: IntegratedCmrPass,
   ): readonly string[] | undefined =>
     activePriorKeysByPass[pass];
-  const activeRemainingCmrCoderFixRounds =
-    remainingCmrCoderFixRounds ?? MAX_CMR_CODER_FIX_ROUNDS;
   const completeness = await runIntegratedCmrPass({
     pass: "completeness",
     familyBackend,
@@ -2191,7 +2174,6 @@ export async function runVerifyCmr(
     priorCmrFindingIdentityKeysByPass: activePriorKeysByPass,
     resolvedRoute,
     allowCoderFix: true,
-    remainingCmrCoderFixRounds: activeRemainingCmrCoderFixRounds,
   });
   if (!completeness.result.ok) return completeness.result;
   if (completeness.restartFinalBarrier !== undefined) {
@@ -2206,14 +2188,11 @@ export async function runVerifyCmr(
       moduleContext,
       priorCmrFindingIdentityKeysByPass:
         completeness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass,
-      remainingCmrCoderFixRounds:
-        completeness.restartFinalBarrier.remainingCmrCoderFixRounds,
     });
   }
 
   let correctnessFamilyHeadAfter = completeness.familyHeadAfter;
   let correctnessPriorKeysByPass = activePriorKeysByPass;
-  let correctnessRemainingCmrCoderFixRounds = activeRemainingCmrCoderFixRounds;
   while (true) {
     const correctness = await runIntegratedCmrPass({
       pass: "correctness",
@@ -2228,7 +2207,6 @@ export async function runVerifyCmr(
       priorCmrFindingIdentityKeysByPass: correctnessPriorKeysByPass,
       resolvedRoute,
       allowCoderFix: true,
-      remainingCmrCoderFixRounds: correctnessRemainingCmrCoderFixRounds,
     });
     if (!correctness.result.ok) return correctness.result;
     if (correctness.restartFinalBarrier === undefined) {
@@ -2245,8 +2223,6 @@ export async function runVerifyCmr(
     correctnessFamilyHeadAfter = correctness.restartFinalBarrier.familyHeadAfter;
     correctnessPriorKeysByPass =
       correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
-    correctnessRemainingCmrCoderFixRounds =
-      correctness.restartFinalBarrier.remainingCmrCoderFixRounds;
   }
   const cmrPassedFamilyHeadAfter = correctnessFamilyHeadAfter;
   // Both CMR passes converged. Fall through to 止于 PR (the ship worker) below.
