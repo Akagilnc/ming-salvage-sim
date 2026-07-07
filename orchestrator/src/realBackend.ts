@@ -518,7 +518,6 @@ export function matchWorktreeForBranch(
  * NEUTRAL prefix (dogfood #327 #1): the earlier `feat/244-orchestrator-issue-<n>`
  * baked in a hardcoded `244` (the #244 epic) — wrong for every other issue, and
  * `issueNumberFromBranch`'s fallback could mis-read that leading run as the issue.
- *
  */
 export function branchForIssue(issueNumber: number): string {
   return `feat/issue-${issueNumber}`;
