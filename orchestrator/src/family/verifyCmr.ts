@@ -1393,11 +1393,13 @@ async function dispatchOrAbort(
     // #598: a family worker that CRASHES (throws) re-dispatches FRESH up to
     // MAX_DISPATCH_ATTEMPTS. Every RESOLVED result (failed / malformed / completed /
     // escalated) is DEFERRED to this gate's own rich terminal handling — the gate
-    // classifies `failed` (provider_degraded / infra_failure), rewrites `malformed`
-    // (OUTCOME_REWRITE_RETRY_CAP), and reads `completed`/`escalated` — so the generic
-    // layer keeps its own counter and never double-counts those. A persistent crash
-    // is re-thrown so the catch below stamps the domain "threw on startup" message
-    // the gate surfaces as INCOMPLETE_GATE.
+    // classifies `failed` (provider_degraded / infra_failure), rewrites cmr
+    // `malformed` (the rewrite loop + its outer re-dispatch), and treats a
+    // ship/coder-fix `malformed` as a CONTRACT violation → contract_drift (a ship
+    // that emits no valid verdict is not a transient protocol failure; #451 dogfood
+    // replay). So the generic layer keeps its own counter and never double-counts.
+    // A persistent crash is re-thrown so the catch below stamps the domain "threw on
+    // startup" message the gate surfaces as INCOMPLETE_GATE.
     return await withMechanicalRetry(
       spec,
       ctx,

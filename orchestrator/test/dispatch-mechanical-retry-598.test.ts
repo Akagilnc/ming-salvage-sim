@@ -165,6 +165,24 @@ describe("#598 withMechanicalRetry", () => {
     expect(seen).toHaveLength(1);
   });
 
+  it("a resetBeforeRetry that THROWS does not abort the retry loop — the remaining attempts still run", async () => {
+    // #598 r2 (agy): a transient reset failure (git lock / permissions) must not
+    // terminate the whole retry loop — a subsequent attempt may still succeed.
+    let dispatches = 0;
+    const dispatch = async (): Promise<WorkerResult> => {
+      dispatches += 1;
+      return { kind: "failed", reason: "crash" };
+    };
+    const result = await withMechanicalRetry(coderSpec(), {}, dispatch, {
+      resetBeforeRetry: async () => {
+        throw new Error("git lock: cannot reset");
+      },
+    });
+    // The reset failure is swallowed — every bounded attempt still dispatches.
+    expect(dispatches).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(result.kind).toBe("failed");
+  });
+
   it("idempotency: resetBeforeRetry runs before EACH retry, never before the first attempt", async () => {
     const events: string[] = [];
     let calls = 0;
@@ -347,6 +365,7 @@ class ShipScriptBackend implements Backend {
   constructor(
     private readonly crashes: number,
     private readonly judgedFailed = false,
+    private readonly judgedMalformed = false,
   ) {}
   async findResumeState(): Promise<undefined> {
     return undefined;
@@ -379,6 +398,9 @@ class ShipScriptBackend implements Backend {
       if (this.judgedFailed) {
         return { kind: "failed", reason: "gstack-ship: tests failed, delivery could not complete" };
       }
+      if (this.judgedMalformed) {
+        return { kind: "malformed", reason: "ship worker emitted no valid <ship> verdict" };
+      }
       return { kind: "completed", output: { kind: "ship", branch: RUN_WORKTREE.branch, status: "pushed" } };
     }
     if (spec.kind === "reviewer") {
@@ -400,6 +422,16 @@ describe("#598 integration — the SHIP role: crash retries, a judged failed ver
     const backend = new ShipScriptBackend(0, true);
     const result = await runOrchestrator({ issueNumber: 598, backend });
     // A decided delivery failure is surfaced, never re-run.
+    expect(result.status).toBe("error");
+    expect(backend.shipDispatches).toBe(1);
+  });
+
+  it("a ship `malformed` (no valid verdict) passes through with ZERO retry — a contract violation, not a transient failure (#598 r2)", async () => {
+    const backend = new ShipScriptBackend(0, false, true);
+    const result = await runOrchestrator({ issueNumber: 598, backend });
+    // A ship that emits no verdict is a decided contract violation (surfaced), not a
+    // transient protocol failure — never re-run (aligned with the family ship's #451
+    // contract_drift). Only a ship CRASH (throw) retries.
     expect(result.status).toBe("error");
     expect(backend.shipDispatches).toBe(1);
   });

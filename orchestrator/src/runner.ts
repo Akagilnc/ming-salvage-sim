@@ -2830,19 +2830,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ? { escalationAnswer: escalationAnswerForStep }
               : {}),
           };
-          // #598: a ship CRASH (throw) or `malformed` (no parseable verdict /
-          // protocol failure) re-dispatches fresh; a JUDGED ship-`failed` delivery
-          // verdict (gstack-ship ran, the delivery hard-failed) passes through with
-          // ZERO retry (crit 1 — never re-run a decided failure). The worktree's
-          // uncommitted residue is reset before each retry (idempotency); gstack-ship's
-          // own re-runnable design keeps the remote push/PR idempotent across a retry.
+          // #598: a ship CRASH (throw — container/connection failure) re-dispatches
+          // fresh. Every RESOLVED ship result passes through with ZERO retry: a judged
+          // `failed` delivery verdict (gstack-ship ran, the delivery hard-failed) and a
+          // `malformed` (no valid ship verdict) are BOTH decided outcomes — a ship that
+          // emits no verdict is a contract violation, not a transient protocol failure
+          // (#598 r2, aligned with the family ship's #451 contract_drift). Only a crash
+          // retries. The worktree's uncommitted residue is reset before each retry
+          // (idempotency); gstack-ship's re-runnable design keeps push/PR idempotent.
           const shipWorktree = worktree;
           const shipResult = await withMechanicalRetry(
             shipSpec,
             shipCtx,
             (s, c) => dispatchWorker(backend, s, c),
             {
-              callerOwns: (o) => "result" in o && o.result.kind === "failed",
+              callerOwns: (o) => "result" in o,
               resetBeforeRetry: () => backend.cleanResidue(shipWorktree),
             },
           );
