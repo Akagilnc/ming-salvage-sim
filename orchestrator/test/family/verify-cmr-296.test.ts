@@ -297,6 +297,55 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     }));
   });
 
+  it("#598 a cmr worker that CRASHES once then converges is retried fresh — the gate passes, no abort", async () => {
+    // The retry DIRECTION for the cmr role (the throw-startup test above proves
+    // only the exhaustion→INCOMPLETE_GATE direction). The cmr worker throws on its
+    // first dispatch, then converges on the fresh retry — so the gate reaches
+    // {ok:true} instead of aborting on the first crash.
+    class CrashOnceCmrBackend extends BareFamilyBackend {
+      cmrDispatches = 0;
+      readonly aborted: FamilyAbortedEvent[] = [];
+      currentFamilyHead = "head-before-worker";
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async readFamilyHead(_familyBase: string): Promise<string> {
+        return this.currentFamilyHead;
+      }
+      async recordAborted(event: FamilyAbortedEvent): Promise<void> {
+        this.aborted.push(event);
+      }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind !== "cmr") {
+          return { kind: "completed", output: { kind: "ship", branch: "family/291-base", status: "pushed" } };
+        }
+        this.cmrDispatches += 1;
+        if (this.cmrDispatches === 1) {
+          throw new Error("cmr worker: container connection dropped mid-review");
+        }
+        return {
+          kind: "completed",
+          output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"], ...CMR_EVIDENCE },
+        };
+      }
+    }
+    const backend = new CrashOnceCmrBackend();
+    await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+    // The retry DIRECTION: the crash was retried FRESH (a second cmr dispatch),
+    // NOT aborted on the first crash. Contrast the throw-startup test above, where
+    // a PERSISTENT crash is dispatched once (well, exhausts) and records a "threw on
+    // startup" abort. Here the transient crash is followed by a converging retry.
+    expect(backend.cmrDispatches).toBeGreaterThanOrEqual(2);
+    // No abort names the transient crash — it recovered instead of aborting.
+    expect(
+      backend.aborted.some((e) => /threw on startup|connection dropped/i.test(e.errorPackage.reason)),
+    ).toBe(false);
+  });
+
   it("checks CMR leg floor before routing fix_now findings to coder-fix", async () => {
     const weakLegFinding: Finding = {
       severity: "medium",
