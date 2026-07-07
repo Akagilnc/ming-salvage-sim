@@ -38,6 +38,7 @@ import {
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
+  soulsMount,
   SPAWNED_WORKER_ENV,
 } from "../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
@@ -264,7 +265,7 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
     public config(auth: ShipAuth): {
       imageName: string;
       env: Record<string, string>;
-      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
       return this.shipSandboxConfig(auth);
     }
@@ -290,6 +291,12 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
     // ORCHESTRATOR_REPO is exported so the ship soul's `gh issue create
     // --repo "$ORCHESTRATOR_REPO"` defer path works (codex #384).
     expect(c.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
+  });
+
+  it("family shipSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {
+    const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
+    const expected = soulsMount(realSoulsDir);
+    expect(c.mounts).toContainEqual(expected);
   });
 
   it("a missing codex auth degrades the mount but still ships under the ship soul", () => {

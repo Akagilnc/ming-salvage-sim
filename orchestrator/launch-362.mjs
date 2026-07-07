@@ -19,6 +19,9 @@ const REPO = dirname(ORCH); // the repo root this orchestrator lives in
 // familyDriver) and pin the exact same tag for build.sh (env) + dispatch (imageName).
 // Single source of truth prevents tag mismatch breaking the freshness guarantee.
 console.log("[launcher] #372 unconditional: npx tsc + image build (before dispatch)");
+// Minimal dist clean before tsc: prevents orphaned dist/*.js (from deleted/renamed
+// sources) from being resolved by the later dynamic import. Fresh-dist guarantee.
+execFileSync("rm", ["-rf", "dist"], { cwd: ORCH, stdio: "inherit" });
 execFileSync("npx", ["tsc"], { cwd: ORCH, stdio: "inherit" });
 
 // Dynamic import AFTER recompile so this process gets fresh dist (static top

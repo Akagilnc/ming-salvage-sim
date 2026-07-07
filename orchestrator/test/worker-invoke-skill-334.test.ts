@@ -23,8 +23,16 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+
+// vi.mock hoisted. Literal key avoids TDZ/eval order issues with vitest transform.
+// Only mock child_process (this file never calls it directly); for launcher smoke
+// we create a temp stub dist/ so dynamic import succeeds without side effects.
+vi.mock("node:child_process", () => ({
+  execFileSync: vi.fn(() => ""),
+}));
+
+import { describe, expect, it, vi } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
 import {
   RealBackend,
@@ -37,6 +45,7 @@ import {
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
+  soulsMount,
 } from "../src/realBackend.js";
 import type {
   Backend,
@@ -129,6 +138,13 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("coder");
   });
 
+  it("boxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) at this site (#372)", () => {
+    const cfg = makeBackend().config(coderSpec);
+    const expected = soulsMount(soulsDir);
+    expect(cfg.mounts).toContainEqual(expected);
+    expect(expected).toEqual({ hostPath: soulsDir, sandboxPath: "/home/agent/.orchestrator/souls", readonly: true });
+  });
+
   it("injects live issue coordinates and GH_TOKEN for the worker's gh issue read", () => {
     const cfg = makeBackend().config(coderSpec);
     expect(cfg.env[SANDBOX_ISSUE_NUMBER_ENV]).toBe("334");
@@ -197,7 +213,7 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
 
     const review = read("reviewer_review.md");
     expect(review).toMatch(/\/home\/agent\/\.orchestrator\/souls\/reviewer\.md/);
-    expect(review).toMatch(/baked soul plus runner\s+parameters/i);
+    expect(review).toMatch(/role soul \(live-mounted\) plus runner\s+parameters/i);
     expect(review).toMatch(/escalationAnswer/i);
     expect(review).not.toMatch(/\.orchestrator-snapshot\.json/i);
     expect(review).not.toMatch(/fetch the current issue body|Retry transient network failures|Review the current full slice diff/is);
@@ -622,5 +638,55 @@ describe("#336 cmr S336 r4 — the terminal single-slice S7 gate re-asserts the 
       output: { kind: "ship", branch: wtBranch, status: "pr_opened", pr: "https://gh/pr/1" },
     });
     expect(status).toBe("success");
+  });
+});
+
+// ─── launcher bootstrap smoke (item 3) ─────────────────────────────────────
+
+describe("launch-362.mjs bootstrap smoke (#372 unconditional)", () => {
+  it("mocks execFileSync and asserts tsc + build.sh (plus clean) are invoked (tsc before driver import)", async () => {
+    const cp = await import("node:child_process");
+    const execMock = cp.execFileSync as unknown as ReturnType<typeof vi.fn>;
+    execMock.mockClear();
+
+    // Pre-create a minimal stub dist/familyDriver.js so launcher's dynamic import
+    // (after its tsc) succeeds and we don't run real driver. Launcher 'rm dist'
+    // is also mocked so our stub persists for the import.
+    const distDir = join(here, "..", "dist");
+    const driverJs = join(distDir, "familyDriver.js");
+    mkdirSync(distDir, { recursive: true });
+    writeFileSync(
+      driverJs,
+      'export const runFamilyDriver = async () => ({});\nexport const resolveImageTag = (t) => t || "tag";\n',
+      "utf8",
+    );
+
+    try {
+      // Trigger launcher top level: uses mocked execs (rm/tsc/build) + real dynamic import of our stub.
+      const launcherPath = join(here, "..", "launch-362.mjs");
+      await import(launcherPath);
+
+      const calls = execMock.mock.calls as any[][];
+      // dist clean
+      expect(
+        calls.some(
+          (c) =>
+            c[0] === "rm" &&
+            Array.isArray(c[1]) &&
+            c[1].some((a: string) => String(a).includes("dist")),
+        ),
+      ).toBe(true);
+      // tsc
+      expect(calls.some((c) => c[0] === "npx" && c[1]?.[0] === "tsc")).toBe(true);
+      // build.sh
+      expect(
+        calls.some((c) => c[0] === "bash" && String(c[1]?.[0] || "").includes("build.sh")),
+      ).toBe(true);
+    } finally {
+      try {
+        rmSync(driverJs, { force: true });
+        rmSync(distDir, { recursive: true, force: true });
+      } catch {}
+    }
   });
 });
