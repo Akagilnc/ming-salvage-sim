@@ -1916,12 +1916,24 @@ async function runIntegratedCmrPass(input: {
       //
       // #597: the fixed CMR coder-fix round cap (formerly 3) is gone. While the
       // fresh reviewer keeps reporting a blocking finding, the runner keeps
-      // dispatching coder-fix + fresh re-review. The loop's only exits are:
-      // convergence (handled below — findings == 0) or a worker-raised
-      // human-decision-gate signal (the escalated/non-converged-without-findings
-      // paths). No runner-side round counter or "same finding recurring"
-      // bookkeeping replaces the removed cap — the runner only counts findings
-      // (0 vs. non-0).
+      // dispatching coder-fix + fresh re-review — with NO runner-side round
+      // counter or "same finding recurring" bookkeeping to replace the removed
+      // cap; the runner only counts findings (0 vs. non-0).
+      //
+      // The two INTENDED steady-state exits: convergence (handled below —
+      // findings == 0) or a worker-raised human-decision-gate signal. The stop
+      // condition for a non-converging loop is therefore the WORKER's judgment,
+      // not a runner budget: every fresh re-review dispatch can emit
+      // `<cmr>{"escalate": …}` when it judges no convergence path (soul
+      // cmr_completeness.md item 4), which lands as `cmrResult.kind ===
+      // "escalated"` at the top of this pass (~L1632) → `escalateFamily` → park
+      // for HITL. That per-round escalate is what prevents an endless loop; a
+      // runner-side round/no-progress threshold is deliberately NOT re-added
+      // (#597 acceptance #3; human-gate plumbing owned by #590/#604).
+      // Beyond those two steady-state exits, the flow can still abort early on
+      // operational failures (e.g. `runCmrCoderFix` returning `{ ok: false }`,
+      // or worker/infra errors bubbling up) — those are error paths, not the
+      // removed budget cap.
       const blockingFindingIdentityKeys = [
         ...new Set(cmrFindingClassification.blocking.map(findingIdentityKey)),
       ];
