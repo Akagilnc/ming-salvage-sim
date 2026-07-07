@@ -3384,10 +3384,33 @@ function gitExitStatus(err: unknown): number | undefined {
 // ════════════════════════════════════════════════════════════════════════════
 
 function extractLastTag(stdout: string, tag: string): string | undefined {
-  const re = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "g");
-  let last: string | undefined;
-  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
-  return last;
+  // Mirror single-slice extractTaggedJson semantics exactly (indexOf collection +
+  // backward scan for last start that has a close after it). This avoids:
+  // (1) prose/conversational <tag> mentions before the real block poisoning the
+  //     span (regex from mention open to first close), (2) regex perf on large
+  //     stdout, (3) divergence from the realBackend.ts side of the seam.
+  // lastIndexOf alone is insufficient (must fallback from unclosed trailing opens).
+  const open = `<${tag}>`;
+  const close = `</${tag}>`;
+  const starts: number[] = [];
+  for (
+    let idx = stdout.indexOf(open);
+    idx !== -1;
+    idx = stdout.indexOf(open, idx + open.length)
+  ) {
+    starts.push(idx);
+  }
+  if (starts.length === 0) {
+    return undefined;
+  }
+  for (let i = starts.length - 1; i >= 0; i -= 1) {
+    const bodyStart = starts[i] + open.length;
+    const end = stdout.indexOf(close, bodyStart);
+    if (end === -1) continue;
+    const body = stdout.slice(bodyStart, end);
+    return body;
+  }
+  return undefined;
 }
 
 export function parseVerifyOutcome(
