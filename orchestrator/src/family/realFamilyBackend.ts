@@ -105,6 +105,7 @@ import {
   type CmrLegAccountingRoute,
 } from "../modelRoutes.js";
 import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
+import { retryProcessCrash } from "../dispatchRetry.js";
 import { recordFamilyEscalated } from "./ledger.js";
 import {
   isFilledString,
@@ -620,7 +621,28 @@ export class RealFamilyBackend implements FamilyBackend {
     // → commit the merge (NEVER `--abort`). The real `sc.run` is behind the
     // {@link runMergerAgent} seam (fake-able; the real container only on the
     // driver / manual-smoke path).
-    const outcome = await this.runMergerAgent(req);
+    // #598: a merger agent that CRASHES (throws — e.g. a container/connection
+    // failure inside the sc.run) is retried fresh up to the bound; before each retry
+    // the half-resolved conflict is re-established so the retry starts from the same
+    // clean conflicted state (idempotency). A RETURNED `{resolved:false}` is a JUDGED
+    // non-resolve — surfaced below, never retried. A persistent crash re-throws.
+    const outcome = await retryProcessCrash(
+      async () => {
+        // #598 idempotency: if a PRIOR crashed attempt already COMMITTED the merge,
+        // the child is LANDED (git truth). Do NOT re-run the merger on a no-conflict
+        // state — `reestablishConflictForRetry` would `git merge --abort` (a no-op
+        // after a commit) then re-merge "already up to date", leaving the merger to
+        // run with nothing to resolve and FAIL a child that was already correctly
+        // merged. Recognize the landed merge instead (the post-state check below
+        // then returns it clean). On attempt 1 the merge is still in-progress, so
+        // this is false and the merger runs normally.
+        if (this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo)) {
+          return { resolved: true };
+        }
+        return await this.runMergerAgent(req);
+      },
+      { resetBeforeRetry: () => this.reestablishConflictForRetry(req) },
+    );
     if (!outcome.resolved) {
       // The resolver could not resolve (escalated / failed) → surface it; the
       // merger does NOT write a `merged` entry (an unresolved conflict never looks
@@ -647,15 +669,65 @@ export class RealFamilyBackend implements FamilyBackend {
     // ancestor does the merge count as landed. Anything else → `conflicted:true` so
     // the merger refuses to record `merged` (invariant: "an unresolved conflict
     // never looks clean").
-    const stillInProgress = this.mergeInProgress(repo);
     const familyHead = this.sh("git", ["rev-parse", this.opts.familyBase], repo);
-    const childLanded =
-      !stillInProgress &&
-      familyHead !== familyHeadBefore &&
-      this.isAncestorOf(childHead, familyHead, repo);
+    const childLanded = this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo);
     return childLanded
       ? { familyHead, familyHeadBefore, childHead }
       : { familyHead, familyHeadBefore, childHead, conflicted: true };
+  }
+
+  /**
+   * Git-truth check (#295 / codex R2/R3, reused by the #598 idempotency retry
+   * guard): the child's merge has LANDED iff there is no in-progress merge AND the
+   * FAMILY BASE REF itself moved past `familyHeadBefore` AND `childHead` is now an
+   * ancestor of it. Reading the FAMILY BASE REF (not HEAD) rejects a wrong-ref /
+   * detached-HEAD landing (codex R3).
+   */
+  private childLandedOnFamilyBase(
+    familyHeadBefore: string,
+    childHead: string,
+    repo: string,
+  ): boolean {
+    if (this.mergeInProgress(repo)) return false;
+    const familyHead = this.sh("git", ["rev-parse", this.opts.familyBase], repo);
+    return (
+      familyHead !== familyHeadBefore &&
+      this.isAncestorOf(childHead, familyHead, repo)
+    );
+  }
+
+  /**
+   * #598 idempotency: re-establish the SAME in-progress merge conflict that a
+   * CRASHED {@link runMergerAgent} attempt left half-resolved, so the retry starts
+   * from the clean conflicted state (never on top of a half-added index). Abort the
+   * half-done merge, check out the family base, then re-run the deterministic
+   * `git merge --no-ff` — a real conflict exits non-zero and leaves MERGE_HEAD,
+   * which is exactly the state the retry's merger resolves. A protected seam so the
+   * retry path is unit-testable without a real conflicting repo.
+   */
+  protected async reestablishConflictForRetry(
+    req: ConflictResolveRequest,
+  ): Promise<void> {
+    const repo = this.opts.workingRepo;
+    try {
+      this.sh("git", ["merge", "--abort"], repo);
+    } catch {
+      // No in-progress merge to abort (the crash may have left none) — fine.
+    }
+    this.sh("git", ["checkout", this.opts.familyBase], repo);
+    const msg = `Merge child #${req.childIssue} (${req.childBranch}) into ${this.opts.familyBase}`;
+    try {
+      this.sh("git", ["merge", "--no-ff", "-m", msg, req.childBranch], repo);
+    } catch (err) {
+      // #598 r5 (codexA/B, mirroring mergeChildLocked): only a REAL content conflict
+      // exits non-zero AND leaves MERGE_HEAD — that is the re-established state the
+      // retry resolves, so swallow it. A NON-conflict git failure (dirty worktree /
+      // lock / bad ref) leaves NO MERGE_HEAD; swallowing it would let the retry's
+      // merger run with no conflict re-established. Rethrow so retryProcessCrash counts
+      // this as a reset failure and SKIPS the merger dispatch (never runs on an
+      // un-re-established state), retrying the reset next attempt / exhausting.
+      if (!this.mergeInProgress(repo)) throw err;
+    }
   }
 
   /** True iff `ancestor` is an ancestor of `descendant` (`git merge-base --is-ancestor`). */

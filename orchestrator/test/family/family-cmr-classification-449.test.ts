@@ -1291,6 +1291,34 @@ describe("#449 CMR worker output parsing", () => {
       findings: [finding],
     });
   });
+
+  it("#598 a closure disposition missing a required field (boundedReopen) is MALFORMED, not a completed verdict", () => {
+    // #598 downstream required-field re-validation: a CMR output whose
+    // accepted_suppressed closure disposition omits a required field
+    // (source/scope/boundedReopen) fails the strict parse schema → `malformed`, so
+    // it is routed to the same-worker rewrite + the generic mechanical retry rather
+    // than silently accepted as a completed verdict. Schema/protocol-level checking,
+    // not content judgment.
+    const parsed = parseCmrOutcome(
+      `<cmr>${JSON.stringify({
+        converged: true,
+        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [
+          {
+            identityKey: "correctness|src/x.ts:1|foo",
+            status: "accepted_suppressed",
+            source: "issue #448 acceptance criteria",
+            scope: "same documented non-goal",
+            reason: "accepted as outside this slice",
+            // boundedReopen intentionally OMITTED → schema fails → malformed.
+          },
+        ],
+        ...CMR_EVIDENCE,
+      })}</cmr>`,
+    );
+    expect(parsed.kind).toBe("malformed");
+  });
 });
 
 class CmrFindingBackend implements FamilyBackend {
@@ -1341,7 +1369,10 @@ class CmrFindingBackend implements FamilyBackend {
         },
       };
     }
-    throw new Error(`unexpected ${spec.kind}`);
+    // #598: a coder-fix that cannot fix returns a `failed` RESULT (a judged
+    // not-ok, not a process crash); the generic mechanical retry defers judged
+    // results to the gate, so this is one dispatch with no retry.
+    return { kind: "failed", reason: `coder-fix reached (probe): ${spec.kind}` };
   }
 }
 
@@ -1371,7 +1402,10 @@ class SequencedCmrBackend extends CmrFindingBackend {
         },
       };
     }
-    throw new Error(`unexpected ${spec.kind}`);
+    // #598: a coder-fix that cannot fix returns a `failed` RESULT (a judged
+    // not-ok, not a process crash); the generic mechanical retry defers judged
+    // results to the gate, so this is one dispatch with no retry.
+    return { kind: "failed", reason: `coder-fix reached (probe): ${spec.kind}` };
   }
 }
 

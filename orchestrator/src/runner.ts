@@ -53,6 +53,7 @@ import {
   stepSpecToWorkerSpec,
   workerResultToStep,
 } from "./dispatchWorker.js";
+import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetry.js";
 import {
   applyRuntimeTightRoutePolicy,
   modelForSlot,
@@ -2568,33 +2569,84 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             attempts += 1;
             let result: Awaited<ReturnType<typeof dispatchWorker>>;
             try {
-              result = await dispatchWorker(
-                backend,
-                stepSpecToWorkerSpec(
-                  stepSpecs[step],
-                  resumeSessionId !== undefined ? "resume" : "fresh",
-                ),
-                {
-                  worktree,
-                  stateDir,
-                  ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
-                  ...(escalationAnswerForStep !== undefined
-                    ? { escalationAnswer: escalationAnswerForStep }
-                    : {}),
-                  // 信封宪法 (ADR 0062): the dispatch structure carries only the
-                  // identity keys + count; the rich finding content travels in the
-                  // separate landing payload below.
-                  ...(step === "S5" || step === "S6"
-                    ? {
-                        blockingFindingIdentityKeys:
-                          pendingBlockingFindingIdentityKeys,
-                        blockingFindingCount: pendingBlockingFindings.length,
-                      }
-                    : {}),
-                },
+              const workerSpec = stepSpecToWorkerSpec(
+                stepSpecs[step],
+                resumeSessionId != null ? "resume" : "fresh",
+              );
+              const dispatchCtx = {
+                worktree,
+                stateDir,
+                ...(resumeSessionId != null ? { resumeSessionId } : {}),
+                ...(escalationAnswerForStep != null
+                  ? { escalationAnswer: escalationAnswerForStep }
+                  : {}),
+                // 信封宪法 (ADR 0062): the dispatch structure carries only the
+                // identity keys + count; the rich finding content travels in the
+                // separate landing payload below.
+                ...(step === "S5" || step === "S6"
+                  ? {
+                      blockingFindingIdentityKeys:
+                        pendingBlockingFindingIdentityKeys,
+                      blockingFindingCount: pendingBlockingFindings.length,
+                    }
+                  : {}),
+              };
+              const landingPayload =
                 step === "S5" || step === "S6"
                   ? { blockingFindings: pendingBlockingFindings }
-                  : undefined,
+                  : undefined;
+              // #598: the generic mechanical retry re-dispatches a process-level
+              // crash (failed/malformed/outcome_protocol_failure/throw) with a fresh
+              // worker. This loop dispatches the agent worker steps S2/S3/S5/S6 (the
+              // SHIP S7 is a separate dispatch below, with its own retry predicate).
+              //
+              //  - CODER (S2/S5): no semantic-retry loop → inherits the generic retry
+              //    for EVERY process failure (the #592 asymmetry: a `failed` coder =
+              //    produced no commit = a process failure to re-attempt).
+              //  - REVIEWER (S3/S6): keeps its OWN bounded semantic loop below
+              //    (MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS), which owns invalid/malformed
+              //    RESULTS and structured-output THROWS — the generic layer defers those
+              //    to it (no double-count). The generic layer DOES retry a NON-structured
+              //    crash (connection drop / container start), recovering a transient one;
+              //    a persistent crash is re-thrown so the reviewer loop surfaces it.
+              //
+              // Idempotency (#598): before any retry, reset the worktree's UNCOMMITTED
+              // git residue (`cleanResidue` = reset --hard HEAD + clean -fd) the crashed
+              // attempt may have left, so the fresh re-dispatch does not run on top of a
+              // dirty index / untracked junk. Committed progress on the resident branch
+              // HEAD is deliberately preserved (cleanResidue contract / ADR 0024 — it is
+              // the resume anchor). A worktree-less family worker has no local residue.
+              //
+              // DEFERRED (#661, needs-design): a coder that COMMITTED a partial attempt
+              // then crashed keeps that commit at HEAD, so the retry continues on it
+              // rather than a strict pre-attempt HEAD. Unlike the merge-resolver's
+              // committed-then-crashed case (data loss — fixed in this PR), a coder
+              // continuing on preserved progress is bounded (the reviewer catches broken
+              // partial work) and is what ADR 0024 intends; whether a mechanical retry
+              // should override that committed-preservation is a design decision.
+              const worktreeForReset = worktree;
+              const resetBeforeRetry =
+                worktreeForReset != null
+                  ? () => backend.cleanResidue(worktreeForReset)
+                  : undefined;
+              const baseReset =
+                resetBeforeRetry != null ? { resetBeforeRetry } : {};
+              const retryOpts: MechanicalRetryOptions =
+                expectedKind === "reviewer"
+                  ? {
+                      callerOwns: (o) =>
+                        "result" in o
+                          ? true
+                          : isReviewerStructuredOutputError(o.error),
+                      rethrowOnExhaustion: true,
+                      ...baseReset,
+                    }
+                  : baseReset;
+              result = await withMechanicalRetry(
+                workerSpec,
+                dispatchCtx,
+                (s, c) => dispatchWorker(backend, s, c, landingPayload),
+                retryOpts,
               );
             } catch (err) {
               if (
@@ -2768,16 +2820,42 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             resumedEscalationAnswer?.forStep === "S7"
               ? resumedEscalationAnswer
               : undefined;
-          if (escalationAnswerForStep !== undefined) {
+          if (escalationAnswerForStep != null) {
             resumedEscalationAnswer = undefined;
           }
-          const shipResult = await dispatchWorker(backend, shipSpec, {
+          const shipCtx = {
             worktree,
             stateDir,
-            ...(escalationAnswerForStep !== undefined
+            ...(escalationAnswerForStep != null
               ? { escalationAnswer: escalationAnswerForStep }
               : {}),
-          });
+          };
+          // #598: a ship CRASH (throw — container/connection failure) re-dispatches
+          // fresh. Every RESOLVED ship result passes through with ZERO retry: a judged
+          // `failed` delivery verdict (gstack-ship ran, the delivery hard-failed) and a
+          // `malformed` (no valid ship verdict) are BOTH decided outcomes — a ship that
+          // emits no verdict is a contract violation, not a transient protocol failure
+          // (#598 r2, aligned with the family ship's #451 contract_drift). Only a crash
+          // retries. The worktree's uncommitted residue is reset before each retry
+          // (idempotency); gstack-ship's re-runnable design keeps push/PR idempotent.
+          const shipWorktree = worktree;
+          // Mirror the coder/reviewer reset guard: only wire cleanResidue when a
+          // worktree exists (a worktree-less worker has no local residue), so a retry
+          // never calls cleanResidue(undefined). (gemini R1 — the coder path already
+          // guards; the ship path must match.)
+          const shipResetOpt =
+            shipWorktree != null
+              ? { resetBeforeRetry: () => backend.cleanResidue(shipWorktree) }
+              : {};
+          const shipResult = await withMechanicalRetry(
+            shipSpec,
+            shipCtx,
+            (s, c) => dispatchWorker(backend, s, c),
+            {
+              callerOwns: (o) => "result" in o,
+              ...shipResetOpt,
+            },
+          );
           // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
           // S8(escalate) handoff, NOT an error — keep the escalate semantics so
           // the human-answer resume re-opens it (codex cmr R4 finding). #331's

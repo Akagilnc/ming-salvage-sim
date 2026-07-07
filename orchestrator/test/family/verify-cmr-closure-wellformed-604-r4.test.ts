@@ -106,8 +106,12 @@ class ScriptedCmrBackend implements FamilyBackend {
     if (spec.kind === "cmr") {
       return { kind: "completed", output: this.cmrOutput };
     }
+    // #598: a coder-fix that cannot fix returns a `failed` RESULT (a judged
+    // not-ok, not a process crash); the generic mechanical retry defers judged
+    // results to the gate — one dispatch, no retry — and reaching this path still
+    // proves the runner routed to coder-fix.
     this.dispatchedNonCmrKinds.push(spec.kind);
-    throw new Error(`unexpected worker dispatch: ${spec.kind}`);
+    return { kind: "failed", reason: `coder-fix reached (probe): ${spec.kind}` };
   }
 }
 
