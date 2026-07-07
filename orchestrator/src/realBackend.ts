@@ -519,15 +519,55 @@ export function matchWorktreeForBranch(
  * baked in a hardcoded `244` (the #244 epic) — wrong for every other issue, and
  * `issueNumberFromBranch`'s fallback could mis-read that leading run as the issue.
  *
- * RESUME-COMPAT DEFERRED (R1 T2 codex): `findResumeState`/`prepareWorktree` locate
- * the resident worktree by EXACT branch name, so a run cut under the OLD name and
- * resumed after this rename would be re-cut fresh (lost ledger/progress). No such
- * in-flight run exists across this rename (issue numbers are unique; the dogfood's
- * old-name worktrees are closed), so it does not trigger here — but a migration
- * old-alias lookup is tracked for if cross-upgrade resume becomes a need.
  */
 export function branchForIssue(issueNumber: number): string {
   return `feat/issue-${issueNumber}`;
+}
+
+/**
+ * Ordered list of candidate branch names for a given issue number — current
+ * naming convention first (`feat/issue-<n>`), then the prior convention
+ * (`feat/244-orchestrator-issue-<n>`, from before PR #365). The fallback
+ * supports resume of worktrees cut under the old name: they are reused IN PLACE
+ * with no rename or migration. `issueNumberFromBranch` already parses the issue
+ * number from either convention, so this list is the single source for lookups
+ * that go the OTHER direction (issue → branch name candidates).
+ */
+export function candidateBranches(issueNumber: number): string[] {
+  return [
+    `feat/issue-${issueNumber}`,
+    `feat/244-orchestrator-issue-${issueNumber}`,
+  ];
+}
+
+/**
+ * Scan `git worktree list --porcelain` output for a resident worktree bound to
+ * one of {@link candidateBranches} for `issueNumber`. Returns the first exact
+ * branch-line match and how many candidate names were tried (#593 call-count
+ * tests). Pure (string parsing) so the fallback strategy is unit-tested without git.
+ */
+export function scanPorcelainForIssueWorktree(
+  porcelainOut: string,
+  issueNumber: number,
+): {
+  worktree: { path: string; branch: string } | undefined;
+  matchAttempts: number;
+} {
+  let matchAttempts = 0;
+  for (const branch of candidateBranches(issueNumber)) {
+    matchAttempts += 1;
+    const path = matchWorktreeForBranch(porcelainOut, branch);
+    if (path !== undefined) return { worktree: { path, branch }, matchAttempts };
+  }
+  return { worktree: undefined, matchAttempts };
+}
+
+/** First-match resident worktree for `issueNumber`, if any (#593). */
+export function resolveExistingWorktreeFromPorcelain(
+  porcelainOut: string,
+  issueNumber: number,
+): { path: string; branch: string } | undefined {
+  return scanPorcelainForIssueWorktree(porcelainOut, issueNumber).worktree;
 }
 
 export function issueNumberFromBranch(branch: string): number {
@@ -2086,7 +2126,6 @@ export class RealBackend implements Backend {
     issueNumber: number,
     base: string,
   ): Promise<WorktreeHandle> {
-    const branch = branchForIssue(issueNumber);
     // Idempotent reuse: if the resident worktree exists, reuse it (the runner's
     // #255 resume path drives this); else cut a fresh one from `base` (main).
     //
@@ -2099,11 +2138,12 @@ export class RealBackend implements Backend {
     // returning, so a no-ledger old branch can never masquerade as a clean fresh
     // cut and leak residue into the pushed branch. (Repo-level prune handed back
     // to Sandcastle — ADR 0024 dec. 2.)
-    const existing = this.findExistingWorktree(branch);
+    const existing = this.findExistingWorktree(issueNumber);
     if (existing !== undefined) {
-      this.cleanResidueAt(existing);
-      return { branch, base, path: existing };
+      this.cleanResidueAt(existing.path);
+      return { branch: existing.branch, base, path: existing.path };
     }
+    const branch = branchForIssue(issueNumber);
     // Cut the slice branch from `base` (= "main", runner.ts SLICE_BASE), NOT the
     // working clone's current HEAD. NamedBranchStrategy.baseBranch defaults to HEAD
     // when omitted (Sandcastle d.ts:213), so omitting it silently derived the
@@ -2179,10 +2219,10 @@ export class RealBackend implements Backend {
     }
   }
 
-  private findExistingWorktree(branch: string): string | undefined {
+  private findExistingWorktree(issueNumber: number): { path: string; branch: string } | undefined {
     try {
       const out = this.sh("git", ["worktree", "list", "--porcelain"], this.workingRepo);
-      return matchWorktreeForBranch(out, branch);
+      return resolveExistingWorktreeFromPorcelain(out, issueNumber);
     } catch {
       // no worktrees / git error ⇒ none existing.
       return undefined;
@@ -3212,13 +3252,12 @@ export class RealBackend implements Backend {
 
   // ── #255: detect resume residue ────────────────────────────────────────────
   async findResumeState(issueNumber: number): Promise<ResumeState | undefined> {
-    const branch = branchForIssue(issueNumber);
-    const wtPath = this.findExistingWorktree(branch);
-    if (wtPath === undefined) return undefined;
-    const stateDir = this.stateDirFor(wtPath, issueNumber);
+    const existing = this.findExistingWorktree(issueNumber);
+    if (existing === undefined) return undefined;
+    const stateDir = this.stateDirFor(existing.path, issueNumber);
     const ledger = this.readLedger(stateDir);
     if (ledger === undefined) return undefined;
-    const worktree = { branch, base: "main", path: wtPath };
+    const worktree = { branch: existing.branch, base: "main", path: existing.path };
 
     // codex#2 — before reusing the resident branch, verify the LAST recorded
     // branchHEAD SHA still matches the live worktree HEAD (integ-cmr 256 r1,
