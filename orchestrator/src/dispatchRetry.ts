@@ -121,15 +121,24 @@ export async function withMechanicalRetry(
     const useCtx = attempt === 1 ? ctx : stripResume(ctx);
     // Idempotency: before a RETRY, reset local git residue the crashed attempt may
     // have left, so the fresh re-dispatch starts from the pre-attempt state.
-    // #598: a transient reset failure (git lock / permissions) must NOT abort the
-    // loop — a later attempt may still succeed. Swallow it and proceed (worst case
-    // the residue lingers and this attempt fails too, which is retried/aborted
-    // through the normal path).
+    // #598 r4 (codexB): if the reset FAILS (git lock / permissions), the worktree is
+    // in an unknown/dirty state — do NOT dispatch on it (that would run the worker on
+    // top of an uncleaned side effect, the exact idempotency violation). Instead SKIP
+    // this attempt's dispatch, record a synthetic reset failure, and let the loop retry
+    // the reset next iteration (a transient reset failure recovers; a persistent one
+    // exhausts into the durable abort below — the worker never runs on a dirty state).
     if (attempt > 1) {
       try {
         await opts?.resetBeforeRetry?.();
-      } catch {
-        /* reset best-effort; do not terminate the retry loop */
+      } catch (err) {
+        last = {
+          kind: "failed",
+          reason: `retry reset failed, worker not dispatched on un-reset state: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        };
+        lastAttemptThrew = false;
+        continue;
       }
     }
     let result: WorkerResult;
@@ -189,11 +198,15 @@ export async function retryProcessCrash<T>(
   let lastError: unknown;
   for (let attempt = 1; attempt <= max; attempt++) {
     if (attempt > 1) {
-      // A transient reset failure must not abort the loop (#598 r2).
+      // #598 r4 (codexB): a failed reset means the state is unknown/dirty — do NOT run
+      // `fn` on it. Record the reset failure and retry the reset next iteration (a
+      // transient one recovers; a persistent one exhausts into the re-throw below —
+      // `fn` never runs on an un-reset state).
       try {
         await opts?.resetBeforeRetry?.();
-      } catch {
-        /* reset best-effort */
+      } catch (err) {
+        lastError = err;
+        continue;
       }
     }
     try {
@@ -202,5 +215,11 @@ export async function retryProcessCrash<T>(
       lastError = err;
     }
   }
-  throw lastError;
+  // #598 crit 6: name the generic dispatch attempt count on exhaustion (the
+  // merge-resolver seam re-throws; its caller stamps the domain message).
+  const annotated =
+    lastError instanceof Error
+      ? new Error(`${lastError.message} (after ${max} dispatch attempts)`)
+      : new Error(`${String(lastError)} (after ${max} dispatch attempts)`);
+  throw annotated;
 }

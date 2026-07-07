@@ -976,6 +976,8 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         summary: expect.stringContaining("outcome protocol failure"),
       },
     });
+    // #598 crit 6 (r4 codexA): the cmr manual re-dispatch exhaustion names the count.
+    expect(abort?.reason).toContain(`after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`);
     expect(abort).not.toHaveProperty("cmrFindingClassification");
   });
 
