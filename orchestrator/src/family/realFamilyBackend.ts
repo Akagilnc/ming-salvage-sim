@@ -1766,7 +1766,7 @@ export class RealFamilyBackend implements FamilyBackend {
             null,
             2,
           )}\n\`\`\``
-        : "\n\nParsed module context (#449): none declared; do not approve cross_module defer from inferred prose/logs.";
+        : "\n\nParsed module context (#449): none declared; do not infer module boundaries from prose or logs.";
     const closureBlock =
       ctx.priorCmrFindingIdentityKeys !== undefined
         ? `\n\nRunner-owned prior CMR finding identity keys that may be claimed fixed in this pass (#450 closure context):\n\n\`\`\`json\n${JSON.stringify(
@@ -2903,14 +2903,14 @@ const cmrDispositionEvidenceSchema = z
       });
     }
   });
-const cmrReviewerFindingSchema = z
+export const cmrReviewerFindingSchema = z
   .object({
     severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
     category: z.string(),
     claim_quote: z.string(),
     location: z.string(),
     suggested_fix: z.string(),
-    action: z.enum(["fix_now", "defer", "wont_fix", "rejected"]),
+    action: z.enum(["fix_now", "wont_fix", "rejected"]),
     disposition_reason: z.string().optional(),
     disposition: cmrDispositionEvidenceSchema.optional(),
   })
@@ -2940,19 +2940,6 @@ const cmrReviewerFindingSchema = z
         path: ["disposition"],
         message:
           "accepted_suppressed disposition is only valid on wont_fix/rejected findings",
-      });
-    }
-    // #604 correctness r1 (P2-b): ADR 0062 removed all non-suppression route
-    // disposition kinds, so `defer` can no longer carry a valid non-suppression
-    // disposition. New reviewer/CMR prompts forbid `defer`; a STRAY defer must
-    // fail closed as malformed (consistent口径 with validate.ts:isValidFinding and
-    // the Python outcome-guard), never be treated as a免修 route.
-    if (finding.action === "defer") {
-      ctx.addIssue({
-        code: "custom",
-        path: ["action"],
-        message:
-          "defer is no longer a supported action (ADR 0062): a stray defer is malformed",
       });
     }
     if (
