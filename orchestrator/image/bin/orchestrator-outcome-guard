@@ -160,7 +160,7 @@ def validate_findings(value: list) -> None:
         validate_exact_fields(finding, allowed, f"findings[{idx}]", required)
         if finding["severity"] not in ["critical", "high", "medium", "low", "clarity"]:
             raise GuardError(f"findings[{idx}].severity is not a supported value")
-        if finding["action"] not in ["fix_now", "defer", "wont_fix", "rejected"]:
+        if finding["action"] not in ["fix_now", "wont_fix", "rejected"]:
             raise GuardError(f"findings[{idx}].action is not a supported value")
         for field in required - {"severity", "action"}:
             if not isinstance(finding[field], str) or finding[field].strip() == "":
@@ -176,12 +176,6 @@ def validate_findings(value: list) -> None:
         disposition_kind = disposition.get("kind") if isinstance(disposition, dict) else None
         if finding["severity"] in ["critical", "high"] and finding["action"] != "fix_now":
             raise GuardError(f"findings[{idx}].action must be fix_now for critical/high severity")
-        # #604 correctness r1 (P2-b): ADR 0062 removed all non-suppression route
-        # kinds, so `defer` can no longer carry a valid non-suppression disposition.
-        # A stray defer fails closed as malformed (口径 parity with the TS parser /
-        # validate.ts / realBackend schemas), never a免修 route.
-        if finding["action"] == "defer":
-            raise GuardError(f"findings[{idx}].action defer is no longer supported (ADR 0062): a stray defer is malformed")
         # #604 correctness r1 (P2-a): accepted_suppressed is only valid on
         # wont_fix/rejected — never on fix_now (it would silently become a blocker).
         if finding["action"] not in ["wont_fix", "rejected"] and disposition_kind == "accepted_suppressed":
