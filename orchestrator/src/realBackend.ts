@@ -473,6 +473,14 @@ export function cutRefFor(
 }
 
 /**
+ * Normalize `git worktree list --porcelain` output for CRLF / trailing-whitespace
+ * robustness before parsing. Pure so line-ending handling is unit-tested without git.
+ */
+export function normalizePorcelainOutput(porcelainOut: string): string {
+  return porcelainOut.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+/**
  * Find the worktree path bound to `branch` in `git worktree list --porcelain`
  * output. Porcelain blocks are blank-line-separated; the branch line is exactly
  * `branch refs/heads/<ref>`.
@@ -487,8 +495,8 @@ export function matchWorktreeForBranch(
   branch: string,
 ): string | undefined {
   const wanted = `branch refs/heads/${branch}`;
-  for (const block of porcelainOut.split("\n\n")) {
-    const lines = block.split("\n");
+  for (const block of normalizePorcelainOutput(porcelainOut).split("\n\n")) {
+    const lines = block.split("\n").map((l) => l.trimEnd());
     if (lines.some((l) => l === wanted)) {
       const wt = lines.find((l) => l.startsWith("worktree "));
       if (wt) return wt.slice("worktree ".length).trim();

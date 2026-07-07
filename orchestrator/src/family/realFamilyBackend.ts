@@ -2563,7 +2563,10 @@ export class RealFamilyBackend implements FamilyBackend {
         // name is still recognised as already-merged — avoiding a double-merge bug.
         // (The proper end-state is to thread `childBranch` through ChildSlice/reconcile
         // — flagged to the driver unit; this fallback makes the seam WORK meanwhile.)
-        if (childBranch !== undefined) {
+        // Explicit branch: only when a non-empty string was provided. `null` from
+        // JSON/db round-trips and `undefined` (omitted) both fall through to the
+        // candidate-list path; empty string is treated as absent too.
+        if (typeof childBranch === "string" && childBranch.length > 0) {
           try {
             const childHead = sh(["rev-parse", "--verify", `${childBranch}^{commit}`]);
             return { exists: true, childHead };
