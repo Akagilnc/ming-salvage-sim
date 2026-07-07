@@ -6,10 +6,11 @@
  * seams (zero real git / Docker), plus the pure porcelain resolver.
  */
 
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type * as sc from "@ai-hero/sandcastle";
 import {
   candidateBranches,
@@ -22,6 +23,20 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "prompts");
+
+const cleanups: string[] = [];
+afterEach(() => {
+  while (cleanups.length > 0) {
+    const p = cleanups.pop();
+    if (p !== undefined) rmSync(p, { recursive: true, force: true });
+  }
+});
+
+function mkDir(prefix: string): string {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  cleanups.push(d);
+  return d;
+}
 
 const ISSUE = 593;
 const NEW_BRANCH = `feat/issue-${ISSUE}`;
@@ -206,20 +221,24 @@ describe("RealBackend findResumeState old-branch fallback (#593)", () => {
   }
 
   it("finds resume state under the old branch name and preserves ledger on disk", async () => {
-    const backend = newBackend(porcelainForBranch(OLD_BRANCH));
+    const wtRoot = mkDir("wt-fallback-resume-");
+    const existingWt = join(wtRoot, "issue-593");
+    mkdirSync(existingWt, { recursive: true });
+
+    const backend = newBackend(porcelainForBranch(OLD_BRANCH, existingWt));
     const ledgerLine = `${JSON.stringify({
       step: "S2",
       branchHEAD: HEAD_SHA,
       output: { kind: "coder", committed: true, commitsAdded: 1 },
     })}\n`;
-    const stateDir = writeLedger(EXISTING_WT, ISSUE, ledgerLine);
+    const stateDir = writeLedger(existingWt, ISSUE, ledgerLine);
     const before = readFileSync(join(stateDir, "steps.jsonl"), "utf8");
 
     const resume = await backend.findResumeState(ISSUE);
 
     expect(resume).toBeDefined();
     expect(resume?.worktree.branch).toBe(OLD_BRANCH);
-    expect(resume?.worktree.path).toBe(EXISTING_WT);
+    expect(resume?.worktree.path).toBe(existingWt);
     expect(resume?.stateDir).toBe(stateDir);
     expect(resume?.ledger).toHaveLength(1);
     expect(readFileSync(join(stateDir, "steps.jsonl"), "utf8")).toBe(before);
@@ -233,8 +252,11 @@ describe("RealBackend findResumeState old-branch fallback (#593)", () => {
   });
 
   it("returns undefined when the old-name worktree has no readable ledger", async () => {
-    rmSync(join(dirname(EXISTING_WT), `.ledger-${ISSUE}`), { recursive: true, force: true });
-    const backend = newBackend(porcelainForBranch(OLD_BRANCH));
+    const wtRoot = mkDir("wt-fallback-no-ledger-");
+    const existingWt = join(wtRoot, "issue-593");
+    mkdirSync(existingWt, { recursive: true });
+
+    const backend = newBackend(porcelainForBranch(OLD_BRANCH, existingWt));
     expect(await backend.findResumeState(ISSUE)).toBeUndefined();
   });
 });
