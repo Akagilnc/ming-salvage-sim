@@ -1598,6 +1598,15 @@ async function runIntegratedCmrPass(input: {
     }
     break;
   }
+  // #598 crit 6 (r4 codexA): the manual cmr re-dispatch loop names its generic
+  // attempt count on exhaustion too (parity with withMechanicalRetry) — reached only
+  // when the loop exhausted MAX_DISPATCH_ATTEMPTS all on outcome_protocol_failure.
+  if (cmrResult.kind === "outcome_protocol_failure") {
+    cmrResult = {
+      ...cmrResult,
+      reason: `${cmrResult.reason} (after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts)`,
+    };
+  }
   const postWorkerFamilyHead = await readPostCmrFamilyHead(
     familyBackend,
     familyBase,

@@ -844,9 +844,15 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
       }
     }
     const b = new AlwaysCrashBackend(opts(trackRepo()));
-    await expect(
-      b.resolveMergeConflict({ childIssue: 22, childBranch: "feat/child-22" }),
-    ).rejects.toThrow(/keeps crashing/);
+    const err = await b
+      .resolveMergeConflict({ childIssue: 22, childBranch: "feat/child-22" })
+      .then(() => undefined)
+      .catch((e: unknown) => e as Error);
+    expect(err?.message).toMatch(/keeps crashing/);
+    // #598 crit 6 (r4 codexB): the exhausted merger crash names the attempt count.
+    expect(err?.message).toMatch(
+      new RegExp(`after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`),
+    );
     expect(b.mergerCalls).toHaveLength(MAX_DISPATCH_ATTEMPTS);
     // A reset ran before each of the bounded retries.
     expect(b.resetCalls).toBe(MAX_DISPATCH_ATTEMPTS - 1);
