@@ -2980,10 +2980,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             (step === "S11" && isValidCleanupResult(result.output)) ||
             (step === "S12" && isValidDocReleaseResult(result.output));
           if (!outputValid) {
+            // Defensive: result.output may be nullish (malformed worker) even on
+            // "completed" — the isValid* guards already rejected it. Do not throw
+            // constructing the message; let errorTermination record the clean error.
+            const badKind = (result.output as { kind?: unknown } | undefined | null)?.kind;
             return await errorTermination(
               step,
               new Error(
-                `${step} worker returned non-${step} output kind '${result.output.kind}'`,
+                `${step} worker returned non-${step} output kind '${String(badKind)}'`,
               ),
             );
           }

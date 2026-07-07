@@ -509,7 +509,7 @@ class DogfoodSingleSliceBackend implements Backend {
     // reaches S7 ship + S9+): return the shared deterministic stubs so S9–S12
     // succeed without fake 'coder' output (which route/runner rejects).
     const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-    if (skeleton !== undefined) {
+    if (skeleton != null) {
       return skeleton;
     }
     const scripted =

@@ -890,16 +890,16 @@ export function familyReviewLoopConvergedForHead(
   entries: ReadonlyArray<FamilyLedgerEntry>,
   familyHeadAfter: string | undefined,
 ): ReviewLoopConvergedRecord | undefined {
-  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) return undefined;
+  if (familyHeadAfter == null || familyHeadAfter.trim().length === 0) return undefined;
   const converged = entries.find(
     (e): e is FamilyLedgerEntry & { readonly pr: string; readonly familyHeadAfter: string } =>
       isValidReviewLoopConverged(e) && e.familyHeadAfter === familyHeadAfter,
   );
-  if (converged === undefined) return undefined;
+  if (converged == null) return undefined;
   return {
     pr: converged.pr,
     familyHeadAfter: converged.familyHeadAfter,
-    ...(converged.stopSummary !== undefined
+    ...(converged.stopSummary != null
       ? { stopSummary: converged.stopSummary }
       : {}),
   };

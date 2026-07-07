@@ -1408,14 +1408,14 @@ export async function runFamily(
     preFinalLedger,
     preFinalFamilyHead,
   );
-  if (convergedRecord !== undefined) {
+  if (convergedRecord != null) {
     const ledgerMerged = await currentMerged(familyBackend);
     const children: FamilyChildResult[] = epic.children.map((c) =>
       ledgerMerged.has(c.issue)
         ? { issue: c.issue, status: "already_done" as const }
         : { issue: c.issue, status: "skipped" as const },
     );
-    if (familyBackend.verifyFamilyShippedPr === undefined) {
+    if (familyBackend.verifyFamilyShippedPr == null) {
       await recordFamilyEscalated(familyBackend, {
         escalationKind: "failure",
         phase: "final",
@@ -1480,7 +1480,7 @@ export async function runFamily(
             actualFamilyHead: "current family head",
             reportedFamilyHead: "review_loop_converged ledger row",
             verifiedCmrHead:
-              convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead !== undefined
+              convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead != null
                 ? "review_loop_converged ledger stop summary"
                 : "review_loop_converged ledger row",
           },
@@ -1493,7 +1493,7 @@ export async function runFamily(
       familyHead,
       stopSummary: alreadyDoneSummary,
       children,
-      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+      ...(epic.admissionSkipped != null && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
     };
@@ -1512,8 +1512,8 @@ export async function runFamily(
     preFinalLedger,
     preFinalFamilyHead,
   );
-  if (shippedRecord !== undefined) {
-    if (familyBackend.verifyFamilyShippedPr === undefined) {
+  if (shippedRecord != null) {
+    if (familyBackend.verifyFamilyShippedPr == null) {
       await recordFamilyEscalated(familyBackend, {
         escalationKind: "failure",
         phase: "final",
@@ -1580,7 +1580,7 @@ export async function runFamily(
     await recordReviewLoopConverged(familyBackend, {
       pr: shippedRecord.pr,
       familyHeadAfter: shippedRecord.familyHeadAfter,
-      ...(shippedRecord.stopSummary !== undefined
+      ...(shippedRecord.stopSummary != null
         ? { stopSummary: shippedRecord.stopSummary }
         : {}),
     });
@@ -1620,7 +1620,7 @@ export async function runFamily(
       familyHead,
       stopSummary: alreadyDoneSummary,
       children,
-      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+      ...(epic.admissionSkipped != null && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
     };
