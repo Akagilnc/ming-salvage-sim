@@ -130,7 +130,7 @@ design-grounding fan 的红队四角度一致暴露同一承重缝：**若离心
 
 **依赖 / 承重落地点（→ sub-ADR / 切片）**：
 
-- 依赖 ADR 0009 `location` 字段——**已 MERGED（#106）实装**（db.py:212/827，带 invariant transit_implies_active），依赖已满足；但召对仍不 gate location、仍无在途时间（#93）→ 召对 location 闸 = 单独切片。
+- 依赖 ADR 0009 `location` 字段——**已 MERGED（#106）实装**（db.py:212/827，带 invariant transit_implies_active），依赖已满足；但召对仍不 gate location、仍无在途时间（#93）→ 召对 location 闸 = 单独切片。（取代注〔2026-07-07 #475 闸〕：召对 location 闸已由 0096 落成机制〔travel-gating＋候见制〕、在途时间已由 0095 建成——本条「仍不 gate／仍无在途时间／留 #93」陈述随之取代。）
 - `season_simulator.md` **需净增「各派承重功能 + 反咬」裁判规则**（现无）——待核现状 + 起草。
 - 「issue 不进/不动」作为装病/拖延的后果落点，需确认 issues 机制支持「停滞」语义。
 
