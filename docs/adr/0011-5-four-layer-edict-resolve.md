@@ -1,6 +1,6 @@
 # 四层票拟 resolve + 中旨 + 执行层 schema（ADR 0011 决定4/5 子 ADR · 0011-5）
 
-Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定4（两阶段五结局 + 四层票拟全幕后）+ 决定5（中旨 / 密令代价曲线），由 design-dig `dig-8` fold 而成。**评审收敛**——本地 ship-pre cmr R1–R8 4/4 concur（2026-06-15）+ 线上 PR #123 R1–R3 评审收敛；merge 即转 Accepted。实现属编码活、spawn 隔壁。）
+Status: Accepted（承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定4（两阶段五结局 + 四层票拟全幕后）+ 决定5（中旨 / 密令代价曲线），由 design-dig `dig-8` fold 而成。**评审收敛**——本地 ship-pre cmr R1–R8 4/4 concur（2026-06-15）+ 线上 PR #123 R1–R3 评审收敛；PR #123 已 merge（`847dc3da5`，2026-06-15）转 Accepted。实现属编码活、spawn 隔壁。）
 
 承 GitHub #112 tracker。本 ADR 是**圣旨颁布阻力网的心脏** + **排最后**：`resolve_directive` 是全部 substrate（血债 0011-2 / 矩阵 0011-3 / ceiling+seed 0011-4 / identity）的汇流口，把「圣旨未必颁得出、颁了未必有效、actor 各有算盘」做成一次幕后纯函数。**硬序铁律：substrate 先落、本 ADR 后做**（零 substrate 则 resolve 读空值退化纸面、破局无料可读，别先搭四层框架）。
 
