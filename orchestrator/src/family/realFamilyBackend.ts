@@ -1751,7 +1751,7 @@ export class RealFamilyBackend implements FamilyBackend {
             null,
             2,
           )}\n\`\`\``
-        : "\n\nParsed module context (#449): none declared; do not approve cross_module defer from inferred prose/logs.";
+        : "\n\nParsed module context (#449): none declared; do not infer module boundaries from prose or logs.";
     const closureBlock =
       ctx.priorCmrFindingIdentityKeys !== undefined
         ? `\n\nRunner-owned prior CMR finding identity keys that may be claimed fixed in this pass (#450 closure context):\n\n\`\`\`json\n${JSON.stringify(
@@ -2873,7 +2873,7 @@ const cmrDispositionEvidenceSchema = z
       });
     }
   });
-const cmrReviewerFindingSchema = z
+export const cmrReviewerFindingSchema = z
   .object({
     severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
     category: z.string(),

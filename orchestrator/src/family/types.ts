@@ -256,7 +256,7 @@ export interface FamilyLedgerEntry {
   /**
    * The governance side-channel the CMR GATE (not the runner) reads to track
    * cross-round prior dispositions (#604 slice 3 / ADR 0062). Carries the
-   * accepted-suppression / defer / owning-issue dispositions the classifier
+   * accepted-suppression / owning-issue dispositions the classifier
    * produced this pass, so a later pass can honour a prior accepted suppression
    * without re-blocking. Split out of the old `cmrFindingClassification` blob so
    * the runner's control envelope (`blockingFindingIdentityKeys`) and the gate's
@@ -804,8 +804,7 @@ export interface FamilyRunInput {
   readonly moduleDeclaration?: SourcedModuleDeclaration;
   /**
    * Runner/run-option/route declared modules intentionally outside the current
-   * family surface. CMR may defer to these targets; issue-body YAML must not
-   * invent them.
+   * family surface. Issue-body YAML must not invent them.
    */
   readonly undevelopedModules?: ReadonlyArray<SourcedModuleDeclaration>;
   /**

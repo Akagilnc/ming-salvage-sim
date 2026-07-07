@@ -1,7 +1,8 @@
 /**
  * #617: `defer` is removed from the `Finding.action` union and its compile
- * closure. This test guards the contract at both the runtime validation seam
- * and the TypeScript type seam.
+ * closure. This test records the contract at the runtime validation seam,
+ * the TypeScript type seam, and the zod schema seams used by the standalone
+ * and family CMR reviewers.
  */
 
 import { execFileSync } from "node:child_process";
@@ -11,7 +12,18 @@ import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { findingSchema } from "../src/realBackend.js";
+import { cmrReviewerFindingSchema } from "../src/family/realFamilyBackend.js";
 import { isValidFinding } from "../src/validate.js";
+
+const strayDeferFinding = {
+  severity: "medium" as const,
+  category: "correctness",
+  claim_quote: "claim",
+  location: "src/x.ts:1",
+  suggested_fix: "fix it",
+  action: "defer",
+};
 
 describe("#617 — defer removed from Finding.action", () => {
   it("rejects a finding whose action is defer", () => {
@@ -25,6 +37,16 @@ describe("#617 — defer removed from Finding.action", () => {
         action: "defer",
       }),
     ).toBe(false);
+  });
+
+  it("standalone reviewer zod schema rejects action: defer", () => {
+    const result = findingSchema.safeParse(strayDeferFinding);
+    expect(result.success).toBe(false);
+  });
+
+  it("family CMR reviewer zod schema rejects action: defer", () => {
+    const result = cmrReviewerFindingSchema.safeParse(strayDeferFinding);
+    expect(result.success).toBe(false);
   });
 
   it("type union does not include defer", () => {
