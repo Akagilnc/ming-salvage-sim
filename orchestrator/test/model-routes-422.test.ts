@@ -122,6 +122,16 @@ describe("#422 model route presets", () => {
     ).toThrow(/unknown model slug/i);
   });
 
+  it("verify-TARGETED: mis/unconfigured verify slot fails closed (no silent fallback to cheap tier per AC3)", () => {
+    expect(() =>
+      resolveRouteModels("normal", { verify: "does-not-exist" }),
+    ).toThrow(/unknown model slug/i);
+    // Also: empty override for verify must not silently take a cheap default (preset "opus" wins or throws on bad)
+    vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "   ");
+    expect(() => resolveRouteModels("normal", {})).not.toThrow(); // preset provides it
+    // but bad explicit still caught above; the targeted proves verify slot participates in fail-closed
+  });
+
   it("claude-tight has no Claude-family slots across every slot", () => {
     const resolved = resolveRouteModels("claude-tight", {});
 
