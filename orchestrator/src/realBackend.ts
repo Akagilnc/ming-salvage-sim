@@ -1514,6 +1514,61 @@ export function promptsDirError(
   return undefined;
 }
 
+/**
+ * The complete set of soul files that must exist under soulsDir.
+ * These are the 8 files under orchestrator/image/souls (no longer baked into
+ * the image post #372; the ctor must verify presence so an incomplete/wrong
+ * dir (e.g. pointing at image/ or a partial checkout) fails fast with names,
+ * mirroring promptsDir validation.
+ */
+export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
+  "cmr.md",
+  "cmr_completeness.md",
+  "cmr_correctness.md",
+  "coder.md",
+  "merger.md",
+  "output_protocol.md",
+  "reviewer.md",
+  "ship.md",
+];
+
+/**
+ * Build the construction-time `soulsDir` validation error message, or
+ * `undefined` when the dir is valid (#372).
+ *
+ * soulsDir MUST be absolute + exist + be a directory + contain every
+ * {@link REQUIRED_SOUL_FILES} (the 8 souls). Pure so the message logic is
+ * unit-testable without I/O; the validate* wrapper supplies the fs verdicts.
+ * Mirrors {@link promptsDirError}.
+ */
+export function soulsDirError(
+  soulsDir: string,
+  isAbs: boolean,
+  dirExists: boolean,
+  missingFiles: ReadonlyArray<string>,
+): string | undefined {
+  if (typeof soulsDir !== "string" || soulsDir.length === 0) {
+    return (
+      "RealBackend: soulsDir is required (souls are no longer baked into the image; " +
+        "a missing soulsDir would yield soul-less container workers with no fallback)."
+    );
+  }
+  if (!isAbs) {
+    return `RealBackend: soulsDir must be an absolute path to an existing directory (got "${soulsDir}").`;
+  }
+  if (!dirExists) {
+    return `RealBackend: soulsDir must be an absolute path to an existing directory (got "${soulsDir}").`;
+  }
+  if (missingFiles.length > 0) {
+    return (
+      `RealBackend: soulsDir "${soulsDir}" is missing required soul file(s): ` +
+      `${missingFiles.join(", ")}. All of [${REQUIRED_SOUL_FILES.join(", ")}] ` +
+      `must be present (the 8 files under image/souls, incl. output_protocol.md).`
+    );
+  }
+  return undefined;
+}
+
 function toolchainVersionCommand(tool: string): string[] {
   if (tool === "typescript") return ["tsc", "--version"];
   return [tool, "--version"];
@@ -1936,9 +1991,11 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Fail loudly at construction if soulsDir is missing or not a usable dir.
-   * Souls are no longer baked (#372); omitting would produce soul-less workers
-   * with no fallback. Mirrors the promptsDir validation.
+   * Fail loudly at construction if soulsDir is missing or not a usable dir
+   * containing the full REQUIRED_SOUL_FILES set. Souls are no longer baked (#372);
+   * an incomplete/wrong dir (e.g. orchestrator/image/ or missing reviewer.md
+   * / output_protocol.md) would now sail through to runtime (no more baked copies).
+   * Mirrors the promptsDir validation (pure {@link soulsDirError} + fs verdicts here).
    */
   private validateSoulsDir(): void {
     const dir = this.opts.soulsDir;
@@ -1948,11 +2005,12 @@ export class RealBackend implements Backend {
           "a missing soulsDir would yield soul-less container workers with no fallback).",
       );
     }
-    if (!isAbsolute(dir) || !existsSync(dir) || !statSync(dir).isDirectory()) {
-      throw new Error(
-        `RealBackend: soulsDir must be an absolute path to an existing directory (got "${dir}").`,
-      );
-    }
+    const dirExists = isAbsolute(dir) && existsSync(dir) && statSync(dir).isDirectory();
+    const missing = dirExists
+      ? REQUIRED_SOUL_FILES.filter((f) => !existsSync(join(dir, f)))
+      : [];
+    const err = soulsDirError(dir, isAbsolute(dir), dirExists, missing);
+    if (err !== undefined) throw new Error(err);
   }
 
   /**

@@ -93,6 +93,7 @@ import {
   WORKER_IDLE_TIMEOUT_SECONDS,
   modelFamilyForSlug,
   soulsMount,
+  REQUIRED_SOUL_FILES,
   type SelfReportedCoder,
 } from "../realBackend.js";
 import {
@@ -372,9 +373,10 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Fail loudly at construction if soulsDir missing or invalid.
-   * Souls are no longer baked (#372); a missing value silently produces
-   * soul-less workers. Mirrors prompts validation.
+   * Fail loudly at construction if soulsDir missing or invalid or incomplete.
+   * Souls are no longer baked (#372); an existing but wrong/incomplete dir
+   * (missing e.g. reviewer.md / output_protocol.md) would sail to runtime.
+   * Mirrors promptsDir-style file-set validation (and the single-slice soulsDir).
    */
   private validateSoulsDir(): void {
     const dir = this.opts.soulsDir;
@@ -387,6 +389,14 @@ export class RealFamilyBackend implements FamilyBackend {
     if (!isAbsolute(dir) || !existsSync(dir) || !statSync(dir).isDirectory()) {
       throw new Error(
         `RealFamilyBackend: soulsDir must be an absolute path to an existing directory (got "${dir}").`,
+      );
+    }
+    const missing = REQUIRED_SOUL_FILES.filter((f) => !existsSync(join(dir, f)));
+    if (missing.length > 0) {
+      throw new Error(
+        `RealFamilyBackend: soulsDir "${dir}" is missing required soul file(s): ` +
+          `${missing.join(", ")}. All of [${REQUIRED_SOUL_FILES.join(", ")}] ` +
+          `must be present (the 8 files under image/souls, incl. output_protocol.md).`,
       );
     }
   }
