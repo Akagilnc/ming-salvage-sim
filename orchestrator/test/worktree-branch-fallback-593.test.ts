@@ -136,6 +136,25 @@ describe("resolveExistingWorktreeFromPorcelain (#593)", () => {
       ),
     ).toBeUndefined();
   });
+
+  it("parses CRLF porcelain output (line-ending robustness)", () => {
+    const porcelain = porcelainForBranch(NEW_BRANCH).replace(/\n/g, "\r\n");
+    expect(resolveExistingWorktreeFromPorcelain(porcelain, ISSUE)).toEqual({
+      path: EXISTING_WT,
+      branch: NEW_BRANCH,
+    });
+  });
+
+  it("does not match a different issue's branch (exact-match lock-in, e.g. issue-59 vs 593)", () => {
+    const porcelain = porcelainForBranch("feat/issue-59", "/tmp/wt-59");
+    expect(resolveExistingWorktreeFromPorcelain(porcelain, ISSUE)).toBeUndefined();
+    expect(
+      resolveExistingWorktreeFromPorcelain(
+        porcelainForBranch("feat/244-orchestrator-issue-59", "/tmp/wt-59-old"),
+        ISSUE,
+      ),
+    ).toBeUndefined();
+  });
 });
 
 // ─── prepareWorktree / findResumeState wiring (#593) ────────────────────────
