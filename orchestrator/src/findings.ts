@@ -195,7 +195,7 @@ function isBlockingByDisposition(finding: Finding): boolean {
   if (isBlockingFinding(finding)) return true;
   // #604 correctness r1 (P1-c) / ADR 0062: any non-suppression finding that
   // reaches this predicate is blocking — routing disposition kinds are gone, so
-  // there is no免修 disposition left. This covers `defer` AND a reopened/disputed
+  // there is no免修 disposition left. This covers a reopened/disputed
   // `wont_fix`/`rejected` that fell through the accepted-suppression branch
   // (suppression失配 / dispute exhausted). Only a MATCHING accepted suppression
   // is suppressed, and that is handled上游 (it never reaches here). The `deferred`

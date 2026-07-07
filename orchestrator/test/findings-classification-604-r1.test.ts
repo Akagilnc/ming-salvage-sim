@@ -2,8 +2,8 @@
  * #604 ship-pre CMR correctness r1 — findings classification defects.
  *
  * P1-c: `isBlockingByDisposition` must return true for EVERY non-suppression
- *   finding that reaches it (defer AND a reopened/disputed wont_fix/rejected that
- *   fell through the accepted-suppression branch). ADR 0062: all non-suppression
+ *   finding that reaches it (a reopened/disputed wont_fix/rejected that fell
+ *   through the accepted-suppression branch). ADR 0062: all non-suppression
  *   active findings are blocking; the `deferred` bucket must be PROVABLY empty.
  *
  * P1-d: a matching accepted suppression that ALSO has a prior sourced suppression
@@ -74,11 +74,6 @@ describe("#604 r1 P1-c — non-suppression findings never land in deferred", () 
     expect(c.blocking).toHaveLength(1);
   });
 
-  it("a medium defer is blocking, deferred stays empty", () => {
-    const c = classifyFindings([finding("medium", "defer")], [], {});
-    expect(c.deferred).toEqual([]);
-    expect(c.blocking).toHaveLength(1);
-  });
 });
 
 describe("#604 r1 P1-d — matching suppression at higher severity reopens, not re-suppresses", () => {

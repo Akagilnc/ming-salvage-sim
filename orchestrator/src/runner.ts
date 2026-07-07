@@ -1799,8 +1799,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // State threaded across steps within this run.
   let worktree: WorktreeHandle | undefined;
   let lastOutput: StepOutput | undefined;
-  // Collected at S4: reviewer findings with action:'defer' (PRD #244 US#25).
-  // Surfaced in RunResult.deferredFindings so the caller can act on them.
+  // #617: the `defer` action was removed from the reviewer contract, so this
+  // bucket is always empty; it is retained so resume state stays shape-compatible.
   let deferredFindings: Finding[] = [];
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];

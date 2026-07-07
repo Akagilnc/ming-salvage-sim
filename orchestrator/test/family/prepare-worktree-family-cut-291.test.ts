@@ -27,6 +27,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
+const realSoulsDir = join(here, "..", "..", "image", "souls");
 
 /**
  * Intercepts `sh` (git), `cloneDirExists` (fs), and `createResidentWorktree`
@@ -78,6 +79,7 @@ function build(over: Partial<RealBackendOptions> = {}): RecordingBackend {
     imageName: "img",
     skillsMount: "/tmp/skills",
     promptsDir: realPromptsDir,
+    soulsDir: realSoulsDir,
     home: "/tmp/home",
     ...over,
   });

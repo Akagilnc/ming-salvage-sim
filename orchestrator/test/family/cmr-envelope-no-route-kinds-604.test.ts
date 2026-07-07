@@ -40,14 +40,14 @@ describe("#604 slice 4 — route-kind-less findings are blocking, deferred is em
     ],
   });
 
-  it("deriveCmrEnvelope sends a would-be cross_module defer to blocking, not deferred", () => {
+  it("deriveCmrEnvelope sends a would-be cross_module route to blocking, not deferred", () => {
     const finding = {
       severity: "medium",
       category: "correctness",
       claim_quote: "the report surface belongs to a separate undeveloped module",
       location: "docs/fiscal-reports/summary.md:12",
       suggested_fix: "implement the report surface",
-      action: "defer",
+      action: "fix_now",
       disposition: {
         // Pre-slice-4 this routes to the deferred bucket; slice 4 removes the kind.
         kind: "cross_module",
@@ -67,14 +67,14 @@ describe("#604 slice 4 — route-kind-less findings are blocking, deferred is em
     expect(classified.deferred).toEqual([]);
   });
 
-  it("single-slice classifyFindings sends a would-be cross_module defer to blocking", () => {
+  it("single-slice classifyFindings sends a would-be cross_module route to blocking", () => {
     const finding = {
       severity: "medium",
       category: "correctness",
       claim_quote: "same claim",
       location: "orchestrator/src/runner.ts:10",
       suggested_fix: "fix it",
-      action: "defer",
+      action: "fix_now",
       disposition: {
         kind: "cross_module",
         targetModule: "some-other-module",

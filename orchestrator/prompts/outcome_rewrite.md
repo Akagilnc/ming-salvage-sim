@@ -1,6 +1,6 @@
 # Worker outcome rewrite entrypoint
 
-Read the baked output protocol first:
+Read the output protocol first (live-mounted):
 
 ```text
 /home/agent/.orchestrator/souls/output_protocol.md
