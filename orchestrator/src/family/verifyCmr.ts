@@ -84,6 +84,7 @@ import {
   recordCmrFixCommitted,
   recordCmrPassed,
   recordCmrReviewed,
+  recordReviewLoopConverged,
   recordShipped,
 } from "./ledger.js";
 import { isFilledString } from "../shipOutcome.js";
@@ -2580,6 +2581,18 @@ export async function runVerifyCmr(
     pr: ship.pr,
     familyHeadAfter: exactPostShipFamilyHead,
     stopSummary: shippedStopSummary,
+  });
+
+  // #596: `shipped` is now an INTERMEDIATE marker. The terminal family review-loop
+  // skeleton records `review_loop_converged` so the spine's final-barrier resume
+  // guard skips re-run only when the FULL loop (verify → cmr → ship → review loop)
+  // has converged for the current head. Real bot-polling logic is out of scope.
+  await recordReviewLoopConverged(familyBackend, {
+    pr: ship.pr,
+    familyHeadAfter: exactPostShipFamilyHead,
+    ...(shippedStopSummary !== undefined
+      ? { stopSummary: shippedStopSummary }
+      : {}),
   });
   return { ok: true, ran: true };
 }

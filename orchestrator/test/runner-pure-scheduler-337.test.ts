@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
+import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
   DispatchContext,
@@ -162,6 +163,10 @@ class SeamOnlyBackend implements Backend {
         },
       };
     }
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) {
+      return skeleton;
+    }
     return {
       kind: "completed",
       output: { kind: "ship", branch: this.worktree.branch, status: "pushed" },
@@ -183,6 +188,10 @@ describe("#337 runner is a pure scheduler — no inline productive work (BEHAVIO
       "S5:coder:/tdd",
       "S6:reviewer:/code-review",
       "S7:ship:gstack-ship",
+      "S9:verify:/verify",
+      "S10:fixer:/fixer",
+      "S11:cleanup:/cleanup",
+      "S12:docRelease:/doc-release",
     ]);
   });
 });

@@ -138,6 +138,10 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
         "merger=sonnet",
         "cmrCompleteness=opus",
         "cmrCorrectness=opus",
+        "verify=opus",
+        "fixer=sonnet",
+        "cleanup=sonnet",
+        "docRelease=sonnet",
         "cmrReview=[codex:gpt-5.5,claude:opus,agy:agy]",
       ].join("\n"),
     );
@@ -164,6 +168,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
 
     // The step ledger records the runner's decisions in canonical order —
     // S3 is the fresh full-diff reviewer and S4 records the runner classification.
+    // #596: S7 ship is INTERMEDIATE; the review-loop skeleton S9→S12 runs before S8.
     expect(result.stepLedger.map((e) => e.step)).toEqual([
       "S0",
       "S1",
@@ -171,6 +176,10 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       "S3",
       "S4",
       "S7",
+      "S9",
+      "S10",
+      "S11",
+      "S12",
       "S8",
     ]);
   });

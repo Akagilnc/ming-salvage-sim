@@ -1047,6 +1047,98 @@ describe("parseMergerOutcome (#291 pure)", () => {
   });
 });
 
+// #596 F2: family-side decode seam test (raw through parse*Outcome, using isValid* guards)
+describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-loop kinds (raw, not fake)", () => {
+  // import here via the file's re-export or direct (the test file imports some parses)
+  // we will require the module symbols via the existing pattern; use dynamic to avoid top-edit
+  it("feeds RAW valid verify tag through real parseVerifyOutcome (family seam)", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const raw = `<verify>{"converged": true}</verify>`;
+    const out = mod.parseVerifyOutcome(raw);
+    expect(out).toEqual({ kind: "verify", converged: true });
+  });
+
+  it("feeds RAW valid-but-false verify through real parse (AC2: false flag passes shape)", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const out = mod.parseVerifyOutcome(`<verify>{"converged": false}</verify>`);
+    expect(out).toEqual({ kind: "verify", converged: false });
+  });
+
+  it("RAW malformed (no tag / bad json / bad type) fails closed on family parseVerifyOutcome", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    expect(mod.parseVerifyOutcome("no tag here").kind).toBe("malformed");
+    expect(mod.parseVerifyOutcome("<verify>notjson</verify>").kind).toBe("malformed");
+    expect(mod.parseVerifyOutcome(`<verify>{"converged": 1}</verify>`).kind).toBe("malformed");
+  });
+
+  it("feeds RAW valid fixer through real parseFixerOutcome (family-side kind)", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const out = mod.parseFixerOutcome(`<fixer>{"committed": true}</fixer>`);
+    expect(out).toEqual({ kind: "fixer", committed: true });
+  });
+
+  it("RAW extra keys on verify is malformed (strict, matches single-slice .strict())", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const out = mod.parseVerifyOutcome(`<verify>{"converged": true, "extra": "nope"}</verify>`);
+    expect(out.kind).toBe("malformed");
+  });
+
+  it("RAW extra keys on fixer is malformed (strict)", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const out = mod.parseFixerOutcome(`<fixer>{"committed": false, "foo": 1, "bar": {}}</fixer>`);
+    expect(out.kind).toBe("malformed");
+  });
+
+  it("RAW extra keys on cleanup is malformed (strict)", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const out = mod.parseCleanupOutcome(`<cleanup>{"ok": true, "unexpected": true}</cleanup>`);
+    expect(out.kind).toBe("malformed");
+  });
+
+  it("RAW extra keys on docRelease is malformed (strict)", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const out = mod.parseDocReleaseOutcome(`<docRelease>{"released": true, "x": 9}</docRelease>`);
+    expect(out.kind).toBe("malformed");
+  });
+
+  // === pinning the canonical last-complete-block semantics (now mirrored from single-slice) ===
+  it("conversational prefix mentioning the tag before the real block → still decodes the real block", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    // prose mention of <verify> (as in real model chatter) must not poison extraction
+    const raw =
+      '我会把最终结果放在 <verify> 里。\n' +
+      '<verify>{"converged": true}</verify>\n' +
+      'done';
+    const out = mod.parseVerifyOutcome(raw);
+    expect(out).toEqual({ kind: "verify", converged: true });
+  });
+
+  it("multiple complete tag blocks → last one wins (verify matches extractVerifyTag on single-slice side)", async () => {
+    const fam = await import("../../src/family/realFamilyBackend.js");
+    const single = await import("../../src/realBackend.js");
+    const raw =
+      '<verify>{"converged": false}</verify>\n' +
+      'chatter between\n' +
+      '<verify>{"converged": true}</verify>';
+    // family parse path
+    const outFam = fam.parseVerifyOutcome(raw);
+    expect(outFam).toEqual({ kind: "verify", converged: true });
+    // single-slice mirror (extractTaggedJson path) must pick same last block
+    const outSingle = single.extractVerifyTag(raw);
+    expect(outSingle).toEqual({ converged: true });
+  });
+
+  it("unclosed trailing tag mention after a complete block → last complete wins (actual observed behavior)", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    // trailing open-mention with no close must be ignored; we take the prior complete
+    const raw =
+      '<verify>{"converged": false}</verify>\n' +
+      'later mention without close: see <verify> for details';
+    const out = mod.parseVerifyOutcome(raw);
+    expect(out).toEqual({ kind: "verify", converged: false });
+  });
+});
+
 describe("parseCmrOutcome accepted suppression contract", () => {
   it("prefers a runner-owned outcome sidecar over malformed cmr stdout", () => {
     const dir = trackTempDir("cmr-outcome-");

@@ -42,10 +42,20 @@ export type StepId =
   | "S5"
   | "S6"
   | "S7"
-  | "S8";
+  | "S8"
+  | "S9"
+  | "S10"
+  | "S11"
+  | "S12";
 
 /** Which role a single-slice worker runs under. */
-export type StepRole = "coder" | "reviewer";
+export type StepRole =
+  | "coder"
+  | "reviewer"
+  | "verify"
+  | "fixer"
+  | "cleanup"
+  | "docRelease";
 
 /** Terminal handoff status (ADR 0018 / PRD #244 route table). */
 export type HandoffStatus = "success" | "escalate" | "error";
@@ -65,7 +75,15 @@ export type HandoffStatus = "success" | "escalate" | "error";
  *   distinct from `"coder"`: it invokes `gstack-ship`, stops at PR creation, and
  *   records deferred findings in a tracker (issue / TODOS.md), never the PR body.
  */
-export type StepSoul = "coder" | "READ-ONLY" | "cmr" | "ship";
+export type StepSoul =
+  | "coder"
+  | "READ-ONLY"
+  | "cmr"
+  | "ship"
+  | "verify"
+  | "fixer"
+  | "cleanup"
+  | "docRelease";
 
 /**
  * Project tool-chain entry. Each entry is a short, lower-case technology slug
@@ -414,7 +432,16 @@ export interface StepResult {
  *   - `merge`    → family-layer merge (may use NO skill — ADR 0026); B 段, no A-段
  *                  consumer (shape only).
  */
-export type WorkerKind = "coder" | "reviewer" | "cmr" | "ship" | "merge";
+export type WorkerKind =
+  | "coder"
+  | "reviewer"
+  | "cmr"
+  | "ship"
+  | "merge"
+  | "verify"
+  | "fixer"
+  | "cleanup"
+  | "docRelease";
 
 /** Which container host runs the worker (decides skill-invocation mechanism). */
 export type WorkerHost = "claude" | "codex";
@@ -718,13 +745,59 @@ export interface MergeWorkerResult {
   // case, NOT an `escalate` field on this `completed` payload (codex cmr R3b).
 }
 
+/**
+ * Online review/PR-check worker output (#596 skeleton). The real bot-polling
+ * logic is out of scope for this slice; the skeleton stub returns a deterministic
+ * `converged:true` verdict through the legacy dispatch path so the runner can
+ * exercise the S9 step seam.
+ */
+export interface VerifyResult {
+  readonly kind: "verify";
+  /** Bot/online review converged (green) ⇒ the fix loop can stop. */
+  readonly converged: boolean;
+}
+
+/**
+ * Post-review fixer worker output (#596 skeleton). The skeleton stubs a
+ * deterministic `committed:true` verdict so the S10 step seam is exercisable.
+ */
+export interface FixerResult {
+  readonly kind: "fixer";
+  /** Whether the fixer produced commits for the requested repairs. */
+  readonly committed: boolean;
+}
+
+/**
+ * PR/issue cleanup worker output (#596 skeleton). The skeleton stubs a
+ * deterministic `ok:true` verdict so the S11 step seam is exercisable.
+ */
+export interface CleanupResult {
+  readonly kind: "cleanup";
+  /** Whether cleanup succeeded (e.g. closed stale review threads). */
+  readonly ok: boolean;
+}
+
+/**
+ * Documentation / release worker output (#596 skeleton). The skeleton stubs a
+ * deterministic `released:true` verdict so the S12 step seam is exercisable.
+ */
+export interface DocReleaseResult {
+  readonly kind: "docRelease";
+  /** Whether the doc/release step completed (e.g. VERSION/CHANGELOG bump). */
+  readonly released: boolean;
+}
+
 /** The structured payload a worker produces — one per {@link WorkerKind}. */
 export type WorkerOutput =
   | CoderResult
   | ReviewerResult
   | CmrResult
   | ShipResult
-  | MergeWorkerResult;
+  | MergeWorkerResult
+  | VerifyResult
+  | FixerResult
+  | CleanupResult
+  | DocReleaseResult;
 
 /**
  * The result of dispatching ONE worker — a discriminated union so the runner can

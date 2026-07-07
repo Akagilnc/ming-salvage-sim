@@ -47,12 +47,22 @@ import {
 // dispatches EVERY worker step (S2/S3/S5/S6 agent workers + S7 ship) through ONE free function
 // instead of reaching for runStep/resumeSession/push directly.
 import {
+  cleanupWorkerSpec,
   dispatchWorker,
+  docReleaseWorkerSpec,
+  fixerWorkerSpec,
   SHIP_PROMPT_FILE,
   shipWorkerSpec,
   stepSpecToWorkerSpec,
+  verifyWorkerSpec,
   workerResultToStep,
 } from "./dispatchWorker.js";
+import {
+  isValidCleanupResult,
+  isValidDocReleaseResult,
+  isValidFixerResult,
+  isValidVerifyResult,
+} from "./reviewLoopOutcome.js";
 import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetry.js";
 import {
   applyRuntimeTightRoutePolicy,
@@ -298,7 +308,11 @@ function isValidStepId(value: unknown): value is StepId {
     value === "S5" ||
     value === "S6" ||
     value === "S7" ||
-    value === "S8"
+    value === "S8" ||
+    value === "S9" ||
+    value === "S10" ||
+    value === "S11" ||
+    value === "S12"
   );
 }
 
@@ -2545,7 +2559,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
         promptFile = stepSpecs[step].promptFile;
-        const expectedKind = stepSpecs[step].role;
+        const expectedKind = stepSpecs[step].role as "coder" | "reviewer";
         const coderHeadBeforeStep =
           expectedKind === "coder" ? gitHead(worktree) : undefined;
         try {
@@ -2927,6 +2941,71 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // without losing the commits already on the resident branch (#252).
           // errorTermination records + persists both the S7 and S8 entries (#3).
           return await errorTermination("S7", err);
+        }
+        break;
+      }
+
+      case "S9":
+      case "S10":
+      case "S11":
+      case "S12": {
+        // #596 review-loop skeleton: S9 verify → S10 fixer → S11 cleanup →
+        // S12 docRelease. Real bot-polling logic is out of scope; this slice
+        // only wires the dispatch seam and fail-closed output validation.
+        if (worktree === undefined) {
+          throw new Error(`runner: ${step} reached before worktree prepared`);
+        }
+        const reviewLoopSpec =
+          step === "S9"
+            ? verifyWorkerSpec(routePolicy.route)
+            : step === "S10"
+              ? fixerWorkerSpec(routePolicy.route)
+              : step === "S11"
+                ? cleanupWorkerSpec(routePolicy.route)
+                : docReleaseWorkerSpec(routePolicy.route);
+        promptFile = reviewLoopSpec.promptFile;
+        try {
+          const result = await dispatchWorker(backend, reviewLoopSpec, {
+            worktree,
+            stateDir,
+          });
+          if (result.kind !== "completed") {
+            return await errorTermination(
+              step,
+              new Error(
+                `${step} worker returned ${result.kind}` +
+                  ("reason" in result ? `: ${result.reason}` : ""),
+              ),
+            );
+          }
+          const outputValid =
+            (step === "S9" && isValidVerifyResult(result.output)) ||
+            (step === "S10" && isValidFixerResult(result.output)) ||
+            (step === "S11" && isValidCleanupResult(result.output)) ||
+            (step === "S12" && isValidDocReleaseResult(result.output));
+          if (!outputValid) {
+            // Defensive: result.output may be nullish (malformed worker) even on
+            // "completed" — the isValid* guards already rejected it. Do not throw
+            // constructing the message; let errorTermination record the clean error.
+            const badKind = (result.output as { kind?: unknown } | undefined | null)?.kind;
+            return await errorTermination(
+              step,
+              new Error(
+                `${step} worker returned non-${step} output kind '${String(badKind)}'`,
+              ),
+            );
+          }
+          output = result.output;
+          stepSessionId = result.sessionId;
+          // Mirror the agent-step contract (lines above): route() is called with
+          // `lastOutput`, so each step whose route() case reads its output must
+          // publish it here. The S9–S12 route cases validate ctx.output against
+          // the verify/fixer/cleanup/docRelease schemas — without this assignment
+          // route() would re-validate the stale pre-S7 agent output and fail
+          // closed (#596).
+          lastOutput = output;
+        } catch (err) {
+          return await errorTermination(step, err);
         }
         break;
       }
