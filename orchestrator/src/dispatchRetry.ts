@@ -71,6 +71,16 @@ export interface MechanicalRetryOptions {
    * retried generically.
    */
   readonly callerOwns?: (outcome: DispatchOutcome) => boolean;
+  /**
+   * When `true`, a THROWN error that persists across all attempts is RE-THROWN
+   * (the last error) instead of being converted to a synthesized `failed` result.
+   * Use when the caller already has a domain-specific throw→result converter (e.g.
+   * the family CMR `dispatchOrAbort` catch, which stamps a "cmr worker threw on
+   * startup" message the gate classifies) — the generic layer retries the crash but
+   * leaves the final surfacing to that converter. Default `false`: exhaustion
+   * returns the last synthesized `failed`.
+   */
+  readonly rethrowOnExhaustion?: boolean;
 }
 
 /**
@@ -88,20 +98,26 @@ export async function withMechanicalRetry(
   opts?: MechanicalRetryOptions,
 ): Promise<WorkerResult> {
   let last: WorkerResult | undefined;
+  let lastError: unknown;
+  let lastAttemptThrew = false;
   for (let attempt = 1; attempt <= MAX_DISPATCH_ATTEMPTS; attempt++) {
     const useSpec = attempt === 1 ? spec : forceFreshSpec(spec);
     const useCtx = attempt === 1 ? ctx : stripResume(ctx);
     let result: WorkerResult;
     try {
       result = await dispatch(useSpec, useCtx);
+      lastAttemptThrew = false;
     } catch (err) {
       // A thrown error the caller's semantic layer owns is re-thrown untouched —
       // the generic layer never retries it (no double-count).
       if (opts?.callerOwns?.({ kind: "thrown", error: err }) === true) throw err;
-      result = {
+      lastError = err;
+      lastAttemptThrew = true;
+      last = {
         kind: "failed",
         reason: `dispatch threw: ${err instanceof Error ? err.message : String(err)}`,
       };
+      continue;
     }
     if (!isProcessFailure(result)) return result;
     // A process-level failure the caller's semantic layer owns is returned as-is so
@@ -110,7 +126,10 @@ export async function withMechanicalRetry(
     if (opts?.callerOwns?.({ result }) === true) return result;
     last = result;
   }
-  // Exhausted: return the last process-level failure verbatim so the caller's
+  // Exhausted. If the last attempt threw and the caller owns the throw→result
+  // conversion, re-throw so its domain converter surfaces the failure.
+  if (opts?.rethrowOnExhaustion === true && lastAttemptThrew) throw lastError;
+  // Otherwise return the last process-level failure verbatim so the caller's
   // existing durable-abort path surfaces it (no new supervisor / stop reason).
   return last!;
 }
