@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
+import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import {
   RealBackend,
   SANDBOX_CODEX_DIR,
@@ -496,9 +497,13 @@ class ReviewWorkerBackend implements Backend {
                   },
                 ],
               }
-            : {}),
+             : {}),
         },
       };
+    }
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) {
+      return skeleton;
     }
     return {
       kind: "completed",
@@ -526,6 +531,10 @@ describe("#334 ADR 0030 worker routing", () => {
       "S5:coder:/tdd",
       "S6:reviewer:/code-review",
       "S7:ship:gstack-ship",
+      "S9:verify:/verify",
+      "S10:fixer:/fixer",
+      "S11:cleanup:/cleanup",
+      "S12:docRelease:/doc-release",
     ]);
   });
 });
@@ -560,6 +569,10 @@ describe("#336 cmr S336 r4 — the terminal single-slice S7 gate re-asserts the 
       }
       if (spec.kind === "reviewer") {
         return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+      }
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      if (skeleton !== undefined) {
+        return skeleton;
       }
       return this.shipOutput;
     }

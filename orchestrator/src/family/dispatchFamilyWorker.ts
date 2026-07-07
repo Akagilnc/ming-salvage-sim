@@ -35,6 +35,7 @@ import {
   modelForSlot,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
+import { skeletonReviewLoopWorkerResult } from "../reviewLoopOutcome.js";
 import type {
   FamilyBackend,
   IntegratedCmrPass,
@@ -260,21 +261,11 @@ export async function legacyDispatchFamilyWorker(
   }
 
   // #596 skeleton: deterministic no-op stubs for the family review-loop workers
-  // when the backend has no real implementation.
-  if (spec.kind === "verify") {
-    return { kind: "completed", output: { kind: "verify", converged: true } };
-  }
-  if (spec.kind === "fixer") {
-    return { kind: "completed", output: { kind: "fixer", committed: true } };
-  }
-  if (spec.kind === "cleanup") {
-    return { kind: "completed", output: { kind: "cleanup", ok: true } };
-  }
-  if (spec.kind === "docRelease") {
-    return {
-      kind: "completed",
-      output: { kind: "docRelease", released: true },
-    };
+  // when the backend has no real implementation. Shared resolver (single-slice
+  // + family + spy backends return the SAME stub verdicts).
+  const skeletonResult = skeletonReviewLoopWorkerResult(spec.kind);
+  if (skeletonResult !== undefined) {
+    return skeletonResult;
   }
 
   throw new Error(

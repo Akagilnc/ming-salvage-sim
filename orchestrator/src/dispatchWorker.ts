@@ -34,6 +34,7 @@ import {
 import { join, resolve } from "node:path";
 
 import { modelForSlot, type ResolvedModelRoute } from "./modelRoutes.js";
+import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
 import type {
   Backend,
   DispatchContext,
@@ -365,21 +366,11 @@ export async function legacyDispatchWorker(
   // #596 skeleton: when the backend has no real review-loop implementation, the
   // legacy path returns deterministic `completed` stubs so the runner can still
   // exercise S9–S12 end-to-end. Real workers will override via the unified
-  // `dispatchWorker` seam.
-  if (spec.kind === "verify") {
-    return { kind: "completed", output: { kind: "verify", converged: true } };
-  }
-  if (spec.kind === "fixer") {
-    return { kind: "completed", output: { kind: "fixer", committed: true } };
-  }
-  if (spec.kind === "cleanup") {
-    return { kind: "completed", output: { kind: "cleanup", ok: true } };
-  }
-  if (spec.kind === "docRelease") {
-    return {
-      kind: "completed",
-      output: { kind: "docRelease", released: true },
-    };
+  // `dispatchWorker` seam. The shared resolver is the SINGLE source of the stub
+  // verdicts (single-slice + family + spy backends all use it).
+  const skeletonResult = skeletonReviewLoopWorkerResult(spec.kind);
+  if (skeletonResult !== undefined) {
+    return skeletonResult;
   }
 
   // FAIL-CLOSED on the worker kind (online review r1, 3 bots): only the legacy
@@ -398,7 +389,6 @@ export async function legacyDispatchWorker(
         `backend implementing the unified dispatchWorker seam.`,
     );
   }
-
   // coder / reviewer agent worker → runStep | resumeSession (legacy seam).
   if (ctx.worktree === undefined) {
     throw new Error(
