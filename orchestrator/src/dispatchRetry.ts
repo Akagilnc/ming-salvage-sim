@@ -47,15 +47,45 @@ function stripResume(ctx: DispatchContext): DispatchContext {
 }
 
 /**
+ * A dispatch outcome as the retry layer sees it: either the underlying dispatch
+ * threw, or it resolved into a {@link WorkerResult}.
+ */
+export type DispatchOutcome =
+  | { readonly kind: "thrown"; readonly error: unknown }
+  | { readonly result: WorkerResult };
+
+/**
+ * Options that let a caller compose its OWN semantic-retry layer with this generic
+ * mechanical layer WITHOUT double-counting (#598 acceptance: "each keeps its own
+ * counter, the generic layer firing only after those run").
+ */
+export interface MechanicalRetryOptions {
+  /**
+   * Return `true` when THIS failure is owned by the caller's semantic-retry layer
+   * (e.g. the reviewer's invalid-output rerun, or CMR's same-worker outcome
+   * rewrite) and must NOT be retried here — the generic layer defers it to the
+   * caller (re-throws a thrown error, returns a resolved result) so the caller's
+   * own bounded loop handles it with its own counter. Everything else (a generic
+   * crash / connection drop / process-protocol failure the caller does not own) is
+   * retried fresh here. Absent ⇒ nothing is caller-owned; every process failure is
+   * retried generically.
+   */
+  readonly callerOwns?: (outcome: DispatchOutcome) => boolean;
+}
+
+/**
  * Wrap a raw dispatch (`dispatch(spec, ctx)` → `WorkerResult`) with the generic
  * mechanical retry. The first attempt uses the caller's spec/ctx verbatim (may be
  * a resume); every retry is forced fresh (resume id stripped, `session:"fresh"`).
- * A thrown exception is treated as a `failed` outcome and retried.
+ * A thrown exception is treated as a process failure and retried — UNLESS
+ * `opts.callerOwns` claims it, in which case it is re-thrown (thrown outcome) or
+ * returned (resolved outcome) for the caller's own semantic layer to handle.
  */
 export async function withMechanicalRetry(
   spec: WorkerSpec,
   ctx: DispatchContext,
   dispatch: (spec: WorkerSpec, ctx: DispatchContext) => Promise<WorkerResult>,
+  opts?: MechanicalRetryOptions,
 ): Promise<WorkerResult> {
   let last: WorkerResult | undefined;
   for (let attempt = 1; attempt <= MAX_DISPATCH_ATTEMPTS; attempt++) {
@@ -65,12 +95,19 @@ export async function withMechanicalRetry(
     try {
       result = await dispatch(useSpec, useCtx);
     } catch (err) {
+      // A thrown error the caller's semantic layer owns is re-thrown untouched —
+      // the generic layer never retries it (no double-count).
+      if (opts?.callerOwns?.({ kind: "thrown", error: err }) === true) throw err;
       result = {
         kind: "failed",
         reason: `dispatch threw: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
     if (!isProcessFailure(result)) return result;
+    // A process-level failure the caller's semantic layer owns is returned as-is so
+    // the caller's own bounded loop retries it with its own counter (#598 sequential
+    // composition — the generic layer fires only for failures nobody else owns).
+    if (opts?.callerOwns?.({ result }) === true) return result;
     last = result;
   }
   // Exhausted: return the last process-level failure verbatim so the caller's
