@@ -2296,6 +2296,7 @@ describe("#369 runner resume/retry review fixes", () => {
     const result = await runOrchestrator({ issueNumber: 428, backend });
 
     expect(result.status).toBe("success");
+    expect(result.deferredFindings).toEqual([]);
     expect(backend.dispatched).toEqual([
       "S5:coder",
       "S6:reviewer",
