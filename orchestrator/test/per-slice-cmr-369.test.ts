@@ -220,9 +220,10 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     ]);
   });
 
-  // #604 slice 4 (ADR 0062): the former cross-module defer is now blocking, so
-  // both findings ride the fix loop and deferredFindings is always empty.
-  it("keeps former cross-module defers blocking across fix rounds", async () => {
+  // #604 slice 4 (ADR 0062): there is no cross-module deferral pass, so every
+  // non-accepted-suppressed finding rides the fix loop and deferredFindings is
+  // always empty.
+  it("keeps non-accepted-suppressed follow-up findings blocking across fix rounds", async () => {
     const blocking: Finding = {
       severity: "high",
       category: "Correctness",
@@ -231,18 +232,18 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
       suggested_fix: "fix it",
       action: "fix_now",
     };
-    const formerCrossModuleDefer: Finding = {
+    const followUpFinding: Finding = {
       severity: "medium",
       category: "Follow-up",
       claim_quote: "track this later",
       location: "src/runner.ts:11",
       suggested_fix: "file follow-up",
-      action: "defer",
+      action: "fix_now",
     };
     const backend = new RetryReviewBackend([
       {
         kind: "completed",
-        output: { kind: "reviewer", findings: [blocking, formerCrossModuleDefer] },
+        output: { kind: "reviewer", findings: [blocking, followUpFinding] },
       },
       {
         kind: "completed",
@@ -2344,6 +2345,7 @@ describe("#369 runner resume/retry review fixes", () => {
     const result = await runOrchestrator({ issueNumber: 428, backend });
 
     expect(result.status).toBe("success");
+    expect(result.deferredFindings).toEqual([]);
     expect(backend.dispatched).toEqual([
       "S5:coder",
       "S6:reviewer",
@@ -2359,15 +2361,15 @@ describe("#369 runner resume/retry review fixes", () => {
 
   // #604 slice 4 (ADR 0062): deferredFindings is always empty now; re-feeding a
   // terminal success run stays terminal and dispatches nothing, but rebuilds an
-  // empty deferred bucket rather than the former cross-module defer.
+  // empty deferred bucket.
   it("rebuilds an empty deferred bucket when re-feeding a terminal resumed run", async () => {
-    const formerCrossModuleDefer: Finding = {
+    const followUpFinding: Finding = {
       severity: "medium",
       category: "Follow-up",
-      claim_quote: "terminal resume still reports this defer",
+      claim_quote: "terminal resume still reports this follow-up",
       location: "src/runner.ts:926",
-      suggested_fix: "surface the deferred finding",
-      action: "defer",
+      suggested_fix: "surface the follow-up finding",
+      action: "fix_now",
     };
     const resumeState: ResumeState = {
       worktree: WORKTREE,
@@ -2376,7 +2378,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [formerCrossModuleDefer] } },
+        { step: "S3", output: { kind: "reviewer", findings: [followUpFinding] } },
         { step: "S4" },
         { step: "S7" },
         { step: "S8", handoffStatus: "success" },
@@ -2661,7 +2663,8 @@ describe("#369 finding identity and classification", () => {
       isValidFinding({
         ...finding,
         severity: "high",
-        action: "defer",
+        action: "wont_fix",
+        disposition_reason: "not allowed for P0",
       }),
     ).toBe(false);
     expect(
@@ -2679,91 +2682,6 @@ describe("#369 finding identity and classification", () => {
         action: "fix_now",
       }),
     ).toBe(true);
-  });
-
-  // #604 slice 4 (ADR 0062): the same_module disposition kind is gone. A bare
-  // action:"defer" finding is classified as blocking (never passes S4), and
-  // because a defer with no valid non-accepted-suppression disposition is now a
-  // contract-invalid reviewer output, route() fails it closed to S8(error)
-  // rather than ever letting S4 pass to ship.
-  it("keeps a bare defer blocking instead of letting S4 pass", () => {
-    const bareDefer: Finding = {
-      ...finding,
-      action: "defer",
-    };
-
-    const classification = classifyFindings([bareDefer]);
-
-    expect(classification.blocking).toEqual([bareDefer]);
-    expect(classification.deferred).toEqual([]);
-    expect(
-      route({
-        from: "S4",
-        output: { kind: "reviewer", findings: [bareDefer] },
-      }),
-    ).toEqual({ kind: "handoff", status: "error" });
-  });
-
-  // #604 slice 4 (ADR 0062): the cross_module disposition and its deferred→S7
-  // pass path are gone. A former cross-module defer is now a bare defer:
-  // classifyFindings treats it as blocking, and since it carries no valid
-  // non-accepted-suppression disposition it is a contract-invalid reviewer
-  // output, so route() fails it closed to S8(error) — the deferred→S7 pass path
-  // no longer exists.
-  it("treats a former cross-module defer as blocking", () => {
-    const formerCrossModuleDefer: Finding = {
-      ...finding,
-      action: "defer",
-    };
-
-    const classification = classifyFindings([formerCrossModuleDefer]);
-
-    expect(classification.blocking).toEqual([formerCrossModuleDefer]);
-    expect(classification.deferred).toEqual([]);
-    expect(
-      route({
-        from: "S4",
-        output: { kind: "reviewer", findings: [formerCrossModuleDefer] },
-      }),
-    ).toEqual({ kind: "handoff", status: "error" });
-  });
-
-  // #604 slice 4 (ADR 0062): the owning_issue_still_red disposition kind is gone.
-  // classifyFindings still treats a bare action:"defer" finding as blocking; the
-  // deleted-kind isValidFinding sub-assertions are removed because no routing
-  // disposition kinds remain to construct.
-  it("records a defer finding as blocking", () => {
-    const stillRed: Finding = {
-      ...finding,
-      action: "defer",
-    };
-
-    const classification = classifyFindings([stillRed]);
-
-    expect(classification.blocking).toEqual([stillRed]);
-    expect(classification.deferred).toEqual([]);
-    expect(isValidFinding(finding)).toBe(true);
-  });
-
-  // #604 slice 4 (ADR 0062): the spec_conflict / infra_failure disposition kinds
-  // are gone. Both were fail-closed defers; as bare defers they remain blocking,
-  // so there is no longer a "separate" classification to assert. The deleted-kind
-  // isValidFinding sub-assertions are removed (no routing disposition kinds remain).
-  it("classifies former spec/infra findings as blocking", () => {
-    const specConflict: Finding = {
-      ...finding,
-      action: "defer",
-    };
-    const infraFailure: Finding = {
-      ...finding,
-      claim_quote: "gh auth failed",
-      action: "defer",
-    };
-
-    const classification = classifyFindings([specConflict, infraFailure]);
-
-    expect(classification.blocking).toEqual([specConflict, infraFailure]);
-    expect(classification.deferred).toEqual([]);
   });
 
   it("requires sourced accepted suppression and reopens it when evidence exceeds the bound", () => {

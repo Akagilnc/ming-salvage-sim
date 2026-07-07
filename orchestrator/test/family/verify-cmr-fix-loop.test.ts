@@ -155,50 +155,10 @@ const SECOND_BLOCKING_FAMILY_CMR_KEY = findingIdentityKey(
 );
 
 /**
- * A blocking finding the reviewer SELF-LABELS with a non-fix disposition
- * (`owning_issue_still_red` + `action: "defer"`). Before #604 slice 2 this
- * content-based label made `fixableCmrFindingKeysFromClassification` return
- * `undefined`, so the runner terminated the whole family on a single such
- * finding (#497/#498). ADR 0062: the runner counts findings, it does NOT read
- * a finding's disposition to decide whether the family lives — every blocking
- * finding goes through coder-fix.
- *
- * #604 correctness r4 (D5 note): this exact shape (`action:"defer"` +
- * `disposition.kind:"owning_issue_still_red"`) is NO LONGER producible through
- * the real reviewer contract — `isValidFinding` rejects it (the routing
- * disposition kinds were removed in ADR 0062, and `defer` may not carry a
- * non-suppression disposition). It is retained here as a SYNTHETIC belt-and-
- * suspenders check that even a hand-forged legacy self-label cannot make the
- * runner read a disposition to spare a blocker. The `...THROUGH_REAL_PARSER`
- * companion finding + test below exercises the SAME invariant with a
- * validator-passing payload the real entry point can actually emit.
- */
-const OWNING_ISSUE_STILL_RED_FINDING: Finding = {
-  severity: "medium",
-  category: "correctness",
-  claim_quote:
-    "reviewer self-labels this blocker as owning-issue-still-red and defers",
-  location: "orchestrator/src/family/verifyCmr.ts:owning-issue-still-red",
-  suggested_fix:
-    "do not terminate the family; route the blocker through coder-fix",
-  action: "defer",
-  disposition: {
-    kind: "owning_issue_still_red",
-    owningIssue: "#498",
-    missingSurface: "the owning issue has not landed its surface yet",
-    nextStep: "wait for the owning issue",
-    reason: "reviewer claims the owning issue is still red",
-  },
-};
-const OWNING_ISSUE_STILL_RED_KEY = findingIdentityKey(
-  OWNING_ISSUE_STILL_RED_FINDING,
-);
-
-/**
- * #604 correctness r4 (D5): the SAME "runner counts, does not read the
- * reviewer's self-judgment" invariant, expressed with a payload the real
- * reviewer contract CAN produce (`isValidFinding === true`). A valid blocking
- * finding (`action:"fix_now"`, medium) whose CONTENT self-labels the blocker as
+ * #604 correctness r4 (D5): the "runner counts, does not read the reviewer's
+ * self-judgment" invariant, expressed with a payload the real reviewer contract
+ * CAN produce (`isValidFinding === true`). A valid blocking finding
+ * (`action:"fix_now"`, medium) whose CONTENT self-labels the blocker as
  * owning-issue-still-red (in claim_quote/suggested_fix) must STILL route through
  * coder-fix — the runner never reads that content to spare it.
  */
@@ -368,10 +328,10 @@ class ReviewFixRereviewBackend implements FamilyBackend {
 
 /**
  * First completeness review returns ONE blocking finding the reviewer
- * self-labels `owning_issue_still_red` + `action: "defer"`; the coder-fix
- * closes it and the re-review converges. Exercises the #604 slice 2 rule that
- * a reviewer's non-fix disposition must NOT terminate the family — the finding
- * still flows through coder-fix by identity key.
+ * content-labels as owning-issue-still-red; the coder-fix closes it and the
+ * re-review converges. Exercises the #604 slice 2 rule that a reviewer's
+ * self-judgment must NOT terminate the family — the finding still flows through
+ * coder-fix by identity key.
  */
 class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
@@ -379,12 +339,11 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
   readonly verifyRequests: FamilyVerifyRequest[] = [];
   currentFamilyHead = "head-before-owning-issue-review";
   private completenessReviewRound = 0;
-  // #604 r4 (D5): parameterize the blocking finding so the same review/fix flow
-  // can be driven with either the synthetic legacy self-label OR the
-  // validator-passing companion.
+  // #604 r4 (D5): parameterize the blocking finding so the review/fix flow can
+  // be driven with the validator-passing blocker.
   constructor(
-    private readonly blockingFinding: Finding = OWNING_ISSUE_STILL_RED_FINDING,
-    private readonly blockingKey: string = OWNING_ISSUE_STILL_RED_KEY,
+    private readonly blockingFinding: Finding = OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER,
+    private readonly blockingKey: string = OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER_KEY,
   ) {}
 
   async mergeChildIntoFamilyBase(): Promise<never> {
@@ -423,7 +382,7 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
             kind: "cmr",
             converged: false,
             reason:
-              "reviewer self-labeled the blocker owning_issue_still_red and deferred",
+              "reviewer content-labels the blocker as owning-issue-still-red",
             successfulLegs: ["opus", "gpt-5.5", "agy"],
             claimedFixedFindingIdentityKeys: [],
             priorFindingDispositions: [],
@@ -2855,42 +2814,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(cmrDispatch?.session).toBe("fresh");
   });
 
-  it("routes a reviewer-self-deferred (owning_issue_still_red) blocker through coder-fix instead of terminating the family (#604 slice 2)", async () => {
-    const backend = new OwningIssueStillRedThenGoodBackend();
-
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/604-base",
-      familyBackend: backend,
-    });
-
-    // The self-deferred blocker's identity key reaches the coder-fix worker...
-    const coderDispatch = backend.dispatches.find((d) => d.kind === "coder");
-    expect(coderDispatch?.blockingFindingIdentityKeys).toEqual([
-      OWNING_ISSUE_STILL_RED_KEY,
-    ]);
-    // ...and the family is NOT torn down on the reviewer's content label.
-    expect(
-      backend.ledger.find(
-        (entry) =>
-          entry.status === "aborted" &&
-          entry.reason?.includes(OWNING_ISSUE_STILL_RED_KEY),
-      ),
-    ).toBeUndefined();
-    expect(result).toEqual({ ok: true, ran: true });
-    expect(backend.ledger).toContainEqual(
-      expect.objectContaining({
-        status: "cmr_fix_committed",
-        event: "cmr_fix_committed",
-        cmrPass: "completeness",
-        familyHeadBefore: "head-before-owning-issue-review",
-        familyHeadAfter: "head-after-owning-issue-coder-fix",
-        blockingFindingIdentityKeys: [OWNING_ISSUE_STILL_RED_KEY],
-      }),
-    );
-  });
-
-  it("routes a VALIDATOR-PASSING content-self-labeled blocker through coder-fix (D5: same invariant via the real reviewer contract)", async () => {
+  it("routes a VALIDATOR-PASSING content-self-labeled blocker through coder-fix (D5: runner counts, does not read reviewer self-judgment)", async () => {
     // #604 correctness r4 (D5): the same "runner counts, does not read the
     // reviewer's self-judgment" invariant, driven by a finding the real reviewer
     // contract CAN emit (`isValidFinding === true`: medium + fix_now, self-label

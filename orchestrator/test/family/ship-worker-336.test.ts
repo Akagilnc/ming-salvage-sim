@@ -38,6 +38,7 @@ import {
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
+  soulsMount,
   SPAWNED_WORKER_ENV,
 } from "../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
@@ -61,6 +62,7 @@ function modelOfAgent(agent: unknown): string {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
+const realSoulsDir = join(here, "..", "..", "image", "souls");
 
 const cleanups: string[] = [];
 afterEach(() => {
@@ -116,6 +118,7 @@ function fixtured(): FixturedShipBackend {
     repo: "Akagilnc/ming-salvage-sim",
     base: "main",
     promptsDir: realPromptsDir,
+    soulsDir: realSoulsDir,
     imageName: "ming-orchestrator-coder:latest",
   });
 }
@@ -262,7 +265,7 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
     public config(auth: ShipAuth): {
       imageName: string;
       env: Record<string, string>;
-      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
       return this.shipSandboxConfig(auth);
     }
@@ -275,6 +278,7 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
     });
   }
@@ -287,6 +291,12 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
     // ORCHESTRATOR_REPO is exported so the ship soul's `gh issue create
     // --repo "$ORCHESTRATOR_REPO"` defer path works (codex #384).
     expect(c.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
+  });
+
+  it("family shipSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {
+    const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
+    const expected = soulsMount(realSoulsDir);
+    expect(c.mounts).toContainEqual(expected);
   });
 
   it("a missing codex auth degrades the mount but still ships under the ship soul", () => {
@@ -359,6 +369,7 @@ describe("#336 family runShipWorker — fail-closed when the top-level Claude wo
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
     });
   }
@@ -429,6 +440,7 @@ describe("#336 family runShipWorker — fail-closed when gh auth is missing", ()
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
     });
   }
@@ -480,6 +492,7 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       repo: over.repo ?? "Akagilnc/ming-salvage-sim",
       base: over.base ?? "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
     });
   }
@@ -566,6 +579,7 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       repo: "Akagilnc/ming-salvage-sim",
       base: "integ/291-wave3",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
     });
     await expect(
@@ -621,6 +635,7 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
     });
 
@@ -656,6 +671,7 @@ describe("#336 family workers — model id is spec-derived via modelIdForSlug (c
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "img",
     });
   }
@@ -720,6 +736,7 @@ describe("#378 family mountShipAuth — writes a minimal danger-full-access conf
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       home: hostHomeWithCodexConfig(),
     });

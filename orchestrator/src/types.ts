@@ -172,15 +172,15 @@ export interface Finding {
   readonly location: string;
   readonly suggested_fix: string;
   /**
-   * P0/P1 ⇒ always `fix_now`; P2/P3 reviewer judges fix_now vs defer.
-   * `wont_fix` / `rejected` are accepted suppression carriers and must include
+   * P0/P1 ⇒ always `fix_now`; P2/P3 reviewer judges fix_now vs accepted
+   * suppression (`wont_fix` / `rejected`). Accepted suppressions must include
    * an `accepted_suppressed` disposition with source, scope, rationale, and
    * bounded reopen conditions.
    */
-  readonly action: "fix_now" | "defer" | "wont_fix" | "rejected";
+  readonly action: "fix_now" | "wont_fix" | "rejected";
   /** Required when action is `wont_fix` or `rejected`; optional otherwise. */
   readonly disposition_reason?: string;
-  /** Machine-verifiable classification evidence for defer/suppression outcomes. */
+  /** Machine-verifiable classification evidence for suppression outcomes. */
   readonly disposition?: FindingDispositionEvidence;
 }
 
@@ -692,7 +692,7 @@ export interface CmrResult {
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   /** Explicit closure disposition for claimed-fixed integrated CMR findings. */
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
-  /** Structured CMR findings for family-level defer/suppression classification. */
+  /** Structured CMR findings for family-level suppression classification. */
   readonly findings?: readonly Finding[];
   /** Worker outcome guard evidence artifacts referenced by this CMR verdict. */
   readonly evidencePaths?: readonly string[];
@@ -1367,9 +1367,9 @@ export interface RunResult {
   /** Unified run-level stop reason summary (#450). */
   readonly stopSummary: StopSummary;
   /**
-   * Reviewer findings with action:'defer' collected at S4 (PRD #244 US#25).
-   * Present on success handoff so the caller can surface them (e.g. as a
-   * follow-up issue list). Empty array when no defer findings exist.
+   * Formerly carried reviewer findings with action:'defer'. #617 removed the
+   * `defer` action from the contract, so this array is always empty; it is
+   * retained on the handoff shape for backward compatibility with resume state.
    */
   readonly deferredFindings: ReadonlyArray<Finding>;
 }
