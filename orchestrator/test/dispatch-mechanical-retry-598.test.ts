@@ -309,4 +309,151 @@ describe("#598 integration — a transient reviewer non-structured crash recover
     expect(result.status).not.toBe("error");
     expect(backend.reviewerDispatches).toBeGreaterThanOrEqual(2);
   });
+
+  it("a coder whose worker IDLE-TIMES-OUT once then succeeds recovers (replay: idle timeout)", async () => {
+    // #598 replay criterion names idle-timeout alongside connection-drop. An idle
+    // timeout surfaces as a thrown crash from the dispatch — retried fresh.
+    class IdleTimeoutCoderBackend extends CoderCrashBackend {
+      constructor() {
+        super(0);
+      }
+      private idleLeft = 1;
+      override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "coder" && spec.id === "S2") {
+          this.coderDispatches += 1;
+          if (this.idleLeft > 0) {
+            this.idleLeft -= 1;
+            throw new Error("worker exceeded idle timeout (no output for 600s)");
+          }
+          return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+        }
+        return super.dispatchWorker(spec);
+      }
+    }
+    const backend = new IdleTimeoutCoderBackend();
+    const result = await runOrchestrator({ issueNumber: 598, backend });
+    expect(result.status).not.toBe("error");
+    expect(backend.coderDispatches).toBe(2);
+  });
+});
+
+/**
+ * A backend whose S7 ship dispatch is scripted: it crashes `crashes` times, then
+ * (if `judgedFailed`) returns a JUDGED ship-`failed` verdict, else completes.
+ * Everything upstream completes so the run reaches S7.
+ */
+class ShipScriptBackend implements Backend {
+  shipDispatches = 0;
+  constructor(
+    private readonly crashes: number,
+    private readonly judgedFailed = false,
+  ) {}
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {}
+  async resumeSession(): Promise<StepOutput> {
+    return { kind: "coder", committed: true, commitsAdded: 1 };
+  }
+  async fetchIssueMeta(n: number): Promise<IssueMeta> {
+    return { number: n, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
+  }
+  async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+    return { number: n, body: "body", comments: [], agentBrief: "" };
+  }
+  async prepareWorktree(): Promise<WorktreeHandle> {
+    return RUN_WORKTREE;
+  }
+  async writeSnapshot(): Promise<void> {}
+  async runStep(): Promise<StepOutput> {
+    return { kind: "coder", committed: true, commitsAdded: 1 };
+  }
+  async push(): Promise<void> {}
+  async writeLedger(): Promise<void> {}
+  async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+    if (spec.kind === "ship") {
+      this.shipDispatches += 1;
+      if (this.shipDispatches <= this.crashes) {
+        throw new Error("ship container crashed mid-push");
+      }
+      if (this.judgedFailed) {
+        return { kind: "failed", reason: "gstack-ship: tests failed, delivery could not complete" };
+      }
+      return { kind: "completed", output: { kind: "ship", branch: RUN_WORKTREE.branch, status: "pushed" } };
+    }
+    if (spec.kind === "reviewer") {
+      return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+    }
+    return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+  }
+}
+
+describe("#598 integration — the SHIP role: crash retries, a judged failed verdict passes through", () => {
+  it("a ship that crashes once then completes is retried fresh — the run proceeds", async () => {
+    const backend = new ShipScriptBackend(1);
+    const result = await runOrchestrator({ issueNumber: 598, backend });
+    expect(result.status).not.toBe("error");
+    expect(backend.shipDispatches).toBe(2);
+  });
+
+  it("a JUDGED ship-`failed` verdict passes through with ZERO retry (dispatched once)", async () => {
+    const backend = new ShipScriptBackend(0, true);
+    const result = await runOrchestrator({ issueNumber: 598, backend });
+    // A decided delivery failure is surfaced, never re-run.
+    expect(result.status).toBe("error");
+    expect(backend.shipDispatches).toBe(1);
+  });
+});
+
+/**
+ * A backend whose S3 reviewer ALWAYS returns a malformed result (a semantic
+ * invalid-output failure the reviewer's own MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS
+ * loop owns). Counts reviewer dispatches so the composition test can prove the
+ * generic layer does NOT also retry — the reviewer budget is not double-counted.
+ */
+class ReviewerAlwaysMalformedBackend implements Backend {
+  reviewerDispatches = 0;
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {}
+  async resumeSession(): Promise<StepOutput> {
+    return { kind: "coder", committed: true, commitsAdded: 1 };
+  }
+  async fetchIssueMeta(n: number): Promise<IssueMeta> {
+    return { number: n, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
+  }
+  async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+    return { number: n, body: "body", comments: [], agentBrief: "" };
+  }
+  async prepareWorktree(): Promise<WorktreeHandle> {
+    return RUN_WORKTREE;
+  }
+  async writeSnapshot(): Promise<void> {}
+  async runStep(): Promise<StepOutput> {
+    return { kind: "coder", committed: true, commitsAdded: 1 };
+  }
+  async push(): Promise<void> {}
+  async writeLedger(): Promise<void> {}
+  async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+    if (spec.kind === "reviewer") {
+      this.reviewerDispatches += 1;
+      return { kind: "malformed", reason: "reviewer emitted no <review> tag" };
+    }
+    return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+  }
+}
+
+describe("#598 composition — the reviewer's own budget is not double-counted by the generic layer", () => {
+  it("a persistently malformed reviewer is dispatched EXACTLY its own bounded budget (not multiplied by the generic retry)", async () => {
+    const backend = new ReviewerAlwaysMalformedBackend();
+    await runOrchestrator({ issueNumber: 598, backend });
+    // The reviewer's malformed RESULT is caller-owned → deferred to its own
+    // MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS loop; the generic layer never retries it.
+    // So the reviewer is dispatched exactly its own budget (2), NOT 2 × the generic
+    // MAX_DISPATCH_ATTEMPTS. This is the "sequential composition, never
+    // double-counting" invariant.
+    expect(backend.reviewerDispatches).toBe(2);
+    expect(backend.reviewerDispatches).toBeLessThan(2 * MAX_DISPATCH_ATTEMPTS);
+  });
 });
