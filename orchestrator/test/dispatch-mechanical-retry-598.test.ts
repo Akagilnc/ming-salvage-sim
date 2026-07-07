@@ -456,14 +456,19 @@ describe("#598 integration — the SHIP role: crash retries, a judged failed ver
     expect(backend.shipDispatches).toBe(1);
   });
 
-  it("a ship `malformed` (no valid verdict) passes through with ZERO retry — a contract violation, not a transient failure (#598 r2)", async () => {
+  it("a ship `malformed` (no valid verdict) RETRIES through the shared path — a structural process failure, not a decided verdict (#601 corrects #598 r2)", async () => {
+    // #601: the over-conservative "#598 r2" carve-out (a structural ship `malformed`
+    // treated as a non-retried contract violation) is corrected here. A ship that
+    // emits no parseable `<ship>` tag (the dogfood-362 / family-405 incident class)
+    // is a PROCESS-LEVEL failure — the worker produced no valid output — so it
+    // retries through the SAME shared `withMechanicalRetry` path as a coder crash
+    // (#592 "no role treated specially"). A PERSISTENT one exhausts the shared bound
+    // and durably aborts; only a JUDGED `failed` verdict (parsed `<ship>{failed:…}`)
+    // passes through with zero retry (the test directly above).
     const backend = new ShipScriptBackend(0, false, true);
     const result = await runOrchestrator({ issueNumber: 598, backend });
-    // A ship that emits no verdict is a decided contract violation (surfaced), not a
-    // transient protocol failure — never re-run (aligned with the family ship's #451
-    // contract_drift). Only a ship CRASH (throw) retries.
     expect(result.status).toBe("error");
-    expect(backend.shipDispatches).toBe(1);
+    expect(backend.shipDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 });
 

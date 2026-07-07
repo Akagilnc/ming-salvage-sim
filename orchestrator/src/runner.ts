@@ -2830,14 +2830,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ? { escalationAnswer: escalationAnswerForStep }
               : {}),
           };
-          // #598: a ship CRASH (throw — container/connection failure) re-dispatches
-          // fresh. Every RESOLVED ship result passes through with ZERO retry: a judged
-          // `failed` delivery verdict (gstack-ship ran, the delivery hard-failed) and a
-          // `malformed` (no valid ship verdict) are BOTH decided outcomes — a ship that
-          // emits no verdict is a contract violation, not a transient protocol failure
-          // (#598 r2, aligned with the family ship's #451 contract_drift). Only a crash
-          // retries. The worktree's uncommitted residue is reset before each retry
-          // (idempotency); gstack-ship's re-runnable design keeps push/PR idempotent.
+          // #598 + #601: the ship step re-dispatches fresh on a PROCESS-LEVEL failure
+          // (a CRASH throw, or a STRUCTURAL `malformed`/`outcome_protocol_failure` —
+          // the worker emitted no parseable `<ship>` verdict, the dogfood-362 /
+          // family-405 incident class that used to durably abort the run on first
+          // occurrence). The `callerOwns` predicate claims ONLY a JUDGED `failed`
+          // verdict (a parsed `<ship>{failed:…}` delivery failure, or a branch-identity
+          // mismatch RealBackend maps to `failed`) so it passes through with ZERO retry
+          // — a decided delivery failure is never re-run. This is the SAME shared
+          // `withMechanicalRetry` path the coder uses (#592 "no role treated specially"):
+          // the structural no-output case retries, the judged-verdict case does not.
+          // The worktree's uncommitted residue is reset before each retry (idempotency);
+          // gstack-ship's re-runnable design keeps push/PR idempotent.
           const shipWorktree = worktree;
           // Mirror the coder/reviewer reset guard: only wire cleanResidue when a
           // worktree exists (a worktree-less worker has no local residue), so a retry
@@ -2852,7 +2856,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             shipCtx,
             (s, c) => dispatchWorker(backend, s, c),
             {
-              callerOwns: (o) => "result" in o,
+              callerOwns: (o) => "result" in o && o.result.kind === "failed",
               ...shipResetOpt,
             },
           );
