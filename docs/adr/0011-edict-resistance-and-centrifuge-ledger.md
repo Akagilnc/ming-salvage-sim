@@ -122,7 +122,7 @@ design-grounding fan 的红队四角度一致暴露同一承重缝：**若离心
 
 - **功能数不设配额**（FF-3）：按各派实际，可 0、可 1、可多（阉党天然多条，宗室日常≈0），realism 优先于对称，不铺能力矩阵。
 - **不发明新机读态**（承 决定 1）：承重功能 = **裁判规则知识**，落 `season_simulator.md`（凭在场名单 + satisfaction 判合作度），**不给 `factions` 表加功能字段**。软判定形态/时机（哪种扣留、多狠，按动的「理」+ 力度，承 决定 3 折扣）；**持久后果落已有槽位**：factions 离心（satisfaction/leverage）+ issues（如「宗室串联抵制削藩」在办事项）+ 功能效果被否（裁判反映本回合没干净厂卫情报）。装病拖延**不扩 status enum**（合 0009 立场：不为风味态扩 enum），真后果落「issue 不进/不动」。
-- **接触途径分层**（FF-4 = A，召对加 `location` 闸）：在朝（location ∈ 京）→ 召对直达；场外（∉ 京，如宗室藩王/边镇武将/classes 阶层）→ 召对够不着即时奏对，要么旨意经制度中介间接、要么「召其入京」触发 ADR 0009 在途（几回合后抵达，**叙事判抵达、非 #93 的距离/ETA 计算**）。宗室/边镇/阶层共用此「场外 actor 接触模型」。**用 0009 的 `location` 字段（TEXT region_id，「在京」= `location == 'beizhili'`〔京师 / 北直隶 同一 region_id；精确以 live db `_CITY_LEVEL_TIERS` 为准，Gemini 线上〕、非 boolean）+ 在途，不碰 #93**——小闸修掉「召对无视距离」一大半（实证 `summon_minister` 当前纯透传 `__summon__{name}`、零 location 闸，tools.py:476）。
+- **接触途径分层**（FF-4 = A，召对加 `location` 闸）：在朝（location ∈ 京）→ 召对直达；场外（∉ 京，如宗室藩王/边镇武将/classes 阶层）→ 召对够不着即时奏对，要么旨意经制度中介间接、要么「召其入京」触发 ADR 0009 在途（几回合后抵达，**叙事判抵达、非 #93 的距离/ETA 计算**）。宗室/边镇/阶层共用此「场外 actor 接触模型」。**用 0009 的 `location` 字段（TEXT region_id，「在京」= `location == 'beizhili'`〔京师 / 北直隶 同一 region_id；精确以 live db `_CITY_LEVEL_TIERS` 为准，Gemini 线上〕、非 boolean）+ 在途，不碰 #93**——小闸修掉「召对无视距离」一大半（实证 `summon_minister` 当前纯透传 `__summon__{name}`、零 location 闸，tools.py:476）。（**取代注〔2026-07-07 #475 闸〕**：括注「几回合后抵达、叙事判抵达、非 #93 的距离/ETA 计算」与「不碰 #93」已被 0095/0096 取代——在途改 0094 距离矩阵确定性倒数、抵达为引擎事实；本条 location 闸方向〔FF-4〕由 0096 兑现为召对 travel-gating＋候见制。）
 - **宗室特性**（FF-2）：威胁度 < 明初藩王（无独立军权靖难），但**不束手就擒**（削/抄会激起抵抗、串联、装病拖延、舆论，极端时藩兵苗头）；低日常供给 + 高反应性自卫 + 场外间接接触；否「少了反而好」。
 - **P4**：功能态/合作度**永不裸呈现**，定性叙事（「厂卫密报开始慢/掺水/对不上」「百司文书积压」）。
 
@@ -130,7 +130,7 @@ design-grounding fan 的红队四角度一致暴露同一承重缝：**若离心
 
 **依赖 / 承重落地点（→ sub-ADR / 切片）**：
 
-- 依赖 ADR 0009 `location` 字段——**已 MERGED（#106）实装**（db.py:212/827，带 invariant transit_implies_active），依赖已满足；但召对仍不 gate location、仍无在途时间（#93）→ 召对 location 闸 = 单独切片。
+- 依赖 ADR 0009 `location` 字段——**已 MERGED（#106）实装**（db.py:212/827，带 invariant transit_implies_active），依赖已满足；但召对仍不 gate location、仍无在途时间（#93）→ 召对 location 闸 = 单独切片。（取代注〔2026-07-07 #475 闸〕：召对 location 闸已由 0096 落成机制〔travel-gating＋候见制〕、在途时间已由 0095 建成——本条「仍不 gate／仍无在途时间／留 #93」陈述随之取代。）
 - `season_simulator.md` **需净增「各派承重功能 + 反咬」裁判规则**（现无）——待核现状 + 起草。
 - 「issue 不进/不动」作为装病/拖延的后果落点，需确认 issues 机制支持「停滞」语义。
 

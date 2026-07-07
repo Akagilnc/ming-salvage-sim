@@ -1,13 +1,13 @@
 # Reviewer worker entrypoint
 
-Read the baked role soul first:
+Read the role soul first (live-mounted):
 
 ```text
 /home/agent/.orchestrator/souls/reviewer.md
 ```
 
 Then follow that soul and the worktree's `CLAUDE.md`. The runner only schedules
-you; review method and input handling belong to the baked soul plus runner
+you; review method and input handling belong to the role soul (live-mounted) plus runner
 parameters.
 
 ## Required output

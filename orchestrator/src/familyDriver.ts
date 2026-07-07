@@ -593,9 +593,11 @@ export interface FamilyDriverOptions {
   readonly promptsDir: string;
   /** Dir holding the family-layer promptFiles (the merger conflict prompt). */
   readonly familyPromptsDir: string;
+  /** Host dir of souls/*.md to mount live (unconditional rebuild #372). */
+  readonly soulsDir: string;
   /** Where the append-only family ledger + escalation records live (outside the worktree). */
   readonly ledgerDir: string;
-  /** The profile image (toolchain + souls + model CLIs baked in). */
+  /** The profile image (toolchain + skills + model CLIs baked in; souls mounted #372). */
   readonly imageName: string;
   /** Host dir holding the baked dev skills to bind-mount. */
   readonly skillsMount: string;
@@ -662,6 +664,7 @@ export async function runFamilyDriver(
     imageName: options.imageName,
     skillsMount: options.skillsMount,
     promptsDir: options.promptsDir,
+    soulsDir: options.soulsDir,
     home: options.home,
     familyBase: options.familyBase,
   });
@@ -720,6 +723,7 @@ export async function runFamilyDriver(
           repo: options.repo,
           base: options.base,
           promptsDir: options.familyPromptsDir,
+          soulsDir: options.soulsDir,
           imageName: options.imageName,
           familyBaseStartHead,
           home: options.home,
@@ -747,6 +751,21 @@ export async function runFamilyDriver(
  * the ADR 0022 decision-5 resume-truth location).
  */
 export const FAMILY_BASE_START_HEAD_FILENAME = "family-base-start-head";
+
+/**
+ * Single source of truth for the default worker image tag (#372).
+ * Both build.sh (via IMAGE_TAG env) and dispatch (via imageName) must use the
+ * same resolved value so unconditional rebuild + dispatch always hit the just-built tag.
+ */
+export const DEFAULT_IMAGE_TAG = "ming-orchestrator-coder:latest";
+
+/**
+ * Resolve one tag for end-to-end: launcher reads IMAGE_TAG (or default) once,
+ * passes to build (explicit env) and to driver.imageName.
+ */
+export function resolveImageTag(envTag: string | undefined): string {
+  return envTag && envTag.length > 0 ? envTag : DEFAULT_IMAGE_TAG;
+}
 
 /**
  * Cut the LOCAL family base branch from the just-fetched `origin/<base>` on the
