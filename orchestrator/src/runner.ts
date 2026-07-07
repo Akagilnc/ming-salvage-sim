@@ -2597,16 +2597,29 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   : undefined;
               // #598: the generic mechanical retry re-dispatches a process-level
               // crash (failed/malformed/outcome_protocol_failure/throw) with a fresh
-              // worker. The REVIEWER keeps its OWN bounded semantic-retry loop below
-              // (MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS) — so for a reviewer step the
-              // generic layer DEFERS every failure to that loop (no double-count).
-              // Coder/ship have no such loop, so they inherit the generic retry
-              // (the #592 asymmetry: coder/ship previously got zero retries).
+              // worker. Coder/ship have no semantic-retry loop, so they inherit the
+              // generic retry for EVERY process failure (the #592 asymmetry).
+              //
+              // The REVIEWER keeps its OWN bounded semantic loop below
+              // (MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS), which owns invalid/malformed
+              // RESULTS and structured-output THROWS — the generic layer defers those
+              // to it (no double-count). The generic layer DOES retry a NON-structured
+              // crash (connection drop / container start failure), recovering a
+              // transient one; a persistent crash is re-thrown so the reviewer loop's
+              // catch surfaces it exactly as before.
               result = await withMechanicalRetry(
                 workerSpec,
                 dispatchCtx,
                 (s, c) => dispatchWorker(backend, s, c, landingPayload),
-                expectedKind === "reviewer" ? { callerOwns: () => true } : undefined,
+                expectedKind === "reviewer"
+                  ? {
+                      callerOwns: (o) =>
+                        "result" in o
+                          ? true
+                          : isReviewerStructuredOutputError(o.error),
+                      rethrowOnExhaustion: true,
+                    }
+                  : undefined,
               );
             } catch (err) {
               if (
