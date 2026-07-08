@@ -2,7 +2,7 @@
  * #600 — online review-loop: bot polling + verify/fixer/reverify convergence.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../src/dispatchRetry.js";
 import {
   verifyWorkerSpec,
@@ -69,6 +69,7 @@ import {
   isReviewLoopConvergedMarker,
   onlineReviewConvergedForHead,
   verifyReviewerHeadMovedStopSummary,
+  verifySideEffectFailureStopSummary,
 } from "../src/onlineReviewLoop.js";
 import {
   applyVerifySideEffects,
@@ -852,6 +853,64 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
         ],
       }),
     ).toEqual(["a"]);
+  });
+});
+
+describe("#600 r18 retrigger timestamp anchoring", () => {
+  it("pin: roundTrigger captured before post so race-window bot ACK stays fresh", () => {
+    const TRIGGER_BEFORE_POST = "2026-07-08T13:00:00.000Z";
+    const BETWEEN_POST_AND_OLD_CAPTURE = "2026-07-08T13:00:00.500Z";
+    const OLD_BUGGY_CAPTURE = "2026-07-08T13:00:01.000Z";
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(TRIGGER_BEFORE_POST));
+    try {
+      const calls: string[] = [];
+      const sh: Sh = (file, args) => {
+        const cmd = args.join(" ");
+        if (
+          cmd.includes("issues/42/comments") &&
+          cmd.includes("-f") &&
+          cmd.includes(BOT_RETRIGGER_COMMENT.split("\n")[0]!)
+        ) {
+          vi.setSystemTime(new Date(OLD_BUGGY_CAPTURE));
+          return JSON.stringify({ id: 9001, body: "posted" });
+        }
+        return ghFixture({ calls })(file, args);
+      };
+
+      const { roundTrigger } = retriggerBotsAndPoll(
+        sh,
+        "o/r",
+        "https://github.com/o/r/pull/42",
+        2,
+        "headsha1",
+      );
+
+      expect(roundTrigger.triggeredAt).toBe(TRIGGER_BEFORE_POST);
+      expect(
+        evidenceAdmissible(
+          {
+            terminalState: "fresh_live",
+            timestamp: BETWEEN_POST_AND_OLD_CAPTURE,
+          },
+          "headsha1",
+          roundTrigger,
+        ),
+      ).toBe(true);
+      expect(
+        evidenceAdmissible(
+          {
+            terminalState: "fresh_live",
+            timestamp: BETWEEN_POST_AND_OLD_CAPTURE,
+          },
+          "headsha1",
+          buildRoundTrigger("headsha1", OLD_BUGGY_CAPTURE),
+        ),
+      ).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -1888,6 +1947,44 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     });
   });
 
+  it("pin r18 family path: applyVerifySideEffects throw → decision_gate_raised in-band", async () => {
+    const sh: Sh = () => {
+      throw new Error("gh should not be called");
+    };
+    const result = await runOnlineReviewLoopStage({
+      poll: async () => baseSnapshot,
+      dispatchVerify: async () => ({
+        kind: "verify",
+        converged: true,
+        isRecheck: true,
+        threadsToResolve: ["PRRT_kwDOExampleThread"],
+      }),
+      dispatchFixer: async () => true,
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (verify, fixingCommitSha) => {
+        applyVerifySideEffects({
+          sh,
+          repo: "o/r",
+          prUrl: "https://github.com/o/r/pull/42",
+          verify,
+          fixingCommitSha,
+        });
+        return verify;
+      },
+      retriggerAfterFix: () => {},
+    });
+    expect(result).toEqual({
+      ok: false,
+      terminalState: "decision_gate_raised",
+      round: 1,
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        summary: expect.stringContaining("side effects failed"),
+      }),
+    });
+  });
+
   it("pin r17: worker converged:true clamped when landing checkRuns are red", async () => {
     let fixerCalls = 0;
     const snapshotWithRedCi: PrReviewSnapshot = {
@@ -1920,6 +2017,19 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       terminalState: "decision_gate_raised",
       round: 1,
     });
+  });
+});
+
+describe("#600 r18 verifySideEffectFailureStopSummary contract", () => {
+  it("pin single-slice: stopSummary shape used by runner errorTermination", () => {
+    const err = new Error(
+      "applyVerifySideEffects: threadsToResolve requires fixingCommitSha on recheck",
+    );
+    const stopSummary = verifySideEffectFailureStopSummary(err);
+    expect(stopSummary.reason).toBe("infra_failure");
+    expect(stopSummary.summary).toContain("side effects failed");
+    expect(stopSummary.summary).toContain("fixingCommitSha");
+    expect(stopSummary.repairHint).toMatch(/rerun/i);
   });
 });
 
