@@ -1416,7 +1416,11 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         pr: "pr://slice/offline-255",
       }),
       entry("S9", { kind: "verify", converged: false }),
-      entry("S10", { kind: "fixer", committed: true }),
+      entry("S10", {
+        kind: "fixer",
+        committed: true,
+        fixCommitSha: "fixsha1111111111111111111111111111111111",
+      }),
       // truncated before fresh re-verify / S11; no S8 yet — S9 false → S10 is the
       // legal loop-back topology (not converged:true then fixer).
     ];
@@ -1820,7 +1824,11 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       },
       {
         step: "S10",
-        output: { kind: "fixer", committed: true },
+        output: {
+          kind: "fixer",
+          committed: true,
+          fixCommitSha: "fixsha1111111111111111111111111111111111",
+        },
         branchHEAD: fixSha,
         sessionId: "session-prior",
         prompt_hash: "hash-S10",
@@ -1979,7 +1987,11 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       }),
       entry(
         "S10",
-        { kind: "fixer", committed: true },
+        {
+          kind: "fixer",
+          committed: true,
+          fixCommitSha: "fixsha1111111111111111111111111111111111",
+        },
         "session-fix",
         fixSha,
       ),

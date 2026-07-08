@@ -1180,7 +1180,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
               spec.kind === "verify"
                 ? { kind: "verify", converged: true }
                 : spec.kind === "fixer"
-                  ? { kind: "fixer", committed: true }
+                  ? {
+                    kind: "fixer",
+                    committed: true,
+                    fixCommitSha: "fixsha1111111111111111111111111111111111",
+                  }
                   : spec.kind === "cleanup"
                     ? { kind: "cleanup", ok: true }
                     : { kind: "docRelease", released: true },

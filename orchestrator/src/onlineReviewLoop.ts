@@ -1130,12 +1130,12 @@ export interface OnlineReviewLoopDispatch {
   ) => VerifyResult;
   readonly retriggerAfterFix: () => void | Promise<void>;
   /**
-   * Resolve the fixing commit SHA after fixer success (post-push HEAD).
-   * When the fixer envelope carries alreadySatisfied.fixCommitSha, that override
-   * is passed so the stage does not re-read git (ADR 0030 envelope-only).
+   * Record/persist the fixing commit SHA after fixer success.
+   * Receives the envelope {@link fixCommitSha} only — never re-read live git
+   * (ADR 0030 envelope-only).
    */
   readonly resolveFixCommitSha?: (
-    envelopeFixSha?: string,
+    envelopeFixSha: string,
   ) => string | Promise<string>;
 }
 
@@ -1256,11 +1256,25 @@ export async function runOnlineReviewLoopStage(
         stopSummary: onlineReviewFixerNothingToFixStopSummary(),
       };
     }
+    const envelopeFixSha = fixerEnvelopeFixCommitSha(fixerOutput);
+    if (envelopeFixSha === undefined || envelopeFixSha.length === 0) {
+      return {
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round,
+        stopSummary: {
+          reason: "infra_failure",
+          summary:
+            "fixer envelope missing fixCommitSha despite proceeding to verify",
+          repairHint:
+            "emit fixCommitSha on committed:true and alreadySatisfied fixer outcomes",
+        },
+      };
+    }
     try {
-      lastFixCommitSha =
-        (await dispatch.resolveFixCommitSha?.(
-          fixerEnvelopeFixCommitSha(fixerOutput),
-        )) ?? snapshot.headOid;
+      lastFixCommitSha = dispatch.resolveFixCommitSha
+        ? await dispatch.resolveFixCommitSha(envelopeFixSha)
+        : envelopeFixSha;
     } catch (err) {
       if (err instanceof OnlineReviewLoopTerminal) {
         throw err;

@@ -318,7 +318,11 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       }
       if (spec.kind === "fixer") {
         familyBackend.head = postFixHead;
-        return { kind: "completed", output: { kind: "fixer", committed: true } };
+        return { kind: "completed", output: {
+                  kind: "fixer",
+                  committed: true,
+                  fixCommitSha: "fixsha1111111111111111111111111111111111",
+                } };
       }
       const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
       return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
@@ -433,7 +437,11 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
             spec.kind === "verify"
               ? { kind: "verify", converged: true }
               : spec.kind === "fixer"
-                ? { kind: "fixer", committed: true }
+                ? {
+                  kind: "fixer",
+                  committed: true,
+                  fixCommitSha: "fixsha1111111111111111111111111111111111",
+                }
                 : spec.kind === "cleanup"
                   ? { kind: "cleanup", ok: true }
                   : { kind: "docRelease", released: true },

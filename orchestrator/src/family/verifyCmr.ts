@@ -1760,12 +1760,8 @@ export async function runFamilyOnlineReviewLoop(input: {
         loopState.round = nextRound;
       }
     },
-    resolveFixCommitSha: async (envelopeFixSha?: string) => {
-      const sha =
-        envelopeFixSha ??
-        (typeof input.familyBackend.readFamilyHead === "function"
-          ? await input.familyBackend.readFamilyHead(input.familyBase)
-          : (input.ship.prHead ?? ""));
+    resolveFixCommitSha: async (envelopeFixSha: string) => {
+      const sha = envelopeFixSha;
       familyLastFixCommitSha = sha;
       loopState.lastFixSha = sha;
       await recordOnlineReviewFixCommitted(input.familyBackend, {

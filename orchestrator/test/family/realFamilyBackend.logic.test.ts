@@ -1028,8 +1028,17 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
 
   it("feeds RAW valid fixer through real parseFixerOutcome (family-side kind)", async () => {
     const mod = await import("../../src/family/realFamilyBackend.js");
+    const sha = "a".repeat(40);
+    const out = mod.parseFixerOutcome(
+      `<fixer>{"committed": true, "fixCommitSha": "${sha}"}</fixer>`,
+    );
+    expect(out).toEqual({ kind: "fixer", committed: true, fixCommitSha: sha });
+  });
+
+  it("pin r39: committed:true without fixCommitSha is malformed on family parseFixerOutcome", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
     const out = mod.parseFixerOutcome(`<fixer>{"committed": true}</fixer>`);
-    expect(out).toEqual({ kind: "fixer", committed: true });
+    expect(out.kind).toBe("malformed");
   });
 
   it("RAW extra keys on verify is malformed (strict, matches single-slice .strict())", async () => {
