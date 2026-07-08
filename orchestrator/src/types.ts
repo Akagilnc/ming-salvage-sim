@@ -578,7 +578,8 @@ export interface OnlineReviewThreadReply {
 export type OnlineReviewTerminalState =
   | "mergeable"
   | "round_budget_exhausted"
-  | "decision_gate_raised";
+  | "decision_gate_raised"
+  | "contract_drift";
 
 export type OnlineReviewBotLegLanding =
   | { readonly state: "pending" }

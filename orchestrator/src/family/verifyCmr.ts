@@ -76,6 +76,7 @@ import {
   retriggerBotsAndPoll,
   runOnlineReviewLoopStage,
   shipLedgerTriggeredAtFromFamilyLedger,
+  verifyReviewerHeadMovedStopSummary,
   waitForBotQuiescence,
   type OnlineReviewLoopStageResult,
 } from "../onlineReviewLoop.js";
@@ -1414,6 +1415,22 @@ function describeShipPrState(ship: {
  * before throwing. A NON-throwing dispatch is returned unchanged (escalated /
  * completed / malformed are handled by the callers).
  */
+function familyOnlineReviewLoopFailureStopSummary(
+  reviewLoop: OnlineReviewLoopStageResult,
+): StopSummary {
+  if (reviewLoop.stopSummary !== undefined) {
+    return reviewLoop.stopSummary;
+  }
+  const reason =
+    reviewLoop.terminalState === "round_budget_exhausted"
+      ? "family online review loop exhausted the 3-round budget"
+      : "family online review loop did not converge";
+  return infraFailureStopSummary({
+    summary: `${reason} (terminal: ${reviewLoop.terminalState})`,
+    repairHint: "resolve remaining online review findings or answer the decision gate",
+  });
+}
+
 async function dispatchFamilyReviewWorker(
   familyBackend: FamilyBackend,
   spec: WorkerSpec,
@@ -1511,12 +1528,35 @@ export async function runFamilyOnlineReviewLoop(input: {
       return snapshot;
     },
     dispatchVerify: async (landing, round) => {
+      const headBefore = await readRequiredFamilyHead(
+        input.familyBackend,
+        input.familyBase,
+      );
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
         verifyWorkerSpec(input.resolvedRoute),
         { ...baseCtx, onlineReviewRound: round },
         landing,
       );
+      const headAfter = await readRequiredFamilyHead(
+        input.familyBackend,
+        input.familyBase,
+      );
+      if (
+        headBefore !== undefined &&
+        headAfter !== undefined &&
+        headAfter !== headBefore
+      ) {
+        throw new OnlineReviewLoopTerminal({
+          ok: false,
+          terminalState: "contract_drift",
+          round,
+          stopSummary: verifyReviewerHeadMovedStopSummary({
+            headBefore,
+            headAfter,
+          }),
+        });
+      }
       if (result.kind !== "completed" || !isValidVerifyResult(result.output)) {
         throw new OnlineReviewLoopTerminal({
           ok: false,
@@ -2847,10 +2887,8 @@ export async function runVerifyCmr(
     resolvedRoute,
   });
   if (!reviewLoop.ok) {
-    const reason =
-      reviewLoop.terminalState === "round_budget_exhausted"
-        ? "family online review loop exhausted the 3-round budget"
-        : "family online review loop did not converge";
+    const stopSummary = familyOnlineReviewLoopFailureStopSummary(reviewLoop);
+    const reason = stopSummary.summary;
     await familyBackend.recordAborted?.({
       phase,
       familyBase,
@@ -2861,10 +2899,7 @@ export async function runVerifyCmr(
       phase,
       reason,
       familyHeadAfter: exactPostShipFamilyHead,
-      stopSummary: infraFailureStopSummary({
-        summary: `${reason} (terminal: ${reviewLoop.terminalState})`,
-        repairHint: "resolve remaining online review findings or answer the decision gate",
-      }),
+      stopSummary,
     });
     return INCOMPLETE_GATE;
   }

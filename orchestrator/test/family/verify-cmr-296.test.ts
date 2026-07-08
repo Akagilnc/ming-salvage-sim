@@ -1056,6 +1056,8 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       "family/291-base",
       "family/291-base",
       "family/291-base",
+      "family/291-base",
+      "family/291-base",
     ]);
   });
 
