@@ -1598,12 +1598,14 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
   });
 
-  it("pin r33: fix-gap resume poll receives gap trigger from full resumeLedger; non-gap unchanged", async () => {
+  it("pin r33: fix-gap resume posts retrigger + marker then polls; non-gap unchanged", async () => {
     const livePr = "https://github.com/o/r/pull/255";
     const fixSha = "fixsha1111111111111111111111111111111111";
     const fixTs = "2026-07-08T12:30:00.000Z";
     const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const ensuredRetriggerTs = "2026-07-08T13:30:00.000Z";
     const gapTrigger = buildRoundTrigger(fixSha, fixTs);
+    const ensuredTrigger = buildRoundTrigger(fixSha, ensuredRetriggerTs);
     const persistedTrigger = buildRoundTrigger(fixSha, retriggerTs);
     const reviewLoopBase = [
       entry("S0"),
@@ -1645,6 +1647,12 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         totalFindingCount: 0,
         quiescent: true,
       }));
+    const ensureSpy = vi
+      .spyOn(onlineReviewLoop, "ensureOnlineReviewRetriggerAfterFixGap")
+      .mockImplementation(({ gapTrigger: gap }) => ({
+        roundTrigger: buildRoundTrigger(gap.headOid, ensuredRetriggerTs),
+        posted: true,
+      }));
 
     const prevOffline = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     const prevRepo = process.env.ORCHESTRATOR_REPO;
@@ -1681,9 +1689,18 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       });
 
       expect(fixGapResult.status).toBe("success");
+      expect(ensureSpy).toHaveBeenCalledTimes(1);
+      expect(ensureSpy.mock.calls[0]![0].gapTrigger).toEqual(gapTrigger);
+      expect(
+        fixGapBackend.ledgerWrites.some(
+          (e) => e.event === "online_review_round_retrigger",
+        ),
+      ).toBe(true);
       expect(pollSpy).toHaveBeenCalledTimes(1);
-      expect(pollSpy.mock.calls[0]![1].roundTrigger).toEqual(gapTrigger);
-      expect(pollSpy.mock.calls[0]![1].roundTrigger.triggeredAt).toBe(fixTs);
+      expect(pollSpy.mock.calls[0]![1].roundTrigger).toEqual(ensuredTrigger);
+      expect(pollSpy.mock.calls[0]![1].roundTrigger.triggeredAt).toBe(
+        ensuredRetriggerTs,
+      );
       expect(fixGapBackend.dispatchSpecs.filter((s) => s.id === "S10")).toHaveLength(
         0,
       );
@@ -1719,6 +1736,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         stateDir: STATE_DIR,
         ledger: retriggerPrior,
       });
+      ensureSpy.mockClear();
       pollSpy.mockClear();
       const retriggerResult = await runOrchestrator({
         issueNumber: 255,
@@ -1726,6 +1744,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       });
 
       expect(retriggerResult.status).toBe("success");
+      expect(ensureSpy).not.toHaveBeenCalled();
       expect(pollSpy).toHaveBeenCalledTimes(1);
       expect(pollSpy.mock.calls[0]![1].roundTrigger).toEqual(persistedTrigger);
       expect(pollSpy.mock.calls[0]![1].roundTrigger.triggeredAt).toBe(retriggerTs);
@@ -1734,6 +1753,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       ).toHaveLength(0);
       expect(retriggerBackend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
     } finally {
+      ensureSpy.mockRestore();
       pollSpy.mockRestore();
       if (prevOffline === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

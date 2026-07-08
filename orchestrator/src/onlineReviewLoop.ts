@@ -27,6 +27,8 @@ import {
   BOT_POLL_INTERVAL_MS,
   BOT_RETRIGGER_COMMENT,
   checkRunsConverged,
+  findAdmissibleRetriggerComment,
+  parsePrRef,
   pollPrReviewState,
   postBotRetriggerComment,
 } from "./botPolling.js";
@@ -878,6 +880,41 @@ export async function waitForBotQuiescence(
     }
   }
   return last!;
+}
+
+/**
+ * Gap-resume recovery: post the bot re-trigger when fix_committed landed but the
+ * retrigger marker did not (#600 r34). Idempotent — skips posting when evidence
+ * collection already finds an admissible re-trigger comment for this round/head.
+ */
+export function ensureOnlineReviewRetriggerAfterFixGap(input: {
+  readonly sh: Sh;
+  readonly repo: string;
+  readonly prUrl: string;
+  readonly gapTrigger: RoundTrigger;
+}): { readonly roundTrigger: RoundTrigger; readonly posted: boolean } {
+  const existing = findAdmissibleRetriggerComment(
+    input.sh,
+    input.repo,
+    input.prUrl,
+    input.gapTrigger,
+  );
+  if (existing !== undefined) {
+    return { roundTrigger: existing, posted: false };
+  }
+  const { prNumber } = parsePrRef(input.prUrl, input.repo);
+  const headProbe = pollPrReviewState(input.sh, {
+    repo: input.repo,
+    prUrl: input.prUrl,
+    pollCount: 0,
+    roundTrigger: input.gapTrigger,
+  });
+  const triggeredAt = new Date().toISOString();
+  postBotRetriggerComment(input.sh, input.repo, prNumber, BOT_RETRIGGER_COMMENT);
+  return {
+    roundTrigger: buildRoundTrigger(headProbe.headOid, triggeredAt),
+    posted: true,
+  };
 }
 
 /** Post R2/R3 re-trigger then poll once (caller may loop). */

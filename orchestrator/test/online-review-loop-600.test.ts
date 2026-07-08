@@ -41,6 +41,8 @@ import {
   ONLINE_REVIEW_BOT_IDS,
   paginateReviewThreadNodes,
   parsePrRef,
+  findAdmissibleRetriggerComment,
+  isBotRetriggerCommentBody,
   pollPrReviewState,
   postBotRetriggerComment,
 } from "../src/botPolling.js";
@@ -65,6 +67,7 @@ import {
   onlineReviewRoundFromLedger,
   onlineReviewRoundTriggerFromFamilyLedger,
   onlineReviewRoundTriggerFromLedger,
+  ensureOnlineReviewRetriggerAfterFixGap,
   retriggerBotsAndPoll,
   familyPendingRoundTriggerFromFixGap,
   resolveOnlineReviewRoundTrigger,
@@ -1401,6 +1404,163 @@ describe("#600 r18 retrigger timestamp anchoring", () => {
   });
 });
 
+describe("#600 r34 gap-resume retrigger recovery", () => {
+  const fixSha = "fixsha1111111111111111111111111111111111";
+  const fixTs = "2026-07-08T12:30:00.000Z";
+  const gapTrigger = buildRoundTrigger(fixSha, fixTs);
+  const existingRetriggerTs = "2026-07-08T13:00:00.000Z";
+
+  it("pin r34: ensure posts retrigger when no admissible comment exists", () => {
+    const calls: string[] = [];
+    const sh = ghFixture({ calls });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-08T13:30:00.000Z"));
+    try {
+      const result = ensureOnlineReviewRetriggerAfterFixGap({
+        sh,
+        repo: "o/r",
+        prUrl: "https://github.com/o/r/pull/42",
+        gapTrigger,
+      });
+      expect(result.posted).toBe(true);
+      expect(result.roundTrigger).toEqual(
+        buildRoundTrigger("headsha1", "2026-07-08T13:30:00.000Z"),
+      );
+      expect(
+        calls.some((c) => c.includes(BOT_RETRIGGER_COMMENT.split("\n")[0]!)),
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pin r34: ensure skips post when admissible retrigger comment already exists", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      const cmd = args.join(" ");
+      calls.push(cmd);
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews")
+      ) {
+        return JSON.stringify({
+          head: { sha: fixSha },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") && !cmd.includes("issues/comments/")) {
+        return JSON.stringify([
+          {
+            id: 8801,
+            user: { login: "orchestrator-host" },
+            body: BOT_RETRIGGER_COMMENT,
+            created_at: existingRetriggerTs,
+          },
+        ]);
+      }
+      if (cmd.includes("pulls/42/comments")) return "[]";
+      if (cmd.includes("check-runs")) return JSON.stringify({ check_runs: [] });
+      if (cmd.includes("pulls/42/reviews")) return "[]";
+      if (cmd.includes("/reactions")) return "[]";
+      return reviewThreadsGraphqlFallback(cmd) ?? "[]";
+    };
+
+    const existing = findAdmissibleRetriggerComment(
+      sh,
+      "o/r",
+      "https://github.com/o/r/pull/42",
+      gapTrigger,
+    );
+    expect(existing).toEqual(buildRoundTrigger(fixSha, existingRetriggerTs));
+
+    const result = ensureOnlineReviewRetriggerAfterFixGap({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      gapTrigger,
+    });
+    expect(result.posted).toBe(false);
+    expect(result.roundTrigger).toEqual(buildRoundTrigger(fixSha, existingRetriggerTs));
+    expect(
+      calls.some((c) => c.includes(BOT_RETRIGGER_COMMENT.split("\n")[0]!) && c.includes("-f")),
+    ).toBe(false);
+  });
+
+  it("pin r34: double gap-resume does not duplicate retrigger comment", () => {
+    let postCount = 0;
+    const sh: Sh = (file, args) => {
+      const cmd = args.join(" ");
+      if (
+        cmd.includes("issues/42/comments") &&
+        cmd.includes("-f") &&
+        cmd.includes(BOT_RETRIGGER_COMMENT.split("\n")[0]!)
+      ) {
+        postCount += 1;
+        return JSON.stringify({ id: 9000 + postCount, body: "posted" });
+      }
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews")
+      ) {
+        return JSON.stringify({
+          head: { sha: fixSha },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") && !cmd.includes("issues/comments/")) {
+        if (postCount > 0) {
+          return JSON.stringify([
+            {
+              id: 9001,
+              user: { login: "orchestrator-host" },
+              body: BOT_RETRIGGER_COMMENT,
+              created_at: "2026-07-08T13:30:00.000Z",
+            },
+          ]);
+        }
+        return "[]";
+      }
+      if (cmd.includes("pulls/42/comments")) return "[]";
+      if (cmd.includes("check-runs")) return JSON.stringify({ check_runs: [] });
+      if (cmd.includes("pulls/42/reviews")) return "[]";
+      if (cmd.includes("/reactions")) return "[]";
+      return reviewThreadsGraphqlFallback(cmd) ?? "[]";
+    };
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-08T13:30:00.000Z"));
+    try {
+      const first = ensureOnlineReviewRetriggerAfterFixGap({
+        sh,
+        repo: "o/r",
+        prUrl: "https://github.com/o/r/pull/42",
+        gapTrigger,
+      });
+      const second = ensureOnlineReviewRetriggerAfterFixGap({
+        sh,
+        repo: "o/r",
+        prUrl: "https://github.com/o/r/pull/42",
+        gapTrigger,
+      });
+      expect(first.posted).toBe(true);
+      expect(second.posted).toBe(false);
+      expect(postCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pin r34: isBotRetriggerCommentBody matches the wiki contract body", () => {
+    expect(isBotRetriggerCommentBody(BOT_RETRIGGER_COMMENT)).toBe(true);
+    expect(isBotRetriggerCommentBody("  " + BOT_RETRIGGER_COMMENT + "  ")).toBe(true);
+    expect(isBotRetriggerCommentBody("unrelated")).toBe(false);
+  });
+});
+
 describe("#600 retriggerBotsAndPoll (#600 AC2)", () => {
   it("posts R2/R3 re-trigger then polls", () => {
     const calls: string[] = [];
@@ -2704,7 +2864,8 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     expect(onlineReviewRoundFromLedger(afterS10Only)).toBe(2);
     expect(lastOnlineReviewFixCommitShaFromLedger(afterS10Only)).toBe(fixSha);
 
-    // crash after fix_committed, before/during retrigger network → gap reader, no fixer rerun
+    // crash after fix_committed, before/during retrigger network → gap reader;
+    // resume ACTION: POST retrigger (idempotent) + persist marker + poll (not fixer)
     const afterFixCommitted = [s9False, fixCommittedOnly];
     expect(slicePostFixVerifyPendingFromMarkerGap(afterFixCommitted)).toBe(true);
     expect(onlineReviewRoundFromLedger(afterFixCommitted)).toBe(2);
@@ -2720,7 +2881,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       }),
     ).toEqual(gapTrigger);
 
-    // crash after retrigger network, before retrigger marker → same gap recovery
+    // crash after retrigger network, before retrigger marker → same gap recovery ACTION
     expect(slicePostFixVerifyPendingFromMarkerGap(afterFixCommitted)).toBe(true);
     expect(onlineReviewRoundTriggerFromLedger(afterFixCommitted)).toBeUndefined();
 
@@ -2766,7 +2927,8 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       ts: retriggerTs,
     };
 
-    // crash after fix_committed, before/during retrigger network
+    // crash after fix_committed, before/during retrigger network;
+    // resume ACTION: POST retrigger (idempotent) + persist marker + poll (symmetric)
     expect(onlineReviewRoundFromFamilyLedger([fixCommittedOnly])).toBe(2);
     expect(lastOnlineReviewFixCommitShaFromFamilyLedger([fixCommittedOnly])).toBe(fixSha);
     const gapTrigger = familyPendingRoundTriggerFromFixGap([fixCommittedOnly]);
