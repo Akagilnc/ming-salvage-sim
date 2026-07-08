@@ -1301,7 +1301,8 @@ function planResume(
       const escalatedLedgerIdx = ledger.lastIndexOf(agentEntry);
       return {
         resumeStep: agentEntry.step,
-        resumeSessionId: agentEntry.sessionId,
+        resumeSessionId:
+          typeof agentEntry.sessionId === "string" ? agentEntry.sessionId : undefined,
         escalationAnswer: answer,
         lastOutput: agentEntry.output,
         priorLedger: ledger.slice(0, escalatedLedgerIdx) as ReadonlyArray<LedgerEntry>,
@@ -1376,7 +1377,8 @@ function planResume(
     const priorLedger = ledger.slice(0, escalatedLedgerIdx);
     return {
       resumeStep: agentEntry.step,
-      resumeSessionId: agentEntry.sessionId,
+      resumeSessionId:
+        typeof agentEntry.sessionId === "string" ? agentEntry.sessionId : undefined,
       escalationAnswer: answer,
       lastOutput: agentEntry.output,
       priorLedger: priorLedger as ReadonlyArray<LedgerEntry>,
@@ -2409,7 +2411,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // Continue from the recorded breakpoint.
     step = plan.resumeStep;
-    if (plan.resumeSessionId !== undefined) {
+    if (typeof plan.resumeSessionId === "string") {
       resumeFor = { step: plan.resumeStep, sessionId: plan.resumeSessionId };
     }
     resumedEscalationAnswer = plan.escalationAnswer;
@@ -2572,7 +2574,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           expectedKind === "coder" ? gitHead(worktree) : undefined;
         try {
           let resumeSessionId: string | undefined;
-          if (resumeFor !== undefined && resumeFor.step === step) {
+          if (resumeFor !== undefined && resumeFor.step === step && typeof resumeFor.sessionId === "string") {
             resumeSessionId = resumeFor.sessionId;
             resumeFor = undefined;
           }
@@ -2593,12 +2595,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             try {
               const workerSpec = stepSpecToWorkerSpec(
                 stepSpecs[step],
-                resumeSessionId !== undefined ? "resume" : "fresh",
+                typeof resumeSessionId === "string" ? "resume" : "fresh",
               );
               const dispatchCtx = {
                 worktree,
                 stateDir,
-                ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
+                ...(typeof resumeSessionId === "string" ? { resumeSessionId } : {}),
                 ...(escalationAnswerForStep != null
                   ? { escalationAnswer: escalationAnswerForStep }
                   : {}),

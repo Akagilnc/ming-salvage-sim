@@ -427,9 +427,11 @@ export async function legacyDispatchWorker(
         }
       : undefined;
   try {
-    // #709 exemption (strict kept): resumeSessionId !== undefined distinction vs null is
-    // load-bearing on the dispatch path (decides resumeSession vs runStep for crash/retry resume).
-    if (ctx.resumeSessionId !== undefined) {
+    // Robust guard (typeof string): explicit null from any source (incl. a
+    // deserialized ledger with bad sessionId that slipped parse) must be
+    // treated as absent, never passed as `resumeSessionId: null` to backend.
+    // (The key presence vs value was load-bearing; we now require a real string id.)
+    if (typeof ctx.resumeSessionId === "string") {
       ret = await backend.resumeSession(
         stepSpec,
         ctx.worktree,

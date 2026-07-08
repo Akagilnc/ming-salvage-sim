@@ -1412,6 +1412,11 @@ const STEP_IDS: ReadonlySet<string> = new Set([
  * whose `step` is a valid {@link StepId}. (`output` / `handoffStatus` are
  * optional, so the minimal valid entry is `{step}`.)
  *
+ * sessionId (when present) must be string — explicit null / non-string is
+ * corrupt. This is the parse-boundary guard that prevents raw JSON null from
+ * flowing through to resumeSessionId in DispatchContext / resumeFor / backend
+ * (addresses the deserial path for #709 resumeSessionId sites).
+ *
  * Online codex P2: a line such as `null`, `{}`, `42`, or `{"step":"S9"}`
  * `JSON.parse`s fine yet is NOT a ledger entry. Without this guard such a record
  * flows into `findResumeState` → `planResume`, where `lastEntry.step` is read
@@ -1426,7 +1431,10 @@ function isLedgerEntryShape(
     return false;
   }
   const step = (value as { step?: unknown }).step;
-  return typeof step === "string" && STEP_IDS.has(step);
+  if (typeof step !== "string" || !STEP_IDS.has(step)) return false;
+  const sid = (value as { sessionId?: unknown }).sessionId;
+  if (sid !== undefined && typeof sid !== "string") return false;
+  return true;
 }
 
 export function parseLedgerJsonl(raw: string): ResumeState["ledger"] {
