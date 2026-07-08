@@ -14,12 +14,20 @@ import type {
   VerifyResult,
 } from "./types.js";
 
+/** Landing thread pairing: REST comment id + GraphQL node id (#600 r23). */
+export type LandingThreadRef = {
+  readonly id: string;
+  readonly threadNodeId?: string;
+};
+
 export interface ApplyVerifySideEffectsInput {
   readonly sh: Sh;
   readonly repo: string;
   readonly prUrl: string;
   readonly verify: VerifyResult;
   readonly fixingCommitSha?: string;
+  /** Poll snapshot threads — required for live side effects to translate worker-echoed ids. */
+  readonly landingThreads?: ReadonlyArray<LandingThreadRef>;
 }
 
 export interface ApplyVerifySideEffectsResult {
@@ -132,6 +140,84 @@ export function resolveReviewThread(
   ]);
 }
 
+function findLandingThread(
+  echoedId: string,
+  threads: ReadonlyArray<LandingThreadRef>,
+): LandingThreadRef | undefined {
+  return threads.find(
+    (t) =>
+      t.id === echoedId ||
+      String(t.id) === echoedId ||
+      t.threadNodeId === echoedId,
+  );
+}
+
+function landingThreadIdMismatchError(echoedId: string): Error {
+  return new Error(
+    `onlineReviewSideEffects: thread id ${echoedId} matches neither REST comment id nor GraphQL node id in landing`,
+  );
+}
+
+/** Replies post via REST — require the top-level review-comment databaseId. */
+export function restCommentIdForReply(
+  echoedId: string,
+  landingThreads: ReadonlyArray<LandingThreadRef> | undefined,
+): string {
+  if (landingThreads === undefined || landingThreads.length === 0) {
+    if (echoedId.startsWith("PRRT_")) {
+      throw new Error(
+        `onlineReviewSideEffects: thread reply requires REST comment id, got GraphQL node id ${echoedId}`,
+      );
+    }
+    return echoedId;
+  }
+  const thread = findLandingThread(echoedId, landingThreads);
+  if (thread === undefined) {
+    throw landingThreadIdMismatchError(echoedId);
+  }
+  return thread.id;
+}
+
+/** Resolution uses GraphQL `resolveReviewThread` — require the reviewThread node id. */
+export function graphqlNodeIdForResolve(
+  echoedId: string,
+  landingThreads: ReadonlyArray<LandingThreadRef> | undefined,
+): string {
+  if (landingThreads === undefined || landingThreads.length === 0) {
+    return echoedId;
+  }
+  const thread = findLandingThread(echoedId, landingThreads);
+  if (thread === undefined) {
+    throw landingThreadIdMismatchError(echoedId);
+  }
+  if (thread.threadNodeId === undefined || thread.threadNodeId.length === 0) {
+    throw new Error(
+      `onlineReviewSideEffects: landing thread ${thread.id} has no GraphQL node id for resolution`,
+    );
+  }
+  return thread.threadNodeId;
+}
+
+function threadIdsReferToSameLandingThread(
+  a: string,
+  b: string,
+  landingThreads: ReadonlyArray<LandingThreadRef> | undefined,
+): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (landingThreads === undefined || landingThreads.length === 0) {
+    return false;
+  }
+  const threadA = findLandingThread(a, landingThreads);
+  const threadB = findLandingThread(b, landingThreads);
+  return (
+    threadA !== undefined &&
+    threadB !== undefined &&
+    threadA.id === threadB.id
+  );
+}
+
 function deferDispositions(
   verify: VerifyResult,
 ): ReadonlyArray<OnlineReviewFindingDisposition> {
@@ -180,7 +266,7 @@ function deferReplyBody(
 export function applyVerifySideEffects(
   input: ApplyVerifySideEffectsInput,
 ): ApplyVerifySideEffectsResult {
-  const { sh, repo, prUrl, verify } = input;
+  const { sh, repo, prUrl, verify, landingThreads } = input;
   const { prNumber } = parsePrRef(prUrl, repo);
   const deferredIssueUrls: string[] = [];
   const repliesPosted: OnlineReviewThreadReply[] = [];
@@ -199,16 +285,18 @@ export function applyVerifySideEffects(
       disposition,
       issueUrl,
     );
-    replyToReviewThread(sh, repo, prNumber, disposition.threadId, replyBody);
-    repliesPosted.push({ threadId: disposition.threadId, body: replyBody });
+    const commentId = restCommentIdForReply(disposition.threadId, landingThreads);
+    replyToReviewThread(sh, repo, prNumber, commentId, replyBody);
+    repliesPosted.push({ threadId: commentId, body: replyBody });
   }
 
   for (const reply of verify.threadReplies ?? []) {
     if (deferDispositions(verify).some((d) => d.threadId === reply.threadId)) {
       continue;
     }
-    replyToReviewThread(sh, repo, prNumber, reply.threadId, reply.body);
-    repliesPosted.push(reply);
+    const commentId = restCommentIdForReply(reply.threadId, landingThreads);
+    replyToReviewThread(sh, repo, prNumber, commentId, reply.body);
+    repliesPosted.push({ threadId: commentId, body: reply.body });
   }
 
   if (
@@ -230,18 +318,25 @@ export function applyVerifySideEffects(
 
   for (const threadId of verify.threadsToResolve ?? []) {
     const fixingCommitSha = input.fixingCommitSha!;
+    const commentId = restCommentIdForReply(threadId, landingThreads);
+    const nodeId = graphqlNodeIdForResolve(threadId, landingThreads);
     const fixedReply = `fixed: https://github.com/${repo}/commit/${fixingCommitSha}`;
     const hasEvidenceReply = repliesPosted.some(
       (r) =>
-        r.threadId === threadId &&
+        (r.threadId === commentId ||
+          threadIdsReferToSameLandingThread(
+            r.threadId,
+            threadId,
+            landingThreads,
+          )) &&
         isFixedEvidenceReplyForCommit(r.body, repo, fixingCommitSha),
     );
     if (!hasEvidenceReply) {
-      replyToReviewThread(sh, repo, prNumber, threadId, fixedReply);
-      repliesPosted.push({ threadId, body: fixedReply });
+      replyToReviewThread(sh, repo, prNumber, commentId, fixedReply);
+      repliesPosted.push({ threadId: commentId, body: fixedReply });
     }
-    resolveReviewThread(sh, repo, prNumber, threadId);
-    threadsResolved.push(threadId);
+    resolveReviewThread(sh, repo, prNumber, nodeId);
+    threadsResolved.push(nodeId);
   }
 
   return { deferredIssueUrls, repliesPosted, threadsResolved };

@@ -521,6 +521,7 @@ export interface OnlineReviewLoopDispatch {
   readonly dispatchCleanup: (landing: WorkerLandingPayload) => Promise<boolean>;
   readonly dispatchDocRelease: (landing: WorkerLandingPayload) => Promise<boolean>;
   readonly applySideEffects: (
+    landing: WorkerLandingPayload,
     verify: VerifyResult,
     fixingCommitSha?: string,
   ) => VerifyResult;
@@ -574,6 +575,7 @@ export async function runOnlineReviewLoopStage(
     }
     try {
       verify = dispatch.applySideEffects(
+        landing,
         verify,
         verify.isRecheck ? lastFixCommitSha : undefined,
       );
@@ -618,7 +620,12 @@ export async function runOnlineReviewLoopStage(
       return decisionGateFromDispatchInfra(round, "fixer", err);
     }
     if (!committed) {
-      return { ok: false, terminalState: "decision_gate_raised", round };
+      return {
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round,
+        stopSummary: onlineReviewFixerNothingToFixStopSummary(),
+      };
     }
     try {
       lastFixCommitSha =

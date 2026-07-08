@@ -3350,6 +3350,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       fixingCommitSha: verifyOutput.isRecheck
                         ? lastOnlineReviewFixCommitSha
                         : undefined,
+                      landingThreads:
+                        onlineReviewLanding?.onlineReviewSnapshot?.threads,
                     })
                   : {
                       deferredIssueUrls: [],

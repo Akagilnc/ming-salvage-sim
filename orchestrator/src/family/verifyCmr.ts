@@ -1627,7 +1627,11 @@ export async function runFamilyOnlineReviewLoop(input: {
         result.output.released
       );
     },
-    applySideEffects: (verify: VerifyResult, fixingCommitSha?: string) => {
+    applySideEffects: (
+      landing: WorkerLandingPayload,
+      verify: VerifyResult,
+      fixingCommitSha?: string,
+    ) => {
       if (!livePoll) {
         return verify;
       }
@@ -1637,6 +1641,7 @@ export async function runFamilyOnlineReviewLoop(input: {
         prUrl,
         verify,
         fixingCommitSha,
+        landingThreads: landing.onlineReviewSnapshot?.threads,
       });
       return {
         ...verify,
