@@ -71,6 +71,7 @@ import {
   clampVerifyConvergenceForCheckRuns,
   isReviewLoopConvergedMarker,
   onlineReviewConvergedForHead,
+  onlineReviewFixerNothingToFixStopSummary,
   verifyReviewerHeadMovedStopSummary,
   verifySideEffectFailureStopSummary,
 } from "../src/onlineReviewLoop.js";
@@ -883,6 +884,142 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       result.repliesPosted.find((r) => r.threadId === "99")?.body,
     ).toContain("fixed: https://github.com/o/r/commit/abc123def456");
     expect(calls.filter((c) => c.includes("resolveReviewThread"))).toHaveLength(1);
+  });
+
+  const LANDING_THREAD_PAIR = [
+    { id: "4242", threadNodeId: "PRRT_kwDOExampleThread" },
+  ] as const;
+
+  it("pin r23: worker echoes node id → reply posts via REST comment id from landing", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      if (args.join(" ").includes("/replies")) {
+        return JSON.stringify({ id: 1, body: "ok" });
+      }
+      return "[]";
+    };
+    applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      landingThreads: [...LANDING_THREAD_PAIR],
+      verify: {
+        kind: "verify",
+        converged: false,
+        threadReplies: [
+          {
+            threadId: "PRRT_kwDOExampleThread",
+            body: "rejected: false positive",
+          },
+        ],
+      },
+    });
+    expect(
+      calls.filter((c) => c.includes("repos/o/r/pulls/42/comments/4242/replies")),
+    ).toHaveLength(1);
+    expect(
+      calls.filter((c) =>
+        c.includes("repos/o/r/pulls/42/comments/PRRT_kwDOExampleThread/replies"),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("pin r23: worker echoes comment id for threadsToResolve → resolve via node id from landing", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      const cmd = args.join(" ");
+      if (cmd.includes("resolveReviewThread")) {
+        return JSON.stringify({ data: { resolveReviewThread: { thread: { isResolved: true } } } });
+      }
+      if (cmd.includes("/replies")) {
+        return JSON.stringify({ id: 1, body: "ok" });
+      }
+      return "[]";
+    };
+    const result = applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      landingThreads: [...LANDING_THREAD_PAIR],
+      verify: {
+        kind: "verify",
+        converged: true,
+        isRecheck: true,
+        threadsToResolve: ["4242"],
+      },
+      fixingCommitSha: "abc123def456",
+    });
+    expect(result.threadsResolved).toEqual(["PRRT_kwDOExampleThread"]);
+    expect(
+      calls.filter((c) => c.includes("repos/o/r/pulls/42/comments/4242/replies")),
+    ).toHaveLength(1);
+    expect(
+      calls.filter(
+        (c) =>
+          c.includes("resolveReviewThread") &&
+          c.includes("threadId=PRRT_kwDOExampleThread"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("pin r23: worker echoes node id for threadsToResolve → reply via comment id + resolve via node id", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      const cmd = args.join(" ");
+      if (cmd.includes("resolveReviewThread")) {
+        return JSON.stringify({ data: { resolveReviewThread: { thread: { isResolved: true } } } });
+      }
+      if (cmd.includes("/replies")) {
+        return JSON.stringify({ id: 1, body: "ok" });
+      }
+      return "[]";
+    };
+    const result = applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      landingThreads: [...LANDING_THREAD_PAIR],
+      verify: {
+        kind: "verify",
+        converged: true,
+        isRecheck: true,
+        threadsToResolve: ["PRRT_kwDOExampleThread"],
+      },
+      fixingCommitSha: "abc123def456",
+    });
+    expect(result.threadsResolved).toEqual(["PRRT_kwDOExampleThread"]);
+    expect(
+      calls.filter((c) => c.includes("repos/o/r/pulls/42/comments/4242/replies")),
+    ).toHaveLength(1);
+    expect(
+      calls.filter(
+        (c) =>
+          c.includes("resolveReviewThread") &&
+          c.includes("threadId=PRRT_kwDOExampleThread"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("pin r23: unknown thread id with landing → terminal", () => {
+    const sh: Sh = () => {
+      throw new Error("gh should not be called");
+    };
+    expect(() =>
+      applyVerifySideEffects({
+        sh,
+        repo: "o/r",
+        prUrl: "https://github.com/o/r/pull/42",
+        landingThreads: [...LANDING_THREAD_PAIR],
+        verify: {
+          kind: "verify",
+          converged: false,
+          threadReplies: [{ threadId: "UNKNOWN_THREAD", body: "rejected: x" }],
+        },
+      }),
+    ).toThrow(/matches neither REST comment id nor GraphQL node id in landing/);
   });
 
   it("applyVerifySideEffects fails closed on invalid prUrl", () => {
@@ -1969,7 +2106,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       dispatchFixer: async () => true,
       dispatchCleanup: async (_landing) => true,
       dispatchDocRelease: async (_landing) => true,
-      applySideEffects: (verify) => verify,
+      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
@@ -1987,7 +2124,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       dispatchFixer: async () => true,
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
-      applySideEffects: (verify) => verify,
+      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(landingBranch).toBe("family/epic-600");
@@ -2012,7 +2149,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchCleanup: async (_landing) => true,
       dispatchDocRelease: async (_landing) => true,
-      applySideEffects: (verify) => verify,
+      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async () => "fix-sha",
     });
@@ -2048,7 +2185,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchCleanup: async (_landing) => true,
       dispatchDocRelease: async (_landing) => true,
-      applySideEffects: (verify) => verify,
+      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async () => "fix-sha",
     });
@@ -2069,14 +2206,40 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       dispatchFixer: async () => false,
       dispatchCleanup: async (_landing) => true,
       dispatchDocRelease: async (_landing) => true,
-      applySideEffects: (verify) => verify,
+      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({
       ok: false,
       terminalState: "decision_gate_raised",
       round: 1,
+      stopSummary: onlineReviewFixerNothingToFixStopSummary(),
     });
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.stopSummary?.reason).not.toBe("infra_failure");
+  });
+
+  it("pin r23: fixer nothing-to-fix stopSummary inherited by family summarizer (not infra_failure)", async () => {
+    const stageResult = await runOnlineReviewLoopStage(stageShip, {
+      poll: async () => baseSnapshot,
+      dispatchVerify: async () => ({ kind: "verify", converged: false }),
+      dispatchFixer: async () => false,
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (_landing, verify) => verify,
+      retriggerAfterFix: () => {},
+    });
+    expect(stageResult.stopSummary).toEqual(
+      onlineReviewFixerNothingToFixStopSummary(),
+    );
+    const familySummary =
+      stageResult.stopSummary ?? {
+        reason: "infra_failure" as const,
+        summary: "fallback",
+        repairHint: "fallback",
+      };
+    expect(familySummary.reason).toBe("decision_gate_park");
+    expect(familySummary.reason).not.toBe("infra_failure");
   });
 
   it("pin r19: retriggerAfterFix throw → decision_gate_raised in-band with stopSummary", async () => {
@@ -2086,7 +2249,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       dispatchFixer: async () => true,
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
-      applySideEffects: (verify) => verify,
+      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {
         throw new Error("retriggerBotsAndPoll: gh api failed");
       },
@@ -2118,13 +2281,16 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       dispatchFixer: async () => true,
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
-      applySideEffects: (verify, fixingCommitSha) => {
+      applySideEffects: (_landing, verify, fixingCommitSha) => {
         applyVerifySideEffects({
           sh,
           repo: "o/r",
           prUrl: "https://github.com/o/r/pull/42",
           verify,
           fixingCommitSha,
+          landingThreads: [
+            { id: "4242", threadNodeId: "PRRT_kwDOExampleThread" },
+          ],
         });
         return verify;
       },
@@ -2150,7 +2316,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       dispatchFixer: async () => true,
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
-      applySideEffects: (verify) => verify,
+      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({
@@ -2173,7 +2339,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       dispatchFixer: async () => true,
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
-      applySideEffects: (verify) => verify,
+      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({
@@ -2196,7 +2362,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
-      applySideEffects: (verify) => verify,
+      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({
@@ -2233,7 +2399,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchCleanup: async (_landing) => true,
       dispatchDocRelease: async (_landing) => true,
-      applySideEffects: (verify) => verify,
+      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(fixerCalls).toBe(1);
@@ -2241,6 +2407,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       ok: false,
       terminalState: "decision_gate_raised",
       round: 1,
+      stopSummary: onlineReviewFixerNothingToFixStopSummary(),
     });
   });
 });
