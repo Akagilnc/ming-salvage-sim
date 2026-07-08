@@ -28,6 +28,17 @@ export interface ApplyVerifySideEffectsResult {
   readonly threadsResolved: ReadonlyArray<string>;
 }
 
+/** GitHub issue URL shape returned by `gh issue create --json url`. */
+export function isValidGithubIssueUrl(url: string): boolean {
+  const trimmed = url.trim();
+  return (
+    trimmed.length > 0 &&
+    /^https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+\/?(?:[?#].*)?$/i.test(
+      trimmed,
+    )
+  );
+}
+
 /** Create a tracked deferral issue via `gh issue create` (#600 AC5). */
 export function createDeferredTrackingIssue(
   sh: Sh,
@@ -49,7 +60,13 @@ export function createDeferredTrackingIssue(
     "-q",
     ".url",
   ]);
-  return url.trim();
+  const trimmed = url.trim();
+  if (!isValidGithubIssueUrl(trimmed)) {
+    throw new Error(
+      `createDeferredTrackingIssue: gh returned invalid issue URL "${url}"`,
+    );
+  }
+  return trimmed;
 }
 
 /** Post an evidence-bearing reply on a PR review thread (#600 AC6). */
@@ -224,13 +241,28 @@ export function applyVerifySideEffects(
     repliesPosted.push(reply);
   }
 
+  if (
+    (verify.threadsToResolve?.length ?? 0) > 0 &&
+    verify.isRecheck !== true
+  ) {
+    throw new Error(
+      "applyVerifySideEffects: threadsToResolve requires a fresh re-check verify (isRecheck)",
+    );
+  }
+  if (
+    (verify.threadsToResolve?.length ?? 0) > 0 &&
+    (input.fixingCommitSha === undefined || input.fixingCommitSha.length === 0)
+  ) {
+    throw new Error(
+      "applyVerifySideEffects: threadsToResolve requires fixingCommitSha on recheck",
+    );
+  }
+
   for (const threadId of verify.threadsToResolve ?? []) {
-    if (input.fixingCommitSha !== undefined && input.fixingCommitSha.length > 0) {
-      const fixedReply = `fixed: https://github.com/${repo}/commit/${input.fixingCommitSha}`;
-      if (!repliesPosted.some((r) => r.threadId === threadId)) {
-        replyToReviewThread(sh, repo, prNumber, threadId, fixedReply);
-        repliesPosted.push({ threadId, body: fixedReply });
-      }
+    const fixedReply = `fixed: https://github.com/${repo}/commit/${input.fixingCommitSha}`;
+    if (!repliesPosted.some((r) => r.threadId === threadId)) {
+      replyToReviewThread(sh, repo, prNumber, threadId, fixedReply);
+      repliesPosted.push({ threadId, body: fixedReply });
     }
     resolveReviewThread(sh, repo, prNumber, threadId);
     threadsResolved.push(threadId);

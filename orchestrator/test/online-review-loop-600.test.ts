@@ -8,7 +8,10 @@ import { verifyWorkerSpec, fixerWorkerSpec } from "../src/dispatchWorker.js";
 import type { DispatchContext, WorkerResult, WorkerSpec } from "../src/types.js";
 import {
   BOT_OVERDUE_POLL_COUNT,
+  BOT_POLL_INTERVAL_MS,
   BOT_RETRIGGER_COMMENT,
+  droppedBotIds,
+  hasDroppedBots,
   isBotQuiescent,
   isThreadEvidenceFresh,
   ONLINE_REVIEW_BOT_IDS,
@@ -17,8 +20,10 @@ import {
   postBotRetriggerComment,
 } from "../src/botPolling.js";
 import {
+  immediateBotPollClock,
   MAX_ONLINE_REVIEW_ROUNDS,
   retriggerBotsAndPoll,
+  waitForBotQuiescence,
 } from "../src/onlineReviewLoop.js";
 import { route } from "../src/route.js";
 import {
@@ -65,11 +70,30 @@ function ghFixture(input: { calls: string[] }): Sh {
       ]);
     }
     if (cmd.includes("issues/42/comments") && cmd.includes("-f")) {
-      return "{}";
+      return JSON.stringify({
+        id: 9001,
+        body: "posted",
+        user: { login: "orchestrator-host" },
+      });
     }
     return "[]";
   };
 }
+
+const GITHUB_REPLY_SHAPE = {
+  id: 99,
+  body: "reply body",
+  path: "src/example.ts",
+  user: { login: "orchestrator-host" },
+};
+
+const GITHUB_RESOLVE_MUTATION_SHAPE = {
+  data: {
+    resolveReviewThread: {
+      thread: { isResolved: true },
+    },
+  },
+};
 
 describe("#600 botPolling — parsePrRef + paginated gh api", () => {
   it("parses a full GitHub PR URL", () => {
@@ -104,6 +128,54 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
     });
     expect(snap.bots.gemini.state).toBe("dropped");
     expect(isBotQuiescent(snap)).toBe(true);
+    expect(hasDroppedBots(snap)).toBe(true);
+    expect(droppedBotIds(snap)).toContain("gemini");
+  });
+
+  it("marks a zero-finding bot review as complete (not pending/dropped)", () => {
+    const sh: Sh = (file, args) => {
+      const cmd = args.join(" ");
+      if (cmd.includes("pulls/42") && cmd.includes("repos/o/r/pulls/42") && !cmd.includes("comments") && !cmd.includes("reviews")) {
+        return JSON.stringify({
+          head: { sha: "headsha1" },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") || cmd.includes("pulls/42/comments")) {
+        return "[]";
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return JSON.stringify([
+          { user: { login: "gemini-code-assist[bot]" }, state: "APPROVED" },
+        ]);
+      }
+      if (cmd.includes("pulls/comments/") && cmd.includes("/reactions")) {
+        return "[]";
+      }
+      return "[]";
+    };
+    const snap = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+    });
+    expect(snap.bots.gemini).toEqual({ state: "complete", findingCount: 0 });
+    expect(snap.bots.gemini.state).not.toBe("pending");
+    expect(snap.bots.gemini.state).not.toBe("dropped");
+  });
+
+  it("pollPrReviewState failures fail closed (no empty-green snapshot)", async () => {
+    const sh: Sh = () => {
+      throw new Error("gh api failed");
+    };
+    await expect(
+      waitForBotQuiescence(sh, {
+        repo: "o/r",
+        prUrl: "https://github.com/o/r/pull/42",
+        maxPolls: 1,
+        clock: immediateBotPollClock,
+      }),
+    ).rejects.toThrow(/gh api failed/);
   });
 
   it("postBotRetriggerComment posts the R2/R3 manual re-trigger body", () => {
@@ -232,6 +304,24 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
       }),
     ).toBe(false);
   });
+
+  it("rejects threadsToResolve without isRecheck", () => {
+    expect(
+      isValidVerifyResult({
+        kind: "verify",
+        converged: false,
+        threadsToResolve: ["99"],
+      }),
+    ).toBe(false);
+    expect(
+      isValidVerifyResult({
+        kind: "verify",
+        converged: false,
+        isRecheck: true,
+        threadsToResolve: ["99"],
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("#600 stale head + artifact bot freshness (#600 AC3)", () => {
@@ -268,17 +358,34 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     };
     const url = createDeferredTrackingIssue(sh, "o/r", "defer finding", "reason text");
     expect(url).toBe("https://github.com/o/r/issues/99");
-    expect(calls.some((c) => c.includes("gh issue create"))).toBe(true);
+    expect(calls).toEqual([
+      "gh issue create --repo o/r --title defer finding --body reason text --json url -q .url",
+    ]);
+  });
+
+  it("createDeferredTrackingIssue fails closed on empty or malformed gh output", () => {
+    const emptySh: Sh = () => "";
+    const junkSh: Sh = () => "not-a-github-url";
+    expect(() =>
+      createDeferredTrackingIssue(emptySh, "o/r", "t", "b"),
+    ).toThrow(/invalid issue URL/);
+    expect(() =>
+      createDeferredTrackingIssue(junkSh, "o/r", "t", "b"),
+    ).toThrow(/invalid issue URL/);
   });
 
   it("applyVerifySideEffects appends tracked issue URL to pre-supplied defer reply", () => {
     const calls: string[] = [];
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
-      if (args.join(" ").includes("issue create")) {
+      const cmd = args.join(" ");
+      if (cmd.includes("issue create")) {
         return "https://github.com/o/r/issues/88";
       }
-      return "{}";
+      if (cmd.includes("/replies")) {
+        return JSON.stringify(GITHUB_REPLY_SHAPE);
+      }
+      return JSON.stringify(GITHUB_REPLY_SHAPE);
     };
     const result = applyVerifySideEffects({
       sh,
@@ -309,10 +416,14 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     const calls: string[] = [];
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
-      if (args.join(" ").includes("issue create")) {
+      const cmd = args.join(" ");
+      if (cmd.includes("issue create")) {
         return "https://github.com/o/r/issues/77";
       }
-      return "{}";
+      if (cmd.includes("/replies")) {
+        return JSON.stringify(GITHUB_REPLY_SHAPE);
+      }
+      return JSON.stringify(GITHUB_REPLY_SHAPE);
     };
     const result = applyVerifySideEffects({
       sh,
@@ -337,7 +448,14 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     expect(result.deferredIssueUrls).toEqual(["https://github.com/o/r/issues/77"]);
     expect(result.repliesPosted.some((r) => r.body.includes("rejected:"))).toBe(true);
     expect(result.repliesPosted.some((r) => r.body.includes("Tracked issue:"))).toBe(true);
-    expect(calls.some((c) => c.includes("gh issue create"))).toBe(true);
+    expect(
+      calls.filter((c) => c.startsWith("gh issue create")),
+    ).toEqual([
+      "gh issue create --repo o/r --title Deferred online review finding: t:3 --body needs design --json url -q .url",
+    ]);
+    expect(
+      calls.filter((c) => c.includes("repos/o/r/pulls/42/comments/2/replies")),
+    ).toHaveLength(1);
   });
 
   it("resolveReviewThread uses GraphQL resolveReviewThread (not REST comment edit)", () => {
@@ -362,13 +480,104 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
           },
         });
       }
-      return "{}";
+      if (args.join(" ").includes("resolveReviewThread")) {
+        return JSON.stringify(GITHUB_RESOLVE_MUTATION_SHAPE);
+      }
+      if (args.join(" ").includes("/replies")) {
+        return JSON.stringify(GITHUB_REPLY_SHAPE);
+      }
+      return JSON.stringify(GITHUB_REPLY_SHAPE);
     };
     replyToReviewThread(sh, "o/r", 42, "99", "fixed: https://github.com/o/r/commit/abc");
     resolveReviewThread(sh, "o/r", 42, "99");
-    expect(calls.some((c) => c.includes("/replies"))).toBe(true);
-    expect(calls.some((c) => c.includes("resolveReviewThread"))).toBe(true);
+    expect(
+      calls.filter((c) => c.includes("repos/o/r/pulls/42/comments/99/replies")),
+    ).toHaveLength(1);
+    expect(
+      calls.filter((c) => c.includes("resolveReviewThread")),
+    ).toHaveLength(1);
     expect(calls.some((c) => c.includes("-X PUT"))).toBe(false);
+  });
+
+  it("applyVerifySideEffects refuses thread resolution without recheck + fixing commit", () => {
+    const sh: Sh = () => {
+      throw new Error("gh should not be called");
+    };
+    expect(() =>
+      applyVerifySideEffects({
+        sh,
+        repo: "o/r",
+        prUrl: "https://github.com/o/r/pull/42",
+        verify: {
+          kind: "verify",
+          converged: false,
+          threadsToResolve: ["99"],
+        },
+      }),
+    ).toThrow(/isRecheck/);
+    expect(() =>
+      applyVerifySideEffects({
+        sh,
+        repo: "o/r",
+        prUrl: "https://github.com/o/r/pull/42",
+        verify: {
+          kind: "verify",
+          converged: false,
+          isRecheck: true,
+          threadsToResolve: ["99"],
+        },
+      }),
+    ).toThrow(/fixingCommitSha/);
+  });
+
+  it("applyVerifySideEffects resolves threads only on recheck with fixing commit", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      const cmd = args.join(" ");
+      if (cmd.includes("graphql") && cmd.includes("reviewThreads")) {
+        return JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      id: "PRRT_kwDOExampleThread",
+                      comments: { nodes: [{ databaseId: 99 }] },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      }
+      if (cmd.includes("resolveReviewThread")) {
+        return JSON.stringify(GITHUB_RESOLVE_MUTATION_SHAPE);
+      }
+      if (cmd.includes("/replies")) {
+        return JSON.stringify(GITHUB_REPLY_SHAPE);
+      }
+      return JSON.stringify(GITHUB_REPLY_SHAPE);
+    };
+    const result = applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      verify: {
+        kind: "verify",
+        converged: true,
+        isRecheck: true,
+        threadsToResolve: ["99"],
+      },
+      fixingCommitSha: "abc123def456",
+    });
+    expect(result.threadsResolved).toEqual(["99"]);
+    expect(
+      result.repliesPosted.find((r) => r.threadId === "99")?.body,
+    ).toContain("fixed: https://github.com/o/r/commit/abc123def456");
+    expect(calls.filter((c) => c.includes("resolveReviewThread"))).toHaveLength(1);
   });
 
   it("applyVerifySideEffects fails closed on invalid prUrl", () => {
@@ -416,6 +625,39 @@ describe("#600 retriggerBotsAndPoll (#600 AC2)", () => {
     expect(calls.some((c) => c.includes(BOT_RETRIGGER_COMMENT.split("\n")[0]!))).toBe(
       true,
     );
+  });
+
+  it("waitForBotQuiescence enforces multi-poll cadence before quiescence", async () => {
+    let polls = 0;
+    const base = ghFixture({ calls: [] });
+    const sh: Sh = (file, args) => {
+      const cmd = args.join(" ");
+      if (
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews")
+      ) {
+        polls += 1;
+      }
+      return base(file, args);
+    };
+    const sleepMs: number[] = [];
+    const clock = {
+      sleep(ms: number) {
+        sleepMs.push(ms);
+      },
+    };
+    const snap = await waitForBotQuiescence(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      maxPolls: BOT_OVERDUE_POLL_COUNT,
+      clock,
+    });
+    expect(polls).toBe(BOT_OVERDUE_POLL_COUNT);
+    expect(sleepMs).toEqual(
+      Array.from({ length: BOT_OVERDUE_POLL_COUNT - 1 }, () => BOT_POLL_INTERVAL_MS),
+    );
+    expect(hasDroppedBots(snap)).toBe(true);
   });
 });
 
@@ -511,7 +753,7 @@ describe("#600 onlineReviewLoop helpers", () => {
           coderabbit: { state: "complete", findingCount: 0 },
           sourcery: { state: "complete", findingCount: 0 },
           codex: { state: "complete", findingCount: 0 },
-          gemini: { state: "complete", findingCount: 0 },
+          gemini: { state: "dropped", reason: "no review signal after 5 polls" },
         },
         threads: [],
         totalFindingCount: 0,
@@ -522,6 +764,11 @@ describe("#600 onlineReviewLoop helpers", () => {
     );
     expect(landing.onlineReviewRound).toBe(2);
     expect(landing.shipDelivery?.branch).toBe("feat/x");
+    expect(landing.onlineReviewSnapshot?.droppedBots).toEqual(["gemini"]);
+    expect(landing.onlineReviewSnapshot?.bots?.gemini).toEqual({
+      state: "dropped",
+      reason: "no review signal after 5 polls",
+    });
   });
 
   it("verifyReviewerHeadMovedStopSummary mirrors cmr read-only guard wording", () => {

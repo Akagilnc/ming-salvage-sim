@@ -56,10 +56,7 @@ import {
 import type { FamilyModuleContext } from "./moduleDeclaration.js";
 import { execFileSync } from "node:child_process";
 
-import {
-  isLiveGithubReviewPollEnabled,
-  pollPrReviewState,
-} from "../botPolling.js";
+import { isLiveGithubReviewPollEnabled } from "../botPolling.js";
 import {
   cleanupWorkerSpec,
   docReleaseWorkerSpec,
@@ -67,9 +64,12 @@ import {
   verifyWorkerSpec,
 } from "../dispatchWorker.js";
 import {
+  immediateBotPollClock,
   offlinePrReviewSnapshot,
+  realBotPollClock,
   retriggerBotsAndPoll,
   runOnlineReviewLoopStage,
+  waitForBotQuiescence,
   type OnlineReviewLoopStageResult,
 } from "../onlineReviewLoop.js";
 import { applyVerifySideEffects } from "../onlineReviewSideEffects.js";
@@ -1494,7 +1494,14 @@ export async function runFamilyOnlineReviewLoop(input: {
           pollCount: round,
         });
       }
-      return pollPrReviewState(ghSh, { repo, prUrl, pollCount: round });
+      return waitForBotQuiescence(ghSh, {
+        repo,
+        prUrl,
+        clock:
+          process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1"
+            ? immediateBotPollClock
+            : realBotPollClock,
+      });
     },
     dispatchVerify: async (landing, round) => {
       const result = await dispatchFamilyReviewWorker(

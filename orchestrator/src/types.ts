@@ -580,11 +580,20 @@ export type OnlineReviewTerminalState =
   | "round_budget_exhausted"
   | "decision_gate_raised";
 
+export type OnlineReviewBotLegLanding =
+  | { readonly state: "pending" }
+  | { readonly state: "complete"; readonly findingCount: number }
+  | { readonly state: "dropped"; readonly reason: string };
+
 export interface OnlineReviewLandingSnapshot {
   readonly prUrl: string;
   readonly headOid: string;
   readonly totalFindingCount: number;
   readonly quiescent: boolean;
+  /** Per-bot terminal/pending legs — dropped bots are not clean-silence evidence (#600). */
+  readonly bots: Readonly<Record<string, OnlineReviewBotLegLanding>>;
+  /** Convenience list of bot ids dropped after the overdue window. */
+  readonly droppedBots: ReadonlyArray<string>;
   readonly threads: ReadonlyArray<{
     readonly id: string;
     readonly body: string;
