@@ -768,6 +768,65 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     ).toThrow(/fixingCommitSha/);
   });
 
+  it("pin r19: pre-existing unrelated reply still gets fixed evidence reply before resolve", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      const cmd = args.join(" ");
+      if (cmd.includes("graphql") && cmd.includes("reviewThreads")) {
+        return JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  pageInfo: { endCursor: "cursor-single-page", hasNextPage: false },
+                  nodes: [
+                    {
+                      id: "PRRT_kwDOExampleThread",
+                      comments: { nodes: [{ databaseId: 99 }] },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      }
+      if (cmd.includes("resolveReviewThread")) {
+        return JSON.stringify(GITHUB_RESOLVE_MUTATION_SHAPE);
+      }
+      if (cmd.includes("/replies")) {
+        return JSON.stringify(GITHUB_REPLY_SHAPE);
+      }
+      return JSON.stringify(GITHUB_REPLY_SHAPE);
+    };
+    const result = applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      verify: {
+        kind: "verify",
+        converged: true,
+        isRecheck: true,
+        threadsToResolve: ["99"],
+        threadReplies: [{ threadId: "99", body: "rejected: unrelated prior reply" }],
+      },
+      fixingCommitSha: "abc123def456",
+    });
+    const fixedReplies = result.repliesPosted.filter((r) =>
+      r.body.startsWith("fixed: https://github.com/o/r/commit/"),
+    );
+    expect(fixedReplies).toHaveLength(1);
+    expect(fixedReplies[0]?.body).toBe(
+      "fixed: https://github.com/o/r/commit/abc123def456",
+    );
+    expect(result.threadsResolved).toEqual(["99"]);
+    expect(
+      calls.filter((c) => c.includes("repos/o/r/pulls/42/comments/99/replies")),
+    ).toHaveLength(2);
+    expect(calls.filter((c) => c.includes("resolveReviewThread"))).toHaveLength(1);
+  });
+
   it("applyVerifySideEffects resolves threads only on recheck with fixing commit", () => {
     const calls: string[] = [];
     const sh: Sh = (file, args) => {
@@ -1944,6 +2003,30 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       ok: false,
       terminalState: "decision_gate_raised",
       round: 1,
+    });
+  });
+
+  it("pin r19: retriggerAfterFix throw → decision_gate_raised in-band with stopSummary", async () => {
+    const result = await runOnlineReviewLoopStage({
+      poll: async () => baseSnapshot,
+      dispatchVerify: async () => ({ kind: "verify", converged: false }),
+      dispatchFixer: async () => true,
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (verify) => verify,
+      retriggerAfterFix: () => {
+        throw new Error("retriggerBotsAndPoll: gh api failed");
+      },
+      resolveFixCommitSha: async () => "fix-sha",
+    });
+    expect(result).toEqual({
+      ok: false,
+      terminalState: "decision_gate_raised",
+      round: 1,
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        summary: expect.stringMatching(/side effects failed.*retriggerBotsAndPoll/s),
+      }),
     });
   });
 
