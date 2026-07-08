@@ -444,6 +444,15 @@ export async function legacyDispatchWorker(
     };
   }
 
+  // S11/S12 remain deterministic stubs until #603 (cleanup.md / docRelease.md +
+  // soul files are #603 deliverables). Never reach runStep / prompt resolution.
+  if (spec.kind === "cleanup" || spec.kind === "docRelease") {
+    const stub = skeletonReviewLoopWorkerResult(spec.kind);
+    if (stub !== undefined) {
+      return stub;
+    }
+  }
+
   // #596 skeleton: explicit offline/test contexts only when the backend has no
   // `dispatchWorker` seam (#600 r5 — mirror family legacy gate; live paths must
   // fail closed instead of synthesizing convergence).
@@ -467,15 +476,14 @@ export async function legacyDispatchWorker(
     "reviewer",
     "verify",
     "fixer",
-    "cleanup",
-    "docRelease",
   ]);
   if (!runStepKinds.has(spec.kind)) {
     throw new Error(
       `legacyDispatchWorker: worker kind '${spec.kind}' (${spec.id}) has no legacy ` +
-        `dispatch path — only coder/reviewer/verify/fixer/cleanup/docRelease (agent), ` +
-        `ship, and the #596 review-loop stubs are forwarded. A cmr/merge worker must go ` +
-        `through a backend implementing the unified dispatchWorker seam.`,
+        `dispatch path — only coder/reviewer/verify/fixer (agent), ship, and the ` +
+        `#596 review-loop stubs (cleanup/docRelease until #603) are forwarded. A ` +
+        `cmr/merge worker must go through a backend implementing the unified ` +
+        `dispatchWorker seam.`,
     );
   }
   // coder / reviewer agent worker → runStep | resumeSession (legacy seam).

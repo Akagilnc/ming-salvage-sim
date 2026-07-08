@@ -139,6 +139,11 @@ export function convergenceHeadToRecord(input: {
   return key;
 }
 
+function parseInstantMs(ts: string): number | undefined {
+  const ms = Date.parse(ts);
+  return Number.isNaN(ms) ? undefined : ms;
+}
+
 /** Classify whether a live artifact correlates to the current head/round. */
 export function classifyEvidenceFreshness(
   artifact: { readonly headOid?: string; readonly timestamp?: string },
@@ -149,7 +154,12 @@ export function classifyEvidenceFreshness(
     return artifact.headOid === head ? "fresh_live" : "stale";
   }
   if (artifact.timestamp !== undefined) {
-    return artifact.timestamp > roundTrigger.triggeredAt ? "fresh_live" : "stale";
+    const artifactMs = parseInstantMs(artifact.timestamp);
+    const triggerMs = parseInstantMs(roundTrigger.triggeredAt);
+    if (artifactMs === undefined || triggerMs === undefined) {
+      return "stale";
+    }
+    return artifactMs > triggerMs ? "fresh_live" : "stale";
   }
   return "stale";
 }
