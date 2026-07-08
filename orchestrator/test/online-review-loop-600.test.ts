@@ -15,7 +15,11 @@ import {
 import type {
   Backend,
   DispatchContext,
+  IssueMeta,
+  IssueSnapshot,
+  OnlineReviewLandingSnapshot,
   PrReviewSnapshot,
+  StepOutput,
   VerifyResult,
   WorkerResult,
   WorkerSpec,
@@ -49,7 +53,9 @@ import {
   runOnlineReviewLoopStage,
   waitForBotQuiescence,
 } from "../src/onlineReviewLoop.js";
+import { runOrchestrator } from "../src/runner.js";
 import { route } from "../src/route.js";
+import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import {
   buildOnlineReviewLanding,
   isReviewLoopConvergedMarker,
@@ -1115,6 +1121,176 @@ describe("#600 r5 legacy skeleton gate — family + slice", () => {
       if (result.kind === "completed" && result.output.kind === "verify") {
         expect(result.output.converged).toBe(true);
       }
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+});
+
+describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gate", () => {
+  const livePr = "https://github.com/o/r/pull/42";
+  const offlinePr = "pr://slice/offline-hook";
+
+  const worktree: WorktreeHandle = {
+    branch: "feat/600-hook-gate",
+    base: "main",
+    path: "/resident/worktrees/issue-600-hook",
+  };
+
+  const greenHookSnapshot = (): OnlineReviewLandingSnapshot => ({
+    prUrl: livePr,
+    headOid: "hook-green-head",
+    totalFindingCount: 0,
+    quiescent: true,
+    bots: {
+      coderabbit: { state: "complete", findingCount: 0 },
+      sourcery: { state: "complete", findingCount: 0 },
+      codex: { state: "complete", findingCount: 0 },
+      gemini: { state: "complete", findingCount: 0 },
+    },
+    droppedBots: [],
+    threads: [],
+  });
+
+  class HookPollBackend implements Backend {
+    readonly hookCalls: string[] = [];
+
+    async findResumeState(): Promise<undefined> {
+      return undefined;
+    }
+    async cleanResidue(): Promise<void> {}
+    async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+      return {
+        number: issueNumber,
+        isReadyForAgent: true,
+        hasSubIssues: false,
+        openBlockedBy: [],
+      };
+    }
+    async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
+      return {
+        number: issueNumber,
+        body: "b",
+        comments: [],
+        agentBrief: "",
+      };
+    }
+    async prepareWorktree(): Promise<WorktreeHandle> {
+      return worktree;
+    }
+    async writeSnapshot(): Promise<void> {}
+    async writeLedger(): Promise<void> {}
+    async runStep(): Promise<StepOutput> {
+      throw new Error("runStep should not be called");
+    }
+    async push(): Promise<void> {}
+    async pollOnlineReviewState(input: {
+      repo: string;
+      prUrl: string;
+      pollCount: number;
+    }): Promise<OnlineReviewLandingSnapshot> {
+      this.hookCalls.push(input.prUrl);
+      return greenHookSnapshot();
+    }
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      if (spec.kind === "coder") {
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      }
+      if (spec.kind === "reviewer") {
+        return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+      }
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      if (skeleton !== undefined) {
+        return skeleton;
+      }
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: worktree.branch,
+          status: "pr_opened",
+          pr: livePr,
+        },
+      };
+    }
+  }
+
+  it("pin: hook green on a real PR URL outside test mode → error, not success", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    try {
+      const backend = new HookPollBackend();
+      const result = await runOrchestrator({ issueNumber: 600, backend });
+      expect(result.status).toBe("error");
+      expect(backend.hookCalls).toEqual([]);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("pin: hook green on a real PR URL with offline flag but non-test handle → error", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      const backend = new HookPollBackend();
+      const result = await runOrchestrator({ issueNumber: 600, backend });
+      expect(result.status).toBe("error");
+      expect(backend.hookCalls).toEqual([]);
+      expect(result.errorPackage?.reason).toMatch(
+        /refused for live GitHub PR/,
+      );
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("offline test handle still admits hook-provided poll snapshots", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      class OfflineHookBackend extends HookPollBackend {
+        override async pollOnlineReviewState(input: {
+          repo: string;
+          prUrl: string;
+          pollCount: number;
+        }): Promise<OnlineReviewLandingSnapshot> {
+          this.hookCalls.push(input.prUrl);
+          return { ...greenHookSnapshot(), prUrl: offlinePr };
+        }
+        override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+          if (spec.kind === "ship") {
+            return {
+              kind: "completed",
+              output: {
+                kind: "ship",
+                branch: worktree.branch,
+                status: "pr_opened",
+                pr: offlinePr,
+              },
+            };
+          }
+          return super.dispatchWorker(spec);
+        }
+      }
+      const backend = new OfflineHookBackend();
+      const result = await runOrchestrator({ issueNumber: 600, backend });
+      expect(result.status).toBe("success");
+      expect(backend.hookCalls).toEqual([offlinePr]);
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

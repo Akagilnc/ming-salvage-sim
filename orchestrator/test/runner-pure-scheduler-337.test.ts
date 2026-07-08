@@ -129,7 +129,7 @@ class SeamOnlyBackend implements Backend {
   }) {
     void input;
     return {
-      prUrl: "https://github.com/o/r/pull/337",
+      prUrl: "pr://slice/offline-337",
       headOid: "deadbeef",
       totalFindingCount: 0,
       quiescent: true,

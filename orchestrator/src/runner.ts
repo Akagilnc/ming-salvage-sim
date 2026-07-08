@@ -1962,40 +1962,42 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       throw new Error("online review poll requires a non-empty PR URL from ship");
     }
     const repo = defaultRepo();
-    if (backend.pollOnlineReviewState !== undefined) {
-      const landing = await backend.pollOnlineReviewState({
-        repo,
-        prUrl,
-        pollCount,
-      });
-      const defaultBots = {
-        coderabbit: { state: "complete" as const, findingCount: 0 },
-        sourcery: { state: "complete" as const, findingCount: 0 },
-        codex: { state: "complete" as const, findingCount: 0 },
-        gemini: { state: "complete" as const, findingCount: 0 },
-      };
-      return {
-        repo,
-        prNumber: 0,
-        prUrl: landing.prUrl,
-        headOid: landing.headOid,
-        pollCount,
-        bots: (landing.bots ?? defaultBots) as PrReviewSnapshot["bots"],
-        threads: landing.threads.map((t) => ({
-          id: t.id,
-          body: t.body,
-          authorLogin: t.authorLogin ?? "unknown",
-          isResolved: t.isResolved,
-          headOid: t.headOid,
-        })),
-        checkRuns: [],
-        totalFindingCount: landing.totalFindingCount,
-        quiescent: landing.quiescent,
-      };
-    }
     const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
     if (!livePoll) {
+      // #600 r6: hook and offline synthesis share the central admissibility gate —
+      // test backends may inject poll results only under explicit offline/test handles.
       assertOfflineSyntheticPollAdmissible(prUrl, repo);
+      if (backend.pollOnlineReviewState !== undefined) {
+        const landing = await backend.pollOnlineReviewState({
+          repo,
+          prUrl,
+          pollCount,
+        });
+        const defaultBots = {
+          coderabbit: { state: "complete" as const, findingCount: 0 },
+          sourcery: { state: "complete" as const, findingCount: 0 },
+          codex: { state: "complete" as const, findingCount: 0 },
+          gemini: { state: "complete" as const, findingCount: 0 },
+        };
+        return {
+          repo,
+          prNumber: 0,
+          prUrl: landing.prUrl,
+          headOid: landing.headOid,
+          pollCount,
+          bots: (landing.bots ?? defaultBots) as PrReviewSnapshot["bots"],
+          threads: landing.threads.map((t) => ({
+            id: t.id,
+            body: t.body,
+            authorLogin: t.authorLogin ?? "unknown",
+            isResolved: t.isResolved,
+            headOid: t.headOid,
+          })),
+          checkRuns: [],
+          totalFindingCount: landing.totalFindingCount,
+          quiescent: landing.quiescent,
+        };
+      }
       return offlinePrReviewSnapshot({
         repo,
         prUrl,
