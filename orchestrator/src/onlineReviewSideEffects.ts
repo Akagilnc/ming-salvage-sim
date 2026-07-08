@@ -6,7 +6,7 @@
  * post-recheck thread resolution. No LLM calls.
  */
 
-import { parsePrRef } from "./botPolling.js";
+import { paginateReviewThreadNodes, parsePrRef } from "./botPolling.js";
 import type { Sh } from "./familyDriver.js";
 import type {
   OnlineReviewFindingDisposition,
@@ -85,14 +85,6 @@ export function replyToReviewThread(
   ]);
 }
 
-function splitRepoSlug(repo: string): { owner: string; name: string } {
-  const [owner, name] = repo.split("/");
-  if (owner === undefined || name === undefined || owner.length === 0 || name.length === 0) {
-    throw new Error(`onlineReviewSideEffects: invalid repo slug "${repo}"`);
-  }
-  return { owner, name };
-}
-
 /**
  * Resolve a review thread via GraphQL `resolveReviewThread` (#600 AC4).
  * REST `PATCH /pulls/comments/{id}` edits comment content — it does NOT resolve
@@ -105,49 +97,18 @@ export function resolveReviewThread(
   prNumber: number,
   threadId: string,
 ): void {
-  const { owner, name } = splitRepoSlug(repo);
-  const lookupQuery = [
-    "query($owner:String!,$name:String!,$number:Int!){",
-    "repository(owner:$owner,name:$name){",
-    "pullRequest(number:$number){",
-    "reviewThreads(first:100){",
-    "nodes{id isResolved comments(first:1){nodes{databaseId}}}}",
-    "}}}",
-  ].join("");
-  const lookupRaw = sh("gh", [
-    "api",
-    "graphql",
-    "-f",
-    `query=${lookupQuery}`,
-    "-f",
-    `owner=${owner}`,
-    "-f",
-    `name=${name}`,
-    "-F",
-    `number=${prNumber}`,
-  ]);
-  const lookupParsed: unknown = JSON.parse(lookupRaw);
-  const nodes =
-    lookupParsed != null &&
-    typeof lookupParsed === "object" &&
-    (lookupParsed as { data?: { repository?: { pullRequest?: { reviewThreads?: { nodes?: unknown[] } } } } })
-      .data?.repository?.pullRequest?.reviewThreads?.nodes;
-  if (!Array.isArray(nodes)) {
-    throw new Error(
-      `onlineReviewSideEffects: could not list review threads for ${repo}#${prNumber}`,
-    );
-  }
+  const nodes = paginateReviewThreadNodes(
+    sh,
+    repo,
+    prNumber,
+    "id isResolved comments(first:1){nodes{databaseId}}",
+  );
   let threadNodeId: string | undefined;
   if (threadId.startsWith("PRRT_")) {
     threadNodeId = threadId;
   } else {
     const targetId = Number(threadId);
-    for (const node of nodes) {
-      if (node == null || typeof node !== "object") continue;
-      const obj = node as {
-        id?: string;
-        comments?: { nodes?: Array<{ databaseId?: number }> };
-      };
+    for (const obj of nodes) {
       const firstCommentId = obj.comments?.nodes?.[0]?.databaseId;
       if (firstCommentId === targetId || String(firstCommentId) === threadId) {
         threadNodeId = obj.id;

@@ -34,6 +34,7 @@ import {
   isBotQuiescent,
   isThreadEvidenceFresh,
   ONLINE_REVIEW_BOT_IDS,
+  paginateReviewThreadNodes,
   parsePrRef,
   pollPrReviewState,
   postBotRetriggerComment,
@@ -134,6 +135,7 @@ function ghFixture(input: { calls: string[] }): Sh {
           repository: {
             pullRequest: {
               reviewThreads: {
+                pageInfo: { endCursor: "cursor-single-page", hasNextPage: false },
                 nodes: [
                   {
                     id: "PRRT_kwDOExampleThread",
@@ -210,6 +212,75 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
     expect(
       parsePrRef("https://github.com/o/r/pull/42", "fallback/r"),
     ).toEqual({ repo: "o/r", prNumber: 42 });
+  });
+
+  it("paginateReviewThreadNodes collects all threads across GraphQL cursor pages (#600 AC2)", () => {
+    const calls: string[] = [];
+    let graphqlPage = 0;
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      const cmd = args.join(" ");
+      if (cmd.includes("graphql") && cmd.includes("reviewThreads")) {
+        graphqlPage += 1;
+        if (graphqlPage === 1) {
+          return JSON.stringify({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    pageInfo: { endCursor: "cursor-page-1", hasNextPage: true },
+                    nodes: [
+                      {
+                        id: "PRRT_page1_a",
+                        isResolved: false,
+                        comments: { nodes: [{ databaseId: 1001 }] },
+                      },
+                      {
+                        id: "PRRT_page1_b",
+                        isResolved: false,
+                        comments: { nodes: [{ databaseId: 1002 }] },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          });
+        }
+        return JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  pageInfo: { endCursor: "cursor-page-2", hasNextPage: false },
+                  nodes: [
+                    {
+                      id: "PRRT_page2_a",
+                      isResolved: true,
+                      comments: { nodes: [{ databaseId: 1003 }] },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      }
+      return "[]";
+    };
+    const nodes = paginateReviewThreadNodes(
+      sh,
+      "o/r",
+      42,
+      "id isResolved comments(first:1){nodes{databaseId}}",
+      2,
+    );
+    expect(nodes).toHaveLength(3);
+    expect(nodes.map((n) => n.comments?.nodes?.[0]?.databaseId)).toEqual([
+      1001, 1002, 1003,
+    ]);
+    expect(graphqlPage).toBe(2);
+    expect(calls.some((c) => c.includes("after=cursor-page-1"))).toBe(true);
   });
 
   it("pollPrReviewState threads use GraphQL top comment id distinct from threadNodeId (#600 r7)", () => {
@@ -613,6 +684,7 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
             repository: {
               pullRequest: {
                 reviewThreads: {
+                  pageInfo: { endCursor: "cursor-single-page", hasNextPage: false },
                   nodes: [
                     {
                       id: "PRRT_kwDOExampleThread",
@@ -686,6 +758,7 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
             repository: {
               pullRequest: {
                 reviewThreads: {
+                  pageInfo: { endCursor: "cursor-single-page", hasNextPage: false },
                   nodes: [
                     {
                       id: "PRRT_kwDOExampleThread",
