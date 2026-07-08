@@ -43,7 +43,7 @@ import {
   childEscalationAnswer,
   familyEscalationState,
   familyReviewLoopConvergedForHead,
-  familyShippedRecordForHead,
+  familyShippedRecordForReviewLoopResume,
   hasBoundShippedMarker,
   hasUnboundLegacyShippedMarker,
   isMergedAccountingEntry,
@@ -1509,7 +1509,7 @@ export async function runFamily(
   // yet) without duplicate PR. (Ruled against AC text; re-open PR cannot satisfy
   // "continues into review-loop" clause — we must resume *from* the shipped state
   // by writing the terminal marker.)
-  const shippedRecord = familyShippedRecordForHead(
+  const shippedRecord = familyShippedRecordForReviewLoopResume(
     preFinalLedger,
     preFinalFamilyHead,
   );

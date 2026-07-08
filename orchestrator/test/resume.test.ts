@@ -1491,6 +1491,70 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     ).toBe(1);
   });
 
+  it("pin r28: crash after fix markers but before S10 row resumes S9 not fixer", async () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+      {
+        step: "S10",
+        event: "online_review_round_retrigger",
+        roundTriggerHeadOid: fixSha,
+        roundTriggerAt: retriggerTs,
+        onlineReviewRound: 2,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: retriggerTs,
+      },
+      {
+        step: "S10",
+        event: "online_review_fix_committed",
+        fixCommitSha: fixSha,
+        onlineReviewRound: 1,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: fixTs,
+      },
+    ];
+    expect(onlineReviewRoundFromLedger(prior)).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromLedger(prior)).toBe(fixSha);
+
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs.filter((s) => s.id === "S10")).toHaveLength(0);
+    const resumedVerifyIdx = backend.dispatchSpecs.findIndex((s) => s.id === "S9");
+    expect(resumedVerifyIdx).toBeGreaterThanOrEqual(0);
+    expect(backend.dispatchContexts[resumedVerifyIdx]?.onlineReviewRound).toBe(2);
+    expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
+  });
+
   it("AC2 r7: crash after S10 resumes S9 with round+fix SHA from full ledger (#600 F1)", async () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const prior = [

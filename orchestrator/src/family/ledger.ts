@@ -812,6 +812,78 @@ export function familyAlreadyShipped(
   return familyShippedRecordForHead(entries, familyHeadAfter) !== undefined;
 }
 
+/** Online-review loop markers prove an in-progress round at `familyHeadAfter`. */
+export function familyOnlineReviewLoopInProgressForHead(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string,
+): boolean {
+  const head = familyHeadAfter.trim();
+  if (head.length === 0) return false;
+  return entries.some(
+    (e) =>
+      (e.event === "online_review_fix_committed" &&
+        e.familyHeadAfter === head) ||
+      (e.event === "online_review_round_retrigger" &&
+        e.roundTriggerHeadOid === head),
+  );
+}
+
+/**
+ * Shipped resume anchor for the online review-loop (#600 r28).
+ *
+ * Exact head match first; when an in-loop fixer advanced HEAD past the shipped
+ * marker, accept the ancestor shipped row plus fix/retrigger markers for the
+ * current head chain.
+ */
+export function familyShippedRecordForReviewLoopResume(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
+): ShippedRecord | undefined {
+  const exact = familyShippedRecordForHead(entries, familyHeadAfter);
+  if (exact != null) return exact;
+  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) {
+    return undefined;
+  }
+  const currentHead = familyHeadAfter.trim();
+  if (!familyOnlineReviewLoopInProgressForHead(entries, currentHead)) {
+    return undefined;
+  }
+  let markerPr: string | undefined;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      entry.event === "online_review_fix_committed" ||
+      entry.event === "online_review_round_retrigger"
+    ) {
+      if (typeof entry.pr === "string" && entry.pr.trim().length > 0) {
+        markerPr = entry.pr.trim();
+      }
+      break;
+    }
+  }
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      isValidFamilyShipped(entry) &&
+      typeof entry.pr === "string" &&
+      entry.pr.trim().length > 0 &&
+      typeof entry.familyHeadAfter === "string" &&
+      entry.familyHeadAfter.trim().length > 0 &&
+      entry.familyHeadAfter !== currentHead &&
+      (markerPr === undefined || entry.pr.trim() === markerPr)
+    ) {
+      return {
+        pr: entry.pr,
+        familyHeadAfter: entry.familyHeadAfter,
+        ...(entry.stopSummary !== undefined
+          ? { stopSummary: entry.stopSummary }
+          : {}),
+      };
+    }
+  }
+  return undefined;
+}
+
 export function familyShippedRecordForHead(
   entries: ReadonlyArray<FamilyLedgerEntry>,
   familyHeadAfter: string | undefined,

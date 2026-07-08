@@ -86,6 +86,7 @@ import {
   retriggerBotsAndPoll,
   shipLedgerTriggeredAtFromSliceLedger,
   slicePendingRoundTriggerFromFixGap,
+  slicePostFixVerifyPendingFromMarkerGap,
   onlineReviewFixerNothingToFixStopSummary,
   VerifyWorkerHeadMovedError,
   verifyReviewerHeadMovedStopSummary,
@@ -1567,6 +1568,19 @@ function planResume(
   const resumeLastOutput = truncateReviewLoop
     ? undefined
     : routeOutput;
+  // #600 r28: markers persist before the executable S10 row — crash in that window
+  // must resume into post-fix verify, not re-dispatch the fixer.
+  if (
+    slicePostFixVerifyPendingFromMarkerGap(ledger) &&
+    decision.kind === "next" &&
+    decision.step === "S10"
+  ) {
+    return {
+      resumeStep: "S9",
+      lastOutput: undefined,
+      priorLedger: priorForResume,
+    };
+  }
   if (decision.kind === "handoff") {
     return {
       terminalStatus: decision.status,
