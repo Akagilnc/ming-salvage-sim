@@ -1,0 +1,322 @@
+/**
+ * Host-side deterministic PR bot polling (#600).
+ *
+ * Polls GitHub for the four online review bots (CodeRabbit auto-updates on push;
+ * Sourcery / Codex / Gemini need a manual R2/R3 re-trigger comment after a fix
+ * push). No LLM calls — runner scheduling only. Every `gh api` list is paginated
+ * with `per_page=100` (wiki pr-review-loop cadence).
+ */
+
+import type { Sh } from "./familyDriver.js";
+
+/** The four bots the online review loop waits on (ADR 0061 / wiki pr-review-loop). */
+export const ONLINE_REVIEW_BOT_IDS = [
+  "coderabbit",
+  "sourcery",
+  "codex",
+  "gemini",
+] as const;
+
+export type OnlineReviewBotId = (typeof ONLINE_REVIEW_BOT_IDS)[number];
+
+/** ~2-minute poll cadence; ~5 polls ≈ 10-minute overdue window before a bot is dropped. */
+export const BOT_POLL_INTERVAL_MS = 120_000;
+export const BOT_OVERDUE_POLL_COUNT = 5;
+
+/** Manual re-trigger comment posted for Sourcery / Codex / Gemini after a fix push. */
+export const BOT_RETRIGGER_COMMENT =
+  "@sourcery-ai review\n@chatgpt-codex-connector review\n@gemini-code-assist review";
+
+export type BotLegStatus =
+  | { readonly state: "pending" }
+  | { readonly state: "complete"; readonly findingCount: number }
+  | { readonly state: "dropped"; readonly reason: string };
+
+export interface ReviewThreadSnapshot {
+  readonly id: string;
+  readonly path?: string;
+  readonly line?: number;
+  readonly body: string;
+  readonly authorLogin: string;
+  readonly isResolved: boolean;
+  /** Head OID the thread targets when GitHub exposes it (undefined for artifact bots). */
+  readonly headOid?: string;
+}
+
+export interface PrReviewSnapshot {
+  readonly repo: string;
+  readonly prNumber: number;
+  readonly prUrl: string;
+  readonly headOid: string;
+  readonly pollCount: number;
+  readonly bots: Readonly<Record<OnlineReviewBotId, BotLegStatus>>;
+  readonly threads: ReadonlyArray<ReviewThreadSnapshot>;
+  readonly totalFindingCount: number;
+  readonly quiescent: boolean;
+}
+
+export interface PollPrReviewInput {
+  readonly repo: string;
+  readonly prUrl: string;
+  readonly pollCount: number;
+  /** Per-bot poll counts without a completion signal — used to drop overdue bots. */
+  readonly botPendingPolls?: Readonly<Partial<Record<OnlineReviewBotId, number>>>;
+}
+
+/**
+ * Parse `owner/repo` and PR number from a GitHub PR URL.
+ * Accepts `https://github.com/o/r/pull/123` and `o/r#123` style handles.
+ */
+export function parsePrRef(
+  prUrl: string,
+  defaultRepo: string,
+): { repo: string; prNumber: number } {
+  const trimmed = prUrl.trim();
+  const web = trimmed.match(
+    /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?(?:[?#].*)?$/i,
+  );
+  if (web) {
+    return { repo: `${web[1]}/${web[2]}`, prNumber: Number(web[3]) };
+  }
+  const short = trimmed.match(/^([^/]+\/[^#]+)#(\d+)$/);
+  if (short) {
+    return { repo: short[1]!, prNumber: Number(short[2]) };
+  }
+  const numOnly = trimmed.match(/^(\d+)$/);
+  if (numOnly) {
+    return { repo: defaultRepo, prNumber: Number(numOnly[1]) };
+  }
+  throw new Error(`botPolling: cannot parse PR reference from "${prUrl}"`);
+}
+
+/** Paginate a GitHub REST collection (`gh api` returns a JSON array). */
+export function paginateGhApi(
+  sh: Sh,
+  path: string,
+  perPage = 100,
+): unknown[] {
+  const items: unknown[] = [];
+  for (let page = 1; ; page += 1) {
+    const sep = path.includes("?") ? "&" : "?";
+    const raw = sh("gh", [
+      "api",
+      `${path}${sep}per_page=${perPage}&page=${page}`,
+    ]);
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) break;
+    items.push(...parsed);
+    if (parsed.length < perPage) break;
+  }
+  return items;
+}
+
+function loginMatchesBot(login: string, bot: OnlineReviewBotId): boolean {
+  const lower = login.toLowerCase();
+  switch (bot) {
+    case "coderabbit":
+      return lower.includes("coderabbit");
+    case "sourcery":
+      return lower.includes("sourcery");
+    case "codex":
+      return lower.includes("codex") || lower.includes("chatgpt-codex");
+    case "gemini":
+      return lower.includes("gemini");
+    default: {
+      const never: never = bot;
+      return never;
+    }
+  }
+}
+
+function countBotFindings(
+  bot: OnlineReviewBotId,
+  comments: ReadonlyArray<{ author?: { login?: string }; body?: string }>,
+  reviews: ReadonlyArray<{ user?: { login?: string }; state?: string }>,
+): number {
+  let count = 0;
+  for (const c of comments) {
+    const login = c.author?.login ?? "";
+    if (!loginMatchesBot(login, bot)) continue;
+    const body = (c.body ?? "").trim();
+    if (body.length === 0) continue;
+    // CodeRabbit / gemini often post summary comments — count non-trivial bodies.
+    if (body.length >= 20) count += 1;
+  }
+  for (const r of reviews) {
+    const login = r.user?.login ?? "";
+    if (!loginMatchesBot(login, bot)) continue;
+    const state = (r.state ?? "").toUpperCase();
+    if (state === "COMMENTED" || state === "CHANGES_REQUESTED") count += 1;
+  }
+  return count;
+}
+
+function resolveBotStatuses(
+  input: PollPrReviewInput,
+  comments: ReadonlyArray<{ author?: { login?: string }; body?: string }>,
+  reviews: ReadonlyArray<{ user?: { login?: string }; state?: string }>,
+): Record<OnlineReviewBotId, BotLegStatus> {
+  const pending = input.botPendingPolls ?? {};
+  const bots = {} as Record<OnlineReviewBotId, BotLegStatus>;
+  for (const bot of ONLINE_REVIEW_BOT_IDS) {
+    const findingCount = countBotFindings(bot, comments, reviews);
+    if (findingCount > 0) {
+      bots[bot] = { state: "complete", findingCount };
+      continue;
+    }
+    const waited = pending[bot] ?? input.pollCount;
+    if (waited >= BOT_OVERDUE_POLL_COUNT) {
+      bots[bot] = {
+        state: "dropped",
+        reason: `no review signal after ${waited} polls (~${Math.round((waited * BOT_POLL_INTERVAL_MS) / 60_000)} min)`,
+      };
+      continue;
+    }
+    bots[bot] = { state: "pending" };
+  }
+  return bots;
+}
+
+function parseReviewThreads(
+  rawThreads: unknown[],
+  headOid: string,
+): ReviewThreadSnapshot[] {
+  const out: ReviewThreadSnapshot[] = [];
+  for (const t of rawThreads) {
+    if (t == null || typeof t !== "object") continue;
+    const obj = t as Record<string, unknown>;
+    const comments = Array.isArray(obj.comments) ? obj.comments : [];
+    const first = comments[0];
+    const firstObj =
+      first != null && typeof first === "object"
+        ? (first as Record<string, unknown>)
+        : undefined;
+    const body =
+      typeof firstObj?.body === "string"
+        ? firstObj.body
+        : typeof obj.body === "string"
+          ? obj.body
+          : "";
+    const author =
+      firstObj?.user != null && typeof firstObj.user === "object"
+        ? ((firstObj.user as { login?: string }).login ?? "unknown")
+        : "unknown";
+    const line =
+      typeof obj.line === "number"
+        ? obj.line
+        : typeof obj.original_line === "number"
+          ? obj.original_line
+          : undefined;
+    const threadHead =
+      typeof obj.commit_id === "string"
+        ? obj.commit_id
+        : typeof firstObj?.commit_id === "string"
+          ? firstObj.commit_id
+          : undefined;
+    out.push({
+      id: String(obj.id ?? out.length),
+      path: typeof obj.path === "string" ? obj.path : undefined,
+      line,
+      body,
+      authorLogin: author,
+      isResolved: Boolean(obj.is_resolved ?? obj.resolved),
+      headOid: threadHead ?? headOid,
+    });
+  }
+  return out;
+}
+
+/**
+ * Collect a single poll snapshot for a PR. Deterministic given `sh` stdout.
+ * Does NOT sleep — the caller owns cadence / retry loops.
+ */
+export function pollPrReviewState(
+  sh: Sh,
+  input: PollPrReviewInput,
+): PrReviewSnapshot {
+  const { repo, prNumber } = parsePrRef(input.prUrl, input.repo);
+  const prRaw = sh("gh", [
+    "api",
+    `repos/${repo}/pulls/${prNumber}`,
+    "--jq",
+    "{head:{sha:.head.sha},html_url:.html_url}",
+  ]);
+  const prParsed: unknown = JSON.parse(prRaw);
+  if (prParsed == null || typeof prParsed !== "object") {
+    throw new Error(`botPolling: malformed gh pr payload for ${input.prUrl}`);
+  }
+  const prObj = prParsed as {
+    head?: { sha?: string };
+    html_url?: string;
+  };
+  const headOid = prObj.head?.sha ?? "";
+  if (headOid.length === 0) {
+    throw new Error(`botPolling: PR ${input.prUrl} has no head sha`);
+  }
+
+  const issueComments = paginateGhApi(
+    sh,
+    `repos/${repo}/issues/${prNumber}/comments`,
+  ) as Array<{ author?: { login?: string }; body?: string }>;
+  const reviewComments = paginateGhApi(
+    sh,
+    `repos/${repo}/pulls/${prNumber}/comments`,
+  ) as Array<{ author?: { login?: string }; body?: string }>;
+  const reviews = paginateGhApi(
+    sh,
+    `repos/${repo}/pulls/${prNumber}/reviews`,
+  ) as Array<{ user?: { login?: string }; state?: string }>;
+  const threadsRaw = paginateGhApi(
+    sh,
+    `repos/${repo}/pulls/${prNumber}/comments`,
+  );
+
+  const allComments = [...issueComments, ...reviewComments];
+  const bots = resolveBotStatuses(input, allComments, reviews);
+  const threads = parseReviewThreads(threadsRaw, headOid);
+  const totalFindingCount = ONLINE_REVIEW_BOT_IDS.reduce((sum, bot) => {
+    const leg = bots[bot];
+    return sum + (leg.state === "complete" ? leg.findingCount : 0);
+  }, 0);
+  const quiescent = ONLINE_REVIEW_BOT_IDS.every((bot) => {
+    const leg = bots[bot];
+    return leg.state === "complete" || leg.state === "dropped";
+  });
+
+  return {
+    repo,
+    prNumber,
+    prUrl: prObj.html_url ?? input.prUrl,
+    headOid,
+    pollCount: input.pollCount,
+    bots,
+    threads,
+    totalFindingCount,
+    quiescent,
+  };
+}
+
+/** Post the manual R2/R3 re-trigger comment for Sourcery / Codex / Gemini. */
+export function postBotRetriggerComment(
+  sh: Sh,
+  repo: string,
+  prNumber: number,
+  body: string = BOT_RETRIGGER_COMMENT,
+): void {
+  sh("gh", [
+    "api",
+    `repos/${repo}/issues/${prNumber}/comments`,
+    "-f",
+    `body=${body}`,
+  ]);
+}
+
+/** True when every bot leg is complete or explicitly dropped (safe to dispatch verify). */
+export function isBotQuiescent(snapshot: PrReviewSnapshot): boolean {
+  return snapshot.quiescent;
+}
+
+/** Count open (unresolved) review threads on the current head. */
+export function unresolvedThreadCount(snapshot: PrReviewSnapshot): number {
+  return snapshot.threads.filter((t) => !t.isResolved).length;
+}
