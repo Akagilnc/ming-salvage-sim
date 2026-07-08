@@ -83,6 +83,7 @@ import {
   resolveOnlineReviewRoundTrigger,
   realBotPollClock,
   reconstructOnlineReviewLandingForResume,
+  ensureOnlineReviewRetriggerAfterFixGap,
   retriggerBotsAndPoll,
   shipLedgerTriggeredAtFromSliceLedger,
   slicePendingRoundTriggerFromFixGap,
@@ -2583,6 +2584,48 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       onlineReviewRoundTriggerFromLedger(resumeLedger);
     lastOnlineReviewPendingRoundTrigger =
       slicePendingRoundTriggerFromFixGap(resumeLedger);
+
+    const pendingGapRetrigger = lastOnlineReviewPendingRoundTrigger;
+    if (pendingGapRetrigger !== undefined && lastShipOutput?.pr != null) {
+      const resumeRepo = defaultRepo();
+      if (isLiveGithubReviewPollEnabled(lastShipOutput.pr, resumeRepo)) {
+        try {
+          const ensured = ensureOnlineReviewRetriggerAfterFixGap({
+            sh: ghSh,
+            repo: resumeRepo,
+            prUrl: lastShipOutput.pr,
+            gapTrigger: pendingGapRetrigger,
+          });
+          lastOnlineReviewRoundTrigger = ensured.roundTrigger;
+          lastOnlineReviewPendingRoundTrigger = undefined;
+          const retriggerMarker = {
+            step: "S10" as const,
+            event: "online_review_round_retrigger" as const,
+            roundTriggerHeadOid: ensured.roundTrigger.headOid,
+            roundTriggerAt: ensured.roundTrigger.triggeredAt,
+            onlineReviewRound,
+          };
+          ledger.push(retriggerMarker);
+          try {
+            await backend.writeLedger(
+              {
+                ...retriggerMarker,
+                sessionId,
+                prompt_hash: await hashPrompt(undefined, "S10", backend),
+                branchHEAD:
+                  lastOnlineReviewFixCommitSha ?? ensured.roundTrigger.headOid,
+                ts: new Date().toISOString(),
+              },
+              stateDir,
+            );
+          } catch (err) {
+            return await errorTermination("S9", err, { recordInMemory: false });
+          }
+        } catch (err) {
+          return await errorTermination("S9", err, { recordInMemory: false });
+        }
+      }
+    }
 
     // ADR 0030: persisted S4 boundaries are the runner's closure truth. Resume
     // must replay the prior S4 adjudications, because an S6 reviewer may carry an

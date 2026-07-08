@@ -749,6 +749,62 @@ export function pollPrReviewState(
   };
 }
 
+type RetriggerIssueComment = {
+  readonly body?: string;
+  readonly created_at?: string;
+};
+
+/** True when an issue-comment body matches the manual R2/R3 re-trigger contract. */
+export function isBotRetriggerCommentBody(body: string): boolean {
+  const trimmed = body.trim();
+  const marker = BOT_RETRIGGER_COMMENT.split("\n")[0]!;
+  return trimmed === BOT_RETRIGGER_COMMENT.trim() || trimmed.includes(marker);
+}
+
+/**
+ * Find an admissible R2/R3 re-trigger comment already on the PR (#600 r34 gap-resume).
+ * Uses the same issue-comment evidence collection as pollPrReviewState.
+ */
+export function findAdmissibleRetriggerComment(
+  sh: Sh,
+  repo: string,
+  prUrl: string,
+  gapTrigger: RoundTrigger,
+): RoundTrigger | undefined {
+  const headProbe = pollPrReviewState(sh, {
+    repo,
+    prUrl,
+    pollCount: 0,
+    roundTrigger: gapTrigger,
+  });
+  const { prNumber } = parsePrRef(prUrl, repo);
+  const issueComments = paginateGhApi(
+    sh,
+    `repos/${repo}/issues/${prNumber}/comments`,
+  ) as RetriggerIssueComment[];
+  for (const comment of issueComments) {
+    const body = comment.body ?? "";
+    if (!isBotRetriggerCommentBody(body)) continue;
+    const timestamp = comment.created_at;
+    if (timestamp === undefined || timestamp.length === 0) continue;
+    if (
+      !evidenceAdmissible(
+        liveArtifactEvidenceRecord({
+          timestamp,
+          head: headProbe.headOid,
+          roundTrigger: gapTrigger,
+        }),
+        headProbe.headOid,
+        gapTrigger,
+      )
+    ) {
+      continue;
+    }
+    return buildRoundTrigger(headProbe.headOid, timestamp);
+  }
+  return undefined;
+}
+
 /** Post the manual R2/R3 re-trigger comment for Sourcery / Codex / Gemini. */
 export function postBotRetriggerComment(
   sh: Sh,

@@ -77,6 +77,7 @@ import {
   onlineReviewRoundFromFamilyLedger,
   onlineReviewRoundTriggerFromFamilyLedger,
   realBotPollClock,
+  ensureOnlineReviewRetriggerAfterFixGap,
   retriggerBotsAndPoll,
   familyPendingRoundTriggerFromFixGap,
   resolveOnlineReviewRoundTrigger,
@@ -1539,13 +1540,13 @@ export async function runFamilyOnlineReviewLoop(input: {
     round: onlineReviewRoundFromFamilyLedger(familyLedger),
     lastFixSha: lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedger),
   };
+  const pendingGapRetrigger = familyPendingRoundTriggerFromFixGap(familyLedger);
   let lastRoundTrigger = livePoll
     ? resolveOnlineReviewRoundTrigger({
         onlineReviewRound: loopState.round,
         persistedRoundTrigger:
           onlineReviewRoundTriggerFromFamilyLedger(familyLedger),
-        pendingRetriggerFromFixGap:
-          familyPendingRoundTriggerFromFixGap(familyLedger),
+        pendingRetriggerFromFixGap: pendingGapRetrigger,
         fixCommitSha: loopState.lastFixSha,
         shipPrHead: input.ship.prHead,
         shipLedgerTriggeredAt: shipTriggeredAt,
@@ -1556,6 +1557,21 @@ export async function runFamilyOnlineReviewLoop(input: {
           "offline-review-head",
         shipTriggeredAt,
       );
+  if (livePoll && pendingGapRetrigger !== undefined) {
+    const ensured = ensureOnlineReviewRetriggerAfterFixGap({
+      sh: ghSh,
+      repo,
+      prUrl,
+      gapTrigger: pendingGapRetrigger,
+    });
+    lastRoundTrigger = ensured.roundTrigger;
+    await recordOnlineReviewRoundRetrigger(input.familyBackend, {
+      roundTriggerHeadOid: ensured.roundTrigger.headOid,
+      roundTriggerAt: ensured.roundTrigger.triggeredAt,
+      onlineReviewRound: loopState.round,
+      pr: prUrl,
+    });
+  }
   let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
 
   try {
