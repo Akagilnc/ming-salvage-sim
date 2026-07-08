@@ -573,7 +573,7 @@ describe("#600 stale head + artifact bot freshness (#600 AC3)", () => {
 });
 
 describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
-  it("createDeferredTrackingIssue uses gh issue create", () => {
+  it("createDeferredTrackingIssue uses gh api repos/{repo}/issues", () => {
     const calls: string[] = [];
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
@@ -582,7 +582,7 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     const url = createDeferredTrackingIssue(sh, "o/r", "defer finding", "reason text");
     expect(url).toBe("https://github.com/o/r/issues/99");
     expect(calls).toEqual([
-      "gh issue create --repo o/r --title defer finding --body reason text --json url -q .url",
+      "gh api repos/o/r/issues -f title=defer finding -f body=reason text --jq .html_url",
     ]);
   });
 
@@ -602,7 +602,7 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
       const cmd = args.join(" ");
-      if (cmd.includes("issue create")) {
+      if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
         return "https://github.com/o/r/issues/88";
       }
       if (cmd.includes("/replies")) {
@@ -640,7 +640,7 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
       const cmd = args.join(" ");
-      if (cmd.includes("issue create")) {
+      if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
         return "https://github.com/o/r/issues/77";
       }
       if (cmd.includes("/replies")) {
@@ -672,9 +672,9 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     expect(result.repliesPosted.some((r) => r.body.includes("rejected:"))).toBe(true);
     expect(result.repliesPosted.some((r) => r.body.includes("Tracked issue:"))).toBe(true);
     expect(
-      calls.filter((c) => c.startsWith("gh issue create")),
+      calls.filter((c) => c.startsWith("gh api repos/o/r/issues")),
     ).toEqual([
-      "gh issue create --repo o/r --title Deferred online review finding: t:3 --body needs design --json url -q .url",
+      "gh api repos/o/r/issues -f title=Deferred online review finding: t:3 -f body=needs design --jq .html_url",
     ]);
     expect(
       calls.filter((c) => c.includes("repos/o/r/pulls/42/comments/2/replies")),
@@ -821,11 +821,11 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
 
   it("createDeferredTrackingIssue propagates gh failures", () => {
     const sh: Sh = () => {
-      throw new Error("gh issue create failed");
+      throw new Error("gh api repos/o/r/issues failed");
     };
     expect(() =>
       createDeferredTrackingIssue(sh, "o/r", "title", "body"),
-    ).toThrow(/gh issue create failed/);
+    ).toThrow(/gh api repos\/o\/r\/issues failed/);
   });
 
   it("fixMarkedKeysFromVerify derives fix keys from dispositions", () => {
