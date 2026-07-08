@@ -240,7 +240,7 @@ export async function recordMerged(
     compact({
       childIssue: r.childIssue,
       status: "merged",
-      ...(r.event !== undefined ? { event: r.event } : {}),
+      ...(r.event != null ? { event: r.event } : {}),
       childBranch: r.childBranch,
       childHead: r.childHead,
       wave: r.wave,
@@ -285,7 +285,7 @@ export async function recordAborted(
         infraFailureStopSummary({
           summary: record.reason ?? "family barrier aborted",
           repairHint: "inspect this aborted ledger row, repair the barrier, and rerun",
-          ...(record.familyHeadAfter !== undefined
+          ...(record.familyHeadAfter != null
             ? {
                 heads: {
                   actualFamilyHead: record.familyHeadAfter,
@@ -315,7 +315,7 @@ export async function recordCmrPassed(
       stopSummary:
         record.stopSummary ??
         successStopSummary(
-          record.familyHeadAfter !== undefined
+          record.familyHeadAfter != null
             ? {
                 heads: {
                   verifiedCmrHead: record.familyHeadAfter,
@@ -349,7 +349,7 @@ export async function recordCmrReviewed(
           summary: record.reason ?? "family CMR review returned blocking findings",
           repairHint:
             "inspect this CMR review row and the following coder-fix row before re-review",
-          ...(record.familyHeadAfter !== undefined
+          ...(record.familyHeadAfter != null
             ? {
                 heads: {
                   actualFamilyHead: record.familyHeadAfter,
@@ -380,14 +380,14 @@ export async function recordCmrFixCommitted(
       stopSummary:
         record.stopSummary ??
         successStopSummary({
-          ...(record.familyHeadAfter !== undefined ||
-          record.familyHeadBefore !== undefined
+          ...(record.familyHeadAfter != null ||
+          record.familyHeadBefore != null
             ? {
                 heads: {
-                  ...(record.familyHeadBefore !== undefined
+                  ...(record.familyHeadBefore != null
                     ? { reportedFamilyHead: record.familyHeadBefore }
                     : {}),
-                  ...(record.familyHeadAfter !== undefined
+                  ...(record.familyHeadAfter != null
                     ? { actualFamilyHead: record.familyHeadAfter }
                     : {}),
                   sources: {
@@ -420,7 +420,7 @@ export async function recordFamilyEscalated(
         infraFailureStopSummary({
           summary: record.reason ?? "family run escalated",
           repairHint: "inspect this escalation row and repair before rerun",
-          ...(record.familyHeadAfter !== undefined
+          ...(record.familyHeadAfter != null
             ? {
                 heads: {
                   actualFamilyHead: record.familyHeadAfter,
@@ -490,7 +490,7 @@ export async function recordChildDecisionParked(
           summary: record.reason,
           repairHint:
             "answer this child decision gate (append an escalation_answered row with the matching childIssue) and rerun the family to resume in place",
-          ...(record.familyHeadAfter !== undefined
+          ...(record.familyHeadAfter != null
             ? {
                 heads: {
                   actualFamilyHead: record.familyHeadAfter,
@@ -730,11 +730,11 @@ export function cmrPassAlreadyPassed(
     readonly routeFingerprint?: string;
   },
 ): boolean {
-  if (input.familyHeadAfter === undefined || input.familyHeadAfter.trim().length === 0) {
+  if (input.familyHeadAfter == null || input.familyHeadAfter.trim().length === 0) {
     return false;
   }
   if (
-    input.routeFingerprint === undefined ||
+    input.routeFingerprint == null ||
     input.routeFingerprint.trim().length === 0
   ) {
     return false;
@@ -745,9 +745,9 @@ export function cmrPassAlreadyPassed(
       e.event === "cmr_passed" &&
       e.phase === "final" &&
       e.cmrPass === input.cmrPass &&
-      e.familyHeadAfter !== undefined &&
+      e.familyHeadAfter != null &&
       e.familyHeadAfter === input.familyHeadAfter &&
-      e.routeFingerprint !== undefined &&
+      e.routeFingerprint != null &&
       e.routeFingerprint === input.routeFingerprint,
   );
 }
@@ -821,16 +821,16 @@ export function familyShippedRecordForHead(
   // `recordShipped` writes — status + event + final phase + a non-blank `pr` URL
   // + a non-blank `familyHeadAfter` — so only a genuine ship for the current HEAD
   // counts.
-  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) return undefined;
+  if (familyHeadAfter == null || familyHeadAfter.trim().length === 0) return undefined;
   const shipped = entries.find(
     (e): e is FamilyLedgerEntry & { readonly pr: string; readonly familyHeadAfter: string } =>
       isValidFamilyShipped(e) && e.familyHeadAfter === familyHeadAfter,
   );
-  if (shipped === undefined) return undefined;
+  if (shipped == null) return undefined;
   return {
     pr: shipped.pr,
     familyHeadAfter: shipped.familyHeadAfter,
-    ...(shipped.stopSummary !== undefined
+    ...(shipped.stopSummary != null
       ? { stopSummary: shipped.stopSummary }
       : {}),
   };
