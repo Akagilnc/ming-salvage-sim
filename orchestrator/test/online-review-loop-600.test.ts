@@ -58,9 +58,11 @@ import {
   enforceRunnerOwnedRecheck,
   immediateBotPollClock,
   lastOnlineReviewFixCommitShaFromFamilyLedger,
+  lastOnlineReviewFixCommitShaFromLedger,
   MAX_ONLINE_REVIEW_ROUNDS,
   onlineReviewResumeHeadKeyFromLedger,
   onlineReviewRoundFromFamilyLedger,
+  onlineReviewRoundFromLedger,
   onlineReviewRoundTriggerFromFamilyLedger,
   onlineReviewRoundTriggerFromLedger,
   retriggerBotsAndPoll,
@@ -2445,6 +2447,70 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
         fixCommitted,
       ]),
     ).toBe(true);
+  });
+
+  it("pin r29: retrigger-only marker gap restores round+fixSHA for recheck (single-slice)", () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const s9False = {
+      step: "S9",
+      output: { kind: "verify", converged: false },
+      ts: "2026-07-08T12:00:00.000Z",
+    };
+    const retriggerOnly = {
+      step: "S10",
+      event: "online_review_round_retrigger" as const,
+      roundTriggerHeadOid: fixSha,
+      roundTriggerAt: RETRIGGER_TS,
+      onlineReviewRound: 2,
+      ts: fixTs,
+    };
+    const ledger = [s9False, retriggerOnly];
+
+    expect(slicePostFixVerifyPendingFromMarkerGap(ledger)).toBe(true);
+    expect(onlineReviewRoundFromLedger(ledger)).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromLedger(ledger)).toBe(fixSha);
+    expect(onlineReviewRoundTriggerFromLedger(ledger)).toEqual(
+      buildRoundTrigger(fixSha, RETRIGGER_TS),
+    );
+
+    const recheckOutcome = enforceRunnerOwnedRecheck(
+      { kind: "verify", converged: true },
+      onlineReviewRoundFromLedger(ledger),
+    );
+    expect(recheckOutcome).toEqual({
+      kind: "verify",
+      converged: true,
+      isRecheck: true,
+    });
+  });
+
+  it("pin r29: retrigger-only marker gap restores round+fixSHA symmetrically (family)", () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const familyLedger: FamilyLedgerEntry[] = [
+      {
+        status: "online_review_round_retrigger",
+        event: "online_review_round_retrigger",
+        phase: "final",
+        roundTriggerHeadOid: fixSha,
+        roundTriggerAt: RETRIGGER_TS,
+        onlineReviewRound: 2,
+      },
+    ];
+    expect(onlineReviewRoundFromFamilyLedger(familyLedger)).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedger)).toBe(fixSha);
+    expect(onlineReviewRoundTriggerFromFamilyLedger(familyLedger)).toEqual(
+      buildRoundTrigger(fixSha, RETRIGGER_TS),
+    );
+    const recheckOutcome = enforceRunnerOwnedRecheck(
+      { kind: "verify", converged: true },
+      onlineReviewRoundFromFamilyLedger(familyLedger),
+    );
+    expect(recheckOutcome).toEqual({
+      kind: "verify",
+      converged: true,
+      isRecheck: true,
+    });
   });
 
   it("pin r27: round ≥2 crash gap reconstructs pending trigger from fix-committed", () => {
