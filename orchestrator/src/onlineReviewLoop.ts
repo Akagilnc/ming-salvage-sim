@@ -44,7 +44,10 @@ import {
   fixMarkedKeysFromVerify,
 } from "./onlineReviewSideEffects.js";
 import type { StopSummary } from "./stopSummary.js";
-import { contractDriftStopSummary } from "./stopSummary.js";
+import {
+  contractDriftStopSummary,
+  infraFailureStopSummary,
+} from "./stopSummary.js";
 
 /** Hard cap on online review rounds — runner-enforced (ADR 0061). */
 export const MAX_ONLINE_REVIEW_ROUNDS = 3;
@@ -240,6 +243,16 @@ export function reconstructOnlineReviewLandingForResume(input: {
   };
 }
 
+/** Stop summary when host GitHub verify side effects fail closed (#600 r18). */
+export function verifySideEffectFailureStopSummary(err: unknown): StopSummary {
+  const detail = err instanceof Error ? err.message : String(err);
+  return infraFailureStopSummary({
+    summary: `online review verify side effects failed: ${detail}`,
+    repairHint:
+      "fix GitHub side-effect preconditions (valid PR ref, recheck fixing commit, defer issue creation) and rerun the online review loop",
+  });
+}
+
 /** In-band terminal for family/slice review-loop dispatch failures (#600 r7 S2). */
 export class OnlineReviewLoopTerminal extends Error {
   constructor(readonly result: OnlineReviewLoopStageResult) {
@@ -413,8 +426,9 @@ export function retriggerBotsAndPoll(
     roundTrigger: buildRoundTrigger(roundTriggerHead),
     botPendingPolls: {},
   });
+  const triggeredAt = new Date().toISOString();
   postBotRetriggerComment(sh, repo, headProbe.prNumber, BOT_RETRIGGER_COMMENT);
-  const roundTrigger = buildRoundTrigger(headProbe.headOid);
+  const roundTrigger = buildRoundTrigger(headProbe.headOid, triggeredAt);
   const snapshot = pollPrReviewState(sh, {
     repo,
     prUrl,
@@ -506,10 +520,22 @@ export async function runOnlineReviewLoopStage(
       await dispatch.dispatchVerify(landing, round),
       landing.onlineReviewSnapshot,
     );
-    verify = dispatch.applySideEffects(
-      verify,
-      verify.isRecheck ? lastFixCommitSha : undefined,
-    );
+    try {
+      verify = dispatch.applySideEffects(
+        verify,
+        verify.isRecheck ? lastFixCommitSha : undefined,
+      );
+    } catch (err) {
+      if (err instanceof OnlineReviewLoopTerminal) {
+        throw err;
+      }
+      return {
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round,
+        stopSummary: verifySideEffectFailureStopSummary(err),
+      };
+    }
     const fixKeys = fixMarkedKeysFromVerify(verify);
     landing = { ...landing, fixMarkedFindingIdentityKeys: fixKeys };
 

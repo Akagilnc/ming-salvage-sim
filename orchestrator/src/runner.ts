@@ -82,6 +82,7 @@ import {
   retriggerBotsAndPoll,
   shipLedgerTriggeredAtFromSliceLedger,
   verifyReviewerHeadMovedStopSummary,
+  verifySideEffectFailureStopSummary,
   waitForBotQuiescence,
   writeOnlineReviewSnapshotFile,
 } from "./onlineReviewLoop.js";
@@ -3335,23 +3336,31 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 stopSummary,
               });
             }
-            const sideEffects =
-              lastShipOutput.pr != null &&
-              isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
-                ? applyVerifySideEffects({
-                    sh: ghSh,
-                    repo: reviewCtx.repo!,
-                    prUrl: lastShipOutput.pr,
-                    verify: verifyOutput,
-                    fixingCommitSha: verifyOutput.isRecheck
-                      ? lastOnlineReviewFixCommitSha
-                      : undefined,
-                  })
-                : {
-                    deferredIssueUrls: [],
-                    repliesPosted: [],
-                    threadsResolved: [],
-                  };
+            let sideEffects: ReturnType<typeof applyVerifySideEffects>;
+            try {
+              sideEffects =
+                lastShipOutput.pr != null &&
+                isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
+                  ? applyVerifySideEffects({
+                      sh: ghSh,
+                      repo: reviewCtx.repo!,
+                      prUrl: lastShipOutput.pr,
+                      verify: verifyOutput,
+                      fixingCommitSha: verifyOutput.isRecheck
+                        ? lastOnlineReviewFixCommitSha
+                        : undefined,
+                    })
+                  : {
+                      deferredIssueUrls: [],
+                      repliesPosted: [],
+                      threadsResolved: [],
+                    };
+            } catch (err) {
+              return await errorTermination(reviewStep, err, {
+                output: verifyOutput,
+                stopSummary: verifySideEffectFailureStopSummary(err),
+              });
+            }
             verifyOutput = {
               ...verifyOutput,
               ...(sideEffects.deferredIssueUrls.length > 0
