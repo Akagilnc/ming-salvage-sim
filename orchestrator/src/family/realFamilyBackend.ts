@@ -667,28 +667,18 @@ export class RealFamilyBackend implements FamilyBackend {
     // → commit the merge (NEVER `--abort`). The real `sc.run` is behind the
     // {@link runMergerAgent} seam (fake-able; the real container only on the
     // driver / manual-smoke path).
-    // #598: a merger agent that CRASHES (throws — e.g. a container/connection
-    // failure inside the sc.run) is retried fresh up to the bound; before each retry
-    // the half-resolved conflict is re-established so the retry starts from the same
-    // clean conflicted state (idempotency). A RETURNED `{resolved:false}` is a JUDGED
-    // non-resolve — surfaced below, never retried. A persistent crash re-throws.
-    const outcome = await retryProcessCrash(
-      async () => {
-        // #598 idempotency: if a PRIOR crashed attempt already COMMITTED the merge,
-        // the child is LANDED (git truth). Do NOT re-run the merger on a no-conflict
-        // state — `reestablishConflictForRetry` would `git merge --abort` (a no-op
-        // after a commit) then re-merge "already up to date", leaving the merger to
-        // run with nothing to resolve and FAIL a child that was already correctly
-        // merged. Recognize the landed merge instead (the post-state check below
-        // then returns it clean). On attempt 1 the merge is still in-progress, so
-        // this is false and the merger runs normally.
-        if (this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo)) {
-          return { resolved: true };
-        }
-        return await this.runMergerAgent(req);
-      },
-      { resetBeforeRetry: () => this.reestablishConflictForRetry(req) },
-    );
+    // #598 / 2026-07-08: a merger agent that CRASHES (throws) is retried fresh up to
+    // the bound on the CURRENT worktree as-is. A RETURNED `{resolved:false}` is a
+    // JUDGED non-resolve — surfaced below, never retried. A persistent crash re-throws.
+    const outcome = await retryProcessCrash(async () => {
+      // If a PRIOR crashed attempt already COMMITTED the merge, the child is LANDED
+      // (git truth). Do NOT re-run the merger on a no-conflict state — recognize the
+      // landed merge instead (the post-state check below then returns it clean).
+      if (this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo)) {
+        return { resolved: true };
+      }
+      return await this.runMergerAgent(req);
+    });
     if (!outcome.resolved) {
       // The resolver could not resolve (escalated / failed) → surface it; the
       // merger does NOT write a `merged` entry (an unresolved conflict never looks
@@ -740,40 +730,6 @@ export class RealFamilyBackend implements FamilyBackend {
       familyHead !== familyHeadBefore &&
       this.isAncestorOf(childHead, familyHead, repo)
     );
-  }
-
-  /**
-   * #598 idempotency: re-establish the SAME in-progress merge conflict that a
-   * CRASHED {@link runMergerAgent} attempt left half-resolved, so the retry starts
-   * from the clean conflicted state (never on top of a half-added index). Abort the
-   * half-done merge, check out the family base, then re-run the deterministic
-   * `git merge --no-ff` — a real conflict exits non-zero and leaves MERGE_HEAD,
-   * which is exactly the state the retry's merger resolves. A protected seam so the
-   * retry path is unit-testable without a real conflicting repo.
-   */
-  protected async reestablishConflictForRetry(
-    req: ConflictResolveRequest,
-  ): Promise<void> {
-    const repo = this.opts.workingRepo;
-    try {
-      this.sh("git", ["merge", "--abort"], repo);
-    } catch {
-      // No in-progress merge to abort (the crash may have left none) — fine.
-    }
-    this.sh("git", ["checkout", this.opts.familyBase], repo);
-    const msg = `Merge child #${req.childIssue} (${req.childBranch}) into ${this.opts.familyBase}`;
-    try {
-      this.sh("git", ["merge", "--no-ff", "-m", msg, req.childBranch], repo);
-    } catch (err) {
-      // #598 r5 (codexA/B, mirroring mergeChildLocked): only a REAL content conflict
-      // exits non-zero AND leaves MERGE_HEAD — that is the re-established state the
-      // retry resolves, so swallow it. A NON-conflict git failure (dirty worktree /
-      // lock / bad ref) leaves NO MERGE_HEAD; swallowing it would let the retry's
-      // merger run with no conflict re-established. Rethrow so retryProcessCrash counts
-      // this as a reset failure and SKIPS the merger dispatch (never runs on an
-      // un-re-established state), retrying the reset next attempt / exhausting.
-      if (!this.mergeInProgress(repo)) throw err;
-    }
   }
 
   /** True iff `ancestor` is an ancestor of `descendant` (`git merge-base --is-ancestor`). */
@@ -1690,17 +1646,6 @@ export class RealFamilyBackend implements FamilyBackend {
         : {}),
       ...(output.escalate !== undefined ? { escalate: output.escalate } : {}),
     };
-  }
-
-  async resetFamilyFixerResidue(ctx: DispatchContext): Promise<void> {
-    if (ctx.familyBase === undefined) {
-      throw new Error(
-        "resetFamilyFixerResidue: requires ctx.familyBase to rewind partial fix residue",
-      );
-    }
-    this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
-    this.sh("git", ["reset", "--hard", "HEAD"], this.opts.workingRepo);
-    this.sh("git", ["clean", "-fd"], this.opts.workingRepo);
   }
 
   protected async runFamilyReviewLoopWorker(

@@ -2951,27 +2951,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               //    crash (connection drop / container start), recovering a transient one;
               //    a persistent crash is re-thrown so the reviewer loop surfaces it.
               //
-              // Idempotency (#598): before any retry, reset the worktree's UNCOMMITTED
-              // git residue (`cleanResidue` = reset --hard HEAD + clean -fd) the crashed
-              // attempt may have left, so the fresh re-dispatch does not run on top of a
-              // dirty index / untracked junk. Committed progress on the resident branch
-              // HEAD is deliberately preserved (cleanResidue contract / ADR 0024 — it is
-              // the resume anchor). A worktree-less family worker has no local residue.
-              //
-              // DEFERRED (#661, needs-design): a coder that COMMITTED a partial attempt
-              // then crashed keeps that commit at HEAD, so the retry continues on it
-              // rather than a strict pre-attempt HEAD. Unlike the merge-resolver's
-              // committed-then-crashed case (data loss — fixed in this PR), a coder
-              // continuing on preserved progress is bounded (the reviewer catches broken
-              // partial work) and is what ADR 0024 intends; whether a mechanical retry
-              // should override that committed-preservation is a design decision.
-              const worktreeForReset = worktree;
-              const resetBeforeRetry =
-                worktreeForReset != null
-                  ? () => backend.cleanResidue(worktreeForReset)
-                  : undefined;
-              const baseReset =
-                resetBeforeRetry != null ? { resetBeforeRetry } : {};
+              // Crash retry (#598 / 2026-07-08): re-dispatch a fresh session on the
+              // CURRENT worktree as-is — no reset, no git clean. Downstream CMR + online
+              // bot gates catch anything wrong; crashes are rare.
               const retryOpts: MechanicalRetryOptions =
                 expectedKind === "reviewer"
                   ? {
@@ -2980,9 +2962,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                           ? true
                           : isReviewerStructuredOutputError(o.error),
                       rethrowOnExhaustion: true,
-                      ...baseReset,
                     }
-                  : baseReset;
+                  : {};
               result = await withMechanicalRetry(
                 workerSpec,
                 dispatchCtx,
@@ -3181,24 +3162,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // — a decided delivery failure is never re-run. This is the SAME shared
           // `withMechanicalRetry` path the coder uses (#592 "no role treated specially"):
           // the structural no-output case retries, the judged-verdict case does not.
-          // The worktree's uncommitted residue is reset before each retry (idempotency);
-          // gstack-ship's re-runnable design keeps push/PR idempotent.
-          const shipWorktree = worktree;
-          // Mirror the coder/reviewer reset guard: only wire cleanResidue when a
-          // worktree exists (a worktree-less worker has no local residue), so a retry
-          // never calls cleanResidue(undefined). (gemini R1 — the coder path already
-          // guards; the ship path must match.)
-          const shipResetOpt =
-            shipWorktree != null
-              ? { resetBeforeRetry: () => backend.cleanResidue(shipWorktree) }
-              : {};
           const shipResult = await withMechanicalRetry(
             shipSpec,
             shipCtx,
             (s, c) => dispatchWorker(backend, s, c),
             {
               callerOwns: (o) => "result" in o && o.result.kind === "failed",
-              ...shipResetOpt,
             },
           );
           // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
@@ -3371,18 +3340,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             }
           };
           const reviewResetOpt: MechanicalRetryOptions =
-            reviewStep !== "S9" && worktree != null
-              ? { resetBeforeRetry: () => backend.cleanResidue(worktree!) }
-              : reviewStep === "S9"
-                ? {
-                    callerOwns: (o) =>
-                      "kind" in o &&
-                      o.kind === "thrown" &&
-                      (o.error instanceof VerifyWorkerHeadMovedError ||
-                        o.error instanceof VerifyWorkerWorktreeDirtyError),
-                    rethrowOnExhaustion: true,
-                  }
-                : {};
+            reviewStep === "S9"
+              ? {
+                  callerOwns: (o) =>
+                    "kind" in o &&
+                    o.kind === "thrown" &&
+                    (o.error instanceof VerifyWorkerHeadMovedError ||
+                      o.error instanceof VerifyWorkerWorktreeDirtyError),
+                  rethrowOnExhaustion: true,
+                }
+              : {};
           if (
             reviewStep === "S10" &&
             (onlineReviewLanding === undefined ||
@@ -3424,7 +3391,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   );
                 } catch (err) {
                   dispatchError = err;
-                } finally {
+                }
+                if (dispatchError === undefined) {
                   await assertVerifyReadOnlyContract();
                 }
                 if (dispatchError !== undefined) throw dispatchError;

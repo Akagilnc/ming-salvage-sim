@@ -604,10 +604,10 @@ class FamilyShipMalformedAfterCmrBackend implements FamilyBackend {
 //
 // HONESTY NOTE (review R1 finding 1): the production family seam
 // (`dispatchOrAbort` in verifyCmr.ts) owns ALL resolved results via
-// `callerOwns: (o) => "result" in o || (writeCapable && o.kind === "thrown")` —
-// so a resolved `malformed` is DEFERRED to the gate, NOT retried by the generic
-// layer. The gate's write-worker reset idempotency (which would let it retry
-// safely) is deferred to #661. This section is therefore split into TWO tests:
+// `callerOwns: (o) => "result" in o` — so a resolved `malformed` is DEFERRED to
+// the gate, NOT retried by the generic layer. Write-capable worker crashes retry
+// on the current worktree like every other role (2026-07-08). This section is
+// therefore split into TWO tests:
 //   1. REAL-VALIDATION PIN — exercises the runner's ACTUAL downstream
 //      source/scope/boundedReopen re-validation (cmrClosureFailureReason →
 //      trustedAcceptedSuppressionDisposition → hasAcceptedSuppressionAuthority)
