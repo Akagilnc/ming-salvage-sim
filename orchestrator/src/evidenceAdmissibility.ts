@@ -117,6 +117,28 @@ export function buildRoundTrigger(
   };
 }
 
+/**
+ * Head key for convergence markers, resume-skip, and abort/escalation head fields
+ * (#600 r2 single-slice + r7 family). When any in-loop fix round occurred
+ * (`postFixHead` set), key to the post-fix / recheck head; otherwise prefer the
+ * ship head. `snapshotHead` / `branchHeadAfter` apply only in the no-fix
+ * single-slice poll context (landing + marker fallbacks).
+ */
+export function convergenceHeadToRecord(input: {
+  readonly shipHead?: string;
+  readonly snapshotHead?: string;
+  readonly postFixHead?: string;
+  readonly branchHeadAfter?: string;
+}): string | undefined {
+  const key =
+    input.postFixHead ??
+    input.snapshotHead ??
+    input.branchHeadAfter ??
+    input.shipHead;
+  if (key === undefined || key.trim().length === 0) return undefined;
+  return key;
+}
+
 /** Classify whether a live artifact correlates to the current head/round. */
 export function classifyEvidenceFreshness(
   artifact: { readonly headOid?: string; readonly timestamp?: string },

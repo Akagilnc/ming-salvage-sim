@@ -29,6 +29,7 @@ import type {
   MergeRequest,
 } from "../../src/family/types.js";
 import { resolveActiveModelRoute } from "../../src/modelRoutes.js";
+import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
 
@@ -220,6 +221,57 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       familyHeadAfter: "family-base-0",
     });
     // No child re-work (shipped resume short-circuits before verifyCmr barrier)
+    expect(singleSliceBackend.prepareBases).toEqual([]);
+  });
+
+  it("shipped-only resume records post-fix family head when in-loop fixer advanced HEAD (cmr r7)", async () => {
+    const shipHead = "family-base-0";
+    const postFixHead = "family-base-postfix";
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.head = shipHead;
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: shipHead },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "pr://family/293-base",
+        familyHeadAfter: shipHead,
+      },
+    );
+    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
+
+    let verifyPass = 0;
+    familyBackend.dispatchWorker = async (spec) => {
+      if (spec.kind === "verify") {
+        verifyPass += 1;
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: verifyPass >= 2 },
+        };
+      }
+      if (spec.kind === "fixer") {
+        familyBackend.head = postFixHead;
+        return { kind: "completed", output: { kind: "fixer", committed: true } };
+      }
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("success");
+    const convergedRows = familyBackend.ledger.filter(
+      (e) => e.status === "review_loop_converged",
+    );
+    expect(convergedRows).toHaveLength(1);
+    expect(convergedRows[0]?.familyHeadAfter).toBe(postFixHead);
     expect(singleSliceBackend.prepareBases).toEqual([]);
   });
 

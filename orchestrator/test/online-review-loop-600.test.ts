@@ -43,6 +43,7 @@ import {
   assertOfflineSyntheticPollAdmissible,
   buildRoundTrigger,
   classifyEvidenceFreshness,
+  convergenceHeadToRecord,
   evidenceAdmissible,
   offlineSyntheticPollAdmissible,
   workerOutcomeAdmissible,
@@ -63,7 +64,6 @@ import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import {
   buildOnlineReviewLanding,
   isReviewLoopConvergedMarker,
-  onlineReviewConvergenceHeadKey,
   onlineReviewConvergedForHead,
   verifyReviewerHeadMovedStopSummary,
 } from "../src/onlineReviewLoop.js";
@@ -78,6 +78,7 @@ import { isValidVerifyResult } from "../src/reviewLoopOutcome.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Sh } from "../src/familyDriver.js";
+import { familyReviewLoopConvergedForHead } from "../src/family/ledger.js";
 import { runFamilyOnlineReviewLoop } from "../src/family/verifyCmr.js";
 import { RealFamilyBackend } from "../src/family/realFamilyBackend.js";
 import type { FamilyBackend, FamilyLedgerEntry } from "../src/family/types.js";
@@ -901,7 +902,7 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
 
   it("no-fix convergence: marker and resume-skip key to ship head", () => {
     const ledger = [{ event: "online_review_converged", prHead: shipHead }];
-    const reviewHead = onlineReviewConvergenceHeadKey({ shipPrHead: shipHead });
+    const reviewHead = convergenceHeadToRecord({ shipHead });
     expect(reviewHead).toBe(shipHead);
     expect(onlineReviewConvergedForHead(ledger, reviewHead)).toBe(true);
     expect(onlineReviewConvergedForHead(ledger, postFixHead)).toBe(false);
@@ -909,14 +910,80 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
 
   it("converge-after-fix: marker and resume-skip key to post-fix head, not stale ship", () => {
     const ledger = [{ event: "online_review_converged", prHead: postFixHead }];
-    const reviewHead = onlineReviewConvergenceHeadKey({
-      postFixCommitSha: postFixHead,
-      snapshotHeadOid: postFixHead,
-      shipPrHead: shipHead,
+    const reviewHead = convergenceHeadToRecord({
+      shipHead,
+      snapshotHead: postFixHead,
+      postFixHead,
     });
     expect(reviewHead).toBe(postFixHead);
     expect(onlineReviewConvergedForHead(ledger, reviewHead)).toBe(true);
     expect(onlineReviewConvergedForHead(ledger, shipHead)).toBe(false);
+  });
+
+  it("family no-fix: review_loop_converged marker keys to ship head", () => {
+    const markerHead = convergenceHeadToRecord({ shipHead });
+    expect(markerHead).toBe(shipHead);
+    expect(
+      familyReviewLoopConvergedForHead(
+        [
+          {
+            status: "review_loop_converged",
+            event: "review_loop_converged",
+            phase: "final",
+            pr: "pr://family/x",
+            familyHeadAfter: shipHead,
+          },
+        ],
+        shipHead,
+      ),
+    ).toBeDefined();
+    expect(
+      familyReviewLoopConvergedForHead(
+        [
+          {
+            status: "review_loop_converged",
+            event: "review_loop_converged",
+            phase: "final",
+            pr: "pr://family/x",
+            familyHeadAfter: shipHead,
+          },
+        ],
+        postFixHead,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("family converge-after-fix: review_loop_converged marker keys to post-fix family head", () => {
+    const markerHead = convergenceHeadToRecord({ shipHead, postFixHead });
+    expect(markerHead).toBe(postFixHead);
+    expect(
+      familyReviewLoopConvergedForHead(
+        [
+          {
+            status: "review_loop_converged",
+            event: "review_loop_converged",
+            phase: "final",
+            pr: "pr://family/x",
+            familyHeadAfter: postFixHead,
+          },
+        ],
+        postFixHead,
+      ),
+    ).toBeDefined();
+    expect(
+      familyReviewLoopConvergedForHead(
+        [
+          {
+            status: "review_loop_converged",
+            event: "review_loop_converged",
+            phase: "final",
+            pr: "pr://family/x",
+            familyHeadAfter: postFixHead,
+          },
+        ],
+        shipHead,
+      ),
+    ).toBeUndefined();
   });
 
   it("buildOnlineReviewLanding keys shipDelivery.prHead to snapshot head after fix", () => {
