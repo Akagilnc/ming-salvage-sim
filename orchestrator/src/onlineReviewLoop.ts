@@ -108,11 +108,49 @@ export function clampVerifyConvergenceForCheckRuns(
   return verify;
 }
 
+type OnlineReviewRetriggerRecoveryEntry = {
+  readonly event?: string;
+  readonly onlineReviewRound?: number;
+  readonly roundTriggerHeadOid?: string;
+  readonly branchHEAD?: string;
+};
+
+/** Latest post-fix recovery from a persisted retrigger marker (#600 r29). */
+function latestOnlineReviewRetriggerRecovery(
+  entries: ReadonlyArray<OnlineReviewRetriggerRecoveryEntry>,
+): { readonly round?: number; readonly fixSha?: string } | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (entry.event !== "online_review_round_retrigger") {
+      continue;
+    }
+    const round =
+      typeof entry.onlineReviewRound === "number" && entry.onlineReviewRound > 0
+        ? entry.onlineReviewRound
+        : undefined;
+    const fixSha =
+      typeof entry.roundTriggerHeadOid === "string" &&
+      entry.roundTriggerHeadOid.length > 0
+        ? entry.roundTriggerHeadOid
+        : typeof entry.branchHEAD === "string" && entry.branchHEAD.length > 0
+          ? entry.branchHEAD
+          : undefined;
+    if (round !== undefined || fixSha !== undefined) {
+      return {
+        ...(round !== undefined ? { round } : {}),
+        ...(fixSha !== undefined ? { fixSha } : {}),
+      };
+    }
+  }
+  return undefined;
+}
+
 /** 1-based online review round from the full executable ledger (#600 r7 resume). */
 export function onlineReviewRoundFromLedger(
   ledger: ReadonlyArray<{
     readonly step: string;
     readonly event?: string;
+    readonly onlineReviewRound?: number;
     readonly output?: { readonly kind?: string; readonly committed?: boolean };
   }>,
 ): number {
@@ -121,6 +159,10 @@ export function onlineReviewRoundFromLedger(
   ).length;
   if (fixCommittedMarkers > 0) {
     return fixCommittedMarkers + 1;
+  }
+  const retriggerRecovery = latestOnlineReviewRetriggerRecovery(ledger);
+  if (retriggerRecovery?.round !== undefined) {
+    return retriggerRecovery.round;
   }
   const completedFixerRounds = ledger.filter(
     (e) =>
@@ -137,6 +179,7 @@ export function lastOnlineReviewFixCommitShaFromLedger(
     readonly step: string;
     readonly event?: string;
     readonly fixCommitSha?: string;
+    readonly roundTriggerHeadOid?: string;
     readonly branchHEAD?: string;
     readonly output?: { readonly kind?: string; readonly committed?: boolean };
   }>,
@@ -158,6 +201,12 @@ export function lastOnlineReviewFixCommitShaFromLedger(
       entry.branchHEAD.length > 0
     ) {
       return entry.branchHEAD;
+    }
+    if (entry.event === "online_review_round_retrigger") {
+      const fromRetrigger = latestOnlineReviewRetriggerRecovery([entry])?.fixSha;
+      if (fromRetrigger !== undefined) {
+        return fromRetrigger;
+      }
     }
   }
   return undefined;
@@ -367,6 +416,9 @@ export function onlineReviewRoundFromFamilyLedger(
   entries: ReadonlyArray<{
     readonly status?: string;
     readonly event?: string;
+    readonly onlineReviewRound?: number;
+    readonly roundTriggerHeadOid?: string;
+    readonly branchHEAD?: string;
   }>,
 ): number {
   const completedFixerRounds = entries.filter(
@@ -374,7 +426,14 @@ export function onlineReviewRoundFromFamilyLedger(
       e.status === "online_review_fix_committed" &&
       e.event === "online_review_fix_committed",
   ).length;
-  return completedFixerRounds + 1;
+  if (completedFixerRounds > 0) {
+    return completedFixerRounds + 1;
+  }
+  const retriggerRecovery = latestOnlineReviewRetriggerRecovery(entries);
+  if (retriggerRecovery?.round !== undefined) {
+    return retriggerRecovery.round;
+  }
+  return 1;
 }
 
 /** Last family online-review fix HEAD — fixing commit for recheck side effects (#600 r26). */
@@ -383,6 +442,8 @@ export function lastOnlineReviewFixCommitShaFromFamilyLedger(
     readonly status?: string;
     readonly event?: string;
     readonly familyHeadAfter?: string;
+    readonly roundTriggerHeadOid?: string;
+    readonly branchHEAD?: string;
   }>,
 ): string | undefined {
   for (let i = entries.length - 1; i >= 0; i--) {
@@ -394,6 +455,12 @@ export function lastOnlineReviewFixCommitShaFromFamilyLedger(
       entry.familyHeadAfter.length > 0
     ) {
       return entry.familyHeadAfter;
+    }
+    if (entry.event === "online_review_round_retrigger") {
+      const fromRetrigger = latestOnlineReviewRetriggerRecovery([entry])?.fixSha;
+      if (fromRetrigger !== undefined) {
+        return fromRetrigger;
+      }
     }
   }
   return undefined;
