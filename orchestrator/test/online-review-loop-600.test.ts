@@ -67,6 +67,7 @@ import {
   familyPendingRoundTriggerFromFixGap,
   resolveOnlineReviewRoundTrigger,
   slicePendingRoundTriggerFromFixGap,
+  slicePostFixVerifyPendingFromMarkerGap,
   runOnlineReviewLoopStage,
   shipLedgerTriggeredAtFromFamilyLedger,
   shipLedgerTriggeredAtFromSliceLedger,
@@ -2387,6 +2388,63 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
         shipLedgerTriggeredAt: SHIP_LEDGER_TS,
       }),
     ).toThrow(/persisted round trigger/);
+  });
+
+  it("pin r28: slicePostFixVerifyPendingFromMarkerGap crash-point matrix (single-slice)", () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const s9False = {
+      step: "S9",
+      output: { kind: "verify", converged: false },
+      ts: "2026-07-08T12:00:00.000Z",
+    };
+    const s10Row = {
+      step: "S10",
+      output: { kind: "fixer", committed: true },
+      branchHEAD: fixSha,
+      ts: fixTs,
+    };
+    const retrigger = {
+      step: "S10",
+      event: "online_review_round_retrigger" as const,
+      roundTriggerHeadOid: fixSha,
+      roundTriggerAt: RETRIGGER_TS,
+      onlineReviewRound: 2,
+      ts: fixTs,
+    };
+    const fixCommitted = {
+      step: "S10",
+      event: "online_review_fix_committed" as const,
+      fixCommitSha: fixSha,
+      onlineReviewRound: 1,
+      ts: fixTs,
+    };
+    // crash before markers → no post-fix pending
+    expect(slicePostFixVerifyPendingFromMarkerGap([s9False])).toBe(false);
+    // crash after retrigger only → post-fix pending
+    expect(slicePostFixVerifyPendingFromMarkerGap([s9False, retrigger])).toBe(true);
+    // crash after fix_committed before S10 row → post-fix pending
+    expect(
+      slicePostFixVerifyPendingFromMarkerGap([s9False, retrigger, fixCommitted]),
+    ).toBe(true);
+    // crash after executable S10 row → not pending (resume uses S10→S9 route)
+    expect(
+      slicePostFixVerifyPendingFromMarkerGap([
+        s9False,
+        retrigger,
+        fixCommitted,
+        s10Row,
+      ]),
+    ).toBe(false);
+    // round-2 markers after round-1 executable S10 → post-fix pending again
+    expect(
+      slicePostFixVerifyPendingFromMarkerGap([
+        s9False,
+        s10Row,
+        retrigger,
+        fixCommitted,
+      ]),
+    ).toBe(true);
   });
 
   it("pin r27: round ≥2 crash gap reconstructs pending trigger from fix-committed", () => {

@@ -226,6 +226,40 @@ export function familyPendingRoundTriggerFromFixGap(
   return buildRoundTrigger(lastFixHead, lastFixTs);
 }
 
+/**
+ * True when audit markers prove the fixer finished but the executable S10 row is
+ * still missing (#600 r28). Resume must enter post-fix verify (S9), not re-dispatch
+ * the fixer.
+ */
+export function slicePostFixVerifyPendingFromMarkerGap(
+  ledger: ReadonlyArray<{
+    readonly step?: string;
+    readonly event?: string;
+    readonly output?: { readonly kind?: string; readonly committed?: boolean };
+  }>,
+): boolean {
+  let lastCommittedS10Idx = -1;
+  let lastFixSignalIdx = -1;
+  for (let i = 0; i < ledger.length; i++) {
+    const entry = ledger[i]!;
+    if (
+      entry.step === "S10" &&
+      entry.event === undefined &&
+      entry.output?.kind === "fixer" &&
+      entry.output.committed === true
+    ) {
+      lastCommittedS10Idx = i;
+    }
+    if (
+      entry.event === "online_review_fix_committed" ||
+      entry.event === "online_review_round_retrigger"
+    ) {
+      lastFixSignalIdx = i;
+    }
+  }
+  return lastFixSignalIdx > lastCommittedS10Idx;
+}
+
 /** Single-slice ledger: S10 fix landed but retrigger persistence crashed mid-gap (#600 r27). */
 export function slicePendingRoundTriggerFromFixGap(
   ledger: ReadonlyArray<{

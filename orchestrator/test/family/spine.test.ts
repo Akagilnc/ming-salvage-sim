@@ -224,6 +224,71 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     expect(singleSliceBackend.prepareBases).toEqual([]);
   });
 
+  it("pin r28: shipped resume re-enters review loop when fixer advanced HEAD with only markers", async () => {
+    const shipHead = "family-base-0";
+    const postFixHead = "family-base-postfix";
+    const pr = "pr://family/293-base";
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.head = postFixHead;
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: shipHead },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr,
+        familyHeadAfter: shipHead,
+      },
+      {
+        status: "online_review_round_retrigger",
+        event: "online_review_round_retrigger",
+        phase: "final",
+        roundTriggerHeadOid: postFixHead,
+        roundTriggerAt: "2026-07-08T13:00:00.000Z",
+        onlineReviewRound: 2,
+        pr,
+      },
+      {
+        status: "online_review_fix_committed",
+        event: "online_review_fix_committed",
+        phase: "final",
+        familyHeadAfter: postFixHead,
+        pr,
+      },
+    );
+    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
+
+    const verifyRounds: number[] = [];
+    familyBackend.dispatchWorker = async (spec, ctx) => {
+      if (spec.kind === "verify") {
+        verifyRounds.push(ctx?.onlineReviewRound ?? 0);
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      }
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("success");
+    expect(verifyRounds).toEqual([2]);
+    expect(singleSliceBackend.prepareBases).toEqual([]);
+    const convergedRows = familyBackend.ledger.filter(
+      (e) => e.status === "review_loop_converged",
+    );
+    expect(convergedRows).toHaveLength(1);
+    expect(convergedRows[0]?.familyHeadAfter).toBe(postFixHead);
+  });
+
   it("shipped-only resume records post-fix family head when in-loop fixer advanced HEAD (cmr r7)", async () => {
     const shipHead = "family-base-0";
     const postFixHead = "family-base-postfix";
