@@ -148,6 +148,15 @@ function replyByThreadId(
   return map;
 }
 
+function isFixedEvidenceReplyForCommit(
+  body: string,
+  repo: string,
+  fixingCommitSha: string,
+): boolean {
+  const expected = `fixed: https://github.com/${repo}/commit/${fixingCommitSha}`;
+  return body.trim() === expected;
+}
+
 function deferReplyBody(
   existingBody: string | undefined,
   disposition: OnlineReviewFindingDisposition,
@@ -220,8 +229,14 @@ export function applyVerifySideEffects(
   }
 
   for (const threadId of verify.threadsToResolve ?? []) {
-    const fixedReply = `fixed: https://github.com/${repo}/commit/${input.fixingCommitSha}`;
-    if (!repliesPosted.some((r) => r.threadId === threadId)) {
+    const fixingCommitSha = input.fixingCommitSha!;
+    const fixedReply = `fixed: https://github.com/${repo}/commit/${fixingCommitSha}`;
+    const hasEvidenceReply = repliesPosted.some(
+      (r) =>
+        r.threadId === threadId &&
+        isFixedEvidenceReplyForCommit(r.body, repo, fixingCommitSha),
+    );
+    if (!hasEvidenceReply) {
       replyToReviewThread(sh, repo, prNumber, threadId, fixedReply);
       repliesPosted.push({ threadId, body: fixedReply });
     }

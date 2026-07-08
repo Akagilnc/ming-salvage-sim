@@ -562,7 +562,19 @@ export async function runOnlineReviewLoopStage(
     }
     lastFixCommitSha =
       (await dispatch.resolveFixCommitSha?.()) ?? snapshot.headOid;
-    dispatch.retriggerAfterFix();
+    try {
+      dispatch.retriggerAfterFix();
+    } catch (err) {
+      if (err instanceof OnlineReviewLoopTerminal) {
+        throw err;
+      }
+      return {
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round,
+        stopSummary: verifySideEffectFailureStopSummary(err),
+      };
+    }
     round += 1;
   }
 
