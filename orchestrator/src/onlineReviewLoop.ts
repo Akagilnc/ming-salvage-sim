@@ -19,9 +19,15 @@ import {
 } from "./botPolling.js";
 import type {
   OnlineReviewLandingSnapshot,
+  OnlineReviewTerminalState,
   ShipResult,
+  VerifyResult,
   WorkerLandingPayload,
 } from "./types.js";
+import {
+  applyVerifySideEffects,
+  fixMarkedKeysFromVerify,
+} from "./onlineReviewSideEffects.js";
 import type { StopSummary } from "./stopSummary.js";
 import { contractDriftStopSummary } from "./stopSummary.js";
 
@@ -31,10 +37,7 @@ export const MAX_ONLINE_REVIEW_ROUNDS = 3;
 export const ONLINE_REVIEW_SNAPSHOT_FILE = "online-review-snapshot.json";
 export const ONLINE_REVIEW_LANDING_FILE = ".orchestrator-online-review.json";
 
-export type OnlineReviewTerminalState =
-  | "mergeable"
-  | "round_budget_exhausted"
-  | "decision_gate_raised";
+export type { OnlineReviewTerminalState } from "./types.js";
 
 export interface OnlineReviewConvergedMarker {
   readonly prUrl: string;
@@ -168,4 +171,86 @@ export function isReviewLoopConvergedMarker(
   prHead: string,
 ): boolean {
   return entry.event === "online_review_converged" && entry.prHead === prHead;
+}
+
+export interface OnlineReviewLoopDispatch {
+  readonly poll: (round: number) => Promise<PrReviewSnapshot>;
+  readonly dispatchVerify: (
+    landing: WorkerLandingPayload,
+    round: number,
+  ) => Promise<VerifyResult>;
+  readonly dispatchFixer: (landing: WorkerLandingPayload) => Promise<boolean>;
+  readonly dispatchCleanup: () => Promise<boolean>;
+  readonly dispatchDocRelease: () => Promise<boolean>;
+  readonly applySideEffects: (
+    verify: VerifyResult,
+    fixingCommitSha?: string,
+  ) => VerifyResult;
+  readonly retriggerAfterFix: () => void;
+}
+
+export interface OnlineReviewLoopStageResult {
+  readonly ok: boolean;
+  readonly terminalState: OnlineReviewTerminalState;
+  readonly round: number;
+}
+
+/**
+ * Shared online review-loop stage for single-slice and family PRs (#600 AC7).
+ * S11/S12 remain stub workers until #603.
+ */
+export async function runOnlineReviewLoopStage(
+  dispatch: OnlineReviewLoopDispatch,
+): Promise<OnlineReviewLoopStageResult> {
+  let round = 1;
+  let lastFixCommitSha: string | undefined;
+
+  while (round <= MAX_ONLINE_REVIEW_ROUNDS) {
+    const snapshot = await dispatch.poll(round);
+    let landing = buildOnlineReviewLanding(
+      snapshot,
+      {
+        kind: "ship",
+        branch: "family-base",
+        status: "pr_opened",
+        pr: snapshot.prUrl,
+        prHead: snapshot.headOid,
+      },
+      round,
+    );
+
+    let verify = await dispatch.dispatchVerify(landing, round);
+    verify = dispatch.applySideEffects(
+      verify,
+      verify.isRecheck ? lastFixCommitSha : undefined,
+    );
+    const fixKeys = fixMarkedKeysFromVerify(verify);
+    landing = { ...landing, fixMarkedFindingIdentityKeys: fixKeys };
+
+    if (verify.converged) {
+      const cleanupOk = await dispatch.dispatchCleanup();
+      if (!cleanupOk) {
+        return { ok: false, terminalState: "decision_gate_raised", round };
+      }
+      const released = await dispatch.dispatchDocRelease();
+      if (!released) {
+        return { ok: false, terminalState: "decision_gate_raised", round };
+      }
+      return { ok: true, terminalState: "mergeable", round };
+    }
+
+    if (round >= MAX_ONLINE_REVIEW_ROUNDS) {
+      return { ok: false, terminalState: "round_budget_exhausted", round };
+    }
+
+    const committed = await dispatch.dispatchFixer(landing);
+    if (!committed) {
+      return { ok: false, terminalState: "decision_gate_raised", round };
+    }
+    lastFixCommitSha = snapshot.headOid;
+    dispatch.retriggerAfterFix();
+    round += 1;
+  }
+
+  return { ok: false, terminalState: "round_budget_exhausted", round };
 }

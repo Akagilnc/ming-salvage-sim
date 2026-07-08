@@ -57,7 +57,7 @@ import {
 } from "./ledger.js";
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
-import { runVerifyCmr } from "./verifyCmr.js";
+import { runFamilyOnlineReviewLoop, runVerifyCmr } from "./verifyCmr.js";
 import { buildFamilyModuleContext } from "./moduleDeclaration.js";
 import {
   infraFailureStopSummary,
@@ -1575,8 +1575,51 @@ export async function runFamily(
       };
     }
 
-    // Write the review_loop_converged marker (resume "into" the review-loop stub).
-    // This makes a subsequent resume hit the converged guard.
+    // #600: continue into the live online review-loop stage (not a stub marker).
+    const reviewLoop = await runFamilyOnlineReviewLoop({
+      familyBackend,
+      familyBase,
+      ship: {
+        kind: "ship",
+        branch: familyBase,
+        pr: shippedRecord.pr,
+        prHead: preFinalFamilyHead,
+        status: "pr_opened",
+      },
+    });
+    if (!reviewLoop.ok) {
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind: "failure",
+        phase: "final",
+        reason:
+          reviewLoop.terminalState === "round_budget_exhausted"
+            ? "family online review loop exhausted the 3-round budget during resume"
+            : "family online review loop did not converge during resume",
+        familyHeadAfter: preFinalFamilyHead,
+      });
+      const ledgerMerged = await currentMerged(familyBackend);
+      const children: FamilyChildResult[] = epic.children.map((c) =>
+        ledgerMerged.has(c.issue)
+          ? { issue: c.issue, status: "already_done" as const }
+          : { issue: c.issue, status: "skipped" as const },
+      );
+      return {
+        status: "escalated",
+        familyBase,
+        familyHead: preFinalFamilyHead,
+        stopSummary: familyStopSummary({
+          status: "escalated",
+          familyBase,
+          familyHead: preFinalFamilyHead,
+          children,
+          escalationReason:
+            reviewLoop.terminalState === "round_budget_exhausted"
+              ? "family online review loop exhausted the 3-round budget during resume"
+              : "family online review loop did not converge during resume",
+        }),
+        children,
+      };
+    }
     await recordReviewLoopConverged(familyBackend, {
       pr: shippedRecord.pr,
       familyHeadAfter: shippedRecord.familyHeadAfter,

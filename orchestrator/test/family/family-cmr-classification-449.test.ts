@@ -1753,7 +1753,14 @@ module_scope:
     });
 
     expect(result).toEqual({ ok: true, ran: true });
-    expect(backend.dispatched).toEqual(["cmr", "cmr", "ship"]);
+    expect(backend.dispatched).toEqual([
+      "cmr",
+      "cmr",
+      "ship",
+      "verify",
+      "cleanup",
+      "docRelease",
+    ]);
     expect(backend.ledger[0]).toMatchObject({
       status: "cmr_passed",
       cmrPass: "completeness",

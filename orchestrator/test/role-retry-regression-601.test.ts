@@ -91,7 +91,7 @@ abstract class RoleRetryBackend implements Backend {
   }): Promise<OnlineReviewLandingSnapshot> {
     void input;
     return {
-      prUrl: "https://example.com/pr/601",
+      prUrl: "https://github.com/o/r/pull/601",
       headOid: "deadbeef",
       totalFindingCount: 0,
       quiescent: true,
@@ -324,7 +324,7 @@ describe("#601 AC#2 — a ship worker returning 'no valid result (crash/malforme
               kind: "ship",
               branch: ROLE_WORKTREE.branch,
               status: "pr_opened",
-              pr: "https://example.com/pr/601",
+              pr: "https://github.com/o/r/pull/601",
             },
           };
         }

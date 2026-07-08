@@ -7,17 +7,29 @@ import {
   BOT_OVERDUE_POLL_COUNT,
   BOT_RETRIGGER_COMMENT,
   isBotQuiescent,
+  isThreadEvidenceFresh,
   ONLINE_REVIEW_BOT_IDS,
   parsePrRef,
   pollPrReviewState,
   postBotRetriggerComment,
 } from "../src/botPolling.js";
-import { MAX_ONLINE_REVIEW_ROUNDS } from "../src/onlineReviewLoop.js";
+import {
+  MAX_ONLINE_REVIEW_ROUNDS,
+  retriggerBotsAndPoll,
+} from "../src/onlineReviewLoop.js";
 import { route } from "../src/route.js";
 import {
   buildOnlineReviewLanding,
+  isReviewLoopConvergedMarker,
   verifyReviewerHeadMovedStopSummary,
 } from "../src/onlineReviewLoop.js";
+import {
+  applyVerifySideEffects,
+  createDeferredTrackingIssue,
+  fixMarkedKeysFromVerify,
+  replyToReviewThread,
+  resolveReviewThread,
+} from "../src/onlineReviewSideEffects.js";
 import { isValidVerifyResult } from "../src/reviewLoopOutcome.js";
 import type { Sh } from "../src/familyDriver.js";
 
@@ -139,14 +151,18 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toEqual({ kind: "next", step: "S10" });
   });
 
-  it("S9 not converged at round cap → error", () => {
+  it("S9 not converged at round cap → round_budget_exhausted decision gate", () => {
     expect(
       route({
         from: "S9",
         output: { kind: "verify", converged: false },
         onlineReviewRound: MAX_ONLINE_REVIEW_ROUNDS,
       }),
-    ).toEqual({ kind: "handoff", status: "error" });
+    ).toEqual({
+      kind: "handoff",
+      status: "escalate",
+      onlineReviewTerminal: "round_budget_exhausted",
+    });
   });
 
   it("S10 committed routes back to S9 for fresh re-verify (not cleanup)", () => {
@@ -172,6 +188,147 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
 
   it("shape-only guard still accepts converged:false as valid shape", () => {
     expect(isValidVerifyResult({ kind: "verify", converged: false })).toBe(true);
+  });
+
+  it("accepts full verify disposition contract", () => {
+    expect(
+      isValidVerifyResult({
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "t:1", threadId: "1", action: "fix" },
+          { identityKey: "t:2", threadId: "2", action: "reject", reason: "fp" },
+        ],
+        fixMarkedFindingIdentityKeys: ["t:1"],
+        threadReplies: [{ threadId: "2", body: "rejected: fp" }],
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("#600 stale head + artifact bot freshness (#600 AC3)", () => {
+  it("threads without native headOid are not coerced to current head", () => {
+    const calls: string[] = [];
+    const sh = ghFixture({ calls });
+    const snap = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+    });
+    expect(snap.threads[0]?.headOid).toBeUndefined();
+    expect(isThreadEvidenceFresh(snap.threads[0]!, snap.headOid)).toBe(false);
+  });
+
+  it("stale prior-head thread is not counted fresh", () => {
+    const stale = {
+      id: "9",
+      body: "old nit",
+      authorLogin: "bot",
+      isResolved: false,
+      headOid: "oldhead0000000000000000000000000000000000",
+    };
+    expect(isThreadEvidenceFresh(stale, "headsha1")).toBe(false);
+  });
+});
+
+describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
+  it("createDeferredTrackingIssue uses gh issue create", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      return "https://github.com/o/r/issues/99";
+    };
+    const url = createDeferredTrackingIssue(sh, "o/r", "defer finding", "reason text");
+    expect(url).toBe("https://github.com/o/r/issues/99");
+    expect(calls.some((c) => c.includes("gh issue create"))).toBe(true);
+  });
+
+  it("applyVerifySideEffects posts evidence replies and creates defer issues", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      if (args.join(" ").includes("issue create")) {
+        return "https://github.com/o/r/issues/77";
+      }
+      return "{}";
+    };
+    const result = applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      verify: {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          {
+            identityKey: "t:3",
+            threadId: "3",
+            action: "defer",
+            reason: "needs design",
+          },
+        ],
+        threadReplies: [
+          { threadId: "2", body: "rejected: false positive on line 10" },
+        ],
+      },
+    });
+    expect(result.deferredIssueUrls).toEqual(["https://github.com/o/r/issues/77"]);
+    expect(result.repliesPosted.some((r) => r.body.includes("rejected:"))).toBe(true);
+    expect(result.repliesPosted.some((r) => r.body.includes("Tracked issue:"))).toBe(true);
+    expect(calls.some((c) => c.includes("gh issue create"))).toBe(true);
+  });
+
+  it("resolveReviewThread and replyToReviewThread use gh api", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      return "{}";
+    };
+    replyToReviewThread(sh, "o/r", 42, "cmt1", "fixed: https://github.com/o/r/commit/abc");
+    resolveReviewThread(sh, "o/r", "cmt1");
+    expect(calls.some((c) => c.includes("/replies"))).toBe(true);
+    expect(calls.some((c) => c.includes("-X PUT"))).toBe(true);
+  });
+
+  it("fixMarkedKeysFromVerify derives fix keys from dispositions", () => {
+    expect(
+      fixMarkedKeysFromVerify({
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "a", threadId: "1", action: "fix" },
+          { identityKey: "b", threadId: "2", action: "defer" },
+        ],
+      }),
+    ).toEqual(["a"]);
+  });
+});
+
+describe("#600 retriggerBotsAndPoll (#600 AC2)", () => {
+  it("posts R2/R3 re-trigger then polls", () => {
+    const calls: string[] = [];
+    const sh = ghFixture({ calls });
+    retriggerBotsAndPoll(sh, "o/r", "https://github.com/o/r/pull/42", 2);
+    expect(calls.some((c) => c.includes(BOT_RETRIGGER_COMMENT.split("\n")[0]!))).toBe(
+      true,
+    );
+  });
+});
+
+describe("#600 converged marker resume skip (#600 AC8)", () => {
+  it("isReviewLoopConvergedMarker matches pr head", () => {
+    expect(
+      isReviewLoopConvergedMarker(
+        { event: "online_review_converged", prHead: "abc123" },
+        "abc123",
+      ),
+    ).toBe(true);
+    expect(
+      isReviewLoopConvergedMarker(
+        { event: "online_review_converged", prHead: "old" },
+        "new",
+      ),
+    ).toBe(false);
   });
 });
 

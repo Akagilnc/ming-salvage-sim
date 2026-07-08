@@ -1320,9 +1320,10 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         status: "pr_opened",
         pr: "https://github.com/o/r/pull/255",
       }),
-      entry("S9", { kind: "verify", converged: true }),
+      entry("S9", { kind: "verify", converged: false }),
       entry("S10", { kind: "fixer", committed: true }),
-      // truncated before S11; no S8 yet
+      // truncated before fresh re-verify / S11; no S8 yet — S9 false → S10 is the
+      // legal loop-back topology (not converged:true then fixer).
     ];
     const backend = new DispatchRecordingResumeBackend({
       worktree: WORKTREE,
@@ -1341,8 +1342,8 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       "S3",
       "S4",
       "S7",
-      "S9",
-      "S9", // verify step + online_review_converged marker
+      "S9", // fresh re-verify after truncated S9(false)→S10 loop-back
+      "S9", // online_review_converged marker
       "S11",
       "S12",
       "S8",

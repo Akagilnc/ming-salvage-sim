@@ -44,6 +44,7 @@ import type {
 } from "../../src/family/types.js";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
+import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type { VerifyCmrInput, VerifyCmrResult } from "../../src/family/verifyCmr.js";
 import type { FindingDisposition } from "../../src/types.js";
 
@@ -831,6 +832,10 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             },
           };
         }
+        const reviewLoop = skeletonReviewLoopWorkerResult(spec.kind);
+        if (reviewLoop !== undefined) {
+          return reviewLoop;
+        }
         throw new Error(`unexpected worker ${spec.kind}:${ctx.cmrPass ?? ""}`);
       }
 
@@ -892,6 +897,9 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       "cmr:completeness",
       "cmr:correctness",
       "ship:none",
+      "verify:none",
+      "cleanup:none",
+      "docRelease:none",
     ]);
     expect(familyBackend.ledger).not.toContainEqual(
       expect.objectContaining({

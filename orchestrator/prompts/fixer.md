@@ -7,7 +7,7 @@ can re-review.
 ## Inputs
 
 - `.orchestrator-online-review.json` — bot snapshot + round metadata.
-- Fix only findings the verify worker marked for repair (identity keys in landing).
+- Fix only findings listed in `fixMarkedFindingIdentityKeys` in the landing file.
 
 ## Output
 

@@ -220,7 +220,9 @@ function parseReviewThreads(
       body,
       authorLogin: author,
       isResolved: Boolean(obj.is_resolved ?? obj.resolved),
-      headOid: threadHead ?? headOid,
+      // Leave undefined when GitHub exposes no native head — do NOT coerce to
+      // current PR head (artifact bots); verify worker judges freshness (#600 AC3).
+      headOid: threadHead,
     });
   }
   return out;
@@ -319,4 +321,12 @@ export function isBotQuiescent(snapshot: PrReviewSnapshot): boolean {
 /** Count open (unresolved) review threads on the current head. */
 export function unresolvedThreadCount(snapshot: PrReviewSnapshot): number {
   return snapshot.threads.filter((t) => !t.isResolved).length;
+}
+
+/** True only when a thread's native head matches the current PR head (#600 AC3). */
+export function isThreadEvidenceFresh(
+  thread: ReviewThreadSnapshot,
+  currentHead: string,
+): boolean {
+  return thread.headOid !== undefined && thread.headOid === currentHead;
 }

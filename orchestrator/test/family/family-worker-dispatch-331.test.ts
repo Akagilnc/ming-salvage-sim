@@ -215,6 +215,9 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
         cmrPass: "correctness",
       },
       { kind: "ship", promptFile: "family_ship.md" },
+      { kind: "verify", promptFile: "verify.md" },
+      { kind: "cleanup", promptFile: "cleanup.md" },
+      { kind: "docRelease", promptFile: "docRelease.md" },
     ]);
   });
 
@@ -247,6 +250,9 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
         escalationAnswer,
       },
       { kind: "ship", promptFile: "family_ship.md", escalationAnswer },
+      { kind: "verify", promptFile: "verify.md" },
+      { kind: "cleanup", promptFile: "cleanup.md" },
+      { kind: "docRelease", promptFile: "docRelease.md" },
     ]);
   });
 

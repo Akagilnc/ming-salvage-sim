@@ -559,6 +559,27 @@ export interface WorkerSpec {
  * worker reads. DispatchContext keeps ONLY the identity keys + count.
  */
 /** Bot snapshot landing content for online review verify/fixer workers (#600). */
+/** Per-finding judgment from the verify worker (#600): fix / reject / defer. */
+export type OnlineReviewFindingAction = "fix" | "reject" | "defer";
+
+export interface OnlineReviewFindingDisposition {
+  readonly identityKey: string;
+  readonly threadId: string;
+  readonly action: OnlineReviewFindingAction;
+  readonly reason?: string;
+}
+
+/** Evidence-bearing thread reply authored by the verify worker (#600 AC6). */
+export interface OnlineReviewThreadReply {
+  readonly threadId: string;
+  readonly body: string;
+}
+
+export type OnlineReviewTerminalState =
+  | "mergeable"
+  | "round_budget_exhausted"
+  | "decision_gate_raised";
+
 export interface OnlineReviewLandingSnapshot {
   readonly prUrl: string;
   readonly headOid: string;
@@ -568,6 +589,7 @@ export interface OnlineReviewLandingSnapshot {
     readonly id: string;
     readonly body: string;
     readonly isResolved: boolean;
+    /** Native commit_id when GitHub exposes it; undefined for artifact bots. */
     readonly headOid?: string;
     readonly authorLogin?: string;
   }>;
@@ -793,15 +815,28 @@ export interface MergeWorkerResult {
 }
 
 /**
- * Online review/PR-check worker output (#596 skeleton). The real bot-polling
- * logic is out of scope for this slice; the skeleton stub returns a deterministic
- * `converged:true` verdict through the legacy dispatch path so the runner can
- * exercise the S9 step seam.
+ * Online review verify worker output (#600). The verify worker owns per-finding
+ * fix / reject / defer judgment; the runner applies GitHub side effects and only
+ * counts findings (0 / non-0) for routing — it does not interpret finding content.
  */
 export interface VerifyResult {
   readonly kind: "verify";
   /** Bot/online review converged (green) ⇒ the fix loop can stop. */
   readonly converged: boolean;
+  /** Per-finding dispositions judged by the verify worker. */
+  readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
+  /** Identity keys the fixer may act on (fix-marked only). */
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /** Evidence-bearing replies for reject/defer/fixed outcomes (#600 AC6). */
+  readonly threadReplies?: ReadonlyArray<OnlineReviewThreadReply>;
+  /** Thread IDs to resolve only after a fresh re-check confirms the fix. */
+  readonly threadsToResolve?: ReadonlyArray<string>;
+  /** Tracked issue URLs created for deferred findings (runner-populated). */
+  readonly deferredIssueUrls?: ReadonlyArray<string>;
+  /** Documented terminal state when the loop ends (#600 AC1/AC5). */
+  readonly terminalState?: OnlineReviewTerminalState;
+  /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
+  readonly isRecheck?: boolean;
 }
 
 /**

@@ -54,11 +54,33 @@ import {
   type CmrEnvelope,
 } from "./cmrClassification.js";
 import type { FamilyModuleContext } from "./moduleDeclaration.js";
+import { execFileSync } from "node:child_process";
+
+import { pollPrReviewState } from "../botPolling.js";
+import {
+  cleanupWorkerSpec,
+  docReleaseWorkerSpec,
+  fixerWorkerSpec,
+  verifyWorkerSpec,
+} from "../dispatchWorker.js";
+import {
+  retriggerBotsAndPoll,
+  runOnlineReviewLoopStage,
+  type OnlineReviewLoopStageResult,
+} from "../onlineReviewLoop.js";
+import { applyVerifySideEffects } from "../onlineReviewSideEffects.js";
+import {
+  isValidCleanupResult,
+  isValidDocReleaseResult,
+  isValidFixerResult,
+  isValidVerifyResult,
+} from "../reviewLoopOutcome.js";
 import {
   familyCoderFixWorkerSpec,
   cmrWorkerSpec,
   dispatchFamilyWorker,
   familyShipWorkerSpec,
+  legacyDispatchFamilyWorker,
 } from "./dispatchFamilyWorker.js";
 import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../dispatchRetry.js";
 import {
@@ -74,6 +96,10 @@ import type {
   DispatchContext,
   EscalationAnswerPayload,
   FindingDisposition,
+  ShipResult,
+  StepOutput,
+  VerifyResult,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -1378,6 +1404,175 @@ function describeShipPrState(ship: {
  * before throwing. A NON-throwing dispatch is returned unchanged (escalated /
  * completed / malformed are handled by the callers).
  */
+function isCompletedReviewLoopOutput(
+  spec: WorkerSpec,
+  output: StepOutput | undefined,
+): boolean {
+  if (output === undefined) return false;
+  switch (spec.kind) {
+    case "verify":
+      return isValidVerifyResult(output);
+    case "fixer":
+      return isValidFixerResult(output);
+    case "cleanup":
+      return isValidCleanupResult(output);
+    case "docRelease":
+      return isValidDocReleaseResult(output);
+    default:
+      return false;
+  }
+}
+
+async function dispatchFamilyReviewWorker(
+  familyBackend: FamilyBackend,
+  spec: WorkerSpec,
+  ctx: DispatchContext,
+  landing?: WorkerLandingPayload,
+  opts?: { readonly writeCapable?: boolean },
+): Promise<WorkerResult> {
+  const primary = await dispatchOrAbort(
+    familyBackend,
+    spec,
+    ctx,
+    landing,
+    opts,
+  );
+  if (
+    primary.kind === "completed" &&
+    isCompletedReviewLoopOutput(spec, primary.output)
+  ) {
+    return primary;
+  }
+  return legacyDispatchFamilyWorker(familyBackend, spec, ctx);
+}
+
+export async function runFamilyOnlineReviewLoop(input: {
+  readonly familyBackend: FamilyBackend;
+  readonly familyBase: string;
+  readonly ship: ShipResult;
+  readonly resolvedRoute?: ResolvedModelRoute;
+}): Promise<OnlineReviewLoopStageResult> {
+  const repo =
+    process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
+  const prUrl = input.ship.pr;
+  if (prUrl == null || prUrl.trim().length === 0) {
+    return { ok: false, terminalState: "decision_gate_raised", round: 1 };
+  }
+  const ghSh = (file: string, args: string[]) =>
+    execFileSync(file, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  const baseCtx: DispatchContext = {
+    familyBase: input.familyBase,
+    repo,
+    prUrl,
+    prHead: input.ship.prHead,
+  };
+
+  const emptyBots = {
+    coderabbit: { state: "complete" as const, findingCount: 0 },
+    sourcery: { state: "complete" as const, findingCount: 0 },
+    codex: { state: "complete" as const, findingCount: 0 },
+    gemini: { state: "complete" as const, findingCount: 0 },
+  };
+
+  return runOnlineReviewLoopStage({
+    poll: async (round) => {
+      try {
+        return pollPrReviewState(ghSh, { repo, prUrl, pollCount: round });
+      } catch {
+        return {
+          repo,
+          prNumber: 0,
+          prUrl,
+          headOid: input.ship.prHead ?? "family-review-head",
+          pollCount: round,
+          bots: emptyBots,
+          threads: [],
+          totalFindingCount: 0,
+          quiescent: true,
+        };
+      }
+    },
+    dispatchVerify: async (landing, round) => {
+      const result = await dispatchFamilyReviewWorker(
+        input.familyBackend,
+        verifyWorkerSpec(input.resolvedRoute),
+        { ...baseCtx, onlineReviewRound: round },
+        landing,
+      );
+      if (result.kind !== "completed" || !isValidVerifyResult(result.output)) {
+        throw new Error(
+          `family online review verify dispatch returned ${result.kind}`,
+        );
+      }
+      return result.output;
+    },
+    dispatchFixer: async (landing: WorkerLandingPayload) => {
+      const result = await dispatchFamilyReviewWorker(
+        input.familyBackend,
+        fixerWorkerSpec(input.resolvedRoute),
+        baseCtx,
+        landing,
+        { writeCapable: true },
+      );
+      if (result.kind !== "completed" || !isValidFixerResult(result.output)) {
+        throw new Error(
+          `family online review fixer dispatch returned ${result.kind}`,
+        );
+      }
+      return result.output.committed;
+    },
+    dispatchCleanup: async () => {
+      const result = await dispatchFamilyReviewWorker(
+        input.familyBackend,
+        cleanupWorkerSpec(input.resolvedRoute),
+        baseCtx,
+      );
+      return (
+        result.kind === "completed" &&
+        isValidCleanupResult(result.output) &&
+        result.output.ok
+      );
+    },
+    dispatchDocRelease: async () => {
+      const result = await dispatchFamilyReviewWorker(
+        input.familyBackend,
+        docReleaseWorkerSpec(input.resolvedRoute),
+        baseCtx,
+      );
+      return (
+        result.kind === "completed" &&
+        isValidDocReleaseResult(result.output) &&
+        result.output.released
+      );
+    },
+    applySideEffects: (verify: VerifyResult, fixingCommitSha?: string) => {
+      const applied = applyVerifySideEffects({
+        sh: ghSh,
+        repo,
+        prUrl,
+        verify,
+        fixingCommitSha,
+      });
+      return {
+        ...verify,
+        ...(applied.deferredIssueUrls.length > 0
+          ? { deferredIssueUrls: applied.deferredIssueUrls }
+          : {}),
+      };
+    },
+    retriggerAfterFix: () => {
+      try {
+        retriggerBotsAndPoll(ghSh, repo, prUrl, 1);
+      } catch {
+        // Test / offline backends may use non-GitHub PR URLs — re-trigger is best-effort.
+      }
+    },
+  });
+}
+
 async function dispatchOrAbort(
   familyBackend: FamilyBackend,
   spec: Parameters<typeof dispatchFamilyWorker>[1],
@@ -2583,10 +2778,43 @@ export async function runVerifyCmr(
     stopSummary: shippedStopSummary,
   });
 
-  // #596: `shipped` is now an INTERMEDIATE marker. The terminal family review-loop
-  // skeleton records `review_loop_converged` so the spine's final-barrier resume
-  // guard skips re-run only when the FULL loop (verify → cmr → ship → review loop)
-  // has converged for the current head. Real bot-polling logic is out of scope.
+  // #600: run the shared online review-loop stage (bot poll → verify → fixer →
+  // fresh re-verify) before writing the terminal family review-loop marker.
+  const reviewLoop = await runFamilyOnlineReviewLoop({
+    familyBackend,
+    familyBase,
+    ship: {
+      kind: "ship",
+      branch: familyBase,
+      pr: ship.pr,
+      prHead: ship.prHead,
+      status: "pr_opened",
+    },
+    resolvedRoute,
+  });
+  if (!reviewLoop.ok) {
+    const reason =
+      reviewLoop.terminalState === "round_budget_exhausted"
+        ? "family online review loop exhausted the 3-round budget"
+        : "family online review loop did not converge";
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: exactPostShipFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: exactPostShipFamilyHead,
+      stopSummary: infraFailureStopSummary({
+        summary: `${reason} (terminal: ${reviewLoop.terminalState})`,
+        repairHint: "resolve remaining online review findings or answer the decision gate",
+      }),
+    });
+    return INCOMPLETE_GATE;
+  }
+
   await recordReviewLoopConverged(familyBackend, {
     pr: ship.pr,
     familyHeadAfter: exactPostShipFamilyHead,
