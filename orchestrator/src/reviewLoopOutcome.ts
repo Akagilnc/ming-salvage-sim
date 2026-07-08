@@ -51,12 +51,32 @@ function isThreadReplyArray(
   });
 }
 
+function verifyResultSemanticallyConsistent(obj: Record<string, unknown>): boolean {
+  if (obj.converged !== true) return true;
+  const fixKeys = obj.fixMarkedFindingIdentityKeys;
+  if (Array.isArray(fixKeys) && fixKeys.length > 0) return false;
+  const dispositions = obj.findingDispositions;
+  if (
+    Array.isArray(dispositions) &&
+    dispositions.some(
+      (item) =>
+        item != null &&
+        typeof item === "object" &&
+        (item as { action?: unknown }).action === "fix",
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export function isValidVerifyResult(
   o: StepOutput | undefined,
 ): o is VerifyResult {
   if (o == null || typeof o !== "object") return false;
   const obj = o as unknown as Record<string, unknown>;
   if (obj.kind !== "verify" || typeof obj.converged !== "boolean") return false;
+  if (!verifyResultSemanticallyConsistent(obj)) return false;
   if (
     obj.findingDispositions !== undefined &&
     !isFindingDispositionArray(obj.findingDispositions)

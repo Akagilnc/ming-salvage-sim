@@ -3,6 +3,9 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../src/dispatchRetry.js";
+import { verifyWorkerSpec, fixerWorkerSpec } from "../src/dispatchWorker.js";
+import type { DispatchContext, WorkerResult, WorkerSpec } from "../src/types.js";
 import {
   BOT_OVERDUE_POLL_COUNT,
   BOT_RETRIGGER_COMMENT,
@@ -44,12 +47,17 @@ function ghFixture(input: { calls: string[] }): Sh {
       });
     }
     if (cmd.includes("issues/42/comments") || cmd.includes("pulls/42/comments")) {
+      // GitHub REST issue/PR comments expose `user.login`, not `author.login`.
+      // https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28
       return JSON.stringify([
         {
-          author: { login: "coderabbitai[bot]" },
+          user: { login: "coderabbitai[bot]" },
           body: "Summary: one nit on line 10",
         },
       ]);
+    }
+    if (cmd.includes("pulls/comments/") && cmd.includes("/reactions")) {
+      return "[]";
     }
     if (cmd.includes("pulls/42/reviews")) {
       return JSON.stringify([
@@ -151,12 +159,22 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toEqual({ kind: "next", step: "S10" });
   });
 
-  it("S9 not converged at round cap → round_budget_exhausted decision gate", () => {
+  it("S9 not converged at round cap still routes to S10 (AC5: round-3 fix attempted)", () => {
     expect(
       route({
         from: "S9",
         output: { kind: "verify", converged: false },
         onlineReviewRound: MAX_ONLINE_REVIEW_ROUNDS,
+      }),
+    ).toEqual({ kind: "next", step: "S10" });
+  });
+
+  it("S9 not converged after round cap → round_budget_exhausted decision gate", () => {
+    expect(
+      route({
+        from: "S9",
+        output: { kind: "verify", converged: false },
+        onlineReviewRound: MAX_ONLINE_REVIEW_ROUNDS + 1,
       }),
     ).toEqual({
       kind: "handoff",
@@ -204,6 +222,16 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
       }),
     ).toBe(true);
   });
+
+  it("rejects contradictory converged:true with fix-marked findings", () => {
+    expect(
+      isValidVerifyResult({
+        kind: "verify",
+        converged: true,
+        fixMarkedFindingIdentityKeys: ["t:1"],
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("#600 stale head + artifact bot freshness (#600 AC3)", () => {
@@ -243,6 +271,40 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     expect(calls.some((c) => c.includes("gh issue create"))).toBe(true);
   });
 
+  it("applyVerifySideEffects appends tracked issue URL to pre-supplied defer reply", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      if (args.join(" ").includes("issue create")) {
+        return "https://github.com/o/r/issues/88";
+      }
+      return "{}";
+    };
+    const result = applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      verify: {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          {
+            identityKey: "t:3",
+            threadId: "3",
+            action: "defer",
+            reason: "needs design",
+          },
+        ],
+        threadReplies: [
+          { threadId: "3", body: "deferred: needs design — tracked issue will follow" },
+        ],
+      },
+    });
+    expect(result.repliesPosted[0]?.body).toContain(
+      "https://github.com/o/r/issues/88",
+    );
+  });
+
   it("applyVerifySideEffects posts evidence replies and creates defer issues", () => {
     const calls: string[] = [];
     const sh: Sh = (file, args) => {
@@ -278,16 +340,58 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     expect(calls.some((c) => c.includes("gh issue create"))).toBe(true);
   });
 
-  it("resolveReviewThread and replyToReviewThread use gh api", () => {
+  it("resolveReviewThread uses GraphQL resolveReviewThread (not REST comment edit)", () => {
     const calls: string[] = [];
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
+      if (args.join(" ").includes("graphql") && args.join(" ").includes("reviewThreads")) {
+        return JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      id: "PRRT_kwDOExampleThread",
+                      comments: { nodes: [{ databaseId: 99 }] },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      }
       return "{}";
     };
-    replyToReviewThread(sh, "o/r", 42, "cmt1", "fixed: https://github.com/o/r/commit/abc");
-    resolveReviewThread(sh, "o/r", "cmt1");
+    replyToReviewThread(sh, "o/r", 42, "99", "fixed: https://github.com/o/r/commit/abc");
+    resolveReviewThread(sh, "o/r", 42, "99");
     expect(calls.some((c) => c.includes("/replies"))).toBe(true);
-    expect(calls.some((c) => c.includes("-X PUT"))).toBe(true);
+    expect(calls.some((c) => c.includes("resolveReviewThread"))).toBe(true);
+    expect(calls.some((c) => c.includes("-X PUT"))).toBe(false);
+  });
+
+  it("applyVerifySideEffects fails closed on invalid prUrl", () => {
+    const sh: Sh = () => {
+      throw new Error("gh should not be called");
+    };
+    expect(() =>
+      applyVerifySideEffects({
+        sh,
+        repo: "o/r",
+        prUrl: "not-a-pr",
+        verify: { kind: "verify", converged: true },
+      }),
+    ).toThrow(/cannot parse PR reference/);
+  });
+
+  it("createDeferredTrackingIssue propagates gh failures", () => {
+    const sh: Sh = () => {
+      throw new Error("gh issue create failed");
+    };
+    expect(() =>
+      createDeferredTrackingIssue(sh, "o/r", "title", "body"),
+    ).toThrow(/gh issue create failed/);
   });
 
   it("fixMarkedKeysFromVerify derives fix keys from dispositions", () => {
@@ -329,6 +433,68 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
         "new",
       ),
     ).toBe(false);
+  });
+});
+
+describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
+  it("a verify worker that crashes once then completes is retried fresh", async () => {
+    let attempts = 0;
+    const dispatch = async (): Promise<WorkerResult> => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("verify worker threw on startup");
+      return {
+        kind: "completed",
+        output: { kind: "verify", converged: true },
+      };
+    };
+    const result = await withMechanicalRetry(
+      verifyWorkerSpec(),
+      {} as DispatchContext,
+      async () => dispatch(),
+    );
+    expect(result.kind).toBe("completed");
+    expect(attempts).toBe(2);
+  });
+
+  it("a fixer worker that crashes once then commits is retried after reset", async () => {
+    let attempts = 0;
+    let resets = 0;
+    const dispatch = async (): Promise<WorkerResult> => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("fixer worker threw on startup");
+      return {
+        kind: "completed",
+        output: { kind: "fixer", committed: true },
+      };
+    };
+    const result = await withMechanicalRetry(
+      fixerWorkerSpec(),
+      {} as DispatchContext,
+      async () => dispatch(),
+      {
+        resetBeforeRetry: async () => {
+          resets += 1;
+        },
+      },
+    );
+    expect(result.kind).toBe("completed");
+    expect(attempts).toBe(2);
+    expect(resets).toBe(1);
+  });
+
+  it("a persistently crashing verify exhausts the shared dispatch bound", async () => {
+    let attempts = 0;
+    const result = await withMechanicalRetry(
+      verifyWorkerSpec(),
+      {} as DispatchContext,
+      async () => {
+        attempts += 1;
+        throw new Error("verify worker threw on startup");
+      },
+    );
+    expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(result.kind).toBe("failed");
+    expect(result.reason).toContain("after 3 dispatch attempts");
   });
 });
 

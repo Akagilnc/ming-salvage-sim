@@ -67,6 +67,36 @@ export interface PollPrReviewInput {
  * Parse `owner/repo` and PR number from a GitHub PR URL.
  * Accepts `https://github.com/o/r/pull/123` and `o/r#123` style handles.
  */
+/** True when `prUrl` names a live GitHub PR the host can poll via `gh api`. */
+export function isPollableGithubPrUrl(prUrl: string, defaultRepo: string): boolean {
+  try {
+    parsePrRef(prUrl, defaultRepo);
+  } catch {
+    return false;
+  }
+  const trimmed = prUrl.trim();
+  return (
+    /^https?:\/\/github\.com\//i.test(trimmed) ||
+    /^[^/]+\/[^#]+#\d+$/.test(trimmed) ||
+    /^\d+$/.test(trimmed)
+  );
+}
+
+/**
+ * True when the host may issue live `gh` calls for online review (poll, side
+ * effects, re-trigger). Unit tests set `ORCHESTRATOR_OFFLINE_REVIEW_POLL=1` so
+ * synthetic `pr://` handles and fake GitHub URLs stay deterministic.
+ */
+export function isLiveGithubReviewPollEnabled(
+  prUrl: string,
+  defaultRepo: string,
+): boolean {
+  return (
+    isPollableGithubPrUrl(prUrl, defaultRepo) &&
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL !== "1"
+  );
+}
+
 export function parsePrRef(
   prUrl: string,
   defaultRepo: string,
@@ -128,14 +158,29 @@ function loginMatchesBot(login: string, bot: OnlineReviewBotId): boolean {
   }
 }
 
+/** REST issue/PR comments expose `user.login`; tolerate legacy `author.login` in fakes. */
+function commentAuthorLogin(
+  comment: { user?: { login?: string }; author?: { login?: string } },
+): string {
+  return comment.user?.login ?? comment.author?.login ?? "";
+}
+
 function countBotFindings(
   bot: OnlineReviewBotId,
-  comments: ReadonlyArray<{ author?: { login?: string }; body?: string }>,
+  comments: ReadonlyArray<{
+    user?: { login?: string };
+    author?: { login?: string };
+    body?: string;
+  }>,
   reviews: ReadonlyArray<{ user?: { login?: string }; state?: string }>,
+  reactions: ReadonlyArray<{
+    user?: { login?: string };
+    content?: string;
+  }>,
 ): number {
   let count = 0;
   for (const c of comments) {
-    const login = c.author?.login ?? "";
+    const login = commentAuthorLogin(c);
     if (!loginMatchesBot(login, bot)) continue;
     const body = (c.body ?? "").trim();
     if (body.length === 0) continue;
@@ -148,18 +193,32 @@ function countBotFindings(
     const state = (r.state ?? "").toUpperCase();
     if (state === "COMMENTED" || state === "CHANGES_REQUESTED") count += 1;
   }
+  for (const reaction of reactions) {
+    const login = reaction.user?.login ?? "";
+    if (!loginMatchesBot(login, bot)) continue;
+    const content = (reaction.content ?? "").trim();
+    if (content.length > 0) count += 1;
+  }
   return count;
 }
 
 function resolveBotStatuses(
   input: PollPrReviewInput,
-  comments: ReadonlyArray<{ author?: { login?: string }; body?: string }>,
+  comments: ReadonlyArray<{
+    user?: { login?: string };
+    author?: { login?: string };
+    body?: string;
+  }>,
   reviews: ReadonlyArray<{ user?: { login?: string }; state?: string }>,
+  reactions: ReadonlyArray<{
+    user?: { login?: string };
+    content?: string;
+  }>,
 ): Record<OnlineReviewBotId, BotLegStatus> {
   const pending = input.botPendingPolls ?? {};
   const bots = {} as Record<OnlineReviewBotId, BotLegStatus>;
   for (const bot of ONLINE_REVIEW_BOT_IDS) {
-    const findingCount = countBotFindings(bot, comments, reviews);
+    const findingCount = countBotFindings(bot, comments, reviews, reactions);
     if (findingCount > 0) {
       bots[bot] = { state: "complete", findingCount };
       continue;
@@ -259,11 +318,20 @@ export function pollPrReviewState(
   const issueComments = paginateGhApi(
     sh,
     `repos/${repo}/issues/${prNumber}/comments`,
-  ) as Array<{ author?: { login?: string }; body?: string }>;
+  ) as Array<{
+    user?: { login?: string };
+    author?: { login?: string };
+    body?: string;
+  }>;
   const reviewComments = paginateGhApi(
     sh,
     `repos/${repo}/pulls/${prNumber}/comments`,
-  ) as Array<{ author?: { login?: string }; body?: string }>;
+  ) as Array<{
+    user?: { login?: string };
+    author?: { login?: string };
+    body?: string;
+    id?: number;
+  }>;
   const reviews = paginateGhApi(
     sh,
     `repos/${repo}/pulls/${prNumber}/reviews`,
@@ -272,9 +340,18 @@ export function pollPrReviewState(
     sh,
     `repos/${repo}/pulls/${prNumber}/comments`,
   );
+  const reactions: Array<{ user?: { login?: string }; content?: string }> = [];
+  for (const comment of reviewComments) {
+    if (comment.id === undefined) continue;
+    const raw = paginateGhApi(
+      sh,
+      `repos/${repo}/pulls/comments/${comment.id}/reactions`,
+    ) as Array<{ user?: { login?: string }; content?: string }>;
+    reactions.push(...raw);
+  }
 
   const allComments = [...issueComments, ...reviewComments];
-  const bots = resolveBotStatuses(input, allComments, reviews);
+  const bots = resolveBotStatuses(input, allComments, reviews, reactions);
   const threads = parseReviewThreads(threadsRaw, headOid);
   const totalFindingCount = ONLINE_REVIEW_BOT_IDS.reduce((sum, bot) => {
     const leg = bots[bot];

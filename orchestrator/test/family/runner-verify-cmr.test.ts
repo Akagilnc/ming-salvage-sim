@@ -826,7 +826,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             output: {
               kind: "ship",
               branch: ctx.familyBase ?? "family/293-base",
-              pr: "https://github.com/Akagilnc/ming-salvage-sim/pull/552",
+              pr: "pr://family/293-base",
               prHead: "+10",
               status: "pr_opened",
             },

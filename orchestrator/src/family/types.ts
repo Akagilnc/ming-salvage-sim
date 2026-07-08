@@ -473,6 +473,11 @@ export interface FamilyBackend {
    * tracked edits behind even when HEAD is unchanged.
    */
   readFamilyTrackedStatus?(familyBase: string): Promise<readonly string[]>;
+  /**
+   * Reset local git residue before a crashed family fixer retry (#600 AC7 / #598).
+   * Optional — only real backends that can safely rewind a partial fix attempt.
+   */
+  resetFamilyFixerResidue?(ctx: DispatchContext): void | Promise<void>;
 
   /**
    * THE unified worker-dispatch seam at the FAMILY layer (ADR 0026 / PRD #330

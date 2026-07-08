@@ -82,7 +82,9 @@ import {
   reconcileCoderCommits,
   SANDBOX_CODEX_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
+  SANDBOX_ONLINE_REVIEW_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
+  soulForStep,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
   SANDBOX_ISSUE_NUMBER_ENV,
   SANDBOX_REPO_ENV,
@@ -107,12 +109,7 @@ import {
   isValidFixerResult,
   isValidVerifyResult,
 } from "../reviewLoopOutcome.js";
-import type {
-  CleanupResult,
-  DocReleaseResult,
-  FixerResult,
-  VerifyResult,
-} from "../types.js";
+import { ONLINE_REVIEW_LANDING_FILE } from "../onlineReviewLoop.js";
 import {
   WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
@@ -133,11 +130,15 @@ import {
 } from "../shipOutcome.js";
 
 import type {
+  CleanupResult,
   CoderResult,
   DispatchContext,
+  DocReleaseResult,
   Finding,
+  FixerResult,
   PriorFindingDisposition,
   StepSoul,
+  VerifyResult,
   WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
@@ -1140,6 +1141,14 @@ export class RealFamilyBackend implements FamilyBackend {
     if (spec.kind === "coder") {
       return this.runFamilyCoderFixWorker(spec, ctx, landing);
     }
+    if (
+      spec.kind === "verify" ||
+      spec.kind === "fixer" ||
+      spec.kind === "cleanup" ||
+      spec.kind === "docRelease"
+    ) {
+      return this.runFamilyReviewLoopWorker(spec, ctx, landing);
+    }
     if (spec.kind !== "cmr") {
       // Any other family worker kind (merge — B 段) forwards to the legacy seam.
       return legacyDispatchFamilyWorker(this, spec, ctx);
@@ -1674,6 +1683,198 @@ export class RealFamilyBackend implements FamilyBackend {
         : {}),
       ...(output.escalate !== undefined ? { escalate: output.escalate } : {}),
     };
+  }
+
+  async resetFamilyFixerResidue(ctx: DispatchContext): Promise<void> {
+    if (ctx.familyBase === undefined) {
+      throw new Error(
+        "resetFamilyFixerResidue: requires ctx.familyBase to rewind partial fix residue",
+      );
+    }
+    this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+    this.sh("git", ["reset", "--hard", "HEAD"], this.opts.workingRepo);
+    this.sh("git", ["clean", "-fd"], this.opts.workingRepo);
+  }
+
+  protected async runFamilyReviewLoopWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    if (ctx.familyBase === undefined) {
+      throw new Error(
+        `dispatchWorker(${spec.kind}): a family ${spec.kind} worker requires ` +
+          "ctx.familyBase (the merged base whose PR is under online review).",
+      );
+    }
+    const auth = this.mountShipAuth();
+    try {
+      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
+        return {
+          kind: "escalated",
+          escalation: {
+            reason:
+              `no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the family ${spec.kind} worker cannot start`,
+            diagnosis:
+              `the family ${spec.kind} worker is a top-level Claude worker when the ` +
+              "active route selects a Claude-family model; provide " +
+              "CLAUDE_CODE_OAUTH_TOKEN / ~/.sc-claude-token or select a non-Claude route.",
+          },
+        };
+      }
+      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+      const onlineReviewLanding = this.writeFamilyOnlineReviewLandingFile(
+        ctx,
+        landing,
+      );
+      try {
+        const result = await this.runAgentSandbox({
+          name: `family-${spec.kind}`,
+          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+          cwd: this.opts.workingRepo,
+          sandbox: this.familyReviewLoopSandbox(
+            auth,
+            spec,
+            ctx,
+            onlineReviewLanding,
+          ),
+          agent: this.agentForSpec(spec),
+          maxIterations: spec.maxIter,
+          completionSignal: spec.completionSignal,
+          branchStrategy: { type: "head" },
+          promptFile: join(this.opts.promptsDir, spec.promptFile),
+        });
+        return this.familyReviewLoopResultFromRun(result, spec);
+      } finally {
+        rmSync(onlineReviewLanding.path, { force: true });
+      }
+    } finally {
+      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+    }
+  }
+
+  protected writeFamilyOnlineReviewLandingFile(
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): { path: string; sandboxPath: string } {
+    if (landing?.onlineReviewSnapshot === undefined) {
+      throw new Error(
+        "writeFamilyOnlineReviewLandingFile: online review landing requires onlineReviewSnapshot",
+      );
+    }
+    this.excludeOptionalRuntimeFileFromGit(ONLINE_REVIEW_LANDING_FILE);
+    const path = join(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
+    writeFileSync(
+      path,
+      `${JSON.stringify(
+        {
+          onlineReviewSnapshot: landing.onlineReviewSnapshot,
+          shipDelivery: landing.shipDelivery,
+          onlineReviewRound: landing.onlineReviewRound ?? ctx.onlineReviewRound,
+          fixMarkedFindingIdentityKeys: landing.fixMarkedFindingIdentityKeys ?? [],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    return { path, sandboxPath: ONLINE_REVIEW_LANDING_FILE };
+  }
+
+  protected familyReviewLoopSandbox(
+    auth: ShipAuth,
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    onlineReviewLanding: { path: string; sandboxPath: string },
+  ): sc.SandboxProvider {
+    return docker(
+      this.familyReviewLoopSandboxConfig(auth, spec, ctx, onlineReviewLanding),
+    );
+  }
+
+  protected familyReviewLoopSandboxConfig(
+    auth: ShipAuth,
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    onlineReviewLanding: { path: string; sandboxPath: string },
+  ): {
+    imageName: string;
+    env: Record<string, string>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+  } {
+    const soul = soulForStep({
+      role: spec.role,
+      soul: spec.soul,
+    });
+    const env: Record<string, string> = {
+      ...SPAWNED_WORKER_ENV,
+      [SANDBOX_SOUL_ENV]: soul,
+      [SANDBOX_REPO_ENV]: this.opts.repo,
+      [SANDBOX_ONLINE_REVIEW_PATH_ENV]: onlineReviewLanding.sandboxPath,
+    };
+    if (ctx.familyIssue !== undefined) {
+      const issue = String(ctx.familyIssue);
+      env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
+      env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV] = issue;
+    }
+    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
+      {
+        hostPath: onlineReviewLanding.path,
+        sandboxPath: onlineReviewLanding.sandboxPath,
+        readonly: true,
+      },
+    ];
+    if (auth.codexAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    mounts.push(soulsMount(this.opts.soulsDir));
+    return { imageName: this.opts.imageName, env, mounts };
+  }
+
+  protected familyReviewLoopResultFromRun(
+    result: Pick<Awaited<ReturnType<typeof sc.run>>, "completionSignal" | "stdout" | "iterations">,
+    spec: WorkerSpec,
+  ): WorkerResult {
+    try {
+      assertCompletionSignal(result, spec.completionSignal, `family-${spec.kind}`);
+      const sessionId = lastSessionIdIfPresent(result);
+      if (spec.kind === "verify") {
+        const parsed = parseVerifyOutcome(result.stdout);
+        if (parsed.kind === "malformed") {
+          return { kind: "malformed", reason: parsed.reason, sessionId };
+        }
+        return { kind: "completed", output: parsed, sessionId };
+      }
+      if (spec.kind === "fixer") {
+        const parsed = parseFixerOutcome(result.stdout);
+        if (parsed.kind === "malformed") {
+          return { kind: "malformed", reason: parsed.reason, sessionId };
+        }
+        return { kind: "completed", output: parsed, sessionId };
+      }
+      if (spec.kind === "cleanup") {
+        const parsed = parseCleanupOutcome(result.stdout);
+        if (parsed.kind === "malformed") {
+          return { kind: "malformed", reason: parsed.reason, sessionId };
+        }
+        return { kind: "completed", output: parsed, sessionId };
+      }
+      const parsed = parseDocReleaseOutcome(result.stdout);
+      if (parsed.kind === "malformed") {
+        return { kind: "malformed", reason: parsed.reason, sessionId };
+      }
+      return { kind: "completed", output: parsed, sessionId };
+    } catch (err) {
+      return {
+        kind: "malformed",
+        reason:
+          `family ${spec.kind} worker output malformed: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+        sessionId: lastSessionIdIfPresent(result),
+      };
+    }
   }
 
   private captureOutcomeRewriteGitEvidence(): {
