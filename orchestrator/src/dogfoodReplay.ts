@@ -665,6 +665,10 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
         },
       };
     }
+    const offlineReviewLoop = skeletonReviewLoopWorkerResult(spec.kind);
+    if (offlineReviewLoop !== undefined) {
+      return offlineReviewLoop;
+    }
     return {
       kind: "completed",
       output: {

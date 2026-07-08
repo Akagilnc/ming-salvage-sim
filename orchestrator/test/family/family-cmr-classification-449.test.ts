@@ -1362,9 +1362,27 @@ class CmrFindingBackend implements FamilyBackend {
           kind: "ship",
           branch: ctx.familyBase!,
           status: "pr_opened",
-          pr: "https://example.test/pr/449",
+          pr: "pr://family/449",
           prHead: this.currentFamilyHead,
         },
+      };
+    }
+    if (
+      spec.kind === "verify" ||
+      spec.kind === "fixer" ||
+      spec.kind === "cleanup" ||
+      spec.kind === "docRelease"
+    ) {
+      return {
+        kind: "completed",
+        output:
+          spec.kind === "verify"
+            ? { kind: "verify", converged: true }
+            : spec.kind === "fixer"
+              ? { kind: "fixer", committed: true }
+              : spec.kind === "cleanup"
+                ? { kind: "cleanup", ok: true }
+                : { kind: "docRelease", released: true },
       };
     }
     // #598: a coder-fix that cannot fix returns a `failed` RESULT (a judged
@@ -1395,9 +1413,27 @@ class SequencedCmrBackend extends CmrFindingBackend {
           kind: "ship",
           branch: ctx.familyBase!,
           status: "pr_opened",
-          pr: "https://example.test/pr/449",
+          pr: "pr://family/449",
           prHead: this.currentFamilyHead,
         },
+      };
+    }
+    if (
+      spec.kind === "verify" ||
+      spec.kind === "fixer" ||
+      spec.kind === "cleanup" ||
+      spec.kind === "docRelease"
+    ) {
+      return {
+        kind: "completed",
+        output:
+          spec.kind === "verify"
+            ? { kind: "verify", converged: true }
+            : spec.kind === "fixer"
+              ? { kind: "fixer", committed: true }
+              : spec.kind === "cleanup"
+                ? { kind: "cleanup", ok: true }
+                : { kind: "docRelease", released: true },
       };
     }
     // #598: a coder-fix that cannot fix returns a `failed` RESULT (a judged

@@ -1,0 +1,191 @@
+/**
+ * Central evidence admissibility gate (#600 round-4).
+ *
+ * Evidence counts toward convergence ONLY when (a) it is fresh for the current
+ * head/round — head SHA match when the artifact carries one, else timestamp after
+ * the round trigger — and (b) its producer completed alive. Failure, fallback,
+ * staleness, silence, and synthesis are terminal/escalate states, never green.
+ */
+
+import { isPollableGithubPrUrl } from "./botPolling.js";
+import {
+  isValidCleanupResult,
+  isValidDocReleaseResult,
+  isValidFixerResult,
+  isValidVerifyResult,
+} from "./reviewLoopOutcome.js";
+import type { StepOutput, WorkerKind, WorkerResult, WorkerSpec } from "./types.js";
+
+/** ISO-8601 instant marking when the current review round began (ship or re-trigger). */
+export interface RoundTrigger {
+  readonly headOid: string;
+  readonly triggeredAt: string;
+}
+
+export type EvidenceTerminalState =
+  | "fresh_live"
+  | "stale"
+  | "synthetic"
+  | "failed"
+  | "fallback"
+  | "silent";
+
+export interface EvidenceRecord {
+  readonly headOid?: string;
+  readonly timestamp?: string;
+  readonly terminalState: EvidenceTerminalState;
+}
+
+const REVIEW_LOOP_KINDS = new Set<WorkerKind>([
+  "verify",
+  "fixer",
+  "cleanup",
+  "docRelease",
+]);
+
+export function isOfflineTestPrUrl(prUrl: string): boolean {
+  return prUrl.trim().startsWith("pr://");
+}
+
+/** True when offline synthesis is explicitly allowed (test handles only). */
+export function offlineSyntheticPollAdmissible(
+  prUrl: string,
+  defaultRepo: string,
+): boolean {
+  if (process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL !== "1") {
+    return false;
+  }
+  return isOfflineTestPrUrl(prUrl) && !isPollableGithubPrUrl(prUrl, defaultRepo);
+}
+
+/**
+ * Refuse offline empty-green synthesis for real GitHub PR URLs outside test mode.
+ * Throws so callers fail closed (escalate/error) instead of fabricating convergence.
+ */
+export function assertOfflineSyntheticPollAdmissible(
+  prUrl: string,
+  defaultRepo: string,
+): void {
+  if (offlineSyntheticPollAdmissible(prUrl, defaultRepo)) {
+    return;
+  }
+  if (
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1" &&
+    isPollableGithubPrUrl(prUrl, defaultRepo)
+  ) {
+    throw new Error(
+      `offline review poll inadmissible: synthetic snapshot refused for live GitHub PR ${prUrl}`,
+    );
+  }
+  if (process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1") {
+    throw new Error(
+      `offline review poll inadmissible: synthetic snapshot refused for non-test PR handle ${prUrl}`,
+    );
+  }
+}
+
+export function buildRoundTrigger(
+  headOid: string,
+  triggeredAt?: string,
+): RoundTrigger {
+  return {
+    headOid,
+    triggeredAt: triggeredAt ?? new Date().toISOString(),
+  };
+}
+
+/** Classify whether a live artifact correlates to the current head/round. */
+export function classifyEvidenceFreshness(
+  artifact: { readonly headOid?: string; readonly timestamp?: string },
+  head: string,
+  roundTrigger: RoundTrigger,
+): "fresh_live" | "stale" {
+  if (artifact.headOid !== undefined) {
+    return artifact.headOid === head ? "fresh_live" : "stale";
+  }
+  if (artifact.timestamp !== undefined) {
+    return artifact.timestamp > roundTrigger.triggeredAt ? "fresh_live" : "stale";
+  }
+  return "stale";
+}
+
+export function evidenceAdmissible(
+  evidence: EvidenceRecord,
+  head: string,
+  roundTrigger: RoundTrigger,
+): boolean {
+  if (evidence.terminalState !== "fresh_live") {
+    return false;
+  }
+  return classifyEvidenceFreshness(evidence, head, roundTrigger) === "fresh_live";
+}
+
+export function liveArtifactEvidenceRecord(input: {
+  readonly headOid?: string;
+  readonly timestamp?: string;
+  readonly head: string;
+  readonly roundTrigger: RoundTrigger;
+}): EvidenceRecord {
+  const freshness = classifyEvidenceFreshness(
+    { headOid: input.headOid, timestamp: input.timestamp },
+    input.head,
+    input.roundTrigger,
+  );
+  return {
+    headOid: input.headOid,
+    timestamp: input.timestamp,
+    terminalState: freshness,
+  };
+}
+
+function isCompletedReviewLoopOutput(
+  spec: WorkerSpec,
+  output: StepOutput | undefined,
+): boolean {
+  if (output === undefined) return false;
+  switch (spec.kind) {
+    case "verify":
+      return isValidVerifyResult(output);
+    case "fixer":
+      return isValidFixerResult(output);
+    case "cleanup":
+      return isValidCleanupResult(output);
+    case "docRelease":
+      return isValidDocReleaseResult(output);
+    default:
+      return false;
+  }
+}
+
+/**
+ * Worker outcomes count toward convergence only when the dispatch completed with a
+ * valid payload. Failed / malformed / escalated / skeleton-fallback paths are
+ * inadmissible terminal states.
+ */
+export function workerOutcomeAdmissible(
+  result: WorkerResult,
+  spec?: WorkerSpec,
+): boolean {
+  if (result.kind !== "completed" || result.output === undefined) {
+    return false;
+  }
+  if (spec !== undefined && REVIEW_LOOP_KINDS.has(spec.kind)) {
+    return isCompletedReviewLoopOutput(spec, result.output);
+  }
+  return true;
+}
+
+export function inadmissibleWorkerOutcomeReason(
+  result: WorkerResult,
+  spec: WorkerSpec,
+): string {
+  if (result.kind === "failed" || result.kind === "malformed") {
+    return "reason" in result && result.reason.length > 0
+      ? result.reason
+      : `family ${spec.kind} worker ${result.kind}`;
+  }
+  if (result.kind === "escalated") {
+    return `family ${spec.kind} worker escalated`;
+  }
+  return `family ${spec.kind} worker dispatch inadmissible: ${result.kind}`;
+}
