@@ -2954,6 +2954,82 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     expect(lastOnlineReviewFixCommitShaFromFamilyLedger([retrigger])).toBe(fixSha);
   });
 
+  it("pin r35: live S10 ledger pairing — happy path does not reopen fix-gap", () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const s10LaterTs = "2026-07-08T13:05:00.000Z";
+    const s9False = {
+      step: "S9",
+      output: { kind: "verify", converged: false },
+      ts: "2026-07-08T12:00:00.000Z",
+    };
+    const fixCommittedOnly = {
+      step: "S10",
+      event: "online_review_fix_committed" as const,
+      fixCommitSha: fixSha,
+      onlineReviewRound: 1,
+      ts: fixTs,
+    };
+    const retrigger = {
+      step: "S10",
+      event: "online_review_round_retrigger" as const,
+      roundTriggerHeadOid: fixSha,
+      roundTriggerAt: retriggerTs,
+      onlineReviewRound: 2,
+      ts: retriggerTs,
+    };
+    const s10Row = {
+      step: "S10",
+      output: { kind: "fixer", committed: true },
+      branchHEAD: fixSha,
+      ts: s10LaterTs,
+    };
+    const liveHappy = [s9False, fixCommittedOnly, retrigger, s10Row];
+
+    expect(slicePendingRoundTriggerFromFixGap(liveHappy)).toBeUndefined();
+    expect(familyPendingRoundTriggerFromFixGap([fixCommittedOnly, retrigger])).toBeUndefined();
+  });
+
+  it("pin r35: live S10 ledger pairing — genuine r27 gap still pending", () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const fixCommittedOnly = {
+      step: "S10",
+      event: "online_review_fix_committed" as const,
+      fixCommitSha: fixSha,
+      onlineReviewRound: 1,
+      ts: fixTs,
+    };
+    expect(slicePendingRoundTriggerFromFixGap([fixCommittedOnly])).toEqual(
+      buildRoundTrigger(fixSha, fixTs),
+    );
+    expect(
+      familyPendingRoundTriggerFromFixGap([
+        {
+          status: "online_review_fix_committed",
+          event: "online_review_fix_committed",
+          familyHeadAfter: fixSha,
+          ts: fixTs,
+        },
+      ]),
+    ).toEqual(buildRoundTrigger(fixSha, fixTs));
+  });
+
+  it("pin r35: live S10 ledger pairing — S10-only fallback crash window still pending", () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const s10Only = {
+      step: "S10",
+      output: { kind: "fixer", committed: true },
+      branchHEAD: fixSha,
+      ts: fixTs,
+    };
+    expect(slicePendingRoundTriggerFromFixGap([s10Only])).toEqual(
+      buildRoundTrigger(fixSha, fixTs),
+    );
+  });
+
   it("pin r31: multi-round crash gap uses max(fixCommitted+1, retrigger round) symmetrically", () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const fixTs = "2026-07-08T12:30:00.000Z";

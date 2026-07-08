@@ -240,41 +240,70 @@ export function onlineReviewRoundTriggerFromLedger(
   return undefined;
 }
 
+/** Retrigger marker head used to pair with a fix signal (#600 r35). */
+function retriggerPairedFixHead(entry: {
+  readonly event?: string;
+  readonly roundTriggerHeadOid?: string;
+  readonly branchHEAD?: string;
+  readonly familyHeadAfter?: string;
+}): string | undefined {
+  if (entry.event !== "online_review_round_retrigger") {
+    return undefined;
+  }
+  if (
+    typeof entry.roundTriggerHeadOid === "string" &&
+    entry.roundTriggerHeadOid.length > 0
+  ) {
+    return entry.roundTriggerHeadOid;
+  }
+  if (typeof entry.branchHEAD === "string" && entry.branchHEAD.length > 0) {
+    return entry.branchHEAD;
+  }
+  if (
+    typeof entry.familyHeadAfter === "string" &&
+    entry.familyHeadAfter.length > 0
+  ) {
+    return entry.familyHeadAfter;
+  }
+  return undefined;
+}
+
 /** Family ledger: fix-committed landed but retrigger persistence crashed mid-gap (#600 r27). */
 export function familyPendingRoundTriggerFromFixGap(
   entries: ReadonlyArray<{
     readonly status?: string;
     readonly event?: string;
     readonly familyHeadAfter?: string;
+    readonly roundTriggerHeadOid?: string;
+    readonly branchHEAD?: string;
     readonly ts?: string;
   }>,
 ): RoundTrigger | undefined {
-  let lastFixIdx = -1;
-  let lastFixHead = "";
-  let lastFixTs = "";
-  let lastRetriggerIdx = -1;
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i]!;
-    if (entry.event === "online_review_round_retrigger") {
-      lastRetriggerIdx = i;
+  const pairedFixShas = new Set<string>();
+  for (const entry of entries) {
+    const head = retriggerPairedFixHead(entry);
+    if (head !== undefined) {
+      pairedFixShas.add(head);
     }
+  }
+  let latestUnpaired: { readonly sha: string; readonly ts: string } | undefined;
+  for (const entry of entries) {
     if (
       entry.status === "online_review_fix_committed" &&
       entry.event === "online_review_fix_committed" &&
       typeof entry.familyHeadAfter === "string" &&
       entry.familyHeadAfter.length > 0 &&
       typeof entry.ts === "string" &&
-      entry.ts.length > 0
+      entry.ts.length > 0 &&
+      !pairedFixShas.has(entry.familyHeadAfter)
     ) {
-      lastFixIdx = i;
-      lastFixHead = entry.familyHeadAfter;
-      lastFixTs = entry.ts;
+      latestUnpaired = { sha: entry.familyHeadAfter, ts: entry.ts };
     }
   }
-  if (lastFixIdx < 0 || lastRetriggerIdx > lastFixIdx) {
+  if (latestUnpaired === undefined) {
     return undefined;
   }
-  return buildRoundTrigger(lastFixHead, lastFixTs);
+  return buildRoundTrigger(latestUnpaired.sha, latestUnpaired.ts);
 }
 
 /**
@@ -318,45 +347,59 @@ export function slicePendingRoundTriggerFromFixGap(
     readonly event?: string;
     readonly fixCommitSha?: string;
     readonly branchHEAD?: string;
+    readonly roundTriggerHeadOid?: string;
     readonly ts?: string;
     readonly output?: { readonly kind?: string; readonly committed?: boolean };
   }>,
 ): RoundTrigger | undefined {
-  let lastFixIdx = -1;
-  let lastFixHead = "";
-  let lastFixTs = "";
-  let lastRetriggerIdx = -1;
-  for (let i = 0; i < ledger.length; i++) {
-    const entry = ledger[i]!;
-    if (entry.event === "online_review_round_retrigger") {
-      lastRetriggerIdx = i;
+  const pairedFixShas = new Set<string>();
+  for (const entry of ledger) {
+    const head = retriggerPairedFixHead(entry);
+    if (head !== undefined) {
+      pairedFixShas.add(head);
     }
-    const fixSha =
+  }
+
+  const fixCommittedShas = new Set<string>();
+  const fixSignals: Array<{ readonly sha: string; readonly ts: string }> = [];
+  for (const entry of ledger) {
+    if (
       entry.event === "online_review_fix_committed" &&
       typeof entry.fixCommitSha === "string" &&
-      entry.fixCommitSha.length > 0
-        ? entry.fixCommitSha
-        : entry.step === "S10" &&
-            entry.output?.kind === "fixer" &&
-            entry.output.committed === true &&
-            typeof entry.branchHEAD === "string" &&
-            entry.branchHEAD.length > 0
-          ? entry.branchHEAD
-          : undefined;
-    if (
-      fixSha !== undefined &&
+      entry.fixCommitSha.length > 0 &&
       typeof entry.ts === "string" &&
       entry.ts.length > 0
     ) {
-      lastFixIdx = i;
-      lastFixHead = fixSha;
-      lastFixTs = entry.ts;
+      fixCommittedShas.add(entry.fixCommitSha);
+      fixSignals.push({ sha: entry.fixCommitSha, ts: entry.ts });
     }
   }
-  if (lastFixIdx < 0 || lastRetriggerIdx > lastFixIdx) {
+  for (const entry of ledger) {
+    if (
+      entry.step === "S10" &&
+      entry.event === undefined &&
+      entry.output?.kind === "fixer" &&
+      entry.output.committed === true &&
+      typeof entry.branchHEAD === "string" &&
+      entry.branchHEAD.length > 0 &&
+      typeof entry.ts === "string" &&
+      entry.ts.length > 0 &&
+      !fixCommittedShas.has(entry.branchHEAD)
+    ) {
+      fixSignals.push({ sha: entry.branchHEAD, ts: entry.ts });
+    }
+  }
+
+  let latestUnpaired: { readonly sha: string; readonly ts: string } | undefined;
+  for (const signal of fixSignals) {
+    if (!pairedFixShas.has(signal.sha)) {
+      latestUnpaired = signal;
+    }
+  }
+  if (latestUnpaired === undefined) {
     return undefined;
   }
-  return buildRoundTrigger(lastFixHead, lastFixTs);
+  return buildRoundTrigger(latestUnpaired.sha, latestUnpaired.ts);
 }
 
 function roundTriggerRecencyMs(trigger: RoundTrigger): number | undefined {
