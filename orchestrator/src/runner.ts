@@ -73,8 +73,11 @@ import {
   buildOnlineReviewLanding,
   immediateBotPollClock,
   isReviewLoopConvergedMarker,
+  lastOnlineReviewFixCommitShaFromLedger,
   offlinePrReviewSnapshot,
+  onlineReviewRoundFromLedger,
   realBotPollClock,
+  reconstructOnlineReviewLandingForResume,
   retriggerBotsAndPoll,
   verifyReviewerHeadMovedStopSummary,
   waitForBotQuiescence,
@@ -919,18 +922,6 @@ function shipStatusFromLedger(
     }
   }
   return undefined;
-}
-
-function onlineReviewRoundFromLedger(
-  ledger: ReadonlyArray<PersistentLedgerEntry>,
-): number {
-  const completedFixerRounds = ledger.filter(
-    (e) =>
-      e.step === "S10" &&
-      e.output?.kind === "fixer" &&
-      e.output.committed,
-  ).length;
-  return completedFixerRounds + 1;
 }
 
 function onlineReviewConvergedForShip(
@@ -1988,6 +1979,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           bots: (landing.bots ?? defaultBots) as PrReviewSnapshot["bots"],
           threads: landing.threads.map((t) => ({
             id: t.id,
+            threadNodeId: t.threadNodeId ?? t.id,
             body: t.body,
             authorLogin: t.authorLogin ?? "unknown",
             isResolved: t.isResolved,
@@ -2540,10 +2532,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         lastShipOutput = e.output;
       }
     }
-    const completedFixerRounds = plan.priorLedger.filter(
-      (e) => e.step === "S10" && e.output?.kind === "fixer" && e.output.committed,
-    ).length;
-    onlineReviewRound = completedFixerRounds + 1;
+    // #600 r7: derive review-loop runtime from the FULL executable ledger before
+    // priorLedgerThroughLastShip drops superseded S9–S12 entries for display seed.
+    onlineReviewRound = onlineReviewRoundFromLedger(resumeLedger);
+    lastOnlineReviewFixCommitSha =
+      lastOnlineReviewFixCommitShaFromLedger(resumeLedger);
 
     // ADR 0030: persisted S4 boundaries are the runner's closure truth. Resume
     // must replay the prior S4 adjudications, because an S6 reviewer may carry an
@@ -2566,6 +2559,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const latestRepair = latestCoderRepair(plan.priorLedger);
     lastCoderRepairEvidence = latestRepair.repairEvidence;
     lastCoderActualRepairPaths = latestRepair.repairMovementPaths;
+
+    if (
+      plan.resumeStep === "S10" &&
+      lastShipOutput !== undefined &&
+      onlineReviewLanding === undefined
+    ) {
+      const reconstructed = reconstructOnlineReviewLandingForResume({
+        fullLedger: resumeLedger,
+        ship: lastShipOutput,
+        stateDir,
+        round: onlineReviewRound,
+      });
+      if (reconstructed?.onlineReviewSnapshot !== undefined) {
+        onlineReviewLanding = reconstructed;
+      }
+    }
 
     if (plan.terminalStatus !== undefined) {
       // The prior run already reached a terminal handoff that is NOT being
@@ -3237,6 +3246,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             worktree != null
               ? { resetBeforeRetry: () => backend.cleanResidue(worktree!) }
               : {};
+          if (
+            reviewStep === "S10" &&
+            (onlineReviewLanding === undefined ||
+              onlineReviewLanding.onlineReviewSnapshot === undefined)
+          ) {
+            return await errorTermination(
+              reviewStep,
+              new Error(
+                `${reviewStep} requires a reconstructed online review landing with ` +
+                  "onlineReviewSnapshot — resume must rebuild from the full ledger " +
+                  "and persisted snapshot before dispatching the fixer",
+              ),
+            );
+          }
           const fixerLanding =
             reviewStep === "S10" && onlineReviewLanding !== undefined
               ? {

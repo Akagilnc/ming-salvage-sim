@@ -137,18 +137,22 @@ export function resolveReviewThread(
       `onlineReviewSideEffects: could not list review threads for ${repo}#${prNumber}`,
     );
   }
-  const targetId = Number(threadId);
   let threadNodeId: string | undefined;
-  for (const node of nodes) {
-    if (node == null || typeof node !== "object") continue;
-    const obj = node as {
-      id?: string;
-      comments?: { nodes?: Array<{ databaseId?: number }> };
-    };
-    const firstCommentId = obj.comments?.nodes?.[0]?.databaseId;
-    if (firstCommentId === targetId || String(firstCommentId) === threadId) {
-      threadNodeId = obj.id;
-      break;
+  if (threadId.startsWith("PRRT_")) {
+    threadNodeId = threadId;
+  } else {
+    const targetId = Number(threadId);
+    for (const node of nodes) {
+      if (node == null || typeof node !== "object") continue;
+      const obj = node as {
+        id?: string;
+        comments?: { nodes?: Array<{ databaseId?: number }> };
+      };
+      const firstCommentId = obj.comments?.nodes?.[0]?.databaseId;
+      if (firstCommentId === targetId || String(firstCommentId) === threadId) {
+        threadNodeId = obj.id;
+        break;
+      }
     }
   }
   if (threadNodeId === undefined || threadNodeId.length === 0) {

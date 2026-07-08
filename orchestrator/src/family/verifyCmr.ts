@@ -70,6 +70,7 @@ import {
 } from "../dispatchWorker.js";
 import {
   immediateBotPollClock,
+  OnlineReviewLoopTerminal,
   offlinePrReviewSnapshot,
   realBotPollClock,
   retriggerBotsAndPoll,
@@ -1475,7 +1476,8 @@ export async function runFamilyOnlineReviewLoop(input: {
     input.ship.prHead ?? "offline-review-head",
   );
 
-  return runOnlineReviewLoopStage({
+  try {
+    return await runOnlineReviewLoopStage({
     poll: async (round) => {
       if (!livePoll) {
         return offlinePrReviewSnapshot({
@@ -1505,13 +1507,16 @@ export async function runFamilyOnlineReviewLoop(input: {
         landing,
       );
       if (result.kind !== "completed" || !isValidVerifyResult(result.output)) {
-        throw new Error(
-          `family online review verify dispatch returned ${result.kind}`,
-        );
+        throw new OnlineReviewLoopTerminal({
+          ok: false,
+          terminalState: "decision_gate_raised",
+          round,
+        });
       }
       return result.output;
     },
     dispatchFixer: async (landing: WorkerLandingPayload) => {
+      const round = landing.onlineReviewRound ?? baseCtx.onlineReviewRound ?? 1;
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
         fixerWorkerSpec(input.resolvedRoute),
@@ -1520,17 +1525,20 @@ export async function runFamilyOnlineReviewLoop(input: {
         { writeCapable: true },
       );
       if (result.kind !== "completed" || !isValidFixerResult(result.output)) {
-        throw new Error(
-          `family online review fixer dispatch returned ${result.kind}`,
-        );
+        throw new OnlineReviewLoopTerminal({
+          ok: false,
+          terminalState: "decision_gate_raised",
+          round,
+        });
       }
       return result.output.committed;
     },
-    dispatchCleanup: async () => {
+    dispatchCleanup: async (landing: WorkerLandingPayload) => {
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
         cleanupWorkerSpec(input.resolvedRoute),
         baseCtx,
+        landing,
       );
       return (
         result.kind === "completed" &&
@@ -1538,11 +1546,12 @@ export async function runFamilyOnlineReviewLoop(input: {
         result.output.ok
       );
     },
-    dispatchDocRelease: async () => {
+    dispatchDocRelease: async (landing: WorkerLandingPayload) => {
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
         docReleaseWorkerSpec(input.resolvedRoute),
         baseCtx,
+        landing,
       );
       return (
         result.kind === "completed" &&
@@ -1587,6 +1596,12 @@ export async function runFamilyOnlineReviewLoop(input: {
       return input.ship.prHead ?? "";
     },
   });
+  } catch (err) {
+    if (err instanceof OnlineReviewLoopTerminal) {
+      return err.result;
+    }
+    throw err;
+  }
 }
 
 async function dispatchOrAbort(
