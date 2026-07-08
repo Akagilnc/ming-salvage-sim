@@ -600,6 +600,8 @@ export interface OnlineReviewLandingSnapshot {
     readonly id: string;
     /** GraphQL reviewThread node id — resolution target. */
     readonly threadNodeId?: string;
+    readonly path?: string;
+    readonly line?: number;
     readonly body: string;
     readonly isResolved: boolean;
     /** Native commit_id when GitHub exposes it; undefined for artifact bots. */

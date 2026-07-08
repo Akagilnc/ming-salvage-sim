@@ -80,6 +80,8 @@ function toLandingSnapshot(snapshot: PrReviewSnapshot): OnlineReviewLandingSnaps
     threads: snapshot.threads.map((t) => ({
       id: t.id,
       threadNodeId: t.threadNodeId,
+      path: t.path,
+      line: t.line,
       body: t.body,
       isResolved: t.isResolved,
       headOid: t.headOid,
