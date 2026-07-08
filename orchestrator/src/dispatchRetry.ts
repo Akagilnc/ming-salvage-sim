@@ -49,7 +49,11 @@ function forceFreshSpec(spec: WorkerSpec): WorkerSpec {
 
 /** Strip the resume session id so a retry opens a brand-new session (#598). */
 function stripResume(ctx: DispatchContext): DispatchContext {
-  if (ctx.resumeSessionId == null) return ctx;
+  // Robust guard (typeof === "string"): treat explicit null (or non-string) as
+  // absent so retry always forces fresh. Matches the dispatchWorker decision
+  // and the runner construction. (Presence of a real string id is what is
+  // load-bearing; null must not be "kept as resume".)
+  if (typeof ctx.resumeSessionId !== "string") return ctx;
   const { resumeSessionId: _drop, ...rest } = ctx;
   return rest;
 }

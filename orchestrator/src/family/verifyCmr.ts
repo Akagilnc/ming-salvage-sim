@@ -239,12 +239,12 @@ function cmrFloorFailureReason(input: {
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
 }): string | undefined {
   const successfulLegs = input.successfulLegs;
-  if (successfulLegs === undefined || successfulLegs.length === 0) {
+  if (successfulLegs == null || successfulLegs.length === 0) {
     return `integrated cmr ${input.pass} floor failed: no successful leg set was reported`;
   }
   if (meetsCmrFloor(successfulLegs)) return undefined;
   const skipped =
-    input.skippedLegs !== undefined && input.skippedLegs.length > 0
+    input.skippedLegs != null && input.skippedLegs.length > 0
       ? `; skipped legs: ${input.skippedLegs
           .map((leg) => `${leg.slug} (${leg.reason})`)
           .join(", ")}`
@@ -260,7 +260,7 @@ function providerDegradedFloorStopSummary(input: {
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
 }): StopSummary {
   const providerDegraded =
-    input.skippedLegs !== undefined && input.skippedLegs.length > 0
+    input.skippedLegs != null && input.skippedLegs.length > 0
       ? input.skippedLegs.map((leg) =>
           skippedLegProviderDegradation(leg, {
             blocking: true,
@@ -404,11 +404,11 @@ function providerDegradedPassStopSummary(input: {
   readonly familyHeadAfter?: string;
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
 }): StopSummary | undefined {
-  if (input.skippedLegs === undefined || input.skippedLegs.length === 0) {
+  if (input.skippedLegs == null || input.skippedLegs.length === 0) {
     return undefined;
   }
   return successStopSummary({
-    ...(input.familyHeadAfter !== undefined
+    ...(input.familyHeadAfter != null
       ? {
           heads: {
             verifiedCmrHead: input.familyHeadAfter,
@@ -437,25 +437,25 @@ function shipWorkerContractDriftStopSummary(input: {
     repairHint:
       "preserve the latest verified CMR head and rerun ship after repairing the worker contract",
     ship: {
-      ...(input.latestVerifiedCmrHead !== undefined
+      ...(input.latestVerifiedCmrHead != null
         ? { latestVerifiedCmrHead: input.latestVerifiedCmrHead }
         : {}),
-      ...(input.currentFamilyHead !== undefined
+      ...(input.currentFamilyHead != null
         ? { currentFamilyHead: input.currentFamilyHead }
         : {}),
-      ...(input.reportedFamilyHead !== undefined
+      ...(input.reportedFamilyHead != null
         ? { reportedFamilyHead: input.reportedFamilyHead }
         : {}),
       shipPrState: input.shipPrState,
     },
     heads: {
-      ...(input.currentFamilyHead !== undefined
+      ...(input.currentFamilyHead != null
         ? { actualFamilyHead: input.currentFamilyHead }
         : {}),
-      ...(input.reportedFamilyHead !== undefined
+      ...(input.reportedFamilyHead != null
         ? { reportedFamilyHead: input.reportedFamilyHead }
         : {}),
-      ...(input.latestVerifiedCmrHead !== undefined
+      ...(input.latestVerifiedCmrHead != null
         ? { verifiedCmrHead: input.latestVerifiedCmrHead }
         : {}),
       sources: {
@@ -558,7 +558,7 @@ function familyCmrPassStopSummary(input: {
       boundedReopen: disposition.boundedReopen!,
     }));
   const materialPassSummary = successStopSummary({
-    ...(input.familyHeadAfter !== undefined
+    ...(input.familyHeadAfter != null
       ? {
           heads: {
             verifiedCmrHead: input.familyHeadAfter,
@@ -566,10 +566,10 @@ function familyCmrPassStopSummary(input: {
           },
         }
       : {}),
-    ...(acceptedSuppressions !== undefined && acceptedSuppressions.length > 0
+    ...(acceptedSuppressions != null && acceptedSuppressions.length > 0
       ? { acceptedSuppressions }
       : {}),
-    ...(input.skippedLegs !== undefined && input.skippedLegs.length > 0
+    ...(input.skippedLegs != null && input.skippedLegs.length > 0
       ? {
           providerDegraded: input.skippedLegs.map((leg) =>
             skippedLegProviderDegradation(leg, {
@@ -885,10 +885,10 @@ function coderFixFailureStopSummary(input: {
     repairHint:
       "repair the family CMR coder-fix worker contract, then rerun the family CMR gate",
     heads: {
-      ...(input.familyHeadBefore !== undefined
+      ...(input.familyHeadBefore != null
         ? { reportedFamilyHead: input.familyHeadBefore }
         : {}),
-      ...(input.familyHeadAfter !== undefined
+      ...(input.familyHeadAfter != null
         ? { actualFamilyHead: input.familyHeadAfter }
         : {}),
       sources: {
@@ -2560,7 +2560,7 @@ export async function runVerifyCmr(
     if (
       entry.status === "cmr_passed" &&
       entry.familyHeadAfter === cmrPassedFamilyHeadAfter &&
-      entry.stopSummary !== undefined &&
+      entry.stopSummary != null &&
       isMaterialCmrStopSummary(entry.stopSummary)
     ) {
       materialCmrSummary = entry.stopSummary;

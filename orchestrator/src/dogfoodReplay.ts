@@ -135,10 +135,10 @@ function scenario(input: {
     stopReason: input.stopReason ?? input.stopSummary.reason,
     summary: input.stopSummary.summary,
     stopSummary: input.stopSummary,
-    ...(input.stopSummary.repairHint !== undefined
+    ...(input.stopSummary.repairHint != null
       ? { repairHint: input.stopSummary.repairHint }
       : {}),
-    ...(input.stopSummary.metadata !== undefined
+    ...(input.stopSummary.metadata != null
       ? { metadata: input.stopSummary.metadata }
       : {}),
     ...(input.source !== undefined ? { source: input.source } : {}),
@@ -242,7 +242,7 @@ async function familyClassificationScenario(input: {
     throw new Error(`dogfood replay ${input.id} produced no classification`);
   }
   const stopSummary = ledgerEntry?.stopSummary;
-  if (stopSummary === undefined) {
+  if (stopSummary == null) {
     throw new Error(`dogfood replay ${input.id} produced no stop summary`);
   }
 
@@ -509,7 +509,8 @@ class DogfoodSingleSliceBackend implements Backend {
     // reaches S7 ship + S9+): return the shared deterministic stubs so S9–S12
     // succeed without fake 'coder' output (which route/runner rejects).
     const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-    if (skeleton != null) {
+    // #709 exemption: strict !== undefined (not loose != null) — skeleton sentinel is exactly `undefined` (never null); null-vs-undefined distinction load-bearing on dispatch fallback to avoid treating null result as skeleton.
+    if (skeleton !== undefined) {
       return skeleton;
     }
     const scripted =
@@ -1222,7 +1223,7 @@ async function familyAttributionReplay(
   if (result?.attribution.method !== "child_module_scope") {
     throw new Error("dogfood family attribution replay did not hit child scope");
   }
-  if (!run.ok || reviewed?.stopSummary === undefined || fixed === undefined || passed === undefined) {
+  if (!run.ok || reviewed?.stopSummary == null || fixed === undefined || passed === undefined) {
     throw new Error(
       `dogfood family attribution replay did not hit family review/fix/re-review gate: ` +
         `run.ok=${run.ok} statuses=${backend.ledger.map((entry) => entry.status).join(",")}`,
@@ -1861,12 +1862,12 @@ async function familyClosureFailure(input: {
     backend.escalations[0]?.reason ??
     backend.ledger.find((entry) => entry.status === "aborted")?.reason;
   const stopSummary = backend.ledger.find(
-    (entry) => entry.status === "aborted" && entry.stopSummary !== undefined,
+    (entry) => entry.status === "aborted" && entry.stopSummary != null,
   )?.stopSummary;
   if (result.ok || reason === undefined) {
     throw new Error(`dogfood CMR closure replay ${input.shape} did not fail`);
   }
-  if (stopSummary === undefined) {
+  if (stopSummary == null) {
     throw new Error(`dogfood CMR closure replay ${input.shape} had no stop summary`);
   }
   if (backend.dispatches.some((dispatch) => dispatch.startsWith("ship:"))) {
