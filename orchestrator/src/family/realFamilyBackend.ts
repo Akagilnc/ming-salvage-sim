@@ -580,12 +580,12 @@ export class RealFamilyBackend implements FamilyBackend {
         typeof record.reason === "string" && record.reason.trim().length > 0
           ? record.reason
           : "legacy family escalation",
-      ...(record.escalationKind === undefined
+      ...(record.escalationKind == null
         ? { escalationKind: "decision" as const }
         : record.escalationKind === "decision" || record.escalationKind === "failure"
           ? { escalationKind: record.escalationKind }
           : {}),
-      ...(record.familyHeadAfter !== undefined
+      ...(record.familyHeadAfter != null
         ? { familyHeadAfter: record.familyHeadAfter }
         : {}),
     }));
@@ -2545,10 +2545,10 @@ export class RealFamilyBackend implements FamilyBackend {
           typeof entry.reason === "string" && entry.reason.trim().length > 0
             ? entry.reason
             : "family escalation",
-        ...(entry.escalationKind !== undefined
+        ...(entry.escalationKind != null
           ? { escalationKind: entry.escalationKind }
           : {}),
-        ...(entry.familyHeadAfter !== undefined
+        ...(entry.familyHeadAfter != null
           ? { familyHeadAfter: entry.familyHeadAfter }
           : {}),
       }));
