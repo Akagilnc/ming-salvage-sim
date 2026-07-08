@@ -20,7 +20,7 @@
  *   ③ live HEAD is NOT consistent with the ledger末条 (diverged / behind /
  *      unrelated — neither equal nor a descendant) → fail-closed escalate.
  *
- * Family reconcile is WIDER than the single-slice `checkBranchHeadConsistency`
+ * Family reconcile is WIDER than the removed single-slice HEAD-equality resume gate
  * "mismatch → abort": branch ② does NOT abort, it补账 + continues — that is the
  * "幂等续合" the family layer needs.
  *

@@ -1364,9 +1364,7 @@ export interface Backend {
    * then falls back to the branch name).
    *
    * OPTIONAL so the zero-container fake Backends need no change: when absent the
-   * runner keeps the v0.1 branch-name value. codex#2 consistency check
-   * (ledger.branchHEAD vs the live worktree HEAD) is built on this in the real
-   * Backend.
+   * runner keeps the v0.1 branch-name value.
    */
   worktreeHead?(worktree: WorktreeHandle): Promise<string | undefined>;
   /**
