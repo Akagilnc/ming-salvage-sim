@@ -64,7 +64,9 @@ import {
   onlineReviewRoundTriggerFromFamilyLedger,
   onlineReviewRoundTriggerFromLedger,
   retriggerBotsAndPoll,
+  familyPendingRoundTriggerFromFixGap,
   resolveOnlineReviewRoundTrigger,
+  slicePendingRoundTriggerFromFixGap,
   runOnlineReviewLoopStage,
   shipLedgerTriggeredAtFromFamilyLedger,
   shipLedgerTriggeredAtFromSliceLedger,
@@ -642,14 +644,14 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toBe(true);
   });
 
-  it("rejects threadsToResolve without isRecheck", () => {
+  it("pin r27: shape guard accepts threadsToResolve without isRecheck (runner normalizes)", () => {
     expect(
       isValidVerifyResult({
         kind: "verify",
         converged: false,
         threadsToResolve: ["99"],
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isValidVerifyResult({
         kind: "verify",
@@ -836,6 +838,20 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       calls.filter((c) => c.includes("resolveReviewThread")),
     ).toHaveLength(1);
     expect(calls.some((c) => c.includes("-X PUT"))).toBe(false);
+  });
+
+  it("pin r27: applyVerifySideEffects refuses mismatched caller repo vs PR URL", () => {
+    const sh: Sh = () => {
+      throw new Error("gh should not be called");
+    };
+    expect(() =>
+      applyVerifySideEffects({
+        sh,
+        repo: "other/r",
+        prUrl: "https://github.com/o/r/pull/42",
+        verify: { kind: "verify", converged: true },
+      }),
+    ).toThrow(/conflicts with PR URL repo/);
   });
 
   it("applyVerifySideEffects refuses thread resolution without recheck + fixing commit", () => {
@@ -1543,6 +1559,45 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
     expect(result.kind).toBe("completed");
     expect(attempts).toBe(2);
     expect(resets).toBe(1);
+  });
+
+  it("pin r27: verify that mutates HEAD then returns malformed is not reset-cleaned", async () => {
+    const { VerifyWorkerHeadMovedError } = await import(
+      "../src/onlineReviewLoop.js"
+    );
+    let attempts = 0;
+    let resets = 0;
+    let head = "head-before";
+    const headBefore = head;
+    const resolveHead = () => head;
+    const result = await withMechanicalRetry(
+      verifyWorkerSpec(),
+      {} as DispatchContext,
+      async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          head = "head-after-mutation";
+        }
+        const workerResult: WorkerResult =
+          attempts === 1
+            ? { kind: "malformed", reason: "missing verify tag" }
+            : { kind: "completed", output: { kind: "verify", converged: true } };
+        const headAfterAttempt = resolveHead();
+        if (headAfterAttempt !== headBefore) {
+          throw new VerifyWorkerHeadMovedError(headBefore, headAfterAttempt);
+        }
+        return workerResult;
+      },
+      {
+        callerOwns: (o) =>
+          o.kind === "thrown" && o.error instanceof VerifyWorkerHeadMovedError,
+        rethrowOnExhaustion: true,
+      },
+    ).catch((err) => err);
+    expect(attempts).toBe(1);
+    expect(resets).toBe(0);
+    expect(head).toBe("head-after-mutation");
+    expect(result).toBeInstanceOf(VerifyWorkerHeadMovedError);
   });
 
   it("a persistently crashing verify exhausts the shared dispatch bound", async () => {
@@ -2334,15 +2389,40 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     ).toThrow(/persisted round trigger/);
   });
 
-  it("pin r26: family ledger restores round/trigger/fix SHA symmetrically to single-slice", () => {
+  it("pin r27: round ≥2 crash gap reconstructs pending trigger from fix-committed", () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
-    const familyLedger: FamilyLedgerEntry[] = [
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const gapTrigger = familyPendingRoundTriggerFromFixGap([
       {
         status: "online_review_fix_committed",
         event: "online_review_fix_committed",
-        phase: "final",
         familyHeadAfter: fixSha,
+        ts: fixTs,
       },
+    ]);
+    expect(gapTrigger).toEqual(buildRoundTrigger(fixSha, fixTs));
+    const resolved = resolveOnlineReviewRoundTrigger({
+      onlineReviewRound: 2,
+      pendingRetriggerFromFixGap: gapTrigger,
+      shipPrHead: "headsha1",
+      shipLedgerTriggeredAt: SHIP_LEDGER_TS,
+    });
+    expect(resolved).toEqual(gapTrigger);
+    expect(
+      slicePendingRoundTriggerFromFixGap([
+        {
+          step: "S10",
+          output: { kind: "fixer", committed: true },
+          branchHEAD: fixSha,
+          ts: fixTs,
+        },
+      ]),
+    ).toEqual(buildRoundTrigger(fixSha, fixTs));
+  });
+
+  it("pin r26: family ledger restores round/trigger/fix SHA symmetrically to single-slice", () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const familyLedger: FamilyLedgerEntry[] = [
       {
         status: "online_review_round_retrigger",
         event: "online_review_round_retrigger",
@@ -2350,6 +2430,12 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
         roundTriggerHeadOid: fixSha,
         roundTriggerAt: RETRIGGER_TS,
         onlineReviewRound: 2,
+      },
+      {
+        status: "online_review_fix_committed",
+        event: "online_review_fix_committed",
+        phase: "final",
+        familyHeadAfter: fixSha,
       },
     ];
     expect(onlineReviewRoundFromFamilyLedger(familyLedger)).toBe(2);
@@ -3296,19 +3382,19 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
       const backend = new ResumeFamilyBackend();
       backend.ledger.push(
         {
-          status: "online_review_fix_committed",
-          event: "online_review_fix_committed",
-          phase: "final",
-          familyHeadAfter: fixSha,
-          pr: offlineShip.pr,
-        },
-        {
           status: "online_review_round_retrigger",
           event: "online_review_round_retrigger",
           phase: "final",
           roundTriggerHeadOid: fixSha,
           roundTriggerAt: retriggerTs,
           onlineReviewRound: 2,
+          pr: offlineShip.pr,
+        },
+        {
+          status: "online_review_fix_committed",
+          event: "online_review_fix_committed",
+          phase: "final",
+          familyHeadAfter: fixSha,
           pr: offlineShip.pr,
         },
       );

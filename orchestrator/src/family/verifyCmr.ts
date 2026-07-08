@@ -78,6 +78,7 @@ import {
   onlineReviewRoundTriggerFromFamilyLedger,
   realBotPollClock,
   retriggerBotsAndPoll,
+  familyPendingRoundTriggerFromFixGap,
   resolveOnlineReviewRoundTrigger,
   runOnlineReviewLoopStage,
   shipLedgerTriggeredAtFromFamilyLedger,
@@ -1527,6 +1528,8 @@ export async function runFamilyOnlineReviewLoop(input: {
         onlineReviewRound: loopState.round,
         persistedRoundTrigger:
           onlineReviewRoundTriggerFromFamilyLedger(familyLedger),
+        pendingRetriggerFromFixGap:
+          familyPendingRoundTriggerFromFixGap(familyLedger),
         fixCommitSha: loopState.lastFixSha,
         shipPrHead: input.ship.prHead,
         shipLedgerTriggeredAt: shipTriggeredAt,
@@ -1693,6 +1696,14 @@ export async function runFamilyOnlineReviewLoop(input: {
           onlineReviewRound: nextRound,
           pr: prUrl,
         });
+        const sha =
+          familyLastFixCommitSha ??
+          loopState.lastFixSha ??
+          retriggered.roundTrigger.headOid;
+        await recordOnlineReviewFixCommitted(input.familyBackend, {
+          familyHeadAfter: sha,
+          pr: prUrl,
+        });
         loopState.round = nextRound;
       }
     },
@@ -1703,10 +1714,12 @@ export async function runFamilyOnlineReviewLoop(input: {
           : (input.ship.prHead ?? "");
       familyLastFixCommitSha = sha;
       loopState.lastFixSha = sha;
-      await recordOnlineReviewFixCommitted(input.familyBackend, {
-        familyHeadAfter: sha,
-        pr: prUrl,
-      });
+      if (!livePoll) {
+        await recordOnlineReviewFixCommitted(input.familyBackend, {
+          familyHeadAfter: sha,
+          pr: prUrl,
+        });
+      }
       return sha;
     },
   },

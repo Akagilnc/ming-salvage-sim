@@ -112,9 +112,16 @@ export function clampVerifyConvergenceForCheckRuns(
 export function onlineReviewRoundFromLedger(
   ledger: ReadonlyArray<{
     readonly step: string;
+    readonly event?: string;
     readonly output?: { readonly kind?: string; readonly committed?: boolean };
   }>,
 ): number {
+  const fixCommittedMarkers = ledger.filter(
+    (e) => e.event === "online_review_fix_committed",
+  ).length;
+  if (fixCommittedMarkers > 0) {
+    return fixCommittedMarkers + 1;
+  }
   const completedFixerRounds = ledger.filter(
     (e) =>
       e.step === "S10" &&
@@ -128,12 +135,21 @@ export function onlineReviewRoundFromLedger(
 export function lastOnlineReviewFixCommitShaFromLedger(
   ledger: ReadonlyArray<{
     readonly step: string;
+    readonly event?: string;
+    readonly fixCommitSha?: string;
     readonly branchHEAD?: string;
     readonly output?: { readonly kind?: string; readonly committed?: boolean };
   }>,
 ): string | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
+    if (
+      entry.event === "online_review_fix_committed" &&
+      typeof entry.fixCommitSha === "string" &&
+      entry.fixCommitSha.length > 0
+    ) {
+      return entry.fixCommitSha;
+    }
     if (
       entry.step === "S10" &&
       entry.output?.kind === "fixer" &&
@@ -173,14 +189,102 @@ export function onlineReviewRoundTriggerFromLedger(
   return undefined;
 }
 
+/** Family ledger: fix-committed landed but retrigger persistence crashed mid-gap (#600 r27). */
+export function familyPendingRoundTriggerFromFixGap(
+  entries: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+    readonly familyHeadAfter?: string;
+    readonly ts?: string;
+  }>,
+): RoundTrigger | undefined {
+  let lastFixIdx = -1;
+  let lastFixHead = "";
+  let lastFixTs = "";
+  let lastRetriggerIdx = -1;
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]!;
+    if (entry.event === "online_review_round_retrigger") {
+      lastRetriggerIdx = i;
+    }
+    if (
+      entry.status === "online_review_fix_committed" &&
+      entry.event === "online_review_fix_committed" &&
+      typeof entry.familyHeadAfter === "string" &&
+      entry.familyHeadAfter.length > 0 &&
+      typeof entry.ts === "string" &&
+      entry.ts.length > 0
+    ) {
+      lastFixIdx = i;
+      lastFixHead = entry.familyHeadAfter;
+      lastFixTs = entry.ts;
+    }
+  }
+  if (lastFixIdx < 0 || lastRetriggerIdx > lastFixIdx) {
+    return undefined;
+  }
+  return buildRoundTrigger(lastFixHead, lastFixTs);
+}
+
+/** Single-slice ledger: S10 fix landed but retrigger persistence crashed mid-gap (#600 r27). */
+export function slicePendingRoundTriggerFromFixGap(
+  ledger: ReadonlyArray<{
+    readonly step?: string;
+    readonly event?: string;
+    readonly fixCommitSha?: string;
+    readonly branchHEAD?: string;
+    readonly ts?: string;
+    readonly output?: { readonly kind?: string; readonly committed?: boolean };
+  }>,
+): RoundTrigger | undefined {
+  let lastFixIdx = -1;
+  let lastFixHead = "";
+  let lastFixTs = "";
+  let lastRetriggerIdx = -1;
+  for (let i = 0; i < ledger.length; i++) {
+    const entry = ledger[i]!;
+    if (entry.event === "online_review_round_retrigger") {
+      lastRetriggerIdx = i;
+    }
+    const fixSha =
+      entry.event === "online_review_fix_committed" &&
+      typeof entry.fixCommitSha === "string" &&
+      entry.fixCommitSha.length > 0
+        ? entry.fixCommitSha
+        : entry.step === "S10" &&
+            entry.output?.kind === "fixer" &&
+            entry.output.committed === true &&
+            typeof entry.branchHEAD === "string" &&
+            entry.branchHEAD.length > 0
+          ? entry.branchHEAD
+          : undefined;
+    if (
+      fixSha !== undefined &&
+      typeof entry.ts === "string" &&
+      entry.ts.length > 0
+    ) {
+      lastFixIdx = i;
+      lastFixHead = fixSha;
+      lastFixTs = entry.ts;
+    }
+  }
+  if (lastFixIdx < 0 || lastRetriggerIdx > lastFixIdx) {
+    return undefined;
+  }
+  return buildRoundTrigger(lastFixHead, lastFixTs);
+}
+
 /**
  * Resolve the bot-poll freshness anchor for the current online review round.
  * Round 1 may fall back to the S7 ship ledger timestamp; round ≥2 requires a
  * persisted re-trigger anchor and never reuses the ship anchor (#600 r25).
+ * When fix-committed landed before retrigger (crash gap), reconstruct the
+ * pending anchor from the fix record so resume stays in-band (#600 r27).
  */
 export function resolveOnlineReviewRoundTrigger(input: {
   readonly onlineReviewRound: number;
   readonly persistedRoundTrigger?: RoundTrigger;
+  readonly pendingRetriggerFromFixGap?: RoundTrigger;
   readonly fixCommitSha?: string;
   readonly shipPrHead?: string;
   readonly shipLedgerTriggeredAt?: string;
@@ -189,6 +293,9 @@ export function resolveOnlineReviewRoundTrigger(input: {
     return input.persistedRoundTrigger;
   }
   if (input.onlineReviewRound > 1) {
+    if (input.pendingRetriggerFromFixGap !== undefined) {
+      return input.pendingRetriggerFromFixGap;
+    }
     throw new Error(
       "online review round ≥2 requires a persisted round trigger from ledger retrigger",
     );
@@ -662,6 +769,21 @@ export function retriggerBotsAndPoll(
     roundTrigger,
   });
   return { snapshot, roundTrigger };
+}
+
+/** Thrown when a read-only verify worker mutates HEAD (runner catches → contract drift). */
+export class VerifyWorkerHeadMovedError extends Error {
+  readonly headBefore: string;
+  readonly headAfter: string;
+
+  constructor(headBefore: string, headAfter: string) {
+    super(
+      `online review verify worker moved HEAD: ${headBefore} -> ${headAfter}`,
+    );
+    this.name = "VerifyWorkerHeadMovedError";
+    this.headBefore = headBefore;
+    this.headAfter = headAfter;
+  }
 }
 
 /** Stop summary when a read-only verify worker moved HEAD (mirrors cmr reviewer guard). */

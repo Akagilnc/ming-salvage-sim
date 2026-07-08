@@ -378,11 +378,19 @@ export interface OnlineReviewRoundRetriggerEvent {
   readonly onlineReviewRound: number;
 }
 
+/** Fixer commit marker persisted after retrigger (#600 r27 crash-safe ordering). */
+export interface OnlineReviewFixCommittedEvent {
+  readonly event: "online_review_fix_committed";
+  readonly fixCommitSha: string;
+  readonly onlineReviewRound: number;
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
   | OnlineReviewConvergedEvent
-  | OnlineReviewRoundRetriggerEvent;
+  | OnlineReviewRoundRetriggerEvent
+  | OnlineReviewFixCommittedEvent;
 
 /**
  * The structured output of any worker step.
