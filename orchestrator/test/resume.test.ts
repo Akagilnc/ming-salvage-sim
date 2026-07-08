@@ -1768,6 +1768,130 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     }
   });
 
+  it("pin r35: live happy-path ledger does not duplicate retrigger on resume", async () => {
+    const livePr = "https://github.com/o/r/pull/255";
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const s10LaterTs = "2026-07-08T13:05:00.000Z";
+    const persistedTrigger = buildRoundTrigger(fixSha, retriggerTs);
+    const reviewLoopBase = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: livePr,
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+    ];
+    const happyPrior = [
+      ...reviewLoopBase,
+      {
+        step: "S10",
+        event: "online_review_fix_committed",
+        fixCommitSha: fixSha,
+        onlineReviewRound: 1,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: fixTs,
+      },
+      {
+        step: "S10",
+        event: "online_review_round_retrigger",
+        roundTriggerHeadOid: fixSha,
+        roundTriggerAt: retriggerTs,
+        onlineReviewRound: 2,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: retriggerTs,
+      },
+      {
+        step: "S10",
+        output: { kind: "fixer", committed: true },
+        branchHEAD: fixSha,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        ts: s10LaterTs,
+      },
+    ];
+    expect(onlineReviewLoop.slicePendingRoundTriggerFromFixGap(happyPrior)).toBeUndefined();
+
+    const pollSpy = vi
+      .spyOn(onlineReviewLoop, "waitForBotQuiescence")
+      .mockImplementation(async (_sh, input) => ({
+        repo: "o/r",
+        prNumber: 255,
+        prUrl: input.prUrl,
+        headOid: input.roundTrigger.headOid,
+        pollCount: 1,
+        bots: {
+          coderabbit: { state: "complete", findingCount: 0 },
+          sourcery: { state: "complete", findingCount: 0 },
+          codex: { state: "complete", findingCount: 0 },
+          gemini: { state: "complete", findingCount: 0 },
+        },
+        threads: [],
+        checkRuns: [],
+        totalFindingCount: 0,
+        quiescent: true,
+      }));
+    const ensureSpy = vi.spyOn(
+      onlineReviewLoop,
+      "ensureOnlineReviewRetriggerAfterFixGap",
+    );
+
+    const prevOffline = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    const prevRepo = process.env.ORCHESTRATOR_REPO;
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
+    vi.stubEnv("ORCHESTRATOR_REPO", "o/r");
+
+    try {
+      const backend = new ReviewLoopResumeBackend({
+        worktree: WORKTREE,
+        stateDir: STATE_DIR,
+        ledger: happyPrior,
+      });
+      const result = await runOrchestrator({
+        issueNumber: 255,
+        backend,
+      });
+
+      expect(result.status).toBe("success");
+      expect(ensureSpy).not.toHaveBeenCalled();
+      expect(pollSpy).toHaveBeenCalledTimes(1);
+      expect(pollSpy.mock.calls[0]![1].roundTrigger).toEqual(persistedTrigger);
+      expect(pollSpy.mock.calls[0]![1].roundTrigger.triggeredAt).toBe(retriggerTs);
+      expect(backend.dispatchSpecs.filter((s) => s.id === "S10")).toHaveLength(0);
+      expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
+    } finally {
+      ensureSpy.mockRestore();
+      pollSpy.mockRestore();
+      if (prevOffline === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prevOffline;
+      }
+      if (prevRepo === undefined) {
+        delete process.env.ORCHESTRATOR_REPO;
+      } else {
+        process.env.ORCHESTRATOR_REPO = prevRepo;
+      }
+    }
+  });
+
   it("pin r28: crash after fix markers but before S10 row resumes S9 not fixer", async () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const retriggerTs = "2026-07-08T13:00:00.000Z";
