@@ -84,7 +84,9 @@ import {
   isReviewLoopConvergedMarker,
   onlineReviewConvergedForHead,
   onlineReviewFixerNothingToFixStopSummary,
+  verifyReadOnlyWorktreeDrift,
   verifyReviewerHeadMovedStopSummary,
+  verifyReviewerWorktreeDirtyStopSummary,
   verifySideEffectFailureStopSummary,
 } from "../src/onlineReviewLoop.js";
 import {
@@ -212,9 +214,48 @@ function ghFixture(input: { calls: string[] }): Sh {
         user: { login: "orchestrator-host" },
       });
     }
-    return "[]";
+    return reviewThreadsGraphqlFallback(cmd) ?? "[]";
   };
 }
+
+const EMPTY_REVIEW_THREADS_GRAPHQL = JSON.stringify({
+  data: {
+    repository: {
+      pullRequest: {
+        reviewThreads: {
+          pageInfo: { endCursor: "", hasNextPage: false },
+          nodes: [],
+        },
+      },
+    },
+  },
+});
+
+function reviewThreadsGraphqlFallback(cmd: string): string | undefined {
+  if (cmd.includes("graphql") && cmd.includes("reviewThreads")) {
+    return EMPTY_REVIEW_THREADS_GRAPHQL;
+  }
+  return undefined;
+}
+
+const LANDING_THREAD_PAIR_GRAPHQL = JSON.stringify({
+  data: {
+    repository: {
+      pullRequest: {
+        reviewThreads: {
+          pageInfo: { endCursor: "", hasNextPage: false },
+          nodes: [
+            {
+              id: "PRRT_kwDOExampleThread",
+              isResolved: false,
+              comments: { nodes: [{ databaseId: 4242 }] },
+            },
+          ],
+        },
+      },
+    },
+  },
+});
 
 const FRESH_BOT_TIMESTAMP = "2026-07-08T12:00:00.000Z";
 const TEST_ROUND_TRIGGER = buildRoundTrigger(
@@ -311,6 +352,61 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
     ]);
     expect(graphqlPage).toBe(2);
     expect(calls.some((c) => c.includes("after=cursor-page-1"))).toBe(true);
+  });
+
+  it("pin r32: malformed GraphQL page mid-pagination fails closed (not silent truncation)", () => {
+    let graphqlPage = 0;
+    const sh: Sh = () => {
+      graphqlPage += 1;
+      if (graphqlPage === 1) {
+        return JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  pageInfo: { endCursor: "cursor-page-1", hasNextPage: true },
+                  nodes: [{ id: "PRRT_page1_a", isResolved: false }],
+                },
+              },
+            },
+          },
+        });
+      }
+      return JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { endCursor: "", hasNextPage: true },
+                nodes: [{ id: "PRRT_page2_a", isResolved: false }],
+              },
+            },
+          },
+        },
+      });
+    };
+    expect(() =>
+      paginateReviewThreadNodes(sh, "o/r", 42, "id isResolved"),
+    ).toThrow(/hasNextPage without endCursor/);
+  });
+
+  it("pin r32: clean terminal GraphQL page with empty nodes ends pagination", () => {
+    const sh: Sh = () =>
+      JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { endCursor: "cursor-last", hasNextPage: false },
+                nodes: [],
+              },
+            },
+          },
+        },
+      });
+    expect(paginateReviewThreadNodes(sh, "o/r", 42, "id isResolved")).toEqual(
+      [],
+    );
   });
 
   it("pollPrReviewState threads use GraphQL top comment id distinct from threadNodeId (#600 r7)", () => {
@@ -428,7 +524,7 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
       ) {
         return "[]";
       }
-      return "[]";
+      return reviewThreadsGraphqlFallback(cmd) ?? "[]";
     };
     const snap = pollPrReviewState(sh, {
       repo: "o/r",
@@ -1095,7 +1191,7 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       if (cmd.includes("/replies")) {
         return JSON.stringify({ id: 1, body: "ok" });
       }
-      return "[]";
+      return reviewThreadsGraphqlFallback(cmd) ?? LANDING_THREAD_PAIR_GRAPHQL;
     };
     const result = applyVerifySideEffects({
       sh,
@@ -1134,7 +1230,7 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       if (cmd.includes("/replies")) {
         return JSON.stringify({ id: 1, body: "ok" });
       }
-      return "[]";
+      return reviewThreadsGraphqlFallback(cmd) ?? LANDING_THREAD_PAIR_GRAPHQL;
     };
     const result = applyVerifySideEffects({
       sh,
@@ -1756,6 +1852,33 @@ describe("#600 onlineReviewLoop helpers", () => {
     expect(s.reason).toBe("contract_drift");
     expect(s.summary).toContain("verify worker moved HEAD");
   });
+
+  it("pin r32: verifyReadOnlyWorktreeDrift flags tracked edits without HEAD movement", () => {
+    expect(
+      verifyReadOnlyWorktreeDrift({
+        headBefore: "same-head",
+        headAfter: "same-head",
+        porcelainBefore: "",
+        porcelainAfter: " M orchestrator/src/foo.ts",
+      }),
+    ).toBe("worktree");
+    expect(
+      verifyReadOnlyWorktreeDrift({
+        headBefore: "same-head",
+        headAfter: "same-head",
+        porcelainBefore: "",
+        porcelainAfter: "",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("verifyReviewerWorktreeDirtyStopSummary is contract_drift", () => {
+    const s = verifyReviewerWorktreeDirtyStopSummary({
+      trackedStatus: [" M orchestrator/src/foo.ts"],
+    });
+    expect(s.reason).toBe("contract_drift");
+    expect(s.summary).toContain("tracked worktree changes");
+  });
 });
 
 describe("#600 r4 central evidence admissibility gate", () => {
@@ -1904,7 +2027,7 @@ describe("#600 r4 central evidence admissibility gate", () => {
       ) {
         return "[]";
       }
-      return "[]";
+      return reviewThreadsGraphqlFallback(cmd) ?? "[]";
     };
     const snap = pollPrReviewState(sh, {
       repo: "o/r",
@@ -1963,7 +2086,7 @@ describe("#600 r4 central evidence admissibility gate", () => {
       ) {
         return "[]";
       }
-      return "[]";
+      return reviewThreadsGraphqlFallback(cmd) ?? "[]";
     };
     const snap = pollPrReviewState(sh, {
       repo: "o/r",
@@ -2027,7 +2150,7 @@ describe("#600 r4 central evidence admissibility gate", () => {
       ) {
         return "[]";
       }
-      return "[]";
+      return reviewThreadsGraphqlFallback(cmd) ?? "[]";
     };
     const snap = pollPrReviewState(sh, {
       repo: "o/r",
@@ -2075,7 +2198,7 @@ describe("#600 r4 central evidence admissibility gate", () => {
       ) {
         return "[]";
       }
-      return "[]";
+      return reviewThreadsGraphqlFallback(cmd) ?? "[]";
     };
     const snap = pollPrReviewState(sh, {
       repo: "o/r",
@@ -2228,7 +2351,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       ) {
         return "[]";
       }
-      return "[]";
+      return reviewThreadsGraphqlFallback(cmd) ?? "[]";
     };
     const snap = pollPrReviewState(sh, {
       repo: "o/r",
@@ -2710,6 +2833,40 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       },
     ];
     expect(onlineReviewRoundFromFamilyLedger(familyLedger)).toBe(3);
+  });
+
+  it("pin r32: round-1 persisted trigger + round-2 fix-gap → newer fix-gap wins", () => {
+    const round1Persisted = buildRoundTrigger(
+      "fixsha1111111111111111111111111111111111",
+      "2026-07-08T10:00:00.000Z",
+    );
+    const round2Gap = buildRoundTrigger(
+      "fixsha2222222222222222222222222222222222",
+      "2026-07-08T12:30:00.000Z",
+    );
+    const resolved = resolveOnlineReviewRoundTrigger({
+      onlineReviewRound: 2,
+      persistedRoundTrigger: round1Persisted,
+      pendingRetriggerFromFixGap: round2Gap,
+    });
+    expect(resolved).toEqual(round2Gap);
+  });
+
+  it("pin r32: persisted retrigger newer than fix-gap → persisted wins", () => {
+    const gapTrigger = buildRoundTrigger(
+      "fixsha1111111111111111111111111111111111",
+      "2026-07-08T12:00:00.000Z",
+    );
+    const persistedTrigger = buildRoundTrigger(
+      "fixsha1111111111111111111111111111111111",
+      "2026-07-08T13:00:00.000Z",
+    );
+    const resolved = resolveOnlineReviewRoundTrigger({
+      onlineReviewRound: 2,
+      persistedRoundTrigger: persistedTrigger,
+      pendingRetriggerFromFixGap: gapTrigger,
+    });
+    expect(resolved).toEqual(persistedTrigger);
   });
 
   it("pin r26: family ledger restores round/trigger/fix SHA symmetrically to single-slice", () => {
@@ -3563,6 +3720,48 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
           (l) => l.onlineReviewSnapshot !== undefined,
         ),
       ).toBe(true);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("pin r32: family verify that dirties tracked worktree terminates contract_drift", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      let trackedStatus: string[] = [];
+      const backend = new ReviewLoopFamilyBackend();
+      backend.readFamilyHead = async () => "head-before";
+      backend.readFamilyTrackedStatus = async () => trackedStatus;
+      backend.dispatchWorker = async (spec) => {
+        if (spec.kind === "verify") {
+          trackedStatus = [" M orchestrator/src/foo.ts"];
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: true },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        return skeleton ?? { kind: "failed", reason: "unexpected" };
+      };
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+      expect(result).toEqual({
+        ok: false,
+        terminalState: "contract_drift",
+        round: 1,
+        stopSummary: expect.objectContaining({
+          reason: "contract_drift",
+          summary: expect.stringContaining("tracked worktree changes"),
+        }),
+      });
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

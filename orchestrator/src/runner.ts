@@ -89,7 +89,11 @@ import {
   slicePostFixVerifyPendingFromMarkerGap,
   onlineReviewFixerNothingToFixStopSummary,
   VerifyWorkerHeadMovedError,
+  VerifyWorkerWorktreeDirtyError,
+  verifyReadOnlyWorktreeDrift,
   verifyReviewerHeadMovedStopSummary,
+  verifyReviewerWorktreeDirtyStopSummary,
+  worktreePorcelainFingerprint,
   verifySideEffectFailureStopSummary,
   waitForBotQuiescence,
   writeOnlineReviewSnapshotFile,
@@ -3287,6 +3291,37 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           };
           const headBefore =
             reviewStep === "S9" ? await resolveBranchHEAD() : undefined;
+          const porcelainBefore =
+            reviewStep === "S9" && worktree != null
+              ? worktreePorcelainFingerprint(
+                  gitOutputLines(worktree, ["status", "--porcelain"]),
+                )
+              : undefined;
+          const assertVerifyReadOnlyContract = async (): Promise<void> => {
+            if (reviewStep !== "S9" || headBefore === undefined) return;
+            const headAfterAttempt = await resolveBranchHEAD();
+            const porcelainAfter =
+              worktree != null
+                ? worktreePorcelainFingerprint(
+                    gitOutputLines(worktree, ["status", "--porcelain"]),
+                  )
+                : "";
+            const drift = verifyReadOnlyWorktreeDrift({
+              headBefore,
+              headAfter: headAfterAttempt,
+              porcelainBefore: porcelainBefore ?? "",
+              porcelainAfter,
+            });
+            if (drift === "head") {
+              throw new VerifyWorkerHeadMovedError(headBefore, headAfterAttempt);
+            }
+            if (drift === "worktree") {
+              throw new VerifyWorkerWorktreeDirtyError(
+                porcelainBefore ?? "",
+                porcelainAfter,
+              );
+            }
+          };
           const reviewResetOpt: MechanicalRetryOptions =
             reviewStep !== "S9" && worktree != null
               ? { resetBeforeRetry: () => backend.cleanResidue(worktree!) }
@@ -3295,7 +3330,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     callerOwns: (o) =>
                       "kind" in o &&
                       o.kind === "thrown" &&
-                      o.error instanceof VerifyWorkerHeadMovedError,
+                      (o.error instanceof VerifyWorkerHeadMovedError ||
+                        o.error instanceof VerifyWorkerWorktreeDirtyError),
                     rethrowOnExhaustion: true,
                   }
                 : {};
@@ -3335,15 +3371,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     ? fixerLanding
                     : undefined,
                 );
-                if (reviewStep === "S9" && headBefore !== undefined) {
-                  const headAfterAttempt = await resolveBranchHEAD();
-                  if (headAfterAttempt !== headBefore) {
-                    throw new VerifyWorkerHeadMovedError(
-                      headBefore,
-                      headAfterAttempt,
-                    );
-                  }
-                }
+                await assertVerifyReadOnlyContract();
                 return workerResult;
               },
               reviewResetOpt,
@@ -3353,6 +3381,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const stopSummary = verifyReviewerHeadMovedStopSummary({
                 headBefore: err.headBefore,
                 headAfter: err.headAfter,
+              });
+              return await errorTermination(reviewStep, err, { stopSummary });
+            }
+            if (err instanceof VerifyWorkerWorktreeDirtyError) {
+              const stopSummary = verifyReviewerWorktreeDirtyStopSummary({
+                trackedStatus: err.porcelainAfter
+                  .split("\n")
+                  .filter((line) => line.length > 0),
               });
               return await errorTermination(reviewStep, err, { stopSummary });
             }
@@ -3409,16 +3445,27 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               );
             }
             verifyOutput = recheckOutcome;
-            const headAfter = await resolveBranchHEAD();
-            if (headBefore !== undefined && headAfter !== headBefore) {
-              const stopSummary = verifyReviewerHeadMovedStopSummary({
-                headBefore,
-                headAfter,
-              });
-              return await errorTermination(reviewStep, new Error(stopSummary.summary), {
-                stopSummary,
-              });
+            try {
+              await assertVerifyReadOnlyContract();
+            } catch (err) {
+              if (err instanceof VerifyWorkerHeadMovedError) {
+                const stopSummary = verifyReviewerHeadMovedStopSummary({
+                  headBefore: err.headBefore,
+                  headAfter: err.headAfter,
+                });
+                return await errorTermination(reviewStep, err, { stopSummary });
+              }
+              if (err instanceof VerifyWorkerWorktreeDirtyError) {
+                const stopSummary = verifyReviewerWorktreeDirtyStopSummary({
+                  trackedStatus: err.porcelainAfter
+                    .split("\n")
+                    .filter((line) => line.length > 0),
+                });
+                return await errorTermination(reviewStep, err, { stopSummary });
+              }
+              throw err;
             }
+            const headAfter = await resolveBranchHEAD();
             let sideEffects: ReturnType<typeof applyVerifySideEffects>;
             try {
               sideEffects =
