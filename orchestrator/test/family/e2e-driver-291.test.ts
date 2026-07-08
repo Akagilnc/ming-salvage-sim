@@ -47,6 +47,7 @@ import type {
   IntegratedCmrRequest,
   OpenFamilyPrRequest,
 } from "../../src/family/types.js";
+import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   Backend,
   DispatchContext,
@@ -55,6 +56,8 @@ import type {
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
+  WorkerLandingPayload,
+  WorkerResult,
   WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
@@ -223,7 +226,7 @@ class E2EFamilyBackend extends RealFamilyBackend {
       kind: "shipped",
       branch: ctx.familyBase!,
       status: "pr_opened",
-      pr: "https://example.invalid/pr/291",
+      pr: "pr://family/291-base",
     };
   }
   protected override verifyFamilyShipPr(input: {
@@ -237,7 +240,18 @@ class E2EFamilyBackend extends RealFamilyBackend {
     // longer reaches it (#336 routes ship through runShipWorker). The assertion
     // below proves prCalls stays EMPTY (the inline push path is dead).
     this.prCalls.push(req);
-    return { url: "https://example.invalid/pr/291" };
+    return { url: "pr://family/291-base" };
+  }
+  protected override async runFamilyReviewLoopWorker(
+    spec: WorkerSpec,
+    _ctx: DispatchContext,
+    _landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) {
+      return skeleton;
+    }
+    return { kind: "failed", reason: `unexpected online review worker ${spec.kind}` };
   }
 }
 

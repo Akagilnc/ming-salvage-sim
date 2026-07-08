@@ -8,6 +8,12 @@
  */
 
 import type { Sh } from "./familyDriver.js";
+import {
+  buildRoundTrigger,
+  evidenceAdmissible,
+  liveArtifactEvidenceRecord,
+  type RoundTrigger,
+} from "./evidenceAdmissibility.js";
 
 /** The four bots the online review loop waits on (ADR 0061 / wiki pr-review-loop). */
 export const ONLINE_REVIEW_BOT_IDS = [
@@ -43,6 +49,14 @@ export interface ReviewThreadSnapshot {
   readonly headOid?: string;
 }
 
+export interface CheckRunSnapshot {
+  readonly id: number;
+  readonly name: string;
+  readonly headSha: string;
+  readonly status: string;
+  readonly conclusion?: string;
+}
+
 export interface PrReviewSnapshot {
   readonly repo: string;
   readonly prNumber: number;
@@ -51,6 +65,8 @@ export interface PrReviewSnapshot {
   readonly pollCount: number;
   readonly bots: Readonly<Record<OnlineReviewBotId, BotLegStatus>>;
   readonly threads: ReadonlyArray<ReviewThreadSnapshot>;
+  /** Head-correlated CI check-runs (ADR 0061 / wiki pr-review-loop). */
+  readonly checkRuns: ReadonlyArray<CheckRunSnapshot>;
   readonly totalFindingCount: number;
   readonly quiescent: boolean;
 }
@@ -59,6 +75,8 @@ export interface PollPrReviewInput {
   readonly repo: string;
   readonly prUrl: string;
   readonly pollCount: number;
+  /** Round freshness anchor — required for admissible bot/check evidence (#600 r4). */
+  readonly roundTrigger: RoundTrigger;
   /** Per-bot poll counts without a completion signal — used to drop overdue bots. */
   readonly botPendingPolls?: Readonly<Partial<Record<OnlineReviewBotId, number>>>;
 }
@@ -165,33 +183,99 @@ function commentAuthorLogin(
   return comment.user?.login ?? comment.author?.login ?? "";
 }
 
-/** True when the bot left any review signal (findings optional — zero is valid completion). */
+type BotComment = {
+  user?: { login?: string };
+  author?: { login?: string };
+  body?: string;
+  created_at?: string;
+  commit_id?: string;
+};
+
+type BotReview = {
+  user?: { login?: string };
+  state?: string;
+  submitted_at?: string;
+  commit_id?: string;
+};
+
+type BotReaction = {
+  user?: { login?: string };
+  content?: string;
+  created_at?: string;
+};
+
+function artifactTimestamp(
+  item: { created_at?: string; submitted_at?: string },
+): string | undefined {
+  return item.created_at ?? item.submitted_at;
+}
+
+function isAdmissibleBotArtifact(
+  artifact: { headOid?: string; timestamp?: string },
+  head: string,
+  roundTrigger: RoundTrigger,
+): boolean {
+  return evidenceAdmissible(
+    liveArtifactEvidenceRecord({
+      headOid: artifact.headOid,
+      timestamp: artifact.timestamp,
+      head,
+      roundTrigger,
+    }),
+    head,
+    roundTrigger,
+  );
+}
+
+/** True when the bot left any fresh review signal (findings optional — zero is valid completion). */
 function hasBotReviewSignal(
   bot: OnlineReviewBotId,
-  comments: ReadonlyArray<{
-    user?: { login?: string };
-    author?: { login?: string };
-    body?: string;
-  }>,
-  reviews: ReadonlyArray<{ user?: { login?: string }; state?: string }>,
-  reactions: ReadonlyArray<{
-    user?: { login?: string };
-    content?: string;
-  }>,
+  comments: ReadonlyArray<BotComment>,
+  reviews: ReadonlyArray<BotReview>,
+  reactions: ReadonlyArray<BotReaction>,
+  head: string,
+  roundTrigger: RoundTrigger,
 ): boolean {
   for (const c of comments) {
     const login = commentAuthorLogin(c);
     if (!loginMatchesBot(login, bot)) continue;
+    if (
+      !isAdmissibleBotArtifact(
+        { headOid: c.commit_id, timestamp: artifactTimestamp(c) },
+        head,
+        roundTrigger,
+      )
+    ) {
+      continue;
+    }
     if ((c.body ?? "").trim().length > 0) return true;
   }
   for (const r of reviews) {
     const login = r.user?.login ?? "";
     if (!loginMatchesBot(login, bot)) continue;
+    if (
+      !isAdmissibleBotArtifact(
+        { headOid: r.commit_id, timestamp: artifactTimestamp(r) },
+        head,
+        roundTrigger,
+      )
+    ) {
+      continue;
+    }
     if ((r.state ?? "").trim().length > 0) return true;
   }
   for (const reaction of reactions) {
     const login = reaction.user?.login ?? "";
     if (!loginMatchesBot(login, bot)) continue;
+    if (
+      !isAdmissibleBotArtifact(
+        { timestamp: artifactTimestamp(reaction) },
+        head,
+        roundTrigger,
+      )
+    ) {
+      continue;
+    }
     if ((reaction.content ?? "").trim().length > 0) return true;
   }
   return false;
@@ -199,21 +283,25 @@ function hasBotReviewSignal(
 
 function countBotFindings(
   bot: OnlineReviewBotId,
-  comments: ReadonlyArray<{
-    user?: { login?: string };
-    author?: { login?: string };
-    body?: string;
-  }>,
-  reviews: ReadonlyArray<{ user?: { login?: string }; state?: string }>,
-  reactions: ReadonlyArray<{
-    user?: { login?: string };
-    content?: string;
-  }>,
+  comments: ReadonlyArray<BotComment>,
+  reviews: ReadonlyArray<BotReview>,
+  reactions: ReadonlyArray<BotReaction>,
+  head: string,
+  roundTrigger: RoundTrigger,
 ): number {
   let count = 0;
   for (const c of comments) {
     const login = commentAuthorLogin(c);
     if (!loginMatchesBot(login, bot)) continue;
+    if (
+      !isAdmissibleBotArtifact(
+        { headOid: c.commit_id, timestamp: artifactTimestamp(c) },
+        head,
+        roundTrigger,
+      )
+    ) {
+      continue;
+    }
     const body = (c.body ?? "").trim();
     if (body.length === 0) continue;
     // CodeRabbit / gemini often post summary comments — count non-trivial bodies.
@@ -222,12 +310,30 @@ function countBotFindings(
   for (const r of reviews) {
     const login = r.user?.login ?? "";
     if (!loginMatchesBot(login, bot)) continue;
+    if (
+      !isAdmissibleBotArtifact(
+        { headOid: r.commit_id, timestamp: artifactTimestamp(r) },
+        head,
+        roundTrigger,
+      )
+    ) {
+      continue;
+    }
     const state = (r.state ?? "").toUpperCase();
     if (state === "COMMENTED" || state === "CHANGES_REQUESTED") count += 1;
   }
   for (const reaction of reactions) {
     const login = reaction.user?.login ?? "";
     if (!loginMatchesBot(login, bot)) continue;
+    if (
+      !isAdmissibleBotArtifact(
+        { timestamp: artifactTimestamp(reaction) },
+        head,
+        roundTrigger,
+      )
+    ) {
+      continue;
+    }
     const content = (reaction.content ?? "").trim();
     if (content.length > 0) count += 1;
   }
@@ -236,22 +342,24 @@ function countBotFindings(
 
 function resolveBotStatuses(
   input: PollPrReviewInput,
-  comments: ReadonlyArray<{
-    user?: { login?: string };
-    author?: { login?: string };
-    body?: string;
-  }>,
-  reviews: ReadonlyArray<{ user?: { login?: string }; state?: string }>,
-  reactions: ReadonlyArray<{
-    user?: { login?: string };
-    content?: string;
-  }>,
+  comments: ReadonlyArray<BotComment>,
+  reviews: ReadonlyArray<BotReview>,
+  reactions: ReadonlyArray<BotReaction>,
+  head: string,
 ): Record<OnlineReviewBotId, BotLegStatus> {
   const pending = input.botPendingPolls ?? {};
+  const roundTrigger = input.roundTrigger;
   const bots = {} as Record<OnlineReviewBotId, BotLegStatus>;
   for (const bot of ONLINE_REVIEW_BOT_IDS) {
-    const findingCount = countBotFindings(bot, comments, reviews, reactions);
-    if (hasBotReviewSignal(bot, comments, reviews, reactions)) {
+    const findingCount = countBotFindings(
+      bot,
+      comments,
+      reviews,
+      reactions,
+      head,
+      roundTrigger,
+    );
+    if (hasBotReviewSignal(bot, comments, reviews, reactions, head, roundTrigger)) {
       bots[bot] = { state: "complete", findingCount };
       continue;
     }
@@ -319,6 +427,61 @@ function parseReviewThreads(
   return out;
 }
 
+function paginateCheckRuns(
+  sh: Sh,
+  repo: string,
+  headOid: string,
+  perPage = 100,
+): CheckRunSnapshot[] {
+  const items: CheckRunSnapshot[] = [];
+  for (let page = 1; ; page += 1) {
+    const raw = sh("gh", [
+      "api",
+      `repos/${repo}/commits/${headOid}/check-runs?per_page=${perPage}&page=${page}`,
+    ]);
+    const parsed: unknown = JSON.parse(raw);
+    const runs =
+      parsed != null &&
+      typeof parsed === "object" &&
+      Array.isArray((parsed as { check_runs?: unknown }).check_runs)
+        ? ((parsed as { check_runs: unknown[] }).check_runs ?? [])
+        : [];
+    if (runs.length === 0) break;
+    for (const run of runs) {
+      if (run == null || typeof run !== "object") continue;
+      const obj = run as Record<string, unknown>;
+      const id = typeof obj.id === "number" ? obj.id : Number(obj.id);
+      const headSha = typeof obj.head_sha === "string" ? obj.head_sha : "";
+      const name = typeof obj.name === "string" ? obj.name : "unknown";
+      const status = typeof obj.status === "string" ? obj.status : "unknown";
+      const conclusion =
+        typeof obj.conclusion === "string" ? obj.conclusion : undefined;
+      if (!Number.isFinite(id) || headSha.length === 0) continue;
+      items.push({ id, name, headSha, status, conclusion });
+    }
+    if (runs.length < perPage) break;
+  }
+  return items;
+}
+
+function admissibleCheckRuns(
+  runs: ReadonlyArray<CheckRunSnapshot>,
+  head: string,
+  roundTrigger: RoundTrigger,
+): CheckRunSnapshot[] {
+  return runs.filter((run) =>
+    evidenceAdmissible(
+      liveArtifactEvidenceRecord({
+        headOid: run.headSha,
+        head,
+        roundTrigger,
+      }),
+      head,
+      roundTrigger,
+    ),
+  );
+}
+
 /**
  * Collect a single poll snapshot for a PR. Deterministic given `sh` stdout.
  * Does NOT sleep — the caller owns cadence / retry loops.
@@ -347,44 +510,51 @@ export function pollPrReviewState(
     throw new Error(`botPolling: PR ${input.prUrl} has no head sha`);
   }
 
+  const roundTrigger =
+    input.roundTrigger.headOid === headOid
+      ? input.roundTrigger
+      : buildRoundTrigger(headOid, input.roundTrigger.triggeredAt);
+
   const issueComments = paginateGhApi(
     sh,
     `repos/${repo}/issues/${prNumber}/comments`,
-  ) as Array<{
-    user?: { login?: string };
-    author?: { login?: string };
-    body?: string;
-  }>;
+  ) as BotComment[];
   const reviewComments = paginateGhApi(
     sh,
     `repos/${repo}/pulls/${prNumber}/comments`,
-  ) as Array<{
-    user?: { login?: string };
-    author?: { login?: string };
-    body?: string;
-    id?: number;
-  }>;
+  ) as Array<BotComment & { id?: number }>;
   const reviews = paginateGhApi(
     sh,
     `repos/${repo}/pulls/${prNumber}/reviews`,
-  ) as Array<{ user?: { login?: string }; state?: string }>;
+  ) as BotReview[];
   const threadsRaw = paginateGhApi(
     sh,
     `repos/${repo}/pulls/${prNumber}/comments`,
   );
-  const reactions: Array<{ user?: { login?: string }; content?: string }> = [];
+  const reactions: BotReaction[] = [];
   for (const comment of reviewComments) {
     if (comment.id === undefined) continue;
     const raw = paginateGhApi(
       sh,
       `repos/${repo}/pulls/comments/${comment.id}/reactions`,
-    ) as Array<{ user?: { login?: string }; content?: string }>;
+    ) as BotReaction[];
     reactions.push(...raw);
   }
 
   const allComments = [...issueComments, ...reviewComments];
-  const bots = resolveBotStatuses(input, allComments, reviews, reactions);
+  const bots = resolveBotStatuses(
+    input,
+    allComments,
+    reviews,
+    reactions,
+    headOid,
+  );
   const threads = parseReviewThreads(threadsRaw, headOid);
+  const checkRuns = admissibleCheckRuns(
+    paginateCheckRuns(sh, repo, headOid),
+    headOid,
+    roundTrigger,
+  );
   const totalFindingCount = ONLINE_REVIEW_BOT_IDS.reduce((sum, bot) => {
     const leg = bots[bot];
     return sum + (leg.state === "complete" ? leg.findingCount : 0);
@@ -402,6 +572,7 @@ export function pollPrReviewState(
     pollCount: input.pollCount,
     bots,
     threads,
+    checkRuns,
     totalFindingCount,
     quiescent,
   };
@@ -446,6 +617,15 @@ export function unresolvedThreadCount(snapshot: PrReviewSnapshot): number {
 export function isThreadEvidenceFresh(
   thread: ReviewThreadSnapshot,
   currentHead: string,
+  roundTrigger: RoundTrigger = buildRoundTrigger(currentHead, "1970-01-01T00:00:00.000Z"),
 ): boolean {
-  return thread.headOid !== undefined && thread.headOid === currentHead;
+  return evidenceAdmissible(
+    liveArtifactEvidenceRecord({
+      headOid: thread.headOid,
+      head: currentHead,
+      roundTrigger,
+    }),
+    currentHead,
+    roundTrigger,
+  );
 }

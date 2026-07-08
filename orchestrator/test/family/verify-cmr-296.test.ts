@@ -1165,6 +1165,24 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
             },
           };
         }
+        if (
+          spec.kind === "verify" ||
+          spec.kind === "fixer" ||
+          spec.kind === "cleanup" ||
+          spec.kind === "docRelease"
+        ) {
+          return {
+            kind: "completed",
+            output:
+              spec.kind === "verify"
+                ? { kind: "verify", converged: true }
+                : spec.kind === "fixer"
+                  ? { kind: "fixer", committed: true }
+                  : spec.kind === "cleanup"
+                    ? { kind: "cleanup", ok: true }
+                    : { kind: "docRelease", released: true },
+          };
+        }
         return { kind: "failed", reason: `unexpected worker ${spec.kind}` };
       },
     });

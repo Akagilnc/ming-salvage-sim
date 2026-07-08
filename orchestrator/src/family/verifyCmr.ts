@@ -58,6 +58,11 @@ import { execFileSync } from "node:child_process";
 
 import { isLiveGithubReviewPollEnabled } from "../botPolling.js";
 import {
+  buildRoundTrigger,
+  inadmissibleWorkerOutcomeReason,
+  workerOutcomeAdmissible,
+} from "../evidenceAdmissibility.js";
+import {
   cleanupWorkerSpec,
   docReleaseWorkerSpec,
   fixerWorkerSpec,
@@ -84,7 +89,6 @@ import {
   cmrWorkerSpec,
   dispatchFamilyWorker,
   familyShipWorkerSpec,
-  legacyDispatchFamilyWorker,
 } from "./dispatchFamilyWorker.js";
 import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../dispatchRetry.js";
 import {
@@ -1408,25 +1412,6 @@ function describeShipPrState(ship: {
  * before throwing. A NON-throwing dispatch is returned unchanged (escalated /
  * completed / malformed are handled by the callers).
  */
-function isCompletedReviewLoopOutput(
-  spec: WorkerSpec,
-  output: StepOutput | undefined,
-): boolean {
-  if (output === undefined) return false;
-  switch (spec.kind) {
-    case "verify":
-      return isValidVerifyResult(output);
-    case "fixer":
-      return isValidFixerResult(output);
-    case "cleanup":
-      return isValidCleanupResult(output);
-    case "docRelease":
-      return isValidDocReleaseResult(output);
-    default:
-      return false;
-  }
-}
-
 async function dispatchFamilyReviewWorker(
   familyBackend: FamilyBackend,
   spec: WorkerSpec,
@@ -1449,13 +1434,16 @@ async function dispatchFamilyReviewWorker(
     landing,
     { ...opts, resetBeforeRetry },
   );
-  if (
-    primary.kind === "completed" &&
-    isCompletedReviewLoopOutput(spec, primary.output)
-  ) {
+  if (workerOutcomeAdmissible(primary, spec)) {
     return primary;
   }
-  return legacyDispatchFamilyWorker(familyBackend, spec, ctx);
+  if (primary.kind === "escalated") {
+    return primary;
+  }
+  return {
+    kind: "failed",
+    reason: inadmissibleWorkerOutcomeReason(primary, spec),
+  };
 }
 
 export async function runFamilyOnlineReviewLoop(input: {
@@ -1483,6 +1471,9 @@ export async function runFamilyOnlineReviewLoop(input: {
   };
 
   const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
+  let lastRoundTrigger = buildRoundTrigger(
+    input.ship.prHead ?? "offline-review-head",
+  );
 
   return runOnlineReviewLoopStage({
     poll: async (round) => {
@@ -1494,14 +1485,17 @@ export async function runFamilyOnlineReviewLoop(input: {
           pollCount: round,
         });
       }
-      return waitForBotQuiescence(ghSh, {
+      const snapshot = await waitForBotQuiescence(ghSh, {
         repo,
         prUrl,
+        roundTrigger: lastRoundTrigger,
         clock:
           process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1"
             ? immediateBotPollClock
             : realBotPollClock,
       });
+      lastRoundTrigger = buildRoundTrigger(snapshot.headOid, lastRoundTrigger.triggeredAt);
+      return snapshot;
     },
     dispatchVerify: async (landing, round) => {
       const result = await dispatchFamilyReviewWorker(
@@ -1576,7 +1570,14 @@ export async function runFamilyOnlineReviewLoop(input: {
     },
     retriggerAfterFix: () => {
       if (livePoll) {
-        retriggerBotsAndPoll(ghSh, repo, prUrl, 1);
+        const retriggered = retriggerBotsAndPoll(
+          ghSh,
+          repo,
+          prUrl,
+          1,
+          input.ship.prHead ?? lastRoundTrigger.headOid,
+        );
+        lastRoundTrigger = retriggered.roundTrigger;
       }
     },
     resolveFixCommitSha: () => {

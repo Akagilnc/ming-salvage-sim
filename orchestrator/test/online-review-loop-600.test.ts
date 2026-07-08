@@ -20,6 +20,14 @@ import {
   postBotRetriggerComment,
 } from "../src/botPolling.js";
 import {
+  assertOfflineSyntheticPollAdmissible,
+  buildRoundTrigger,
+  evidenceAdmissible,
+  offlineSyntheticPollAdmissible,
+  workerOutcomeAdmissible,
+} from "../src/evidenceAdmissibility.js";
+import { offlinePrReviewSnapshot } from "../src/onlineReviewLoop.js";
+import {
   immediateBotPollClock,
   MAX_ONLINE_REVIEW_ROUNDS,
   retriggerBotsAndPoll,
@@ -58,15 +66,33 @@ function ghFixture(input: { calls: string[] }): Sh {
         {
           user: { login: "coderabbitai[bot]" },
           body: "Summary: one nit on line 10",
+          created_at: FRESH_BOT_TIMESTAMP,
         },
       ]);
+    }
+    if (cmd.includes("check-runs")) {
+      return JSON.stringify({
+        check_runs: [
+          {
+            id: 1,
+            name: "ci",
+            head_sha: "headsha1",
+            status: "completed",
+            conclusion: "success",
+          },
+        ],
+      });
     }
     if (cmd.includes("pulls/comments/") && cmd.includes("/reactions")) {
       return "[]";
     }
     if (cmd.includes("pulls/42/reviews")) {
       return JSON.stringify([
-        { user: { login: "chatgpt-codex-connector[bot]" }, state: "COMMENTED" },
+        {
+          user: { login: "chatgpt-codex-connector[bot]" },
+          state: "COMMENTED",
+          submitted_at: FRESH_BOT_TIMESTAMP,
+        },
       ]);
     }
     if (cmd.includes("issues/42/comments") && cmd.includes("-f")) {
@@ -79,6 +105,12 @@ function ghFixture(input: { calls: string[] }): Sh {
     return "[]";
   };
 }
+
+const FRESH_BOT_TIMESTAMP = "2026-07-08T12:00:00.000Z";
+const TEST_ROUND_TRIGGER = buildRoundTrigger(
+  "headsha1",
+  "2026-07-08T11:00:00.000Z",
+);
 
 const GITHUB_REPLY_SHAPE = {
   id: 99,
@@ -109,8 +141,12 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
       repo: "o/r",
       prUrl: "https://github.com/o/r/pull/42",
       pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
     });
     expect(snap.headOid).toBe("headsha1");
+    expect(snap.checkRuns).toEqual([
+      expect.objectContaining({ name: "ci", headSha: "headsha1" }),
+    ]);
     expect(snap.quiescent).toBe(false);
     expect(ONLINE_REVIEW_BOT_IDS.every((b) => snap.bots[b] !== undefined)).toBe(
       true,
@@ -124,6 +160,7 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
       repo: "o/r",
       prUrl: "https://github.com/o/r/pull/42",
       pollCount: BOT_OVERDUE_POLL_COUNT,
+      roundTrigger: TEST_ROUND_TRIGGER,
       botPendingPolls: { gemini: BOT_OVERDUE_POLL_COUNT },
     });
     expect(snap.bots.gemini.state).toBe("dropped");
@@ -144,9 +181,16 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
       if (cmd.includes("issues/42/comments") || cmd.includes("pulls/42/comments")) {
         return "[]";
       }
+      if (cmd.includes("check-runs")) {
+        return JSON.stringify({ check_runs: [] });
+      }
       if (cmd.includes("pulls/42/reviews")) {
         return JSON.stringify([
-          { user: { login: "gemini-code-assist[bot]" }, state: "APPROVED" },
+          {
+            user: { login: "gemini-code-assist[bot]" },
+            state: "APPROVED",
+            submitted_at: FRESH_BOT_TIMESTAMP,
+          },
         ]);
       }
       if (cmd.includes("pulls/comments/") && cmd.includes("/reactions")) {
@@ -158,6 +202,7 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
       repo: "o/r",
       prUrl: "https://github.com/o/r/pull/42",
       pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
     });
     expect(snap.bots.gemini).toEqual({ state: "complete", findingCount: 0 });
     expect(snap.bots.gemini.state).not.toBe("pending");
@@ -172,6 +217,7 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
       waitForBotQuiescence(sh, {
         repo: "o/r",
         prUrl: "https://github.com/o/r/pull/42",
+        roundTrigger: TEST_ROUND_TRIGGER,
         maxPolls: 1,
         clock: immediateBotPollClock,
       }),
@@ -332,6 +378,7 @@ describe("#600 stale head + artifact bot freshness (#600 AC3)", () => {
       repo: "o/r",
       prUrl: "https://github.com/o/r/pull/42",
       pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
     });
     expect(snap.threads[0]?.headOid).toBeUndefined();
     expect(isThreadEvidenceFresh(snap.threads[0]!, snap.headOid)).toBe(false);
@@ -621,7 +668,7 @@ describe("#600 retriggerBotsAndPoll (#600 AC2)", () => {
   it("posts R2/R3 re-trigger then polls", () => {
     const calls: string[] = [];
     const sh = ghFixture({ calls });
-    retriggerBotsAndPoll(sh, "o/r", "https://github.com/o/r/pull/42", 2);
+    retriggerBotsAndPoll(sh, "o/r", "https://github.com/o/r/pull/42", 2, "headsha1");
     expect(calls.some((c) => c.includes(BOT_RETRIGGER_COMMENT.split("\n")[0]!))).toBe(
       true,
     );
@@ -650,6 +697,7 @@ describe("#600 retriggerBotsAndPoll (#600 AC2)", () => {
     const snap = await waitForBotQuiescence(sh, {
       repo: "o/r",
       prUrl: "https://github.com/o/r/pull/42",
+      roundTrigger: TEST_ROUND_TRIGGER,
       maxPolls: BOT_OVERDUE_POLL_COUNT,
       clock,
     });
@@ -756,6 +804,7 @@ describe("#600 onlineReviewLoop helpers", () => {
           gemini: { state: "dropped", reason: "no review signal after 5 polls" },
         },
         threads: [],
+        checkRuns: [],
         totalFindingCount: 0,
         quiescent: true,
       },
@@ -778,5 +827,137 @@ describe("#600 onlineReviewLoop helpers", () => {
     });
     expect(s.reason).toBe("contract_drift");
     expect(s.summary).toContain("verify worker moved HEAD");
+  });
+});
+
+describe("#600 r4 central evidence admissibility gate", () => {
+  const trigger = buildRoundTrigger("head-a", "2026-07-08T10:00:00.000Z");
+
+  it("matrix: only fresh_live correlating evidence is admissible", () => {
+    expect(
+      evidenceAdmissible(
+        { terminalState: "fresh_live", headOid: "head-a" },
+        "head-a",
+        trigger,
+      ),
+    ).toBe(true);
+    for (const terminalState of [
+      "stale",
+      "synthetic",
+      "failed",
+      "fallback",
+      "silent",
+    ] as const) {
+      expect(
+        evidenceAdmissible(
+          { terminalState, headOid: "head-a" },
+          "head-a",
+          trigger,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("matrix: timestamp freshness accepts post-trigger artifacts only", () => {
+    expect(
+      evidenceAdmissible(
+        {
+          terminalState: "fresh_live",
+          timestamp: "2026-07-08T11:00:00.000Z",
+        },
+        "head-a",
+        trigger,
+      ),
+    ).toBe(true);
+    expect(
+      evidenceAdmissible(
+        {
+          terminalState: "fresh_live",
+          timestamp: "2026-07-08T09:00:00.000Z",
+        },
+        "head-a",
+        trigger,
+      ),
+    ).toBe(false);
+  });
+
+  it("pin botPolling: historical bot comments before round trigger stay pending", () => {
+    const sh: Sh = (file, args) => {
+      const cmd = args.join(" ");
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews") &&
+        !cmd.includes("check-runs")
+      ) {
+        return JSON.stringify({
+          head: { sha: "headsha1" },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") || cmd.includes("pulls/42/comments")) {
+        return JSON.stringify([
+          {
+            user: { login: "coderabbitai[bot]" },
+            body: "stale summary from prior round",
+            created_at: "2020-01-01T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (cmd.includes("check-runs")) {
+        return JSON.stringify({ check_runs: [] });
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return "[]";
+      }
+      if (cmd.includes("pulls/comments/") && cmd.includes("/reactions")) {
+        return "[]";
+      }
+      return "[]";
+    };
+    const snap = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
+    });
+    expect(snap.bots.coderabbit.state).toBe("pending");
+  });
+
+  it("pin offline gate: synthetic snapshots refused for real GitHub PR URLs", () => {
+    expect(
+      offlineSyntheticPollAdmissible("https://github.com/o/r/pull/1", "o/r"),
+    ).toBe(false);
+    expect(() =>
+      assertOfflineSyntheticPollAdmissible("https://github.com/o/r/pull/1", "o/r"),
+    ).toThrow(/refused for live GitHub PR/);
+    expect(() =>
+      offlinePrReviewSnapshot({
+        repo: "o/r",
+        prUrl: "https://github.com/o/r/pull/1",
+        headOid: "abc",
+        pollCount: 1,
+      }),
+    ).toThrow(/refused for live GitHub PR/);
+    expect(offlineSyntheticPollAdmissible("pr://family/offline", "o/r")).toBe(
+      true,
+    );
+  });
+
+  it("pin workerOutcomeAdmissible: failed dispatch is terminal, not skeleton-green", () => {
+    const spec = verifyWorkerSpec();
+    expect(
+      workerOutcomeAdmissible(
+        { kind: "failed", reason: "verify worker threw on startup" },
+        spec,
+      ),
+    ).toBe(false);
+    expect(
+      workerOutcomeAdmissible(
+        { kind: "completed", output: { kind: "verify", converged: true } },
+        spec,
+      ),
+    ).toBe(true);
   });
 });

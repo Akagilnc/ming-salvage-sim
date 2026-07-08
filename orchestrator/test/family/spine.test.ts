@@ -308,6 +308,20 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
           },
         };
       }
+      const skeletonKinds = new Set(["verify", "fixer", "cleanup", "docRelease"]);
+      if (skeletonKinds.has(spec.kind)) {
+        return {
+          kind: "completed",
+          output:
+            spec.kind === "verify"
+              ? { kind: "verify", converged: true }
+              : spec.kind === "fixer"
+                ? { kind: "fixer", committed: true }
+                : spec.kind === "cleanup"
+                  ? { kind: "cleanup", ok: true }
+                  : { kind: "docRelease", released: true },
+        };
+      }
       return { kind: "failed", reason: "unexpected kind in #596 r2 fresh-ship spine test" };
     };
 

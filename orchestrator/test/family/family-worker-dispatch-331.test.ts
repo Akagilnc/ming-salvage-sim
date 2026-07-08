@@ -65,7 +65,7 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);
-    return { url: `https://example/pr/${req.familyBase}`, prHead: "head-1" };
+    return { url: `pr://${req.familyBase}`, prHead: "head-1" };
   }
 }
 
@@ -180,18 +180,37 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
           },
         };
       }
-      // Ship the family base branch (the gate re-asserts branch === familyBase,
-      // cmr S336 r4) with a real pr_opened + pr URL.
-      return {
-        kind: "completed",
-        output: {
-          kind: "ship",
-          branch: "feat/330",
-          pr: "u",
-          prHead: "head-1",
-          status: "pr_opened",
-        },
-      };
+      if (spec.kind === "ship") {
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: "feat/330",
+            pr: "pr://feat/330",
+            prHead: "head-1",
+            status: "pr_opened",
+          },
+        };
+      }
+      if (
+        spec.kind === "verify" ||
+        spec.kind === "fixer" ||
+        spec.kind === "cleanup" ||
+        spec.kind === "docRelease"
+      ) {
+        return {
+          kind: "completed",
+          output:
+            spec.kind === "verify"
+              ? { kind: "verify", converged: true }
+              : spec.kind === "fixer"
+                ? { kind: "fixer", committed: true }
+                : spec.kind === "cleanup"
+                  ? { kind: "cleanup", ok: true }
+                  : { kind: "docRelease", released: true },
+        };
+      }
+      return { kind: "failed", reason: `unexpected worker ${spec.kind}` };
     }
   }
 
@@ -366,6 +385,24 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
           },
         };
       }
+      if (
+        spec.kind === "verify" ||
+        spec.kind === "fixer" ||
+        spec.kind === "cleanup" ||
+        spec.kind === "docRelease"
+      ) {
+        return {
+          kind: "completed",
+          output:
+            spec.kind === "verify"
+              ? { kind: "verify", converged: true }
+              : spec.kind === "fixer"
+                ? { kind: "fixer", committed: true }
+                : spec.kind === "cleanup"
+                  ? { kind: "cleanup", ok: true }
+                  : { kind: "docRelease", released: true },
+        };
+      }
       return this.shipOutput;
     }
   }
@@ -417,7 +454,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         kind: "ship",
         branch: "feat/330",
         status: "pr_opened",
-        pr: "https://gh/pr/1",
+        pr: "pr://feat/330",
       },
     });
     expect(res).toEqual({ ok: false, ran: true });
@@ -430,7 +467,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         kind: "ship",
         branch: "feat/330",
         status: "pr_opened",
-        pr: "https://gh/pr/1",
+        pr: "pr://feat/330",
         prHead: "   ",
       },
     });
@@ -444,7 +481,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         kind: "ship",
         branch: "feat/330",
         status: "pr_opened",
-        pr: "https://gh/pr/1",
+        pr: "pr://feat/330",
         prHead: "head-1",
       },
     });
@@ -458,7 +495,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         kind: "ship",
         branch: "feat/330",
         status: "pr_opened",
-        pr: "https://gh/pr/1",
+        pr: "pr://feat/330",
         prHead: "stale-head",
       },
     });
@@ -560,7 +597,7 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
           kind: "ship",
           branch: "feat/445",
           status: "pr_opened",
-          pr: "https://gh/pr/445",
+          pr: "pr://feat/445",
           prHead: "stale-pr-head",
         },
       };
@@ -900,7 +937,7 @@ describe("#331 legacyDispatchFamilyWorker — wraps legacy returns as WorkerResu
     });
     expect(res.kind).toBe("completed");
     if (res.kind === "completed" && res.output.kind === "ship") {
-      expect(res.output.pr).toBe("https://example/pr/fb");
+      expect(res.output.pr).toBe("pr://fb");
       expect(res.output.prHead).toBe("head-1");
       expect(res.output.status).toBe("pr_opened");
     } else {
@@ -912,7 +949,7 @@ describe("#331 legacyDispatchFamilyWorker — wraps legacy returns as WorkerResu
     class UnverifiedPrBackend extends CapableFamilyBackend {
       override async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
         this.prCalls.push(req);
-        return { url: `https://example/pr/${req.familyBase}` };
+        return { url: `pr://${req.familyBase}` };
       }
     }
     const be = new UnverifiedPrBackend();
@@ -921,7 +958,7 @@ describe("#331 legacyDispatchFamilyWorker — wraps legacy returns as WorkerResu
     });
     expect(res.kind).toBe("completed");
     if (res.kind === "completed" && res.output.kind === "ship") {
-      expect(res.output.pr).toBe("https://example/pr/fb");
+      expect(res.output.pr).toBe("pr://fb");
       expect(res.output.prHead).toBeUndefined();
     } else {
       throw new Error("expected completed ship payload");

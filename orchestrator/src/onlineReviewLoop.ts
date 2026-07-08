@@ -12,10 +12,14 @@ import { join } from "node:path";
 
 import {
   droppedBotIds,
-  isPollableGithubPrUrl,
   ONLINE_REVIEW_BOT_IDS,
   type PrReviewSnapshot,
 } from "./botPolling.js";
+import {
+  assertOfflineSyntheticPollAdmissible,
+  buildRoundTrigger,
+  type RoundTrigger,
+} from "./evidenceAdmissibility.js";
 import type { Sh } from "./familyDriver.js";
 import {
   BOT_OVERDUE_POLL_COUNT,
@@ -85,6 +89,7 @@ export function offlinePrReviewSnapshot(input: {
   readonly headOid: string;
   readonly pollCount: number;
 }): PrReviewSnapshot {
+  assertOfflineSyntheticPollAdmissible(input.prUrl, input.repo);
   const bots = Object.fromEntries(
     ONLINE_REVIEW_BOT_IDS.map((bot) => [
       bot,
@@ -99,6 +104,7 @@ export function offlinePrReviewSnapshot(input: {
     pollCount: input.pollCount,
     bots,
     threads: [],
+    checkRuns: [],
     totalFindingCount: 0,
     quiescent: true,
   };
@@ -164,6 +170,7 @@ export async function waitForBotQuiescence(
   input: {
     readonly repo: string;
     readonly prUrl: string;
+    readonly roundTrigger: RoundTrigger;
     readonly maxPolls?: number;
     readonly botPendingPolls?: Readonly<Partial<Record<string, number>>>;
     readonly clock?: BotPollClock;
@@ -177,6 +184,7 @@ export async function waitForBotQuiescence(
       repo: input.repo,
       prUrl: input.prUrl,
       pollCount: poll,
+      roundTrigger: input.roundTrigger,
       botPendingPolls: input.botPendingPolls as never,
     });
     if (last.quiescent) return last;
@@ -193,15 +201,24 @@ export function retriggerBotsAndPoll(
   repo: string,
   prUrl: string,
   pollCount: number,
-): PrReviewSnapshot {
-  const { prNumber } = pollPrReviewState(sh, {
+  roundTriggerHead: string,
+): { readonly snapshot: PrReviewSnapshot; readonly roundTrigger: RoundTrigger } {
+  const headProbe = pollPrReviewState(sh, {
     repo,
     prUrl,
     pollCount: 0,
+    roundTrigger: buildRoundTrigger(roundTriggerHead),
     botPendingPolls: {},
   });
-  postBotRetriggerComment(sh, repo, prNumber, BOT_RETRIGGER_COMMENT);
-  return pollPrReviewState(sh, { repo, prUrl, pollCount });
+  postBotRetriggerComment(sh, repo, headProbe.prNumber, BOT_RETRIGGER_COMMENT);
+  const roundTrigger = buildRoundTrigger(headProbe.headOid);
+  const snapshot = pollPrReviewState(sh, {
+    repo,
+    prUrl,
+    pollCount,
+    roundTrigger,
+  });
+  return { snapshot, roundTrigger };
 }
 
 /** Stop summary when a read-only verify worker moved HEAD (mirrors cmr reviewer guard). */

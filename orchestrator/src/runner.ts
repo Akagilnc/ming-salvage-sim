@@ -81,6 +81,11 @@ import {
   writeOnlineReviewSnapshotFile,
 } from "./onlineReviewLoop.js";
 import {
+  assertOfflineSyntheticPollAdmissible,
+  buildRoundTrigger,
+  type RoundTrigger,
+} from "./evidenceAdmissibility.js";
+import {
   applyVerifySideEffects,
   fixMarkedKeysFromVerify,
 } from "./onlineReviewSideEffects.js";
@@ -1923,7 +1928,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let onlineReviewRound = 1;
   let onlineReviewLanding: WorkerLandingPayload | undefined;
   let lastOnlineReviewFixCommitSha: string | undefined;
-  let onlineReviewNeedsRetrigger = false;
+  let lastOnlineReviewRoundTrigger: RoundTrigger | undefined;
 
   function ghSh(file: string, args: string[]): string {
     return execFileSync(file, args, {
@@ -1957,15 +1962,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       throw new Error("online review poll requires a non-empty PR URL from ship");
     }
     const repo = defaultRepo();
-    const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
-    if (!livePoll) {
-      return offlinePrReviewSnapshot({
-        repo,
-        prUrl,
-        headOid: ship.prHead ?? "offline-review-head",
-        pollCount,
-      });
-    }
     if (backend.pollOnlineReviewState !== undefined) {
       const landing = await backend.pollOnlineReviewState({
         repo,
@@ -1992,23 +1988,43 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           isResolved: t.isResolved,
           headOid: t.headOid,
         })),
+        checkRuns: [],
         totalFindingCount: landing.totalFindingCount,
         quiescent: landing.quiescent,
       };
+    }
+    const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
+    if (!livePoll) {
+      assertOfflineSyntheticPollAdmissible(prUrl, repo);
+      return offlinePrReviewSnapshot({
+        repo,
+        prUrl,
+        headOid: ship.prHead ?? "offline-review-head",
+        pollCount,
+      });
     }
     const ghSh = (file: string, args: string[]) =>
       execFileSync(file, args, {
         stdio: ["ignore", "pipe", "pipe"],
         encoding: "utf8",
       }).trim();
-    return waitForBotQuiescence(ghSh, {
+    const roundTrigger =
+      lastOnlineReviewRoundTrigger ??
+      buildRoundTrigger(ship.prHead ?? "offline-review-head");
+    const snapshot = await waitForBotQuiescence(ghSh, {
       repo,
       prUrl,
+      roundTrigger,
       clock:
         process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1"
           ? immediateBotPollClock
           : realBotPollClock,
     });
+    lastOnlineReviewRoundTrigger = buildRoundTrigger(
+      snapshot.headOid,
+      roundTrigger.triggeredAt,
+    );
+    return snapshot;
   }
 
   function seedClassificationFromReviewerOutput(
@@ -3346,12 +3362,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               lastShipOutput.pr != null &&
               isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
             ) {
-              retriggerBotsAndPoll(
+              const retriggered = retriggerBotsAndPoll(
                 ghSh,
                 reviewCtx.repo!,
                 lastShipOutput.pr,
                 1,
+                lastOnlineReviewFixCommitSha ??
+                  lastShipOutput.prHead ??
+                  lastOnlineReviewRoundTrigger?.headOid ??
+                  "offline-review-head",
               );
+              lastOnlineReviewRoundTrigger = retriggered.roundTrigger;
             }
             onlineReviewRound += 1;
           }
