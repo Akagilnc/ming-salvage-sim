@@ -57,7 +57,9 @@ import { offlinePrReviewSnapshot } from "../src/onlineReviewLoop.js";
 import {
   immediateBotPollClock,
   MAX_ONLINE_REVIEW_ROUNDS,
+  onlineReviewRoundTriggerFromLedger,
   retriggerBotsAndPoll,
+  resolveOnlineReviewRoundTrigger,
   runOnlineReviewLoopStage,
   shipLedgerTriggeredAtFromFamilyLedger,
   shipLedgerTriggeredAtFromSliceLedger,
@@ -592,6 +594,46 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toBe(false);
   });
 
+  it("pin r25: rejects empty fixMarked with fix-action dispositions (set equality)", () => {
+    expect(
+      isValidVerifyResult({
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "t:1", threadId: "1", action: "fix" },
+        ],
+        fixMarkedFindingIdentityKeys: [],
+      }),
+    ).toBe(false);
+  });
+
+  it("pin r25: accepts equal empty fixMarked and no fix dispositions", () => {
+    expect(
+      isValidVerifyResult({
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "t:2", threadId: "2", action: "reject", reason: "fp" },
+        ],
+        fixMarkedFindingIdentityKeys: [],
+      }),
+    ).toBe(true);
+  });
+
+  it("pin r25: accepts equal non-empty fixMarked and matching fix dispositions", () => {
+    expect(
+      isValidVerifyResult({
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "t:1", threadId: "1", action: "fix" },
+          { identityKey: "t:2", threadId: "2", action: "reject", reason: "fp" },
+        ],
+        fixMarkedFindingIdentityKeys: ["t:1"],
+      }),
+    ).toBe(true);
+  });
+
   it("rejects threadsToResolve without isRecheck", () => {
     expect(
       isValidVerifyResult({
@@ -1110,6 +1152,35 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
         },
       }),
     ).toThrow(/matches neither REST comment id nor GraphQL node id in landing/);
+  });
+
+  it("pin r25: invalid thread id in batch → zero GitHub writes occurred", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      return "https://github.com/o/r/issues/99";
+    };
+    expect(() =>
+      applyVerifySideEffects({
+        sh,
+        repo: "o/r",
+        prUrl: "https://github.com/o/r/pull/42",
+        landingThreads: [...LANDING_THREAD_PAIR],
+        verify: {
+          kind: "verify",
+          converged: false,
+          findingDispositions: [
+            {
+              identityKey: "t:bad",
+              threadId: "UNKNOWN_THREAD",
+              action: "defer",
+              reason: "needs design",
+            },
+          ],
+        },
+      }),
+    ).toThrow(/matches neither REST comment id nor GraphQL node id in landing/);
+    expect(calls).toEqual([]);
   });
 
   it("applyVerifySideEffects fails closed on invalid prUrl", () => {
@@ -2156,6 +2227,73 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       "https://github.com/o/r/pull/42",
     );
     expect(familyShipTs).toBe(SHIP_LEDGER_TS);
+  });
+
+  it("pin r25: resume mid-round-2 restores persisted retrigger anchor (pre-fix evidence stale)", () => {
+    const betweenShipAndRetrigger = "2026-07-08T11:30:00.000Z";
+    const resumedTrigger = onlineReviewRoundTriggerFromLedger([
+      {
+        step: "S10",
+        event: "online_review_round_retrigger",
+        roundTriggerHeadOid: "fixsha1111111111111111111111111111111111",
+        roundTriggerAt: RETRIGGER_TS,
+        onlineReviewRound: 2,
+      },
+    ]);
+    expect(resumedTrigger).toEqual(
+      buildRoundTrigger(
+        "fixsha1111111111111111111111111111111111",
+        RETRIGGER_TS,
+      ),
+    );
+
+    const resolved = resolveOnlineReviewRoundTrigger({
+      onlineReviewRound: 2,
+      persistedRoundTrigger: resumedTrigger,
+      shipPrHead: "headsha1",
+      shipLedgerTriggeredAt: SHIP_LEDGER_TS,
+    });
+    expect(resolved).toBe(resumedTrigger);
+    expect(
+      evidenceAdmissible(
+        { terminalState: "fresh_live", timestamp: betweenShipAndRetrigger },
+        "fixsha1111111111111111111111111111111111",
+        resolved,
+      ),
+    ).toBe(false);
+    expect(
+      evidenceAdmissible(
+        { terminalState: "fresh_live", timestamp: POST_RETRIGGER_TS },
+        "fixsha1111111111111111111111111111111111",
+        resolved,
+      ),
+    ).toBe(true);
+  });
+
+  it("pin r25: round-1 resume still falls back to ship ledger anchor", () => {
+    const shipTriggeredAt = shipLedgerTriggeredAtFromSliceLedger([
+      {
+        step: "S7",
+        output: { kind: "ship" },
+        ts: SHIP_LEDGER_TS,
+      },
+    ]);
+    const resolved = resolveOnlineReviewRoundTrigger({
+      onlineReviewRound: 1,
+      shipPrHead: "headsha1",
+      shipLedgerTriggeredAt: shipTriggeredAt,
+    });
+    expect(resolved).toEqual(buildRoundTrigger("headsha1", SHIP_LEDGER_TS));
+  });
+
+  it("pin r25: round ≥2 without persisted trigger fails closed (no ship fallback)", () => {
+    expect(() =>
+      resolveOnlineReviewRoundTrigger({
+        onlineReviewRound: 2,
+        shipPrHead: "headsha1",
+        shipLedgerTriggeredAt: SHIP_LEDGER_TS,
+      }),
+    ).toThrow(/persisted round trigger/);
   });
 });
 

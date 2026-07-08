@@ -370,10 +370,19 @@ export interface OnlineReviewConvergedEvent {
   readonly round: number;
 }
 
+/** Round ≥2 freshness anchor persisted after S10 re-trigger (#600 r25). */
+export interface OnlineReviewRoundRetriggerEvent {
+  readonly event: "online_review_round_retrigger";
+  readonly roundTriggerHeadOid: string;
+  readonly roundTriggerAt: string;
+  readonly onlineReviewRound: number;
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
-  | OnlineReviewConvergedEvent;
+  | OnlineReviewConvergedEvent
+  | OnlineReviewRoundRetriggerEvent;
 
 /**
  * The structured output of any worker step.
@@ -1081,6 +1090,10 @@ export interface LedgerEntry {
   readonly prHead?: string;
   /** Online review converged marker (#600): final round number. */
   readonly onlineReviewRound?: number;
+  /** Online review round re-trigger marker (#600 r25): anchored PR head OID. */
+  readonly roundTriggerHeadOid?: string;
+  /** Online review round re-trigger marker (#600 r25): ISO instant the round began. */
+  readonly roundTriggerAt?: string;
 }
 
 /**
