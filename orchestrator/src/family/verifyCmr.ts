@@ -101,7 +101,11 @@ import {
   dispatchFamilyWorker,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../dispatchRetry.js";
+import {
+  type DispatchOutcome,
+  MAX_DISPATCH_ATTEMPTS,
+  withMechanicalRetry,
+} from "../dispatchRetry.js";
 import {
   cmrLegAccountingFailure,
   modelRouteFingerprint,
@@ -1477,7 +1481,11 @@ async function dispatchFamilyReviewWorker(
   spec: WorkerSpec,
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
-  opts?: { readonly writeCapable?: boolean },
+  opts?: {
+    readonly writeCapable?: boolean;
+    readonly afterEachAttempt?: () => Promise<void>;
+    readonly extraCallerOwns?: (outcome: DispatchOutcome) => boolean;
+  },
 ): Promise<WorkerResult> {
   const resetBeforeRetry =
     opts?.writeCapable === true &&
@@ -1611,49 +1619,59 @@ export async function runFamilyOnlineReviewLoop(input: {
         input.familyBackend,
         input.familyBase,
       );
+      const assertFamilyVerifyReadOnlyContract = async (): Promise<void> => {
+        const headAfter = await readRequiredFamilyHead(
+          input.familyBackend,
+          input.familyBase,
+        );
+        const trackedAfter = await readOnlineVerifyTrackedStatus(
+          input.familyBackend,
+          input.familyBase,
+        );
+        if (
+          headBefore !== undefined &&
+          headAfter !== undefined &&
+          headAfter !== headBefore
+        ) {
+          throw new OnlineReviewLoopTerminal({
+            ok: false,
+            terminalState: "contract_drift",
+            round,
+            stopSummary: verifyReviewerHeadMovedStopSummary({
+              headBefore,
+              headAfter,
+            }),
+          });
+        }
+        if (
+          trackedBefore !== undefined &&
+          trackedAfter !== undefined &&
+          trackedAfter.join("\n") !== trackedBefore.join("\n")
+        ) {
+          throw new OnlineReviewLoopTerminal({
+            ok: false,
+            terminalState: "contract_drift",
+            round,
+            stopSummary: verifyReviewerWorktreeDirtyStopSummary({
+              trackedStatus: trackedAfter,
+            }),
+          });
+        }
+      };
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
         verifyWorkerSpec(input.resolvedRoute),
         { ...baseCtx, onlineReviewRound: round },
         landing,
+        {
+          afterEachAttempt: assertFamilyVerifyReadOnlyContract,
+          extraCallerOwns: (o) =>
+            "kind" in o &&
+            o.kind === "thrown" &&
+            o.error instanceof OnlineReviewLoopTerminal &&
+            o.error.result.terminalState === "contract_drift",
+        },
       );
-      const headAfter = await readRequiredFamilyHead(
-        input.familyBackend,
-        input.familyBase,
-      );
-      const trackedAfter = await readOnlineVerifyTrackedStatus(
-        input.familyBackend,
-        input.familyBase,
-      );
-      if (
-        headBefore !== undefined &&
-        headAfter !== undefined &&
-        headAfter !== headBefore
-      ) {
-        throw new OnlineReviewLoopTerminal({
-          ok: false,
-          terminalState: "contract_drift",
-          round,
-          stopSummary: verifyReviewerHeadMovedStopSummary({
-            headBefore,
-            headAfter,
-          }),
-        });
-      }
-      if (
-        trackedBefore !== undefined &&
-        trackedAfter !== undefined &&
-        trackedAfter.join("\n") !== trackedBefore.join("\n")
-      ) {
-        throw new OnlineReviewLoopTerminal({
-          ok: false,
-          terminalState: "contract_drift",
-          round,
-          stopSummary: verifyReviewerWorktreeDirtyStopSummary({
-            trackedStatus: trackedAfter,
-          }),
-        });
-      }
       if (result.kind !== "completed" || !isValidVerifyResult(result.output)) {
         throw new OnlineReviewLoopTerminal({
           ok: false,
@@ -1788,6 +1806,8 @@ async function dispatchOrAbort(
   opts?: {
     readonly writeCapable?: boolean;
     readonly resetBeforeRetry?: () => Promise<void>;
+    readonly afterEachAttempt?: () => Promise<void>;
+    readonly extraCallerOwns?: (outcome: DispatchOutcome) => boolean;
   },
 ): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
   // The READ-ONLY cmr reviewer leaves no local residue, so a thrown crash is safe to
@@ -1816,9 +1836,27 @@ async function dispatchOrAbort(
     return await withMechanicalRetry(
       spec,
       ctx,
-      (s, c) => dispatchFamilyWorker(familyBackend, s, c, landing),
+      async (s, c) => {
+        let dispatchError: unknown | undefined;
+        let workerResult: Awaited<ReturnType<typeof dispatchFamilyWorker>>;
+        try {
+          workerResult = await dispatchFamilyWorker(
+            familyBackend,
+            s,
+            c,
+            landing,
+          );
+        } catch (err) {
+          dispatchError = err;
+        } finally {
+          await opts?.afterEachAttempt?.();
+        }
+        if (dispatchError !== undefined) throw dispatchError;
+        return workerResult!;
+      },
       {
         callerOwns: (o) =>
+          opts?.extraCallerOwns?.(o) === true ||
           "result" in o ||
           (writeCapable &&
             o.kind === "thrown" &&
@@ -1828,6 +1866,7 @@ async function dispatchOrAbort(
       },
     );
   } catch (err) {
+    if (err instanceof OnlineReviewLoopTerminal) throw err;
     const reason = `family ${spec.kind} worker threw on startup: ${
       err instanceof Error ? err.message : String(err)
     }`;

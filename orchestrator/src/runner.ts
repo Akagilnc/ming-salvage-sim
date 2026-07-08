@@ -3411,16 +3411,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               reviewLoopSpec,
               reviewCtx,
               async (s, c) => {
-                const workerResult = await dispatchWorker(
-                  backend,
-                  s,
-                  c,
-                  reviewStep === "S9" || reviewStep === "S10"
-                    ? fixerLanding
-                    : undefined,
-                );
-                await assertVerifyReadOnlyContract();
-                return workerResult;
+                let dispatchError: unknown | undefined;
+                let workerResult: Awaited<ReturnType<typeof dispatchWorker>>;
+                try {
+                  workerResult = await dispatchWorker(
+                    backend,
+                    s,
+                    c,
+                    reviewStep === "S9" || reviewStep === "S10"
+                      ? fixerLanding
+                      : undefined,
+                  );
+                } catch (err) {
+                  dispatchError = err;
+                } finally {
+                  await assertVerifyReadOnlyContract();
+                }
+                if (dispatchError !== undefined) throw dispatchError;
+                return workerResult!;
               },
               reviewResetOpt,
             );

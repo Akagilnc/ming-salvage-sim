@@ -3,7 +3,11 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../src/dispatchRetry.js";
+import {
+  type MechanicalRetryOptions,
+  MAX_DISPATCH_ATTEMPTS,
+  withMechanicalRetry,
+} from "../src/dispatchRetry.js";
 import {
   cleanupWorkerSpec,
   docReleaseWorkerSpec,
@@ -1906,6 +1910,32 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
   });
 });
 
+/** Mirrors S9 production: drift guard runs in `finally` after every attempt. */
+async function dispatchVerifyWithPerAttemptDriftGuard(
+  dispatch: () => Promise<WorkerResult>,
+  assertContract: () => Promise<void>,
+  callerOwns: NonNullable<MechanicalRetryOptions["callerOwns"]>,
+): Promise<WorkerResult> {
+  return withMechanicalRetry(
+    verifyWorkerSpec(),
+    {} as DispatchContext,
+    async () => {
+      let dispatchError: unknown | undefined;
+      let workerResult: WorkerResult | undefined;
+      try {
+        workerResult = await dispatch();
+      } catch (err) {
+        dispatchError = err;
+      } finally {
+        await assertContract();
+      }
+      if (dispatchError !== undefined) throw dispatchError;
+      return workerResult!;
+    },
+    { callerOwns, rethrowOnExhaustion: true },
+  );
+}
+
 describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
   it("a verify worker that crashes once then completes is retried fresh", async () => {
     let attempts = 0;
@@ -2004,6 +2034,108 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
     expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(result.kind).toBe("failed");
     expect(result.reason).toContain("after 3 dispatch attempts");
+  });
+
+  it("pin r37: verify that mutates HEAD then throws is terminal contract_drift, not retried on residue", async () => {
+    const { VerifyWorkerHeadMovedError } = await import(
+      "../src/onlineReviewLoop.js"
+    );
+    let attempts = 0;
+    let head = "head-before";
+    const headBefore = head;
+    const assertContract = async (): Promise<void> => {
+      const drift = verifyReadOnlyWorktreeDrift({
+        headBefore,
+        headAfter: head,
+        porcelainBefore: "",
+        porcelainAfter: "",
+      });
+      if (drift === "head") {
+        throw new VerifyWorkerHeadMovedError(headBefore, head);
+      }
+    };
+    const result = await dispatchVerifyWithPerAttemptDriftGuard(
+      async () => {
+        attempts += 1;
+        head = "head-after-mutation";
+        throw new Error("verify worker threw on startup");
+      },
+      assertContract,
+      (o) =>
+        o.kind === "thrown" && o.error instanceof VerifyWorkerHeadMovedError,
+    ).catch((err) => err);
+    expect(attempts).toBe(1);
+    expect(head).toBe("head-after-mutation");
+    expect(result).toBeInstanceOf(VerifyWorkerHeadMovedError);
+  });
+
+  it("pin r37: verify that dirties tracked worktree then throws is terminal contract_drift, not retried on residue", async () => {
+    const { VerifyWorkerWorktreeDirtyError } = await import(
+      "../src/onlineReviewLoop.js"
+    );
+    let attempts = 0;
+    let porcelainAfter = "";
+    const assertContract = async (): Promise<void> => {
+      const drift = verifyReadOnlyWorktreeDrift({
+        headBefore: "same-head",
+        headAfter: "same-head",
+        porcelainBefore: "",
+        porcelainAfter,
+      });
+      if (drift === "worktree") {
+        throw new VerifyWorkerWorktreeDirtyError("", porcelainAfter);
+      }
+    };
+    const result = await dispatchVerifyWithPerAttemptDriftGuard(
+      async () => {
+        attempts += 1;
+        porcelainAfter = " M orchestrator/src/foo.ts";
+        throw new Error("verify worker threw on startup");
+      },
+      assertContract,
+      (o) =>
+        o.kind === "thrown" &&
+        o.error instanceof VerifyWorkerWorktreeDirtyError,
+    ).catch((err) => err);
+    expect(attempts).toBe(1);
+    expect(result).toBeInstanceOf(VerifyWorkerWorktreeDirtyError);
+  });
+
+  it("pin r37: verify that throws transient error without mutation still retries fresh (#598)", async () => {
+    const { VerifyWorkerHeadMovedError, VerifyWorkerWorktreeDirtyError } =
+      await import("../src/onlineReviewLoop.js");
+    let attempts = 0;
+    const assertContract = async (): Promise<void> => {
+      const drift = verifyReadOnlyWorktreeDrift({
+        headBefore: "stable-head",
+        headAfter: "stable-head",
+        porcelainBefore: "",
+        porcelainAfter: "",
+      });
+      if (drift === "head") {
+        throw new VerifyWorkerHeadMovedError("stable-head", "stable-head");
+      }
+      if (drift === "worktree") {
+        throw new VerifyWorkerWorktreeDirtyError("", "");
+      }
+    };
+    const result = await dispatchVerifyWithPerAttemptDriftGuard(
+      async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("verify worker threw on startup");
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      },
+      assertContract,
+      (o) =>
+        o.kind === "thrown" &&
+        (o.error instanceof VerifyWorkerHeadMovedError ||
+          o.error instanceof VerifyWorkerWorktreeDirtyError),
+    );
+    expect(attempts).toBe(2);
+    expect(result.kind).toBe("completed");
   });
 });
 
@@ -4176,6 +4308,127 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         }),
       });
       expect(headReadCount).toBeGreaterThanOrEqual(2);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("pin r37: family verify that mutates HEAD then throws is terminal contract_drift, not retried on residue", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      let attempts = 0;
+      let headReadCount = 0;
+      const backend = new ReviewLoopFamilyBackend();
+      backend.readFamilyHead = async () => {
+        headReadCount += 1;
+        return headReadCount === 1 ? "head-before" : "head-after";
+      };
+      backend.dispatchWorker = async (spec) => {
+        if (spec.kind === "verify") {
+          attempts += 1;
+          throw new Error("verify worker threw on startup");
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        return skeleton ?? { kind: "failed", reason: "unexpected" };
+      };
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+      expect(attempts).toBe(1);
+      expect(result).toEqual({
+        ok: false,
+        terminalState: "contract_drift",
+        round: 1,
+        stopSummary: expect.objectContaining({
+          reason: "contract_drift",
+          summary: expect.stringContaining("verify worker moved HEAD"),
+        }),
+      });
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("pin r37: family verify that dirties tracked worktree then throws is terminal contract_drift, not retried on residue", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      let attempts = 0;
+      let trackedStatus: string[] = [];
+      const backend = new ReviewLoopFamilyBackend();
+      backend.readFamilyHead = async () => "head-before";
+      backend.readFamilyTrackedStatus = async () => trackedStatus;
+      backend.dispatchWorker = async (spec) => {
+        if (spec.kind === "verify") {
+          attempts += 1;
+          trackedStatus = [" M orchestrator/src/foo.ts"];
+          throw new Error("verify worker threw on startup");
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        return skeleton ?? { kind: "failed", reason: "unexpected" };
+      };
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+      expect(attempts).toBe(1);
+      expect(result).toEqual({
+        ok: false,
+        terminalState: "contract_drift",
+        round: 1,
+        stopSummary: expect.objectContaining({
+          reason: "contract_drift",
+          summary: expect.stringContaining("tracked worktree changes"),
+        }),
+      });
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("pin r37: family verify that throws transient error without mutation still retries fresh (#598)", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      let attempts = 0;
+      const backend = new ReviewLoopFamilyBackend();
+      backend.readFamilyHead = async () => "head-before";
+      backend.readFamilyTrackedStatus = async () => [];
+      backend.dispatchWorker = async (spec) => {
+        if (spec.kind === "verify") {
+          attempts += 1;
+          if (attempts === 1) throw new Error("verify worker threw on startup");
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: true },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        return skeleton ?? { kind: "failed", reason: "unexpected" };
+      };
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+      expect(attempts).toBe(2);
+      expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
