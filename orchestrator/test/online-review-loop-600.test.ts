@@ -21,6 +21,7 @@ import {
 import type {
   Backend,
   DispatchContext,
+  FixerResult,
   IssueMeta,
   IssueSnapshot,
   OnlineReviewLandingSnapshot,
@@ -32,6 +33,15 @@ import type {
   WorkerSpec,
   WorktreeHandle,
 } from "../src/types.js";
+
+const fixerCommitted = (): FixerResult => ({ kind: "fixer", committed: true });
+const fixerNotFixed = (): FixerResult => ({ kind: "fixer", committed: false });
+const fixerAlreadySatisfied = (fixCommitSha: string): FixerResult => ({
+  kind: "fixer",
+  committed: false,
+  alreadySatisfied: true,
+  fixCommitSha,
+});
 import {
   BOT_OVERDUE_POLL_COUNT,
   BOT_POLL_INTERVAL_MS,
@@ -660,6 +670,20 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
       status: "escalate",
       onlineReviewTerminal: "decision_gate_raised",
     });
+  });
+
+  it("pin r33: S10 alreadySatisfied routes back to S9 (not decision_gate)", () => {
+    expect(
+      route({
+        from: "S10",
+        output: {
+          kind: "fixer",
+          committed: false,
+          alreadySatisfied: true,
+          fixCommitSha: "landed-fix-sha",
+        },
+      }),
+    ).toEqual({ kind: "next", step: "S9" });
   });
 
   it("S11 ok:false → error (success-flag branch)", () => {
@@ -3450,7 +3474,7 @@ describe("#600 r26 runner-owned isRecheck", () => {
           }
           return { kind: "verify", converged: true };
         },
-        dispatchFixer: async () => true,
+        dispatchFixer: async () => fixerCommitted(),
         dispatchCleanup: async () => true,
         dispatchDocRelease: async () => true,
         applySideEffects: (_landing, verify, sha) => {
@@ -3501,7 +3525,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         verifyCalls += 1;
         return { kind: "verify", converged: true } satisfies VerifyResult;
       },
-      dispatchFixer: async () => true,
+      dispatchFixer: async () => fixerCommitted(),
       dispatchCleanup: async (_landing) => true,
       dispatchDocRelease: async (_landing) => true,
       applySideEffects: (_landing, verify) => verify,
@@ -3519,7 +3543,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         landingBranch = landing.shipDelivery?.branch;
         return { kind: "verify", converged: true } satisfies VerifyResult;
       },
-      dispatchFixer: async () => true,
+      dispatchFixer: async () => fixerCommitted(),
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
       applySideEffects: (_landing, verify) => verify,
@@ -3543,7 +3567,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchFixer: async () => {
         fixerCalls += 1;
-        return true;
+        return fixerCommitted();
       },
       dispatchCleanup: async (_landing) => true,
       dispatchDocRelease: async (_landing) => true,
@@ -3579,7 +3603,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchFixer: async () => {
         fixerCalls += 1;
-        return true;
+        return fixerCommitted();
       },
       dispatchCleanup: async (_landing) => true,
       dispatchDocRelease: async (_landing) => true,
@@ -3601,7 +3625,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
       dispatchVerify: async () => ({ kind: "verify", converged: false }),
-      dispatchFixer: async () => false,
+      dispatchFixer: async () => fixerNotFixed(),
       dispatchCleanup: async (_landing) => true,
       dispatchDocRelease: async (_landing) => true,
       applySideEffects: (_landing, verify) => verify,
@@ -3621,7 +3645,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     const stageResult = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
       dispatchVerify: async () => ({ kind: "verify", converged: false }),
-      dispatchFixer: async () => false,
+      dispatchFixer: async () => fixerNotFixed(),
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
       applySideEffects: (_landing, verify) => verify,
@@ -3644,7 +3668,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
       dispatchVerify: async () => ({ kind: "verify", converged: false }),
-      dispatchFixer: async () => true,
+      dispatchFixer: async () => fixerCommitted(),
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
       applySideEffects: (_landing, verify) => verify,
@@ -3681,7 +3705,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
           threadsToResolve: ["PRRT_kwDOExampleThread"],
         };
       },
-      dispatchFixer: async () => true,
+      dispatchFixer: async () => fixerCommitted(),
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
       applySideEffects: (_landing, verify, fixingCommitSha) => {
@@ -3717,7 +3741,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         throw new Error("waitForBotQuiescence: gh api rate limited");
       },
       dispatchVerify: async () => ({ kind: "verify", converged: true }),
-      dispatchFixer: async () => true,
+      dispatchFixer: async () => fixerCommitted(),
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
       applySideEffects: (_landing, verify) => verify,
@@ -3740,7 +3764,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       dispatchVerify: async () => {
         throw new Error("dispatchFamilyReviewWorker: container start failed");
       },
-      dispatchFixer: async () => true,
+      dispatchFixer: async () => fixerCommitted(),
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
       applySideEffects: (_landing, verify) => verify,
@@ -3780,6 +3804,67 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     });
   });
 
+  it("pin r33: fixer alreadySatisfied proceeds to re-verify (envelope fix SHA, no git re-read)", async () => {
+    let resolveFixCalls = 0;
+    let retriggerCalls = 0;
+    let fixingSha: string | undefined;
+    const result = await runOnlineReviewLoopStage(stageShip, {
+      poll: async () => baseSnapshot,
+      dispatchVerify: async (_landing, round) => {
+        if (round === 1) {
+          return { kind: "verify", converged: false };
+        }
+        return { kind: "verify", converged: true, isRecheck: true };
+      },
+      dispatchFixer: async () => fixerAlreadySatisfied("crash-landed-sha"),
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (_landing, verify, sha) => {
+        fixingSha = sha;
+        return verify;
+      },
+      retriggerAfterFix: () => {
+        retriggerCalls += 1;
+      },
+      resolveFixCommitSha: async (envelopeFixSha) => {
+        resolveFixCalls += 1;
+        expect(envelopeFixSha).toBe("crash-landed-sha");
+        return envelopeFixSha ?? "should-not-read-git";
+      },
+    });
+    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
+    expect(resolveFixCalls).toBe(1);
+    expect(retriggerCalls).toBe(1);
+    expect(fixingSha).toBe("crash-landed-sha");
+  });
+
+  it("pin r33 family: fixer alreadySatisfied records fix marker path via envelope SHA", async () => {
+    let recordedSha: string | undefined;
+    const result = await runOnlineReviewLoopStage(stageShip, {
+      poll: async () => baseSnapshot,
+      dispatchVerify: async (_landing, round) => {
+        if (round === 1) {
+          return { kind: "verify", converged: false };
+        }
+        return { kind: "verify", converged: true, isRecheck: true };
+      },
+      dispatchFixer: async () => fixerAlreadySatisfied("family-landed-sha"),
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (_landing, verify, sha) => {
+        recordedSha = sha;
+        return verify;
+      },
+      retriggerAfterFix: () => {},
+      resolveFixCommitSha: async (envelopeFixSha) => {
+        expect(envelopeFixSha).toBe("family-landed-sha");
+        return envelopeFixSha!;
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(recordedSha).toBe("family-landed-sha");
+  });
+
   it("pin r17: worker converged:true clamped when landing checkRuns are red", async () => {
     let fixerCalls = 0;
     const snapshotWithRedCi: PrReviewSnapshot = {
@@ -3799,7 +3884,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       dispatchVerify: async () => ({ kind: "verify", converged: true }),
       dispatchFixer: async () => {
         fixerCalls += 1;
-        return false;
+        return fixerNotFixed();
       },
       dispatchCleanup: async (_landing) => true,
       dispatchDocRelease: async (_landing) => true,

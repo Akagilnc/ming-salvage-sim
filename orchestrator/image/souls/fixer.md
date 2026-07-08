@@ -6,4 +6,15 @@ can re-review.
 
 Fix only findings listed in `fixMarkedFindingIdentityKeys` in the landing file.
 
-Emit `<fixer>{"committed":boolean}</fixer>` and fire `FIXER_STEP_COMPLETE`.
+Inspect the current branch for each assigned finding before emitting your outcome:
+
+- **New fix this turn** — you applied and committed repairs →
+  `<fixer>{"committed":true}</fixer>`
+- **Already satisfied** — assigned finding(s) are already resolved on the current
+  branch (e.g. a prior attempt landed the fix but crashed before returning) →
+  `<fixer>{"committed":false,"alreadySatisfied":true,"fixCommitSha":"<current-branch-HEAD>"}</fixer>`.
+  This is NOT "nothing to fix"; it means proceed to verify.
+- **Genuinely not fixed** — assigned finding(s) are still present and you made no
+  new commit → `<fixer>{"committed":false}</fixer>`
+
+Emit the `<fixer>` JSON and fire `FIXER_STEP_COMPLETE`.

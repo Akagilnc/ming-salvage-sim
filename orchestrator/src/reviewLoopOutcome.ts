@@ -150,10 +150,103 @@ export function isValidVerifyResult(
   return true;
 }
 
+function isValidFixerEnvelopeFields(obj: Record<string, unknown>): boolean {
+  if (typeof obj.committed !== "boolean") return false;
+  if (obj.alreadySatisfied !== undefined && typeof obj.alreadySatisfied !== "boolean") {
+    return false;
+  }
+  if (obj.fixCommitSha !== undefined && typeof obj.fixCommitSha !== "string") {
+    return false;
+  }
+  if (obj.committed === true && obj.alreadySatisfied === true) {
+    return false;
+  }
+  if (
+    obj.committed === false &&
+    obj.alreadySatisfied === true &&
+    (typeof obj.fixCommitSha !== "string" || obj.fixCommitSha.length === 0)
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export function isValidFixerResult(o: StepOutput | undefined): o is FixerResult {
   if (o == null || typeof o !== "object") return false;
   const obj = o as unknown as Record<string, unknown>;
-  return obj.kind === "fixer" && typeof obj.committed === "boolean";
+  return obj.kind === "fixer" && isValidFixerEnvelopeFields(obj);
+}
+
+/** True when the fixer outcome should advance to fresh S9 verify (not park). */
+export function fixerProceedsToVerify(output: FixerResult): boolean {
+  return output.committed || output.alreadySatisfied === true;
+}
+
+/** Ledger replay: S10 fixer output that advanced the loop (committed or alreadySatisfied). */
+export function fixerLedgerOutputProceeds(output?: {
+  readonly kind?: string;
+  readonly committed?: boolean;
+  readonly alreadySatisfied?: boolean;
+}): boolean {
+  return (
+    output?.kind === "fixer" &&
+    (output.committed === true || output.alreadySatisfied === true)
+  );
+}
+
+/** Fix SHA recorded on an S10 ledger row (envelope or branchHEAD). */
+export function fixerLedgerFixCommitSha(entry: {
+  readonly branchHEAD?: string;
+  readonly output?: {
+    readonly kind?: string;
+    readonly committed?: boolean;
+    readonly alreadySatisfied?: boolean;
+    readonly fixCommitSha?: string;
+  };
+}): string | undefined {
+  if (!fixerLedgerOutputProceeds(entry.output)) {
+    return undefined;
+  }
+  if (
+    entry.output?.alreadySatisfied === true &&
+    typeof entry.output.fixCommitSha === "string" &&
+    entry.output.fixCommitSha.length > 0
+  ) {
+    return entry.output.fixCommitSha;
+  }
+  if (typeof entry.branchHEAD === "string" && entry.branchHEAD.length > 0) {
+    return entry.branchHEAD;
+  }
+  return undefined;
+}
+
+/**
+ * Fix SHA from the fixer envelope when the worker reports alreadySatisfied.
+ * Returns undefined for committed:true (stage uses resolveFixCommitSha).
+ */
+export function fixerEnvelopeFixCommitSha(output: FixerResult): string | undefined {
+  if (output.alreadySatisfied === true) {
+    return output.fixCommitSha;
+  }
+  return undefined;
+}
+
+export function fixerResultFromParsed(parsed: {
+  readonly committed: boolean;
+  readonly alreadySatisfied?: boolean;
+  readonly fixCommitSha?: string;
+}): FixerResult {
+  const candidate: FixerResult = {
+    kind: "fixer",
+    committed: parsed.committed,
+    ...(parsed.alreadySatisfied === true
+      ? { alreadySatisfied: true, fixCommitSha: parsed.fixCommitSha }
+      : {}),
+  };
+  if (!isValidFixerResult(candidate)) {
+    throw new Error("fixerResultFromParsed: envelope failed isValidFixerResult");
+  }
+  return candidate;
 }
 
 export function isValidCleanupResult(

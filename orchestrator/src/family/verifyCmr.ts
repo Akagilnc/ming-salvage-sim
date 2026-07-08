@@ -1686,7 +1686,7 @@ export async function runFamilyOnlineReviewLoop(input: {
           round,
         });
       }
-      return result.output.committed;
+      return result.output;
     },
     dispatchCleanup: async (landing: WorkerLandingPayload) => {
       const result = await dispatchFamilyReviewWorker(
@@ -1760,11 +1760,12 @@ export async function runFamilyOnlineReviewLoop(input: {
         loopState.round = nextRound;
       }
     },
-    resolveFixCommitSha: async () => {
+    resolveFixCommitSha: async (envelopeFixSha?: string) => {
       const sha =
-        typeof input.familyBackend.readFamilyHead === "function"
+        envelopeFixSha ??
+        (typeof input.familyBackend.readFamilyHead === "function"
           ? await input.familyBackend.readFamilyHead(input.familyBase)
-          : (input.ship.prHead ?? "");
+          : (input.ship.prHead ?? ""));
       familyLastFixCommitSha = sha;
       loopState.lastFixSha = sha;
       await recordOnlineReviewFixCommitted(input.familyBackend, {

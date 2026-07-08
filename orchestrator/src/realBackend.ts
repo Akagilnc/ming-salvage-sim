@@ -2012,8 +2012,30 @@ export const verifyOutputSchema = z
   })
   .strict();
 export const fixerOutputSchema = z
-  .object({ committed: z.boolean() })
-  .strict();
+  .object({
+    committed: z.boolean(),
+    alreadySatisfied: z.boolean().optional(),
+    fixCommitSha: z.string().min(1).optional(),
+  })
+  .strict()
+  .superRefine((data, ctx) => {
+    if (data.committed && data.alreadySatisfied === true) {
+      ctx.addIssue({
+        code: "custom",
+        message: "alreadySatisfied is incompatible with committed:true",
+      });
+    }
+    if (
+      data.committed === false &&
+      data.alreadySatisfied === true &&
+      data.fixCommitSha === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "fixCommitSha is required when alreadySatisfied is true",
+      });
+    }
+  });
 export const cleanupOutputSchema = z
   .object({ ok: z.boolean() })
   .strict();
@@ -2877,7 +2899,13 @@ export class RealBackend implements Backend {
     }
     if (spec.role === "fixer") {
       const f = fixerOutputSchema.parse(raw);
-      const candidate: FixerResult = { kind: "fixer", committed: f.committed };
+      const candidate: FixerResult = {
+        kind: "fixer",
+        committed: f.committed,
+        ...(f.alreadySatisfied === true
+          ? { alreadySatisfied: true, fixCommitSha: f.fixCommitSha }
+          : {}),
+      };
       if (!isValidFixerResult(candidate)) {
         const err = new Error(
           "realBackend: fixer output did not satisfy isValidFixerResult guard",

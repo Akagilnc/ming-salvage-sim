@@ -58,6 +58,8 @@ import {
   workerResultToStep,
 } from "./dispatchWorker.js";
 import {
+  fixerEnvelopeFixCommitSha,
+  fixerProceedsToVerify,
   isValidCleanupResult,
   isValidDocReleaseResult,
   isValidFixerResult,
@@ -3573,9 +3575,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           if (
             reviewStep === "S10" &&
             isValidFixerResult(result.output) &&
-            result.output.committed
+            fixerProceedsToVerify(result.output)
           ) {
-            lastOnlineReviewFixCommitSha = await resolveBranchHEAD();
+            lastOnlineReviewFixCommitSha =
+              fixerEnvelopeFixCommitSha(result.output) ??
+              (await resolveBranchHEAD());
             if (
               lastShipOutput.pr != null &&
               isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)

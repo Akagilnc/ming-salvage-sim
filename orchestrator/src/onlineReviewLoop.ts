@@ -33,6 +33,7 @@ import {
   postBotRetriggerComment,
 } from "./botPolling.js";
 import type {
+  FixerResult,
   OnlineReviewLandingSnapshot,
   OnlineReviewTerminalState,
   PersistentLedgerEntry,
@@ -41,6 +42,12 @@ import type {
   VerifyResult,
   WorkerLandingPayload,
 } from "./types.js";
+import {
+  fixerEnvelopeFixCommitSha,
+  fixerLedgerFixCommitSha,
+  fixerLedgerOutputProceeds,
+  fixerProceedsToVerify,
+} from "./reviewLoopOutcome.js";
 import {
   applyVerifySideEffects,
   fixMarkedKeysFromVerify,
@@ -153,7 +160,11 @@ export function onlineReviewRoundFromLedger(
     readonly step: string;
     readonly event?: string;
     readonly onlineReviewRound?: number;
-    readonly output?: { readonly kind?: string; readonly committed?: boolean };
+    readonly output?: {
+      readonly kind?: string;
+      readonly committed?: boolean;
+      readonly alreadySatisfied?: boolean;
+    };
   }>,
 ): number {
   const fixCommittedMarkers = ledger.filter(
@@ -167,10 +178,7 @@ export function onlineReviewRoundFromLedger(
     return retriggerRecovery.round;
   }
   const completedFixerRounds = ledger.filter(
-    (e) =>
-      e.step === "S10" &&
-      e.output?.kind === "fixer" &&
-      e.output.committed,
+    (e) => e.step === "S10" && fixerLedgerOutputProceeds(e.output),
   ).length;
   return completedFixerRounds + 1;
 }
@@ -183,7 +191,12 @@ export function lastOnlineReviewFixCommitShaFromLedger(
     readonly fixCommitSha?: string;
     readonly roundTriggerHeadOid?: string;
     readonly branchHEAD?: string;
-    readonly output?: { readonly kind?: string; readonly committed?: boolean };
+    readonly output?: {
+      readonly kind?: string;
+      readonly committed?: boolean;
+      readonly alreadySatisfied?: boolean;
+      readonly fixCommitSha?: string;
+    };
   }>,
 ): string | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
@@ -195,14 +208,11 @@ export function lastOnlineReviewFixCommitShaFromLedger(
     ) {
       return entry.fixCommitSha;
     }
-    if (
-      entry.step === "S10" &&
-      entry.output?.kind === "fixer" &&
-      entry.output.committed &&
-      typeof entry.branchHEAD === "string" &&
-      entry.branchHEAD.length > 0
-    ) {
-      return entry.branchHEAD;
+    if (entry.step === "S10") {
+      const fromS10 = fixerLedgerFixCommitSha(entry);
+      if (fromS10 !== undefined) {
+        return fromS10;
+      }
     }
     if (entry.event === "online_review_round_retrigger") {
       const fromRetrigger = latestOnlineReviewRetriggerRecovery([entry])?.fixSha;
@@ -315,7 +325,11 @@ export function slicePostFixVerifyPendingFromMarkerGap(
   ledger: ReadonlyArray<{
     readonly step?: string;
     readonly event?: string;
-    readonly output?: { readonly kind?: string; readonly committed?: boolean };
+    readonly output?: {
+      readonly kind?: string;
+      readonly committed?: boolean;
+      readonly alreadySatisfied?: boolean;
+    };
   }>,
 ): boolean {
   let lastCommittedS10Idx = -1;
@@ -325,8 +339,7 @@ export function slicePostFixVerifyPendingFromMarkerGap(
     if (
       entry.step === "S10" &&
       entry.event === undefined &&
-      entry.output?.kind === "fixer" &&
-      entry.output.committed === true
+      fixerLedgerOutputProceeds(entry.output)
     ) {
       lastCommittedS10Idx = i;
     }
@@ -349,7 +362,12 @@ export function slicePendingRoundTriggerFromFixGap(
     readonly branchHEAD?: string;
     readonly roundTriggerHeadOid?: string;
     readonly ts?: string;
-    readonly output?: { readonly kind?: string; readonly committed?: boolean };
+    readonly output?: {
+      readonly kind?: string;
+      readonly committed?: boolean;
+      readonly alreadySatisfied?: boolean;
+      readonly fixCommitSha?: string;
+    };
   }>,
 ): RoundTrigger | undefined {
   const pairedFixShas = new Set<string>();
@@ -375,18 +393,16 @@ export function slicePendingRoundTriggerFromFixGap(
     }
   }
   for (const entry of ledger) {
+    const sha = fixerLedgerFixCommitSha(entry);
     if (
       entry.step === "S10" &&
       entry.event === undefined &&
-      entry.output?.kind === "fixer" &&
-      entry.output.committed === true &&
-      typeof entry.branchHEAD === "string" &&
-      entry.branchHEAD.length > 0 &&
+      sha !== undefined &&
       typeof entry.ts === "string" &&
       entry.ts.length > 0 &&
-      !fixCommittedShas.has(entry.branchHEAD)
+      !fixCommittedShas.has(sha)
     ) {
-      fixSignals.push({ sha: entry.branchHEAD, ts: entry.ts });
+      fixSignals.push({ sha, ts: entry.ts });
     }
   }
 
@@ -1093,7 +1109,7 @@ export interface OnlineReviewLoopDispatch {
     landing: WorkerLandingPayload,
     round: number,
   ) => Promise<VerifyResult>;
-  readonly dispatchFixer: (landing: WorkerLandingPayload) => Promise<boolean>;
+  readonly dispatchFixer: (landing: WorkerLandingPayload) => Promise<FixerResult>;
   readonly dispatchCleanup: (landing: WorkerLandingPayload) => Promise<boolean>;
   readonly dispatchDocRelease: (landing: WorkerLandingPayload) => Promise<boolean>;
   readonly applySideEffects: (
@@ -1102,8 +1118,14 @@ export interface OnlineReviewLoopDispatch {
     fixingCommitSha?: string,
   ) => VerifyResult;
   readonly retriggerAfterFix: () => void | Promise<void>;
-  /** Resolve the fixing commit SHA after fixer success (post-push HEAD). */
-  readonly resolveFixCommitSha?: () => string | Promise<string>;
+  /**
+   * Resolve the fixing commit SHA after fixer success (post-push HEAD).
+   * When the fixer envelope carries alreadySatisfied.fixCommitSha, that override
+   * is passed so the stage does not re-read git (ADR 0030 envelope-only).
+   */
+  readonly resolveFixCommitSha?: (
+    envelopeFixSha?: string,
+  ) => string | Promise<string>;
 }
 
 export interface OnlineReviewLoopStageResult {
@@ -1206,16 +1228,16 @@ export async function runOnlineReviewLoopStage(
       return { ok: false, terminalState: "round_budget_exhausted", round };
     }
 
-    let committed: boolean;
+    let fixerOutput: FixerResult;
     try {
-      committed = await dispatch.dispatchFixer(landing);
+      fixerOutput = await dispatch.dispatchFixer(landing);
     } catch (err) {
       if (err instanceof OnlineReviewLoopTerminal) {
         throw err;
       }
       return decisionGateFromDispatchInfra(round, "fixer", err);
     }
-    if (!committed) {
+    if (!fixerProceedsToVerify(fixerOutput)) {
       return {
         ok: false,
         terminalState: "decision_gate_raised",
@@ -1225,7 +1247,9 @@ export async function runOnlineReviewLoopStage(
     }
     try {
       lastFixCommitSha =
-        (await dispatch.resolveFixCommitSha?.()) ?? snapshot.headOid;
+        (await dispatch.resolveFixCommitSha?.(
+          fixerEnvelopeFixCommitSha(fixerOutput),
+        )) ?? snapshot.headOid;
     } catch (err) {
       if (err instanceof OnlineReviewLoopTerminal) {
         throw err;
