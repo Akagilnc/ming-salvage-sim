@@ -1696,14 +1696,6 @@ export async function runFamilyOnlineReviewLoop(input: {
           onlineReviewRound: nextRound,
           pr: prUrl,
         });
-        const sha =
-          familyLastFixCommitSha ??
-          loopState.lastFixSha ??
-          retriggered.roundTrigger.headOid;
-        await recordOnlineReviewFixCommitted(input.familyBackend, {
-          familyHeadAfter: sha,
-          pr: prUrl,
-        });
         loopState.round = nextRound;
       }
     },
@@ -1714,12 +1706,10 @@ export async function runFamilyOnlineReviewLoop(input: {
           : (input.ship.prHead ?? "");
       familyLastFixCommitSha = sha;
       loopState.lastFixSha = sha;
-      if (!livePoll) {
-        await recordOnlineReviewFixCommitted(input.familyBackend, {
-          familyHeadAfter: sha,
-          pr: prUrl,
-        });
-      }
+      await recordOnlineReviewFixCommitted(input.familyBackend, {
+        familyHeadAfter: sha,
+        pr: prUrl,
+      });
       return sha;
     },
   },

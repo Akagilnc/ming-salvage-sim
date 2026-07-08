@@ -247,7 +247,7 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
         postFixHead,
       ),
     ).toEqual({ pr, familyHeadAfter: shipHead });
-    // crash after retrigger (fix_committed pending) → still resume
+    // legacy r29 / old ordering: retrigger-only without fix_committed → still resume
     expect(
       familyShippedRecordForReviewLoopResume(
         [...mergedOnly, shipped, retrigger],
