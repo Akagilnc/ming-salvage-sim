@@ -1417,6 +1417,13 @@ const STEP_IDS: ReadonlySet<string> = new Set([
  * flowing through to resumeSessionId in DispatchContext / resumeFor / backend
  * (addresses the deserial path for #709 resumeSessionId sites).
  *
+ * escalationKind (when present) must be string — explicit null / non-string is
+ * corrupt. This closes the documented #709 exemption site at planResume: the
+ * `!== undefined` (vs != null) distinction between absent=legacy-untagged vs
+ * present=tagged (even if unknown value) is only safe once the parse boundary
+ * enforces it (intent-verified is not boundary-enforced until now; symmetric
+ * to the sessionId fix).
+ *
  * Online codex P2: a line such as `null`, `{}`, `42`, or `{"step":"S9"}`
  * `JSON.parse`s fine yet is NOT a ledger entry. Without this guard such a record
  * flows into `findResumeState` → `planResume`, where `lastEntry.step` is read
@@ -1434,6 +1441,12 @@ function isLedgerEntryShape(
   if (typeof step !== "string" || !STEP_IDS.has(step)) return false;
   const sid = (value as { sessionId?: unknown }).sessionId;
   if (sid !== undefined && typeof sid !== "string") return false;
+  const ek = (value as { escalationKind?: unknown }).escalationKind;
+  if (
+    ek !== undefined &&
+    (typeof ek !== "string" || (ek !== "decision" && ek !== "failure"))
+  )
+    return false;
   return true;
 }
 
