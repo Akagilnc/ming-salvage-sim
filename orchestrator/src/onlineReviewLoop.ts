@@ -147,6 +147,58 @@ export function lastOnlineReviewFixCommitShaFromLedger(
   return undefined;
 }
 
+/** Latest persisted round ≥2 freshness anchor from ledger (#600 r25 resume). */
+export function onlineReviewRoundTriggerFromLedger(
+  ledger: ReadonlyArray<{
+    readonly event?: string;
+    readonly roundTriggerHeadOid?: string;
+    readonly roundTriggerAt?: string;
+  }>,
+): RoundTrigger | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.event === "online_review_round_retrigger" &&
+      typeof entry.roundTriggerHeadOid === "string" &&
+      entry.roundTriggerHeadOid.length > 0 &&
+      typeof entry.roundTriggerAt === "string" &&
+      entry.roundTriggerAt.length > 0
+    ) {
+      return buildRoundTrigger(
+        entry.roundTriggerHeadOid,
+        entry.roundTriggerAt,
+      );
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolve the bot-poll freshness anchor for the current online review round.
+ * Round 1 may fall back to the S7 ship ledger timestamp; round ≥2 requires a
+ * persisted re-trigger anchor and never reuses the ship anchor (#600 r25).
+ */
+export function resolveOnlineReviewRoundTrigger(input: {
+  readonly onlineReviewRound: number;
+  readonly persistedRoundTrigger?: RoundTrigger;
+  readonly fixCommitSha?: string;
+  readonly shipPrHead?: string;
+  readonly shipLedgerTriggeredAt?: string;
+}): RoundTrigger {
+  if (input.persistedRoundTrigger !== undefined) {
+    return input.persistedRoundTrigger;
+  }
+  if (input.onlineReviewRound > 1) {
+    throw new Error(
+      "online review round ≥2 requires a persisted round trigger from ledger retrigger",
+    );
+  }
+  return buildRoundTrigger(
+    input.fixCommitSha ?? input.shipPrHead ?? "offline-review-head",
+    input.shipLedgerTriggeredAt,
+  );
+}
+
 /** S7 ship ledger `ts` — round-1 freshness anchor (#600 r9). */
 export function shipLedgerTriggeredAtFromSliceLedger(
   ledger: ReadonlyArray<{

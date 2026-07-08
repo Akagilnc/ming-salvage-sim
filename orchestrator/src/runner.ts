@@ -77,6 +77,8 @@ import {
   offlinePrReviewSnapshot,
   onlineReviewConvergedForHead,
   onlineReviewRoundFromLedger,
+  onlineReviewRoundTriggerFromLedger,
+  resolveOnlineReviewRoundTrigger,
   realBotPollClock,
   reconstructOnlineReviewLandingForResume,
   retriggerBotsAndPoll,
@@ -2000,14 +2002,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         stdio: ["ignore", "pipe", "pipe"],
         encoding: "utf8",
       }).trim();
-    const roundTrigger =
-      lastOnlineReviewRoundTrigger ??
-      buildRoundTrigger(
-        lastOnlineReviewFixCommitSha ??
-          ship.prHead ??
-          "offline-review-head",
-        shipLedgerTriggeredAtFromSliceLedger(ledger),
-      );
+    const roundTrigger = resolveOnlineReviewRoundTrigger({
+      onlineReviewRound,
+      persistedRoundTrigger: lastOnlineReviewRoundTrigger,
+      fixCommitSha: lastOnlineReviewFixCommitSha,
+      shipPrHead: ship.prHead,
+      shipLedgerTriggeredAt: shipLedgerTriggeredAtFromSliceLedger(ledger),
+    });
     const snapshot = await waitForBotQuiescence(ghSh, {
       repo,
       prUrl,
@@ -2552,6 +2553,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     onlineReviewRound = onlineReviewRoundFromLedger(resumeLedger);
     lastOnlineReviewFixCommitSha =
       lastOnlineReviewFixCommitShaFromLedger(resumeLedger);
+    lastOnlineReviewRoundTrigger =
+      onlineReviewRoundTriggerFromLedger(resumeLedger);
 
     // ADR 0030: persisted S4 boundaries are the runner's closure truth. Resume
     // must replay the prior S4 adjudications, because an S6 reviewer may carry an
@@ -3439,6 +3442,33 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   "offline-review-head",
               );
               lastOnlineReviewRoundTrigger = retriggered.roundTrigger;
+              const nextRound = onlineReviewRound + 1;
+              const retriggerMarker = {
+                step: "S10" as const,
+                event: "online_review_round_retrigger" as const,
+                roundTriggerHeadOid: retriggered.roundTrigger.headOid,
+                roundTriggerAt: retriggered.roundTrigger.triggeredAt,
+                onlineReviewRound: nextRound,
+              };
+              ledger.push(retriggerMarker);
+              if (stateDir !== undefined) {
+                try {
+                  await backend.writeLedger(
+                    {
+                      ...retriggerMarker,
+                      sessionId,
+                      prompt_hash: await hashPrompt(promptFile, "S10", backend),
+                      branchHEAD: await resolveBranchHEAD(),
+                      ts: new Date().toISOString(),
+                    },
+                    stateDir,
+                  );
+                } catch (err) {
+                  return await errorTermination(reviewStep, err, {
+                    recordInMemory: false,
+                  });
+                }
+              }
             }
             onlineReviewRound += 1;
           }

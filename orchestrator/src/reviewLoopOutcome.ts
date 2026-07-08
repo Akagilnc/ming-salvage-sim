@@ -64,28 +64,42 @@ function verifyResultSemanticallyConsistent(obj: Record<string, unknown>): boole
 
   const fixKeys = obj.fixMarkedFindingIdentityKeys;
   const dispositions = obj.findingDispositions;
-  const hasFixKeys = Array.isArray(fixKeys) && fixKeys.length > 0;
+  const hasExplicitFixKeys = fixKeys !== undefined;
   const hasDispositions =
     Array.isArray(dispositions) && dispositions.length > 0;
 
-  // Set-consistency (fail-closed regardless of converged): every fix-marked key
-  // must have a matching disposition with action:"fix".
-  if (hasFixKeys && hasDispositions) {
-    if (!isFindingDispositionArray(dispositions)) {
+  // Set-equality when the worker explicitly carries fixMarkedFindingIdentityKeys
+  // (fail-closed regardless of converged): the array and fix-action dispositions
+  // must be the same set — both directions, including empty ([] ↔ no fix
+  // dispositions). Omitted fixMarked keys derive from dispositions only after
+  // validation passes (host-side fixMarkedKeysFromVerify).
+  if (hasExplicitFixKeys) {
+    if (!isStringArray(fixKeys)) {
       return false;
     }
+    if (hasDispositions && !isFindingDispositionArray(dispositions)) {
+      return false;
+    }
+    const markedKeys = new Set(fixKeys);
     const fixDispositionKeys = new Set(
-      dispositions
+      (hasDispositions ? dispositions : [])
         .filter((d) => d.action === "fix")
         .map((d) => d.identityKey),
     );
-    if (!fixKeys.every((key) => fixDispositionKeys.has(key))) {
+    if (markedKeys.size !== fixDispositionKeys.size) {
       return false;
+    }
+    for (const key of markedKeys) {
+      if (!fixDispositionKeys.has(key)) {
+        return false;
+      }
     }
   }
 
   if (obj.converged !== true) return true;
-  if (hasFixKeys) return false;
+  if (hasExplicitFixKeys && isStringArray(fixKeys) && fixKeys.length > 0) {
+    return false;
+  }
   if (
     Array.isArray(dispositions) &&
     dispositions.some(

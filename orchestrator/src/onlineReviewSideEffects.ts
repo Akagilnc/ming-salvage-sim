@@ -295,54 +295,43 @@ function deferReplyBody(
   return `deferred: ${reason}\nTracked issue: ${issueUrl}`;
 }
 
+type DeferredSideEffectPlan = {
+  readonly disposition: OnlineReviewFindingDisposition;
+  readonly title: string;
+  readonly issueBody: string;
+  readonly replyBodyTemplate: string;
+  readonly commentId: string;
+};
+
+type ReplySideEffectPlan = {
+  readonly commentId: string;
+  readonly body: string;
+};
+
+type ResolveSideEffectPlan = {
+  readonly threadId: string;
+  readonly commentId: string;
+  readonly nodeId: string;
+  readonly fixedReply: string;
+  readonly needsFixedReply: boolean;
+};
+
+type VerifySideEffectPlan = {
+  readonly deferred: ReadonlyArray<DeferredSideEffectPlan>;
+  readonly replies: ReadonlyArray<ReplySideEffectPlan>;
+  readonly resolves: ReadonlyArray<ResolveSideEffectPlan>;
+};
+
 /**
- * Apply GitHub side effects from a verify verdict: defer → tracked issue + reply,
- * reject/defer/fixed replies with evidence, resolve after recheck confirmation.
+ * Validate and normalize all disposition/thread mappings before any GitHub write.
+ * Fail-closed: invalid thread ids in the batch must not create partial side effects.
  */
-export function applyVerifySideEffects(
+export function planVerifySideEffects(
   input: ApplyVerifySideEffectsInput,
-): ApplyVerifySideEffectsResult {
-  const { sh, repo, prUrl, verify, landingThreads } = input;
-  const { prNumber } = parsePrRef(prUrl, repo);
-  const deferredIssueUrls: string[] = [];
-  const repliesPosted: OnlineReviewThreadReply[] = [];
-  const threadsResolved: string[] = [];
+): VerifySideEffectPlan {
+  const { repo, verify, landingThreads } = input;
   const existingReplies = replyByThreadId(verify);
-
-  for (const disposition of deferDispositions(verify)) {
-    const title = `Deferred online review finding: ${disposition.identityKey}`;
-    const body =
-      disposition.reason ??
-      `Deferred from online review loop for thread ${disposition.threadId}`;
-    const issueUrl = createDeferredTrackingIssue(sh, repo, title, body);
-    deferredIssueUrls.push(issueUrl);
-    const replyBody = deferReplyBody(
-      findReplyForThread(
-        disposition.threadId,
-        existingReplies,
-        verify,
-        landingThreads,
-      )?.body,
-      disposition,
-      issueUrl,
-    );
-    const commentId = restCommentIdForReply(disposition.threadId, landingThreads);
-    replyToReviewThread(sh, repo, prNumber, commentId, replyBody);
-    repliesPosted.push({ threadId: commentId, body: replyBody });
-  }
-
-  for (const reply of verify.threadReplies ?? []) {
-    if (
-      deferDispositions(verify).some((d) =>
-        deferDispositionMatchesReplyThread(d, reply.threadId, landingThreads),
-      )
-    ) {
-      continue;
-    }
-    const commentId = restCommentIdForReply(reply.threadId, landingThreads);
-    replyToReviewThread(sh, repo, prNumber, commentId, reply.body);
-    repliesPosted.push({ threadId: commentId, body: reply.body });
-  }
+  const defers = deferDispositions(verify);
 
   if (
     (verify.threadsToResolve?.length ?? 0) > 0 &&
@@ -361,27 +350,127 @@ export function applyVerifySideEffects(
     );
   }
 
+  const deferred: DeferredSideEffectPlan[] = [];
+  for (const disposition of defers) {
+    const commentId = restCommentIdForReply(disposition.threadId, landingThreads);
+    const issueBody =
+      disposition.reason ??
+      `Deferred from online review loop for thread ${disposition.threadId}`;
+    const existingReplyBody = findReplyForThread(
+      disposition.threadId,
+      existingReplies,
+      verify,
+      landingThreads,
+    )?.body;
+    deferred.push({
+      disposition,
+      title: `Deferred online review finding: ${disposition.identityKey}`,
+      issueBody,
+      replyBodyTemplate: existingReplyBody ?? "",
+      commentId,
+    });
+  }
+
+  const replies: ReplySideEffectPlan[] = [];
+  for (const reply of verify.threadReplies ?? []) {
+    if (
+      defers.some((d) =>
+        deferDispositionMatchesReplyThread(d, reply.threadId, landingThreads),
+      )
+    ) {
+      continue;
+    }
+    replies.push({
+      commentId: restCommentIdForReply(reply.threadId, landingThreads),
+      body: reply.body,
+    });
+  }
+
+  const fixingCommitSha = input.fixingCommitSha;
+  const resolves: ResolveSideEffectPlan[] = [];
   for (const threadId of verify.threadsToResolve ?? []) {
-    const fixingCommitSha = input.fixingCommitSha!;
     const commentId = restCommentIdForReply(threadId, landingThreads);
     const nodeId = graphqlNodeIdForResolve(threadId, landingThreads);
     const fixedReply = `fixed: https://github.com/${repo}/commit/${fixingCommitSha}`;
-    const hasEvidenceReply = repliesPosted.some(
-      (r) =>
-        (r.threadId === commentId ||
+    const hasEvidenceReply =
+      replies.some(
+        (r) =>
+          (r.commentId === commentId ||
+            threadIdsReferToSameLandingThread(
+              r.commentId,
+              threadId,
+              landingThreads,
+            )) &&
+          isFixedEvidenceReplyForCommit(r.body, repo, fixingCommitSha!),
+      ) ||
+      deferred.some(
+        (d) =>
           threadIdsReferToSameLandingThread(
-            r.threadId,
+            d.commentId,
             threadId,
             landingThreads,
-          )) &&
-        isFixedEvidenceReplyForCommit(r.body, repo, fixingCommitSha),
+          ) &&
+          isFixedEvidenceReplyForCommit(
+            d.replyBodyTemplate,
+            repo,
+            fixingCommitSha!,
+          ),
+      );
+    resolves.push({
+      threadId,
+      commentId,
+      nodeId,
+      fixedReply,
+      needsFixedReply: !hasEvidenceReply,
+    });
+  }
+
+  return { deferred, replies, resolves };
+}
+
+/**
+ * Apply GitHub side effects from a verify verdict: defer → tracked issue + reply,
+ * reject/defer/fixed replies with evidence, resolve after recheck confirmation.
+ */
+export function applyVerifySideEffects(
+  input: ApplyVerifySideEffectsInput,
+): ApplyVerifySideEffectsResult {
+  const { sh, repo, prUrl, landingThreads } = input;
+  const { prNumber } = parsePrRef(prUrl, repo);
+  const plan = planVerifySideEffects(input);
+  const deferredIssueUrls: string[] = [];
+  const repliesPosted: OnlineReviewThreadReply[] = [];
+  const threadsResolved: string[] = [];
+
+  for (const item of plan.deferred) {
+    const issueUrl = createDeferredTrackingIssue(
+      sh,
+      repo,
+      item.title,
+      item.issueBody,
     );
-    if (!hasEvidenceReply) {
-      replyToReviewThread(sh, repo, prNumber, commentId, fixedReply);
-      repliesPosted.push({ threadId: commentId, body: fixedReply });
+    deferredIssueUrls.push(issueUrl);
+    const replyBody = deferReplyBody(
+      item.replyBodyTemplate.length > 0 ? item.replyBodyTemplate : undefined,
+      item.disposition,
+      issueUrl,
+    );
+    replyToReviewThread(sh, repo, prNumber, item.commentId, replyBody);
+    repliesPosted.push({ threadId: item.commentId, body: replyBody });
+  }
+
+  for (const reply of plan.replies) {
+    replyToReviewThread(sh, repo, prNumber, reply.commentId, reply.body);
+    repliesPosted.push({ threadId: reply.commentId, body: reply.body });
+  }
+
+  for (const item of plan.resolves) {
+    if (item.needsFixedReply) {
+      replyToReviewThread(sh, repo, prNumber, item.commentId, item.fixedReply);
+      repliesPosted.push({ threadId: item.commentId, body: item.fixedReply });
     }
-    resolveReviewThread(sh, repo, prNumber, nodeId);
-    threadsResolved.push(nodeId);
+    resolveReviewThread(sh, repo, prNumber, item.nodeId);
+    threadsResolved.push(item.nodeId);
   }
 
   return { deferredIssueUrls, repliesPosted, threadsResolved };
