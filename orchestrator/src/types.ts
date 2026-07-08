@@ -892,6 +892,14 @@ export interface FixerResult {
   readonly kind: "fixer";
   /** Whether the fixer produced commits for the requested repairs. */
   readonly committed: boolean;
+  /**
+   * When `committed` is false: assigned fix-marked findings are already resolved
+   * on the current branch (e.g. a prior crashed attempt landed the fix).
+   * The stage proceeds to verify using {@link fixCommitSha}, not decision_gate.
+   */
+  readonly alreadySatisfied?: boolean;
+  /** Branch HEAD the fixer sees when {@link alreadySatisfied} is true. */
+  readonly fixCommitSha?: string;
 }
 
 /**

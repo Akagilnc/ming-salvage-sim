@@ -32,6 +32,7 @@ import {
 } from "./validate.js";
 import { MAX_ONLINE_REVIEW_ROUNDS } from "./onlineReviewLoop.js";
 import {
+  fixerProceedsToVerify,
   isValidCleanupResult,
   isValidDocReleaseResult,
   isValidFixerResult,
@@ -201,9 +202,9 @@ export function route(ctx: RouteContext): RouteDecision {
       if (!isValidFixerResult(ctx.output)) {
         return { kind: "handoff", status: "error" };
       }
-      // fixer.md allows committed:false as a contract-valid "nothing to fix"
-      // outcome — park at the online-review decision gate, not S8(error).
-      if (!ctx.output.committed) {
+      // fixer.md: committed:false + alreadySatisfied → fresh verify; genuinely
+      // not fixed → decision gate (not S8(error)).
+      if (!fixerProceedsToVerify(ctx.output)) {
         return {
           kind: "handoff",
           status: "escalate",

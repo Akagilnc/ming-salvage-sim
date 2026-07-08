@@ -3643,7 +3643,16 @@ export function parseFixerOutcome(
       reason: "fixer worker <fixer> tag did not satisfy fixerOutputSchema (extra keys or wrong types)",
     };
   }
-  const candidate: FixerResult = { kind: "fixer", committed: shape.data.committed };
+  const candidate: FixerResult = {
+    kind: "fixer",
+    committed: shape.data.committed,
+    ...(shape.data.alreadySatisfied === true
+      ? {
+          alreadySatisfied: true,
+          fixCommitSha: shape.data.fixCommitSha,
+        }
+      : {}),
+  };
   if (!isValidFixerResult(candidate)) {
     return { kind: "malformed", reason: "fixer worker <fixer> tag did not satisfy isValidFixerResult guard" };
   }
