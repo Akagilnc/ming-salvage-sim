@@ -1497,7 +1497,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     ).toBe(1);
   });
 
-  it("pin r29: crash after retrigger-only marker resumes S9 with round+fix SHA", async () => {
+  it("pin r29: crash after retrigger-only marker resumes S9 with round (no fix SHA)", async () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const retriggerTs = "2026-07-08T13:00:00.000Z";
     const prior = [
@@ -1532,7 +1532,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       },
     ];
     expect(onlineReviewRoundFromLedger(prior)).toBe(2);
-    expect(lastOnlineReviewFixCommitShaFromLedger(prior)).toBe(fixSha);
+    expect(lastOnlineReviewFixCommitShaFromLedger(prior)).toBeUndefined();
 
     const backend = new ReviewLoopResumeBackend({
       worktree: WORKTREE,
