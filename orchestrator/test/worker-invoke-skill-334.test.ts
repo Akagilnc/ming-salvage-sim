@@ -514,7 +514,7 @@ class ReviewWorkerBackend implements Backend {
   }) {
     void input;
     return {
-      prUrl: "https://github.com/o/r/pull/334",
+      prUrl: "pr://slice/offline-334",
       headOid: "deadbeef",
       totalFindingCount: 0,
       quiescent: true,
@@ -701,7 +701,12 @@ describe("#336 cmr S336 r4 — the terminal single-slice S7 gate re-asserts the 
   it("a legitimate pr_opened ship with a real pr URL ⇒ success", async () => {
     const status = await run({
       kind: "completed",
-      output: { kind: "ship", branch: wtBranch, status: "pr_opened", pr: "https://gh/pr/1" },
+      output: {
+        kind: "ship",
+        branch: wtBranch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-334",
+      },
     });
     expect(status).toBe("success");
   });

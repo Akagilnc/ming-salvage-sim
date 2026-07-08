@@ -1348,8 +1348,10 @@ export interface Backend {
    * the S8 handoff entry, BEFORE returning the final result.
    */
   /**
-   * Optional (#600): host-side bot polling for the online review loop. When absent
-   * the runner synthesizes a quiescent empty snapshot for test/spy backends.
+   * Optional (#600): inject bot-poll results for the online review loop in explicit
+   * offline/test handles only (`pr://…` + `ORCHESTRATOR_OFFLINE_REVIEW_POLL`). When
+   * absent the runner uses live `gh` polling or `offlinePrReviewSnapshot` under the
+   * same central admissibility gate — never for live GitHub PR URLs outside test mode.
    */
   pollOnlineReviewState?(input: {
     readonly repo: string;

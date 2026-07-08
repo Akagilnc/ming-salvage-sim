@@ -263,7 +263,7 @@ class ResumeBackend implements Backend {
   }) {
     void input;
     return {
-      prUrl: "https://github.com/o/r/pull/255",
+      prUrl: "pr://slice/offline-255",
       headOid: "deadbeefcommitsha",
       totalFindingCount: 0,
       quiescent: true,
@@ -1325,7 +1325,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         kind: "ship",
         branch: WORKTREE.branch,
         status: "pr_opened",
-        pr: "https://github.com/o/r/pull/255",
+        pr: "pr://slice/offline-255",
       }),
       entry("S9", { kind: "verify", converged: false }),
       entry("S10", { kind: "fixer", committed: true }),

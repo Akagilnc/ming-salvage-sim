@@ -98,7 +98,7 @@ class DispatchBackend implements Backend {
   }) {
     void input;
     return {
-      prUrl: "https://github.com/o/r/pull/331",
+      prUrl: "pr://slice/offline-331",
       headOid: "deadbeef",
       totalFindingCount: 0,
       quiescent: true,
@@ -150,7 +150,7 @@ class DispatchBackend implements Backend {
         kind: "ship",
         branch: this.worktree.branch,
         status: "pr_opened",
-        pr: "https://github.com/o/r/pull/331",
+        pr: "pr://slice/offline-331",
       },
     };
   }
@@ -334,7 +334,7 @@ describe("#596 S9 (verify) worker must return a valid verify payload — finding
           kind: "ship",
           branch: this.worktree.branch,
           status: "pr_opened",
-          pr: "https://github.com/o/r/pull/331",
+          pr: "pr://slice/offline-331",
         },
       };
     }
