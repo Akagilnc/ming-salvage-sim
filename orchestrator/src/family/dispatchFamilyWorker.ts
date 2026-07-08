@@ -35,6 +35,7 @@ import {
   modelForSlot,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
+import { offlineReviewLoopDispatchAdmissible } from "../evidenceAdmissibility.js";
 import { skeletonReviewLoopWorkerResult } from "../reviewLoopOutcome.js";
 import type {
   FamilyBackend,
@@ -260,12 +261,20 @@ export async function legacyDispatchFamilyWorker(
     };
   }
 
-  // #596 skeleton: deterministic no-op stubs for the family review-loop workers
-  // when the backend has no real implementation. Shared resolver (single-slice
-  // + family + spy backends return the SAME stub verdicts).
+  // #596 skeleton: deterministic no-op stubs for explicit offline/test contexts
+  // only (#600 r5 — same gate as verifyCmr dispatchFamilyReviewWorker: a failed or
+  // unavailable primary path must NOT synthesize convergence).
   const skeletonResult = skeletonReviewLoopWorkerResult(spec.kind);
   if (skeletonResult !== undefined) {
-    return skeletonResult;
+    if (offlineReviewLoopDispatchAdmissible(ctx)) {
+      return skeletonResult;
+    }
+    return {
+      kind: "failed",
+      reason:
+        `family ${spec.kind} worker unavailable: no dispatchWorker seam and ` +
+        `offline skeleton synthesis inadmissible for PR ${ctx.prUrl ?? "(missing)"}`,
+    };
   }
 
   throw new Error(
