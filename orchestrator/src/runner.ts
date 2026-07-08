@@ -1973,6 +1973,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           threads: landing.threads.map((t) => ({
             id: t.id,
             threadNodeId: t.threadNodeId ?? t.id,
+            path: t.path,
+            line: t.line,
             body: t.body,
             authorLogin: t.authorLogin ?? "unknown",
             isResolved: t.isResolved,

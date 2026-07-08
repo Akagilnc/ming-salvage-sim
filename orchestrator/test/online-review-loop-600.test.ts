@@ -318,6 +318,36 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
     );
   });
 
+  it("pin r24: buildOnlineReviewLanding threads carry path/line from poll snapshot", () => {
+    const calls: string[] = [];
+    const sh = ghFixture({ calls });
+    const snap = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
+    });
+    const landing = buildOnlineReviewLanding(
+      snap,
+      {
+        kind: "ship",
+        branch: "feat/x",
+        status: "pr_opened",
+        pr: "https://github.com/o/r/pull/42",
+        prHead: "headsha1",
+      },
+      1,
+    );
+    expect(landing.onlineReviewSnapshot?.threads[0]).toEqual(
+      expect.objectContaining({
+        id: "4242",
+        threadNodeId: "PRRT_kwDOExampleThread",
+        path: "src/a.ts",
+        line: 10,
+      }),
+    );
+  });
+
   it("pollPrReviewState collects bot legs and marks quiescent when all complete/dropped", () => {
     const calls: string[] = [];
     const sh = ghFixture({ calls });
@@ -544,6 +574,19 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
       isValidVerifyResult({
         kind: "verify",
         converged: true,
+        fixMarkedFindingIdentityKeys: ["t:1"],
+      }),
+    ).toBe(false);
+  });
+
+  it("pin r24: rejects contradictory converged:false when fixMarked keys disagree with dispositions", () => {
+    expect(
+      isValidVerifyResult({
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "t:1", threadId: "1", action: "reject", reason: "fp" },
+        ],
         fixMarkedFindingIdentityKeys: ["t:1"],
       }),
     ).toBe(false);
@@ -889,6 +932,53 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
   const LANDING_THREAD_PAIR = [
     { id: "4242", threadNodeId: "PRRT_kwDOExampleThread" },
   ] as const;
+
+  it("pin r24: defer disposition node id + reply comment id for same thread → deduped", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      const cmd = args.join(" ");
+      if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
+        return "https://github.com/o/r/issues/55";
+      }
+      if (cmd.includes("/replies")) {
+        return JSON.stringify(GITHUB_REPLY_SHAPE);
+      }
+      return JSON.stringify(GITHUB_REPLY_SHAPE);
+    };
+    const result = applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      landingThreads: [...LANDING_THREAD_PAIR],
+      verify: {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          {
+            identityKey: "t:defer",
+            threadId: "PRRT_kwDOExampleThread",
+            action: "defer",
+            reason: "needs design",
+          },
+        ],
+        threadReplies: [
+          {
+            threadId: "4242",
+            body: "deferred: needs design — tracked issue will follow",
+          },
+        ],
+      },
+    });
+    expect(result.deferredIssueUrls).toEqual(["https://github.com/o/r/issues/55"]);
+    expect(
+      calls.filter((c) => c.includes("repos/o/r/pulls/42/comments/4242/replies")),
+    ).toHaveLength(1);
+    expect(result.repliesPosted).toHaveLength(1);
+    expect(result.repliesPosted[0]?.body).toContain(
+      "https://github.com/o/r/issues/55",
+    );
+  });
 
   it("pin r23: worker echoes node id → reply posts via REST comment id from landing", () => {
     const calls: string[] = [];
@@ -2696,15 +2786,37 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     try {
       class OfflineHookBackend extends HookPollBackend {
+        readonly verifyLandings: WorkerLandingPayload[] = [];
+
         override async pollOnlineReviewState(input: {
           repo: string;
           prUrl: string;
           pollCount: number;
         }): Promise<OnlineReviewLandingSnapshot> {
           this.hookCalls.push(input.prUrl);
-          return { ...greenHookSnapshot(), prUrl: offlinePr };
+          return {
+            ...greenHookSnapshot(),
+            prUrl: offlinePr,
+            threads: [
+              {
+                id: "4242",
+                threadNodeId: "PRRT_kwDOExampleThread",
+                path: "src/offline.ts",
+                line: 42,
+                body: "offline hook thread",
+                isResolved: false,
+              },
+            ],
+          };
         }
-        override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        override async dispatchWorker(
+          spec: WorkerSpec,
+          _ctx?: DispatchContext,
+          landing?: WorkerLandingPayload,
+        ): Promise<WorkerResult> {
+          if (spec.kind === "verify" && landing !== undefined) {
+            this.verifyLandings.push(landing);
+          }
           if (spec.kind === "ship") {
             return {
               kind: "completed",
@@ -2723,6 +2835,14 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
       const result = await runOrchestrator({ issueNumber: 600, backend });
       expect(result.status).toBe("success");
       expect(backend.hookCalls).toEqual([offlinePr]);
+      expect(backend.verifyLandings[0]?.onlineReviewSnapshot?.threads[0]).toEqual(
+        expect.objectContaining({
+          id: "4242",
+          threadNodeId: "PRRT_kwDOExampleThread",
+          path: "src/offline.ts",
+          line: 42,
+        }),
+      );
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

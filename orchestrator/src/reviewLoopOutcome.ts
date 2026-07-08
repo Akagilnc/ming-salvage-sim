@@ -61,10 +61,31 @@ function verifyResultSemanticallyConsistent(obj: Record<string, unknown>): boole
   ) {
     return false;
   }
-  if (obj.converged !== true) return true;
+
   const fixKeys = obj.fixMarkedFindingIdentityKeys;
-  if (Array.isArray(fixKeys) && fixKeys.length > 0) return false;
   const dispositions = obj.findingDispositions;
+  const hasFixKeys = Array.isArray(fixKeys) && fixKeys.length > 0;
+  const hasDispositions =
+    Array.isArray(dispositions) && dispositions.length > 0;
+
+  // Set-consistency (fail-closed regardless of converged): every fix-marked key
+  // must have a matching disposition with action:"fix".
+  if (hasFixKeys && hasDispositions) {
+    if (!isFindingDispositionArray(dispositions)) {
+      return false;
+    }
+    const fixDispositionKeys = new Set(
+      dispositions
+        .filter((d) => d.action === "fix")
+        .map((d) => d.identityKey),
+    );
+    if (!fixKeys.every((key) => fixDispositionKeys.has(key))) {
+      return false;
+    }
+  }
+
+  if (obj.converged !== true) return true;
+  if (hasFixKeys) return false;
   if (
     Array.isArray(dispositions) &&
     dispositions.some(

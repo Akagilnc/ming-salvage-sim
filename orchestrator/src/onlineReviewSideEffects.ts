@@ -234,6 +234,42 @@ function replyByThreadId(
   return map;
 }
 
+function findReplyForThread(
+  threadId: string,
+  replies: Map<string, OnlineReviewThreadReply>,
+  verify: VerifyResult,
+  landingThreads: ReadonlyArray<LandingThreadRef> | undefined,
+): OnlineReviewThreadReply | undefined {
+  const direct = replies.get(threadId);
+  if (direct !== undefined) {
+    return direct;
+  }
+  for (const reply of verify.threadReplies ?? []) {
+    if (
+      threadIdsReferToSameLandingThread(
+        reply.threadId,
+        threadId,
+        landingThreads,
+      )
+    ) {
+      return reply;
+    }
+  }
+  return undefined;
+}
+
+function deferDispositionMatchesReplyThread(
+  disposition: OnlineReviewFindingDisposition,
+  replyThreadId: string,
+  landingThreads: ReadonlyArray<LandingThreadRef> | undefined,
+): boolean {
+  return threadIdsReferToSameLandingThread(
+    disposition.threadId,
+    replyThreadId,
+    landingThreads,
+  );
+}
+
 function isFixedEvidenceReplyForCommit(
   body: string,
   repo: string,
@@ -281,7 +317,12 @@ export function applyVerifySideEffects(
     const issueUrl = createDeferredTrackingIssue(sh, repo, title, body);
     deferredIssueUrls.push(issueUrl);
     const replyBody = deferReplyBody(
-      existingReplies.get(disposition.threadId)?.body,
+      findReplyForThread(
+        disposition.threadId,
+        existingReplies,
+        verify,
+        landingThreads,
+      )?.body,
       disposition,
       issueUrl,
     );
@@ -291,7 +332,11 @@ export function applyVerifySideEffects(
   }
 
   for (const reply of verify.threadReplies ?? []) {
-    if (deferDispositions(verify).some((d) => d.threadId === reply.threadId)) {
+    if (
+      deferDispositions(verify).some((d) =>
+        deferDispositionMatchesReplyThread(d, reply.threadId, landingThreads),
+      )
+    ) {
       continue;
     }
     const commentId = restCommentIdForReply(reply.threadId, landingThreads);
