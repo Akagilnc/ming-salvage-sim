@@ -2669,6 +2669,49 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     expect(lastOnlineReviewFixCommitShaFromFamilyLedger([retrigger])).toBe(fixSha);
   });
 
+  it("pin r31: multi-round crash gap uses max(fixCommitted+1, retrigger round) symmetrically", () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const round1FixCommitted = {
+      step: "S10",
+      event: "online_review_fix_committed" as const,
+      fixCommitSha: fixSha,
+      onlineReviewRound: 1,
+      ts: fixTs,
+    };
+    const round3Retrigger = {
+      step: "S10",
+      event: "online_review_round_retrigger" as const,
+      roundTriggerHeadOid: fixSha,
+      roundTriggerAt: retriggerTs,
+      onlineReviewRound: 3,
+      ts: retriggerTs,
+    };
+    const sliceLedger = [round1FixCommitted, round3Retrigger];
+    expect(onlineReviewRoundFromLedger(sliceLedger)).toBe(3);
+
+    const familyLedger: FamilyLedgerEntry[] = [
+      {
+        status: "online_review_fix_committed",
+        event: "online_review_fix_committed",
+        phase: "final",
+        familyHeadAfter: fixSha,
+        ts: fixTs,
+      },
+      {
+        status: "online_review_round_retrigger",
+        event: "online_review_round_retrigger",
+        phase: "final",
+        roundTriggerHeadOid: fixSha,
+        roundTriggerAt: retriggerTs,
+        onlineReviewRound: 3,
+        ts: retriggerTs,
+      },
+    ];
+    expect(onlineReviewRoundFromFamilyLedger(familyLedger)).toBe(3);
+  });
+
   it("pin r26: family ledger restores round/trigger/fix SHA symmetrically to single-slice", () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const familyLedger: FamilyLedgerEntry[] = [

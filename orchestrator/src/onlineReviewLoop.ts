@@ -157,10 +157,10 @@ export function onlineReviewRoundFromLedger(
   const fixCommittedMarkers = ledger.filter(
     (e) => e.event === "online_review_fix_committed",
   ).length;
-  if (fixCommittedMarkers > 0) {
-    return fixCommittedMarkers + 1;
-  }
   const retriggerRecovery = latestOnlineReviewRetriggerRecovery(ledger);
+  if (fixCommittedMarkers > 0) {
+    return Math.max(fixCommittedMarkers + 1, retriggerRecovery?.round ?? 0);
+  }
   if (retriggerRecovery?.round !== undefined) {
     return retriggerRecovery.round;
   }
@@ -426,10 +426,10 @@ export function onlineReviewRoundFromFamilyLedger(
       e.status === "online_review_fix_committed" &&
       e.event === "online_review_fix_committed",
   ).length;
-  if (completedFixerRounds > 0) {
-    return completedFixerRounds + 1;
-  }
   const retriggerRecovery = latestOnlineReviewRetriggerRecovery(entries);
+  if (completedFixerRounds > 0) {
+    return Math.max(completedFixerRounds + 1, retriggerRecovery?.round ?? 0);
+  }
   if (retriggerRecovery?.round !== undefined) {
     return retriggerRecovery.round;
   }
