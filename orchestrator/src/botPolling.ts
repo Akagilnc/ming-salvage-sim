@@ -30,9 +30,18 @@ export type OnlineReviewBotId = (typeof ONLINE_REVIEW_BOT_IDS)[number];
 export const BOT_POLL_INTERVAL_MS = 120_000;
 export const BOT_OVERDUE_POLL_COUNT = 5;
 
-/** Manual re-trigger comment posted for Sourcery / Codex / Gemini after a fix push. */
+/**
+ * Manual re-trigger comment posted for Sourcery / Codex / Gemini after a fix push.
+ * Contract: wiki/concepts/pr-review-loop.md (authoritative per ADR 0061).
+ */
 export const BOT_RETRIGGER_COMMENT =
-  "@sourcery-ai review\n@chatgpt-codex-connector review\n@gemini-code-assist review";
+  "@sourcery-ai review\n@codex review\n@gemini-code-assist please review";
+
+/**
+ * GitHub reaction `content` values that signal bot completion/ack — not actionable
+ * findings (wiki: Codex PR `+1` is an approval verdict; `eyes` is an ACK).
+ */
+export const BOT_REACTION_ACK_CONTENT = new Set(["+1", "eyes"]);
 
 export type BotLegStatus =
   | { readonly state: "pending" }
@@ -436,9 +445,20 @@ function countBotFindings(
       continue;
     }
     const content = (reaction.content ?? "").trim();
-    if (content.length > 0) count += 1;
+    if (content.length > 0 && !BOT_REACTION_ACK_CONTENT.has(content)) {
+      count += 1;
+    }
   }
   return count;
+}
+
+/** True when every admissible head-correlated check-run completed successfully. */
+export function checkRunsConverged(
+  runs: ReadonlyArray<CheckRunSnapshot>,
+): boolean {
+  return runs.every(
+    (run) => run.status === "completed" && run.conclusion === "success",
+  );
 }
 
 function resolveBotStatuses(
@@ -618,7 +638,12 @@ export function pollPrReviewState(
     `repos/${repo}/pulls/${prNumber}/reviews`,
   ) as BotReview[];
   const threads = fetchReviewThreadsFromGraphql(sh, repo, prNumber);
-  const reactions: BotReaction[] = [];
+  const reactions: BotReaction[] = [
+    ...(paginateGhApi(
+      sh,
+      `repos/${repo}/issues/${prNumber}/reactions`,
+    ) as BotReaction[]),
+  ];
   for (const comment of issueComments) {
     if (comment.id === undefined) continue;
     const raw = paginateGhApi(

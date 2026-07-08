@@ -526,6 +526,7 @@ class ReviewWorkerBackend implements Backend {
       },
       droppedBots: [],
       threads: [],
+      checkRuns: [],
     };
   }
 

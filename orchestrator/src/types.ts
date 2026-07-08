@@ -606,6 +606,14 @@ export interface OnlineReviewLandingSnapshot {
     readonly headOid?: string;
     readonly authorLogin?: string;
   }>;
+  /** Head-correlated CI check-runs for verify default-deny (#600 / ADR 0061). */
+  readonly checkRuns: ReadonlyArray<{
+    readonly id: number;
+    readonly name: string;
+    readonly headSha: string;
+    readonly status: string;
+    readonly conclusion?: string;
+  }>;
 }
 
 export interface WorkerLandingPayload {

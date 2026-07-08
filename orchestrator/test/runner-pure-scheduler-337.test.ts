@@ -141,6 +141,7 @@ class SeamOnlyBackend implements Backend {
       },
       droppedBots: [],
       threads: [],
+      checkRuns: [],
     };
   }
 

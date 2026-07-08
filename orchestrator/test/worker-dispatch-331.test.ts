@@ -110,6 +110,7 @@ class DispatchBackend implements Backend {
       },
       droppedBots: [],
       threads: [],
+      checkRuns: [],
     };
   }
 
