@@ -25,6 +25,7 @@
 
 import { describe, expect, it } from "vitest";
 import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../src/dispatchRetry.js";
+import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import { runOrchestrator } from "../src/runner.js";
 import { dispatchFamilyWorker } from "../src/family/dispatchFamilyWorker.js";
 import { runVerifyCmr } from "../src/family/verifyCmr.js";
@@ -34,6 +35,7 @@ import type {
   DispatchContext,
   IssueMeta,
   IssueSnapshot,
+  OnlineReviewLandingSnapshot,
   StepOutput,
   WorkerLandingPayload,
   WorkerResult,
@@ -82,6 +84,20 @@ abstract class RoleRetryBackend implements Backend {
   }
   async push(): Promise<void> {}
   async writeLedger(): Promise<void> {}
+  async pollOnlineReviewState(input: {
+    repo: string;
+    prUrl: string;
+    pollCount: number;
+  }): Promise<OnlineReviewLandingSnapshot> {
+    void input;
+    return {
+      prUrl: "https://example.com/pr/601",
+      headOid: "deadbeef",
+      totalFindingCount: 0,
+      quiescent: true,
+      threads: [],
+    };
+  }
   abstract dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
@@ -96,6 +112,10 @@ abstract class RoleRetryBackend implements Backend {
  * fixtures share one tail, not a copy each.
  */
 function cleanSuccessTail(spec: WorkerSpec): WorkerResult {
+  const reviewLoop = skeletonReviewLoopWorkerResult(spec.kind);
+  if (reviewLoop !== undefined) {
+    return reviewLoop;
+  }
   if (spec.kind === "reviewer") {
     return { kind: "completed", output: { kind: "reviewer", findings: [] } };
   }

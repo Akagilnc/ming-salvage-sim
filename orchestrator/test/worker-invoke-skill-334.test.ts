@@ -471,6 +471,20 @@ class ReviewWorkerBackend implements Backend {
     throw new Error("push should not be called directly (#334)");
   }
   async writeLedger(): Promise<void> {}
+  async pollOnlineReviewState(input: {
+    repo: string;
+    prUrl: string;
+    pollCount: number;
+  }) {
+    void input;
+    return {
+      prUrl: "https://github.com/o/r/pull/334",
+      headOid: "deadbeef",
+      totalFindingCount: 0,
+      quiescent: true,
+      threads: [],
+    };
+  }
 
   async dispatchWorker(
     spec: WorkerSpec,
@@ -550,10 +564,6 @@ describe("#334 ADR 0030 worker routing", () => {
       "S5:coder:/tdd",
       "S6:reviewer:/code-review",
       "S7:ship:gstack-ship",
-      "S9:verify:/verify",
-      "S10:fixer:/fixer",
-      "S11:cleanup:/cleanup",
-      "S12:docRelease:/doc-release",
     ]);
   });
 });

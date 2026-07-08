@@ -362,7 +362,18 @@ export interface ContinueFixingEvent {
   readonly reason?: string;
 }
 
-export type LedgerBookkeepingEvent = EscalationAnswerEvent | ContinueFixingEvent;
+/** Phase-level marker: online bot review loop converged for a PR head (#600). */
+export interface OnlineReviewConvergedEvent {
+  readonly event: "online_review_converged";
+  readonly prUrl: string;
+  readonly prHead: string;
+  readonly round: number;
+}
+
+export type LedgerBookkeepingEvent =
+  | EscalationAnswerEvent
+  | ContinueFixingEvent
+  | OnlineReviewConvergedEvent;
 
 /**
  * The structured output of any worker step.
@@ -547,6 +558,21 @@ export interface WorkerSpec {
  * for a fate decision — it only搬运s them into the landing file the coder-fix
  * worker reads. DispatchContext keeps ONLY the identity keys + count.
  */
+/** Bot snapshot landing content for online review verify/fixer workers (#600). */
+export interface OnlineReviewLandingSnapshot {
+  readonly prUrl: string;
+  readonly headOid: string;
+  readonly totalFindingCount: number;
+  readonly quiescent: boolean;
+  readonly threads: ReadonlyArray<{
+    readonly id: string;
+    readonly body: string;
+    readonly isResolved: boolean;
+    readonly headOid?: string;
+    readonly authorLogin?: string;
+  }>;
+}
+
 export interface WorkerLandingPayload {
   /**
    * S5 / family coder-fix worker only: the blocking reviewer findings (full
@@ -554,6 +580,19 @@ export interface WorkerLandingPayload {
    * them to the landing file; the runner does not read them.
    */
   readonly blockingFindings?: ReadonlyArray<Finding>;
+  /** S9/S10 online review workers: paginated bot/thread snapshot (#600). */
+  readonly onlineReviewSnapshot?: OnlineReviewLandingSnapshot;
+  /** S9/S10: ship delivery metadata threaded from S7 (pr URL/head). */
+  readonly shipDelivery?: {
+    readonly branch: string;
+    readonly pr?: string;
+    readonly prHead?: string;
+    readonly status: string;
+  };
+  /** S9/S10: 1-based online review round (runner-enforced cap). */
+  readonly onlineReviewRound?: number;
+  /** S10 fixer only: fix-marked finding identity keys from verify worker. */
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
 }
 
 /**
@@ -657,6 +696,14 @@ export interface DispatchContext {
    * closure keys outside this protected set.
    */
   readonly priorCmrFindingIdentityKeys?: ReadonlyArray<string>;
+  /** S9/S10 online review: opened PR URL from S7 ship (undefined when pushed-only). */
+  readonly prUrl?: string;
+  /** S9/S10 online review: verified PR head OID/SHA. */
+  readonly prHead?: string;
+  /** GitHub `owner/repo` for gh api polling. */
+  readonly repo?: string;
+  /** 1-based online review round — runner enforces MAX_ONLINE_REVIEW_ROUNDS (#600). */
+  readonly onlineReviewRound?: number;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */
@@ -948,7 +995,7 @@ export interface LedgerEntry {
   /** Active finding scope targeted by a continue-fixing bookkeeping event. */
   readonly findingScope?: FindingRepairScope;
   /** Source of a bookkeeping event, when recorded. */
-  readonly source?: LedgerBookkeepingEvent["source"];
+  readonly source?: EscalationAnswerPayload["source"];
   /** Timestamp for a bookkeeping event, when recorded. */
   readonly ts?: string;
   /** Optional reason for a bookkeeping event. */
@@ -970,6 +1017,12 @@ export interface LedgerEntry {
   readonly repairMovementPaths?: ReadonlyArray<string>;
   /** Runner-owned terminal stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
+  /** Online review converged marker (#600): PR URL covered by this convergence. */
+  readonly prUrl?: string;
+  /** Online review converged marker (#600): reviewed PR head SHA. */
+  readonly prHead?: string;
+  /** Online review converged marker (#600): final round number. */
+  readonly onlineReviewRound?: number;
 }
 
 /**
@@ -1250,6 +1303,15 @@ export interface Backend {
    * `<stateDir>/steps.jsonl`.  The runner calls this once per step, including
    * the S8 handoff entry, BEFORE returning the final result.
    */
+  /**
+   * Optional (#600): host-side bot polling for the online review loop. When absent
+   * the runner synthesizes a quiescent empty snapshot for test/spy backends.
+   */
+  pollOnlineReviewState?(input: {
+    readonly repo: string;
+    readonly prUrl: string;
+    readonly pollCount: number;
+  }): Promise<OnlineReviewLandingSnapshot>;
   writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void>;
 }
 
@@ -1272,6 +1334,7 @@ export interface WorkerOutcomeLandingFile {
 /** Optional agent-step execution metadata consumed by real sandboxes. */
 export interface AgentStepRunOptions {
   readonly fixFindingsLanding?: FixFindingsLandingFile;
+  readonly onlineReviewLanding?: FixFindingsLandingFile;
   readonly outcomeLanding?: WorkerOutcomeLandingFile;
 }
 

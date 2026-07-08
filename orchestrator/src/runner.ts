@@ -63,7 +63,16 @@ import {
   isValidFixerResult,
   isValidVerifyResult,
 } from "./reviewLoopOutcome.js";
+import {
+  pollPrReviewState,
+  type PrReviewSnapshot,
+} from "./botPolling.js";
 import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetry.js";
+import {
+  buildOnlineReviewLanding,
+  verifyReviewerHeadMovedStopSummary,
+  writeOnlineReviewSnapshotFile,
+} from "./onlineReviewLoop.js";
 import {
   applyRuntimeTightRoutePolicy,
   modelForSlot,
@@ -107,8 +116,10 @@ import type {
   RunInput,
   RunResult,
   StepId,
+  ShipResult,
   StepOutput,
   StepSpec,
+  WorkerLandingPayload,
   WorktreeHandle,
 } from "./types.js";
 
@@ -878,6 +889,56 @@ function lastNonTerminalStep(
   return undefined;
 }
 
+function isReviewLoopStep(step: StepId): boolean {
+  return step === "S9" || step === "S10" || step === "S11" || step === "S12";
+}
+
+function shipStatusFromLedger(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): string | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.step === "S7" && entry.output?.kind === "ship") {
+      return entry.output.status;
+    }
+  }
+  return undefined;
+}
+
+function onlineReviewRoundFromLedger(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): number {
+  const completedFixerRounds = ledger.filter(
+    (e) =>
+      e.step === "S10" &&
+      e.output?.kind === "fixer" &&
+      e.output.committed,
+  ).length;
+  return completedFixerRounds + 1;
+}
+
+/** Drop superseded S9–S12 entries when resuming mid online-review loop (#600 F3). */
+function priorLedgerThroughLastShip(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): ReadonlyArray<LedgerEntry> {
+  let shipIdx = -1;
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (
+      !isBookkeepingEntry(entry) &&
+      entry.step === "S7" &&
+      entry.output?.kind === "ship"
+    ) {
+      shipIdx = i;
+      break;
+    }
+  }
+  if (shipIdx < 0) {
+    return ledger as ReadonlyArray<LedgerEntry>;
+  }
+  return ledger.slice(0, shipIdx + 1) as ReadonlyArray<LedgerEntry>;
+}
+
 function isLikelyGitSha(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{7,64}$/.test(value);
 }
@@ -1455,25 +1516,51 @@ function planResume(
     routeFrom === "S4"
       ? adjudicatedBlockingFindingsForPersistedS4(executableLedger)
       : undefined;
+  const routeOutput =
+    isReviewLoopStep(routeFrom) && routeFrom === lastEntry.step
+      ? lastEntry.output
+      : agentEntry?.output;
+  const shipStatusForRoute =
+    routeFrom === "S7"
+      ? shipStatusFromLedger(executableLedger) ?? "pushed"
+      : undefined;
+  const onlineReviewRoundForRoute =
+    routeFrom === "S9" || routeFrom === "S10"
+      ? onlineReviewRoundFromLedger(executableLedger)
+      : undefined;
   const decision = route({
     from: routeFrom,
-    output: agentEntry?.output,
+    output: routeOutput,
     ...(pendingBlockingFindings !== undefined
       ? { pendingBlockingFindings }
       : {}),
+    ...(shipStatusForRoute !== undefined
+      ? { shipStatus: shipStatusForRoute }
+      : {}),
+    ...(onlineReviewRoundForRoute !== undefined
+      ? { onlineReviewRound: onlineReviewRoundForRoute }
+      : {}),
   });
+  const truncateReviewLoop =
+    isReviewLoopStep(routeFrom) && decision.kind === "next";
+  const priorForResume = truncateReviewLoop
+    ? priorLedgerThroughLastShip(ledger)
+    : (ledger as ReadonlyArray<LedgerEntry>);
+  const resumeLastOutput = truncateReviewLoop
+    ? undefined
+    : routeOutput;
   if (decision.kind === "handoff") {
     return {
       terminalStatus: decision.status,
       resumeStep: "S8",
-      lastOutput: agentEntry?.output,
-      priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+      lastOutput: resumeLastOutput ?? agentEntry?.output,
+      priorLedger: priorForResume,
     };
   }
   return {
     resumeStep: decision.step,
-    lastOutput: agentEntry?.output,
-    priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+    lastOutput: resumeLastOutput,
+    priorLedger: priorForResume,
   };
 }
 
@@ -1809,6 +1896,70 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastCoderRepairEvidence: RepairEvidence | undefined;
   let lastCoderActualRepairPaths: ReadonlyArray<string> = [];
   const noProgressByFindingIdentityKey = new Map<string, number>();
+  let lastShipOutput: ShipResult | undefined;
+  let onlineReviewRound = 1;
+  let onlineReviewLanding: WorkerLandingPayload | undefined;
+
+  function defaultRepo(): string {
+    const fromEnv = process.env.ORCHESTRATOR_REPO?.trim();
+    if (fromEnv && fromEnv.length > 0) return fromEnv;
+    try {
+      return execFileSync("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    } catch {
+      return "Akagilnc/ming-salvage-sim";
+    }
+  }
+
+  async function pollOnlineReviewForShip(
+    ship: ShipResult,
+    pollCount: number,
+  ): Promise<PrReviewSnapshot> {
+    const prUrl = ship.pr;
+    if (prUrl == null || prUrl.trim().length === 0) {
+      throw new Error("online review poll requires a non-empty PR URL from ship");
+    }
+    const repo = defaultRepo();
+    if (backend.pollOnlineReviewState !== undefined) {
+      const landing = await backend.pollOnlineReviewState({
+        repo,
+        prUrl,
+        pollCount,
+      });
+      return {
+        repo,
+        prNumber: 0,
+        prUrl: landing.prUrl,
+        headOid: landing.headOid,
+        pollCount,
+        bots: {
+          coderabbit: { state: "complete", findingCount: 0 },
+          sourcery: { state: "complete", findingCount: 0 },
+          codex: { state: "complete", findingCount: 0 },
+          gemini: { state: "complete", findingCount: 0 },
+        },
+        threads: landing.threads.map((t) => ({
+          id: t.id,
+          body: t.body,
+          authorLogin: t.authorLogin ?? "unknown",
+          isResolved: t.isResolved,
+          headOid: t.headOid,
+        })),
+        totalFindingCount: landing.totalFindingCount,
+        quiescent: landing.quiescent,
+      };
+    }
+    return pollPrReviewState(
+      (file, args) =>
+        execFileSync(file, args, {
+          stdio: ["ignore", "pipe", "pipe"],
+          encoding: "utf8",
+        }).trim(),
+      { repo, prUrl, pollCount },
+    );
+  }
 
   function seedClassificationFromReviewerOutput(
     reviewerOutput: StepOutput | undefined,
@@ -2315,6 +2466,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // preserved and the prior steps are NOT re-run.
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
+
+    for (const e of plan.priorLedger) {
+      if (e.step === "S7" && e.output?.kind === "ship") {
+        lastShipOutput = e.output;
+      }
+    }
+    const completedFixerRounds = plan.priorLedger.filter(
+      (e) => e.step === "S10" && e.output?.kind === "fixer" && e.output.committed,
+    ).length;
+    onlineReviewRound = completedFixerRounds + 1;
 
     // ADR 0030: persisted S4 boundaries are the runner's closure truth. Resume
     // must replay the prior S4 adjudications, because an S6 reviewer may carry an
@@ -2935,6 +3096,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // worker's sessionId. Assign them so the delivery is recoverable from
           // resume truth and surfaced to the caller.
           output = ship;
+          lastShipOutput = ship;
           stepSessionId = shipResult.sessionId;
         } catch (err) {
           // Push failure → S8(error) with branch head so dev can diagnose
@@ -2949,11 +3111,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       case "S10":
       case "S11":
       case "S12": {
-        // #596 review-loop skeleton: S9 verify → S10 fixer → S11 cleanup →
-        // S12 docRelease. Real bot-polling logic is out of scope; this slice
-        // only wires the dispatch seam and fail-closed output validation.
+        // #600 online review loop: bot poll → fresh verify → fixer → fresh verify
+        // (ADR 0061). S11/S12 remain stub workers until #603.
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
+        }
+        if (lastShipOutput === undefined || lastShipOutput.pr === undefined) {
+          return await errorTermination(
+            step,
+            new Error(
+              `${step} requires a prior S7 pr_opened ship output with a PR URL`,
+            ),
+          );
         }
         const reviewLoopSpec =
           step === "S9"
@@ -2965,10 +3134,46 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 : docReleaseWorkerSpec(routePolicy.route);
         promptFile = reviewLoopSpec.promptFile;
         try {
-          const result = await dispatchWorker(backend, reviewLoopSpec, {
+          if (step === "S9") {
+            const snapshot = await pollOnlineReviewForShip(
+              lastShipOutput,
+              onlineReviewRound,
+            );
+            if (stateDir !== undefined) {
+              writeOnlineReviewSnapshotFile(stateDir, snapshot);
+            }
+            onlineReviewLanding = buildOnlineReviewLanding(
+              snapshot,
+              lastShipOutput,
+              onlineReviewRound,
+            );
+          }
+          const reviewCtx = {
             worktree,
             stateDir,
-          });
+            repo: defaultRepo(),
+            prUrl: lastShipOutput.pr,
+            prHead: lastShipOutput.prHead ?? onlineReviewLanding?.shipDelivery?.prHead,
+            onlineReviewRound,
+          };
+          const headBefore =
+            step === "S9" ? await resolveBranchHEAD() : undefined;
+          const reviewResetOpt =
+            worktree != null
+              ? { resetBeforeRetry: () => backend.cleanResidue(worktree!) }
+              : {};
+          const result = await withMechanicalRetry(
+            reviewLoopSpec,
+            reviewCtx,
+            (s, c) =>
+              dispatchWorker(
+                backend,
+                s,
+                c,
+                step === "S9" || step === "S10" ? onlineReviewLanding : undefined,
+              ),
+            reviewResetOpt,
+          );
           if (result.kind !== "completed") {
             return await errorTermination(
               step,
@@ -2984,9 +3189,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             (step === "S11" && isValidCleanupResult(result.output)) ||
             (step === "S12" && isValidDocReleaseResult(result.output));
           if (!outputValid) {
-            // Defensive: result.output may be nullish (malformed worker) even on
-            // "completed" — the isValid* guards already rejected it. Do not throw
-            // constructing the message; let errorTermination record the clean error.
             const badKind = (result.output as { kind?: unknown } | undefined | null)?.kind;
             return await errorTermination(
               step,
@@ -2995,14 +3197,52 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ),
             );
           }
+          if (step === "S9" && isValidVerifyResult(result.output)) {
+            const verifyOutput = result.output;
+            const headAfter = await resolveBranchHEAD();
+            if (headBefore !== undefined && headAfter !== headBefore) {
+              const stopSummary = verifyReviewerHeadMovedStopSummary({
+                headBefore,
+                headAfter,
+              });
+              return await errorTermination(step, new Error(stopSummary.summary), {
+                stopSummary,
+              });
+            }
+            if (verifyOutput.converged && stateDir !== undefined) {
+              const marker = {
+                step: "S9" as const,
+                event: "online_review_converged" as const,
+                prUrl: lastShipOutput.pr!,
+                prHead: lastShipOutput.prHead ?? reviewCtx.prHead ?? headAfter,
+                onlineReviewRound,
+              };
+              ledger.push(marker);
+              try {
+                await backend.writeLedger(
+                  {
+                    step: "S9",
+                    event: "online_review_converged",
+                    prUrl: marker.prUrl,
+                    prHead: marker.prHead,
+                    onlineReviewRound,
+                    sessionId,
+                    prompt_hash: await hashPrompt(promptFile, "S9", backend),
+                    branchHEAD: headAfter,
+                    ts: new Date().toISOString(),
+                  },
+                  stateDir,
+                );
+              } catch (err) {
+                return await errorTermination(step, err, { recordInMemory: false });
+              }
+            }
+          }
+          if (step === "S10" && isValidFixerResult(result.output) && result.output.committed) {
+            onlineReviewRound += 1;
+          }
           output = result.output;
           stepSessionId = result.sessionId;
-          // Mirror the agent-step contract (lines above): route() is called with
-          // `lastOutput`, so each step whose route() case reads its output must
-          // publish it here. The S9–S12 route cases validate ctx.output against
-          // the verify/fixer/cleanup/docRelease schemas — without this assignment
-          // route() would re-validate the stale pre-S7 agent output and fail
-          // closed (#596).
           lastOutput = output;
         } catch (err) {
           return await errorTermination(step, err);
@@ -3091,6 +3331,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       output: lastOutput,
       ...(step === "S4"
         ? { pendingBlockingFindings }
+        : {}),
+      ...(step === "S7"
+        ? {
+            shipStatus:
+              lastShipOutput?.status ??
+              (family?.noPush ? "pushed" : undefined),
+          }
+        : {}),
+      ...(step === "S9" || step === "S10"
+        ? { onlineReviewRound }
         : {}),
     });
 
