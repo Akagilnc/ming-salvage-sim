@@ -2068,6 +2068,75 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     });
   });
 
+  it("pin r20: poll throw → decision_gate_raised in-band with stopSummary", async () => {
+    const result = await runOnlineReviewLoopStage({
+      poll: async () => {
+        throw new Error("waitForBotQuiescence: gh api rate limited");
+      },
+      dispatchVerify: async () => ({ kind: "verify", converged: true }),
+      dispatchFixer: async () => true,
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (verify) => verify,
+      retriggerAfterFix: () => {},
+    });
+    expect(result).toEqual({
+      ok: false,
+      terminalState: "decision_gate_raised",
+      round: 1,
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        summary: expect.stringMatching(/bot poll failed.*rate limited/s),
+      }),
+    });
+  });
+
+  it("pin r20: dispatchVerify throw → decision_gate_raised in-band with stopSummary", async () => {
+    const result = await runOnlineReviewLoopStage({
+      poll: async () => baseSnapshot,
+      dispatchVerify: async () => {
+        throw new Error("dispatchFamilyReviewWorker: container start failed");
+      },
+      dispatchFixer: async () => true,
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (verify) => verify,
+      retriggerAfterFix: () => {},
+    });
+    expect(result).toEqual({
+      ok: false,
+      terminalState: "decision_gate_raised",
+      round: 1,
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        summary: expect.stringMatching(/verify dispatch failed.*container start/s),
+      }),
+    });
+  });
+
+  it("pin r20: dispatchFixer throw → decision_gate_raised in-band with stopSummary", async () => {
+    const result = await runOnlineReviewLoopStage({
+      poll: async () => baseSnapshot,
+      dispatchVerify: async () => ({ kind: "verify", converged: false }),
+      dispatchFixer: async () => {
+        throw new Error("dispatchFamilyReviewWorker: fixer residue unsafe");
+      },
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (verify) => verify,
+      retriggerAfterFix: () => {},
+    });
+    expect(result).toEqual({
+      ok: false,
+      terminalState: "decision_gate_raised",
+      round: 1,
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        summary: expect.stringMatching(/fixer dispatch failed.*residue unsafe/s),
+      }),
+    });
+  });
+
   it("pin r17: worker converged:true clamped when landing checkRuns are red", async () => {
     let fixerCalls = 0;
     const snapshotWithRedCi: PrReviewSnapshot = {
