@@ -80,6 +80,7 @@ import {
   realBotPollClock,
   reconstructOnlineReviewLandingForResume,
   retriggerBotsAndPoll,
+  shipLedgerTriggeredAtFromSliceLedger,
   verifyReviewerHeadMovedStopSummary,
   waitForBotQuiescence,
   writeOnlineReviewSnapshotFile,
@@ -2000,6 +2001,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         lastOnlineReviewFixCommitSha ??
           ship.prHead ??
           "offline-review-head",
+        shipLedgerTriggeredAtFromSliceLedger(ledger),
       );
     const snapshot = await waitForBotQuiescence(ghSh, {
       repo,
@@ -2189,6 +2191,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       stopSummary,
     });
 
+    const mirrorInMemoryLedgerTs = (step: StepId, ts: string): void => {
+      for (let i = ledger.length - 1; i >= 0; i--) {
+        if (ledger[i]!.step === step) {
+          ledger[i] = { ...ledger[i]!, ts };
+          break;
+        }
+      }
+    };
+
     if (stateDir === undefined) {
       // stateDir not yet known — buffer until S1 resolves the worktree path.
       pendingEntries.push(entry);
@@ -2199,10 +2210,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // each item ONLY AFTER its write succeeds.  If writeLedger rejects, the
     // remaining entries stay in the buffer — they are never silently dropped.
     while (pendingEntries.length > 0) {
-      await backend.writeLedger(pendingEntries[0]!, stateDir);
+      const buffered = pendingEntries[0]!;
+      await backend.writeLedger(buffered, stateDir);
       pendingEntries.shift();
+      mirrorInMemoryLedgerTs(buffered.step, buffered.ts);
     }
     await backend.writeLedger(entry, stateDir);
+    mirrorInMemoryLedgerTs(s, entry.ts);
   }
 
   /**

@@ -312,6 +312,8 @@ export interface FamilyLedgerEntry {
   readonly note?: string;
   /** Unified run-level/family-level stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
+  /** ISO-8601 instant when this ledger row was written (#600 r9 round-1 trigger truth). */
+  readonly ts?: string;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────

@@ -121,6 +121,54 @@ export function lastOnlineReviewFixCommitShaFromLedger(
   return undefined;
 }
 
+/** S7 ship ledger `ts` — round-1 freshness anchor (#600 r9). */
+export function shipLedgerTriggeredAtFromSliceLedger(
+  ledger: ReadonlyArray<{
+    readonly step: string;
+    readonly output?: { readonly kind?: string };
+    readonly ts?: string;
+  }>,
+): string | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.step === "S7" &&
+      entry.output?.kind === "ship" &&
+      typeof entry.ts === "string" &&
+      entry.ts.length > 0
+    ) {
+      return entry.ts;
+    }
+  }
+  return undefined;
+}
+
+/** Family `shipped` ledger `ts` for the PR — round-1 freshness anchor (#600 r9). */
+export function shipLedgerTriggeredAtFromFamilyLedger(
+  entries: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+    readonly pr?: string;
+    readonly ts?: string;
+  }>,
+  prUrl: string,
+): string | undefined {
+  const normalized = prUrl.trim();
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      entry.status === "shipped" &&
+      entry.event === "shipped" &&
+      entry.pr?.trim() === normalized &&
+      typeof entry.ts === "string" &&
+      entry.ts.length > 0
+    ) {
+      return entry.ts;
+    }
+  }
+  return undefined;
+}
+
 function lastS9VerifyOutputFromLedger(
   ledger: ReadonlyArray<{ readonly step: string; readonly output?: StepOutput }>,
 ): VerifyResult | undefined {
