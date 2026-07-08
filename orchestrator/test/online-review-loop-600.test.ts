@@ -2544,6 +2544,131 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     ).toEqual(buildRoundTrigger(fixSha, fixTs));
   });
 
+  it("pin r30: post-fixer crash-point matrix incl. network boundary (single-slice)", () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const s9False = {
+      step: "S9",
+      output: { kind: "verify", converged: false },
+      ts: "2026-07-08T12:00:00.000Z",
+    };
+    const s10Row = {
+      step: "S10",
+      output: { kind: "fixer", committed: true },
+      branchHEAD: fixSha,
+      ts: fixTs,
+    };
+    const fixCommittedOnly = {
+      step: "S10",
+      event: "online_review_fix_committed" as const,
+      fixCommitSha: fixSha,
+      onlineReviewRound: 1,
+      ts: fixTs,
+    };
+    const retrigger = {
+      step: "S10",
+      event: "online_review_round_retrigger" as const,
+      roundTriggerHeadOid: fixSha,
+      roundTriggerAt: retriggerTs,
+      onlineReviewRound: 2,
+      ts: retriggerTs,
+    };
+
+    // crash after fixer S10 row, before fix_committed persist → resume uses S10 row
+    const afterS10Only = [s9False, s10Row];
+    expect(slicePostFixVerifyPendingFromMarkerGap(afterS10Only)).toBe(false);
+    expect(onlineReviewRoundFromLedger(afterS10Only)).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromLedger(afterS10Only)).toBe(fixSha);
+
+    // crash after fix_committed, before/during retrigger network → gap reader, no fixer rerun
+    const afterFixCommitted = [s9False, fixCommittedOnly];
+    expect(slicePostFixVerifyPendingFromMarkerGap(afterFixCommitted)).toBe(true);
+    expect(onlineReviewRoundFromLedger(afterFixCommitted)).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromLedger(afterFixCommitted)).toBe(fixSha);
+    const gapTrigger = slicePendingRoundTriggerFromFixGap(afterFixCommitted);
+    expect(gapTrigger).toEqual(buildRoundTrigger(fixSha, fixTs));
+    expect(
+      resolveOnlineReviewRoundTrigger({
+        onlineReviewRound: 2,
+        pendingRetriggerFromFixGap: gapTrigger,
+        shipPrHead: "headsha1",
+        shipLedgerTriggeredAt: SHIP_LEDGER_TS,
+      }),
+    ).toEqual(gapTrigger);
+
+    // crash after retrigger network, before retrigger marker → same gap recovery
+    expect(slicePostFixVerifyPendingFromMarkerGap(afterFixCommitted)).toBe(true);
+    expect(onlineReviewRoundTriggerFromLedger(afterFixCommitted)).toBeUndefined();
+
+    // happy path: both markers persisted
+    const happy = [s9False, fixCommittedOnly, retrigger, s10Row];
+    expect(slicePostFixVerifyPendingFromMarkerGap(happy)).toBe(false);
+    expect(onlineReviewRoundFromLedger(happy)).toBe(2);
+    expect(onlineReviewRoundTriggerFromLedger(happy)).toEqual(
+      buildRoundTrigger(fixSha, retriggerTs),
+    );
+
+    // legacy r29: retrigger-only (old ordering) still recovers round+fixSHA
+    const retriggerOnly = [s9False, retrigger];
+    expect(slicePostFixVerifyPendingFromMarkerGap(retriggerOnly)).toBe(true);
+    expect(onlineReviewRoundFromLedger(retriggerOnly)).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromLedger(retriggerOnly)).toBe(fixSha);
+    expect(onlineReviewRoundTriggerFromLedger(retriggerOnly)).toEqual(
+      buildRoundTrigger(fixSha, retriggerTs),
+    );
+  });
+
+  it("pin r30: post-fixer crash-point matrix incl. network boundary (family)", () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const pr = "https://gh/pr/352";
+    const fixCommittedOnly: FamilyLedgerEntry = {
+      status: "online_review_fix_committed",
+      event: "online_review_fix_committed",
+      phase: "final",
+      familyHeadAfter: fixSha,
+      pr,
+      ts: fixTs,
+    };
+    const retrigger: FamilyLedgerEntry = {
+      status: "online_review_round_retrigger",
+      event: "online_review_round_retrigger",
+      phase: "final",
+      roundTriggerHeadOid: fixSha,
+      roundTriggerAt: retriggerTs,
+      onlineReviewRound: 2,
+      pr,
+      ts: retriggerTs,
+    };
+
+    // crash after fix_committed, before/during retrigger network
+    expect(onlineReviewRoundFromFamilyLedger([fixCommittedOnly])).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromFamilyLedger([fixCommittedOnly])).toBe(fixSha);
+    const gapTrigger = familyPendingRoundTriggerFromFixGap([fixCommittedOnly]);
+    expect(gapTrigger).toEqual(buildRoundTrigger(fixSha, fixTs));
+    expect(
+      resolveOnlineReviewRoundTrigger({
+        onlineReviewRound: 2,
+        pendingRetriggerFromFixGap: gapTrigger,
+        shipPrHead: "headsha1",
+        shipLedgerTriggeredAt: SHIP_LEDGER_TS,
+      }),
+    ).toEqual(gapTrigger);
+    expect(onlineReviewRoundTriggerFromFamilyLedger([fixCommittedOnly])).toBeUndefined();
+
+    // happy path
+    expect(onlineReviewRoundFromFamilyLedger([fixCommittedOnly, retrigger])).toBe(2);
+    expect(onlineReviewRoundTriggerFromFamilyLedger([fixCommittedOnly, retrigger])).toEqual(
+      buildRoundTrigger(fixSha, retriggerTs),
+    );
+
+    // legacy r29: retrigger-only backward compat
+    expect(onlineReviewRoundFromFamilyLedger([retrigger])).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromFamilyLedger([retrigger])).toBe(fixSha);
+  });
+
   it("pin r26: family ledger restores round/trigger/fix SHA symmetrically to single-slice", () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const familyLedger: FamilyLedgerEntry[] = [

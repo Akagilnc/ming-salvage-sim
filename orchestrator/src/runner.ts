@@ -3509,31 +3509,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               lastShipOutput.pr != null &&
               isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
             ) {
-              const retriggered = retriggerBotsAndPoll(
-                ghSh,
-                reviewCtx.repo!,
-                lastShipOutput.pr,
-                1,
-                lastOnlineReviewFixCommitSha ??
-                  lastOnlineReviewRoundTrigger?.headOid ??
-                  lastShipOutput.prHead ??
-                  "offline-review-head",
-              );
-              lastOnlineReviewRoundTrigger = retriggered.roundTrigger;
               const nextRound = onlineReviewRound + 1;
-              const retriggerMarker = {
+              const fixCommittedMarker = {
                 step: "S10" as const,
-                event: "online_review_round_retrigger" as const,
-                roundTriggerHeadOid: retriggered.roundTrigger.headOid,
-                roundTriggerAt: retriggered.roundTrigger.triggeredAt,
-                onlineReviewRound: nextRound,
+                event: "online_review_fix_committed" as const,
+                fixCommitSha: lastOnlineReviewFixCommitSha!,
+                onlineReviewRound,
               };
-              ledger.push(retriggerMarker);
+              ledger.push(fixCommittedMarker);
               if (stateDir !== undefined) {
                 try {
                   await backend.writeLedger(
                     {
-                      ...retriggerMarker,
+                      ...fixCommittedMarker,
                       sessionId,
                       prompt_hash: await hashPrompt(promptFile, "S10", backend),
                       branchHEAD: lastOnlineReviewFixCommitSha,
@@ -3547,18 +3535,30 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   });
                 }
               }
-              const fixCommittedMarker = {
+              const retriggered = retriggerBotsAndPoll(
+                ghSh,
+                reviewCtx.repo!,
+                lastShipOutput.pr,
+                1,
+                lastOnlineReviewFixCommitSha ??
+                  lastOnlineReviewRoundTrigger?.headOid ??
+                  lastShipOutput.prHead ??
+                  "offline-review-head",
+              );
+              lastOnlineReviewRoundTrigger = retriggered.roundTrigger;
+              const retriggerMarker = {
                 step: "S10" as const,
-                event: "online_review_fix_committed" as const,
-                fixCommitSha: lastOnlineReviewFixCommitSha!,
-                onlineReviewRound,
+                event: "online_review_round_retrigger" as const,
+                roundTriggerHeadOid: retriggered.roundTrigger.headOid,
+                roundTriggerAt: retriggered.roundTrigger.triggeredAt,
+                onlineReviewRound: nextRound,
               };
-              ledger.push(fixCommittedMarker);
+              ledger.push(retriggerMarker);
               if (stateDir !== undefined) {
                 try {
                   await backend.writeLedger(
                     {
-                      ...fixCommittedMarker,
+                      ...retriggerMarker,
                       sessionId,
                       prompt_hash: await hashPrompt(promptFile, "S10", backend),
                       branchHEAD: lastOnlineReviewFixCommitSha,
