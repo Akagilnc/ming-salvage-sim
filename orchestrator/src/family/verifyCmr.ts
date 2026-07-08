@@ -885,7 +885,7 @@ function coderFixFailureStopSummary(input: {
     repairHint:
       "repair the family CMR coder-fix worker contract, then rerun the family CMR gate",
     heads: {
-      ...(input.familyHeadBefore !== undefined
+      ...(input.familyHeadBefore != null
         ? { reportedFamilyHead: input.familyHeadBefore }
         : {}),
       ...(input.familyHeadAfter != null
@@ -2560,7 +2560,7 @@ export async function runVerifyCmr(
     if (
       entry.status === "cmr_passed" &&
       entry.familyHeadAfter === cmrPassedFamilyHeadAfter &&
-      entry.stopSummary !== undefined &&
+      entry.stopSummary != null &&
       isMaterialCmrStopSummary(entry.stopSummary)
     ) {
       materialCmrSummary = entry.stopSummary;

@@ -1204,6 +1204,14 @@ function planResume(
   const lastEntryIndex = ledger.lastIndexOf(lastEntry);
   const agentEntry = lastAgentEntry(executableLedger);
 
+  // #709 exemption: keep strict !== undefined (not != null) — escalationKind presence
+  // on S8(escalate) distinguishes legacy untagged (absent → fallthrough to Case 2
+  // agentEscalate + answer reopen logic) from tagged kind (present → use "decision"
+  // vs "failure" to decide reopen vs always-terminal). Traced: planResume Case1 vs
+  // Case2/3a; familyEscalationState uses ==/=== directly; "unknown tagged" test forces
+  // terminal for non-decision even w/ answer. null-vs-undefined load-bearing for
+  // resume routing on deserialized persisted ledger (same JSONL class as stopSummary).
+  // Explicit null treated as "tagged invalid kind" (terminal) not "absent legacy".
   if (
     lastEntry.step === "S8" &&
     lastEntry.handoffStatus === "escalate" &&
