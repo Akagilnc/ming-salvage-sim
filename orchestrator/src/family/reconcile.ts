@@ -82,7 +82,7 @@ function lastRecordedHead(ledger: ReadonlyArray<FamilyLedgerEntry>): {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
     const after = entry.familyHeadAfter;
-    if (after !== undefined) {
+    if (after != null) {
       if (!isValidRecordedHeadEntry(entry)) {
         return { head: undefined, index: i, invalid: true };
       }
@@ -171,10 +171,10 @@ async function headlessTailIsConsistent(
     // Only merged entries that lack their own familyHeadAfter are "uncovered" by
     // the baseline. (An aborted tail entry does not count as merged; a tail entry
     // that DOES carry familyHeadAfter would have been the baseline.)
-    if (entry.status !== "merged" || entry.familyHeadAfter !== undefined) continue;
+    if (entry.status !== "merged" || entry.familyHeadAfter != null) continue;
     if (!isMergedAccountingEntry(entry)) return false;
     // A headless merged entry with no childHead cannot be verified → fail-closed.
-    if (entry.childHead === undefined) return false;
+    if (entry.childHead == null) return false;
     if (await git.isAncestor(entry.childHead, startHead)) return false;
     if (!(await git.isAncestor(entry.childHead, liveHead))) return false;
   }
@@ -190,8 +190,8 @@ async function verifyHeadlessAccountingRows(
   let hasVerified = false;
   for (const entry of ledger) {
     if (!isMergedAccountingEntry(entry)) continue;
-    if (entry.familyHeadAfter !== undefined) continue;
-    if (entry.childHead === undefined) {
+    if (entry.familyHeadAfter != null) continue;
+    if (entry.childHead == null) {
       return { consistent: false, hasVerified };
     }
     if (await git.isAncestor(entry.childHead, baseHead)) {

@@ -427,6 +427,8 @@ export async function legacyDispatchWorker(
         }
       : undefined;
   try {
+    // #709 exemption (strict kept): resumeSessionId !== undefined distinction vs null is
+    // load-bearing on the dispatch path (decides resumeSession vs runStep for crash/retry resume).
     if (ctx.resumeSessionId !== undefined) {
       ret = await backend.resumeSession(
         stepSpec,
