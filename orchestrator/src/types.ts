@@ -367,7 +367,7 @@ export interface OnlineReviewConvergedEvent {
   readonly event: "online_review_converged";
   readonly prUrl: string;
   readonly prHead: string;
-  readonly round: number;
+  readonly onlineReviewRound: number;
 }
 
 /** Round ≥2 freshness anchor persisted after S10 re-trigger (#600 r25). */
@@ -584,10 +584,15 @@ export interface OnlineReviewThreadReply {
   readonly body: string;
 }
 
-export type OnlineReviewTerminalState =
+/** Terminal states a verify worker may self-declare (#600 wire schema). */
+export type VerifyWorkerTerminalState =
   | "mergeable"
   | "round_budget_exhausted"
-  | "decision_gate_raised"
+  | "decision_gate_raised";
+
+/** Runner-internal online review terminals (adds contract_drift from HEAD drift). */
+export type OnlineReviewTerminalState =
+  | VerifyWorkerTerminalState
   | "contract_drift";
 
 export type OnlineReviewBotLegLanding =
@@ -866,7 +871,7 @@ export interface VerifyResult {
   /** Tracked issue URLs created for deferred findings (runner-populated). */
   readonly deferredIssueUrls?: ReadonlyArray<string>;
   /** Documented terminal state when the loop ends (#600 AC1/AC5). */
-  readonly terminalState?: OnlineReviewTerminalState;
+  readonly terminalState?: VerifyWorkerTerminalState;
   /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
   readonly isRecheck?: boolean;
 }

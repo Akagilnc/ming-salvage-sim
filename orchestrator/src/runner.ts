@@ -72,10 +72,12 @@ import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetr
 import {
   buildOnlineReviewLanding,
   clampVerifyConvergenceForCheckRuns,
+  enforceRunnerOwnedRecheck,
   immediateBotPollClock,
   lastOnlineReviewFixCommitShaFromLedger,
   offlinePrReviewSnapshot,
   onlineReviewConvergedForHead,
+  onlineReviewResumeHeadKeyFromLedger,
   onlineReviewRoundFromLedger,
   onlineReviewRoundTriggerFromLedger,
   resolveOnlineReviewRoundTrigger,
@@ -3220,11 +3222,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           );
         }
         let reviewStep = step;
-        const reviewHeadKey = convergenceHeadToRecord({
-          shipHead: lastShipOutput.prHead,
-          snapshotHead: onlineReviewLanding?.onlineReviewSnapshot?.headOid,
-          postFixHead: lastOnlineReviewFixCommitSha,
-        });
+        const reviewHeadKey =
+          onlineReviewResumeHeadKeyFromLedger(ledger) ??
+          convergenceHeadToRecord({
+            shipHead: lastShipOutput.prHead,
+            snapshotHead: onlineReviewLanding?.onlineReviewSnapshot?.headOid,
+            postFixHead: lastOnlineReviewFixCommitSha,
+          });
         if (
           reviewStep === "S9" &&
           onlineReviewConvergedForHead(ledger, reviewHeadKey)
@@ -3332,6 +3336,29 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               result.output,
               onlineReviewLanding?.onlineReviewSnapshot,
             );
+            const recheckOutcome = enforceRunnerOwnedRecheck(
+              verifyOutput,
+              onlineReviewRound,
+            );
+            if (recheckOutcome.kind === "recheck_contradiction") {
+              return await errorTermination(
+                reviewStep,
+                new Error(
+                  "online review verify worker contradicted runner-owned recheck truth (isRecheck)",
+                ),
+                {
+                  output: verifyOutput,
+                  stopSummary: {
+                    reason: "infra_failure",
+                    summary:
+                      "online review verify worker contradicted runner-owned recheck truth (isRecheck)",
+                    repairHint:
+                      "omit isRecheck on round-1 verify; set isRecheck:true only on post-fixer re-check rounds",
+                  },
+                },
+              );
+            }
+            verifyOutput = recheckOutcome;
             const headAfter = await resolveBranchHEAD();
             if (headBefore !== undefined && headAfter !== headBefore) {
               const stopSummary = verifyReviewerHeadMovedStopSummary({
@@ -3352,9 +3379,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       repo: reviewCtx.repo!,
                       prUrl: lastShipOutput.pr,
                       verify: verifyOutput,
-                      fixingCommitSha: verifyOutput.isRecheck
-                        ? lastOnlineReviewFixCommitSha
-                        : undefined,
+                      fixingCommitSha:
+                        onlineReviewRound > 1
+                          ? lastOnlineReviewFixCommitSha
+                          : undefined,
                       landingThreads:
                         onlineReviewLanding?.onlineReviewSnapshot?.threads,
                     })
@@ -3576,6 +3604,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     });
 
     if (decision.kind === "handoff") {
+      // Online-review decision terminals map to escalationKind:"failure" pending
+      // #604's A/B re-open channel (B-class summary + A-class kind pairing is deliberate).
       const handoffStopSummary: StopSummary =
         decision.status === "success"
           ? successSummaryForCurrentState({ deferredFindings, findingDispositions })

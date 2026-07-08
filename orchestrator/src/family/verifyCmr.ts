@@ -72,9 +72,13 @@ import {
 import {
   immediateBotPollClock,
   OnlineReviewLoopTerminal,
+  lastOnlineReviewFixCommitShaFromFamilyLedger,
   offlinePrReviewSnapshot,
+  onlineReviewRoundFromFamilyLedger,
+  onlineReviewRoundTriggerFromFamilyLedger,
   realBotPollClock,
   retriggerBotsAndPoll,
+  resolveOnlineReviewRoundTrigger,
   runOnlineReviewLoopStage,
   shipLedgerTriggeredAtFromFamilyLedger,
   verifyReviewerHeadMovedStopSummary,
@@ -122,6 +126,8 @@ import {
   recordCmrFixCommitted,
   recordCmrPassed,
   recordCmrReviewed,
+  recordOnlineReviewFixCommitted,
+  recordOnlineReviewRoundRetrigger,
   recordReviewLoopConverged,
   recordShipped,
 } from "./ledger.js";
@@ -1512,14 +1518,31 @@ export async function runFamilyOnlineReviewLoop(input: {
     familyLedger,
     prUrl,
   );
-  let lastRoundTrigger = buildRoundTrigger(
-    input.ship.prHead ?? "offline-review-head",
-    shipTriggeredAt,
-  );
-  let familyLastFixCommitSha: string | undefined;
+  const loopState = {
+    round: onlineReviewRoundFromFamilyLedger(familyLedger),
+    lastFixSha: lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedger),
+  };
+  let lastRoundTrigger = livePoll
+    ? resolveOnlineReviewRoundTrigger({
+        onlineReviewRound: loopState.round,
+        persistedRoundTrigger:
+          onlineReviewRoundTriggerFromFamilyLedger(familyLedger),
+        fixCommitSha: loopState.lastFixSha,
+        shipPrHead: input.ship.prHead,
+        shipLedgerTriggeredAt: shipTriggeredAt,
+      })
+    : buildRoundTrigger(
+        loopState.lastFixSha ??
+          input.ship.prHead ??
+          "offline-review-head",
+        shipTriggeredAt,
+      );
+  let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
 
   try {
-    return await runOnlineReviewLoopStage(input.ship, {
+    return await runOnlineReviewLoopStage(
+      input.ship,
+      {
     poll: async (round) => {
       if (!livePoll) {
         return offlinePrReviewSnapshot({
@@ -1650,7 +1673,7 @@ export async function runFamilyOnlineReviewLoop(input: {
           : {}),
       };
     },
-    retriggerAfterFix: () => {
+    retriggerAfterFix: async () => {
       if (livePoll) {
         const retriggered = retriggerBotsAndPoll(
           ghSh,
@@ -1663,6 +1686,14 @@ export async function runFamilyOnlineReviewLoop(input: {
             "offline-review-head",
         );
         lastRoundTrigger = retriggered.roundTrigger;
+        const nextRound = loopState.round + 1;
+        await recordOnlineReviewRoundRetrigger(input.familyBackend, {
+          roundTriggerHeadOid: retriggered.roundTrigger.headOid,
+          roundTriggerAt: retriggered.roundTrigger.triggeredAt,
+          onlineReviewRound: nextRound,
+          pr: prUrl,
+        });
+        loopState.round = nextRound;
       }
     },
     resolveFixCommitSha: async () => {
@@ -1671,9 +1702,19 @@ export async function runFamilyOnlineReviewLoop(input: {
           ? await input.familyBackend.readFamilyHead(input.familyBase)
           : (input.ship.prHead ?? "");
       familyLastFixCommitSha = sha;
+      loopState.lastFixSha = sha;
+      await recordOnlineReviewFixCommitted(input.familyBackend, {
+        familyHeadAfter: sha,
+        pr: prUrl,
+      });
       return sha;
     },
-  });
+  },
+      {
+        initialRound: loopState.round,
+        initialFixCommitSha: loopState.lastFixSha,
+      },
+    );
   } catch (err) {
     if (err instanceof OnlineReviewLoopTerminal) {
       return err.result;
