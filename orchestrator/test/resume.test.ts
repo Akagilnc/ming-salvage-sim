@@ -1536,6 +1536,52 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(backend.dispatchContexts[resumedVerifyIdx]?.onlineReviewRound).toBe(2);
     expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
   });
+
+  it("pin r26: crash after converged marker resumes into S11 (skips re-verify)", async () => {
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      {
+        ...entry("S9", { kind: "verify", converged: true }),
+        event: "online_review_converged",
+        prUrl: "pr://slice/offline-255",
+        prHead: "deadbeefcommitsha",
+        onlineReviewRound: 1,
+      },
+    ];
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs.filter((s) => s.id === "S9")).toHaveLength(0);
+    expect(backend.dispatchSpecs.map((s) => s.id)).toEqual(["S11", "S12"]);
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S7",
+      "S9",
+      "S11",
+      "S12",
+      "S8",
+    ]);
+  });
 });
 
 // ─── C-1 (integ-cmr int-r1): S7 SHIP escalate-resume re-dispatches the ship worker

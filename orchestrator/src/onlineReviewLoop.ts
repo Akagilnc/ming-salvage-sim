@@ -221,6 +221,133 @@ export function shipLedgerTriggeredAtFromSliceLedger(
   return undefined;
 }
 
+/** 1-based online review round from the family ledger (#600 r26 resume). */
+export function onlineReviewRoundFromFamilyLedger(
+  entries: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+  }>,
+): number {
+  const completedFixerRounds = entries.filter(
+    (e) =>
+      e.status === "online_review_fix_committed" &&
+      e.event === "online_review_fix_committed",
+  ).length;
+  return completedFixerRounds + 1;
+}
+
+/** Last family online-review fix HEAD — fixing commit for recheck side effects (#600 r26). */
+export function lastOnlineReviewFixCommitShaFromFamilyLedger(
+  entries: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+    readonly familyHeadAfter?: string;
+  }>,
+): string | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      entry.status === "online_review_fix_committed" &&
+      entry.event === "online_review_fix_committed" &&
+      typeof entry.familyHeadAfter === "string" &&
+      entry.familyHeadAfter.length > 0
+    ) {
+      return entry.familyHeadAfter;
+    }
+  }
+  return undefined;
+}
+
+/** Latest persisted round ≥2 freshness anchor from the family ledger (#600 r26). */
+export function onlineReviewRoundTriggerFromFamilyLedger(
+  entries: ReadonlyArray<{
+    readonly event?: string;
+    readonly roundTriggerHeadOid?: string;
+    readonly roundTriggerAt?: string;
+  }>,
+): RoundTrigger | undefined {
+  return onlineReviewRoundTriggerFromLedger(entries);
+}
+
+/**
+ * Resume-skip / convergence head key from persisted ledger truth (#600 r26).
+ * Mirrors the marker writer's {@link convergenceHeadToRecord} inputs without
+ * relying on in-memory landing or optional ship.prHead.
+ */
+export function onlineReviewResumeHeadKeyFromLedger(
+  ledger: ReadonlyArray<{
+    readonly step?: string;
+    readonly event?: string;
+    readonly prHead?: string;
+    readonly branchHEAD?: string;
+    readonly output?: {
+      readonly kind?: string;
+      readonly prHead?: string;
+      readonly committed?: boolean;
+    };
+  }>,
+): string | undefined {
+  const postFixHead = lastOnlineReviewFixCommitShaFromLedger(
+    ledger.filter(
+      (e): e is {
+        readonly step: string;
+        readonly branchHEAD?: string;
+        readonly output?: { readonly kind?: string; readonly committed?: boolean };
+      } => typeof e.step === "string",
+    ),
+  );
+  let shipPrHead: string | undefined;
+  let branchHeadAfter: string | undefined;
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.step === "S7" && entry.output?.kind === "ship") {
+      const out = entry.output as { prHead?: string };
+      if (typeof out.prHead === "string" && out.prHead.length > 0) {
+        shipPrHead = out.prHead;
+      }
+      break;
+    }
+  }
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.step === "S9" &&
+      entry.output?.kind === "verify" &&
+      typeof entry.branchHEAD === "string" &&
+      entry.branchHEAD.length > 0
+    ) {
+      branchHeadAfter = entry.branchHEAD;
+      break;
+    }
+  }
+  return convergenceHeadToRecord({
+    shipHead: shipPrHead,
+    postFixHead,
+    branchHeadAfter,
+  });
+}
+
+/**
+ * Runner-owned recheck truth (#600 r26): round ≥2 verify is a post-fixer re-check
+ * by construction. Worker omission is normalized; explicit contradiction fails closed.
+ */
+export function enforceRunnerOwnedRecheck(
+  verify: VerifyResult,
+  onlineReviewRound: number,
+): VerifyResult | { readonly kind: "recheck_contradiction" } {
+  const runnerRecheck = onlineReviewRound > 1;
+  if (verify.isRecheck === false && runnerRecheck) {
+    return { kind: "recheck_contradiction" };
+  }
+  if (verify.isRecheck === true && !runnerRecheck) {
+    return { kind: "recheck_contradiction" };
+  }
+  if (runnerRecheck) {
+    return { ...verify, isRecheck: true };
+  }
+  return verify;
+}
+
 /** Family `shipped` ledger `ts` for the PR — round-1 freshness anchor (#600 r9). */
 export function shipLedgerTriggeredAtFromFamilyLedger(
   entries: ReadonlyArray<{
@@ -579,7 +706,7 @@ export interface OnlineReviewLoopDispatch {
     verify: VerifyResult,
     fixingCommitSha?: string,
   ) => VerifyResult;
-  readonly retriggerAfterFix: () => void;
+  readonly retriggerAfterFix: () => void | Promise<void>;
   /** Resolve the fixing commit SHA after fixer success (post-push HEAD). */
   readonly resolveFixCommitSha?: () => string | Promise<string>;
 }
@@ -599,9 +726,13 @@ export interface OnlineReviewLoopStageResult {
 export async function runOnlineReviewLoopStage(
   ship: ShipResult,
   dispatch: OnlineReviewLoopDispatch,
+  opts?: {
+    readonly initialRound?: number;
+    readonly initialFixCommitSha?: string;
+  },
 ): Promise<OnlineReviewLoopStageResult> {
-  let round = 1;
-  let lastFixCommitSha: string | undefined;
+  let round = opts?.initialRound ?? 1;
+  let lastFixCommitSha = opts?.initialFixCommitSha;
 
   while (round <= MAX_ONLINE_REVIEW_ROUNDS + 1) {
     let snapshot: PrReviewSnapshot;
@@ -627,11 +758,27 @@ export async function runOnlineReviewLoopStage(
       }
       return decisionGateFromDispatchInfra(round, "verify", err);
     }
+    const recheckOutcome = enforceRunnerOwnedRecheck(verify, round);
+    if (recheckOutcome.kind === "recheck_contradiction") {
+      return {
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round,
+        stopSummary: {
+          reason: "infra_failure",
+          summary:
+            "online review verify worker contradicted runner-owned recheck truth (isRecheck)",
+          repairHint:
+            "omit isRecheck on round-1 verify; set isRecheck:true only on post-fixer re-check rounds",
+        },
+      };
+    }
+    verify = recheckOutcome;
     try {
       verify = dispatch.applySideEffects(
         landing,
         verify,
-        verify.isRecheck ? lastFixCommitSha : undefined,
+        round > 1 ? lastFixCommitSha : undefined,
       );
     } catch (err) {
       if (err instanceof OnlineReviewLoopTerminal) {
@@ -691,7 +838,7 @@ export async function runOnlineReviewLoopStage(
       return decisionGateFromDispatchInfra(round, "fixer", err);
     }
     try {
-      dispatch.retriggerAfterFix();
+      await dispatch.retriggerAfterFix();
     } catch (err) {
       if (err instanceof OnlineReviewLoopTerminal) {
         throw err;

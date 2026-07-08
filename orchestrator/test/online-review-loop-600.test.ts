@@ -55,8 +55,13 @@ import {
 } from "../src/evidenceAdmissibility.js";
 import { offlinePrReviewSnapshot } from "../src/onlineReviewLoop.js";
 import {
+  enforceRunnerOwnedRecheck,
   immediateBotPollClock,
+  lastOnlineReviewFixCommitShaFromFamilyLedger,
   MAX_ONLINE_REVIEW_ROUNDS,
+  onlineReviewResumeHeadKeyFromLedger,
+  onlineReviewRoundFromFamilyLedger,
+  onlineReviewRoundTriggerFromFamilyLedger,
   onlineReviewRoundTriggerFromLedger,
   retriggerBotsAndPoll,
   resolveOnlineReviewRoundTrigger,
@@ -92,7 +97,10 @@ import { familyReviewLoopConvergedForHead } from "../src/family/ledger.js";
 import { runFamilyOnlineReviewLoop } from "../src/family/verifyCmr.js";
 import { RealFamilyBackend } from "../src/family/realFamilyBackend.js";
 import type { FamilyBackend, FamilyLedgerEntry } from "../src/family/types.js";
-import type { WorkerLandingPayload } from "../src/types.js";
+import type {
+  OnlineReviewConvergedEvent,
+  WorkerLandingPayload,
+} from "../src/types.js";
 
 function ghFixture(input: { calls: string[] }): Sh {
   return (file, args) => {
@@ -1428,6 +1436,36 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
     ).toBeUndefined();
   });
 
+  it("pin r26: onlineReviewResumeHeadKeyFromLedger keys no-fix convergence to S9 branchHEAD", () => {
+    const ledger = [
+      {
+        step: "S7",
+        output: { kind: "ship", status: "pr_opened" },
+      },
+      {
+        step: "S9",
+        output: { kind: "verify", converged: true },
+        branchHEAD: shipHead,
+      },
+      { event: "online_review_converged", prHead: shipHead },
+    ];
+    const reviewHead = onlineReviewResumeHeadKeyFromLedger(ledger);
+    expect(reviewHead).toBe(shipHead);
+    expect(onlineReviewConvergedForHead(ledger, reviewHead)).toBe(true);
+  });
+
+  it("pin r26: OnlineReviewConvergedEvent decodes persisted onlineReviewRound field", () => {
+    const persisted = {
+      event: "online_review_converged" as const,
+      prUrl: "https://github.com/o/r/pull/1",
+      prHead: shipHead,
+      onlineReviewRound: 2,
+    };
+    const decoded: OnlineReviewConvergedEvent = persisted;
+    expect(decoded.onlineReviewRound).toBe(2);
+    expect(decoded.event).toBe("online_review_converged");
+  });
+
   it("buildOnlineReviewLanding keys shipDelivery.prHead to snapshot head after fix", () => {
     const landing = buildOnlineReviewLanding(
       {
@@ -2295,6 +2333,100 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       }),
     ).toThrow(/persisted round trigger/);
   });
+
+  it("pin r26: family ledger restores round/trigger/fix SHA symmetrically to single-slice", () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const familyLedger: FamilyLedgerEntry[] = [
+      {
+        status: "online_review_fix_committed",
+        event: "online_review_fix_committed",
+        phase: "final",
+        familyHeadAfter: fixSha,
+      },
+      {
+        status: "online_review_round_retrigger",
+        event: "online_review_round_retrigger",
+        phase: "final",
+        roundTriggerHeadOid: fixSha,
+        roundTriggerAt: RETRIGGER_TS,
+        onlineReviewRound: 2,
+      },
+    ];
+    expect(onlineReviewRoundFromFamilyLedger(familyLedger)).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedger)).toBe(fixSha);
+    expect(onlineReviewRoundTriggerFromFamilyLedger(familyLedger)).toEqual(
+      buildRoundTrigger(fixSha, RETRIGGER_TS),
+    );
+  });
+});
+
+describe("#600 r26 runner-owned isRecheck", () => {
+  it("round ≥2 normalizes omitted isRecheck to true", () => {
+    const normalized = enforceRunnerOwnedRecheck(
+      { kind: "verify", converged: true },
+      2,
+    );
+    expect(normalized).toEqual({ kind: "verify", converged: true, isRecheck: true });
+  });
+
+  it("round ≥2 with explicit isRecheck:false fails closed", () => {
+    expect(
+      enforceRunnerOwnedRecheck(
+        { kind: "verify", converged: true, isRecheck: false },
+        2,
+      ),
+    ).toEqual({ kind: "recheck_contradiction" });
+  });
+
+  it("pin r26: stage post-fixer verify omitting isRecheck still applies fixing SHA", async () => {
+    let fixingSha: string | undefined;
+    const result = await runOnlineReviewLoopStage(
+      {
+        kind: "ship",
+        branch: "feat/x",
+        status: "pr_opened",
+        pr: "pr://x",
+        prHead: "head-1",
+      },
+      {
+        poll: async () => ({
+          repo: "o/r",
+          prNumber: 1,
+          prUrl: "pr://x",
+          headOid: "head-1",
+          pollCount: 2,
+          bots: {
+            coderabbit: { state: "complete", findingCount: 0 },
+            sourcery: { state: "complete", findingCount: 0 },
+            codex: { state: "complete", findingCount: 0 },
+            gemini: { state: "complete", findingCount: 0 },
+          },
+          threads: [],
+          checkRuns: [],
+          totalFindingCount: 0,
+          quiescent: true,
+        }),
+        dispatchVerify: async (_landing, round) => {
+          if (round === 1) {
+            return { kind: "verify", converged: false };
+          }
+          return { kind: "verify", converged: true };
+        },
+        dispatchFixer: async () => true,
+        dispatchCleanup: async () => true,
+        dispatchDocRelease: async () => true,
+        applySideEffects: (_landing, verify, sha) => {
+          fixingSha = sha;
+          return verify;
+        },
+        retriggerAfterFix: () => {},
+        resolveFixCommitSha: async () => "fix-sha-round1",
+      },
+      { initialRound: 1 },
+    );
+    expect(result.ok).toBe(true);
+    expect(fixingSha).toBe("fix-sha-round1");
+  });
 });
 
 describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
@@ -2500,12 +2632,17 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     };
     const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
-      dispatchVerify: async () => ({
-        kind: "verify",
-        converged: true,
-        isRecheck: true,
-        threadsToResolve: ["PRRT_kwDOExampleThread"],
-      }),
+      dispatchVerify: async (_landing, round) => {
+        if (round === 1) {
+          return { kind: "verify", converged: false };
+        }
+        return {
+          kind: "verify",
+          converged: true,
+          isRecheck: true,
+          threadsToResolve: ["PRRT_kwDOExampleThread"],
+        };
+      },
       dispatchFixer: async () => true,
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
@@ -2523,11 +2660,12 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return verify;
       },
       retriggerAfterFix: () => {},
+      resolveFixCommitSha: async () => "fix-sha",
     });
     expect(result).toEqual({
       ok: false,
       terminalState: "decision_gate_raised",
-      round: 1,
+      round: 2,
       stopSummary: expect.objectContaining({
         reason: "infra_failure",
         summary: expect.stringContaining("side effects failed"),
@@ -3122,6 +3260,65 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         terminalState: "decision_gate_raised",
         round: 1,
       });
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("pin r26: family crash mid-round-2 restores round+trigger+fixSHA from ledger", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    try {
+      class ResumeFamilyBackend extends ReviewLoopFamilyBackend {
+        readonly verifyRounds: number[] = [];
+        override async dispatchWorker(
+          spec: WorkerSpec,
+          ctx: DispatchContext,
+          landing?: WorkerLandingPayload,
+        ): Promise<WorkerResult> {
+          if (spec.kind === "verify") {
+            this.verifyRounds.push(ctx.onlineReviewRound ?? landing?.onlineReviewRound ?? 0);
+            return {
+              kind: "completed",
+              output: { kind: "verify", converged: true },
+            };
+          }
+          const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+          return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
+        }
+      }
+      const backend = new ResumeFamilyBackend();
+      backend.ledger.push(
+        {
+          status: "online_review_fix_committed",
+          event: "online_review_fix_committed",
+          phase: "final",
+          familyHeadAfter: fixSha,
+          pr: offlineShip.pr,
+        },
+        {
+          status: "online_review_round_retrigger",
+          event: "online_review_round_retrigger",
+          phase: "final",
+          roundTriggerHeadOid: fixSha,
+          roundTriggerAt: retriggerTs,
+          onlineReviewRound: 2,
+          pr: offlineShip.pr,
+        },
+      );
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+      expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
+      expect(backend.verifyRounds).toEqual([2]);
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

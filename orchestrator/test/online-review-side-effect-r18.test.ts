@@ -127,6 +127,8 @@ describe("#600 r18 single-slice verify side-effect in-band", () => {
   };
 
   class SideEffectFailBackend implements Backend {
+    private verifyCalls = 0;
+
     async findResumeState(): Promise<undefined> {
       return undefined;
     }
@@ -167,6 +169,13 @@ describe("#600 r18 single-slice verify side-effect in-band", () => {
         return { kind: "completed", output: { kind: "reviewer", findings: [] } };
       }
       if (spec.kind === "verify") {
+        this.verifyCalls += 1;
+        if (this.verifyCalls === 1) {
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: false },
+          };
+        }
         return {
           kind: "completed",
           output: {
@@ -175,6 +184,12 @@ describe("#600 r18 single-slice verify side-effect in-band", () => {
             isRecheck: true,
             threadsToResolve: ["PRRT_kwDOExampleThread"],
           },
+        };
+      }
+      if (spec.kind === "fixer") {
+        return {
+          kind: "completed",
+          output: { kind: "fixer", committed: true },
         };
       }
       const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
@@ -212,7 +227,11 @@ describe("#600 r18 single-slice verify side-effect in-band", () => {
       expect(result.status).toBe("error");
       expect(result.stopSummary?.reason).toBe("infra_failure");
       expect(result.stopSummary?.summary).toContain("side effects failed");
-      expect(result.stopSummary?.summary).toContain("fixingCommitSha");
+      // r26: runner supplies fixingCommitSha on round ≥2 by construction — not the
+      // missing-SHA guard this pin originally exercised.
+      expect(result.stopSummary?.summary).not.toContain(
+        "requires fixingCommitSha on recheck",
+      );
       expect(ghCalls.some((c) => c.startsWith("gh "))).toBe(true);
     } finally {
       if (prev === undefined) {

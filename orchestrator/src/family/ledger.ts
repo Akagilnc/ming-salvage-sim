@@ -837,6 +837,67 @@ export function familyShippedRecordForHead(
   };
 }
 
+/** Append one online-review fixer commit audit row (#600 r26 family resume). */
+export async function recordOnlineReviewFixCommitted(
+  backend: FamilyBackend,
+  record: {
+    readonly familyHeadAfter: string;
+    readonly pr?: string;
+  },
+): Promise<void> {
+  const familyHeadAfter = record.familyHeadAfter.trim();
+  if (familyHeadAfter.length === 0) {
+    throw new Error(
+      "family online_review_fix_committed marker must include a non-empty familyHeadAfter",
+    );
+  }
+  await backend.appendFamilyLedger(
+    compact({
+      status: "online_review_fix_committed",
+      event: "online_review_fix_committed",
+      phase: "final",
+      familyHeadAfter,
+      ...(record.pr !== undefined && record.pr.trim().length > 0
+        ? { pr: record.pr.trim() }
+        : {}),
+      ts: new Date().toISOString(),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/** Append one online-review round ≥2 freshness anchor (#600 r26 family resume). */
+export async function recordOnlineReviewRoundRetrigger(
+  backend: FamilyBackend,
+  record: {
+    readonly roundTriggerHeadOid: string;
+    readonly roundTriggerAt: string;
+    readonly onlineReviewRound: number;
+    readonly pr?: string;
+  },
+): Promise<void> {
+  const headOid = record.roundTriggerHeadOid.trim();
+  const triggeredAt = record.roundTriggerAt.trim();
+  if (headOid.length === 0 || triggeredAt.length === 0) {
+    throw new Error(
+      "family online_review_round_retrigger marker must include roundTriggerHeadOid and roundTriggerAt",
+    );
+  }
+  await backend.appendFamilyLedger(
+    compact({
+      status: "online_review_round_retrigger",
+      event: "online_review_round_retrigger",
+      phase: "final",
+      roundTriggerHeadOid: headOid,
+      roundTriggerAt: triggeredAt,
+      onlineReviewRound: record.onlineReviewRound,
+      ...(record.pr !== undefined && record.pr.trim().length > 0
+        ? { pr: record.pr.trim() }
+        : {}),
+      ts: new Date().toISOString(),
+    }) as FamilyLedgerEntry,
+  );
+}
+
 /**
  * Append the PHASE-LEVEL `review_loop_converged` terminal marker to the family
  * ledger (#596).
