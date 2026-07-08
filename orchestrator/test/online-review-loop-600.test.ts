@@ -1218,24 +1218,52 @@ describe("#600 r4 central evidence admissibility gate", () => {
     expect(snap.bots.coderabbit.state).toBe("pending");
   });
 
-  it("pin offline gate: synthetic snapshots refused for real GitHub PR URLs", () => {
-    expect(
-      offlineSyntheticPollAdmissible("https://github.com/o/r/pull/1", "o/r"),
-    ).toBe(false);
-    expect(() =>
-      assertOfflineSyntheticPollAdmissible("https://github.com/o/r/pull/1", "o/r"),
-    ).toThrow(/refused for live GitHub PR/);
-    expect(() =>
-      offlinePrReviewSnapshot({
-        repo: "o/r",
-        prUrl: "https://github.com/o/r/pull/1",
-        headOid: "abc",
-        pollCount: 1,
-      }),
-    ).toThrow(/refused for live GitHub PR/);
-    expect(offlineSyntheticPollAdmissible("pr://family/offline", "o/r")).toBe(
-      true,
-    );
+  it("pin offline gate: default-deny synthetic snapshots outside admissible handles", () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    try {
+      expect(
+        offlineSyntheticPollAdmissible("https://github.com/o/r/pull/1", "o/r"),
+      ).toBe(false);
+      expect(() =>
+        assertOfflineSyntheticPollAdmissible(
+          "https://github.com/o/r/pull/1",
+          "o/r",
+        ),
+      ).toThrow(/refused for live GitHub PR/);
+      expect(() =>
+        offlinePrReviewSnapshot({
+          repo: "o/r",
+          prUrl: "https://github.com/o/r/pull/1",
+          headOid: "abc",
+          pollCount: 1,
+        }),
+      ).toThrow(/refused for live GitHub PR/);
+
+      delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      expect(() =>
+        assertOfflineSyntheticPollAdmissible(
+          "https://github.com/o/r/pull/1",
+          "o/r",
+        ),
+      ).toThrow(/refused for live GitHub PR/);
+      expect(() =>
+        assertOfflineSyntheticPollAdmissible("pr://family/offline", "o/r"),
+      ).toThrow(/refused for non-admissible PR handle/);
+
+      process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+      expect(offlineSyntheticPollAdmissible("pr://family/offline", "o/r")).toBe(
+        true,
+      );
+      expect(() =>
+        assertOfflineSyntheticPollAdmissible("pr://family/offline", "o/r"),
+      ).not.toThrow();
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
   });
 
   it("pin workerOutcomeAdmissible: failed dispatch is terminal, not skeleton-green", () => {

@@ -92,10 +92,7 @@ export function assertOfflineSyntheticPollAdmissible(
   if (offlineSyntheticPollAdmissible(prUrl, defaultRepo)) {
     return;
   }
-  if (
-    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1" &&
-    isPollableGithubPrUrl(prUrl, defaultRepo)
-  ) {
+  if (isPollableGithubPrUrl(prUrl, defaultRepo)) {
     throw new Error(
       `offline review poll inadmissible: synthetic snapshot refused for live GitHub PR ${prUrl}`,
     );
@@ -105,6 +102,9 @@ export function assertOfflineSyntheticPollAdmissible(
       `offline review poll inadmissible: synthetic snapshot refused for non-test PR handle ${prUrl}`,
     );
   }
+  throw new Error(
+    `offline review poll inadmissible: synthetic snapshot refused for non-admissible PR handle ${prUrl}`,
+  );
 }
 
 export function buildRoundTrigger(
