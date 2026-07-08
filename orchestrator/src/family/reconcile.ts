@@ -29,7 +29,7 @@
  *      (diverged)            ledger末条 (diverged / behind / unrelated history) →
  *                            fail-closed escalate (do not guess).
  *
- * This is WIDER than the single-slice `checkBranchHeadConsistency` "HEAD mismatch
+ * This is WIDER than the removed single-slice HEAD-equality resume gate ("HEAD mismatch
  * → abort": branch ② does NOT abort — it补账 and continues, which is the "幂等
  * 续合" the family layer needs (agy/codex R2). The function is PURE over the
  * injected {@link ReconcileGit} seam (no real git here) so the spine stays a thin

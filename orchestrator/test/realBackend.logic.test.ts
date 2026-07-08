@@ -3,8 +3,8 @@
  *
  * Scope (per #256 acceptance criteria): only the zero-container, zero-LLM logic
  * — gh-snapshot parsing, auth-mount path construction, model-slug mapping,
- * per-step sessionId extraction (seam extension), branchHEAD consistency
- * (codex#2), resume error classification, and failedStep attribution
+ * per-step sessionId extraction (seam extension), resume error classification,
+ * and failedStep attribution
  * (codex#3). The real container / real-LLM / real-gh paths are #256
  * MANUAL smoke and are NOT exercised here.
  *
@@ -28,7 +28,6 @@ import {
   buildIssueMeta,
   buildIssueSnapshot,
   checkExecutableInstructionSource,
-  checkBranchHeadConsistency,
   classifyResumeError,
   cutRefFor,
   ensureExcluded,
@@ -41,7 +40,6 @@ import {
   isLikelySha,
   isReadyForAgent,
   issueNumberFromBranch,
-  lastLedgerBranchHead,
   lastSessionId,
   matchWorktreeForBranch,
   modelIdForSlug,
@@ -752,121 +750,13 @@ describe("realBackend assertCompletionSignal", () => {
   });
 });
 
-// ─── branchHEAD consistency (codex#2) ────────────────────────────────────────
-
-describe("realBackend checkBranchHeadConsistency (codex#2)", () => {
-  const sha = "a".repeat(40);
-  const other = "b".repeat(40);
-
-  it("ok when the recorded SHA matches the live HEAD", () => {
-    expect(checkBranchHeadConsistency(sha, sha)).toEqual({ ok: true });
-  });
-
-  it("mismatch when the recorded SHA diverges from the live HEAD", () => {
-    expect(checkBranchHeadConsistency(sha, other)).toEqual({
-      ok: false,
-      ledgerHead: sha,
-      liveHead: other,
-    });
-  });
-
-  it("ok (no contradiction) when there is no recorded SHA", () => {
-    expect(checkBranchHeadConsistency(undefined, sha)).toEqual({ ok: true });
-    expect(checkBranchHeadConsistency("", sha)).toEqual({ ok: true });
-  });
-
-  it("ok when the ledger value is a v0.1 branch-name fallback (not a SHA)", () => {
-    // A pre-#256 ledger recorded the branch NAME, not a SHA — never a mismatch.
-    expect(
-      checkBranchHeadConsistency("feat/244-orchestrator-issue-256", sha),
-    ).toEqual({ ok: true });
-  });
-
-  it("ok when the live HEAD is unavailable", () => {
-    expect(checkBranchHeadConsistency(sha, undefined)).toEqual({ ok: true });
-  });
-
-  it("isLikelySha accepts 7–40 lower-hex, rejects branch names / upper / short", () => {
+describe("realBackend isLikelySha", () => {
+  it("accepts 7–40 lower-hex, rejects branch names / upper / short", () => {
     expect(isLikelySha("abc1234")).toBe(true);
     expect(isLikelySha("a".repeat(40))).toBe(true);
     expect(isLikelySha("feat/x")).toBe(false);
     expect(isLikelySha("ABC1234")).toBe(false);
-    expect(isLikelySha("abc12")).toBe(false); // too short
-  });
-});
-
-// ─── resume HEAD reconciliation: mismatch → bail (integ-cmr 256 r1, F5) ───────
-
-describe("realBackend resume HEAD reconciliation (codex#2 wiring, F5)", () => {
-  const sha = "a".repeat(40);
-  const other = "b".repeat(40);
-
-  it("lastLedgerBranchHead picks the latest recorded SHA, skipping name fallbacks", () => {
-    // Earliest entries used the v0.1 branch-NAME fallback; the latest agent step
-    // recorded a real SHA — that is the base the resume must reconcile against.
-    expect(
-      lastLedgerBranchHead([
-        { branchHEAD: "feat/244-orchestrator-issue-256" }, // v0.1 name
-        { branchHEAD: sha }, // real SHA (latest)
-      ]),
-    ).toBe(sha);
-  });
-
-  it("lastLedgerBranchHead returns the last REAL SHA when a later branch-name fallback follows it (r2 F1)", () => {
-    // The dangerous interleave: an agent step recorded a real SHA, then a LATER
-    // step's resolveBranchHEAD hit a transient worktreeHead() fault and recorded
-    // the branch NAME fallback. Returning the latest non-empty value would yield
-    // the NAME — checkBranchHeadConsistency then sees a non-SHA and returns
-    // {ok:true}, SKIPPING a real divergence. Scanning backward for the first
-    // value that is a SHA reconciles against the last REAL recorded base instead.
-    expect(
-      lastLedgerBranchHead([
-        { branchHEAD: sha }, // real SHA (earlier)
-        { branchHEAD: "feat/244-orchestrator-issue-256" }, // later NAME fallback
-      ]),
-    ).toBe(sha);
-  });
-
-  it("lastLedgerBranchHead skips multiple trailing name fallbacks back to the real SHA (r2 F1)", () => {
-    expect(
-      lastLedgerBranchHead([
-        { branchHEAD: other }, // older SHA
-        { branchHEAD: sha }, // latest real SHA — the one to reconcile against
-        { branchHEAD: "feat/244-orchestrator-issue-256" }, // name fallback
-        { branchHEAD: "feat/244-orchestrator-issue-256" }, // name fallback
-      ]),
-    ).toBe(sha);
-  });
-
-  it("lastLedgerBranchHead returns undefined when only name fallbacks were recorded (r2 F1)", () => {
-    // No real SHA anywhere ⇒ nothing for the consistency check to contradict.
-    expect(
-      lastLedgerBranchHead([
-        { branchHEAD: "feat/244-orchestrator-issue-256" },
-        { branchHEAD: "feat/244-orchestrator-issue-256" },
-      ]),
-    ).toBeUndefined();
-  });
-
-  it("returns undefined when no entry recorded a value (fresh / pre-SHA ledger)", () => {
-    expect(lastLedgerBranchHead([{}, {}])).toBeUndefined();
-    expect(lastLedgerBranchHead([])).toBeUndefined();
-  });
-
-  it("mismatch → bail: a moved branch (live HEAD ≠ last ledger SHA) is a hard error", () => {
-    // The reconciliation findResumeState runs: read the last recorded SHA, read
-    // the live worktree HEAD, compare. A divergence (stray commit / wrong-
-    // worktree reuse / corrupted ledger) must NOT be resumed — it bails to a
-    // clean error (S8(error) at the runner). This asserts the decision the wiring
-    // feeds to `throw`.
-    const ledgerHead = lastLedgerBranchHead([{ branchHEAD: sha }]);
-    const verdict = checkBranchHeadConsistency(ledgerHead, /*liveHead*/ other);
-    expect(verdict).toEqual({ ok: false, ledgerHead: sha, liveHead: other });
-  });
-
-  it("agreement → resume proceeds (live HEAD == last ledger SHA)", () => {
-    const ledgerHead = lastLedgerBranchHead([{ branchHEAD: sha }]);
-    expect(checkBranchHeadConsistency(ledgerHead, sha)).toEqual({ ok: true });
+    expect(isLikelySha("abc12")).toBe(false);
   });
 });
 
