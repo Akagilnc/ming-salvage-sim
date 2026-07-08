@@ -1889,7 +1889,7 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
     expect(onlineReviewConvergedForHead(ledger, reviewHead)).toBe(true);
   });
 
-  it("pin r36: crash after converged marker without S9 verify output keys resume to marker prHead", () => {
+  it("pin r36/r38: converged marker writer shape closes integrated resume-skip (prHead + branchHEAD, no trailing S9 verify output)", () => {
     const markerHead = "deadbeefcommitsha0000000000000000000000";
     const ledger = [
       {
@@ -1910,21 +1910,7 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
     expect(onlineReviewConvergedForHead(ledger, reviewHead)).toBe(true);
   });
 
-  it("pin r36: converged marker without prHead falls back to branchHEAD", () => {
-    const branchHead = "branchheadfallback00000000000000000000";
-    const ledger = [
-      {
-        step: "S9",
-        event: "online_review_converged",
-        prUrl: "pr://slice/offline-255",
-        branchHEAD: branchHead,
-        onlineReviewRound: 1,
-      },
-    ];
-    expect(onlineReviewResumeHeadKeyFromLedger(ledger)).toBe(branchHead);
-  });
-
-  it("pin r36: without converged marker, ship/fix/verify-row fallback unchanged", () => {
+  it("pin r36/r38: without converged marker, ship/fix/verify-row fallback unchanged and does not resume-skip", () => {
     const ledger = [
       {
         step: "S7",
@@ -1936,7 +1922,9 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
         branchHEAD: shipHead,
       },
     ];
-    expect(onlineReviewResumeHeadKeyFromLedger(ledger)).toBe(shipHead);
+    const reviewHead = onlineReviewResumeHeadKeyFromLedger(ledger);
+    expect(reviewHead).toBe(shipHead);
+    expect(onlineReviewConvergedForHead(ledger, reviewHead)).toBe(false);
   });
 
   it("pin r26: OnlineReviewConvergedEvent decodes persisted onlineReviewRound field", () => {

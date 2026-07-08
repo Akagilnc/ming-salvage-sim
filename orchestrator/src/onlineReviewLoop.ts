@@ -574,12 +574,12 @@ export function onlineReviewRoundTriggerFromFamilyLedger(
 }
 
 /**
- * Resume-skip / convergence head key from persisted ledger truth (#600 r26, r36).
- * Prefer the latest `online_review_converged` marker's own `prHead` (else
- * `branchHEAD`) so crash-after-marker resume matches durable convergence without
- * a trailing S9 verify output row. Otherwise mirror the marker writer's
- * {@link convergenceHeadToRecord} inputs without relying on in-memory landing or
- * optional ship.prHead.
+ * Resume-skip / convergence head key from persisted ledger truth (#600 r26, r36, r38).
+ * Prefer the latest `online_review_converged` marker's `prHead` (writer always
+ * records it; predicate keys on prHead only) so crash-after-marker resume
+ * matches durable convergence without a trailing S9 verify output row. Otherwise
+ * mirror the marker writer's {@link convergenceHeadToRecord} inputs without relying
+ * on in-memory landing or optional ship.prHead.
  */
 export function onlineReviewResumeHeadKeyFromLedger(
   ledger: ReadonlyArray<{
@@ -599,9 +599,6 @@ export function onlineReviewResumeHeadKeyFromLedger(
     if (entry.event !== "online_review_converged") continue;
     if (typeof entry.prHead === "string" && entry.prHead.length > 0) {
       return entry.prHead;
-    }
-    if (typeof entry.branchHEAD === "string" && entry.branchHEAD.length > 0) {
-      return entry.branchHEAD;
     }
     break;
   }
