@@ -357,12 +357,33 @@ export function slicePendingRoundTriggerFromFixGap(
   return buildRoundTrigger(lastFixHead, lastFixTs);
 }
 
+function roundTriggerRecencyMs(trigger: RoundTrigger): number | undefined {
+  const ms = Date.parse(trigger.triggeredAt);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/** Pick the fresher recovery anchor when multiple sources are present (#600 r32). */
+export function newerRoundTrigger(
+  a: RoundTrigger,
+  b: RoundTrigger,
+): RoundTrigger {
+  const aMs = roundTriggerRecencyMs(a);
+  const bMs = roundTriggerRecencyMs(b);
+  if (aMs !== undefined && bMs !== undefined) {
+    return aMs >= bMs ? a : b;
+  }
+  if (aMs !== undefined) return a;
+  if (bMs !== undefined) return b;
+  return a;
+}
+
 /**
  * Resolve the bot-poll freshness anchor for the current online review round.
  * Round 1 may fall back to the S7 ship ledger timestamp; round ≥2 requires a
  * persisted re-trigger anchor and never reuses the ship anchor (#600 r25).
  * When fix-committed landed before retrigger (crash gap), reconstruct the
  * pending anchor from the fix record so resume stays in-band (#600 r27).
+ * When both persisted and fix-gap anchors exist, precedence is by recency (#600 r32).
  */
 export function resolveOnlineReviewRoundTrigger(input: {
   readonly onlineReviewRound: number;
@@ -372,16 +393,30 @@ export function resolveOnlineReviewRoundTrigger(input: {
   readonly shipPrHead?: string;
   readonly shipLedgerTriggeredAt?: string;
 }): RoundTrigger {
-  if (input.persistedRoundTrigger !== undefined) {
-    return input.persistedRoundTrigger;
-  }
-  if (input.onlineReviewRound > 1) {
-    if (input.pendingRetriggerFromFixGap !== undefined) {
-      return input.pendingRetriggerFromFixGap;
+  const { persistedRoundTrigger, pendingRetriggerFromFixGap, onlineReviewRound } =
+    input;
+  if (onlineReviewRound > 1) {
+    if (
+      persistedRoundTrigger !== undefined &&
+      pendingRetriggerFromFixGap !== undefined
+    ) {
+      return newerRoundTrigger(
+        pendingRetriggerFromFixGap,
+        persistedRoundTrigger,
+      );
+    }
+    if (persistedRoundTrigger !== undefined) {
+      return persistedRoundTrigger;
+    }
+    if (pendingRetriggerFromFixGap !== undefined) {
+      return pendingRetriggerFromFixGap;
     }
     throw new Error(
       "online review round ≥2 requires a persisted round trigger from ledger retrigger",
     );
+  }
+  if (persistedRoundTrigger !== undefined) {
+    return persistedRoundTrigger;
   }
   return buildRoundTrigger(
     input.fixCommitSha ?? input.shipPrHead ?? "offline-review-head",
@@ -887,6 +922,49 @@ export class VerifyWorkerHeadMovedError extends Error {
   }
 }
 
+/** Thrown when a read-only verify worker dirties the tracked worktree (#600 r32). */
+export class VerifyWorkerWorktreeDirtyError extends Error {
+  readonly porcelainBefore: string;
+  readonly porcelainAfter: string;
+
+  constructor(porcelainBefore: string, porcelainAfter: string) {
+    super(
+      "online review verify worker left tracked worktree changes: " +
+        porcelainAfter,
+    );
+    this.name = "VerifyWorkerWorktreeDirtyError";
+    this.porcelainBefore = porcelainBefore;
+    this.porcelainAfter = porcelainAfter;
+  }
+}
+
+export function worktreePorcelainFingerprint(
+  lines: ReadonlyArray<string>,
+): string {
+  return lines.map((line) => line.trimEnd()).join("\n");
+}
+
+export type VerifyReadOnlyWorktreeDrift =
+  | "head"
+  | "worktree"
+  | undefined;
+
+/** Detect read-only verify contract drift from HEAD or tracked-worktree movement. */
+export function verifyReadOnlyWorktreeDrift(input: {
+  readonly headBefore: string;
+  readonly headAfter: string;
+  readonly porcelainBefore: string;
+  readonly porcelainAfter: string;
+}): VerifyReadOnlyWorktreeDrift {
+  if (input.headAfter !== input.headBefore) {
+    return "head";
+  }
+  if (input.porcelainAfter !== input.porcelainBefore) {
+    return "worktree";
+  }
+  return undefined;
+}
+
 /** Stop summary when a read-only verify worker moved HEAD (mirrors cmr reviewer guard). */
 export function verifyReviewerHeadMovedStopSummary(input: {
   readonly headBefore: string;
@@ -905,6 +983,20 @@ export function verifyReviewerHeadMovedStopSummary(input: {
         actualFamilyHead: "post-verify branch HEAD",
       },
     },
+  });
+}
+
+/** Stop summary when a read-only verify worker left tracked worktree residue (#600 r32). */
+export function verifyReviewerWorktreeDirtyStopSummary(input: {
+  readonly trackedStatus: readonly string[];
+}): StopSummary {
+  return contractDriftStopSummary({
+    summary:
+      "online review verify worker left tracked worktree changes: " +
+      input.trackedStatus.join("; "),
+    repairHint:
+      "restore the verify/fixer role boundary so verify leaves the tracked worktree clean, then rerun the online review loop",
+    metadata: { trackedStatus: input.trackedStatus },
   });
 }
 

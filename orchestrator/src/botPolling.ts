@@ -194,8 +194,78 @@ type ReviewThreadsConnection = {
   pageInfo?: { endCursor?: string | null; hasNextPage?: boolean };
 };
 
+type ParsedReviewThreadsPage = {
+  readonly nodes: ReviewThreadGraphqlNode[];
+  readonly hasNextPage: boolean;
+  readonly endCursor: string;
+};
+
+function parseReviewThreadsGraphqlPage(parsed: unknown): ParsedReviewThreadsPage {
+  if (parsed != null && typeof parsed === "object") {
+    const errors = (parsed as { errors?: unknown }).errors;
+    if (Array.isArray(errors) && errors.length > 0) {
+      throw new Error(
+        `botPolling: GraphQL reviewThreads errors: ${JSON.stringify(errors)}`,
+      );
+    }
+  }
+
+  const connection: ReviewThreadsConnection | undefined =
+    parsed != null && typeof parsed === "object"
+      ? (
+          parsed as {
+            data?: {
+              repository?: {
+                pullRequest?: { reviewThreads?: ReviewThreadsConnection };
+              };
+            };
+          }
+        ).data?.repository?.pullRequest?.reviewThreads
+      : undefined;
+  if (connection === undefined) {
+    throw new Error(
+      "botPolling: malformed GraphQL reviewThreads response (missing connection)",
+    );
+  }
+
+  const pageInfo = connection.pageInfo;
+  if (pageInfo === undefined || typeof pageInfo !== "object") {
+    throw new Error(
+      "botPolling: malformed GraphQL reviewThreads response (missing pageInfo)",
+    );
+  }
+
+  const rawNodes = connection.nodes;
+  if (rawNodes === undefined) {
+    throw new Error(
+      "botPolling: malformed GraphQL reviewThreads response (missing nodes)",
+    );
+  }
+  if (!Array.isArray(rawNodes)) {
+    throw new Error(
+      "botPolling: malformed GraphQL reviewThreads response (non-array nodes)",
+    );
+  }
+
+  const hasNextPage = pageInfo.hasNextPage === true;
+  const endCursor =
+    typeof pageInfo.endCursor === "string" ? pageInfo.endCursor : "";
+  if (hasNextPage && endCursor.length === 0) {
+    throw new Error(
+      "botPolling: malformed GraphQL reviewThreads pagination (hasNextPage without endCursor)",
+    );
+  }
+
+  return {
+    nodes: rawNodes as ReviewThreadGraphqlNode[],
+    hasNextPage,
+    endCursor,
+  };
+}
+
 /**
  * Cursor-paginate `pullRequest.reviewThreads` via GraphQL `pageInfo` (#600 AC2).
+ * Malformed pages fail closed; only a well-formed terminal page ends pagination (#600 r32).
  */
 export function paginateReviewThreadNodes(
   sh: Sh,
@@ -236,32 +306,14 @@ export function paginateReviewThreadNodes(
       ghArgs.push("-f", `after=${after}`);
     }
     const raw = sh("gh", ghArgs);
-    const parsed: unknown = JSON.parse(raw);
-    const connection: ReviewThreadsConnection | undefined =
-      parsed != null && typeof parsed === "object"
-        ? (
-            parsed as {
-              data?: {
-                repository?: {
-                  pullRequest?: { reviewThreads?: ReviewThreadsConnection };
-                };
-              };
-            }
-          ).data?.repository?.pullRequest?.reviewThreads
-        : undefined;
-    const nodes = connection?.nodes;
-    if (!Array.isArray(nodes) || nodes.length === 0) {
+    const page = parseReviewThreadsGraphqlPage(JSON.parse(raw));
+    if (page.nodes.length > 0) {
+      allNodes.push(...page.nodes);
+    }
+    if (!page.hasNextPage) {
       break;
     }
-    allNodes.push(...(nodes as ReviewThreadGraphqlNode[]));
-    if (!connection?.pageInfo?.hasNextPage) {
-      break;
-    }
-    const nextCursor = connection.pageInfo.endCursor;
-    if (typeof nextCursor !== "string" || nextCursor.length === 0) {
-      break;
-    }
-    after = nextCursor;
+    after = page.endCursor;
   }
 
   return allNodes;

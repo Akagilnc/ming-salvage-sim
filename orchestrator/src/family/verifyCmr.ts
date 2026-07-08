@@ -83,6 +83,7 @@ import {
   runOnlineReviewLoopStage,
   shipLedgerTriggeredAtFromFamilyLedger,
   verifyReviewerHeadMovedStopSummary,
+  verifyReviewerWorktreeDirtyStopSummary,
   waitForBotQuiescence,
   type OnlineReviewLoopStageResult,
 } from "../onlineReviewLoop.js";
@@ -1262,6 +1263,21 @@ async function readPostCmrTrackedStatus(
   );
 }
 
+/** Best-effort tracked status for online-review verify guard (skip when unreadable). */
+async function readOnlineVerifyTrackedStatus(
+  familyBackend: FamilyBackend,
+  familyBase: string,
+): Promise<readonly string[] | undefined> {
+  if (familyBackend.readFamilyTrackedStatus === undefined) {
+    return undefined;
+  }
+  try {
+    return await readPostCmrTrackedStatus(familyBackend, familyBase);
+  } catch {
+    return undefined;
+  }
+}
+
 async function readPostCmrCurrentHead(
   familyBackend: FamilyBackend,
 ): Promise<string | undefined> {
@@ -1575,6 +1591,10 @@ export async function runFamilyOnlineReviewLoop(input: {
         input.familyBackend,
         input.familyBase,
       );
+      const trackedBefore = await readOnlineVerifyTrackedStatus(
+        input.familyBackend,
+        input.familyBase,
+      );
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
         verifyWorkerSpec(input.resolvedRoute),
@@ -1582,6 +1602,10 @@ export async function runFamilyOnlineReviewLoop(input: {
         landing,
       );
       const headAfter = await readRequiredFamilyHead(
+        input.familyBackend,
+        input.familyBase,
+      );
+      const trackedAfter = await readOnlineVerifyTrackedStatus(
         input.familyBackend,
         input.familyBase,
       );
@@ -1597,6 +1621,20 @@ export async function runFamilyOnlineReviewLoop(input: {
           stopSummary: verifyReviewerHeadMovedStopSummary({
             headBefore,
             headAfter,
+          }),
+        });
+      }
+      if (
+        trackedBefore !== undefined &&
+        trackedAfter !== undefined &&
+        trackedAfter.join("\n") !== trackedBefore.join("\n")
+      ) {
+        throw new OnlineReviewLoopTerminal({
+          ok: false,
+          terminalState: "contract_drift",
+          round,
+          stopSummary: verifyReviewerWorktreeDirtyStopSummary({
+            trackedStatus: trackedAfter,
           }),
         });
       }
