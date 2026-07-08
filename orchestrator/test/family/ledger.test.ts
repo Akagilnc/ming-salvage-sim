@@ -116,6 +116,7 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
         stopSummary: { reason: "success" },
       },
     ]);
+    expect(backend.appended[0]?.ts).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it("recordShipped rejects blank PR/head values before appending", async () => {

@@ -41,6 +41,7 @@ import {
 import {
   assertOfflineSyntheticPollAdmissible,
   buildRoundTrigger,
+  classifyEvidenceFreshness,
   evidenceAdmissible,
   offlineSyntheticPollAdmissible,
   workerOutcomeAdmissible,
@@ -51,6 +52,8 @@ import {
   MAX_ONLINE_REVIEW_ROUNDS,
   retriggerBotsAndPoll,
   runOnlineReviewLoopStage,
+  shipLedgerTriggeredAtFromFamilyLedger,
+  shipLedgerTriggeredAtFromSliceLedger,
   waitForBotQuiescence,
 } from "../src/onlineReviewLoop.js";
 import { runOrchestrator } from "../src/runner.js";
@@ -1109,6 +1112,178 @@ describe("#600 r4 central evidence admissibility gate", () => {
         spec,
       ),
     ).toBe(true);
+  });
+});
+
+describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
+  const SHIP_LEDGER_TS = "2026-07-08T10:00:00.000Z";
+  const LOOP_START_TS = "2026-07-08T12:00:00.000Z";
+  const BETWEEN_SHIP_AND_LOOP_TS = "2026-07-08T11:00:00.000Z";
+  const PRE_SHIP_TS = "2026-07-08T09:00:00.000Z";
+  const POST_RETRIGGER_TS = "2026-07-08T13:30:00.000Z";
+  const RETRIGGER_TS = "2026-07-08T13:00:00.000Z";
+
+  it("(a) evidence between ship ledger ts and loop start is admissible in round 1", () => {
+    const shipTriggeredAt = shipLedgerTriggeredAtFromSliceLedger([
+      {
+        step: "S7",
+        output: { kind: "ship" },
+        ts: SHIP_LEDGER_TS,
+      },
+    ]);
+    expect(shipTriggeredAt).toBe(SHIP_LEDGER_TS);
+
+    const round1Trigger = buildRoundTrigger("headsha1", shipTriggeredAt);
+    expect(
+      evidenceAdmissible(
+        {
+          terminalState: "fresh_live",
+          timestamp: BETWEEN_SHIP_AND_LOOP_TS,
+        },
+        "headsha1",
+        round1Trigger,
+      ),
+    ).toBe(true);
+
+    const loopStartTrigger = buildRoundTrigger("headsha1", LOOP_START_TS);
+    expect(
+      evidenceAdmissible(
+        {
+          terminalState: "fresh_live",
+          timestamp: BETWEEN_SHIP_AND_LOOP_TS,
+        },
+        "headsha1",
+        loopStartTrigger,
+      ),
+    ).toBe(false);
+
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      const cmd = args.join(" ");
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews")
+      ) {
+        return JSON.stringify({
+          head: { sha: "headsha1" },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") || cmd.includes("pulls/42/comments")) {
+        return JSON.stringify([
+          {
+            user: { login: "coderabbitai[bot]" },
+            body: "Summary posted after ship, before loop poll",
+            created_at: BETWEEN_SHIP_AND_LOOP_TS,
+          },
+        ]);
+      }
+      if (cmd.includes("check-runs")) {
+        return JSON.stringify({ check_runs: [] });
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return "[]";
+      }
+      if (cmd.includes("pulls/comments/") && cmd.includes("/reactions")) {
+        return "[]";
+      }
+      return "[]";
+    };
+    const snap = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: round1Trigger,
+    });
+    expect(snap.bots.coderabbit.state).toBe("complete");
+  });
+
+  it("(b) evidence predating the ship ledger ts stays inadmissible in round 1", () => {
+    const round1Trigger = buildRoundTrigger(
+      "headsha1",
+      shipLedgerTriggeredAtFromSliceLedger([
+        {
+          step: "S7",
+          output: { kind: "ship" },
+          ts: SHIP_LEDGER_TS,
+        },
+      ]),
+    );
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: PRE_SHIP_TS },
+        "headsha1",
+        round1Trigger,
+      ),
+    ).toBe("stale");
+    expect(
+      evidenceAdmissible(
+        { terminalState: "fresh_live", timestamp: PRE_SHIP_TS },
+        "headsha1",
+        round1Trigger,
+      ),
+    ).toBe(false);
+  });
+
+  it("(c) round ≥2 retrigger anchoring uses a fresh trigger, not the ship ledger ts", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      return ghFixture({ calls })(file, args);
+    };
+
+    const shipRound1Trigger = buildRoundTrigger("headsha1", SHIP_LEDGER_TS);
+    const betweenShipAndRetrigger = "2026-07-08T11:30:00.000Z";
+    expect(
+      evidenceAdmissible(
+        { terminalState: "fresh_live", timestamp: betweenShipAndRetrigger },
+        "headsha1",
+        shipRound1Trigger,
+      ),
+    ).toBe(true);
+
+    const { roundTrigger: round2Trigger } = retriggerBotsAndPoll(
+      sh,
+      "o/r",
+      "https://github.com/o/r/pull/42",
+      2,
+      "headsha1",
+    );
+    expect(round2Trigger.triggeredAt).not.toBe(SHIP_LEDGER_TS);
+    expect(calls.some((c) => c.includes(BOT_RETRIGGER_COMMENT.split("\n")[0]!))).toBe(
+      true,
+    );
+
+    const explicitRound2Trigger = buildRoundTrigger("headsha1", RETRIGGER_TS);
+    expect(
+      evidenceAdmissible(
+        { terminalState: "fresh_live", timestamp: betweenShipAndRetrigger },
+        "headsha1",
+        explicitRound2Trigger,
+      ),
+    ).toBe(false);
+    expect(
+      evidenceAdmissible(
+        { terminalState: "fresh_live", timestamp: POST_RETRIGGER_TS },
+        "headsha1",
+        explicitRound2Trigger,
+      ),
+    ).toBe(true);
+
+    const familyShipTs = shipLedgerTriggeredAtFromFamilyLedger(
+      [
+        {
+          status: "shipped",
+          event: "shipped",
+          pr: "https://github.com/o/r/pull/42",
+          ts: SHIP_LEDGER_TS,
+        },
+      ],
+      "https://github.com/o/r/pull/42",
+    );
+    expect(familyShipTs).toBe(SHIP_LEDGER_TS);
   });
 });
 

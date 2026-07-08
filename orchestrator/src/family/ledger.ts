@@ -784,6 +784,7 @@ export async function recordShipped(
       phase: "final",
       pr,
       familyHeadAfter,
+      ts: new Date().toISOString(),
       stopSummary:
         record.stopSummary ??
         successStopSummary({

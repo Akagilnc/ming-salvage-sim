@@ -75,6 +75,7 @@ import {
   realBotPollClock,
   retriggerBotsAndPoll,
   runOnlineReviewLoopStage,
+  shipLedgerTriggeredAtFromFamilyLedger,
   waitForBotQuiescence,
   type OnlineReviewLoopStageResult,
 } from "../onlineReviewLoop.js";
@@ -1472,8 +1473,14 @@ export async function runFamilyOnlineReviewLoop(input: {
   };
 
   const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
+  const familyLedger = await input.familyBackend.readFamilyLedger();
+  const shipTriggeredAt = shipLedgerTriggeredAtFromFamilyLedger(
+    familyLedger,
+    prUrl,
+  );
   let lastRoundTrigger = buildRoundTrigger(
     input.ship.prHead ?? "offline-review-head",
+    shipTriggeredAt,
   );
   let familyLastFixCommitSha: string | undefined;
 
