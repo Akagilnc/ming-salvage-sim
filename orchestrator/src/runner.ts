@@ -85,7 +85,9 @@ import {
   reconstructOnlineReviewLandingForResume,
   retriggerBotsAndPoll,
   shipLedgerTriggeredAtFromSliceLedger,
+  slicePendingRoundTriggerFromFixGap,
   onlineReviewFixerNothingToFixStopSummary,
+  VerifyWorkerHeadMovedError,
   verifyReviewerHeadMovedStopSummary,
   verifySideEffectFailureStopSummary,
   waitForBotQuiescence,
@@ -2007,6 +2009,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const roundTrigger = resolveOnlineReviewRoundTrigger({
       onlineReviewRound,
       persistedRoundTrigger: lastOnlineReviewRoundTrigger,
+      pendingRetriggerFromFixGap: slicePendingRoundTriggerFromFixGap(ledger),
       fixCommitSha: lastOnlineReviewFixCommitSha,
       shipPrHead: ship.prHead,
       shipLedgerTriggeredAt: shipLedgerTriggeredAtFromSliceLedger(ledger),
@@ -3270,10 +3273,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           };
           const headBefore =
             reviewStep === "S9" ? await resolveBranchHEAD() : undefined;
-          const reviewResetOpt =
-            worktree != null
+          const reviewResetOpt: MechanicalRetryOptions =
+            reviewStep !== "S9" && worktree != null
               ? { resetBeforeRetry: () => backend.cleanResidue(worktree!) }
-              : {};
+              : reviewStep === "S9"
+                ? {
+                    callerOwns: (o) =>
+                      "kind" in o &&
+                      o.kind === "thrown" &&
+                      o.error instanceof VerifyWorkerHeadMovedError,
+                    rethrowOnExhaustion: true,
+                  }
+                : {};
           if (
             reviewStep === "S10" &&
             (onlineReviewLanding === undefined ||
@@ -3296,18 +3307,43 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     onlineReviewLanding.fixMarkedFindingIdentityKeys ?? [],
                 }
               : onlineReviewLanding;
-          const result = await withMechanicalRetry(
-            reviewLoopSpec,
-            reviewCtx,
-            (s, c) =>
-              dispatchWorker(
-                backend,
-                s,
-                c,
-                reviewStep === "S9" || reviewStep === "S10" ? fixerLanding : undefined,
-              ),
-            reviewResetOpt,
-          );
+          let result: Awaited<ReturnType<typeof withMechanicalRetry>>;
+          try {
+            result = await withMechanicalRetry(
+              reviewLoopSpec,
+              reviewCtx,
+              async (s, c) => {
+                const workerResult = await dispatchWorker(
+                  backend,
+                  s,
+                  c,
+                  reviewStep === "S9" || reviewStep === "S10"
+                    ? fixerLanding
+                    : undefined,
+                );
+                if (reviewStep === "S9" && headBefore !== undefined) {
+                  const headAfterAttempt = await resolveBranchHEAD();
+                  if (headAfterAttempt !== headBefore) {
+                    throw new VerifyWorkerHeadMovedError(
+                      headBefore,
+                      headAfterAttempt,
+                    );
+                  }
+                }
+                return workerResult;
+              },
+              reviewResetOpt,
+            );
+          } catch (err) {
+            if (err instanceof VerifyWorkerHeadMovedError) {
+              const stopSummary = verifyReviewerHeadMovedStopSummary({
+                headBefore: err.headBefore,
+                headAfter: err.headAfter,
+              });
+              return await errorTermination(reviewStep, err, { stopSummary });
+            }
+            throw err;
+          }
           if (result.kind !== "completed") {
             return await errorTermination(
               reviewStep,
@@ -3486,7 +3522,32 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       ...retriggerMarker,
                       sessionId,
                       prompt_hash: await hashPrompt(promptFile, "S10", backend),
-                      branchHEAD: await resolveBranchHEAD(),
+                      branchHEAD: lastOnlineReviewFixCommitSha,
+                      ts: new Date().toISOString(),
+                    },
+                    stateDir,
+                  );
+                } catch (err) {
+                  return await errorTermination(reviewStep, err, {
+                    recordInMemory: false,
+                  });
+                }
+              }
+              const fixCommittedMarker = {
+                step: "S10" as const,
+                event: "online_review_fix_committed" as const,
+                fixCommitSha: lastOnlineReviewFixCommitSha!,
+                onlineReviewRound,
+              };
+              ledger.push(fixCommittedMarker);
+              if (stateDir !== undefined) {
+                try {
+                  await backend.writeLedger(
+                    {
+                      ...fixCommittedMarker,
+                      sessionId,
+                      prompt_hash: await hashPrompt(promptFile, "S10", backend),
+                      branchHEAD: lastOnlineReviewFixCommitSha,
                       ts: new Date().toISOString(),
                     },
                     stateDir,

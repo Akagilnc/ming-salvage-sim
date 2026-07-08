@@ -432,12 +432,30 @@ export function planVerifySideEffects(
  * Apply GitHub side effects from a verify verdict: defer → tracked issue + reply,
  * reject/defer/fixed replies with evidence, resolve after recheck confirmation.
  */
+/** Single parse of PR URL → repo; fail closed when caller repo disagrees (#600 r27). */
+export function resolvePrRepoFromUrl(
+  prUrl: string,
+  callerRepo: string,
+): { readonly repo: string; readonly prNumber: number } {
+  const parsed = parsePrRef(prUrl, callerRepo);
+  const normalizedCaller = callerRepo.trim();
+  if (
+    normalizedCaller.length > 0 &&
+    parsed.repo.toLowerCase() !== normalizedCaller.toLowerCase()
+  ) {
+    throw new Error(
+      `applyVerifySideEffects: caller repo "${callerRepo}" conflicts with PR URL repo "${parsed.repo}"`,
+    );
+  }
+  return parsed;
+}
+
 export function applyVerifySideEffects(
   input: ApplyVerifySideEffectsInput,
 ): ApplyVerifySideEffectsResult {
-  const { sh, repo, prUrl, landingThreads } = input;
-  const { prNumber } = parsePrRef(prUrl, repo);
-  const plan = planVerifySideEffects(input);
+  const { sh, prUrl, landingThreads } = input;
+  const { repo, prNumber } = resolvePrRepoFromUrl(prUrl, input.repo);
+  const plan = planVerifySideEffects({ ...input, repo });
   const deferredIssueUrls: string[] = [];
   const repliesPosted: OnlineReviewThreadReply[] = [];
   const threadsResolved: string[] = [];

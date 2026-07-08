@@ -53,15 +53,6 @@ function isThreadReplyArray(
 }
 
 function verifyResultSemanticallyConsistent(obj: Record<string, unknown>): boolean {
-  const threadsToResolve = obj.threadsToResolve;
-  if (
-    Array.isArray(threadsToResolve) &&
-    threadsToResolve.length > 0 &&
-    obj.isRecheck !== true
-  ) {
-    return false;
-  }
-
   const fixKeys = obj.fixMarkedFindingIdentityKeys;
   const dispositions = obj.findingDispositions;
   const hasExplicitFixKeys = fixKeys !== undefined;
