@@ -26,6 +26,7 @@ import {
   BOT_OVERDUE_POLL_COUNT,
   BOT_POLL_INTERVAL_MS,
   BOT_RETRIGGER_COMMENT,
+  checkRunsConverged,
   pollPrReviewState,
   postBotRetriggerComment,
 } from "./botPolling.js";
@@ -80,7 +81,25 @@ function toLandingSnapshot(snapshot: PrReviewSnapshot): OnlineReviewLandingSnaps
       headOid: t.headOid,
       authorLogin: t.authorLogin,
     })),
+    checkRuns: snapshot.checkRuns,
   };
+}
+
+/**
+ * Host-side default-deny: verify `converged:true` is inadmissible while CI check-runs
+ * are in-progress or non-success (ADR 0061 — runner enforces, worker still sees runs).
+ */
+export function clampVerifyConvergenceForCheckRuns(
+  verify: VerifyResult,
+  landing: OnlineReviewLandingSnapshot | undefined,
+): VerifyResult {
+  if (!verify.converged || landing === undefined) {
+    return verify;
+  }
+  if (!checkRunsConverged(landing.checkRuns)) {
+    return { ...verify, converged: false };
+  }
+  return verify;
 }
 
 /** 1-based online review round from the full executable ledger (#600 r7 resume). */
@@ -483,7 +502,10 @@ export async function runOnlineReviewLoopStage(
       round,
     );
 
-    let verify = await dispatch.dispatchVerify(landing, round);
+    let verify = clampVerifyConvergenceForCheckRuns(
+      await dispatch.dispatchVerify(landing, round),
+      landing.onlineReviewSnapshot,
+    );
     verify = dispatch.applySideEffects(
       verify,
       verify.isRecheck ? lastFixCommitSha : undefined,

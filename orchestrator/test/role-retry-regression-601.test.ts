@@ -103,6 +103,7 @@ abstract class RoleRetryBackend implements Backend {
       },
       droppedBots: [],
       threads: [],
+      checkRuns: [],
     };
   }
   abstract dispatchWorker(

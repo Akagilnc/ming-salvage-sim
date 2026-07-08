@@ -323,6 +323,7 @@ class ResumeBackend implements Backend {
       },
       droppedBots: [],
       threads: [],
+      checkRuns: [],
     };
   }
 }

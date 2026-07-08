@@ -136,10 +136,19 @@ function writeOnlineReviewLandingFile(
   const needsLanding =
     (spec.kind === "verify" || spec.kind === "fixer") &&
     landing?.onlineReviewSnapshot !== undefined;
-  if (!needsLanding || ctx.worktree === undefined) {
+  if (!needsLanding) {
     return undefined;
   }
-  if (!existsSync(ctx.worktree.path)) return undefined;
+  if (ctx.worktree === undefined) {
+    throw new Error(
+      `${spec.kind} worker requires a worktree to mount the online review landing file`,
+    );
+  }
+  if (!existsSync(ctx.worktree.path)) {
+    throw new Error(
+      `${spec.kind} worker online review landing worktree missing: ${ctx.worktree.path}`,
+    );
+  }
 
   const landingPath =
     ctx.stateDir !== undefined
@@ -151,26 +160,34 @@ function writeOnlineReviewLandingFile(
     } else {
       ensureGitExcluded(ctx.worktree.path, ONLINE_REVIEW_LANDING_FILE);
     }
-  } catch {
-    return undefined;
+  } catch (err) {
+    throw new Error(
+      `${spec.kind} worker failed to prepare online review landing directory: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
   }
   try {
     writeFileSync(
-    landingPath,
-    `${JSON.stringify(
-      {
-        onlineReviewSnapshot: landing.onlineReviewSnapshot,
-        shipDelivery: landing.shipDelivery,
-        onlineReviewRound: landing.onlineReviewRound ?? ctx.onlineReviewRound,
-        fixMarkedFindingIdentityKeys: landing.fixMarkedFindingIdentityKeys ?? [],
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  } catch {
-    return undefined;
+      landingPath,
+      `${JSON.stringify(
+        {
+          onlineReviewSnapshot: landing.onlineReviewSnapshot,
+          shipDelivery: landing.shipDelivery,
+          onlineReviewRound: landing.onlineReviewRound ?? ctx.onlineReviewRound,
+          fixMarkedFindingIdentityKeys: landing.fixMarkedFindingIdentityKeys ?? [],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+  } catch (err) {
+    throw new Error(
+      `${spec.kind} worker failed to write online review landing file: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
   }
   return {
     path: landingPath,
@@ -470,7 +487,15 @@ export async function legacyDispatchWorker(
   const stepSpec = workerSpecToStepSpec(spec);
   let ret: StepOutput | StepResult;
   const fixFindingsLanding = writeFixFindingsLandingFile(spec, ctx, landing);
-  const onlineReviewLanding = writeOnlineReviewLandingFile(spec, ctx, landing);
+  let onlineReviewLanding;
+  try {
+    onlineReviewLanding = writeOnlineReviewLandingFile(spec, ctx, landing);
+  } catch (err) {
+    return {
+      kind: "failed",
+      reason: err instanceof Error ? err.message : String(err),
+    };
+  }
   const fixFindingsOptions =
     fixFindingsLanding !== undefined
       ? {

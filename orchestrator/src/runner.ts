@@ -71,6 +71,7 @@ import {
 import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetry.js";
 import {
   buildOnlineReviewLanding,
+  clampVerifyConvergenceForCheckRuns,
   immediateBotPollClock,
   lastOnlineReviewFixCommitShaFromLedger,
   offlinePrReviewSnapshot,
@@ -1975,7 +1976,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             isResolved: t.isResolved,
             headOid: t.headOid,
           })),
-          checkRuns: [],
+          checkRuns: landing.checkRuns ?? [],
           totalFindingCount: landing.totalFindingCount,
           quiescent: landing.quiescent,
         };
@@ -3320,7 +3321,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             );
           }
           if (reviewStep === "S9" && isValidVerifyResult(result.output)) {
-            let verifyOutput = result.output;
+            let verifyOutput = clampVerifyConvergenceForCheckRuns(
+              result.output,
+              onlineReviewLanding?.onlineReviewSnapshot,
+            );
             const headAfter = await resolveBranchHEAD();
             if (headBefore !== undefined && headAfter !== headBefore) {
               const stopSummary = verifyReviewerHeadMovedStopSummary({

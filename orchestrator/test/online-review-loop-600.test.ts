@@ -28,7 +28,9 @@ import type {
 import {
   BOT_OVERDUE_POLL_COUNT,
   BOT_POLL_INTERVAL_MS,
+  BOT_REACTION_ACK_CONTENT,
   BOT_RETRIGGER_COMMENT,
+  checkRunsConverged,
   droppedBotIds,
   hasDroppedBots,
   isBotQuiescent,
@@ -63,6 +65,7 @@ import { route } from "../src/route.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import {
   buildOnlineReviewLanding,
+  clampVerifyConvergenceForCheckRuns,
   isReviewLoopConvergedMarker,
   onlineReviewConvergedForHead,
   verifyReviewerHeadMovedStopSummary,
@@ -117,6 +120,9 @@ function ghFixture(input: { calls: string[] }): Sh {
           },
         ],
       });
+    }
+    if (cmd.includes("repos/o/r/issues/42/reactions")) {
+      return "[]";
     }
     if (
       (cmd.includes("pulls/comments/") || cmd.includes("issues/comments/")) &&
@@ -398,6 +404,13 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
         clock: immediateBotPollClock,
       }),
     ).rejects.toThrow(/gh api failed/);
+  });
+
+  it("pin BOT_RETRIGGER_COMMENT matches wiki concepts/pr-review-loop.md bot commands", () => {
+    // Authoritative contract: wiki/concepts/pr-review-loop.md (ADR 0061).
+    expect(BOT_RETRIGGER_COMMENT).toBe(
+      "@sourcery-ai review\n@codex review\n@gemini-code-assist please review",
+    );
   });
 
   it("postBotRetriggerComment posts the R2/R3 manual re-trigger body", () => {
@@ -1103,7 +1116,15 @@ describe("#600 onlineReviewLoop helpers", () => {
           gemini: { state: "dropped", reason: "no review signal after 5 polls" },
         },
         threads: [],
-        checkRuns: [],
+        checkRuns: [
+          {
+            id: 9,
+            name: "ci",
+            headSha: "abc",
+            status: "completed",
+            conclusion: "success",
+          },
+        ],
         totalFindingCount: 0,
         quiescent: true,
       },
@@ -1117,6 +1138,95 @@ describe("#600 onlineReviewLoop helpers", () => {
       state: "dropped",
       reason: "no review signal after 5 polls",
     });
+    expect(landing.onlineReviewSnapshot?.checkRuns).toEqual([
+      {
+        id: 9,
+        name: "ci",
+        headSha: "abc",
+        status: "completed",
+        conclusion: "success",
+      },
+    ]);
+  });
+
+  it("pin checkRunsConverged: in-progress or failed runs block convergence", () => {
+    expect(
+      checkRunsConverged([
+        {
+          id: 1,
+          name: "ci",
+          headSha: "h",
+          status: "completed",
+          conclusion: "success",
+        },
+      ]),
+    ).toBe(true);
+    expect(
+      checkRunsConverged([
+        {
+          id: 2,
+          name: "ci",
+          headSha: "h",
+          status: "in_progress",
+        },
+      ]),
+    ).toBe(false);
+    expect(
+      checkRunsConverged([
+        {
+          id: 3,
+          name: "ci",
+          headSha: "h",
+          status: "completed",
+          conclusion: "failure",
+        },
+      ]),
+    ).toBe(false);
+    expect(checkRunsConverged([])).toBe(true);
+  });
+
+  it("pin clampVerifyConvergenceForCheckRuns default-denies worker converged:true when CI red", () => {
+    const landing: OnlineReviewLandingSnapshot = {
+      prUrl: "https://github.com/o/r/pull/1",
+      headOid: "abc",
+      totalFindingCount: 0,
+      quiescent: true,
+      bots: {
+        coderabbit: { state: "complete", findingCount: 0 },
+        sourcery: { state: "complete", findingCount: 0 },
+        codex: { state: "complete", findingCount: 0 },
+        gemini: { state: "complete", findingCount: 0 },
+      },
+      droppedBots: [],
+      threads: [],
+      checkRuns: [
+        {
+          id: 1,
+          name: "ci",
+          headSha: "abc",
+          status: "completed",
+          conclusion: "failure",
+        },
+      ],
+    };
+    expect(
+      clampVerifyConvergenceForCheckRuns(
+        { kind: "verify", converged: true },
+        landing,
+      ).converged,
+    ).toBe(false);
+    expect(
+      clampVerifyConvergenceForCheckRuns(
+        { kind: "verify", converged: true },
+        { ...landing, checkRuns: [] },
+      ).converged,
+    ).toBe(true);
+    expect(
+      clampVerifyConvergenceForCheckRuns(
+        { kind: "verify", converged: false },
+        landing,
+      ).converged,
+    ).toBe(false);
   });
 
   it("verifyReviewerHeadMovedStopSummary mirrors cmr read-only guard wording", () => {
@@ -1244,8 +1354,67 @@ describe("#600 r4 central evidence admissibility gate", () => {
     expect(
       calls.some((c) => c.includes("repos/o/r/issues/comments/8801/reactions")),
     ).toBe(true);
-    expect(snap.bots.codex).toEqual({ state: "complete", findingCount: 1 });
+    expect(snap.bots.codex).toEqual({ state: "complete", findingCount: 0 });
     expect(snap.bots.codex.state).not.toBe("pending");
+  });
+
+  it("pin botPolling r17: Codex PR-level +1 reaction is completion evidence, not a finding", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      const cmd = args.join(" ");
+      calls.push(cmd);
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews") &&
+        !cmd.includes("check-runs")
+      ) {
+        return JSON.stringify({
+          head: { sha: "headsha1" },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") && !cmd.includes("issues/comments/")) {
+        return "[]";
+      }
+      if (cmd.includes("pulls/42/comments")) {
+        return "[]";
+      }
+      if (cmd.includes("check-runs")) {
+        return JSON.stringify({ check_runs: [] });
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return "[]";
+      }
+      if (cmd.includes("repos/o/r/issues/42/reactions")) {
+        return JSON.stringify([
+          {
+            user: { login: "chatgpt-codex-connector[bot]" },
+            content: "+1",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+        ]);
+      }
+      if (
+        (cmd.includes("pulls/comments/") || cmd.includes("issues/comments/")) &&
+        cmd.includes("/reactions")
+      ) {
+        return "[]";
+      }
+      return "[]";
+    };
+    const snap = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
+    });
+    expect(calls.some((c) => c.includes("repos/o/r/issues/42/reactions"))).toBe(
+      true,
+    );
+    expect(snap.bots.codex).toEqual({ state: "complete", findingCount: 0 });
+    expect(BOT_REACTION_ACK_CONTENT.has("+1")).toBe(true);
   });
 
   it("pin botPolling r15: stale pre-trigger issue-comment reaction stays inadmissible", () => {
@@ -1718,6 +1887,93 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       round: 1,
     });
   });
+
+  it("pin r17: worker converged:true clamped when landing checkRuns are red", async () => {
+    let fixerCalls = 0;
+    const snapshotWithRedCi: PrReviewSnapshot = {
+      ...baseSnapshot,
+      checkRuns: [
+        {
+          id: 1,
+          name: "ci",
+          headSha: "head-1",
+          status: "completed",
+          conclusion: "failure",
+        },
+      ],
+    };
+    const result = await runOnlineReviewLoopStage({
+      poll: async () => snapshotWithRedCi,
+      dispatchVerify: async () => ({ kind: "verify", converged: true }),
+      dispatchFixer: async () => {
+        fixerCalls += 1;
+        return false;
+      },
+      dispatchCleanup: async (_landing) => true,
+      dispatchDocRelease: async (_landing) => true,
+      applySideEffects: (verify) => verify,
+      retriggerAfterFix: () => {},
+    });
+    expect(fixerCalls).toBe(1);
+    expect(result).toEqual({
+      ok: false,
+      terminalState: "decision_gate_raised",
+      round: 1,
+    });
+  });
+});
+
+describe("#600 r17 landing write fail-closed — verify/fixer dispatch", () => {
+  const landingPayload: WorkerLandingPayload = {
+    onlineReviewSnapshot: {
+      prUrl: "https://github.com/o/r/pull/42",
+      headOid: "abc",
+      totalFindingCount: 0,
+      quiescent: true,
+      bots: {
+        coderabbit: { state: "complete", findingCount: 0 },
+        sourcery: { state: "complete", findingCount: 0 },
+        codex: { state: "complete", findingCount: 0 },
+        gemini: { state: "complete", findingCount: 0 },
+      },
+      droppedBots: [],
+      threads: [],
+      checkRuns: [],
+    },
+  };
+
+  it("pin: online review landing write failure returns failed dispatch, not worker-without-mount", async () => {
+    const spec = verifyWorkerSpec();
+    // A defined dispatchWorker skips the offline skeleton short-circuit so the
+    // legacy path reaches writeOnlineReviewLandingFile (RealBackend shape).
+    const legacyBackend = {
+      dispatchWorker: async () => ({
+        kind: "completed" as const,
+        output: { kind: "verify", converged: true },
+      }),
+      async runStep(): Promise<StepOutput> {
+        throw new Error("runStep must not run when landing write failed");
+      },
+    } as unknown as Backend;
+    const result = await legacyDispatchWorker(
+      legacyBackend,
+      spec,
+      {
+        worktree: {
+          branch: "feat/x",
+          base: "main",
+          path: "/nonexistent/worktree/path/for-landing-fail",
+        },
+        repo: "o/r",
+        prUrl: "https://github.com/o/r/pull/42",
+      },
+      landingPayload,
+    );
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") {
+      expect(result.reason).toMatch(/online review landing/i);
+    }
+  });
 });
 
 describe("#600 r5 legacy skeleton gate — family + slice", () => {
@@ -1807,6 +2063,7 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
     },
     droppedBots: [],
     threads: [],
+    checkRuns: [],
   });
 
   class HookPollBackend implements Backend {
