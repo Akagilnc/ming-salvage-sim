@@ -130,6 +130,22 @@ describe("parseLedgerJsonl — corrupt-line fail-closed (256 r5)", () => {
     expect(() => parseLedgerJsonl(raw)).toThrow(/corrupt/i);
   });
 
+  it("an object with non-string `sessionId` (explicit null / number) is corrupt — parse boundary strips null before it can reach resumeSessionId / DispatchContext", () => {
+    // Pin for #709: raw JSONL null must not flow to agentEntry.sessionId →
+    // resumeFor / resumeSessionId (string|undefined) → dispatchCtx → backend.resumeSession(null).
+    // Such a line is shape-invalid (like bad step); fail-closed to S8(error) instead.
+    const withNull = JSON.stringify({
+      step: "S2",
+      sessionId: null,
+      prompt_hash: "h",
+      branchHEAD: "b".repeat(40),
+      ts: "t",
+    });
+    const withNum = JSON.stringify({ step: "S2", sessionId: 123, prompt_hash: "h", branchHEAD: "c".repeat(40), ts: "t" });
+    expect(() => parseLedgerJsonl([goodLine("S0"), withNull].join("\n"))).toThrow(/corrupt/i);
+    expect(() => parseLedgerJsonl([goodLine("S0"), withNum].join("\n"))).toThrow(/corrupt/i);
+  });
+
   it("a shape-valid entry with only the required `step` still parses (output optional)", () => {
     // The minimal LedgerEntry is `{step}` — output/handoffStatus are optional, so
     // a bare valid-step record must NOT be rejected.
