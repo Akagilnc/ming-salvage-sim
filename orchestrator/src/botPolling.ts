@@ -284,6 +284,7 @@ function commentAuthorLogin(
 }
 
 type BotComment = {
+  id?: number;
   user?: { login?: string };
   author?: { login?: string };
   body?: string;
@@ -618,6 +619,14 @@ export function pollPrReviewState(
   ) as BotReview[];
   const threads = fetchReviewThreadsFromGraphql(sh, repo, prNumber);
   const reactions: BotReaction[] = [];
+  for (const comment of issueComments) {
+    if (comment.id === undefined) continue;
+    const raw = paginateGhApi(
+      sh,
+      `repos/${repo}/issues/comments/${comment.id}/reactions`,
+    ) as BotReaction[];
+    reactions.push(...raw);
+  }
   for (const comment of reviewComments) {
     if (comment.id === undefined) continue;
     const raw = paginateGhApi(
