@@ -486,12 +486,6 @@ export interface FamilyBackend {
    */
   readFamilyTrackedStatus?(familyBase: string): Promise<readonly string[]>;
   /**
-   * Reset local git residue before a crashed family fixer retry (#600 AC7 / #598).
-   * Optional — only real backends that can safely rewind a partial fix attempt.
-   */
-  resetFamilyFixerResidue?(ctx: DispatchContext): void | Promise<void>;
-
-  /**
    * THE unified worker-dispatch seam at the FAMILY layer (ADR 0026 / PRD #330
    * #331) — parallel to {@link Backend.dispatchWorker}. The family-LEVEL worker
    * steps (integrated cmr over the merged family base, the family-base ship/PR)

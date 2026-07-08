@@ -1910,7 +1910,7 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
   });
 });
 
-/** Mirrors S9 production: drift guard runs in `finally` after every attempt. */
+/** Mirrors S9 production: drift guard runs only after a non-crash return. */
 async function dispatchVerifyWithPerAttemptDriftGuard(
   dispatch: () => Promise<WorkerResult>,
   assertContract: () => Promise<void>,
@@ -1926,7 +1926,8 @@ async function dispatchVerifyWithPerAttemptDriftGuard(
         workerResult = await dispatch();
       } catch (err) {
         dispatchError = err;
-      } finally {
+      }
+      if (dispatchError === undefined) {
         await assertContract();
       }
       if (dispatchError !== undefined) throw dispatchError;
@@ -1956,9 +1957,8 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
     expect(attempts).toBe(2);
   });
 
-  it("a fixer worker that crashes once then commits is retried after reset", async () => {
+  it("a fixer worker that crashes once then commits is retried on current state", async () => {
     let attempts = 0;
-    let resets = 0;
     const dispatch = async (): Promise<WorkerResult> => {
       attempts += 1;
       if (attempts === 1) throw new Error("fixer worker threw on startup");
@@ -1971,15 +1971,9 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
       fixerWorkerSpec(),
       {} as DispatchContext,
       async () => dispatch(),
-      {
-        resetBeforeRetry: async () => {
-          resets += 1;
-        },
-      },
     );
     expect(result.kind).toBe("completed");
     expect(attempts).toBe(2);
-    expect(resets).toBe(1);
   });
 
   it("pin r27: verify that mutates HEAD then returns malformed is not reset-cleaned", async () => {
@@ -2036,7 +2030,7 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
     expect(result.reason).toContain("after 3 dispatch attempts");
   });
 
-  it("pin r37: verify that mutates HEAD then throws is terminal contract_drift, not retried on residue", async () => {
+  it("pin r37: verify that mutates HEAD then throws retries on current state (not terminal on first throw)", async () => {
     const { VerifyWorkerHeadMovedError } = await import(
       "../src/onlineReviewLoop.js"
     );
@@ -2057,19 +2051,22 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
     const result = await dispatchVerifyWithPerAttemptDriftGuard(
       async () => {
         attempts += 1;
-        head = "head-after-mutation";
+        if (attempts === 1) {
+          head = "head-after-mutation";
+        }
         throw new Error("verify worker threw on startup");
       },
       assertContract,
       (o) =>
         o.kind === "thrown" && o.error instanceof VerifyWorkerHeadMovedError,
     ).catch((err) => err);
-    expect(attempts).toBe(1);
+    expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(head).toBe("head-after-mutation");
-    expect(result).toBeInstanceOf(VerifyWorkerHeadMovedError);
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error).message).toContain("verify worker threw on startup");
   });
 
-  it("pin r37: verify that dirties tracked worktree then throws is terminal contract_drift, not retried on residue", async () => {
+  it("pin r37: verify that dirties tracked worktree then throws retries on current state (not terminal on first throw)", async () => {
     const { VerifyWorkerWorktreeDirtyError } = await import(
       "../src/onlineReviewLoop.js"
     );
@@ -2089,7 +2086,9 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
     const result = await dispatchVerifyWithPerAttemptDriftGuard(
       async () => {
         attempts += 1;
-        porcelainAfter = " M orchestrator/src/foo.ts";
+        if (attempts === 1) {
+          porcelainAfter = " M orchestrator/src/foo.ts";
+        }
         throw new Error("verify worker threw on startup");
       },
       assertContract,
@@ -2097,8 +2096,10 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
         o.kind === "thrown" &&
         o.error instanceof VerifyWorkerWorktreeDirtyError,
     ).catch((err) => err);
-    expect(attempts).toBe(1);
-    expect(result).toBeInstanceOf(VerifyWorkerWorktreeDirtyError);
+    expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(porcelainAfter).toBe(" M orchestrator/src/foo.ts");
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error).message).toContain("verify worker threw on startup");
   });
 
   it("pin r37: verify that throws transient error without mutation still retries fresh (#598)", async () => {
@@ -4317,7 +4318,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("pin r37: family verify that mutates HEAD then throws is terminal contract_drift, not retried on residue", async () => {
+  it("pin r37: family verify that mutates HEAD then throws retries on current state (not terminal on first throw)", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     try {
@@ -4341,15 +4342,11 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         familyBase: "family/r7",
         ship: offlineShip,
       });
-      expect(attempts).toBe(1);
+      expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
       expect(result).toEqual({
         ok: false,
-        terminalState: "contract_drift",
+        terminalState: "decision_gate_raised",
         round: 1,
-        stopSummary: expect.objectContaining({
-          reason: "contract_drift",
-          summary: expect.stringContaining("verify worker moved HEAD"),
-        }),
       });
     } finally {
       if (prev === undefined) {
@@ -4360,7 +4357,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("pin r37: family verify that dirties tracked worktree then throws is terminal contract_drift, not retried on residue", async () => {
+  it("pin r37: family verify that dirties tracked worktree then throws retries on current state (not terminal on first throw)", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     try {
@@ -4372,7 +4369,9 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
       backend.dispatchWorker = async (spec) => {
         if (spec.kind === "verify") {
           attempts += 1;
-          trackedStatus = [" M orchestrator/src/foo.ts"];
+          if (attempts === 1) {
+            trackedStatus = [" M orchestrator/src/foo.ts"];
+          }
           throw new Error("verify worker threw on startup");
         }
         const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
@@ -4383,15 +4382,11 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         familyBase: "family/r7",
         ship: offlineShip,
       });
-      expect(attempts).toBe(1);
+      expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
       expect(result).toEqual({
         ok: false,
-        terminalState: "contract_drift",
+        terminalState: "decision_gate_raised",
         round: 1,
-        stopSummary: expect.objectContaining({
-          reason: "contract_drift",
-          summary: expect.stringContaining("tracked worktree changes"),
-        }),
       });
     } finally {
       if (prev === undefined) {

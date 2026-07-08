@@ -1513,12 +1513,10 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     }));
   });
 
-  it("#598 idempotency: a WRITE-capable family ship crash is dispatched ONCE (no residue retry); a read-only cmr crash retries MAX_DISPATCH_ATTEMPTS", async () => {
+  it("#598: a persistent family worker crash retries on current state up to MAX_DISPATCH_ATTEMPTS (every role)", async () => {
     // A backend that throws PERSISTENTLY on the given kind and counts dispatches of
-    // it. The read-only cmr reviewer leaves no residue → a crash re-dispatches fresh
-    // up to MAX_DISPATCH_ATTEMPTS. The write-capable ship can throw after a partial
-    // write → re-dispatching on that residue would violate #598 idempotency (no safe
-    // reset hook yet, #661), so it is NOT retried: exactly ONE dispatch, then abort.
+    // it. Every role — read-only cmr and write-capable ship alike — re-dispatches a
+    // fresh session on the CURRENT worktree as-is, up to MAX_DISPATCH_ATTEMPTS.
     class CountingThrowBackend extends BareFamilyBackend {
       readonly aborted: FamilyAbortedEvent[] = [];
       currentFamilyHead = "head-before-worker";
@@ -1559,7 +1557,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBackend: shipBackend,
     });
     expect(shipResult).toEqual({ ok: false, ran: true });
-    expect(shipBackend.throwKindDispatches).toBe(1);
+    expect(shipBackend.throwKindDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(shipBackend.aborted[0]?.errorPackage.reason).toMatch(/ship worker threw on startup/i);
 
     const cmrBackend = new CountingThrowBackend("cmr");
