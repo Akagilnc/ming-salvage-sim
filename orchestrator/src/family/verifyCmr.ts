@@ -1475,6 +1475,7 @@ export async function runFamilyOnlineReviewLoop(input: {
   let lastRoundTrigger = buildRoundTrigger(
     input.ship.prHead ?? "offline-review-head",
   );
+  let familyLastFixCommitSha: string | undefined;
 
   try {
     return await runOnlineReviewLoopStage({
@@ -1483,7 +1484,10 @@ export async function runFamilyOnlineReviewLoop(input: {
         return offlinePrReviewSnapshot({
           repo,
           prUrl,
-          headOid: input.ship.prHead ?? "offline-review-head",
+          headOid:
+            familyLastFixCommitSha ??
+            input.ship.prHead ??
+            "offline-review-head",
           pollCount: round,
         });
       }
@@ -1584,16 +1588,21 @@ export async function runFamilyOnlineReviewLoop(input: {
           repo,
           prUrl,
           1,
-          input.ship.prHead ?? lastRoundTrigger.headOid,
+          familyLastFixCommitSha ??
+            lastRoundTrigger.headOid ??
+            input.ship.prHead ??
+            "offline-review-head",
         );
         lastRoundTrigger = retriggered.roundTrigger;
       }
     },
-    resolveFixCommitSha: () => {
-      if (typeof input.familyBackend.readFamilyHead === "function") {
-        return input.familyBackend.readFamilyHead(input.familyBase);
-      }
-      return input.ship.prHead ?? "";
+    resolveFixCommitSha: async () => {
+      const sha =
+        typeof input.familyBackend.readFamilyHead === "function"
+          ? await input.familyBackend.readFamilyHead(input.familyBase)
+          : (input.ship.prHead ?? "");
+      familyLastFixCommitSha = sha;
+      return sha;
     },
   });
   } catch (err) {

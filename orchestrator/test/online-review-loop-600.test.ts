@@ -59,6 +59,8 @@ import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import {
   buildOnlineReviewLanding,
   isReviewLoopConvergedMarker,
+  onlineReviewConvergenceHeadKey,
+  onlineReviewConvergedForHead,
   verifyReviewerHeadMovedStopSummary,
 } from "../src/onlineReviewLoop.js";
 import {
@@ -803,6 +805,9 @@ describe("#600 retriggerBotsAndPoll (#600 AC2)", () => {
 });
 
 describe("#600 converged marker resume skip (#600 AC8)", () => {
+  const shipHead = "shiphead1111111111111111111111111111111111";
+  const postFixHead = "postfix1111111111111111111111111111111111";
+
   it("isReviewLoopConvergedMarker matches pr head", () => {
     expect(
       isReviewLoopConvergedMarker(
@@ -816,6 +821,58 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
         "new",
       ),
     ).toBe(false);
+  });
+
+  it("no-fix convergence: marker and resume-skip key to ship head", () => {
+    const ledger = [{ event: "online_review_converged", prHead: shipHead }];
+    const reviewHead = onlineReviewConvergenceHeadKey({ shipPrHead: shipHead });
+    expect(reviewHead).toBe(shipHead);
+    expect(onlineReviewConvergedForHead(ledger, reviewHead)).toBe(true);
+    expect(onlineReviewConvergedForHead(ledger, postFixHead)).toBe(false);
+  });
+
+  it("converge-after-fix: marker and resume-skip key to post-fix head, not stale ship", () => {
+    const ledger = [{ event: "online_review_converged", prHead: postFixHead }];
+    const reviewHead = onlineReviewConvergenceHeadKey({
+      postFixCommitSha: postFixHead,
+      snapshotHeadOid: postFixHead,
+      shipPrHead: shipHead,
+    });
+    expect(reviewHead).toBe(postFixHead);
+    expect(onlineReviewConvergedForHead(ledger, reviewHead)).toBe(true);
+    expect(onlineReviewConvergedForHead(ledger, shipHead)).toBe(false);
+  });
+
+  it("buildOnlineReviewLanding keys shipDelivery.prHead to snapshot head after fix", () => {
+    const landing = buildOnlineReviewLanding(
+      {
+        repo: "o/r",
+        prNumber: 1,
+        prUrl: "https://github.com/o/r/pull/1",
+        headOid: postFixHead,
+        pollCount: 2,
+        bots: {
+          coderabbit: { state: "complete", findingCount: 0 },
+          sourcery: { state: "complete", findingCount: 0 },
+          codex: { state: "complete", findingCount: 0 },
+          gemini: { state: "complete", findingCount: 0 },
+        },
+        threads: [],
+        checkRuns: [],
+        totalFindingCount: 0,
+        quiescent: true,
+      },
+      {
+        kind: "ship",
+        branch: "feat/x",
+        status: "pr_opened",
+        pr: "https://github.com/o/r/pull/1",
+        prHead: shipHead,
+      },
+      2,
+    );
+    expect(landing.shipDelivery?.prHead).toBe(postFixHead);
+    expect(landing.onlineReviewSnapshot?.headOid).toBe(postFixHead);
   });
 });
 
