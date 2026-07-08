@@ -74,7 +74,6 @@ import {
   immediateBotPollClock,
   lastOnlineReviewFixCommitShaFromLedger,
   offlinePrReviewSnapshot,
-  onlineReviewConvergenceHeadKey,
   onlineReviewConvergedForHead,
   onlineReviewRoundFromLedger,
   realBotPollClock,
@@ -88,6 +87,7 @@ import {
 import {
   assertOfflineSyntheticPollAdmissible,
   buildRoundTrigger,
+  convergenceHeadToRecord,
   type RoundTrigger,
 } from "./evidenceAdmissibility.js";
 import {
@@ -3212,10 +3212,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           );
         }
         let reviewStep = step;
-        const reviewHeadKey = onlineReviewConvergenceHeadKey({
-          postFixCommitSha: lastOnlineReviewFixCommitSha,
-          snapshotHeadOid: onlineReviewLanding?.onlineReviewSnapshot?.headOid,
-          shipPrHead: lastShipOutput.prHead,
+        const reviewHeadKey = convergenceHeadToRecord({
+          shipHead: lastShipOutput.prHead,
+          snapshotHead: onlineReviewLanding?.onlineReviewSnapshot?.headOid,
+          postFixHead: lastOnlineReviewFixCommitSha,
         });
         if (
           reviewStep === "S9" &&
@@ -3362,12 +3362,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               };
             }
             if (verifyOutput.converged && stateDir !== undefined) {
-              const markerHead = onlineReviewConvergenceHeadKey({
-                postFixCommitSha: lastOnlineReviewFixCommitSha,
-                snapshotHeadOid:
+              const markerHead = convergenceHeadToRecord({
+                shipHead: lastShipOutput.prHead,
+                snapshotHead:
                   onlineReviewLanding?.onlineReviewSnapshot?.headOid,
+                postFixHead: lastOnlineReviewFixCommitSha,
                 branchHeadAfter: headAfter,
-                shipPrHead: lastShipOutput.prHead,
               });
               const marker = {
                 step: "S9" as const,

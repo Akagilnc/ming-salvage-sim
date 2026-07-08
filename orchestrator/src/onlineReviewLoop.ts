@@ -18,6 +18,7 @@ import {
 import {
   assertOfflineSyntheticPollAdmissible,
   buildRoundTrigger,
+  convergenceHeadToRecord,
   type RoundTrigger,
 } from "./evidenceAdmissibility.js";
 import type { Sh } from "./familyDriver.js";
@@ -264,19 +265,19 @@ export function offlinePrReviewSnapshot(input: {
  * Prefer recheck/snapshot/post-fix head over stale S7 ship.prHead once a fix
  * round occurred.
  */
+/** @deprecated Prefer {@link convergenceHeadToRecord} — thin alias for call sites. */
 export function onlineReviewConvergenceHeadKey(input: {
   readonly postFixCommitSha?: string;
   readonly snapshotHeadOid?: string;
   readonly branchHeadAfter?: string;
   readonly shipPrHead?: string;
 }): string | undefined {
-  const key =
-    input.postFixCommitSha ??
-    input.snapshotHeadOid ??
-    input.branchHeadAfter ??
-    input.shipPrHead;
-  if (key === undefined || key.trim().length === 0) return undefined;
-  return key;
+  return convergenceHeadToRecord({
+    shipHead: input.shipPrHead,
+    snapshotHead: input.snapshotHeadOid,
+    postFixHead: input.postFixCommitSha,
+    branchHeadAfter: input.branchHeadAfter,
+  });
 }
 
 export function onlineReviewConvergedForHead(

@@ -59,6 +59,7 @@ import { execFileSync } from "node:child_process";
 import { isLiveGithubReviewPollEnabled } from "../botPolling.js";
 import {
   buildRoundTrigger,
+  convergenceHeadToRecord,
   inadmissibleWorkerOutcomeReason,
   workerOutcomeAdmissible,
 } from "../evidenceAdmissibility.js";
@@ -1386,6 +1387,22 @@ async function readRequiredFamilyHead(
   } catch {
     return undefined;
   }
+}
+
+/** Re-read live family HEAD and key the convergence/abort marker via {@link convergenceHeadToRecord}. */
+async function familyConvergenceMarkerHead(
+  familyBackend: FamilyBackend,
+  familyBase: string,
+  shipHead: string,
+): Promise<string> {
+  const liveHead = await readRequiredFamilyHead(familyBackend, familyBase);
+  return (
+    convergenceHeadToRecord({
+      shipHead,
+      postFixHead:
+        liveHead !== undefined && liveHead !== shipHead ? liveHead : undefined,
+    }) ?? liveHead ?? shipHead
+  );
 }
 
 function describeShipPrState(ship: {
@@ -2889,24 +2906,34 @@ export async function runVerifyCmr(
   if (!reviewLoop.ok) {
     const stopSummary = familyOnlineReviewLoopFailureStopSummary(reviewLoop);
     const reason = stopSummary.summary;
+    const abortFamilyHead = await familyConvergenceMarkerHead(
+      familyBackend,
+      familyBase,
+      exactPostShipFamilyHead,
+    );
     await familyBackend.recordAborted?.({
       phase,
       familyBase,
       errorPackage: { reason },
-      familyHeadAfter: exactPostShipFamilyHead,
+      familyHeadAfter: abortFamilyHead,
     });
     await recordDurableAbort(familyBackend, {
       phase,
       reason,
-      familyHeadAfter: exactPostShipFamilyHead,
+      familyHeadAfter: abortFamilyHead,
       stopSummary,
     });
     return INCOMPLETE_GATE;
   }
 
+  const convergedFamilyHead = await familyConvergenceMarkerHead(
+    familyBackend,
+    familyBase,
+    exactPostShipFamilyHead,
+  );
   await recordReviewLoopConverged(familyBackend, {
     pr: ship.pr,
-    familyHeadAfter: exactPostShipFamilyHead,
+    familyHeadAfter: convergedFamilyHead,
     ...(shippedStopSummary !== undefined
       ? { stopSummary: shippedStopSummary }
       : {}),

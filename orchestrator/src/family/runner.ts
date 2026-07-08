@@ -57,6 +57,7 @@ import {
 } from "./ledger.js";
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
+import { convergenceHeadToRecord } from "../evidenceAdmissibility.js";
 import { runFamilyOnlineReviewLoop, runVerifyCmr } from "./verifyCmr.js";
 import { buildFamilyModuleContext } from "./moduleDeclaration.js";
 import {
@@ -1588,6 +1589,17 @@ export async function runFamily(
       },
     });
     if (!reviewLoop.ok) {
+      const postReviewLoopFamilyHead =
+        (await readCurrentFamilyHead(familyBackend, familyBase)) ??
+        preFinalFamilyHead;
+      const escalationFamilyHead =
+        convergenceHeadToRecord({
+          shipHead: shippedRecord.familyHeadAfter,
+          postFixHead:
+            postReviewLoopFamilyHead !== shippedRecord.familyHeadAfter
+              ? postReviewLoopFamilyHead
+              : undefined,
+        }) ?? postReviewLoopFamilyHead;
       const escalationReason =
         reviewLoop.stopSummary?.summary ??
         (reviewLoop.terminalState === "round_budget_exhausted"
@@ -1599,7 +1611,7 @@ export async function runFamily(
         escalationKind: "failure",
         phase: "final",
         reason: escalationReason,
-        familyHeadAfter: preFinalFamilyHead,
+        familyHeadAfter: escalationFamilyHead,
       });
       const ledgerMerged = await currentMerged(familyBackend);
       const children: FamilyChildResult[] = epic.children.map((c) =>
@@ -1623,15 +1635,29 @@ export async function runFamily(
         children,
       };
     }
+    const postReviewLoopFamilyHead =
+      (await readCurrentFamilyHead(familyBackend, familyBase)) ??
+      preFinalFamilyHead;
+    const convergedFamilyHead =
+      convergenceHeadToRecord({
+        shipHead: shippedRecord.familyHeadAfter,
+        postFixHead:
+          postReviewLoopFamilyHead !== undefined &&
+          postReviewLoopFamilyHead !== shippedRecord.familyHeadAfter
+            ? postReviewLoopFamilyHead
+            : undefined,
+      }) ??
+      postReviewLoopFamilyHead ??
+      shippedRecord.familyHeadAfter;
     await recordReviewLoopConverged(familyBackend, {
       pr: shippedRecord.pr,
-      familyHeadAfter: shippedRecord.familyHeadAfter,
+      familyHeadAfter: convergedFamilyHead,
       ...(shippedRecord.stopSummary != null
         ? { stopSummary: shippedRecord.stopSummary }
         : {}),
     });
 
-    familyHead = preFinalFamilyHead;
+    familyHead = postReviewLoopFamilyHead;
     const ledgerMerged = await currentMerged(familyBackend);
     const children: FamilyChildResult[] = epic.children.map((c) =>
       ledgerMerged.has(c.issue)
@@ -1646,12 +1672,12 @@ export async function runFamily(
       summary: "family review-loop converged during resume for the current family HEAD",
       metadata: {
         heads: {
-          actualFamilyHead: preFinalFamilyHead,
-          reportedFamilyHead: shippedRecord.familyHeadAfter,
+          actualFamilyHead: postReviewLoopFamilyHead,
+          reportedFamilyHead: convergedFamilyHead,
           verifiedCmrHead: shippedVerifiedCmrHead,
           sources: {
             actualFamilyHead: "current family head",
-            reportedFamilyHead: "shipped ledger row",
+            reportedFamilyHead: "review_loop_converged ledger row",
             verifiedCmrHead:
               shippedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead !== undefined
                 ? "shipped ledger stop summary"
