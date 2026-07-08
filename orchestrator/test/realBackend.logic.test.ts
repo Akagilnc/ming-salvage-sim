@@ -1359,6 +1359,35 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     expect(decoded).toEqual({ kind: "fixer", committed: false });
   });
 
+  it("pin r39: decodeOutput on RAW committed:true fixer requires fixCommitSha", () => {
+    const backend = makeBackend();
+    const sha = "b".repeat(40);
+    const raw = extractFixerTag(
+      `<fixer>{"committed": true, "fixCommitSha": "${sha}"}</fixer>`,
+    );
+    const decoded = (
+      backend as unknown as {
+        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+      }
+    ).decodeOutput(fixerSpec, raw, undefined);
+    expect(decoded).toEqual({ kind: "fixer", committed: true, fixCommitSha: sha });
+  });
+
+  it("pin r39: decodeOutput on RAW committed:true without fixCommitSha fails closed", () => {
+    const backend = makeBackend();
+    expect(() =>
+      (
+        backend as unknown as {
+          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+        }
+      ).decodeOutput(
+        fixerSpec,
+        extractFixerTag('<fixer>{"committed": true}</fixer>'),
+        undefined,
+      ),
+    ).toThrow();
+  });
+
   it("decodeOutput on RAW valid cleanup produces CleanupResult via real seam", () => {
     const backend = makeBackend();
     const raw = extractCleanupTag('<cleanup>{"ok": true}</cleanup>');

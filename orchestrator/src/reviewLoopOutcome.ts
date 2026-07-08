@@ -162,6 +162,12 @@ function isValidFixerEnvelopeFields(obj: Record<string, unknown>): boolean {
     return false;
   }
   if (
+    obj.committed === true &&
+    (typeof obj.fixCommitSha !== "string" || obj.fixCommitSha.length === 0)
+  ) {
+    return false;
+  }
+  if (
     obj.committed === false &&
     obj.alreadySatisfied === true &&
     (typeof obj.fixCommitSha !== "string" || obj.fixCommitSha.length === 0)
@@ -194,7 +200,7 @@ export function fixerLedgerOutputProceeds(output?: {
   );
 }
 
-/** Fix SHA recorded on an S10 ledger row (envelope or branchHEAD). */
+/** Fix SHA recorded on an S10 ledger row (envelope only). */
 export function fixerLedgerFixCommitSha(entry: {
   readonly branchHEAD?: string;
   readonly output?: {
@@ -204,28 +210,25 @@ export function fixerLedgerFixCommitSha(entry: {
     readonly fixCommitSha?: string;
   };
 }): string | undefined {
-  if (!fixerLedgerOutputProceeds(entry.output)) {
+  const output = entry.output;
+  if (!fixerLedgerOutputProceeds(output)) {
     return undefined;
   }
   if (
-    entry.output?.alreadySatisfied === true &&
-    typeof entry.output.fixCommitSha === "string" &&
-    entry.output.fixCommitSha.length > 0
+    typeof output?.fixCommitSha === "string" &&
+    output.fixCommitSha.length > 0
   ) {
-    return entry.output.fixCommitSha;
-  }
-  if (typeof entry.branchHEAD === "string" && entry.branchHEAD.length > 0) {
-    return entry.branchHEAD;
+    return output.fixCommitSha;
   }
   return undefined;
 }
 
 /**
- * Fix SHA from the fixer envelope when the worker reports alreadySatisfied.
- * Returns undefined for committed:true (stage uses resolveFixCommitSha).
+ * Fix SHA from the fixer envelope (committed:true or alreadySatisfied).
+ * Runner/stage must not re-read live git for this value (ADR 0030).
  */
 export function fixerEnvelopeFixCommitSha(output: FixerResult): string | undefined {
-  if (output.alreadySatisfied === true) {
+  if (output.committed === true || output.alreadySatisfied === true) {
     return output.fixCommitSha;
   }
   return undefined;
@@ -239,8 +242,9 @@ export function fixerResultFromParsed(parsed: {
   const candidate: FixerResult = {
     kind: "fixer",
     committed: parsed.committed,
-    ...(parsed.alreadySatisfied === true
-      ? { alreadySatisfied: true, fixCommitSha: parsed.fixCommitSha }
+    ...(parsed.alreadySatisfied === true ? { alreadySatisfied: true } : {}),
+    ...(parsed.fixCommitSha !== undefined
+      ? { fixCommitSha: parsed.fixCommitSha }
       : {}),
   };
   if (!isValidFixerResult(candidate)) {
@@ -272,7 +276,7 @@ export function stubVerifyResult(): VerifyResult {
 
 /** Deterministic skeleton verdict used by the legacy dispatch path for S10. */
 export function stubFixerResult(): FixerResult {
-  return { kind: "fixer", committed: true };
+  return { kind: "fixer", committed: true, fixCommitSha: "stub-fix-sha" };
 }
 
 /** Deterministic skeleton verdict used by the legacy dispatch path for S11. */

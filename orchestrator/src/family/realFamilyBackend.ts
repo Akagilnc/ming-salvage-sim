@@ -3646,11 +3646,9 @@ export function parseFixerOutcome(
   const candidate: FixerResult = {
     kind: "fixer",
     committed: shape.data.committed,
-    ...(shape.data.alreadySatisfied === true
-      ? {
-          alreadySatisfied: true,
-          fixCommitSha: shape.data.fixCommitSha,
-        }
+    ...(shape.data.alreadySatisfied === true ? { alreadySatisfied: true } : {}),
+    ...(shape.data.fixCommitSha !== undefined
+      ? { fixCommitSha: shape.data.fixCommitSha }
       : {}),
   };
   if (!isValidFixerResult(candidate)) {

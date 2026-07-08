@@ -3577,9 +3577,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             isValidFixerResult(result.output) &&
             fixerProceedsToVerify(result.output)
           ) {
-            lastOnlineReviewFixCommitSha =
-              fixerEnvelopeFixCommitSha(result.output) ??
-              (await resolveBranchHEAD());
+            lastOnlineReviewFixCommitSha = fixerEnvelopeFixCommitSha(result.output)!;
             if (
               lastShipOutput.pr != null &&
               isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)

@@ -898,7 +898,11 @@ export interface FixerResult {
    * The stage proceeds to verify using {@link fixCommitSha}, not decision_gate.
    */
   readonly alreadySatisfied?: boolean;
-  /** Branch HEAD the fixer sees when {@link alreadySatisfied} is true. */
+  /**
+   * Fixing commit SHA from the fixer envelope. Required when {@link committed} is
+   * true (new fix this turn) or when {@link alreadySatisfied} is true. Runner/stage
+   * never re-read live git for this value (ADR 0030).
+   */
   readonly fixCommitSha?: string;
 }
 

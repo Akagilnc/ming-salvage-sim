@@ -11,10 +11,11 @@ Soul: `fixer` (`/home/agent/.orchestrator/souls/fixer.md`)
 Emit `<fixer>` JSON and fire `FIXER_STEP_COMPLETE`:
 
 ```json
-{"committed": true}
+{"committed": true, "fixCommitSha": "<the-commit-sha-you-just-made>"}
 ```
 
-when you committed a new fix this turn;
+when you committed a new fix this turn (report the fixing commit SHA you just
+created);
 
 ```json
 {"committed": false, "alreadySatisfied": true, "fixCommitSha": "<current-branch-HEAD>"}

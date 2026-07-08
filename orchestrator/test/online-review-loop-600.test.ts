@@ -34,7 +34,12 @@ import type {
   WorktreeHandle,
 } from "../src/types.js";
 
-const fixerCommitted = (): FixerResult => ({ kind: "fixer", committed: true });
+const FIXER_ENVELOPE_SHA = "fixsha1111111111111111111111111111111111";
+const fixerCommitted = (fixCommitSha = FIXER_ENVELOPE_SHA): FixerResult => ({
+  kind: "fixer",
+  committed: true,
+  fixCommitSha,
+});
 const fixerNotFixed = (): FixerResult => ({ kind: "fixer", committed: false });
 const fixerAlreadySatisfied = (fixCommitSha: string): FixerResult => ({
   kind: "fixer",
@@ -657,7 +662,7 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     expect(
       route({
         from: "S10",
-        output: { kind: "fixer", committed: true },
+        output: { kind: "fixer", committed: true, fixCommitSha: FIXER_ENVELOPE_SHA },
       }),
     ).toEqual({ kind: "next", step: "S9" });
   });
@@ -2026,7 +2031,7 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
       if (attempts === 1) throw new Error("fixer worker threw on startup");
       return {
         kind: "completed",
-        output: { kind: "fixer", committed: true },
+        output: { kind: "fixer", committed: true, fixCommitSha: FIXER_ENVELOPE_SHA },
       };
     };
     const result = await withMechanicalRetry(
@@ -3012,7 +3017,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     };
     const s10Row = {
       step: "S10",
-      output: { kind: "fixer", committed: true },
+      output: { kind: "fixer", committed: true, fixCommitSha: FIXER_ENVELOPE_SHA },
       branchHEAD: fixSha,
       ts: fixTs,
     };
@@ -3146,7 +3151,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       slicePendingRoundTriggerFromFixGap([
         {
           step: "S10",
-          output: { kind: "fixer", committed: true },
+          output: { kind: "fixer", committed: true, fixCommitSha: FIXER_ENVELOPE_SHA },
           branchHEAD: fixSha,
           ts: fixTs,
         },
@@ -3165,7 +3170,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     };
     const s10Row = {
       step: "S10",
-      output: { kind: "fixer", committed: true },
+      output: { kind: "fixer", committed: true, fixCommitSha: FIXER_ENVELOPE_SHA },
       branchHEAD: fixSha,
       ts: fixTs,
     };
@@ -3308,7 +3313,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     };
     const s10Row = {
       step: "S10",
-      output: { kind: "fixer", committed: true },
+      output: { kind: "fixer", committed: true, fixCommitSha: FIXER_ENVELOPE_SHA },
       branchHEAD: fixSha,
       ts: s10LaterTs,
     };
@@ -3348,7 +3353,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     const fixTs = "2026-07-08T12:30:00.000Z";
     const s10Only = {
       step: "S10",
-      output: { kind: "fixer", committed: true },
+      output: { kind: "fixer", committed: true, fixCommitSha: FIXER_ENVELOPE_SHA },
       branchHEAD: fixSha,
       ts: fixTs,
     };
@@ -3874,6 +3879,63 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     expect(resolveFixCalls).toBe(1);
     expect(retriggerCalls).toBe(1);
     expect(fixingSha).toBe("crash-landed-sha");
+  });
+
+  it("pin r39: committed:true fixCommitSha keys recheck via envelope only (no live HEAD)", async () => {
+    const envelopeSha = "envelopefixsha111111111111111111111111";
+    const driftHeadOid = "live-head-would-be-wrong-if-read";
+    let resolveFixCalls = 0;
+    let fixingSha: string | undefined;
+    const result = await runOnlineReviewLoopStage(stageShip, {
+      poll: async () => ({ ...baseSnapshot, headOid: driftHeadOid }),
+      dispatchVerify: async (_landing, round) => {
+        if (round === 1) {
+          return { kind: "verify", converged: false };
+        }
+        return { kind: "verify", converged: true, isRecheck: true };
+      },
+      dispatchFixer: async () => fixerCommitted(envelopeSha),
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (_landing, verify, sha) => {
+        fixingSha = sha;
+        return verify;
+      },
+      retriggerAfterFix: () => {},
+      resolveFixCommitSha: async (envelopeFixSha) => {
+        resolveFixCalls += 1;
+        expect(envelopeFixSha).toBe(envelopeSha);
+        return envelopeFixSha;
+      },
+    });
+    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
+    expect(resolveFixCalls).toBe(1);
+    expect(fixingSha).toBe(envelopeSha);
+    expect(fixingSha).not.toBe(driftHeadOid);
+  });
+
+  it("pin r39: committed:true without fixCommitSha is rejected (no silent live-HEAD fallback)", async () => {
+    const malformed = { kind: "fixer", committed: true } as FixerResult;
+    const result = await runOnlineReviewLoopStage(stageShip, {
+      poll: async () => baseSnapshot,
+      dispatchVerify: async () => ({ kind: "verify", converged: false }),
+      dispatchFixer: async () => malformed,
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (_landing, verify) => verify,
+      retriggerAfterFix: () => {
+        throw new Error("retriggerAfterFix must not run for malformed fixer envelope");
+      },
+    });
+    expect(result).toEqual({
+      ok: false,
+      terminalState: "decision_gate_raised",
+      round: 1,
+      stopSummary: expect.objectContaining({
+        reason: "infra_failure",
+        summary: expect.stringMatching(/missing fixCommitSha/i),
+      }),
+    });
   });
 
   it("pin r33 family: fixer alreadySatisfied records fix marker path via envelope SHA", async () => {

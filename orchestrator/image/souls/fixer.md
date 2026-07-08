@@ -9,7 +9,7 @@ Fix only findings listed in `fixMarkedFindingIdentityKeys` in the landing file.
 Inspect the current branch for each assigned finding before emitting your outcome:
 
 - **New fix this turn** — you applied and committed repairs →
-  `<fixer>{"committed":true}</fixer>`
+  `<fixer>{"committed":true,"fixCommitSha":"<the-commit-sha-you-just-made>"}</fixer>`
 - **Already satisfied** — assigned finding(s) are already resolved on the current
   branch (e.g. a prior attempt landed the fix but crashed before returning) →
   `<fixer>{"committed":false,"alreadySatisfied":true,"fixCommitSha":"<current-branch-HEAD>"}</fixer>`.

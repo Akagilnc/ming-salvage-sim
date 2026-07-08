@@ -1944,6 +1944,15 @@ export const fixerOutputSchema = z
       });
     }
     if (
+      data.committed === true &&
+      (data.fixCommitSha === undefined || data.fixCommitSha.length === 0)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "fixCommitSha is required when committed is true",
+      });
+    }
+    if (
       data.committed === false &&
       data.alreadySatisfied === true &&
       data.fixCommitSha === undefined
@@ -2820,9 +2829,8 @@ export class RealBackend implements Backend {
       const candidate: FixerResult = {
         kind: "fixer",
         committed: f.committed,
-        ...(f.alreadySatisfied === true
-          ? { alreadySatisfied: true, fixCommitSha: f.fixCommitSha }
-          : {}),
+        ...(f.alreadySatisfied === true ? { alreadySatisfied: true } : {}),
+        ...(f.fixCommitSha !== undefined ? { fixCommitSha: f.fixCommitSha } : {}),
       };
       if (!isValidFixerResult(candidate)) {
         const err = new Error(

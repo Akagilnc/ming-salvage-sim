@@ -189,7 +189,11 @@ describe("#600 r18 single-slice verify side-effect in-band", () => {
       if (spec.kind === "fixer") {
         return {
           kind: "completed",
-          output: { kind: "fixer", committed: true },
+          output: {
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: "fixsha1111111111111111111111111111111111",
+          },
         };
       }
       const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
