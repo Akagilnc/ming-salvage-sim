@@ -1,6 +1,6 @@
 # 0114: 藩地失陷后果包——（藩王，省）键控通用包、洛阳 seed、失陷不写血债
 
-Status: Proposed（决策：2026-07-08 #87 宗藩闸 grill Q7 用户拍板〔五件套〕；承 0014 史实事件机器、战略事件节点 `luoyang_fallen` 现成锚〔regions＝`henan`、powers＝`bandit_li_zicheng`、锚词含「福王/朱常洵」〕；开封围城节点将来免费复用〔周王〕）
+Status: Accepted（PR #719 merged `4ffecc42` 2026-07-08，线上 3 轮收敛；决策：2026-07-08 #87 宗藩闸 grill Q7 用户拍板〔五件套〕；承 0014 史实事件机器、战略事件节点 `luoyang_fallen` 现成锚〔regions＝`henan`、powers＝`bandit_li_zicheng`、锚词含「福王/朱常洵」〕；开封围城节点将来免费复用〔周王〕）
 
 **通用后果包**，按（藩王，就藩省）键控，洛阳/福王为 seed 首例。五件：
 
