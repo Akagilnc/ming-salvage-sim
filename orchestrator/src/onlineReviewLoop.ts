@@ -253,6 +253,40 @@ export function verifySideEffectFailureStopSummary(err: unknown): StopSummary {
   });
 }
 
+type OnlineReviewDispatchPhase = "poll" | "verify" | "fixer";
+
+/** Stop summary when poll/verify/fixer dispatch throws (#600 r20). */
+export function onlineReviewDispatchFailureStopSummary(
+  phase: OnlineReviewDispatchPhase,
+  err: unknown,
+): StopSummary {
+  const detail = err instanceof Error ? err.message : String(err);
+  const label =
+    phase === "poll"
+      ? "bot poll"
+      : phase === "verify"
+        ? "verify dispatch"
+        : "fixer dispatch";
+  return infraFailureStopSummary({
+    summary: `online review ${label} failed: ${detail}`,
+    repairHint:
+      "repair the online review loop infrastructure failure and rerun the online review loop",
+  });
+}
+
+function decisionGateFromDispatchInfra(
+  round: number,
+  phase: OnlineReviewDispatchPhase,
+  err: unknown,
+): OnlineReviewLoopStageResult {
+  return {
+    ok: false,
+    terminalState: "decision_gate_raised",
+    round,
+    stopSummary: onlineReviewDispatchFailureStopSummary(phase, err),
+  };
+}
+
 /** In-band terminal for family/slice review-loop dispatch failures (#600 r7 S2). */
 export class OnlineReviewLoopTerminal extends Error {
   constructor(readonly result: OnlineReviewLoopStageResult) {
@@ -503,7 +537,15 @@ export async function runOnlineReviewLoopStage(
   let lastFixCommitSha: string | undefined;
 
   while (round <= MAX_ONLINE_REVIEW_ROUNDS + 1) {
-    const snapshot = await dispatch.poll(round);
+    let snapshot: PrReviewSnapshot;
+    try {
+      snapshot = await dispatch.poll(round);
+    } catch (err) {
+      if (err instanceof OnlineReviewLoopTerminal) {
+        throw err;
+      }
+      return decisionGateFromDispatchInfra(round, "poll", err);
+    }
     let landing = buildOnlineReviewLanding(
       snapshot,
       {
@@ -516,10 +558,18 @@ export async function runOnlineReviewLoopStage(
       round,
     );
 
-    let verify = clampVerifyConvergenceForCheckRuns(
-      await dispatch.dispatchVerify(landing, round),
-      landing.onlineReviewSnapshot,
-    );
+    let verify: VerifyResult;
+    try {
+      verify = clampVerifyConvergenceForCheckRuns(
+        await dispatch.dispatchVerify(landing, round),
+        landing.onlineReviewSnapshot,
+      );
+    } catch (err) {
+      if (err instanceof OnlineReviewLoopTerminal) {
+        throw err;
+      }
+      return decisionGateFromDispatchInfra(round, "verify", err);
+    }
     try {
       verify = dispatch.applySideEffects(
         verify,
@@ -556,12 +606,27 @@ export async function runOnlineReviewLoopStage(
       return { ok: false, terminalState: "round_budget_exhausted", round };
     }
 
-    const committed = await dispatch.dispatchFixer(landing);
+    let committed: boolean;
+    try {
+      committed = await dispatch.dispatchFixer(landing);
+    } catch (err) {
+      if (err instanceof OnlineReviewLoopTerminal) {
+        throw err;
+      }
+      return decisionGateFromDispatchInfra(round, "fixer", err);
+    }
     if (!committed) {
       return { ok: false, terminalState: "decision_gate_raised", round };
     }
-    lastFixCommitSha =
-      (await dispatch.resolveFixCommitSha?.()) ?? snapshot.headOid;
+    try {
+      lastFixCommitSha =
+        (await dispatch.resolveFixCommitSha?.()) ?? snapshot.headOid;
+    } catch (err) {
+      if (err instanceof OnlineReviewLoopTerminal) {
+        throw err;
+      }
+      return decisionGateFromDispatchInfra(round, "fixer", err);
+    }
     try {
       dispatch.retriggerAfterFix();
     } catch (err) {
