@@ -469,10 +469,6 @@ export async function runOnlineReviewLoopStage(
   let lastFixCommitSha: string | undefined;
 
   while (round <= MAX_ONLINE_REVIEW_ROUNDS + 1) {
-    if (round > MAX_ONLINE_REVIEW_ROUNDS) {
-      return { ok: false, terminalState: "round_budget_exhausted", round };
-    }
-
     const snapshot = await dispatch.poll(round);
     let landing = buildOnlineReviewLanding(
       snapshot,
@@ -504,6 +500,11 @@ export async function runOnlineReviewLoopStage(
         return { ok: false, terminalState: "decision_gate_raised", round };
       }
       return { ok: true, terminalState: "mergeable", round };
+    }
+
+    // ADR 0061: round MAX+1 is verify-only — no further fixer after the cap.
+    if (round > MAX_ONLINE_REVIEW_ROUNDS) {
+      return { ok: false, terminalState: "round_budget_exhausted", round };
     }
 
     const committed = await dispatch.dispatchFixer(landing);

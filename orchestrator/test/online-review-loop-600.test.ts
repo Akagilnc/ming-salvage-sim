@@ -1400,12 +1400,16 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
   it("non-convergence terminal: persistent verify red + fixer commits exhausts round budget", async () => {
     let roundSeen = 0;
     let fixerCalls = 0;
+    let verifyCalls = 0;
     const result = await runOnlineReviewLoopStage({
       poll: async (round) => {
         roundSeen = round;
         return { ...baseSnapshot, pollCount: round };
       },
-      dispatchVerify: async () => ({ kind: "verify", converged: false }),
+      dispatchVerify: async () => {
+        verifyCalls += 1;
+        return { kind: "verify", converged: false };
+      },
       dispatchFixer: async () => {
         fixerCalls += 1;
         return true;
@@ -1422,7 +1426,44 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       round: MAX_ONLINE_REVIEW_ROUNDS + 1,
     });
     expect(fixerCalls).toBe(MAX_ONLINE_REVIEW_ROUNDS);
-    expect(roundSeen).toBe(MAX_ONLINE_REVIEW_ROUNDS);
+    expect(verifyCalls).toBe(MAX_ONLINE_REVIEW_ROUNDS + 1);
+    expect(roundSeen).toBe(MAX_ONLINE_REVIEW_ROUNDS + 1);
+  });
+
+  it("final-round fix converges on MAX+1 fresh verify → mergeable (not exhausted)", async () => {
+    let roundSeen = 0;
+    let fixerCalls = 0;
+    let verifyCalls = 0;
+    const result = await runOnlineReviewLoopStage({
+      poll: async (round) => {
+        roundSeen = round;
+        return { ...baseSnapshot, pollCount: round };
+      },
+      dispatchVerify: async (_landing, round) => {
+        verifyCalls += 1;
+        return {
+          kind: "verify",
+          converged: round > MAX_ONLINE_REVIEW_ROUNDS,
+        } satisfies VerifyResult;
+      },
+      dispatchFixer: async () => {
+        fixerCalls += 1;
+        return true;
+      },
+      dispatchCleanup: async (_landing) => true,
+      dispatchDocRelease: async (_landing) => true,
+      applySideEffects: (verify) => verify,
+      retriggerAfterFix: () => {},
+      resolveFixCommitSha: async () => "fix-sha",
+    });
+    expect(result).toEqual({
+      ok: true,
+      terminalState: "mergeable",
+      round: MAX_ONLINE_REVIEW_ROUNDS + 1,
+    });
+    expect(fixerCalls).toBe(MAX_ONLINE_REVIEW_ROUNDS);
+    expect(verifyCalls).toBe(MAX_ONLINE_REVIEW_ROUNDS + 1);
+    expect(roundSeen).toBe(MAX_ONLINE_REVIEW_ROUNDS + 1);
   });
 
   it("non-convergence terminal: fixer failure raises decision gate on first round", async () => {
