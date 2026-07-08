@@ -20,12 +20,76 @@ import type {
   WorkerResult,
 } from "./types.js";
 
+function isStringArray(value: unknown): value is ReadonlyArray<string> {
+  return Array.isArray(value) && value.every((v) => typeof v === "string");
+}
+
+function isFindingDispositionArray(
+  value: unknown,
+): value is VerifyResult["findingDispositions"] {
+  if (!Array.isArray(value)) return false;
+  return value.every((item) => {
+    if (item == null || typeof item !== "object") return false;
+    const d = item as Record<string, unknown>;
+    return (
+      typeof d.identityKey === "string" &&
+      typeof d.threadId === "string" &&
+      (d.action === "fix" || d.action === "reject" || d.action === "defer") &&
+      (d.reason === undefined || typeof d.reason === "string")
+    );
+  });
+}
+
+function isThreadReplyArray(
+  value: unknown,
+): value is VerifyResult["threadReplies"] {
+  if (!Array.isArray(value)) return false;
+  return value.every((item) => {
+    if (item == null || typeof item !== "object") return false;
+    const r = item as Record<string, unknown>;
+    return typeof r.threadId === "string" && typeof r.body === "string";
+  });
+}
+
 export function isValidVerifyResult(
   o: StepOutput | undefined,
 ): o is VerifyResult {
   if (o == null || typeof o !== "object") return false;
   const obj = o as unknown as Record<string, unknown>;
-  return obj.kind === "verify" && typeof obj.converged === "boolean";
+  if (obj.kind !== "verify" || typeof obj.converged !== "boolean") return false;
+  if (
+    obj.findingDispositions !== undefined &&
+    !isFindingDispositionArray(obj.findingDispositions)
+  ) {
+    return false;
+  }
+  if (
+    obj.fixMarkedFindingIdentityKeys !== undefined &&
+    !isStringArray(obj.fixMarkedFindingIdentityKeys)
+  ) {
+    return false;
+  }
+  if (obj.threadReplies !== undefined && !isThreadReplyArray(obj.threadReplies)) {
+    return false;
+  }
+  if (obj.threadsToResolve !== undefined && !isStringArray(obj.threadsToResolve)) {
+    return false;
+  }
+  if (obj.deferredIssueUrls !== undefined && !isStringArray(obj.deferredIssueUrls)) {
+    return false;
+  }
+  if (
+    obj.terminalState !== undefined &&
+    obj.terminalState !== "mergeable" &&
+    obj.terminalState !== "round_budget_exhausted" &&
+    obj.terminalState !== "decision_gate_raised"
+  ) {
+    return false;
+  }
+  if (obj.isRecheck !== undefined && typeof obj.isRecheck !== "boolean") {
+    return false;
+  }
+  return true;
 }
 
 export function isValidFixerResult(o: StepOutput | undefined): o is FixerResult {

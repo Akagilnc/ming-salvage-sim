@@ -70,9 +70,15 @@ import {
 import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetry.js";
 import {
   buildOnlineReviewLanding,
+  isReviewLoopConvergedMarker,
+  retriggerBotsAndPoll,
   verifyReviewerHeadMovedStopSummary,
   writeOnlineReviewSnapshotFile,
 } from "./onlineReviewLoop.js";
+import {
+  applyVerifySideEffects,
+  fixMarkedKeysFromVerify,
+} from "./onlineReviewSideEffects.js";
 import {
   applyRuntimeTightRoutePolicy,
   modelForSlot,
@@ -915,6 +921,18 @@ function onlineReviewRoundFromLedger(
       e.output.committed,
   ).length;
   return completedFixerRounds + 1;
+}
+
+function onlineReviewConvergedForShip(
+  ledger: ReadonlyArray<{ readonly event?: string; readonly prHead?: string }>,
+  ship: ShipResult | undefined,
+): boolean {
+  if (ship?.prHead === undefined || ship.prHead.trim().length === 0) {
+    return false;
+  }
+  return ledger.some((entry) =>
+    isReviewLoopConvergedMarker(entry, ship.prHead!),
+  );
 }
 
 /** Drop superseded S9–S12 entries when resuming mid online-review loop (#600 F3). */
@@ -1899,6 +1917,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastShipOutput: ShipResult | undefined;
   let onlineReviewRound = 1;
   let onlineReviewLanding: WorkerLandingPayload | undefined;
+  let lastOnlineReviewFixCommitSha: string | undefined;
+  let onlineReviewNeedsRetrigger = false;
+
+  function ghSh(file: string, args: string[]): string {
+    return execFileSync(file, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+    }).trim();
+  }
 
   function defaultRepo(): string {
     const fromEnv = process.env.ORCHESTRATOR_REPO?.trim();
@@ -3124,17 +3151,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             ),
           );
         }
+        let reviewStep = step;
+        if (
+          reviewStep === "S9" &&
+          onlineReviewConvergedForShip(ledger, lastShipOutput)
+        ) {
+          reviewStep = "S11";
+        }
         const reviewLoopSpec =
-          step === "S9"
+          reviewStep === "S9"
             ? verifyWorkerSpec(routePolicy.route)
-            : step === "S10"
+            : reviewStep === "S10"
               ? fixerWorkerSpec(routePolicy.route)
-              : step === "S11"
+              : reviewStep === "S11"
                 ? cleanupWorkerSpec(routePolicy.route)
                 : docReleaseWorkerSpec(routePolicy.route);
         promptFile = reviewLoopSpec.promptFile;
         try {
-          if (step === "S9") {
+          if (reviewStep === "S9") {
             const snapshot = await pollOnlineReviewForShip(
               lastShipOutput,
               onlineReviewRound,
@@ -3157,11 +3191,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             onlineReviewRound,
           };
           const headBefore =
-            step === "S9" ? await resolveBranchHEAD() : undefined;
+            reviewStep === "S9" ? await resolveBranchHEAD() : undefined;
           const reviewResetOpt =
             worktree != null
               ? { resetBeforeRetry: () => backend.cleanResidue(worktree!) }
               : {};
+          const fixerLanding =
+            reviewStep === "S10" && onlineReviewLanding !== undefined
+              ? {
+                  ...onlineReviewLanding,
+                  fixMarkedFindingIdentityKeys:
+                    onlineReviewLanding.fixMarkedFindingIdentityKeys ?? [],
+                }
+              : onlineReviewLanding;
           const result = await withMechanicalRetry(
             reviewLoopSpec,
             reviewCtx,
@@ -3170,44 +3212,66 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 backend,
                 s,
                 c,
-                step === "S9" || step === "S10" ? onlineReviewLanding : undefined,
+                reviewStep === "S9" || reviewStep === "S10" ? fixerLanding : undefined,
               ),
             reviewResetOpt,
           );
           if (result.kind !== "completed") {
             return await errorTermination(
-              step,
+              reviewStep,
               new Error(
-                `${step} worker returned ${result.kind}` +
+                `${reviewStep} worker returned ${result.kind}` +
                   ("reason" in result ? `: ${result.reason}` : ""),
               ),
             );
           }
           const outputValid =
-            (step === "S9" && isValidVerifyResult(result.output)) ||
-            (step === "S10" && isValidFixerResult(result.output)) ||
-            (step === "S11" && isValidCleanupResult(result.output)) ||
-            (step === "S12" && isValidDocReleaseResult(result.output));
+            (reviewStep === "S9" && isValidVerifyResult(result.output)) ||
+            (reviewStep === "S10" && isValidFixerResult(result.output)) ||
+            (reviewStep === "S11" && isValidCleanupResult(result.output)) ||
+            (reviewStep === "S12" && isValidDocReleaseResult(result.output));
           if (!outputValid) {
             const badKind = (result.output as { kind?: unknown } | undefined | null)?.kind;
             return await errorTermination(
-              step,
+              reviewStep,
               new Error(
-                `${step} worker returned non-${step} output kind '${String(badKind)}'`,
+                `${reviewStep} worker returned non-${reviewStep} output kind '${String(badKind)}'`,
               ),
             );
           }
-          if (step === "S9" && isValidVerifyResult(result.output)) {
-            const verifyOutput = result.output;
+          if (reviewStep === "S9" && isValidVerifyResult(result.output)) {
+            let verifyOutput = result.output;
             const headAfter = await resolveBranchHEAD();
             if (headBefore !== undefined && headAfter !== headBefore) {
               const stopSummary = verifyReviewerHeadMovedStopSummary({
                 headBefore,
                 headAfter,
               });
-              return await errorTermination(step, new Error(stopSummary.summary), {
+              return await errorTermination(reviewStep, new Error(stopSummary.summary), {
                 stopSummary,
               });
+            }
+            const sideEffects = applyVerifySideEffects({
+              sh: ghSh,
+              repo: reviewCtx.repo!,
+              prUrl: lastShipOutput.pr,
+              verify: verifyOutput,
+              fixingCommitSha: verifyOutput.isRecheck
+                ? lastOnlineReviewFixCommitSha
+                : undefined,
+            });
+            verifyOutput = {
+              ...verifyOutput,
+              ...(sideEffects.deferredIssueUrls.length > 0
+                ? { deferredIssueUrls: sideEffects.deferredIssueUrls }
+                : {}),
+            };
+            const fixKeys = fixMarkedKeysFromVerify(verifyOutput);
+            if (onlineReviewLanding !== undefined) {
+              onlineReviewLanding = {
+                ...onlineReviewLanding,
+                fixMarkedFindingIdentityKeys: fixKeys,
+              };
             }
             if (verifyOutput.converged && stateDir !== undefined) {
               const marker = {
@@ -3234,14 +3298,28 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   stateDir,
                 );
               } catch (err) {
-                return await errorTermination(step, err, { recordInMemory: false });
+                return await errorTermination(reviewStep, err, { recordInMemory: false });
               }
             }
+            output = verifyOutput;
+          } else {
+            output = result.output;
           }
-          if (step === "S10" && isValidFixerResult(result.output) && result.output.committed) {
+          if (
+            reviewStep === "S10" &&
+            isValidFixerResult(result.output) &&
+            result.output.committed
+          ) {
+            lastOnlineReviewFixCommitSha = await resolveBranchHEAD();
+            retriggerBotsAndPoll(
+              ghSh,
+              reviewCtx.repo!,
+              lastShipOutput.pr,
+              1,
+            );
             onlineReviewRound += 1;
           }
-          output = result.output;
+          step = reviewStep;
           stepSessionId = result.sessionId;
           lastOutput = output;
         } catch (err) {
@@ -3354,12 +3432,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 reason: buildErrorReason(step, lastOutput),
                 branchHead: worktree?.branch,
               })
-            : stopSummaryForEscalation(
-                escalateOf(lastOutput) ?? {
-                  reason: "run escalated",
-                  diagnosis: `step ${step} routed to an escalate handoff`,
-                },
-              );
+            : decision.onlineReviewTerminal === "round_budget_exhausted"
+              ? {
+                  reason: "decision_gate_park",
+                  summary:
+                    "online review loop exhausted the 3-round budget (round_budget_exhausted) with remaining findings",
+                  repairHint:
+                    "answer the decision gate or defer remaining findings, then rerun",
+                }
+              : stopSummaryForEscalation(
+                  escalateOf(lastOutput) ?? {
+                    reason: "run escalated",
+                    diagnosis: `step ${step} routed to an escalate handoff`,
+                  },
+                );
       ledger.push({ step: "S8", stopSummary: handoffStopSummary });
       // #249: persist the S8 handoff entry too.
       // #6 / integ-cmr base r2 (E): a writeLedger failure on the S8 entry →

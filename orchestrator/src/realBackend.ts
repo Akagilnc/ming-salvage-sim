@@ -1979,8 +1979,35 @@ const coderOutputSchema = z.object({
 // #596 F2: minimal schemas for the 4 review-loop kinds. Used for outputFor (Sandcastle typed)
 // and initial parse in decodeOutput; final decode validation uses the isValid*Result guards
 // from reviewLoopOutcome.ts (per AC2). .strict() so off-shape (extra keys, wrong types) fails closed.
+const onlineReviewFindingDispositionSchema = z
+  .object({
+    identityKey: z.string(),
+    threadId: z.string(),
+    action: z.enum(["fix", "reject", "defer"]),
+    reason: z.string().optional(),
+  })
+  .strict();
+
+const onlineReviewThreadReplySchema = z
+  .object({
+    threadId: z.string(),
+    body: z.string(),
+  })
+  .strict();
+
 export const verifyOutputSchema = z
-  .object({ converged: z.boolean() })
+  .object({
+    converged: z.boolean(),
+    findingDispositions: z.array(onlineReviewFindingDispositionSchema).optional(),
+    fixMarkedFindingIdentityKeys: z.array(z.string()).optional(),
+    threadReplies: z.array(onlineReviewThreadReplySchema).optional(),
+    threadsToResolve: z.array(z.string()).optional(),
+    deferredIssueUrls: z.array(z.string()).optional(),
+    terminalState: z
+      .enum(["mergeable", "round_budget_exhausted", "decision_gate_raised"])
+      .optional(),
+    isRecheck: z.boolean().optional(),
+  })
   .strict();
 export const fixerOutputSchema = z
   .object({ committed: z.boolean() })
@@ -2807,7 +2834,25 @@ export class RealBackend implements Backend {
     // Shape-valid but false flags (converged:false etc) pass this layer (no semantic).
     if (spec.role === "verify") {
       const v = verifyOutputSchema.parse(raw);
-      const candidate: VerifyResult = { kind: "verify", converged: v.converged };
+      const candidate: VerifyResult = {
+        kind: "verify",
+        converged: v.converged,
+        ...(v.findingDispositions !== undefined
+          ? { findingDispositions: v.findingDispositions }
+          : {}),
+        ...(v.fixMarkedFindingIdentityKeys !== undefined
+          ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
+          : {}),
+        ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
+        ...(v.threadsToResolve !== undefined
+          ? { threadsToResolve: v.threadsToResolve }
+          : {}),
+        ...(v.deferredIssueUrls !== undefined
+          ? { deferredIssueUrls: v.deferredIssueUrls }
+          : {}),
+        ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
+        ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
+      };
       if (!isValidVerifyResult(candidate)) {
         const err = new Error(
           "realBackend: verify output did not satisfy isValidVerifyResult guard",

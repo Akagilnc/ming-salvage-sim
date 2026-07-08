@@ -3439,7 +3439,26 @@ export function parseVerifyOutcome(
       reason: "verify worker <verify> tag did not satisfy verifyOutputSchema (extra keys or wrong types)",
     };
   }
-  const candidate: VerifyResult = { kind: "verify", converged: shape.data.converged };
+  const v = shape.data;
+  const candidate: VerifyResult = {
+    kind: "verify",
+    converged: v.converged,
+    ...(v.findingDispositions !== undefined
+      ? { findingDispositions: v.findingDispositions }
+      : {}),
+    ...(v.fixMarkedFindingIdentityKeys !== undefined
+      ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
+      : {}),
+    ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
+    ...(v.threadsToResolve !== undefined
+      ? { threadsToResolve: v.threadsToResolve }
+      : {}),
+    ...(v.deferredIssueUrls !== undefined
+      ? { deferredIssueUrls: v.deferredIssueUrls }
+      : {}),
+    ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
+    ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
+  };
   if (!isValidVerifyResult(candidate)) {
     return { kind: "malformed", reason: "verify worker <verify> tag did not satisfy isValidVerifyResult guard" };
   }

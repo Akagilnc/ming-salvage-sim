@@ -15,7 +15,7 @@
  * Escalate stays the global stop edge (checked FIRST).
  */
 
-import type { Finding, StepId, StepOutput } from "./types.js";
+import type { Finding, OnlineReviewTerminalState, StepId, StepOutput } from "./types.js";
 import { classifyFindings } from "./findings.js";
 // Shared seam guards — the SINGLE source of truth, also used by the runner, so
 // the coder-output / commitsAdded rules can never drift between two copies.
@@ -41,7 +41,12 @@ import {
 /** What route() decides: the next step to run, or a terminal handoff. */
 export type RouteDecision =
   | { kind: "next"; step: StepId }
-  | { kind: "handoff"; status: "success" | "escalate" | "error" };
+  | {
+      kind: "handoff";
+      status: "success" | "escalate" | "error";
+      /** Documented online-review terminal when the loop ends (#600 AC1/AC5). */
+      onlineReviewTerminal?: OnlineReviewTerminalState;
+    };
 
 /** Inputs route() needs to decide the edge out of `from`. */
 export interface RouteContext {
@@ -174,11 +179,18 @@ export function route(ctx: RouteContext): RouteDecision {
         return { kind: "handoff", status: "error" };
       }
       if (ctx.output.converged) {
-        return { kind: "next", step: "S11" };
+        return {
+          kind: "next",
+          step: "S11",
+        };
       }
       const round = ctx.onlineReviewRound ?? 1;
       if (round >= MAX_ONLINE_REVIEW_ROUNDS) {
-        return { kind: "handoff", status: "error" };
+        return {
+          kind: "handoff",
+          status: "escalate",
+          onlineReviewTerminal: "round_budget_exhausted",
+        };
       }
       return { kind: "next", step: "S10" };
     }
