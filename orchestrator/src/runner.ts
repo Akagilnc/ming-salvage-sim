@@ -64,6 +64,7 @@ import {
   isValidVerifyResult,
 } from "./reviewLoopOutcome.js";
 import {
+  isLiveGithubReviewPollEnabled,
   pollPrReviewState,
   type PrReviewSnapshot,
 } from "./botPolling.js";
@@ -71,6 +72,7 @@ import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetr
 import {
   buildOnlineReviewLanding,
   isReviewLoopConvergedMarker,
+  offlinePrReviewSnapshot,
   retriggerBotsAndPoll,
   verifyReviewerHeadMovedStopSummary,
   writeOnlineReviewSnapshotFile,
@@ -1930,6 +1932,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   function defaultRepo(): string {
     const fromEnv = process.env.ORCHESTRATOR_REPO?.trim();
     if (fromEnv && fromEnv.length > 0) return fromEnv;
+    if (process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1") {
+      return "Akagilnc/ming-salvage-sim";
+    }
     try {
       return execFileSync("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], {
         encoding: "utf8",
@@ -1949,6 +1954,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       throw new Error("online review poll requires a non-empty PR URL from ship");
     }
     const repo = defaultRepo();
+    const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
+    if (!livePoll) {
+      return offlinePrReviewSnapshot({
+        repo,
+        prUrl,
+        headOid: ship.prHead ?? "offline-review-head",
+        pollCount,
+      });
+    }
     if (backend.pollOnlineReviewState !== undefined) {
       const landing = await backend.pollOnlineReviewState({
         repo,
@@ -3251,15 +3265,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 stopSummary,
               });
             }
-            const sideEffects = applyVerifySideEffects({
-              sh: ghSh,
-              repo: reviewCtx.repo!,
-              prUrl: lastShipOutput.pr,
-              verify: verifyOutput,
-              fixingCommitSha: verifyOutput.isRecheck
-                ? lastOnlineReviewFixCommitSha
-                : undefined,
-            });
+            const sideEffects =
+              lastShipOutput.pr != null &&
+              isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
+                ? applyVerifySideEffects({
+                    sh: ghSh,
+                    repo: reviewCtx.repo!,
+                    prUrl: lastShipOutput.pr,
+                    verify: verifyOutput,
+                    fixingCommitSha: verifyOutput.isRecheck
+                      ? lastOnlineReviewFixCommitSha
+                      : undefined,
+                  })
+                : {
+                    deferredIssueUrls: [],
+                    repliesPosted: [],
+                    threadsResolved: [],
+                  };
             verifyOutput = {
               ...verifyOutput,
               ...(sideEffects.deferredIssueUrls.length > 0
@@ -3311,12 +3333,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             result.output.committed
           ) {
             lastOnlineReviewFixCommitSha = await resolveBranchHEAD();
-            retriggerBotsAndPoll(
-              ghSh,
-              reviewCtx.repo!,
-              lastShipOutput.pr,
-              1,
-            );
+            if (
+              lastShipOutput.pr != null &&
+              isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
+            ) {
+              retriggerBotsAndPoll(
+                ghSh,
+                reviewCtx.repo!,
+                lastShipOutput.pr,
+                1,
+              );
+            }
             onlineReviewRound += 1;
           }
           step = reviewStep;

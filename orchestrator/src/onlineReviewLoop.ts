@@ -10,7 +10,11 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-import type { PrReviewSnapshot } from "./botPolling.js";
+import {
+  isPollableGithubPrUrl,
+  ONLINE_REVIEW_BOT_IDS,
+  type PrReviewSnapshot,
+} from "./botPolling.js";
 import type { Sh } from "./familyDriver.js";
 import {
   BOT_RETRIGGER_COMMENT,
@@ -63,6 +67,35 @@ function toLandingSnapshot(snapshot: PrReviewSnapshot): OnlineReviewLandingSnaps
       headOid: t.headOid,
       authorLogin: t.authorLogin,
     })),
+  };
+}
+
+/**
+ * Synthetic bot snapshot for offline/test PR handles (`pr://…`) where live `gh api`
+ * polling is impossible. Worker dispatch still runs; only host polling is skipped.
+ */
+export function offlinePrReviewSnapshot(input: {
+  readonly repo: string;
+  readonly prUrl: string;
+  readonly headOid: string;
+  readonly pollCount: number;
+}): PrReviewSnapshot {
+  const bots = Object.fromEntries(
+    ONLINE_REVIEW_BOT_IDS.map((bot) => [
+      bot,
+      { state: "complete" as const, findingCount: 0 },
+    ]),
+  ) as PrReviewSnapshot["bots"];
+  return {
+    repo: input.repo,
+    prNumber: 0,
+    prUrl: input.prUrl,
+    headOid: input.headOid,
+    pollCount: input.pollCount,
+    bots,
+    threads: [],
+    totalFindingCount: 0,
+    quiescent: true,
   };
 }
 
@@ -187,6 +220,8 @@ export interface OnlineReviewLoopDispatch {
     fixingCommitSha?: string,
   ) => VerifyResult;
   readonly retriggerAfterFix: () => void;
+  /** Resolve the fixing commit SHA after fixer success (post-push HEAD). */
+  readonly resolveFixCommitSha?: () => string | Promise<string>;
 }
 
 export interface OnlineReviewLoopStageResult {
@@ -205,7 +240,11 @@ export async function runOnlineReviewLoopStage(
   let round = 1;
   let lastFixCommitSha: string | undefined;
 
-  while (round <= MAX_ONLINE_REVIEW_ROUNDS) {
+  while (round <= MAX_ONLINE_REVIEW_ROUNDS + 1) {
+    if (round > MAX_ONLINE_REVIEW_ROUNDS) {
+      return { ok: false, terminalState: "round_budget_exhausted", round };
+    }
+
     const snapshot = await dispatch.poll(round);
     let landing = buildOnlineReviewLanding(
       snapshot,
@@ -239,15 +278,12 @@ export async function runOnlineReviewLoopStage(
       return { ok: true, terminalState: "mergeable", round };
     }
 
-    if (round >= MAX_ONLINE_REVIEW_ROUNDS) {
-      return { ok: false, terminalState: "round_budget_exhausted", round };
-    }
-
     const committed = await dispatch.dispatchFixer(landing);
     if (!committed) {
       return { ok: false, terminalState: "decision_gate_raised", round };
     }
-    lastFixCommitSha = snapshot.headOid;
+    lastFixCommitSha =
+      (await dispatch.resolveFixCommitSha?.()) ?? snapshot.headOid;
     dispatch.retriggerAfterFix();
     round += 1;
   }

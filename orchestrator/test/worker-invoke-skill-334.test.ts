@@ -39,6 +39,7 @@ import {
   RealBackend,
   SANDBOX_CODEX_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
+  SANDBOX_ONLINE_REVIEW_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
   SANDBOX_ISSUE_NUMBER_ENV,
@@ -152,6 +153,41 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     expect(cfg.env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV]).toBe("334");
     expect(cfg.env[SANDBOX_REPO_ENV]).toBe("owner/name");
     expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBe("gho_test");
+  });
+
+  it("mounts S9 online-review landing at the documented worktree-root path read-only", () => {
+    const cfg = makeBackend().config(
+      {
+        id: "S9",
+        kind: "verify",
+        role: "verify",
+        host: "claude",
+        session: "fresh",
+        contextRetention: "clean",
+        skill: "verify",
+        promptFile: "verify.md",
+        completionSignal: "VERIFY_STEP_COMPLETE",
+        maxIter: 1,
+        model: "opus",
+        soul: "verify",
+        toolchain: [],
+      },
+      {
+        onlineReviewLanding: {
+          path: "/host/.ledger-600/online-review.json",
+          sandboxPath: ".orchestrator-online-review.json",
+        },
+      },
+    );
+
+    expect(cfg.env[SANDBOX_ONLINE_REVIEW_PATH_ENV]).toBe(
+      ".orchestrator-online-review.json",
+    );
+    expect(cfg.mounts).toContainEqual({
+      hostPath: "/host/.ledger-600/online-review.json",
+      sandboxPath: ".orchestrator-online-review.json",
+      readonly: true,
+    });
   });
 
   it("mounts S5 fix findings at the documented worktree-root path read-only", () => {

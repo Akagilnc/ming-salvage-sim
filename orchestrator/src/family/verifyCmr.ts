@@ -56,7 +56,10 @@ import {
 import type { FamilyModuleContext } from "./moduleDeclaration.js";
 import { execFileSync } from "node:child_process";
 
-import { pollPrReviewState } from "../botPolling.js";
+import {
+  isLiveGithubReviewPollEnabled,
+  pollPrReviewState,
+} from "../botPolling.js";
 import {
   cleanupWorkerSpec,
   docReleaseWorkerSpec,
@@ -64,6 +67,7 @@ import {
   verifyWorkerSpec,
 } from "../dispatchWorker.js";
 import {
+  offlinePrReviewSnapshot,
   retriggerBotsAndPoll,
   runOnlineReviewLoopStage,
   type OnlineReviewLoopStageResult,
@@ -1430,12 +1434,20 @@ async function dispatchFamilyReviewWorker(
   landing?: WorkerLandingPayload,
   opts?: { readonly writeCapable?: boolean },
 ): Promise<WorkerResult> {
+  const resetBeforeRetry =
+    opts?.writeCapable === true &&
+    spec.kind === "fixer" &&
+    typeof familyBackend.resetFamilyFixerResidue === "function"
+      ? async () => {
+          await familyBackend.resetFamilyFixerResidue!(ctx);
+        }
+      : undefined;
   const primary = await dispatchOrAbort(
     familyBackend,
     spec,
     ctx,
     landing,
-    opts,
+    { ...opts, resetBeforeRetry },
   );
   if (
     primary.kind === "completed" &&
@@ -1470,30 +1482,19 @@ export async function runFamilyOnlineReviewLoop(input: {
     prHead: input.ship.prHead,
   };
 
-  const emptyBots = {
-    coderabbit: { state: "complete" as const, findingCount: 0 },
-    sourcery: { state: "complete" as const, findingCount: 0 },
-    codex: { state: "complete" as const, findingCount: 0 },
-    gemini: { state: "complete" as const, findingCount: 0 },
-  };
+  const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
 
   return runOnlineReviewLoopStage({
     poll: async (round) => {
-      try {
-        return pollPrReviewState(ghSh, { repo, prUrl, pollCount: round });
-      } catch {
-        return {
+      if (!livePoll) {
+        return offlinePrReviewSnapshot({
           repo,
-          prNumber: 0,
           prUrl,
-          headOid: input.ship.prHead ?? "family-review-head",
+          headOid: input.ship.prHead ?? "offline-review-head",
           pollCount: round,
-          bots: emptyBots,
-          threads: [],
-          totalFindingCount: 0,
-          quiescent: true,
-        };
+        });
       }
+      return pollPrReviewState(ghSh, { repo, prUrl, pollCount: round });
     },
     dispatchVerify: async (landing, round) => {
       const result = await dispatchFamilyReviewWorker(
@@ -1549,6 +1550,9 @@ export async function runFamilyOnlineReviewLoop(input: {
       );
     },
     applySideEffects: (verify: VerifyResult, fixingCommitSha?: string) => {
+      if (!livePoll) {
+        return verify;
+      }
       const applied = applyVerifySideEffects({
         sh: ghSh,
         repo,
@@ -1564,11 +1568,15 @@ export async function runFamilyOnlineReviewLoop(input: {
       };
     },
     retriggerAfterFix: () => {
-      try {
+      if (livePoll) {
         retriggerBotsAndPoll(ghSh, repo, prUrl, 1);
-      } catch {
-        // Test / offline backends may use non-GitHub PR URLs — re-trigger is best-effort.
       }
+    },
+    resolveFixCommitSha: () => {
+      if (typeof input.familyBackend.readFamilyHead === "function") {
+        return input.familyBackend.readFamilyHead(input.familyBase);
+      }
+      return input.ship.prHead ?? "";
     },
   });
 }
@@ -1578,7 +1586,10 @@ async function dispatchOrAbort(
   spec: Parameters<typeof dispatchFamilyWorker>[1],
   ctx: Parameters<typeof dispatchFamilyWorker>[2],
   landing?: Parameters<typeof dispatchFamilyWorker>[3],
-  opts?: { readonly writeCapable?: boolean },
+  opts?: {
+    readonly writeCapable?: boolean;
+    readonly resetBeforeRetry?: () => Promise<void>;
+  },
 ): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
   // The READ-ONLY cmr reviewer leaves no local residue, so a thrown crash is safe to
   // re-dispatch fresh. The WRITE-capable family coder-fix / ship can throw AFTER a
@@ -1609,7 +1620,11 @@ async function dispatchOrAbort(
       (s, c) => dispatchFamilyWorker(familyBackend, s, c, landing),
       {
         callerOwns: (o) =>
-          "result" in o || (writeCapable && o.kind === "thrown"),
+          "result" in o ||
+          (writeCapable &&
+            o.kind === "thrown" &&
+            opts?.resetBeforeRetry === undefined),
+        resetBeforeRetry: opts?.resetBeforeRetry,
         rethrowOnExhaustion: true,
       },
     );

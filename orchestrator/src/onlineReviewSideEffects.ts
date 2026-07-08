@@ -68,19 +68,89 @@ export function replyToReviewThread(
   ]);
 }
 
-/** Resolve a review thread only after fresh re-check confirms the fix (#600 AC4). */
+function splitRepoSlug(repo: string): { owner: string; name: string } {
+  const [owner, name] = repo.split("/");
+  if (owner === undefined || name === undefined || owner.length === 0 || name.length === 0) {
+    throw new Error(`onlineReviewSideEffects: invalid repo slug "${repo}"`);
+  }
+  return { owner, name };
+}
+
+/**
+ * Resolve a review thread via GraphQL `resolveReviewThread` (#600 AC4).
+ * REST `PATCH /pulls/comments/{id}` edits comment content — it does NOT resolve
+ * the conversation. See:
+ * https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28
+ */
 export function resolveReviewThread(
   sh: Sh,
   repo: string,
+  prNumber: number,
   threadId: string,
 ): void {
+  const { owner, name } = splitRepoSlug(repo);
+  const lookupQuery = [
+    "query($owner:String!,$name:String!,$number:Int!){",
+    "repository(owner:$owner,name:$name){",
+    "pullRequest(number:$number){",
+    "reviewThreads(first:100){",
+    "nodes{id isResolved comments(first:1){nodes{databaseId}}}}",
+    "}}}",
+  ].join("");
+  const lookupRaw = sh("gh", [
+    "api",
+    "graphql",
+    "-f",
+    `query=${lookupQuery}`,
+    "-f",
+    `owner=${owner}`,
+    "-f",
+    `name=${name}`,
+    "-F",
+    `number=${prNumber}`,
+  ]);
+  const lookupParsed: unknown = JSON.parse(lookupRaw);
+  const nodes =
+    lookupParsed != null &&
+    typeof lookupParsed === "object" &&
+    (lookupParsed as { data?: { repository?: { pullRequest?: { reviewThreads?: { nodes?: unknown[] } } } } })
+      .data?.repository?.pullRequest?.reviewThreads?.nodes;
+  if (!Array.isArray(nodes)) {
+    throw new Error(
+      `onlineReviewSideEffects: could not list review threads for ${repo}#${prNumber}`,
+    );
+  }
+  const targetId = Number(threadId);
+  let threadNodeId: string | undefined;
+  for (const node of nodes) {
+    if (node == null || typeof node !== "object") continue;
+    const obj = node as {
+      id?: string;
+      comments?: { nodes?: Array<{ databaseId?: number }> };
+    };
+    const firstCommentId = obj.comments?.nodes?.[0]?.databaseId;
+    if (firstCommentId === targetId || String(firstCommentId) === threadId) {
+      threadNodeId = obj.id;
+      break;
+    }
+  }
+  if (threadNodeId === undefined || threadNodeId.length === 0) {
+    throw new Error(
+      `onlineReviewSideEffects: no GraphQL review thread for comment id ${threadId}`,
+    );
+  }
+  const mutation = [
+    "mutation($threadId:ID!){",
+    "resolveReviewThread(input:{threadId:$threadId}){",
+    "thread{isResolved}}}",
+  ].join("");
   sh("gh", [
     "api",
-    "-X",
-    "PUT",
-    `repos/${repo}/pulls/comments/${threadId}`,
+    "graphql",
     "-f",
-    "body=resolved by online review re-check",
+    `query=${mutation}`,
+    "-f",
+    `threadId=${threadNodeId}`,
   ]);
 }
 
@@ -100,6 +170,22 @@ function replyByThreadId(
   return map;
 }
 
+function deferReplyBody(
+  existingBody: string | undefined,
+  disposition: OnlineReviewFindingDisposition,
+  issueUrl: string,
+): string {
+  const reason =
+    disposition.reason ??
+    `Deferred from online review loop for thread ${disposition.threadId}`;
+  if (existingBody !== undefined && existingBody.trim().length > 0) {
+    return existingBody.includes(issueUrl)
+      ? existingBody
+      : `${existingBody}\nTracked issue: ${issueUrl}`;
+  }
+  return `deferred: ${reason}\nTracked issue: ${issueUrl}`;
+}
+
 /**
  * Apply GitHub side effects from a verify verdict: defer → tracked issue + reply,
  * reject/defer/fixed replies with evidence, resolve after recheck confirmation.
@@ -108,12 +194,7 @@ export function applyVerifySideEffects(
   input: ApplyVerifySideEffectsInput,
 ): ApplyVerifySideEffectsResult {
   const { sh, repo, prUrl, verify } = input;
-  let prNumber: number;
-  try {
-    ({ prNumber } = parsePrRef(prUrl, repo));
-  } catch {
-    return { deferredIssueUrls: [], repliesPosted: [], threadsResolved: [] };
-  }
+  const { prNumber } = parsePrRef(prUrl, repo);
   const deferredIssueUrls: string[] = [];
   const repliesPosted: OnlineReviewThreadReply[] = [];
   const threadsResolved: string[] = [];
@@ -126,9 +207,11 @@ export function applyVerifySideEffects(
       `Deferred from online review loop for thread ${disposition.threadId}`;
     const issueUrl = createDeferredTrackingIssue(sh, repo, title, body);
     deferredIssueUrls.push(issueUrl);
-    const replyBody =
-      existingReplies.get(disposition.threadId)?.body ??
-      `deferred: ${body}\nTracked issue: ${issueUrl}`;
+    const replyBody = deferReplyBody(
+      existingReplies.get(disposition.threadId)?.body,
+      disposition,
+      issueUrl,
+    );
     replyToReviewThread(sh, repo, prNumber, disposition.threadId, replyBody);
     repliesPosted.push({ threadId: disposition.threadId, body: replyBody });
   }
@@ -149,7 +232,7 @@ export function applyVerifySideEffects(
         repliesPosted.push({ threadId, body: fixedReply });
       }
     }
-    resolveReviewThread(sh, repo, threadId);
+    resolveReviewThread(sh, repo, prNumber, threadId);
     threadsResolved.push(threadId);
   }
 

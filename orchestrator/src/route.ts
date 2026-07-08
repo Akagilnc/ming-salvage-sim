@@ -185,7 +185,9 @@ export function route(ctx: RouteContext): RouteDecision {
         };
       }
       const round = ctx.onlineReviewRound ?? 1;
-      if (round >= MAX_ONLINE_REVIEW_ROUNDS) {
+      // AC5: round 3 remaining P2/nits are attempted by default — only exhaust
+      // after the final (round > cap) verify still has findings.
+      if (round > MAX_ONLINE_REVIEW_ROUNDS) {
         return {
           kind: "handoff",
           status: "escalate",
