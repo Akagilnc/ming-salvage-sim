@@ -211,17 +211,51 @@ export function offlinePrReviewSnapshot(input: {
   };
 }
 
+/**
+ * Head key for converged marker, landing shipDelivery.prHead, and resume-skip.
+ * Prefer recheck/snapshot/post-fix head over stale S7 ship.prHead once a fix
+ * round occurred.
+ */
+export function onlineReviewConvergenceHeadKey(input: {
+  readonly postFixCommitSha?: string;
+  readonly snapshotHeadOid?: string;
+  readonly branchHeadAfter?: string;
+  readonly shipPrHead?: string;
+}): string | undefined {
+  const key =
+    input.postFixCommitSha ??
+    input.snapshotHeadOid ??
+    input.branchHeadAfter ??
+    input.shipPrHead;
+  if (key === undefined || key.trim().length === 0) return undefined;
+  return key;
+}
+
+export function onlineReviewConvergedForHead(
+  ledger: ReadonlyArray<{ readonly event?: string; readonly prHead?: string }>,
+  reviewHead: string | undefined,
+): boolean {
+  if (reviewHead === undefined) return false;
+  return ledger.some((entry) =>
+    isReviewLoopConvergedMarker(entry, reviewHead),
+  );
+}
+
 export function buildOnlineReviewLanding(
   snapshot: PrReviewSnapshot,
   ship: ShipResult,
   round: number,
 ): WorkerLandingPayload {
+  const prHead = onlineReviewConvergenceHeadKey({
+    snapshotHeadOid: snapshot.headOid,
+    shipPrHead: ship.prHead,
+  });
   return {
     onlineReviewSnapshot: toLandingSnapshot(snapshot),
     shipDelivery: {
       branch: ship.branch,
       pr: ship.pr,
-      prHead: ship.prHead ?? snapshot.headOid,
+      prHead: prHead!,
       status: ship.status,
     },
     onlineReviewRound: round,

@@ -72,9 +72,10 @@ import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetr
 import {
   buildOnlineReviewLanding,
   immediateBotPollClock,
-  isReviewLoopConvergedMarker,
   lastOnlineReviewFixCommitShaFromLedger,
   offlinePrReviewSnapshot,
+  onlineReviewConvergenceHeadKey,
+  onlineReviewConvergedForHead,
   onlineReviewRoundFromLedger,
   realBotPollClock,
   reconstructOnlineReviewLandingForResume,
@@ -922,18 +923,6 @@ function shipStatusFromLedger(
     }
   }
   return undefined;
-}
-
-function onlineReviewConvergedForShip(
-  ledger: ReadonlyArray<{ readonly event?: string; readonly prHead?: string }>,
-  ship: ShipResult | undefined,
-): boolean {
-  if (ship?.prHead === undefined || ship.prHead.trim().length === 0) {
-    return false;
-  }
-  return ledger.some((entry) =>
-    isReviewLoopConvergedMarker(entry, ship.prHead!),
-  );
 }
 
 /** Drop superseded S9–S12 entries when resuming mid online-review loop (#600 F3). */
@@ -1993,7 +1982,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return offlinePrReviewSnapshot({
         repo,
         prUrl,
-        headOid: ship.prHead ?? "offline-review-head",
+        headOid:
+          lastOnlineReviewFixCommitSha ??
+          ship.prHead ??
+          "offline-review-head",
         pollCount,
       });
     }
@@ -2004,7 +1996,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }).trim();
     const roundTrigger =
       lastOnlineReviewRoundTrigger ??
-      buildRoundTrigger(ship.prHead ?? "offline-review-head");
+      buildRoundTrigger(
+        lastOnlineReviewFixCommitSha ??
+          ship.prHead ??
+          "offline-review-head",
+      );
     const snapshot = await waitForBotQuiescence(ghSh, {
       repo,
       prUrl,
@@ -3202,9 +3198,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           );
         }
         let reviewStep = step;
+        const reviewHeadKey = onlineReviewConvergenceHeadKey({
+          postFixCommitSha: lastOnlineReviewFixCommitSha,
+          snapshotHeadOid: onlineReviewLanding?.onlineReviewSnapshot?.headOid,
+          shipPrHead: lastShipOutput.prHead,
+        });
         if (
           reviewStep === "S9" &&
-          onlineReviewConvergedForShip(ledger, lastShipOutput)
+          onlineReviewConvergedForHead(ledger, reviewHeadKey)
         ) {
           reviewStep = "S11";
         }
@@ -3237,7 +3238,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             stateDir,
             repo: defaultRepo(),
             prUrl: lastShipOutput.pr,
-            prHead: lastShipOutput.prHead ?? onlineReviewLanding?.shipDelivery?.prHead,
+            prHead:
+              onlineReviewLanding?.shipDelivery?.prHead ?? lastShipOutput.prHead,
             onlineReviewRound,
           };
           const headBefore =
@@ -3346,11 +3348,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               };
             }
             if (verifyOutput.converged && stateDir !== undefined) {
+              const markerHead = onlineReviewConvergenceHeadKey({
+                postFixCommitSha: lastOnlineReviewFixCommitSha,
+                snapshotHeadOid:
+                  onlineReviewLanding?.onlineReviewSnapshot?.headOid,
+                branchHeadAfter: headAfter,
+                shipPrHead: lastShipOutput.prHead,
+              });
               const marker = {
                 step: "S9" as const,
                 event: "online_review_converged" as const,
                 prUrl: lastShipOutput.pr!,
-                prHead: lastShipOutput.prHead ?? reviewCtx.prHead ?? headAfter,
+                prHead: markerHead ?? headAfter,
                 onlineReviewRound,
               };
               ledger.push(marker);
@@ -3393,8 +3402,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 lastShipOutput.pr,
                 1,
                 lastOnlineReviewFixCommitSha ??
-                  lastShipOutput.prHead ??
                   lastOnlineReviewRoundTrigger?.headOid ??
+                  lastShipOutput.prHead ??
                   "offline-review-head",
               );
               lastOnlineReviewRoundTrigger = retriggered.roundTrigger;
