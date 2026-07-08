@@ -3064,7 +3064,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     ).toBe(true);
   });
 
-  it("pin r29: retrigger-only marker gap restores round+fixSHA for recheck (single-slice)", () => {
+  it("pin r29: retrigger-only marker gap restores round for recheck (single-slice)", () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const fixTs = "2026-07-08T12:30:00.000Z";
     const s9False = {
@@ -3084,7 +3084,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
 
     expect(slicePostFixVerifyPendingFromMarkerGap(ledger)).toBe(true);
     expect(onlineReviewRoundFromLedger(ledger)).toBe(2);
-    expect(lastOnlineReviewFixCommitShaFromLedger(ledger)).toBe(fixSha);
+    expect(lastOnlineReviewFixCommitShaFromLedger(ledger)).toBeUndefined();
     expect(onlineReviewRoundTriggerFromLedger(ledger)).toEqual(
       buildRoundTrigger(fixSha, RETRIGGER_TS),
     );
@@ -3100,7 +3100,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     });
   });
 
-  it("pin r29: retrigger-only marker gap restores round+fixSHA symmetrically (family)", () => {
+  it("pin r29: retrigger-only marker gap restores round symmetrically (family)", () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const familyLedger: FamilyLedgerEntry[] = [
       {
@@ -3113,7 +3113,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       },
     ];
     expect(onlineReviewRoundFromFamilyLedger(familyLedger)).toBe(2);
-    expect(lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedger)).toBe(fixSha);
+    expect(lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedger)).toBeUndefined();
     expect(onlineReviewRoundTriggerFromFamilyLedger(familyLedger)).toEqual(
       buildRoundTrigger(fixSha, RETRIGGER_TS),
     );
@@ -3225,11 +3225,11 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       buildRoundTrigger(fixSha, retriggerTs),
     );
 
-    // legacy r29: retrigger-only (old ordering) still recovers round+fixSHA
+    // legacy r29: retrigger-only (old ordering) still recovers round (not fix SHA)
     const retriggerOnly = [s9False, retrigger];
     expect(slicePostFixVerifyPendingFromMarkerGap(retriggerOnly)).toBe(true);
     expect(onlineReviewRoundFromLedger(retriggerOnly)).toBe(2);
-    expect(lastOnlineReviewFixCommitShaFromLedger(retriggerOnly)).toBe(fixSha);
+    expect(lastOnlineReviewFixCommitShaFromLedger(retriggerOnly)).toBeUndefined();
     expect(onlineReviewRoundTriggerFromLedger(retriggerOnly)).toEqual(
       buildRoundTrigger(fixSha, retriggerTs),
     );
@@ -3281,9 +3281,9 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       buildRoundTrigger(fixSha, retriggerTs),
     );
 
-    // legacy r29: retrigger-only backward compat
+    // legacy r29: retrigger-only backward compat (round only, not fix SHA)
     expect(onlineReviewRoundFromFamilyLedger([retrigger])).toBe(2);
-    expect(lastOnlineReviewFixCommitShaFromFamilyLedger([retrigger])).toBe(fixSha);
+    expect(lastOnlineReviewFixCommitShaFromFamilyLedger([retrigger])).toBeUndefined();
   });
 
   it("pin r35: live S10 ledger pairing — happy path does not reopen fix-gap", () => {
@@ -3936,6 +3936,129 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         summary: expect.stringMatching(/missing fixCommitSha/i),
       }),
     });
+  });
+
+  it("pin r40: retrigger-only ledger yields no fix SHA (single-slice, envelope-only)", () => {
+    const liveHead = "live-pr-head-not-envelope-fix-sha111111111";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const retriggerOnly = [
+      {
+        step: "S9",
+        output: { kind: "verify", converged: false },
+        ts: "2026-07-08T12:00:00.000Z",
+      },
+      {
+        step: "S10",
+        event: "online_review_round_retrigger" as const,
+        roundTriggerHeadOid: liveHead,
+        roundTriggerAt: retriggerTs,
+        onlineReviewRound: 2,
+        branchHEAD: liveHead,
+        ts: retriggerTs,
+      },
+    ];
+    expect(onlineReviewRoundFromLedger(retriggerOnly)).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromLedger(retriggerOnly)).toBeUndefined();
+    expect(onlineReviewRoundTriggerFromLedger(retriggerOnly)).toEqual(
+      buildRoundTrigger(liveHead, retriggerTs),
+    );
+  });
+
+  it("pin r40: retrigger-only ledger yields no fix SHA (family, envelope-only)", () => {
+    const liveHead = "live-pr-head-not-envelope-fix-sha111111111";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const retriggerOnly: FamilyLedgerEntry[] = [
+      {
+        status: "online_review_round_retrigger",
+        event: "online_review_round_retrigger",
+        phase: "final",
+        roundTriggerHeadOid: liveHead,
+        roundTriggerAt: retriggerTs,
+        onlineReviewRound: 2,
+      },
+    ];
+    expect(onlineReviewRoundFromFamilyLedger(retriggerOnly)).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromFamilyLedger(retriggerOnly)).toBeUndefined();
+    expect(onlineReviewRoundTriggerFromFamilyLedger(retriggerOnly)).toEqual(
+      buildRoundTrigger(liveHead, retriggerTs),
+    );
+  });
+
+  it("pin r40: fix SHA regression — fix_committed marker and S10 envelope unchanged", () => {
+    const envelopeSha = "envelopefixsha111111111111111111111111";
+    const liveHead = "live-pr-head-would-be-wrong-if-used1111";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const fromFixCommitted = [
+      {
+        step: "S10",
+        event: "online_review_fix_committed" as const,
+        fixCommitSha: envelopeSha,
+        onlineReviewRound: 1,
+        ts: "2026-07-08T12:30:00.000Z",
+      },
+      {
+        step: "S10",
+        event: "online_review_round_retrigger" as const,
+        roundTriggerHeadOid: liveHead,
+        roundTriggerAt: retriggerTs,
+        onlineReviewRound: 2,
+        ts: retriggerTs,
+      },
+    ];
+    expect(lastOnlineReviewFixCommitShaFromLedger(fromFixCommitted)).toBe(envelopeSha);
+
+    const fromS10 = [
+      {
+        step: "S10",
+        output: {
+          kind: "fixer",
+          committed: true,
+          fixCommitSha: envelopeSha,
+        },
+        ts: "2026-07-08T12:30:00.000Z",
+      },
+    ];
+    expect(lastOnlineReviewFixCommitShaFromLedger(fromS10)).toBe(envelopeSha);
+
+    const familyFixCommitted: FamilyLedgerEntry[] = [
+      {
+        status: "online_review_fix_committed",
+        event: "online_review_fix_committed",
+        phase: "final",
+        familyHeadAfter: envelopeSha,
+      },
+      {
+        status: "online_review_round_retrigger",
+        event: "online_review_round_retrigger",
+        phase: "final",
+        roundTriggerHeadOid: liveHead,
+        roundTriggerAt: retriggerTs,
+        onlineReviewRound: 2,
+      },
+    ];
+    expect(lastOnlineReviewFixCommitShaFromFamilyLedger(familyFixCommitted)).toBe(
+      envelopeSha,
+    );
+  });
+
+  it("pin r40: recheck side effects fail-closed when fix SHA missing (no wrong GH link)", () => {
+    const sh: Sh = () => {
+      throw new Error("gh should not be called when fixingCommitSha is missing");
+    };
+    expect(() =>
+      applyVerifySideEffects({
+        sh,
+        repo: "o/r",
+        prUrl: "https://github.com/o/r/pull/42",
+        verify: {
+          kind: "verify",
+          converged: true,
+          isRecheck: true,
+          threadsToResolve: ["thread-1"],
+        },
+        landingThreads: [],
+      }),
+    ).toThrow(/fixingCommitSha/);
   });
 
   it("pin r33 family: fixer alreadySatisfied records fix marker path via envelope SHA", async () => {
