@@ -503,10 +503,14 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toEqual({ kind: "next", step: "S9" });
   });
 
-  it("S10 not committed → error", () => {
+  it("S10 not committed → decision_gate_raised (contract-valid nothing-to-fix)", () => {
     expect(
       route({ from: "S10", output: { kind: "fixer", committed: false } }),
-    ).toEqual({ kind: "handoff", status: "error" });
+    ).toEqual({
+      kind: "handoff",
+      status: "escalate",
+      onlineReviewTerminal: "decision_gate_raised",
+    });
   });
 
   it("S11 ok:false → error (success-flag branch)", () => {
@@ -1929,6 +1933,13 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
 });
 
 describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
+  const stageShip = {
+    kind: "ship" as const,
+    branch: "family/epic-600",
+    status: "pr_opened",
+    pr: "pr://family/stage-test",
+    prHead: "head-1",
+  };
   const baseSnapshot: PrReviewSnapshot = {
     repo: "o/r",
     prNumber: 42,
@@ -1949,7 +1960,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
 
   it("happy path: converged verify → cleanup → docRelease terminates mergeable", async () => {
     let verifyCalls = 0;
-    const result = await runOnlineReviewLoopStage({
+    const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
       dispatchVerify: async () => {
         verifyCalls += 1;
@@ -1965,11 +1976,28 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     expect(verifyCalls).toBe(1);
   });
 
+  it("pin r22: stage landing shipDelivery.branch threads the real ship branch", async () => {
+    let landingBranch: string | undefined;
+    await runOnlineReviewLoopStage(stageShip, {
+      poll: async () => baseSnapshot,
+      dispatchVerify: async (landing) => {
+        landingBranch = landing.shipDelivery?.branch;
+        return { kind: "verify", converged: true } satisfies VerifyResult;
+      },
+      dispatchFixer: async () => true,
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (verify) => verify,
+      retriggerAfterFix: () => {},
+    });
+    expect(landingBranch).toBe("family/epic-600");
+  });
+
   it("non-convergence terminal: persistent verify red + fixer commits exhausts round budget", async () => {
     let roundSeen = 0;
     let fixerCalls = 0;
     let verifyCalls = 0;
-    const result = await runOnlineReviewLoopStage({
+    const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async (round) => {
         roundSeen = round;
         return { ...baseSnapshot, pollCount: round };
@@ -2002,7 +2030,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     let roundSeen = 0;
     let fixerCalls = 0;
     let verifyCalls = 0;
-    const result = await runOnlineReviewLoopStage({
+    const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async (round) => {
         roundSeen = round;
         return { ...baseSnapshot, pollCount: round };
@@ -2035,7 +2063,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
   });
 
   it("non-convergence terminal: fixer failure raises decision gate on first round", async () => {
-    const result = await runOnlineReviewLoopStage({
+    const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
       dispatchVerify: async () => ({ kind: "verify", converged: false }),
       dispatchFixer: async () => false,
@@ -2052,7 +2080,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
   });
 
   it("pin r19: retriggerAfterFix throw → decision_gate_raised in-band with stopSummary", async () => {
-    const result = await runOnlineReviewLoopStage({
+    const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
       dispatchVerify: async () => ({ kind: "verify", converged: false }),
       dispatchFixer: async () => true,
@@ -2079,7 +2107,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     const sh: Sh = () => {
       throw new Error("gh should not be called");
     };
-    const result = await runOnlineReviewLoopStage({
+    const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
       dispatchVerify: async () => ({
         kind: "verify",
@@ -2114,7 +2142,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
   });
 
   it("pin r20: poll throw → decision_gate_raised in-band with stopSummary", async () => {
-    const result = await runOnlineReviewLoopStage({
+    const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => {
         throw new Error("waitForBotQuiescence: gh api rate limited");
       },
@@ -2137,7 +2165,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
   });
 
   it("pin r20: dispatchVerify throw → decision_gate_raised in-band with stopSummary", async () => {
-    const result = await runOnlineReviewLoopStage({
+    const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
       dispatchVerify: async () => {
         throw new Error("dispatchFamilyReviewWorker: container start failed");
@@ -2160,7 +2188,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
   });
 
   it("pin r20: dispatchFixer throw → decision_gate_raised in-band with stopSummary", async () => {
-    const result = await runOnlineReviewLoopStage({
+    const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
       dispatchVerify: async () => ({ kind: "verify", converged: false }),
       dispatchFixer: async () => {
@@ -2196,7 +2224,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         },
       ],
     };
-    const result = await runOnlineReviewLoopStage({
+    const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => snapshotWithRedCi,
       dispatchVerify: async () => ({ kind: "verify", converged: true }),
       dispatchFixer: async () => {

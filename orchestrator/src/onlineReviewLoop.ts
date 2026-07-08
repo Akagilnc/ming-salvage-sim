@@ -46,6 +46,7 @@ import {
 import type { StopSummary } from "./stopSummary.js";
 import {
   contractDriftStopSummary,
+  decisionGateParkStopSummary,
   infraFailureStopSummary,
 } from "./stopSummary.js";
 
@@ -241,6 +242,16 @@ export function reconstructOnlineReviewLandingForResume(input: {
     ...buildOnlineReviewLanding(snapshot, input.ship, input.round),
     fixMarkedFindingIdentityKeys: fixKeys,
   };
+}
+
+/** Stop summary when fixer reports committed:false (nothing to fix) (#600 r22). */
+export function onlineReviewFixerNothingToFixStopSummary(): StopSummary {
+  return decisionGateParkStopSummary({
+    summary:
+      "online review fixer reported nothing to fix (committed:false) while verify still has remaining findings",
+    repairHint:
+      "answer the decision gate or resolve remaining findings manually, then rerun the online review loop",
+  });
 }
 
 /** Stop summary when host GitHub verify side effects fail closed (#600 r18). */
@@ -531,6 +542,7 @@ export interface OnlineReviewLoopStageResult {
  * S11/S12 remain stub workers until #603.
  */
 export async function runOnlineReviewLoopStage(
+  ship: ShipResult,
   dispatch: OnlineReviewLoopDispatch,
 ): Promise<OnlineReviewLoopStageResult> {
   let round = 1;
@@ -546,17 +558,7 @@ export async function runOnlineReviewLoopStage(
       }
       return decisionGateFromDispatchInfra(round, "poll", err);
     }
-    let landing = buildOnlineReviewLanding(
-      snapshot,
-      {
-        kind: "ship",
-        branch: "family-base",
-        status: "pr_opened",
-        pr: snapshot.prUrl,
-        prHead: snapshot.headOid,
-      },
-      round,
-    );
+    let landing = buildOnlineReviewLanding(snapshot, ship, round);
 
     let verify: VerifyResult;
     try {
