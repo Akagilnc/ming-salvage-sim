@@ -81,6 +81,7 @@ import {
   reconstructOnlineReviewLandingForResume,
   retriggerBotsAndPoll,
   shipLedgerTriggeredAtFromSliceLedger,
+  onlineReviewFixerNothingToFixStopSummary,
   verifyReviewerHeadMovedStopSummary,
   verifySideEffectFailureStopSummary,
   waitForBotQuiescence,
@@ -3550,28 +3551,30 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 reason: buildErrorReason(step, lastOutput),
                 branchHead: worktree?.branch,
               })
-            : decision.onlineReviewTerminal === "round_budget_exhausted"
-              ? {
-                  reason: "decision_gate_park",
-                  summary:
-                    "online review loop exhausted the 3-round budget (round_budget_exhausted) with remaining findings",
-                  repairHint:
-                    "answer the decision gate or defer remaining findings, then rerun",
-                }
-              : decision.onlineReviewTerminal === "contract_drift"
+            : decision.onlineReviewTerminal === "decision_gate_raised"
+              ? onlineReviewFixerNothingToFixStopSummary()
+              : decision.onlineReviewTerminal === "round_budget_exhausted"
                 ? {
-                    reason: "contract_drift",
+                    reason: "decision_gate_park",
                     summary:
-                      "online review verify worker moved HEAD (contract_drift)",
+                      "online review loop exhausted the 3-round budget (round_budget_exhausted) with remaining findings",
                     repairHint:
-                      "restore the verify/fixer role boundary so verify leaves HEAD unchanged, then rerun the online review loop",
+                      "answer the decision gate or defer remaining findings, then rerun",
                   }
-                : stopSummaryForEscalation(
-                  escalateOf(lastOutput) ?? {
-                    reason: "run escalated",
-                    diagnosis: `step ${step} routed to an escalate handoff`,
-                  },
-                );
+                : decision.onlineReviewTerminal === "contract_drift"
+                  ? {
+                      reason: "contract_drift",
+                      summary:
+                        "online review verify worker moved HEAD (contract_drift)",
+                      repairHint:
+                        "restore the verify/fixer role boundary so verify leaves HEAD unchanged, then rerun the online review loop",
+                    }
+                  : stopSummaryForEscalation(
+                      escalateOf(lastOutput) ?? {
+                        reason: "run escalated",
+                        diagnosis: `step ${step} routed to an escalate handoff`,
+                      },
+                    );
       ledger.push({ step: "S8", stopSummary: handoffStopSummary });
       // #249: persist the S8 handoff entry too.
       // #6 / integ-cmr base r2 (E): a writeLedger failure on the S8 entry →

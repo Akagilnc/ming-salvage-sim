@@ -201,8 +201,14 @@ export function route(ctx: RouteContext): RouteDecision {
       if (!isValidFixerResult(ctx.output)) {
         return { kind: "handoff", status: "error" };
       }
+      // fixer.md allows committed:false as a contract-valid "nothing to fix"
+      // outcome — park at the online-review decision gate, not S8(error).
       if (!ctx.output.committed) {
-        return { kind: "handoff", status: "error" };
+        return {
+          kind: "handoff",
+          status: "escalate",
+          onlineReviewTerminal: "decision_gate_raised",
+        };
       }
       // ADR 0061: fixer → fresh verify re-check (never fixer → cleanup direct).
       return { kind: "next", step: "S9" };

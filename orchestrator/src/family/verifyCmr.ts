@@ -1519,7 +1519,7 @@ export async function runFamilyOnlineReviewLoop(input: {
   let familyLastFixCommitSha: string | undefined;
 
   try {
-    return await runOnlineReviewLoopStage({
+    return await runOnlineReviewLoopStage(input.ship, {
     poll: async (round) => {
       if (!livePoll) {
         return offlinePrReviewSnapshot({
