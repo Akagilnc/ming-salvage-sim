@@ -118,7 +118,10 @@ function ghFixture(input: { calls: string[] }): Sh {
         ],
       });
     }
-    if (cmd.includes("pulls/comments/") && cmd.includes("/reactions")) {
+    if (
+      (cmd.includes("pulls/comments/") || cmd.includes("issues/comments/")) &&
+      cmd.includes("/reactions")
+    ) {
       return "[]";
     }
     if (cmd.includes("pulls/42/reviews")) {
@@ -363,7 +366,10 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
           },
         ]);
       }
-      if (cmd.includes("pulls/comments/") && cmd.includes("/reactions")) {
+      if (
+        (cmd.includes("pulls/comments/") || cmd.includes("issues/comments/")) &&
+        cmd.includes("/reactions")
+      ) {
         return "[]";
       }
       return "[]";
@@ -1174,6 +1180,135 @@ describe("#600 r4 central evidence admissibility gate", () => {
     ).toBe(false);
   });
 
+  it("pin botPolling r15: issue-comment reaction after round trigger counts as bot evidence", () => {
+    // Codex ACKs the manual re-trigger via reaction on the issue comment (not the PR body).
+    // https://docs.github.com/en/rest/reactions/reactions?apiVersion=2022-11-28#list-reactions-for-an-issue-comment
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      const cmd = args.join(" ");
+      calls.push(cmd);
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews") &&
+        !cmd.includes("check-runs")
+      ) {
+        return JSON.stringify({
+          head: { sha: "headsha1" },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") && !cmd.includes("issues/comments/")) {
+        return JSON.stringify([
+          {
+            id: 8801,
+            user: { login: "orchestrator-host" },
+            body: BOT_RETRIGGER_COMMENT,
+            created_at: TEST_ROUND_TRIGGER.triggeredAt,
+          },
+        ]);
+      }
+      if (cmd.includes("pulls/42/comments")) {
+        return "[]";
+      }
+      if (cmd.includes("check-runs")) {
+        return JSON.stringify({ check_runs: [] });
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return "[]";
+      }
+      if (cmd.includes("issues/comments/8801/reactions")) {
+        return JSON.stringify([
+          {
+            user: { login: "chatgpt-codex-connector[bot]" },
+            content: "eyes",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+        ]);
+      }
+      if (
+        (cmd.includes("pulls/comments/") || cmd.includes("issues/comments/")) &&
+        cmd.includes("/reactions")
+      ) {
+        return "[]";
+      }
+      return "[]";
+    };
+    const snap = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
+    });
+    expect(
+      calls.some((c) => c.includes("repos/o/r/issues/comments/8801/reactions")),
+    ).toBe(true);
+    expect(snap.bots.codex).toEqual({ state: "complete", findingCount: 1 });
+    expect(snap.bots.codex.state).not.toBe("pending");
+  });
+
+  it("pin botPolling r15: stale pre-trigger issue-comment reaction stays inadmissible", () => {
+    const sh: Sh = (file, args) => {
+      const cmd = args.join(" ");
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews") &&
+        !cmd.includes("check-runs")
+      ) {
+        return JSON.stringify({
+          head: { sha: "headsha1" },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") && !cmd.includes("issues/comments/")) {
+        return JSON.stringify([
+          {
+            id: 8802,
+            user: { login: "orchestrator-host" },
+            body: BOT_RETRIGGER_COMMENT,
+            created_at: TEST_ROUND_TRIGGER.triggeredAt,
+          },
+        ]);
+      }
+      if (cmd.includes("pulls/42/comments")) {
+        return "[]";
+      }
+      if (cmd.includes("check-runs")) {
+        return JSON.stringify({ check_runs: [] });
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return "[]";
+      }
+      if (cmd.includes("issues/comments/8802/reactions")) {
+        return JSON.stringify([
+          {
+            user: { login: "chatgpt-codex-connector[bot]" },
+            content: "eyes",
+            created_at: "2020-01-01T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (
+        (cmd.includes("pulls/comments/") || cmd.includes("issues/comments/")) &&
+        cmd.includes("/reactions")
+      ) {
+        return "[]";
+      }
+      return "[]";
+    };
+    const snap = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
+    });
+    expect(snap.bots.codex.state).toBe("pending");
+    expect(snap.bots.codex).not.toEqual({ state: "complete", findingCount: 1 });
+  });
+
   it("pin botPolling: historical bot comments before round trigger stay pending", () => {
     const sh: Sh = (file, args) => {
       const cmd = args.join(" ");
@@ -1204,7 +1339,10 @@ describe("#600 r4 central evidence admissibility gate", () => {
       if (cmd.includes("pulls/42/reviews")) {
         return "[]";
       }
-      if (cmd.includes("pulls/comments/") && cmd.includes("/reactions")) {
+      if (
+        (cmd.includes("pulls/comments/") || cmd.includes("issues/comments/")) &&
+        cmd.includes("/reactions")
+      ) {
         return "[]";
       }
       return "[]";
@@ -1354,7 +1492,10 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       if (cmd.includes("pulls/42/reviews")) {
         return "[]";
       }
-      if (cmd.includes("pulls/comments/") && cmd.includes("/reactions")) {
+      if (
+        (cmd.includes("pulls/comments/") || cmd.includes("issues/comments/")) &&
+        cmd.includes("/reactions")
+      ) {
         return "[]";
       }
       return "[]";
