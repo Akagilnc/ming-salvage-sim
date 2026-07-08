@@ -1669,6 +1669,50 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
+  it("family verify that moves HEAD terminates contract_drift without accepting converged output", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      let headReadCount = 0;
+      const backend = new ReviewLoopFamilyBackend();
+      backend.readFamilyHead = async () => {
+        headReadCount += 1;
+        return headReadCount === 1 ? "head-before" : "head-after";
+      };
+      backend.dispatchWorker = async (spec) => {
+        if (spec.kind === "verify") {
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: true },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        return skeleton ?? { kind: "failed", reason: "unexpected" };
+      };
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+      expect(result).toEqual({
+        ok: false,
+        terminalState: "contract_drift",
+        round: 1,
+        stopSummary: expect.objectContaining({
+          reason: "contract_drift",
+          summary: expect.stringContaining("verify worker moved HEAD"),
+        }),
+      });
+      expect(headReadCount).toBeGreaterThanOrEqual(2);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
   it("verify dispatch failure returns decision_gate_raised in-band (no throw)", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";

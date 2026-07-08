@@ -454,6 +454,8 @@ export interface OnlineReviewLoopStageResult {
   readonly ok: boolean;
   readonly terminalState: OnlineReviewTerminalState;
   readonly round: number;
+  /** Populated for contract-drift terminals (e.g. read-only verify moved HEAD). */
+  readonly stopSummary?: StopSummary;
 }
 
 /**

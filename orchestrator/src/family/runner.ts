@@ -1588,13 +1588,17 @@ export async function runFamily(
       },
     });
     if (!reviewLoop.ok) {
+      const escalationReason =
+        reviewLoop.stopSummary?.summary ??
+        (reviewLoop.terminalState === "round_budget_exhausted"
+          ? "family online review loop exhausted the 3-round budget during resume"
+          : reviewLoop.terminalState === "contract_drift"
+            ? "family online review verify worker moved HEAD during resume"
+            : "family online review loop did not converge during resume");
       await recordFamilyEscalated(familyBackend, {
         escalationKind: "failure",
         phase: "final",
-        reason:
-          reviewLoop.terminalState === "round_budget_exhausted"
-            ? "family online review loop exhausted the 3-round budget during resume"
-            : "family online review loop did not converge during resume",
+        reason: escalationReason,
         familyHeadAfter: preFinalFamilyHead,
       });
       const ledgerMerged = await currentMerged(familyBackend);
@@ -1607,16 +1611,15 @@ export async function runFamily(
         status: "escalated",
         familyBase,
         familyHead: preFinalFamilyHead,
-        stopSummary: familyStopSummary({
-          status: "escalated",
-          familyBase,
-          familyHead: preFinalFamilyHead,
-          children,
-          escalationReason:
-            reviewLoop.terminalState === "round_budget_exhausted"
-              ? "family online review loop exhausted the 3-round budget during resume"
-              : "family online review loop did not converge during resume",
-        }),
+        stopSummary:
+          reviewLoop.stopSummary ??
+          familyStopSummary({
+            status: "escalated",
+            familyBase,
+            familyHead: preFinalFamilyHead,
+            children,
+            escalationReason,
+          }),
         children,
       };
     }

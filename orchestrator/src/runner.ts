@@ -3545,7 +3545,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   repairHint:
                     "answer the decision gate or defer remaining findings, then rerun",
                 }
-              : stopSummaryForEscalation(
+              : decision.onlineReviewTerminal === "contract_drift"
+                ? {
+                    reason: "contract_drift",
+                    summary:
+                      "online review verify worker moved HEAD (contract_drift)",
+                    repairHint:
+                      "restore the verify/fixer role boundary so verify leaves HEAD unchanged, then rerun the online review loop",
+                  }
+                : stopSummaryForEscalation(
                   escalateOf(lastOutput) ?? {
                     reason: "run escalated",
                     diagnosis: `step ${step} routed to an escalate handoff`,
