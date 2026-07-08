@@ -595,7 +595,10 @@ export interface OnlineReviewLandingSnapshot {
   /** Convenience list of bot ids dropped after the overdue window. */
   readonly droppedBots: ReadonlyArray<string>;
   readonly threads: ReadonlyArray<{
+    /** Top-level review-comment databaseId — REST reply parent. */
     readonly id: string;
+    /** GraphQL reviewThread node id — resolution target. */
+    readonly threadNodeId?: string;
     readonly body: string;
     readonly isResolved: boolean;
     /** Native commit_id when GitHub exposes it; undefined for artifact bots. */

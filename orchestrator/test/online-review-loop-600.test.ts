@@ -69,7 +69,13 @@ import {
   resolveReviewThread,
 } from "../src/onlineReviewSideEffects.js";
 import { isValidVerifyResult } from "../src/reviewLoopOutcome.js";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Sh } from "../src/familyDriver.js";
+import { runFamilyOnlineReviewLoop } from "../src/family/verifyCmr.js";
+import { RealFamilyBackend } from "../src/family/realFamilyBackend.js";
+import type { FamilyBackend, FamilyLedgerEntry } from "../src/family/types.js";
+import type { WorkerLandingPayload } from "../src/types.js";
 
 function ghFixture(input: { calls: string[] }): Sh {
   return (file, args) => {
@@ -117,6 +123,51 @@ function ghFixture(input: { calls: string[] }): Sh {
         },
       ]);
     }
+    if (cmd.includes("graphql") && cmd.includes("reviewThreads")) {
+      return JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                nodes: [
+                  {
+                    id: "PRRT_kwDOExampleThread",
+                    isResolved: false,
+                    comments: {
+                      nodes: [
+                        {
+                          databaseId: 4242,
+                          body: "top-level review comment",
+                          path: "src/a.ts",
+                          line: 10,
+                          author: { login: "coderabbitai[bot]" },
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    id: "PRRT_kwDOReplyOnly",
+                    isResolved: false,
+                    comments: {
+                      nodes: [
+                        {
+                          databaseId: 4243,
+                          body: "reply on thread",
+                          path: "src/a.ts",
+                          line: 10,
+                          author: { login: "human" },
+                          commit: { oid: "headsha1" },
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      });
+    }
     if (cmd.includes("issues/42/comments") && cmd.includes("-f")) {
       return JSON.stringify({
         id: 9001,
@@ -154,6 +205,26 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
     expect(
       parsePrRef("https://github.com/o/r/pull/42", "fallback/r"),
     ).toEqual({ repo: "o/r", prNumber: 42 });
+  });
+
+  it("pollPrReviewState threads use GraphQL top comment id distinct from threadNodeId (#600 r7)", () => {
+    const calls: string[] = [];
+    const sh = ghFixture({ calls });
+    const snap = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
+    });
+    expect(snap.threads).toHaveLength(2);
+    const thread = snap.threads[0]!;
+    expect(thread.id).toBe("4242");
+    expect(thread.threadNodeId).toBe("PRRT_kwDOExampleThread");
+    expect(thread.id).not.toBe(thread.threadNodeId);
+    expect(thread.isResolved).toBe(false);
+    expect(calls.some((c) => c.includes("graphql") && c.includes("reviewThreads"))).toBe(
+      true,
+    );
   });
 
   it("pollPrReviewState collects bot legs and marks quiescent when all complete/dropped", () => {
@@ -1012,8 +1083,8 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return { kind: "verify", converged: true } satisfies VerifyResult;
       },
       dispatchFixer: async () => true,
-      dispatchCleanup: async () => true,
-      dispatchDocRelease: async () => true,
+      dispatchCleanup: async (_landing) => true,
+      dispatchDocRelease: async (_landing) => true,
       applySideEffects: (verify) => verify,
       retriggerAfterFix: () => {},
     });
@@ -1034,8 +1105,8 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return true;
       },
-      dispatchCleanup: async () => true,
-      dispatchDocRelease: async () => true,
+      dispatchCleanup: async (_landing) => true,
+      dispatchDocRelease: async (_landing) => true,
       applySideEffects: (verify) => verify,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async () => "fix-sha",
@@ -1054,8 +1125,8 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       poll: async () => baseSnapshot,
       dispatchVerify: async () => ({ kind: "verify", converged: false }),
       dispatchFixer: async () => false,
-      dispatchCleanup: async () => true,
-      dispatchDocRelease: async () => true,
+      dispatchCleanup: async (_landing) => true,
+      dispatchDocRelease: async (_landing) => true,
       applySideEffects: (verify) => verify,
       retriggerAfterFix: () => {},
     });
@@ -1291,6 +1362,152 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
       const result = await runOrchestrator({ issueNumber: 600, backend });
       expect(result.status).toBe("success");
       expect(backend.hookCalls).toEqual([offlinePr]);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+});
+
+describe("#600 r7 family online review — cleanup landing + in-band failures", () => {
+  class ReviewLoopFamilyBackend implements FamilyBackend {
+    readonly reviewLoopLandings: WorkerLandingPayload[] = [];
+    readonly ledger: FamilyLedgerEntry[] = [];
+
+    async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
+      return { familyHead: "fb-head" };
+    }
+    async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+      this.ledger.push(entry);
+    }
+    async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+      return this.ledger;
+    }
+    async dispatchWorker(
+      spec: WorkerSpec,
+      _ctx: DispatchContext,
+      landing?: WorkerLandingPayload,
+    ): Promise<WorkerResult> {
+      if (
+        (spec.kind === "cleanup" || spec.kind === "docRelease") &&
+        landing !== undefined
+      ) {
+        this.reviewLoopLandings.push(landing);
+      }
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      if (skeleton !== undefined) return skeleton;
+      return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    }
+  }
+
+  const offlineShip = {
+    kind: "ship" as const,
+    branch: "family/r7",
+    pr: "pr://family/r7-cleanup-landing",
+    prHead: "head-r7",
+    status: "pr_opened" as const,
+  };
+
+  it("happy path passes onlineReviewSnapshot landing into cleanup and docRelease", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      const backend = new ReviewLoopFamilyBackend();
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+      expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
+      expect(backend.reviewLoopLandings).toHaveLength(2);
+      expect(
+        backend.reviewLoopLandings.every(
+          (l) => l.onlineReviewSnapshot !== undefined,
+        ),
+      ).toBe(true);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("verify dispatch failure returns decision_gate_raised in-band (no throw)", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      const backend = new ReviewLoopFamilyBackend();
+      backend.dispatchWorker = async (spec) => {
+        if (spec.kind === "verify") {
+          return { kind: "failed", reason: "verify worker unavailable" };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        return skeleton ?? { kind: "failed", reason: "unexpected" };
+      };
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+      expect(result).toEqual({
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round: 1,
+      });
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("RealFamilyBackend-derived worker records cleanup landing with snapshot", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    const here = dirname(fileURLToPath(import.meta.url));
+    const realPromptsDir = join(here, "..", "prompts");
+    const realSoulsDir = join(here, "..", "image", "souls");
+    try {
+      class ProbeBackend extends RealFamilyBackend {
+        readonly landings: WorkerLandingPayload[] = [];
+        protected override async runFamilyReviewLoopWorker(
+          spec: WorkerSpec,
+          _ctx: DispatchContext,
+          landing?: WorkerLandingPayload,
+        ): Promise<WorkerResult> {
+          if (landing !== undefined) this.landings.push(landing);
+          const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+          return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
+        }
+      }
+      const backend = new ProbeBackend({
+        workingRepo: "/tmp/family-r7-probe",
+        familyBase: "family/r7",
+        ledgerDir: "/tmp/family-r7-ledger",
+        repo: "o/r",
+        base: "main",
+        promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
+        imageName: "img",
+        skillsMount: "/tmp/skills",
+      });
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+      expect(result.ok).toBe(true);
+      expect(
+        backend.landings.some((l) => l.onlineReviewSnapshot !== undefined),
+      ).toBe(true);
+      expect(backend.landings.length).toBeGreaterThanOrEqual(2);
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

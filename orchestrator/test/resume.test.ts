@@ -32,8 +32,16 @@
  * at step k, then asserts the runner reuses, cleans, and continues from k+1.
  */
 
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
+import {
+  ONLINE_REVIEW_SNAPSHOT_FILE,
+  onlineReviewRoundFromLedger,
+  lastOnlineReviewFixCommitShaFromLedger,
+} from "../src/onlineReviewLoop.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
@@ -46,6 +54,8 @@ import type {
   StepId,
   StepOutput,
   StepSpec,
+  VerifyResult,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -78,15 +88,53 @@ function entry(
   step: StepId,
   output?: StepOutput,
   sessionId = "session-prior",
+  branchHEAD = "deadbeefcommitsha",
 ): PersistentLedgerEntry {
   return {
     step,
     sessionId,
     prompt_hash: `hash-${step}`,
-    branchHEAD: "deadbeefcommitsha",
+    branchHEAD,
     ts: "2026-06-21T00:00:00.000Z",
     ...(output !== undefined ? { output } : {}),
   };
+}
+
+function writeResumeOnlineReviewSnapshot(stateDir: string): void {
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(
+    join(stateDir, ONLINE_REVIEW_SNAPSHOT_FILE),
+    `${JSON.stringify(
+      {
+        repo: "Akagilnc/ming-salvage-sim",
+        prNumber: 0,
+        prUrl: "pr://slice/offline-255",
+        headOid: "deadbeefcommitsha",
+        pollCount: 1,
+        bots: {
+          coderabbit: { state: "complete", findingCount: 1 },
+          sourcery: { state: "complete", findingCount: 0 },
+          codex: { state: "complete", findingCount: 0 },
+          gemini: { state: "complete", findingCount: 0 },
+        },
+        threads: [
+          {
+            id: "100",
+            threadNodeId: "PRRT_resumeThread",
+            body: "fix this",
+            authorLogin: "bot",
+            isResolved: false,
+          },
+        ],
+        checkRuns: [],
+        totalFindingCount: 1,
+        quiescent: true,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
 }
 
 /** Build a terminal S8 entry tagged with its handoff status (#255). */
@@ -282,13 +330,16 @@ class ResumeBackend implements Backend {
 class DispatchRecordingResumeBackend extends ResumeBackend {
   readonly dispatchSpecs: WorkerSpec[] = [];
   readonly dispatchContexts: DispatchContext[] = [];
+  readonly dispatchLandings: Array<WorkerLandingPayload | undefined> = [];
 
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     this.dispatchSpecs.push(spec);
     this.dispatchContexts.push(ctx);
+    this.dispatchLandings.push(landing);
 
     if (spec.kind === "ship") {
       if (ctx.worktree === undefined) {
@@ -324,6 +375,40 @@ class DispatchRecordingResumeBackend extends ResumeBackend {
         ? await this.resumeSession(stepSpec, ctx.worktree!, ctx.resumeSessionId)
         : await this.runStep(stepSpec, ctx.worktree!);
     return { kind: "completed", output };
+  }
+}
+
+/** Records landing + drives verify→fixer→recheck for #600 r7 resume tests. */
+class ReviewLoopResumeBackend extends DispatchRecordingResumeBackend {
+  verifyDispatchCount = 0;
+
+  override async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    if (spec.kind === "verify") {
+      this.verifyDispatchCount += 1;
+      this.dispatchSpecs.push(spec);
+      this.dispatchContexts.push(ctx);
+      this.dispatchLandings.push(landing);
+      if (this.verifyDispatchCount === 1) {
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true } satisfies VerifyResult,
+        };
+      }
+      return {
+        kind: "completed",
+        output: {
+          kind: "verify",
+          converged: true,
+          isRecheck: true,
+          threadsToResolve: ["100"],
+        } satisfies VerifyResult,
+      };
+    }
+    return super.dispatchWorker(spec, ctx, landing);
   }
 }
 
@@ -1360,6 +1445,95 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       .filter((s) => ["S9", "S10", "S11", "S12"].includes(s.id))
       .map((s) => s.id);
     expect(reviewLoopDispatched).toEqual(["S9", "S11", "S12"]);
+  });
+
+  it("AC2 r7: crash after S9(converged:false) resumes S10 with reconstructed landing (#600 F1)", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-snapshot-"));
+    writeResumeOnlineReviewSnapshot(stateDir);
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+    ];
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs.filter((s) => s.id === "S10")).toHaveLength(1);
+    const fixerIdx = backend.dispatchSpecs.findIndex((s) => s.id === "S10");
+    const fixerLanding = backend.dispatchLandings[fixerIdx];
+    expect(fixerLanding?.onlineReviewSnapshot).toBeDefined();
+    expect(fixerLanding?.fixMarkedFindingIdentityKeys).toEqual(["f:1"]);
+    expect(
+      backend.dispatchContexts.find((_, i) => backend.dispatchSpecs[i]?.id === "S10")
+        ?.onlineReviewRound,
+    ).toBe(1);
+  });
+
+  it("AC2 r7: crash after S10 resumes S9 with round+fix SHA from full ledger (#600 F1)", async () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+      entry(
+        "S10",
+        { kind: "fixer", committed: true },
+        "session-fix",
+        fixSha,
+      ),
+    ];
+    expect(onlineReviewRoundFromLedger(prior)).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromLedger(prior)).toBe(fixSha);
+
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    const resumedVerifyIdx = backend.dispatchSpecs.findIndex((s) => s.id === "S9");
+    expect(resumedVerifyIdx).toBeGreaterThanOrEqual(0);
+    expect(backend.dispatchContexts[resumedVerifyIdx]?.onlineReviewRound).toBe(2);
+    expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
   });
 });
 

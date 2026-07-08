@@ -7,7 +7,7 @@
  * (ADR 0061 / ADR 0062).
  */
 
-import { writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -31,7 +31,9 @@ import {
 import type {
   OnlineReviewLandingSnapshot,
   OnlineReviewTerminalState,
+  PersistentLedgerEntry,
   ShipResult,
+  StepOutput,
   VerifyResult,
   WorkerLandingPayload,
 } from "./types.js";
@@ -71,12 +73,111 @@ function toLandingSnapshot(snapshot: PrReviewSnapshot): OnlineReviewLandingSnaps
     droppedBots: droppedBotIds(snapshot),
     threads: snapshot.threads.map((t) => ({
       id: t.id,
+      threadNodeId: t.threadNodeId,
       body: t.body,
       isResolved: t.isResolved,
       headOid: t.headOid,
       authorLogin: t.authorLogin,
     })),
   };
+}
+
+/** 1-based online review round from the full executable ledger (#600 r7 resume). */
+export function onlineReviewRoundFromLedger(
+  ledger: ReadonlyArray<{
+    readonly step: string;
+    readonly output?: { readonly kind?: string; readonly committed?: boolean };
+  }>,
+): number {
+  const completedFixerRounds = ledger.filter(
+    (e) =>
+      e.step === "S10" &&
+      e.output?.kind === "fixer" &&
+      e.output.committed,
+  ).length;
+  return completedFixerRounds + 1;
+}
+
+/** Last committed S10 branchHEAD — fixing commit for recheck side effects (#600 r7). */
+export function lastOnlineReviewFixCommitShaFromLedger(
+  ledger: ReadonlyArray<{
+    readonly step: string;
+    readonly branchHEAD?: string;
+    readonly output?: { readonly kind?: string; readonly committed?: boolean };
+  }>,
+): string | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.step === "S10" &&
+      entry.output?.kind === "fixer" &&
+      entry.output.committed &&
+      typeof entry.branchHEAD === "string" &&
+      entry.branchHEAD.length > 0
+    ) {
+      return entry.branchHEAD;
+    }
+  }
+  return undefined;
+}
+
+function lastS9VerifyOutputFromLedger(
+  ledger: ReadonlyArray<{ readonly step: string; readonly output?: StepOutput }>,
+): VerifyResult | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.step === "S9" && entry.output?.kind === "verify") {
+      return entry.output;
+    }
+  }
+  return undefined;
+}
+
+/** Read the persisted bot snapshot written before a crash mid review-loop (#600 r7). */
+export function readOnlineReviewSnapshotFile(
+  stateDir: string,
+): PrReviewSnapshot | undefined {
+  const path = join(stateDir, ONLINE_REVIEW_SNAPSHOT_FILE);
+  if (!existsSync(path)) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (parsed == null || typeof parsed !== "object") return undefined;
+    return parsed as PrReviewSnapshot;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Rebuild fixer landing from ledger + persisted snapshot — never from in-memory
+ * survivors truncated away by priorLedgerThroughLastShip (#600 r7).
+ */
+export function reconstructOnlineReviewLandingForResume(input: {
+  readonly fullLedger: ReadonlyArray<PersistentLedgerEntry>;
+  readonly ship: ShipResult;
+  readonly stateDir?: string;
+  readonly round: number;
+}): WorkerLandingPayload | undefined {
+  const snapshot =
+    input.stateDir !== undefined
+      ? readOnlineReviewSnapshotFile(input.stateDir)
+      : undefined;
+  if (snapshot === undefined) return undefined;
+  const lastVerify = lastS9VerifyOutputFromLedger(input.fullLedger);
+  const fixKeys =
+    lastVerify !== undefined ? fixMarkedKeysFromVerify(lastVerify) : [];
+  return {
+    ...buildOnlineReviewLanding(snapshot, input.ship, input.round),
+    fixMarkedFindingIdentityKeys: fixKeys,
+  };
+}
+
+/** In-band terminal for family/slice review-loop dispatch failures (#600 r7 S2). */
+export class OnlineReviewLoopTerminal extends Error {
+  constructor(readonly result: OnlineReviewLoopStageResult) {
+    super(`online review loop terminal: ${result.terminalState}`);
+    this.name = "OnlineReviewLoopTerminal";
+  }
 }
 
 /**
@@ -256,8 +357,8 @@ export interface OnlineReviewLoopDispatch {
     round: number,
   ) => Promise<VerifyResult>;
   readonly dispatchFixer: (landing: WorkerLandingPayload) => Promise<boolean>;
-  readonly dispatchCleanup: () => Promise<boolean>;
-  readonly dispatchDocRelease: () => Promise<boolean>;
+  readonly dispatchCleanup: (landing: WorkerLandingPayload) => Promise<boolean>;
+  readonly dispatchDocRelease: (landing: WorkerLandingPayload) => Promise<boolean>;
   readonly applySideEffects: (
     verify: VerifyResult,
     fixingCommitSha?: string,
@@ -310,11 +411,11 @@ export async function runOnlineReviewLoopStage(
     landing = { ...landing, fixMarkedFindingIdentityKeys: fixKeys };
 
     if (verify.converged) {
-      const cleanupOk = await dispatch.dispatchCleanup();
+      const cleanupOk = await dispatch.dispatchCleanup(landing);
       if (!cleanupOk) {
         return { ok: false, terminalState: "decision_gate_raised", round };
       }
-      const released = await dispatch.dispatchDocRelease();
+      const released = await dispatch.dispatchDocRelease(landing);
       if (!released) {
         return { ok: false, terminalState: "decision_gate_raised", round };
       }

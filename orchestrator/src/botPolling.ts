@@ -39,7 +39,10 @@ export type BotLegStatus =
   | { readonly state: "dropped"; readonly reason: string };
 
 export interface ReviewThreadSnapshot {
+  /** Top-level review-comment databaseId — REST reply parent (#600 r7). */
   readonly id: string;
+  /** GraphQL reviewThread node id — resolution target (#600 r7). */
+  readonly threadNodeId: string;
   readonly path?: string;
   readonly line?: number;
   readonly body: string;
@@ -376,52 +379,89 @@ function resolveBotStatuses(
   return bots;
 }
 
-function parseReviewThreads(
-  rawThreads: unknown[],
-  headOid: string,
+function splitRepoSlug(repo: string): { owner: string; name: string } {
+  const [owner, name] = repo.split("/");
+  if (owner === undefined || name === undefined || owner.length === 0 || name.length === 0) {
+    throw new Error(`botPolling: invalid repo slug "${repo}"`);
+  }
+  return { owner, name };
+}
+
+/** GraphQL reviewThreads — authoritative thread id + isResolved + top comment (#600 r7). */
+function fetchReviewThreadsFromGraphql(
+  sh: Sh,
+  repo: string,
+  prNumber: number,
 ): ReviewThreadSnapshot[] {
+  const { owner, name } = splitRepoSlug(repo);
+  const query = [
+    "query($owner:String!,$name:String!,$number:Int!){",
+    "repository(owner:$owner,name:$name){",
+    "pullRequest(number:$number){",
+    "reviewThreads(first:100){",
+    "nodes{",
+    "id isResolved",
+    "comments(first:1){nodes{databaseId body path line author{login} commit{oid}}}",
+    "}}}}}",
+  ].join("");
+  const raw = sh("gh", [
+    "api",
+    "graphql",
+    "-f",
+    `query=${query}`,
+    "-f",
+    `owner=${owner}`,
+    "-f",
+    `name=${name}`,
+    "-F",
+    `number=${prNumber}`,
+  ]);
+  const parsed: unknown = JSON.parse(raw);
+  const nodes =
+    parsed != null &&
+    typeof parsed === "object" &&
+    (
+      parsed as {
+        data?: {
+          repository?: {
+            pullRequest?: { reviewThreads?: { nodes?: unknown[] } };
+          };
+        };
+      }
+    ).data?.repository?.pullRequest?.reviewThreads?.nodes;
+  if (!Array.isArray(nodes)) {
+    return [];
+  }
   const out: ReviewThreadSnapshot[] = [];
-  for (const t of rawThreads) {
-    if (t == null || typeof t !== "object") continue;
-    const obj = t as Record<string, unknown>;
-    const comments = Array.isArray(obj.comments) ? obj.comments : [];
-    const first = comments[0];
-    const firstObj =
-      first != null && typeof first === "object"
-        ? (first as Record<string, unknown>)
-        : undefined;
-    const body =
-      typeof firstObj?.body === "string"
-        ? firstObj.body
-        : typeof obj.body === "string"
-          ? obj.body
-          : "";
-    const author =
-      firstObj?.user != null && typeof firstObj.user === "object"
-        ? ((firstObj.user as { login?: string }).login ?? "unknown")
-        : "unknown";
-    const line =
-      typeof obj.line === "number"
-        ? obj.line
-        : typeof obj.original_line === "number"
-          ? obj.original_line
-          : undefined;
-    const threadHead =
-      typeof obj.commit_id === "string"
-        ? obj.commit_id
-        : typeof firstObj?.commit_id === "string"
-          ? firstObj.commit_id
-          : undefined;
+  for (const node of nodes) {
+    if (node == null || typeof node !== "object") continue;
+    const obj = node as {
+      id?: string;
+      isResolved?: boolean;
+      comments?: {
+        nodes?: Array<{
+          databaseId?: number;
+          body?: string;
+          path?: string;
+          line?: number;
+          author?: { login?: string };
+          commit?: { oid?: string };
+        }>;
+      };
+    };
+    const threadNodeId = typeof obj.id === "string" ? obj.id : "";
+    const first = obj.comments?.nodes?.[0];
+    if (threadNodeId.length === 0 || first?.databaseId === undefined) continue;
     out.push({
-      id: String(obj.id ?? out.length),
-      path: typeof obj.path === "string" ? obj.path : undefined,
-      line,
-      body,
-      authorLogin: author,
-      isResolved: Boolean(obj.is_resolved ?? obj.resolved),
-      // Leave undefined when GitHub exposes no native head — do NOT coerce to
-      // current PR head (artifact bots); verify worker judges freshness (#600 AC3).
-      headOid: threadHead,
+      id: String(first.databaseId),
+      threadNodeId,
+      path: typeof first.path === "string" ? first.path : undefined,
+      line: typeof first.line === "number" ? first.line : undefined,
+      body: typeof first.body === "string" ? first.body : "",
+      authorLogin: first.author?.login ?? "unknown",
+      isResolved: Boolean(obj.isResolved),
+      headOid:
+        typeof first.commit?.oid === "string" ? first.commit.oid : undefined,
     });
   }
   return out;
@@ -527,10 +567,7 @@ export function pollPrReviewState(
     sh,
     `repos/${repo}/pulls/${prNumber}/reviews`,
   ) as BotReview[];
-  const threadsRaw = paginateGhApi(
-    sh,
-    `repos/${repo}/pulls/${prNumber}/comments`,
-  );
+  const threads = fetchReviewThreadsFromGraphql(sh, repo, prNumber);
   const reactions: BotReaction[] = [];
   for (const comment of reviewComments) {
     if (comment.id === undefined) continue;
@@ -549,7 +586,6 @@ export function pollPrReviewState(
     reactions,
     headOid,
   );
-  const threads = parseReviewThreads(threadsRaw, headOid);
   const checkRuns = admissibleCheckRuns(
     paginateCheckRuns(sh, repo, headOid),
     headOid,
