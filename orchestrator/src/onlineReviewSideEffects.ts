@@ -28,7 +28,7 @@ export interface ApplyVerifySideEffectsResult {
   readonly threadsResolved: ReadonlyArray<string>;
 }
 
-/** GitHub issue URL shape returned by `gh issue create --json url`. */
+/** GitHub issue URL shape returned by `gh api repos/{repo}/issues --jq .html_url`. */
 export function isValidGithubIssueUrl(url: string): boolean {
   const trimmed = url.trim();
   return (
@@ -39,7 +39,7 @@ export function isValidGithubIssueUrl(url: string): boolean {
   );
 }
 
-/** Create a tracked deferral issue via `gh issue create` (#600 AC5). */
+/** Create a tracked deferral issue via `gh api repos/{repo}/issues` (#600 AC5). */
 export function createDeferredTrackingIssue(
   sh: Sh,
   repo: string,
@@ -47,18 +47,14 @@ export function createDeferredTrackingIssue(
   body: string,
 ): string {
   const url = sh("gh", [
-    "issue",
-    "create",
-    "--repo",
-    repo,
-    "--title",
-    title,
-    "--body",
-    body,
-    "--json",
-    "url",
-    "-q",
-    ".url",
+    "api",
+    `repos/${repo}/issues`,
+    "-f",
+    `title=${title}`,
+    "-f",
+    `body=${body}`,
+    "--jq",
+    ".html_url",
   ]);
   const trimmed = url.trim();
   if (!isValidGithubIssueUrl(trimmed)) {
