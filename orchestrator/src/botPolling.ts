@@ -757,8 +757,9 @@ type RetriggerIssueComment = {
 /** True when an issue-comment body matches the manual R2/R3 re-trigger contract. */
 export function isBotRetriggerCommentBody(body: string): boolean {
   const trimmed = body.trim();
-  const marker = BOT_RETRIGGER_COMMENT.split("\n")[0]!;
-  return trimmed === BOT_RETRIGGER_COMMENT.trim() || trimmed.includes(marker);
+  if (trimmed === BOT_RETRIGGER_COMMENT.trim()) return true;
+  const requiredLines = BOT_RETRIGGER_COMMENT.split("\n").map((line) => line.trim());
+  return requiredLines.every((line) => trimmed.includes(line));
 }
 
 /**
