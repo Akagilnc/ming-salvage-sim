@@ -5,6 +5,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../src/dispatchRetry.js";
 import {
+  cleanupWorkerSpec,
+  docReleaseWorkerSpec,
   verifyWorkerSpec,
   fixerWorkerSpec,
   legacyDispatchWorker,
@@ -21,6 +23,7 @@ import type {
   PrReviewSnapshot,
   StepOutput,
   VerifyResult,
+  WorkerKind,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -1408,6 +1411,48 @@ describe("#600 r4 central evidence admissibility gate", () => {
     ).toBe(false);
   });
 
+  it("pin r15: timestamp freshness compares parsed instants (precision/timezone formats)", () => {
+    const triggerZ = buildRoundTrigger("head-a", "2026-07-08T10:00:00Z");
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: "2026-07-08T10:30:00.000Z" },
+        "head-a",
+        triggerZ,
+      ),
+    ).toBe("fresh_live");
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: "2026-07-08T09:30:00Z" },
+        "head-a",
+        triggerZ,
+      ),
+    ).toBe("stale");
+  });
+
+  it("pin r15: unparseable timestamp → stale (fail-closed)", () => {
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: "not-a-timestamp" },
+        "head-a",
+        trigger,
+      ),
+    ).toBe("stale");
+    expect(
+      evidenceAdmissible(
+        { terminalState: "fresh_live", timestamp: "garbage-ts" },
+        "head-a",
+        trigger,
+      ),
+    ).toBe(false);
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: "2026-07-08T11:00:00.000Z" },
+        "head-a",
+        buildRoundTrigger("head-a", "also-not-a-timestamp"),
+      ),
+    ).toBe("stale");
+  });
+
   it("pin botPolling r15: issue-comment reaction after round trigger counts as bot evidence", () => {
     // Codex ACKs the manual re-trigger via reaction on the issue comment (not the PR body).
     // https://docs.github.com/en/rest/reactions/reactions?apiVersion=2022-11-28#list-reactions-for-an-issue-comment
@@ -2300,6 +2345,26 @@ describe("#600 r5 legacy skeleton gate — family + slice", () => {
       }
     }
   });
+
+  it("pin r15: S11/S12 legacy dispatch returns stub without runStep even when dispatchWorker seam exists", async () => {
+    let runStepCalls = 0;
+    const legacyBackend = {
+      dispatchWorker: async () => ({
+        kind: "completed" as const,
+        output: { kind: "verify", converged: true },
+      }),
+      async runStep(): Promise<StepOutput> {
+        runStepCalls += 1;
+        throw new Error("runStep must not run for S11/S12 stub workers");
+      },
+    } as unknown as Backend;
+    for (const spec of [cleanupWorkerSpec(), docReleaseWorkerSpec()]) {
+      const result = await legacyDispatchWorker(legacyBackend, spec, { worktree });
+      expect(result.kind).toBe("completed");
+      expect(workerOutcomeAdmissible(result, spec)).toBe(true);
+    }
+    expect(runStepCalls).toBe(0);
+  });
 });
 
 describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gate", () => {
@@ -2613,7 +2678,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("RealFamilyBackend-derived worker records cleanup landing with snapshot", async () => {
+  it("pin r15: RealFamilyBackend S11/S12 stub at dispatchWorker — verify only hits runFamilyReviewLoopWorker", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     const here = dirname(fileURLToPath(import.meta.url));
@@ -2621,12 +2686,14 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     const realSoulsDir = join(here, "..", "image", "souls");
     try {
       class ProbeBackend extends RealFamilyBackend {
+        readonly reviewLoopKinds: WorkerKind[] = [];
         readonly landings: WorkerLandingPayload[] = [];
         protected override async runFamilyReviewLoopWorker(
           spec: WorkerSpec,
           _ctx: DispatchContext,
           landing?: WorkerLandingPayload,
         ): Promise<WorkerResult> {
+          this.reviewLoopKinds.push(spec.kind);
           if (landing !== undefined) this.landings.push(landing);
           const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
           return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
@@ -2649,10 +2716,9 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         ship: offlineShip,
       });
       expect(result.ok).toBe(true);
-      expect(
-        backend.landings.some((l) => l.onlineReviewSnapshot !== undefined),
-      ).toBe(true);
-      expect(backend.landings.length).toBeGreaterThanOrEqual(2);
+      expect(backend.reviewLoopKinds).toEqual(["verify"]);
+      expect(backend.landings).toHaveLength(1);
+      expect(backend.landings[0]?.onlineReviewSnapshot).toBeDefined();
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

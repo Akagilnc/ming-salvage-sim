@@ -108,6 +108,7 @@ import {
   isValidDocReleaseResult,
   isValidFixerResult,
   isValidVerifyResult,
+  skeletonReviewLoopWorkerResult,
 } from "../reviewLoopOutcome.js";
 import { ONLINE_REVIEW_LANDING_FILE } from "../onlineReviewLoop.js";
 import {
@@ -1141,12 +1142,18 @@ export class RealFamilyBackend implements FamilyBackend {
     if (spec.kind === "coder") {
       return this.runFamilyCoderFixWorker(spec, ctx, landing);
     }
-    if (
-      spec.kind === "verify" ||
-      spec.kind === "fixer" ||
-      spec.kind === "cleanup" ||
-      spec.kind === "docRelease"
-    ) {
+    // S11/S12 remain deterministic stubs until #603 (prompt/soul files land later).
+    if (spec.kind === "cleanup" || spec.kind === "docRelease") {
+      const stub = skeletonReviewLoopWorkerResult(spec.kind);
+      if (stub !== undefined) {
+        return stub;
+      }
+      return {
+        kind: "failed",
+        reason: `family ${spec.kind} stub unavailable`,
+      };
+    }
+    if (spec.kind === "verify" || spec.kind === "fixer") {
       return this.runFamilyReviewLoopWorker(spec, ctx, landing);
     }
     if (spec.kind !== "cmr") {
