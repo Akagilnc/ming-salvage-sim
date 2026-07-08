@@ -33,6 +33,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { offlineReviewLoopDispatchAdmissible } from "./evidenceAdmissibility.js";
 import { modelForSlot, type ResolvedModelRoute } from "./modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
 import type {
@@ -426,15 +427,20 @@ export async function legacyDispatchWorker(
     };
   }
 
-  // #596 skeleton: spy/fake backends without `dispatchWorker` get deterministic
-  // stubs. RealBackend implements `dispatchWorker` and reaches runStep for
-  // verify/fixer/cleanup/docRelease (#600 live path).
+  // #596 skeleton: explicit offline/test contexts only when the backend has no
+  // `dispatchWorker` seam (#600 r5 — mirror family legacy gate; live paths must
+  // fail closed instead of synthesizing convergence).
   const skeletonResult = skeletonReviewLoopWorkerResult(spec.kind);
-  if (
-    skeletonResult !== undefined &&
-    backend.dispatchWorker === undefined
-  ) {
-    return skeletonResult;
+  if (skeletonResult !== undefined && backend.dispatchWorker === undefined) {
+    if (offlineReviewLoopDispatchAdmissible(ctx)) {
+      return skeletonResult;
+    }
+    return {
+      kind: "failed",
+      reason:
+        `${spec.kind} worker unavailable: no dispatchWorker seam and ` +
+        `offline skeleton synthesis inadmissible for PR ${ctx.prUrl ?? "(missing)"}`,
+    };
   }
 
   // FAIL-CLOSED on the worker kind (online review r1, 3 bots): only agent +

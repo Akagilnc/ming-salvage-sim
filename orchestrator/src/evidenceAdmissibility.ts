@@ -14,7 +14,13 @@ import {
   isValidFixerResult,
   isValidVerifyResult,
 } from "./reviewLoopOutcome.js";
-import type { StepOutput, WorkerKind, WorkerResult, WorkerSpec } from "./types.js";
+import type {
+  DispatchContext,
+  StepOutput,
+  WorkerKind,
+  WorkerResult,
+  WorkerSpec,
+} from "./types.js";
 
 /** ISO-8601 instant marking when the current review round began (ship or re-trigger). */
 export interface RoundTrigger {
@@ -56,6 +62,23 @@ export function offlineSyntheticPollAdmissible(
     return false;
   }
   return isOfflineTestPrUrl(prUrl) && !isPollableGithubPrUrl(prUrl, defaultRepo);
+}
+
+/**
+ * Review-loop skeleton synthesis is allowed only in the same explicit offline/test
+ * handles as synthetic bot polling (`pr://…` + ORCHESTRATOR_OFFLINE_REVIEW_POLL).
+ */
+export function offlineReviewLoopDispatchAdmissible(
+  ctx: Pick<DispatchContext, "prUrl" | "repo">,
+  defaultRepo?: string,
+): boolean {
+  const repo =
+    ctx.repo?.trim() ??
+    defaultRepo?.trim() ??
+    process.env.ORCHESTRATOR_REPO?.trim() ??
+    "Akagilnc/ming-salvage-sim";
+  const prUrl = ctx.prUrl?.trim() ?? "";
+  return offlineSyntheticPollAdmissible(prUrl, repo);
 }
 
 /**

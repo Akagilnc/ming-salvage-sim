@@ -4,8 +4,23 @@
 
 import { describe, expect, it } from "vitest";
 import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../src/dispatchRetry.js";
-import { verifyWorkerSpec, fixerWorkerSpec } from "../src/dispatchWorker.js";
-import type { DispatchContext, WorkerResult, WorkerSpec } from "../src/types.js";
+import {
+  verifyWorkerSpec,
+  fixerWorkerSpec,
+  legacyDispatchWorker,
+} from "../src/dispatchWorker.js";
+import {
+  legacyDispatchFamilyWorker,
+} from "../src/family/dispatchFamilyWorker.js";
+import type {
+  Backend,
+  DispatchContext,
+  PrReviewSnapshot,
+  VerifyResult,
+  WorkerResult,
+  WorkerSpec,
+  WorktreeHandle,
+} from "../src/types.js";
 import {
   BOT_OVERDUE_POLL_COUNT,
   BOT_POLL_INTERVAL_MS,
@@ -31,6 +46,7 @@ import {
   immediateBotPollClock,
   MAX_ONLINE_REVIEW_ROUNDS,
   retriggerBotsAndPoll,
+  runOnlineReviewLoopStage,
   waitForBotQuiescence,
 } from "../src/onlineReviewLoop.js";
 import { route } from "../src/route.js";
@@ -959,5 +975,152 @@ describe("#600 r4 central evidence admissibility gate", () => {
         spec,
       ),
     ).toBe(true);
+  });
+});
+
+describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
+  const baseSnapshot: PrReviewSnapshot = {
+    repo: "o/r",
+    prNumber: 42,
+    prUrl: "pr://family/stage-test",
+    headOid: "head-1",
+    pollCount: 1,
+    bots: {
+      coderabbit: { state: "complete", findingCount: 0 },
+      sourcery: { state: "complete", findingCount: 0 },
+      codex: { state: "complete", findingCount: 0 },
+      gemini: { state: "complete", findingCount: 0 },
+    },
+    threads: [],
+    checkRuns: [],
+    totalFindingCount: 0,
+    quiescent: true,
+  };
+
+  it("happy path: converged verify → cleanup → docRelease terminates mergeable", async () => {
+    let verifyCalls = 0;
+    const result = await runOnlineReviewLoopStage({
+      poll: async () => baseSnapshot,
+      dispatchVerify: async () => {
+        verifyCalls += 1;
+        return { kind: "verify", converged: true } satisfies VerifyResult;
+      },
+      dispatchFixer: async () => true,
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (verify) => verify,
+      retriggerAfterFix: () => {},
+    });
+    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
+    expect(verifyCalls).toBe(1);
+  });
+
+  it("non-convergence terminal: persistent verify red + fixer commits exhausts round budget", async () => {
+    let roundSeen = 0;
+    let fixerCalls = 0;
+    const result = await runOnlineReviewLoopStage({
+      poll: async (round) => {
+        roundSeen = round;
+        return { ...baseSnapshot, pollCount: round };
+      },
+      dispatchVerify: async () => ({ kind: "verify", converged: false }),
+      dispatchFixer: async () => {
+        fixerCalls += 1;
+        return true;
+      },
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (verify) => verify,
+      retriggerAfterFix: () => {},
+      resolveFixCommitSha: async () => "fix-sha",
+    });
+    expect(result).toEqual({
+      ok: false,
+      terminalState: "round_budget_exhausted",
+      round: MAX_ONLINE_REVIEW_ROUNDS + 1,
+    });
+    expect(fixerCalls).toBe(MAX_ONLINE_REVIEW_ROUNDS);
+    expect(roundSeen).toBe(MAX_ONLINE_REVIEW_ROUNDS);
+  });
+
+  it("non-convergence terminal: fixer failure raises decision gate on first round", async () => {
+    const result = await runOnlineReviewLoopStage({
+      poll: async () => baseSnapshot,
+      dispatchVerify: async () => ({ kind: "verify", converged: false }),
+      dispatchFixer: async () => false,
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (verify) => verify,
+      retriggerAfterFix: () => {},
+    });
+    expect(result).toEqual({
+      ok: false,
+      terminalState: "decision_gate_raised",
+      round: 1,
+    });
+  });
+});
+
+describe("#600 r5 legacy skeleton gate — family + slice", () => {
+  const liveCtx: DispatchContext = {
+    familyBase: "fb",
+    repo: "o/r",
+    prUrl: "https://github.com/o/r/pull/42",
+  };
+
+  const worktree: WorktreeHandle = {
+    branch: "feat/x",
+    base: "main",
+    path: "/wt",
+  };
+
+  it("pin family legacy path: unavailable primary on live PR → failed, not skeleton-green", async () => {
+    const spec = verifyWorkerSpec();
+    const result = await legacyDispatchFamilyWorker({} as never, spec, liveCtx);
+    expect(result.kind).toBe("failed");
+    expect(workerOutcomeAdmissible(result, spec)).toBe(false);
+    if (result.kind === "failed") {
+      expect(result.reason).toContain("offline skeleton synthesis inadmissible");
+    }
+  });
+
+  it("pin slice legacy path: unavailable primary on live PR → failed, not skeleton-green", async () => {
+    const spec = verifyWorkerSpec();
+    const legacyBackend = {
+      async push(): Promise<void> {},
+    } as unknown as Backend;
+    const result = await legacyDispatchWorker(legacyBackend, spec, {
+      worktree,
+      ...liveCtx,
+    });
+    expect(result.kind).toBe("failed");
+    expect(workerOutcomeAdmissible(result, spec)).toBe(false);
+    if (result.kind === "failed") {
+      expect(result.reason).toContain("offline skeleton synthesis inadmissible");
+    }
+  });
+
+  it("offline test handle still admits skeleton on the family legacy path", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      const spec = verifyWorkerSpec();
+      const result = await legacyDispatchFamilyWorker({} as never, spec, {
+        familyBase: "fb",
+        repo: "o/r",
+        prUrl: "pr://family/offline",
+      });
+      expect(result.kind).toBe("completed");
+      expect(workerOutcomeAdmissible(result, spec)).toBe(true);
+      if (result.kind === "completed" && result.output.kind === "verify") {
+        expect(result.output.converged).toBe(true);
+      }
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
   });
 });
