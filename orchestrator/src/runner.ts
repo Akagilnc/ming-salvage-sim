@@ -1937,6 +1937,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let onlineReviewLanding: WorkerLandingPayload | undefined;
   let lastOnlineReviewFixCommitSha: string | undefined;
   let lastOnlineReviewRoundTrigger: RoundTrigger | undefined;
+  let lastOnlineReviewPendingRoundTrigger: RoundTrigger | undefined;
 
   function ghSh(file: string, args: string[]): string {
     return execFileSync(file, args, {
@@ -2027,7 +2028,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const roundTrigger = resolveOnlineReviewRoundTrigger({
       onlineReviewRound,
       persistedRoundTrigger: lastOnlineReviewRoundTrigger,
-      pendingRetriggerFromFixGap: slicePendingRoundTriggerFromFixGap(ledger),
+      pendingRetriggerFromFixGap:
+        lastOnlineReviewPendingRoundTrigger ??
+        slicePendingRoundTriggerFromFixGap(ledger),
       fixCommitSha: lastOnlineReviewFixCommitSha,
       shipPrHead: ship.prHead,
       shipLedgerTriggeredAt: shipLedgerTriggeredAtFromSliceLedger(ledger),
@@ -2578,6 +2581,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       lastOnlineReviewFixCommitShaFromLedger(resumeLedger);
     lastOnlineReviewRoundTrigger =
       onlineReviewRoundTriggerFromLedger(resumeLedger);
+    lastOnlineReviewPendingRoundTrigger =
+      slicePendingRoundTriggerFromFixGap(resumeLedger);
 
     // ADR 0030: persisted S4 boundaries are the runner's closure truth. Resume
     // must replay the prior S4 adjudications, because an S6 reviewer may carry an
@@ -3593,6 +3598,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   "offline-review-head",
               );
               lastOnlineReviewRoundTrigger = retriggered.roundTrigger;
+              lastOnlineReviewPendingRoundTrigger = undefined;
               const retriggerMarker = {
                 step: "S10" as const,
                 event: "online_review_round_retrigger" as const,
