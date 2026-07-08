@@ -1558,6 +1558,138 @@ describe("#600 r34 gap-resume retrigger recovery", () => {
     expect(isBotRetriggerCommentBody(BOT_RETRIGGER_COMMENT)).toBe(true);
     expect(isBotRetriggerCommentBody("  " + BOT_RETRIGGER_COMMENT + "  ")).toBe(true);
     expect(isBotRetriggerCommentBody("unrelated")).toBe(false);
+    expect(isBotRetriggerCommentBody("@sourcery-ai review")).toBe(false);
+    expect(isBotRetriggerCommentBody("@codex review")).toBe(false);
+    expect(isBotRetriggerCommentBody("@sourcery-ai review\n@codex review")).toBe(false);
+    expect(
+      isBotRetriggerCommentBody(
+        "Please re-run all bots after the fix:\n" +
+          BOT_RETRIGGER_COMMENT +
+          "\nThanks!",
+      ),
+    ).toBe(true);
+  });
+
+  it("pin r29: lone partial retrigger does not satisfy fix-gap idempotency", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      const cmd = args.join(" ");
+      calls.push(cmd);
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews")
+      ) {
+        return JSON.stringify({
+          head: { sha: fixSha },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") && !cmd.includes("issues/comments/")) {
+        return JSON.stringify([
+          {
+            id: 8802,
+            user: { login: "orchestrator-host" },
+            body: "@sourcery-ai review",
+            created_at: existingRetriggerTs,
+          },
+        ]);
+      }
+      if (cmd.includes("pulls/42/comments")) return "[]";
+      if (cmd.includes("check-runs")) return JSON.stringify({ check_runs: [] });
+      if (cmd.includes("pulls/42/reviews")) return "[]";
+      if (cmd.includes("/reactions")) return "[]";
+      return reviewThreadsGraphqlFallback(cmd) ?? "[]";
+    };
+
+    expect(
+      findAdmissibleRetriggerComment(
+        sh,
+        "o/r",
+        "https://github.com/o/r/pull/42",
+        gapTrigger,
+      ),
+    ).toBeUndefined();
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-08T13:30:00.000Z"));
+    try {
+      const result = ensureOnlineReviewRetriggerAfterFixGap({
+        sh,
+        repo: "o/r",
+        prUrl: "https://github.com/o/r/pull/42",
+        gapTrigger,
+      });
+      expect(result.posted).toBe(true);
+      expect(result.roundTrigger).toEqual(
+        buildRoundTrigger(fixSha, "2026-07-08T13:30:00.000Z"),
+      );
+      expect(
+        calls.some(
+          (c) =>
+            c.includes(BOT_RETRIGGER_COMMENT.split("\n")[0]!) &&
+            c.includes("@gemini-code-assist please review") &&
+            c.includes("-f"),
+        ),
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pin r29: full three-bot retrigger still satisfies fix-gap idempotency", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      const cmd = args.join(" ");
+      calls.push(cmd);
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews")
+      ) {
+        return JSON.stringify({
+          head: { sha: fixSha },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") && !cmd.includes("issues/comments/")) {
+        return JSON.stringify([
+          {
+            id: 8803,
+            user: { login: "orchestrator-host" },
+            body: BOT_RETRIGGER_COMMENT,
+            created_at: existingRetriggerTs,
+          },
+        ]);
+      }
+      if (cmd.includes("pulls/42/comments")) return "[]";
+      if (cmd.includes("check-runs")) return JSON.stringify({ check_runs: [] });
+      if (cmd.includes("pulls/42/reviews")) return "[]";
+      if (cmd.includes("/reactions")) return "[]";
+      return reviewThreadsGraphqlFallback(cmd) ?? "[]";
+    };
+
+    const existing = findAdmissibleRetriggerComment(
+      sh,
+      "o/r",
+      "https://github.com/o/r/pull/42",
+      gapTrigger,
+    );
+    expect(existing).toEqual(buildRoundTrigger(fixSha, existingRetriggerTs));
+
+    const result = ensureOnlineReviewRetriggerAfterFixGap({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      gapTrigger,
+    });
+    expect(result.posted).toBe(false);
+    expect(result.roundTrigger).toEqual(buildRoundTrigger(fixSha, existingRetriggerTs));
+    expect(
+      calls.some((c) => c.includes(BOT_RETRIGGER_COMMENT.split("\n")[0]!) && c.includes("-f")),
+    ).toBe(false);
   });
 });
 
