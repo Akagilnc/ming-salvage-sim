@@ -95,6 +95,13 @@ abstract class RoleRetryBackend implements Backend {
       headOid: "deadbeef",
       totalFindingCount: 0,
       quiescent: true,
+      bots: {
+        coderabbit: { state: "complete", findingCount: 0 },
+        sourcery: { state: "complete", findingCount: 0 },
+        codex: { state: "complete", findingCount: 0 },
+        gemini: { state: "complete", findingCount: 0 },
+      },
+      droppedBots: [],
       threads: [],
     };
   }

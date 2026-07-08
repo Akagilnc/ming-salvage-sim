@@ -11,12 +11,15 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  droppedBotIds,
   isPollableGithubPrUrl,
   ONLINE_REVIEW_BOT_IDS,
   type PrReviewSnapshot,
 } from "./botPolling.js";
 import type { Sh } from "./familyDriver.js";
 import {
+  BOT_OVERDUE_POLL_COUNT,
+  BOT_POLL_INTERVAL_MS,
   BOT_RETRIGGER_COMMENT,
   pollPrReviewState,
   postBotRetriggerComment,
@@ -60,6 +63,8 @@ function toLandingSnapshot(snapshot: PrReviewSnapshot): OnlineReviewLandingSnaps
     headOid: snapshot.headOid,
     totalFindingCount: snapshot.totalFindingCount,
     quiescent: snapshot.quiescent,
+    bots: snapshot.bots,
+    droppedBots: droppedBotIds(snapshot),
     threads: snapshot.threads.map((t) => ({
       id: t.id,
       body: t.body,
@@ -134,20 +139,38 @@ export function writeOnlineReviewSnapshotFile(
   }
 }
 
+/** Injectable clock for host-side bot poll cadence (tests use immediate no-op sleep). */
+export interface BotPollClock {
+  sleep(ms: number): void | Promise<void>;
+}
+
+export const realBotPollClock: BotPollClock = {
+  sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  },
+};
+
+export const immediateBotPollClock: BotPollClock = {
+  sleep() {},
+};
+
 /**
  * Poll until bots are quiescent or the poll budget for this wait is exhausted.
- * `maxPolls` defaults to 1 for unit tests; production callers pass higher budgets.
+ * Enforces ~2-minute cadence between polls; production defaults to the ~5-poll
+ * overdue window. Pass `maxPolls: 1` and `clock: immediateBotPollClock` in unit tests.
  */
-export function waitForBotQuiescence(
+export async function waitForBotQuiescence(
   sh: Sh,
   input: {
     readonly repo: string;
     readonly prUrl: string;
     readonly maxPolls?: number;
     readonly botPendingPolls?: Readonly<Partial<Record<string, number>>>;
+    readonly clock?: BotPollClock;
   },
-): PrReviewSnapshot {
-  const maxPolls = input.maxPolls ?? 1;
+): Promise<PrReviewSnapshot> {
+  const maxPolls = input.maxPolls ?? BOT_OVERDUE_POLL_COUNT;
+  const clock = input.clock ?? realBotPollClock;
   let last: PrReviewSnapshot | undefined;
   for (let poll = 1; poll <= maxPolls; poll += 1) {
     last = pollPrReviewState(sh, {
@@ -157,6 +180,9 @@ export function waitForBotQuiescence(
       botPendingPolls: input.botPendingPolls as never,
     });
     if (last.quiescent) return last;
+    if (poll < maxPolls) {
+      await clock.sleep(BOT_POLL_INTERVAL_MS);
+    }
   }
   return last!;
 }

@@ -10,6 +10,7 @@
  * reject an off-contract output instead of silently advancing.
  */
 
+import { isValidGithubIssueUrl } from "./onlineReviewSideEffects.js";
 import type {
   CleanupResult,
   DocReleaseResult,
@@ -52,6 +53,14 @@ function isThreadReplyArray(
 }
 
 function verifyResultSemanticallyConsistent(obj: Record<string, unknown>): boolean {
+  const threadsToResolve = obj.threadsToResolve;
+  if (
+    Array.isArray(threadsToResolve) &&
+    threadsToResolve.length > 0 &&
+    obj.isRecheck !== true
+  ) {
+    return false;
+  }
   if (obj.converged !== true) return true;
   const fixKeys = obj.fixMarkedFindingIdentityKeys;
   if (Array.isArray(fixKeys) && fixKeys.length > 0) return false;
@@ -95,8 +104,11 @@ export function isValidVerifyResult(
   if (obj.threadsToResolve !== undefined && !isStringArray(obj.threadsToResolve)) {
     return false;
   }
-  if (obj.deferredIssueUrls !== undefined && !isStringArray(obj.deferredIssueUrls)) {
-    return false;
+  if (obj.deferredIssueUrls !== undefined) {
+    if (!isStringArray(obj.deferredIssueUrls)) return false;
+    if (!obj.deferredIssueUrls.every((url) => isValidGithubIssueUrl(url))) {
+      return false;
+    }
   }
   if (
     obj.terminalState !== undefined &&

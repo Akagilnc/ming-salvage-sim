@@ -71,10 +71,13 @@ import {
 import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetry.js";
 import {
   buildOnlineReviewLanding,
+  immediateBotPollClock,
   isReviewLoopConvergedMarker,
   offlinePrReviewSnapshot,
+  realBotPollClock,
   retriggerBotsAndPoll,
   verifyReviewerHeadMovedStopSummary,
+  waitForBotQuiescence,
   writeOnlineReviewSnapshotFile,
 } from "./onlineReviewLoop.js";
 import {
@@ -1969,18 +1972,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         prUrl,
         pollCount,
       });
+      const defaultBots = {
+        coderabbit: { state: "complete" as const, findingCount: 0 },
+        sourcery: { state: "complete" as const, findingCount: 0 },
+        codex: { state: "complete" as const, findingCount: 0 },
+        gemini: { state: "complete" as const, findingCount: 0 },
+      };
       return {
         repo,
         prNumber: 0,
         prUrl: landing.prUrl,
         headOid: landing.headOid,
         pollCount,
-        bots: {
-          coderabbit: { state: "complete", findingCount: 0 },
-          sourcery: { state: "complete", findingCount: 0 },
-          codex: { state: "complete", findingCount: 0 },
-          gemini: { state: "complete", findingCount: 0 },
-        },
+        bots: (landing.bots ?? defaultBots) as PrReviewSnapshot["bots"],
         threads: landing.threads.map((t) => ({
           id: t.id,
           body: t.body,
@@ -1992,14 +1996,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         quiescent: landing.quiescent,
       };
     }
-    return pollPrReviewState(
-      (file, args) =>
-        execFileSync(file, args, {
-          stdio: ["ignore", "pipe", "pipe"],
-          encoding: "utf8",
-        }).trim(),
-      { repo, prUrl, pollCount },
-    );
+    const ghSh = (file: string, args: string[]) =>
+      execFileSync(file, args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf8",
+      }).trim();
+    return waitForBotQuiescence(ghSh, {
+      repo,
+      prUrl,
+      clock:
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1"
+          ? immediateBotPollClock
+          : realBotPollClock,
+    });
   }
 
   function seedClassificationFromReviewerOutput(

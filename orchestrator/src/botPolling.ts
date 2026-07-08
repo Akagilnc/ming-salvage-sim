@@ -165,6 +165,38 @@ function commentAuthorLogin(
   return comment.user?.login ?? comment.author?.login ?? "";
 }
 
+/** True when the bot left any review signal (findings optional — zero is valid completion). */
+function hasBotReviewSignal(
+  bot: OnlineReviewBotId,
+  comments: ReadonlyArray<{
+    user?: { login?: string };
+    author?: { login?: string };
+    body?: string;
+  }>,
+  reviews: ReadonlyArray<{ user?: { login?: string }; state?: string }>,
+  reactions: ReadonlyArray<{
+    user?: { login?: string };
+    content?: string;
+  }>,
+): boolean {
+  for (const c of comments) {
+    const login = commentAuthorLogin(c);
+    if (!loginMatchesBot(login, bot)) continue;
+    if ((c.body ?? "").trim().length > 0) return true;
+  }
+  for (const r of reviews) {
+    const login = r.user?.login ?? "";
+    if (!loginMatchesBot(login, bot)) continue;
+    if ((r.state ?? "").trim().length > 0) return true;
+  }
+  for (const reaction of reactions) {
+    const login = reaction.user?.login ?? "";
+    if (!loginMatchesBot(login, bot)) continue;
+    if ((reaction.content ?? "").trim().length > 0) return true;
+  }
+  return false;
+}
+
 function countBotFindings(
   bot: OnlineReviewBotId,
   comments: ReadonlyArray<{
@@ -219,7 +251,7 @@ function resolveBotStatuses(
   const bots = {} as Record<OnlineReviewBotId, BotLegStatus>;
   for (const bot of ONLINE_REVIEW_BOT_IDS) {
     const findingCount = countBotFindings(bot, comments, reviews, reactions);
-    if (findingCount > 0) {
+    if (hasBotReviewSignal(bot, comments, reviews, reactions)) {
       bots[bot] = { state: "complete", findingCount };
       continue;
     }
@@ -390,9 +422,19 @@ export function postBotRetriggerComment(
   ]);
 }
 
-/** True when every bot leg is complete or explicitly dropped (safe to dispatch verify). */
+/** Bot ids explicitly dropped after the overdue window (not convergence evidence). */
+export function droppedBotIds(snapshot: PrReviewSnapshot): OnlineReviewBotId[] {
+  return ONLINE_REVIEW_BOT_IDS.filter((bot) => snapshot.bots[bot].state === "dropped");
+}
+
+/** True when every bot leg is complete or explicitly dropped (polling may stop). */
 export function isBotQuiescent(snapshot: PrReviewSnapshot): boolean {
   return snapshot.quiescent;
+}
+
+/** True when any bot was dropped — verify must judge, never treat as clean silence. */
+export function hasDroppedBots(snapshot: PrReviewSnapshot): boolean {
+  return droppedBotIds(snapshot).length > 0;
 }
 
 /** Count open (unresolved) review threads on the current head. */
