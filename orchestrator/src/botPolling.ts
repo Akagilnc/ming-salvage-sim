@@ -4,7 +4,8 @@
  * Polls GitHub for the four online review bots (CodeRabbit auto-updates on push;
  * Sourcery / Codex / Gemini need a manual R2/R3 re-trigger comment after a fix
  * push). No LLM calls — runner scheduling only. Every `gh api` list is paginated
- * with `per_page=100` (wiki pr-review-loop cadence).
+ * with `per_page=100` (wiki pr-review-loop cadence); GraphQL `reviewThreads`
+ * uses cursor pagination via `pageInfo { endCursor hasNextPage }`.
  */
 
 import type { Sh } from "./familyDriver.js";
@@ -159,6 +160,102 @@ export function paginateGhApi(
     if (parsed.length < perPage) break;
   }
   return items;
+}
+
+/** Default page size for GraphQL `reviewThreads` cursor pagination (#600 AC2). */
+export const REVIEW_THREADS_GRAPHQL_PAGE_SIZE = 100;
+
+type ReviewThreadGraphqlNode = {
+  id?: string;
+  isResolved?: boolean;
+  comments?: {
+    nodes?: Array<{
+      databaseId?: number;
+      body?: string;
+      path?: string;
+      line?: number;
+      author?: { login?: string };
+      commit?: { oid?: string };
+    }>;
+  };
+};
+
+type ReviewThreadsConnection = {
+  nodes?: unknown[];
+  pageInfo?: { endCursor?: string | null; hasNextPage?: boolean };
+};
+
+/**
+ * Cursor-paginate `pullRequest.reviewThreads` via GraphQL `pageInfo` (#600 AC2).
+ */
+export function paginateReviewThreadNodes(
+  sh: Sh,
+  repo: string,
+  prNumber: number,
+  nodesFields: string,
+  pageSize: number = REVIEW_THREADS_GRAPHQL_PAGE_SIZE,
+): ReviewThreadGraphqlNode[] {
+  const { owner, name } = splitRepoSlug(repo);
+  const allNodes: ReviewThreadGraphqlNode[] = [];
+  let after: string | undefined;
+
+  for (;;) {
+    const query = [
+      "query($owner:String!,$name:String!,$number:Int!,$first:Int!,$after:String){",
+      "repository(owner:$owner,name:$name){",
+      "pullRequest(number:$number){",
+      "reviewThreads(first:$first,after:$after){",
+      "pageInfo{endCursor hasNextPage}",
+      `nodes{${nodesFields}}`,
+      "}}}}}",
+    ].join("");
+    const ghArgs = [
+      "api",
+      "graphql",
+      "-f",
+      `query=${query}`,
+      "-f",
+      `owner=${owner}`,
+      "-f",
+      `name=${name}`,
+      "-F",
+      `number=${prNumber}`,
+      "-F",
+      `first=${pageSize}`,
+    ];
+    if (after !== undefined) {
+      ghArgs.push("-f", `after=${after}`);
+    }
+    const raw = sh("gh", ghArgs);
+    const parsed: unknown = JSON.parse(raw);
+    const connection: ReviewThreadsConnection | undefined =
+      parsed != null && typeof parsed === "object"
+        ? (
+            parsed as {
+              data?: {
+                repository?: {
+                  pullRequest?: { reviewThreads?: ReviewThreadsConnection };
+                };
+              };
+            }
+          ).data?.repository?.pullRequest?.reviewThreads
+        : undefined;
+    const nodes = connection?.nodes;
+    if (!Array.isArray(nodes) || nodes.length === 0) {
+      break;
+    }
+    allNodes.push(...(nodes as ReviewThreadGraphqlNode[]));
+    if (!connection?.pageInfo?.hasNextPage) {
+      break;
+    }
+    const nextCursor = connection.pageInfo.endCursor;
+    if (typeof nextCursor !== "string" || nextCursor.length === 0) {
+      break;
+    }
+    after = nextCursor;
+  }
+
+  return allNodes;
 }
 
 function loginMatchesBot(login: string, bot: OnlineReviewBotId): boolean {
@@ -393,62 +490,14 @@ function fetchReviewThreadsFromGraphql(
   repo: string,
   prNumber: number,
 ): ReviewThreadSnapshot[] {
-  const { owner, name } = splitRepoSlug(repo);
-  const query = [
-    "query($owner:String!,$name:String!,$number:Int!){",
-    "repository(owner:$owner,name:$name){",
-    "pullRequest(number:$number){",
-    "reviewThreads(first:100){",
-    "nodes{",
-    "id isResolved",
-    "comments(first:1){nodes{databaseId body path line author{login} commit{oid}}}",
-    "}}}}}",
-  ].join("");
-  const raw = sh("gh", [
-    "api",
-    "graphql",
-    "-f",
-    `query=${query}`,
-    "-f",
-    `owner=${owner}`,
-    "-f",
-    `name=${name}`,
-    "-F",
-    `number=${prNumber}`,
-  ]);
-  const parsed: unknown = JSON.parse(raw);
-  const nodes =
-    parsed != null &&
-    typeof parsed === "object" &&
-    (
-      parsed as {
-        data?: {
-          repository?: {
-            pullRequest?: { reviewThreads?: { nodes?: unknown[] } };
-          };
-        };
-      }
-    ).data?.repository?.pullRequest?.reviewThreads?.nodes;
-  if (!Array.isArray(nodes)) {
-    return [];
-  }
+  const nodes = paginateReviewThreadNodes(
+    sh,
+    repo,
+    prNumber,
+    "id isResolved comments(first:1){nodes{databaseId body path line author{login} commit{oid}}}",
+  );
   const out: ReviewThreadSnapshot[] = [];
-  for (const node of nodes) {
-    if (node == null || typeof node !== "object") continue;
-    const obj = node as {
-      id?: string;
-      isResolved?: boolean;
-      comments?: {
-        nodes?: Array<{
-          databaseId?: number;
-          body?: string;
-          path?: string;
-          line?: number;
-          author?: { login?: string };
-          commit?: { oid?: string };
-        }>;
-      };
-    };
+  for (const obj of nodes) {
     const threadNodeId = typeof obj.id === "string" ? obj.id : "";
     const first = obj.comments?.nodes?.[0];
     if (threadNodeId.length === 0 || first?.databaseId === undefined) continue;
