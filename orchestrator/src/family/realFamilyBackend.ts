@@ -1716,8 +1716,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // verify/fixer need the bot-evidence landing; docRelease only invokes
       // /gstack-document-release and does not read the online-review snapshot.
       const onlineReviewLanding =
-        spec.kind === "docRelease" &&
-        landing?.onlineReviewSnapshot === undefined
+        spec.kind === "docRelease"
           ? undefined
           : this.writeFamilyOnlineReviewLandingFile(ctx, landing);
       try {
