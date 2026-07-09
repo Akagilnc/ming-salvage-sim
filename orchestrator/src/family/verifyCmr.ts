@@ -3133,7 +3133,7 @@ export async function runVerifyCmr(
   });
 
   const shipPr = ship.pr;
-  if (shipPr == null || shipPr.trim().length === 0) {
+  if (shipPr === undefined || shipPr.trim().length === 0) {
     return INCOMPLETE_GATE;
   }
   const autoMerge = await runFamilyAutoMergeStage({

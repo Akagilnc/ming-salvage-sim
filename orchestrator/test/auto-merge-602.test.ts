@@ -29,6 +29,7 @@ import {
   familyAutoMergeIncomplete,
   runFamilyAutoMergeStage,
 } from "../src/family/familyAutoMerge.js";
+import { familyPrMergedForHead } from "../src/family/ledger.js";
 import type { FamilyBackend, FamilyLedgerEntry } from "../src/family/types.js";
 import { runOrchestrator } from "../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
@@ -408,6 +409,16 @@ describe("#602 fetchPrMergeLiveState + assessMergeReadiness", () => {
 });
 
 describe("#602 executePrMergeCommit + confirmPrMergedLive", () => {
+  it("rejects null JSON payload at parse boundary (R2-G3)", () => {
+    expect(() =>
+      fetchPrMergeLiveState(
+        fakeSh({ "gh pr view": () => "null" }),
+        REPO,
+        PR_URL,
+      ),
+    ).toThrow(/malformed gh pr view payload/);
+  });
+
   it("uses merge commit (not squash) and confirms via live MERGED state", () => {
     const mergeCalls: string[][] = [];
     let merged = false;
@@ -561,6 +572,93 @@ describe("#602 runAutoMergeStage", () => {
       poll: async () => readySnapshot({ headOid: "merged-head-1" }),
     });
     expect(viewCount).toBeGreaterThanOrEqual(2);
+    expect(result).toMatchObject({
+      ok: true,
+      terminalState: "merged",
+      record: { mergedHeadOid: "merged-head-1" },
+    });
+  });
+
+  it("reuses pre-fetched live state across backfill and merge gate (R2-G1/G2)", async () => {
+    let merged = false;
+    let viewCount = 0;
+    const sh = fakeSh({
+      "gh pr view": () => {
+        viewCount += 1;
+        return JSON.stringify({
+          number: 602,
+          url: PR_URL,
+          state: merged ? "MERGED" : "OPEN",
+          headRefName: "feat/x",
+          headRefOid: "merged-head-1",
+          mergeStateStatus: merged ? "UNKNOWN" : "CLEAN",
+        });
+      },
+      "gh pr merge": () => {
+        merged = true;
+        return "";
+      },
+    });
+    const result = await runAutoMergeStage({
+      sh,
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "merged-head-1",
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      offlineSynthetic: false,
+      docReleasePaths: ["VERSION"],
+      mergeConfirmRetryDelayMs: 0,
+      poll: async () => readySnapshot({ headOid: "merged-head-1" }),
+    });
+    expect(viewCount).toBe(2);
+    expect(result).toMatchObject({
+      ok: true,
+      terminalState: "merged",
+      record: { mergedHeadOid: "merged-head-1" },
+    });
+  });
+
+  it("retries merge confirmation after transient confirm throws (R2-G4)", async () => {
+    let merged = false;
+    let postMergeConfirmAttempts = 0;
+    const sh = fakeSh({
+      "gh pr view": () => {
+        if (merged) {
+          postMergeConfirmAttempts += 1;
+          if (postMergeConfirmAttempts <= 2) {
+            throw new Error("transient GitHub API error");
+          }
+        }
+        return JSON.stringify({
+          number: 602,
+          url: PR_URL,
+          state: merged ? "MERGED" : "OPEN",
+          headRefName: "feat/x",
+          headRefOid: "merged-head-1",
+          mergeStateStatus: merged ? "UNKNOWN" : "CLEAN",
+        });
+      },
+      "gh pr merge": () => {
+        merged = true;
+        return "";
+      },
+    });
+    const result = await runAutoMergeStage({
+      sh,
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "merged-head-1",
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      offlineSynthetic: false,
+      docReleasePaths: ["VERSION"],
+      mergeConfirmRetryDelayMs: 0,
+      poll: async () => readySnapshot({ headOid: "merged-head-1" }),
+    });
+    expect(postMergeConfirmAttempts).toBe(3);
     expect(result).toMatchObject({
       ok: true,
       terminalState: "merged",
@@ -1051,6 +1149,53 @@ describe("#602 isPrMergedMarker", () => {
     };
     expect(isPrMergedMarker(entry, "pre-merge-head")).toBe(true);
     expect(isPrMergedMarker(entry, "other-head")).toBe(false);
+  });
+});
+
+describe("#602 familyPrMergedForHead", () => {
+  it("includes stopSummary only when defined, not when absent (R2-G7)", () => {
+    const withSummary = familyPrMergedForHead(
+      [
+        {
+          status: "pr_merged",
+          event: "pr_merged",
+          phase: "final",
+          pr: PR_URL,
+          prNumber: 602,
+          remoteBranchName: "feat/x",
+          mergedHeadOid: "merged-head",
+          familyHeadAfter: "merged-head",
+          stopSummary: {
+            reason: "success",
+            summary: "merged",
+            repairHint: "none",
+          },
+        },
+      ],
+      "merged-head",
+    );
+    expect(withSummary?.stopSummary).toEqual({
+      reason: "success",
+      summary: "merged",
+      repairHint: "none",
+    });
+
+    const withoutSummary = familyPrMergedForHead(
+      [
+        {
+          status: "pr_merged",
+          event: "pr_merged",
+          phase: "final",
+          pr: PR_URL,
+          prNumber: 602,
+          remoteBranchName: "feat/x",
+          mergedHeadOid: "merged-head",
+          familyHeadAfter: "merged-head",
+        },
+      ],
+      "merged-head",
+    );
+    expect(withoutSummary).not.toHaveProperty("stopSummary");
   });
 });
 
