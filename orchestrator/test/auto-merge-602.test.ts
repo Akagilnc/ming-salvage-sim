@@ -438,12 +438,14 @@ describe("#602 executePrMergeCommit + confirmPrMergedLive", () => {
           mergeStateStatus: merged ? "UNKNOWN" : "CLEAN",
         }),
     });
-    executePrMergeCommit(sh, REPO, 602);
+    executePrMergeCommit(sh, REPO, 602, "merged-head-1");
     expect(mergeCalls[0]).toEqual([
       "pr",
       "merge",
       "602",
       "--merge",
+      "--match-head-commit",
+      "merged-head-1",
       "--repo",
       REPO,
     ]);
@@ -500,6 +502,7 @@ describe("#602 runAutoMergeStage", () => {
 
   it("happy path: all gates green → merge commit + terminal record", async () => {
     let merged = false;
+    let mergeArgs: string[] | undefined;
     const sh = fakeSh({
       "gh pr view": () =>
         JSON.stringify({
@@ -510,7 +513,8 @@ describe("#602 runAutoMergeStage", () => {
           headRefOid: "merged-head-1",
           mergeStateStatus: merged ? "UNKNOWN" : "CLEAN",
         }),
-      "gh pr merge": () => {
+      "gh pr merge": (args) => {
+        mergeArgs = args;
         merged = true;
         return "";
       },
@@ -536,6 +540,16 @@ describe("#602 runAutoMergeStage", () => {
         mergedHeadOid: "merged-head-1",
       },
     });
+    expect(mergeArgs).toEqual([
+      "pr",
+      "merge",
+      "602",
+      "--merge",
+      "--match-head-commit",
+      "merged-head-1",
+      "--repo",
+      REPO,
+    ]);
   });
 
   it("retries live merge confirmation when GitHub API lags (R1-G1)", async () => {
@@ -1011,6 +1025,70 @@ describe("#602 runAutoMergeStage", () => {
     expect(result.record?.mergedHeadOid).toBe("post-doc-head");
   });
 
+  it("ignores ORCHESTRATOR_AUTO_MERGE_ALLOW_UNVERIFIED_DOC_PATHS env (R3-G-SEC)", async () => {
+    vi.stubEnv("ORCHESTRATOR_AUTO_MERGE_ALLOW_UNVERIFIED_DOC_PATHS", "1");
+    const merge = vi.fn();
+    const result = await runAutoMergeStage({
+      sh: fakeSh({}),
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "head-1",
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      offlineSynthetic: true,
+      poll: async () => readySnapshot(),
+      executeMerge: merge,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate");
+    expect(merge).not.toHaveBeenCalled();
+  });
+
+  it("offlineAutoMergeAllowUnverifiedDocPaths admits pr:// test handles only", async () => {
+    const { offlineAutoMergeAllowUnverifiedDocPaths } = await import(
+      "../src/autoMerge.js"
+    );
+    expect(
+      offlineAutoMergeAllowUnverifiedDocPaths(
+        "pr://slice/offline-602",
+        REPO,
+        true,
+        undefined,
+      ),
+    ).toBe(true);
+    expect(
+      offlineAutoMergeAllowUnverifiedDocPaths(PR_URL, REPO, true, undefined),
+    ).toBe(false);
+    expect(
+      offlineAutoMergeAllowUnverifiedDocPaths(
+        "pr://slice/offline-602",
+        REPO,
+        false,
+        undefined,
+      ),
+    ).toBe(false);
+  });
+
+  it("allowUnverifiedDocReleasePaths: true permits offline synthetic without paths", async () => {
+    const merge = vi.fn();
+    const result = await runAutoMergeStage({
+      sh: fakeSh({}),
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "head-1",
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      offlineSynthetic: true,
+      allowUnverifiedDocReleasePaths: true,
+      poll: async () => readySnapshot(),
+      executeMerge: merge,
+    });
+    expect(result.ok).toBe(true);
+    expect(merge).toHaveBeenCalled();
+  });
+
   it("offline synthetic fails closed when docReleasePaths is missing", async () => {
     const merge = vi.fn();
     const result = await runAutoMergeStage({
@@ -1480,5 +1558,62 @@ describe("#602 runOrchestrator slice path — AC8 pr_merged ledger", () => {
     expect(
       backend.ledgerWrites.some((e) => e.event === "pr_merged"),
     ).toBe(false);
+  });
+});
+
+describe("#602 slice auto-merge live poll (R3-C2)", () => {
+  it("merge readiness poll uses pollPrReviewState not waitForBotQuiescence", async () => {
+    const botPolling = await import("../src/botPolling.js");
+    const onlineReviewLoop = await import("../src/onlineReviewLoop.js");
+    const { buildRoundTrigger } = await import("../src/evidenceAdmissibility.js");
+    const pollSpy = vi.spyOn(botPolling, "pollPrReviewState").mockReturnValue(
+      readySnapshot({ headOid: "post-doc-head" }),
+    );
+    const quiescenceSpy = vi.spyOn(onlineReviewLoop, "waitForBotQuiescence");
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
+    const mergeHeadOid = "post-doc-head";
+    let merged = false;
+    const sh = fakeSh({
+      "gh pr view": () =>
+        JSON.stringify({
+          number: 602,
+          url: PR_URL,
+          state: merged ? "MERGED" : "OPEN",
+          headRefName: "feat/x",
+          headRefOid: mergeHeadOid,
+          mergeStateStatus: merged ? "UNKNOWN" : "CLEAN",
+        }),
+      "gh pr merge": () => {
+        merged = true;
+        return "";
+      },
+    });
+
+    await runAutoMergeStage({
+      sh,
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "s9-head",
+      expectedMergeHeadOid: mergeHeadOid,
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      offlineSynthetic: false,
+      docReleasePaths: ["VERSION"],
+      mergeConfirmRetryDelayMs: 0,
+      poll: async (round) =>
+        botPolling.pollPrReviewState(sh, {
+          repo: REPO,
+          prUrl: PR_URL,
+          pollCount: round,
+          roundTrigger: buildRoundTrigger(mergeHeadOid),
+        }),
+    });
+
+    expect(pollSpy).toHaveBeenCalled();
+    expect(quiescenceSpy).not.toHaveBeenCalled();
+    pollSpy.mockRestore();
+    quiescenceSpy.mockRestore();
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
   });
 });

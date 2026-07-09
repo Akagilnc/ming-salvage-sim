@@ -16,10 +16,6 @@ const ROUTE_ENV_KEYS = [
 
 process.env.ORCHESTRATOR_ROUTE = "normal";
 process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
-// Suite-wide hatch for #602 offline auto-merge when fakes have no doc-release
-// commit paths. Production host wiring never sets this; #602 unit tests that
-// assert fail-closed explicitly clear it.
-process.env.ORCHESTRATOR_AUTO_MERGE_ALLOW_UNVERIFIED_DOC_PATHS = "1";
 for (const key of ROUTE_ENV_KEYS) {
   delete process.env[key];
 }
@@ -28,7 +24,6 @@ beforeEach(() => {
   vi.unstubAllEnvs();
   vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
   vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
-  vi.stubEnv("ORCHESTRATOR_AUTO_MERGE_ALLOW_UNVERIFIED_DOC_PATHS", "1");
   for (const key of ROUTE_ENV_KEYS) {
     delete process.env[key];
   }
