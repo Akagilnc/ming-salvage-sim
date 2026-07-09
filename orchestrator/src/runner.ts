@@ -2232,12 +2232,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
     const docReleaseOid = sliceDocReleaseCommitOid(ledger);
     const docReleasePaths = docReleasePathsFromHead(worktree, docReleaseOid);
+    const expectedMergeHeadOid =
+      docReleaseOid ?? gitHead(worktree) ?? convergedHeadOid;
     const mergeResult = await runAutoMergeStage({
       sh: ghSh,
       repo,
       prUrl,
       convergedHeadOid,
-      expectedMergeHeadOid: docReleaseOid ?? convergedHeadOid,
+      expectedMergeHeadOid,
       docReleaseCompleted: true,
       priorConvergenceRecorded: onlineReviewConvergedForHead(
         ledger,
@@ -2450,10 +2452,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       stopSummary,
     });
 
-    const mirrorInMemoryLedgerTs = (step: StepId, ts: string): void => {
+    const mirrorInMemoryLedgerPersistedFields = (
+      step: StepId,
+      fields: Pick<PersistentLedgerEntry, "ts" | "branchHEAD">,
+    ): void => {
       for (let i = ledger.length - 1; i >= 0; i--) {
         if (ledger[i]!.step === step) {
-          ledger[i] = { ...ledger[i]!, ts };
+          ledger[i] = { ...ledger[i]!, ...fields };
           break;
         }
       }
@@ -2472,10 +2477,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       const buffered = pendingEntries[0]!;
       await backend.writeLedger(buffered, stateDir);
       pendingEntries.shift();
-      mirrorInMemoryLedgerTs(buffered.step, buffered.ts);
+      mirrorInMemoryLedgerPersistedFields(buffered.step, {
+        ts: buffered.ts,
+        branchHEAD: buffered.branchHEAD,
+      });
     }
     await backend.writeLedger(entry, stateDir);
-    mirrorInMemoryLedgerTs(s, entry.ts);
+    mirrorInMemoryLedgerPersistedFields(s, {
+      ts: entry.ts,
+      branchHEAD: entry.branchHEAD,
+    });
   }
 
   /**
