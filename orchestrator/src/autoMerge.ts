@@ -26,8 +26,7 @@ export type MergeReadinessBlocker =
   | "ci_pending"
   | "ci_failed"
   | "ruleset_blocked"
-  | "not_open"
-  | "doc_release_non_doc_path";
+  | "not_open";
 
 export interface PrMergeLiveState {
   readonly prNumber: number;
@@ -70,7 +69,11 @@ export interface AutoMergeStageResult {
   readonly stopSummary?: StopSummary;
 }
 
-/** True when a changed path is admissible for a doc-only doc-release commit. */
+/**
+ * Historical helper: was the #602 doc-only path allowlist for merge veto.
+ * ADR 0123 / #735 removed that veto — kept for diagnostics / tests only.
+ * Do not reintroduce as a silent second merge gate without a new ADR.
+ */
 export function isDocOnlyPath(path: string): boolean {
   const normalized = path.trim().replace(/\\/g, "/");
   if (normalized.length === 0) return false;
@@ -84,7 +87,7 @@ export function isDocOnlyPath(path: string): boolean {
   return false;
 }
 
-/** Fail closed when any changed path falls outside the doc-release allow-list. */
+/** Historical helper (ADR 0123: not a merge gate). See {@link isDocOnlyPath}. */
 export function isDocOnlyFileList(files: readonly string[]): boolean {
   return files.length > 0 && files.every(isDocOnlyPath);
 }
@@ -103,7 +106,7 @@ function normalizeDocReleaseGitPath(line: string): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
-/** Paths changed by a specific commit (doc-release gate, #602). */
+/** Paths changed by a specific commit (diagnostics / tip inspection; not a merge veto after ADR 0123). */
 export function docReleasePathsFromCommit(
   repoPath: string | undefined,
   commitOid: string | undefined,
@@ -361,6 +364,7 @@ export interface AutoMergeStageInput {
   readonly priorConvergenceRecorded: boolean;
   readonly prMergedMarkerPresent: boolean;
   readonly poll: (round: number) => Promise<PrReviewSnapshot>;
+  /** Optional diagnostic: paths changed by the doc-release commit (not a merge veto after ADR 0123). */
   readonly docReleasePaths?: readonly string[];
   readonly executeMerge?: (prNumber: number) => void;
   /** Live merge confirm retry delay (ms); default 2000. Tests may pass 0. */
@@ -368,8 +372,8 @@ export interface AutoMergeStageInput {
   /** Offline/test: skip live gh pr view/merge and synthesize MERGED from poll readiness. */
   readonly offlineSynthetic?: boolean;
   /**
-   * Test-only hatch: allow offline synthetic merge when docReleasePaths cannot
-   * be verified. Host wiring must never set this; production stays fail-closed.
+   * Deprecated no-op under ADR 0123 (path allowlist removed). Retained so callers
+   * that still pass the field keep type-compatible; merge ignores it.
    */
   readonly allowUnverifiedDocReleasePaths?: boolean;
 }
@@ -425,33 +429,11 @@ function externallyMergedNeverConvergedSummary(): StopSummary {
   };
 }
 
-function nonDocReleaseSummary(): StopSummary {
-  return {
-    reason: "decision_gate_park",
-    summary:
-      "doc-release commit is not doc-only — non-doc paths in the diff fail closed (no auto-merge)",
-    repairHint:
-      "revert non-doc changes from the doc-release commit or answer the decision gate",
-  };
-}
-
-function unverifiedDocReleasePathsSummary(): StopSummary {
-  return {
-    reason: "decision_gate_park",
-    summary:
-      "doc-release commit paths could not be verified — non-doc gate fails closed (no auto-merge)",
-    repairHint:
-      "ensure doc-release completed with a readable commit in the worktree, or answer the decision gate",
-  };
-}
-
-function allowUnverifiedDocReleasePathsHatch(
-  input: Pick<AutoMergeStageInput, "allowUnverifiedDocReleasePaths">,
-): boolean {
-  return input.allowUnverifiedDocReleasePaths === true;
-}
-
-/** Test-only: admit unverified doc paths for offline `pr://` auto-merge fakes. */
+/**
+ * Compat helper retained for callers that still compute the pre-ADR-0123
+ * "unverified doc paths" hatch. Under ADR 0123 the hatch is not a merge veto;
+ * the function remains pure/testable for offline `pr://` admission shape.
+ */
 export function offlineAutoMergeAllowUnverifiedDocPaths(
   prUrl: string,
   repo: string,
@@ -463,28 +445,6 @@ export function offlineAutoMergeAllowUnverifiedDocPaths(
     (docReleasePaths === undefined || docReleasePaths.length === 0) &&
     offlineSyntheticPollAdmissible(prUrl, repo)
   );
-}
-
-function docReleasePathGateResult(
-  docReleasePaths: readonly string[] | undefined,
-  opts?: { readonly allowUnverified?: boolean },
-): AutoMergeStageResult | undefined {
-  if (docReleasePaths === undefined || docReleasePaths.length === 0) {
-    if (opts?.allowUnverified === true) return undefined;
-    return {
-      ok: false,
-      terminalState: "decision_gate",
-      stopSummary: unverifiedDocReleasePathsSummary(),
-    };
-  }
-  if (!isDocOnlyFileList(docReleasePaths)) {
-    return {
-      ok: false,
-      terminalState: "decision_gate",
-      stopSummary: nonDocReleaseSummary(),
-    };
-  }
-  return undefined;
 }
 
 function mergeNotConfirmedSummary(): StopSummary {
@@ -576,13 +536,12 @@ export async function runAutoMergeStage(
         : !isLiveGithubReviewPollEnabled(input.prUrl, input.repo) &&
           process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1";
 
+  // ADR 0123 / #735: auto-merge no longer vetoes on doc-release path allowlist.
+  // Gate = docReleaseCompleted (above) + live readiness on the post-doc tip.
+  // Path helpers (isDocOnlyFileList / docReleasePathsFromCommit) may remain for
+  // diagnostics but must not re-enter as a silent second merge gate.
+
   if (offlineSynthetic) {
-    const offlineDocGate = docReleasePathGateResult(input.docReleasePaths, {
-      allowUnverified: allowUnverifiedDocReleasePathsHatch(input),
-    });
-    if (offlineDocGate !== undefined) {
-      return offlineDocGate;
-    }
     return runOfflineSyntheticAutoMerge(input);
   }
 
@@ -592,11 +551,6 @@ export async function runAutoMergeStage(
     return backfill;
   }
 
-  // Live path: never honor the test-only unverified-paths hatch.
-  const docReleaseGate = docReleasePathGateResult(input.docReleasePaths);
-  if (docReleaseGate !== undefined) {
-    return docReleaseGate;
-  }
   if (live.state === "MERGED") {
     if (!input.priorConvergenceRecorded) {
       return {

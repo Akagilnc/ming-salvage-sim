@@ -982,12 +982,17 @@ export interface CleanupResult {
 }
 
 /**
- * Documentation / release worker output (#596 skeleton). The skeleton stubs a
- * deterministic `released:true` verdict so the S12 step seam is exercisable.
+ * 文档发布 worker output (#735 / S12). Thin schema only: skill success
+ * (including 文档发布空跑) → `released:true`; crash / hang / skill fail /
+ * required push fail → `released:false`. Tip continues via ledger `branchHEAD`.
+ * Offline/test may still synthesize a green stub under the offline hatch only.
  */
 export interface DocReleaseResult {
   readonly kind: "docRelease";
-  /** Whether the doc/release step completed (e.g. VERSION/CHANGELOG bump). */
+  /**
+   * Whether 文档发布 finished successfully (true includes empty-run; false
+   * blocks auto-merge).
+   */
   readonly released: boolean;
 }
 
