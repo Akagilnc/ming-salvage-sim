@@ -49,7 +49,11 @@ function forceFreshSpec(spec: WorkerSpec): WorkerSpec {
 
 /** Strip the resume session id so a retry opens a brand-new session (#598). */
 function stripResume(ctx: DispatchContext): DispatchContext {
-  if (ctx.resumeSessionId == null) return ctx;
+  // Robust guard (typeof === "string"): treat explicit null (or non-string) as
+  // absent so retry always forces fresh. Matches the dispatchWorker decision
+  // and the runner construction. (Presence of a real string id is what is
+  // load-bearing; null must not be "kept as resume".)
+  if (typeof ctx.resumeSessionId !== "string") return ctx;
   const { resumeSessionId: _drop, ...rest } = ctx;
   return rest;
 }
@@ -89,6 +93,14 @@ export interface MechanicalRetryOptions {
    * returns the last synthesized `failed`.
    */
   readonly rethrowOnExhaustion?: boolean;
+  /**
+   * Idempotency hook (#598): reset LOCAL side effects (git HEAD/worktree residue)
+   * to the pre-attempt state BEFORE each retry, so a retry never runs on top of an
+   * uncleaned side effect the previous crashed attempt left behind. Called only
+   * before a retry (never before the first attempt). Remote side effects (pushed
+   * branch, opened PR) must be made idempotent or excluded by the caller.
+   */
+  readonly resetBeforeRetry?: () => Promise<void>;
 }
 
 /**
@@ -111,6 +123,28 @@ export async function withMechanicalRetry(
   for (let attempt = 1; attempt <= MAX_DISPATCH_ATTEMPTS; attempt++) {
     const useSpec = attempt === 1 ? spec : forceFreshSpec(spec);
     const useCtx = attempt === 1 ? ctx : stripResume(ctx);
+    // Idempotency: before a RETRY, reset local git residue the crashed attempt may
+    // have left, so the fresh re-dispatch starts from the pre-attempt state.
+    // #598 r4 (codexB): if the reset FAILS (git lock / permissions), the worktree is
+    // in an unknown/dirty state — do NOT dispatch on it (that would run the worker on
+    // top of an uncleaned side effect, the exact idempotency violation). Instead SKIP
+    // this attempt's dispatch, record a synthetic reset failure, and let the loop retry
+    // the reset next iteration (a transient reset failure recovers; a persistent one
+    // exhausts into the durable abort below — the worker never runs on a dirty state).
+    if (attempt > 1) {
+      try {
+        await opts?.resetBeforeRetry?.();
+      } catch (err) {
+        last = {
+          kind: "failed",
+          reason: `retry reset failed, worker not dispatched on un-reset state: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        };
+        lastAttemptThrew = false;
+        continue;
+      }
+    }
     let result: WorkerResult;
     try {
       result = await dispatch(useSpec, useCtx);
@@ -153,14 +187,15 @@ export async function withMechanicalRetry(
  * The generic mechanical retry for a NON-WorkerResult seam that signals a process
  * crash by THROWING (#598 — the merge-conflict resolver's own call site). Retries
  * `fn` up to a bound when it throws; a RETURNED value (even a judged not-ok, e.g. a
- * merger `{resolved:false}`) is never retried — the caller surfaces it. Each retry
- * continues on the current worktree state as-is. Persistent crash re-throws the last
- * error.
+ * merger `{resolved:false}`) is never retried — the caller surfaces it. A local
+ * side effect the crashed attempt left is reset before each retry via
+ * `resetBeforeRetry`. Persistent crash re-throws the last error.
  */
 export async function retryProcessCrash<T>(
   fn: () => Promise<T>,
   opts?: {
     readonly maxAttempts?: number;
+    readonly resetBeforeRetry?: () => Promise<void>;
   },
 ): Promise<T> {
   const max = opts?.maxAttempts ?? MAX_DISPATCH_ATTEMPTS;
@@ -173,6 +208,18 @@ export async function retryProcessCrash<T>(
   }
   let lastError: unknown;
   for (let attempt = 1; attempt <= max; attempt++) {
+    if (attempt > 1) {
+      // #598 r4 (codexB): a failed reset means the state is unknown/dirty — do NOT run
+      // `fn` on it. Record the reset failure and retry the reset next iteration (a
+      // transient one recovers; a persistent one exhausts into the re-throw below —
+      // `fn` never runs on an un-reset state).
+      try {
+        await opts?.resetBeforeRetry?.();
+      } catch (err) {
+        lastError = err;
+        continue;
+      }
+    }
     try {
       return await fn();
     } catch (err) {

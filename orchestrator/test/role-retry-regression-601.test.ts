@@ -127,6 +127,8 @@ function cleanSuccessTail(spec: WorkerSpec): WorkerResult {
   if (spec.kind === "reviewer") {
     return { kind: "completed", output: { kind: "reviewer", findings: [] } };
   }
+  const sk = skeletonReviewLoopWorkerResult(spec.kind);
+  if (sk !== undefined) return sk;
   return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
 }
 
@@ -203,6 +205,8 @@ class CoderCrashThenConvergeBackend extends RoleRetryBackend {
     if (spec.kind === "ship") {
       return { kind: "completed", output: { kind: "ship", branch: ROLE_WORKTREE.branch, status: "pushed" } };
     }
+    const sk = skeletonReviewLoopWorkerResult(spec.kind);
+    if (sk !== undefined) return sk;
     return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
   }
 }

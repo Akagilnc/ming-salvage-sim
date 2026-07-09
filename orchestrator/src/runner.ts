@@ -376,16 +376,16 @@ function isEscalationAnswerEntry(
   const raw = entry as unknown as Record<string, unknown>;
   return (
     entry.event === "escalation_answered" &&
-    entry.output === undefined &&
-    raw.verdict === undefined &&
+    entry.output == null &&
+    raw.verdict == null &&
     isValidStepId(entry.forStep) &&
     typeof entry.answer === "string" &&
     entry.answer.trim().length > 0 &&
-    (entry.note === undefined || typeof entry.note === "string") &&
-    (entry.source === undefined || isBookkeepingSource(entry.source)) &&
-    (entry.findingIdentityKey === undefined ||
+    (entry.note == null || typeof entry.note === "string") &&
+    (entry.source == null || isBookkeepingSource(entry.source)) &&
+    (entry.findingIdentityKey == null ||
       typeof entry.findingIdentityKey === "string") &&
-    (entry.findingScope === undefined ||
+    (entry.findingScope == null ||
       isFindingRepairScope(entry.findingScope))
   );
 }
@@ -397,19 +397,19 @@ function answerPayload(
     event: "escalation_answered",
     forStep: entry.forStep,
     answer: entry.answer,
-    ...(entry.note !== undefined ? { note: entry.note } : {}),
+    ...(entry.note != null ? { note: entry.note } : {}),
     source: entry.source ?? "human",
-    ...(entry.findingIdentityKey !== undefined
+    ...(entry.findingIdentityKey != null
       ? { findingIdentityKey: entry.findingIdentityKey }
       : {}),
-    ...(entry.findingScope !== undefined
+    ...(entry.findingScope != null
       ? { findingScope: entry.findingScope }
       : {}),
   };
 }
 
 function isBookkeepingEntry(entry: LedgerEntry): boolean {
-  return entry.event !== undefined;
+  return entry.event != null;
 }
 
 function executableLedgerEntries(
@@ -571,16 +571,16 @@ function isContinueFixingEntry(
   const raw = entry as unknown as Record<string, unknown>;
   return (
     entry.event === "runner_bookkeeping" &&
-    entry.output === undefined &&
-    raw.verdict === undefined &&
+    entry.output == null &&
+    raw.verdict == null &&
     entry.intent === "continue_fixing" &&
     isExecutableContinueFixingSource(entry.source) &&
     typeof entry.ts === "string" &&
     entry.ts.trim().length > 0 &&
-    (entry.reason === undefined || typeof entry.reason === "string") &&
-    (entry.findingIdentityKey === undefined ||
+    (entry.reason == null || typeof entry.reason === "string") &&
+    (entry.findingIdentityKey == null ||
       typeof entry.findingIdentityKey === "string") &&
-    (entry.findingScope === undefined ||
+    (entry.findingScope == null ||
       isFindingRepairScope(entry.findingScope))
   );
 }
@@ -899,7 +899,7 @@ function lastAgentEntry(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
 ): PersistentLedgerEntry | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
-    if (ledger[i]!.output !== undefined) return ledger[i];
+    if (ledger[i]!.output != null) return ledger[i];
   }
   return undefined;
 }
@@ -913,7 +913,7 @@ function lastAgentStep(
   ledger: ReadonlyArray<LedgerEntry>,
 ): StepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
-    if (ledger[i]!.output !== undefined) return ledger[i]!.step;
+    if (ledger[i]!.output != null) return ledger[i]!.step;
   }
   return undefined;
 }
@@ -985,7 +985,7 @@ function isRecoverableCoderProtocolFailure(
   if (
     entry.step !== "S8" ||
     entry.handoffStatus !== "error" ||
-    entry.stopSummary === undefined
+    entry.stopSummary == null
   ) {
     return false;
   }
@@ -1009,7 +1009,7 @@ function protocolFailedLandedCoderStep(
   const entry = ledger[i]!;
   if (
     (entry.step !== "S2" && entry.step !== "S5") ||
-    entry.output !== undefined ||
+    entry.output != null ||
     !isLikelyGitSha(entry.branchHEAD)
   ) {
     return undefined;
@@ -1296,6 +1296,14 @@ function planResume(
   const lastEntryIndex = ledger.lastIndexOf(lastEntry);
   const agentEntry = lastAgentEntry(executableLedger);
 
+  // #709 exemption: keep strict !== undefined (not != null) — escalationKind presence
+  // on S8(escalate) distinguishes legacy untagged (absent → fallthrough to Case 2
+  // agentEscalate + answer reopen logic) from tagged kind (present → use "decision"
+  // vs "failure" to decide reopen vs always-terminal). Traced: planResume Case1 vs
+  // Case2/3a; familyEscalationState uses ==/=== directly; "unknown tagged" test forces
+  // terminal for non-decision even w/ answer. null-vs-undefined load-bearing for
+  // resume routing on deserialized persisted ledger (same JSONL class as stopSummary).
+  // Explicit null treated as "tagged invalid kind" (terminal) not "absent legacy".
   if (
     lastEntry.step === "S8" &&
     lastEntry.handoffStatus === "escalate" &&
@@ -1385,7 +1393,8 @@ function planResume(
       const escalatedLedgerIdx = ledger.lastIndexOf(agentEntry);
       return {
         resumeStep: agentEntry.step,
-        resumeSessionId: agentEntry.sessionId,
+        resumeSessionId:
+          typeof agentEntry.sessionId === "string" ? agentEntry.sessionId : undefined,
         escalationAnswer: answer,
         lastOutput: agentEntry.output,
         priorLedger: ledger.slice(0, escalatedLedgerIdx) as ReadonlyArray<LedgerEntry>,
@@ -1460,7 +1469,8 @@ function planResume(
     const priorLedger = ledger.slice(0, escalatedLedgerIdx);
     return {
       resumeStep: agentEntry.step,
-      resumeSessionId: agentEntry.sessionId,
+      resumeSessionId:
+        typeof agentEntry.sessionId === "string" ? agentEntry.sessionId : undefined,
       escalationAnswer: answer,
       lastOutput: agentEntry.output,
       priorLedger: priorLedger as ReadonlyArray<LedgerEntry>,
@@ -1859,7 +1869,7 @@ function latestLedgerStopSummary(
 ): StopSummary | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const stopSummary = ledger[i]!.stopSummary;
-    if (stopSummary !== undefined) return stopSummary;
+    if (stopSummary != null) return stopSummary;
   }
   return undefined;
 }
@@ -2761,7 +2771,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // Continue from the recorded breakpoint.
     step = plan.resumeStep;
-    if (plan.resumeSessionId !== undefined) {
+    if (typeof plan.resumeSessionId === "string") {
       resumeFor = { step: plan.resumeStep, sessionId: plan.resumeSessionId };
     }
     resumedEscalationAnswer = plan.escalationAnswer;
@@ -2924,7 +2934,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           expectedKind === "coder" ? gitHead(worktree) : undefined;
         try {
           let resumeSessionId: string | undefined;
-          if (resumeFor !== undefined && resumeFor.step === step) {
+          if (resumeFor !== undefined && resumeFor.step === step && typeof resumeFor.sessionId === "string") {
             resumeSessionId = resumeFor.sessionId;
             resumeFor = undefined;
           }
@@ -2945,12 +2955,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             try {
               const workerSpec = stepSpecToWorkerSpec(
                 stepSpecs[step],
-                resumeSessionId != null ? "resume" : "fresh",
+                typeof resumeSessionId === "string" ? "resume" : "fresh",
               );
               const dispatchCtx = {
                 worktree,
                 stateDir,
-                ...(resumeSessionId != null ? { resumeSessionId } : {}),
+                ...(typeof resumeSessionId === "string" ? { resumeSessionId } : {}),
                 ...(escalationAnswerForStep != null
                   ? { escalationAnswer: escalationAnswerForStep }
                   : {}),
@@ -2984,9 +2994,34 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               //    crash (connection drop / container start), recovering a transient one;
               //    a persistent crash is re-thrown so the reviewer loop surfaces it.
               //
-              // Crash retry (#598 / 2026-07-08): re-dispatch a fresh session on the
-              // CURRENT worktree as-is — no reset, no git clean. Downstream CMR + online
-              // bot gates catch anything wrong; crashes are rare.
+              // Idempotency (#598, from main): before any retry, reset the worktree's
+              // UNCOMMITTED git residue (`cleanResidue` = reset --hard HEAD + clean -fd)
+              // the crashed attempt may have left, so the fresh re-dispatch does not run
+              // on top of a dirty index / untracked junk. Committed progress on the
+              // resident branch HEAD is deliberately preserved (cleanResidue contract /
+              // ADR 0024 — it is the resume anchor). A worktree-less family worker has
+              // no local residue.
+              //
+              // DEFERRED (#661, needs-design): a coder that COMMITTED a partial attempt
+              // then crashed keeps that commit at HEAD, so the retry continues on it
+              // rather than a strict pre-attempt HEAD. Unlike the merge-resolver's
+              // committed-then-crashed case (data loss — fixed in this PR), a coder
+              // continuing on preserved progress is bounded (the reviewer catches broken
+              // partial work) and is what ADR 0024 intends; whether a mechanical retry
+              // should override that committed-preservation is a design decision.
+              //
+              // Note: S9 online-review verify uses a separate path with read-only
+              // contract_drift (no cleanResidue) — that intent is preserved there.
+              const worktreeForReset = worktree;
+              // #709 exemption: keep strict !== undefined (not != null) for reset wiring on retry path;
+              // worktree is | undefined (never null in this scope), and the sentinel/omission in opts must
+              // preserve the exact absent-vs-present for the mechanical retry layer's optional resetBeforeRetry.
+              const resetBeforeRetry =
+                worktreeForReset !== undefined
+                  ? () => backend.cleanResidue(worktreeForReset)
+                  : undefined;
+              const baseReset =
+                resetBeforeRetry !== undefined ? { resetBeforeRetry } : {};
               const retryOpts: MechanicalRetryOptions =
                 expectedKind === "reviewer"
                   ? {
@@ -2995,8 +3030,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                           ? true
                           : isReviewerStructuredOutputError(o.error),
                       rethrowOnExhaustion: true,
+                      ...baseReset,
                     }
-                  : {};
+                  : baseReset;
               result = await withMechanicalRetry(
                 workerSpec,
                 dispatchCtx,
@@ -3195,12 +3231,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // — a decided delivery failure is never re-run. This is the SAME shared
           // `withMechanicalRetry` path the coder uses (#592 "no role treated specially"):
           // the structural no-output case retries, the judged-verdict case does not.
+          // The worktree's uncommitted residue is reset before each retry (idempotency);
+          // gstack-ship's re-runnable design keeps push/PR idempotent. (from main)
+          const shipWorktree = worktree;
+          // Mirror the coder/reviewer reset guard: only wire cleanResidue when a
+          // worktree exists (a worktree-less worker has no local residue), so a retry
+          // never calls cleanResidue(undefined). (gemini R1 — the coder path already
+          // guards; the ship path must match.)
+          // #709 exemption: strict !== undefined (not loose) — the resetBeforeRetry presence in
+          // MechanicalRetryOptions is load-bearing for whether retry path attempts reset on crash.
+          const shipResetOpt =
+            shipWorktree !== undefined
+              ? { resetBeforeRetry: () => backend.cleanResidue(shipWorktree) }
+              : {};
           const shipResult = await withMechanicalRetry(
             shipSpec,
             shipCtx,
             (s, c) => dispatchWorker(backend, s, c),
             {
               callerOwns: (o) => "result" in o && o.result.kind === "failed",
+              ...shipResetOpt,
             },
           );
           // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
