@@ -5,6 +5,8 @@
  * re-queries live GitHub state (mergeStateStatus / threads / CI), never a cache.
  */
 
+import { execFileSync } from "node:child_process";
+
 import {
   classifyCheckRuns,
   isLiveGithubReviewPollEnabled,
@@ -76,6 +78,53 @@ export function isDocOnlyPath(path: string): boolean {
 /** Fail closed when any changed path falls outside the doc-release allow-list. */
 export function isDocOnlyFileList(files: readonly string[]): boolean {
   return files.length > 0 && files.every(isDocOnlyPath);
+}
+
+function normalizeDocReleaseGitPath(line: string): string | undefined {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return undefined;
+  const renameTarget = trimmed.includes(" -> ")
+    ? trimmed.slice(trimmed.lastIndexOf(" -> ") + 4)
+    : trimmed;
+  const unquoted =
+    renameTarget.startsWith('"') && renameTarget.endsWith('"')
+      ? renameTarget.slice(1, -1)
+      : renameTarget;
+  const normalized = unquoted.trim().replace(/\\/g, "/");
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+/** Paths changed by a specific commit (doc-release gate, #602). */
+export function docReleasePathsFromCommit(
+  repoPath: string | undefined,
+  commitOid: string | undefined,
+): readonly string[] | undefined {
+  if (repoPath === undefined || commitOid === undefined) return undefined;
+  const oid = commitOid.trim();
+  if (oid.length === 0) return undefined;
+  try {
+    const raw = execFileSync(
+      "git",
+      [
+        "-C",
+        repoPath,
+        "diff-tree",
+        "--root",
+        "--no-commit-id",
+        "--name-only",
+        "-r",
+        oid,
+      ],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    );
+    const paths = raw
+      .split(/\r?\n/)
+      .map((line) => normalizeDocReleaseGitPath(line))
+      .filter((p): p is string => p !== undefined);
+    return paths.length > 0 ? paths : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parsePrMergeLivePayload(raw: string, prUrl: string): PrMergeLiveState {

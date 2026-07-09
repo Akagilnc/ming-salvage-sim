@@ -586,6 +586,12 @@ export interface FamilyBackend {
     request: VerifyFamilyShippedPrRequest,
   ): Promise<VerifyFamilyShippedPrResult>;
   /**
+   * Absolute git working directory for the family base clone (#602 doc-release
+   * fail-closed path reads). Optional — when absent, auto-merge skips the
+   * non-doc diff gate (offline/test fakes).
+   */
+  resolveFamilyWorkingRepo?(): string | undefined;
+  /**
    * #298-OWNED aborted-event seam — #296 only CALLS it. A red verify writes an
    * `aborted` event (携带错误包 + the family base at the time) so a failed wave is
    * NOT silently dropped (decision 3④/5 "不静默吞"). The CONCRETE ledger schema

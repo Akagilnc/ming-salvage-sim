@@ -57,7 +57,10 @@ import type { FamilyModuleContext } from "./moduleDeclaration.js";
 import { execFileSync } from "node:child_process";
 
 import { isLiveGithubReviewPollEnabled, pollPrReviewState } from "../botPolling.js";
-import { runAutoMergeStage } from "../autoMerge.js";
+import {
+  familyAutoMergeIncomplete,
+  runFamilyAutoMergeStage,
+} from "./familyAutoMerge.js";
 import {
   buildRoundTrigger,
   convergenceHeadToRecord,
@@ -138,8 +141,6 @@ import {
   recordOnlineReviewFixCommitted,
   recordOnlineReviewRoundRetrigger,
   recordReviewLoopConverged,
-  recordPrMerged,
-  familyPrMergedForHead,
   recordShipped,
 } from "./ledger.js";
 import { isFilledString } from "../shipOutcome.js";
@@ -3131,49 +3132,17 @@ export async function runVerifyCmr(
       : {}),
   });
 
-  const ghSh = (file: string, args: string[]) =>
-    execFileSync(file, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-    }).trim();
-  const familyRepo =
-    process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
-  const familyLedgerAfterConverge = await familyBackend.readFamilyLedger();
-  const priorPrMerged = familyPrMergedForHead(
-    familyLedgerAfterConverge,
-    convergedFamilyHead,
-  );
   const shipPr = ship.pr;
   if (shipPr == null || shipPr.trim().length === 0) {
     return INCOMPLETE_GATE;
   }
-  const autoMerge = await runAutoMergeStage({
-    sh: ghSh,
-    repo: familyRepo,
-    prUrl: shipPr,
+  const autoMerge = await runFamilyAutoMergeStage({
+    familyBackend,
+    familyBase,
     convergedHeadOid: convergedFamilyHead,
-    docReleaseCompleted: true,
-    priorConvergenceRecorded: true,
-    prMergedMarkerPresent: priorPrMerged !== undefined,
-    offlineSynthetic: !isLiveGithubReviewPollEnabled(shipPr, familyRepo),
-    poll: async (round) => {
-      if (isLiveGithubReviewPollEnabled(shipPr, familyRepo)) {
-        return pollPrReviewState(ghSh, {
-          repo: familyRepo,
-          prUrl: shipPr,
-          pollCount: round,
-          roundTrigger: buildRoundTrigger(convergedFamilyHead),
-        });
-      }
-      return offlinePrReviewSnapshot({
-        repo: familyRepo,
-        prUrl: shipPr,
-        headOid: convergedFamilyHead,
-        pollCount: round,
-      });
-    },
+    prUrl: shipPr,
   });
-  if (!autoMerge.ok || autoMerge.record === undefined) {
+  if (familyAutoMergeIncomplete(autoMerge)) {
     const stopSummary =
       autoMerge.stopSummary ??
       decisionGateParkStopSummary({
@@ -3194,15 +3163,6 @@ export async function runVerifyCmr(
       stopSummary,
     });
     return INCOMPLETE_GATE;
-  }
-  if (autoMerge.terminalState === "merged") {
-    await recordPrMerged(familyBackend, {
-      pr: shipPr,
-      prNumber: autoMerge.record.prNumber,
-      remoteBranchName: autoMerge.record.remoteBranchName,
-      mergedHeadOid: autoMerge.record.mergedHeadOid,
-      familyHeadAfter: convergedFamilyHead,
-    });
   }
   return { ok: true, ran: true };
 }
