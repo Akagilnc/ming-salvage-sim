@@ -75,6 +75,7 @@ import {
 } from "./botPolling.js";
 import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetry.js";
 import {
+  docReleasePathsFromCommit,
   isPrMergedMarker,
   runAutoMergeStage,
   type PrMergedTerminalRecord,
@@ -693,16 +694,8 @@ export function docReleasePathsFromHead(
   worktree: WorktreeHandle | undefined,
 ): readonly string[] | undefined {
   if (worktree === undefined) return undefined;
-  const paths = gitOutputLines(worktree, [
-    "diff-tree",
-    "--no-commit-id",
-    "--name-only",
-    "-r",
-    "HEAD",
-  ])
-    .map((line) => normalizeGitPath(line))
-    .filter((p): p is string => p !== undefined);
-  return paths.length > 0 ? paths : undefined;
+  const head = gitHead(worktree);
+  return docReleasePathsFromCommit(worktree.path, head);
 }
 
 function actualRepairMovementPaths(

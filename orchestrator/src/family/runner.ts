@@ -44,6 +44,7 @@ import {
   familyEscalationState,
   familyReviewLoopConvergedForHead,
   familyShippedRecordForReviewLoopResume,
+  familyPrMergedForHead,
   hasBoundShippedMarker,
   hasUnboundLegacyShippedMarker,
   isMergedAccountingEntry,
@@ -59,8 +60,13 @@ import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import { convergenceHeadToRecord } from "../evidenceAdmissibility.js";
 import { runFamilyOnlineReviewLoop, runVerifyCmr } from "./verifyCmr.js";
+import {
+  familyAutoMergeIncomplete,
+  runFamilyAutoMergeStage,
+} from "./familyAutoMerge.js";
 import { buildFamilyModuleContext } from "./moduleDeclaration.js";
 import {
+  decisionGateParkStopSummary,
   infraFailureStopSummary,
   successStopSummary,
   type StopSummary,
@@ -1465,6 +1471,45 @@ export async function runFamily(
         children,
       };
     }
+
+    const priorPrMerged = familyPrMergedForHead(preFinalLedger, preFinalFamilyHead);
+    if (priorPrMerged === undefined) {
+      const autoMerge = await runFamilyAutoMergeStage({
+        familyBackend,
+        familyBase,
+        convergedHeadOid: preFinalFamilyHead!,
+        prUrl: convergedRecord.pr,
+      });
+      if (familyAutoMergeIncomplete(autoMerge)) {
+        const stopSummary =
+          autoMerge.stopSummary ??
+          decisionGateParkStopSummary({
+            summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
+            repairHint:
+              "resolve merge blockers or answer the decision gate, then re-feed the family run",
+          });
+        await recordFamilyEscalated(familyBackend, {
+          escalationKind: "failure",
+          phase: "final",
+          reason: stopSummary.summary,
+          familyHeadAfter: preFinalFamilyHead,
+        });
+        return {
+          status: "escalated",
+          familyBase,
+          familyHead: preFinalFamilyHead,
+          stopSummary: familyStopSummary({
+            status: "escalated",
+            familyBase,
+            familyHead: preFinalFamilyHead,
+            children,
+            escalationReason: stopSummary.summary,
+          }),
+          children,
+        };
+      }
+    }
+
     familyHead = preFinalFamilyHead;
     const convergedVerifiedCmrHead =
       convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??

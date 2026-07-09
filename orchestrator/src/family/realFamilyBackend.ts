@@ -613,6 +613,10 @@ export class RealFamilyBackend implements FamilyBackend {
     return trimmed.length === 0 ? [] : trimmed.split(/\r?\n/);
   }
 
+  resolveFamilyWorkingRepo(): string {
+    return this.opts.workingRepo;
+  }
+
   // ─────────────────────────── merge ───────────────────────────
 
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {

@@ -17,12 +17,18 @@ import {
   mergeReadinessStopSummary,
   runAutoMergeStage,
   tryResumePrMergedBackfill,
+  docReleasePathsFromCommit,
 } from "../src/autoMerge.js";
 import type { PrReviewSnapshot } from "../src/botPolling.js";
 import { docReleaseWorkerSpec } from "../src/dispatchWorker.js";
 import { RealBackend, SPAWNED_WORKER_ENV } from "../src/realBackend.js";
 import { stepSpecToWorkerSpec } from "../src/dispatchWorker.js";
 import { docReleasePathsFromHead } from "../src/runner.js";
+import {
+  familyAutoMergeIncomplete,
+  runFamilyAutoMergeStage,
+} from "../src/family/familyAutoMerge.js";
+import type { FamilyBackend, FamilyLedgerEntry } from "../src/family/types.js";
 
 const REPO = "Akagilnc/ming-salvage-sim";
 const PR_URL = "https://github.com/Akagilnc/ming-salvage-sim/pull/602";
@@ -83,6 +89,117 @@ describe("#602 isDocOnlyFileList", () => {
   it("rejects non-doc paths fail-closed", () => {
     expect(isDocOnlyFileList(["orchestrator/src/runner.ts"])).toBe(false);
     expect(isDocOnlyFileList(["VERSION", "ming_sim/db.py"])).toBe(false);
+  });
+});
+
+describe("#602 docReleasePathsFromCommit", () => {
+  it("reads paths from a specific commit OID (not just worktree HEAD)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "doc-release-commit-"));
+    const git = (args: string[]) =>
+      execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+    git(["init"]);
+    git(["config", "user.email", "t@example.com"]);
+    git(["config", "user.name", "t"]);
+    writeFileSync(join(dir, "VERSION"), "1.0.0\n");
+    git(["add", "."]);
+    git(["commit", "-m", "doc-release"]);
+    const docReleaseOid = git(["rev-parse", "HEAD"]).trim();
+    writeFileSync(join(dir, "bad.ts"), "x\n");
+    git(["add", "."]);
+    git(["commit", "-m", "later"]);
+
+    expect(docReleasePathsFromCommit(dir, docReleaseOid)).toEqual(["VERSION"]);
+    expect(docReleasePathsFromCommit(dir, git(["rev-parse", "HEAD"]).trim())).toEqual([
+      "bad.ts",
+    ]);
+  });
+});
+
+describe("#602 runFamilyAutoMergeStage", () => {
+  class MinimalFamilyBackend implements FamilyBackend {
+    readonly ledger: FamilyLedgerEntry[] = [];
+    readonly workingRepo?: string;
+    constructor(workingRepo?: string) {
+      this.workingRepo = workingRepo;
+    }
+    async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
+      return { familyHead: "head" };
+    }
+    async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+      this.ledger.push(entry);
+    }
+    async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+      return this.ledger;
+    }
+    resolveFamilyWorkingRepo(): string | undefined {
+      return this.workingRepo;
+    }
+  }
+
+  it("records pr_merged on offline happy path", async () => {
+    const backend = new MinimalFamilyBackend();
+    const result = await runFamilyAutoMergeStage({
+      familyBackend: backend,
+      familyBase: "family/base",
+      convergedHeadOid: "head-ready",
+      prUrl: "pr://family/offline-602",
+    });
+    expect(familyAutoMergeIncomplete(result)).toBe(false);
+    expect(backend.ledger.filter((e) => e.status === "pr_merged")).toHaveLength(1);
+    expect(backend.ledger[0]).toMatchObject({
+      event: "pr_merged",
+      pr: "pr://family/offline-602",
+      familyHeadAfter: "head-ready",
+    });
+  });
+
+  it("already_recorded when pr_merged marker exists", async () => {
+    const backend = new MinimalFamilyBackend();
+    backend.ledger.push({
+      status: "pr_merged",
+      event: "pr_merged",
+      phase: "final",
+      pr: "pr://family/offline-602",
+      prNumber: 602,
+      remoteBranchName: "feat/x",
+      mergedHeadOid: "head-ready",
+      familyHeadAfter: "head-ready",
+    });
+    const result = await runFamilyAutoMergeStage({
+      familyBackend: backend,
+      familyBase: "family/base",
+      convergedHeadOid: "head-ready",
+      prUrl: "pr://family/offline-602",
+    });
+    expect(result.terminalState).toBe("already_recorded");
+    expect(familyAutoMergeIncomplete(result)).toBe(false);
+    expect(backend.ledger.filter((e) => e.status === "pr_merged")).toHaveLength(1);
+  });
+
+  it("fail-closed on non-doc doc-release paths when working repo is available", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "family-non-doc-"));
+    const git = (args: string[]) =>
+      execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+    git(["init"]);
+    git(["config", "user.email", "t@example.com"]);
+    git(["config", "user.name", "t"]);
+    writeFileSync(join(dir, "orchestrator-src.ts"), "x\n");
+    git(["add", "."]);
+    git(["commit", "-m", "non-doc release"]);
+    const headOid = git(["rev-parse", "HEAD"]).trim();
+    expect(docReleasePathsFromCommit(dir, headOid)).toEqual(["orchestrator-src.ts"]);
+
+    const backend = new MinimalFamilyBackend(dir);
+    const result = await runFamilyAutoMergeStage({
+      familyBackend: backend,
+      familyBase: "family/base",
+      convergedHeadOid: headOid,
+      prUrl: "pr://family/offline-602",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate");
+    expect(result.stopSummary?.summary).toMatch(/non-doc/i);
+    expect(backend.ledger.filter((e) => e.status === "pr_merged")).toHaveLength(0);
   });
 });
 
