@@ -259,6 +259,7 @@ export function prMergedRecordFromLive(
 ): PrMergedTerminalRecord | undefined {
   if (live.state !== "MERGED") return undefined;
   if (live.headOid.length === 0) return undefined;
+  if (live.headOid !== convergedHeadOid) return undefined;
   return {
     prUrl: live.prUrl,
     prNumber: live.prNumber,
@@ -362,6 +363,36 @@ function nonDocReleaseSummary(): StopSummary {
   };
 }
 
+function unverifiedDocReleasePathsSummary(): StopSummary {
+  return {
+    reason: "decision_gate_park",
+    summary:
+      "doc-release commit paths could not be verified — non-doc gate fails closed (no auto-merge)",
+    repairHint:
+      "ensure doc-release completed with a readable commit in the worktree, or answer the decision gate",
+  };
+}
+
+function docReleasePathGateResult(
+  docReleasePaths: readonly string[] | undefined,
+): AutoMergeStageResult | undefined {
+  if (docReleasePaths === undefined || docReleasePaths.length === 0) {
+    return {
+      ok: false,
+      terminalState: "decision_gate",
+      stopSummary: unverifiedDocReleasePathsSummary(),
+    };
+  }
+  if (!isDocOnlyFileList(docReleasePaths)) {
+    return {
+      ok: false,
+      terminalState: "decision_gate",
+      stopSummary: nonDocReleaseSummary(),
+    };
+  }
+  return undefined;
+}
+
 function mergeNotConfirmedSummary(): StopSummary {
   return {
     reason: "infra_failure",
@@ -440,18 +471,12 @@ export async function runAutoMergeStage(
     return backfill;
   }
 
-  if (
-    input.docReleasePaths !== undefined &&
-    !isDocOnlyFileList(input.docReleasePaths)
-  ) {
-    return {
-      ok: false,
-      terminalState: "decision_gate",
-      stopSummary: nonDocReleaseSummary(),
-    };
+  const docReleaseGate = docReleasePathGateResult(input.docReleasePaths);
+  if (docReleaseGate !== undefined) {
+    return docReleaseGate;
   }
 
-  const live = fetchPrMergeLiveState(input.sh, input.repo, input.prUrl);
+  let live = fetchPrMergeLiveState(input.sh, input.repo, input.prUrl);
   if (live.state === "MERGED") {
     if (!input.priorConvergenceRecorded) {
       return {
@@ -464,9 +489,17 @@ export async function runAutoMergeStage(
     if (record !== undefined) {
       return { ok: true, terminalState: "merged", record };
     }
+    return {
+      ok: false,
+      terminalState: "decision_gate",
+      stopSummary: mergeNotConfirmedSummary(),
+    };
   }
 
   const snapshot = await input.poll(1);
+  if (snapshot.headOid !== live.headOid) {
+    live = fetchPrMergeLiveState(input.sh, input.repo, input.prUrl);
+  }
   const readiness = assessMergeReadiness(live, snapshot);
   if (!readiness.ready) {
     const pendingOnly =
