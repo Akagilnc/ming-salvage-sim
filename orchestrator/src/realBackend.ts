@@ -1985,8 +1985,31 @@ export const fixerOutputSchema = z
     }
   });
 export const cleanupOutputSchema = z
-  .object({ ok: z.boolean() })
-  .strict();
+  .object({
+    terminal: z.boolean(),
+    ok: z.boolean(),
+    issuesClosed: z.array(z.number().int().positive()).optional(),
+    parentIssueClosed: z.boolean().optional(),
+    branchOutcome: z
+      .enum([
+        "deleted",
+        "already_gone",
+        "skipped_tip_drift",
+        "skipped_pr_not_merged",
+        "skipped_precondition",
+      ])
+      .optional(),
+    skippedReasons: z.array(z.string()).optional(),
+  })
+  .strict()
+  .superRefine((val, ctx) => {
+    if (val.terminal === false && val.ok === true) {
+      ctx.addIssue({
+        code: "custom",
+        message: "non-terminal cleanup must not report ok:true",
+      });
+    }
+  });
 export const docReleaseOutputSchema = z
   .object({ released: z.boolean() })
   .strict();
@@ -2864,7 +2887,19 @@ export class RealBackend implements Backend {
     }
     if (spec.role === "cleanup") {
       const c = cleanupOutputSchema.parse(raw);
-      const candidate: CleanupResult = { kind: "cleanup", ok: c.ok };
+      const candidate: CleanupResult = {
+        kind: "cleanup",
+        terminal: c.terminal,
+        ok: c.ok,
+        ...(c.issuesClosed !== undefined ? { issuesClosed: c.issuesClosed } : {}),
+        ...(c.parentIssueClosed === true ? { parentIssueClosed: true } : {}),
+        ...(c.branchOutcome !== undefined
+          ? { branchOutcome: c.branchOutcome }
+          : {}),
+        ...(c.skippedReasons !== undefined
+          ? { skippedReasons: c.skippedReasons }
+          : {}),
+      };
       if (!isValidCleanupResult(candidate)) {
         const err = new Error(
           "realBackend: cleanup output did not satisfy isValidCleanupResult guard",
@@ -3526,6 +3561,24 @@ export class RealBackend implements Backend {
   // ── #255: clean uncommitted residue before reuse ───────────────────────────
   async cleanResidue(worktree: WorktreeHandle): Promise<void> {
     this.cleanResidueAt(worktree.path);
+  }
+
+  /**
+   * Terminal-success GC (#603 / ADR 0024): remove the resident slice worktree.
+   * Scoped to the worktree path only — no repo-level prune.
+   */
+  async reapResidentWorktree(worktree: WorktreeHandle): Promise<void> {
+    return runExclusive(this.workingRepo, () => {
+      try {
+        this.sh(
+          "git",
+          ["worktree", "remove", "--force", worktree.path],
+          this.workingRepo,
+        );
+      } catch {
+        // Best-effort: a missing worktree is already reclaimed.
+      }
+    });
   }
 
   /**

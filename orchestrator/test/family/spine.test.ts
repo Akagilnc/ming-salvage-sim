@@ -228,6 +228,18 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         mergedHeadOid: "family-base-0",
         familyHeadAfter: "family-base-0",
       },
+      {
+        status: "post_merge_cleanup",
+        event: "post_merge_cleanup",
+        phase: "final",
+        familyHeadAfter: "family-base-0",
+        cleanupOutput: {
+          kind: "cleanup",
+          terminal: true,
+          ok: true,
+          branchOutcome: "already_gone",
+        },
+      },
     );
     familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
 
@@ -241,6 +253,125 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     expect(result.status).toBe("success");
     expect(result.stopSummary?.reason).toBe("already_done");
     expect(familyBackend.ledger.filter((e) => e.status === "pr_merged")).toHaveLength(1);
+    expect(
+      familyBackend.ledger.filter((e) => e.status === "post_merge_cleanup"),
+    ).toHaveLength(1);
+  });
+
+  it("#603: family cleanup failed/malformed abort includes worker reason", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
+      {
+        status: "review_loop_converged",
+        event: "review_loop_converged",
+        phase: "final",
+        pr: "pr://family/293-base",
+        familyHeadAfter: "family-base-0",
+      },
+      {
+        status: "pr_merged",
+        event: "pr_merged",
+        phase: "final",
+        pr: "pr://family/293-base",
+        prNumber: 293,
+        remoteBranchName: "family/293-base",
+        mergedHeadOid: "family-base-0",
+        familyHeadAfter: "family-base-0",
+      },
+    );
+    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
+    familyBackend.dispatchWorker = async (spec: any) => {
+      if (spec.kind === "cleanup") {
+        return {
+          kind: "failed",
+          reason: "gh auth expired while closing issues",
+        };
+      }
+      return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("escalated");
+    const reason =
+      result.stopSummary?.summary ??
+      result.stopSummary?.repairHint ??
+      "";
+    expect(reason).toMatch(/gh auth expired while closing issues/);
+    expect(reason).toMatch(/failed/);
+  });
+
+  it("#603: pr_merged without terminal cleanup re-enters cleanup before already_done", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
+      {
+        status: "review_loop_converged",
+        event: "review_loop_converged",
+        phase: "final",
+        pr: "pr://family/293-base",
+        familyHeadAfter: "family-base-0",
+      },
+      {
+        status: "pr_merged",
+        event: "pr_merged",
+        phase: "final",
+        pr: "pr://family/293-base",
+        prNumber: 293,
+        remoteBranchName: "family/293-base",
+        mergedHeadOid: "family-base-0",
+        familyHeadAfter: "family-base-0",
+      },
+    );
+    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
+    let cleanupDispatched = 0;
+    familyBackend.dispatchWorker = async (spec: any) => {
+      if (spec.kind === "cleanup") {
+        cleanupDispatched += 1;
+        return {
+          kind: "completed",
+          output: {
+            kind: "cleanup",
+            terminal: true,
+            ok: true,
+            branchOutcome: "deleted",
+            issuesClosed: [10],
+          },
+        };
+      }
+      return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(cleanupDispatched).toBe(1);
+    expect(result.status).toBe("success");
+    expect(result.stopSummary?.reason).toBe("already_done");
+    const cleanupRows = familyBackend.ledger.filter(
+      (e) => e.status === "post_merge_cleanup",
+    );
+    expect(cleanupRows).toHaveLength(1);
+    expect(cleanupRows[0]).toMatchObject({
+      familyHeadAfter: "family-base-0",
+      cleanupOutput: expect.objectContaining({
+        terminal: true,
+        ok: true,
+        branchOutcome: "deleted",
+      }),
+    });
   });
 
   it("shipped-only (bound to current head, no review_loop_converged) continues into review-loop: writes converged marker, reports already_done, no re-ship (F2)", async () => {
@@ -320,6 +451,18 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         remoteBranchName: "family/293-base",
         mergedHeadOid: "family-base-0",
         familyHeadAfter: "family-base-0",
+      },
+      {
+        status: "post_merge_cleanup",
+        event: "post_merge_cleanup",
+        phase: "final",
+        familyHeadAfter: "family-base-0",
+        cleanupOutput: {
+          kind: "cleanup",
+          terminal: true,
+          ok: true,
+          branchOutcome: "already_gone",
+        },
       },
     );
     let verifyCalled = false;
@@ -559,7 +702,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
                   fixCommitSha: "fixsha1111111111111111111111111111111111",
                 }
                 : spec.kind === "cleanup"
-                  ? { kind: "cleanup", ok: true }
+                  ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
                   : { kind: "docRelease", released: true },
         };
       }

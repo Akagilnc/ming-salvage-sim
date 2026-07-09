@@ -1447,7 +1447,7 @@ describe("#602 runOrchestrator slice path — AC8 pr_merged ledger", () => {
     const result = await runOrchestrator({ issueNumber: 602, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.dispatchSpecs.map((s) => s.id)).toEqual(["S11", "S12"]);
+    expect(backend.dispatchSpecs.map((s) => s.id)).toEqual(["S12", "S11"]);
     const marker = result.stepLedger.find((e) => e.event === "pr_merged");
     expect(marker).toMatchObject({
       step: "S12",

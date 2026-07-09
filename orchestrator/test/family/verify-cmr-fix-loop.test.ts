@@ -34,11 +34,11 @@ const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
 } as const;
 
-/** #600: successful pr_opened ship is followed by the shared online review-loop stage. */
+/** #600/#603: successful pr_opened ship → verify → docRelease → post-merge cleanup. */
 const ONLINE_REVIEW_DISPATCH_TAIL = [
   expect.objectContaining({ kind: "verify", promptFile: "verify.md" }),
-  expect.objectContaining({ kind: "cleanup", promptFile: "cleanup.md" }),
   expect.objectContaining({ kind: "docRelease", promptFile: "docRelease.md" }),
+  expect.objectContaining({ kind: "cleanup", promptFile: "cleanup.md" }),
 ] as const;
 
 /** Deterministic skeleton for verify/fixer/cleanup/docRelease after ship (#600). */
@@ -2781,8 +2781,8 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       "cmr",
       "ship",
       "verify",
-      "cleanup",
       "docRelease",
+      "cleanup",
     ]);
   });
 
