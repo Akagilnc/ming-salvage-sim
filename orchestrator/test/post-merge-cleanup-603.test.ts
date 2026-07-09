@@ -14,9 +14,12 @@ import {
   type PostMergeCleanupActs,
 } from "../src/postMergeCleanup.js";
 import {
+  cleanupResultReclaimEligible,
+  shouldReclaimFamilyHost,
   shouldReclaimSliceHost,
   sliceCleanupTerminalForReclaim,
 } from "../src/hostReclaim.js";
+import type { FamilyLedgerEntry } from "../src/family/types.js";
 import { isValidCleanupResult } from "../src/reviewLoopOutcome.js";
 import type { CleanupResult, LedgerEntry } from "../src/types.js";
 
@@ -199,8 +202,54 @@ describe("#603 runPostMergeCleanup — live verify before act (AC1)", () => {
     });
     expect(deleted).toBe(false);
     expect(result.branchOutcome).toBe("skipped_tip_drift");
+    expect(result.terminal).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(cleanupResultReclaimEligible(result)).toBe(false);
+  });
+
+  it("does not fabricate MERGED offline without ORCHESTRATOR_OFFLINE_REVIEW_POLL=1 (#602 parity)", () => {
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
+    const result = runPostMergeCleanup({
+      sh: fakeSh({
+        "gh pr view": () => {
+          throw new Error("live gh pr view must run when offline hatch is off");
+        },
+      }),
+      repo: REPO,
+      coveredIssues: [603],
+      prMerged: PR_MERGED,
+      fetchIssueState: () => "CLOSED",
+      branchExists: () => false,
+    });
+    expect(result.terminal).toBe(false);
+    expect(result.skippedReasons?.some((r) => r.startsWith("live_pr_fetch_failed"))).toBe(
+      true,
+    );
+  });
+
+  it("allows offline synthetic MERGED only with explicit ORCHESTRATOR_OFFLINE_REVIEW_POLL=1", () => {
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
+    const closed: number[] = [];
+    const result = runPostMergeCleanup({
+      sh: fakeSh({
+        "gh pr view": () => {
+          throw new Error("offline hatch must not call live gh pr view");
+        },
+      }),
+      repo: REPO,
+      coveredIssues: [603],
+      prMerged: {
+        ...PR_MERGED,
+        prUrl: "pr://family/offline-cleanup",
+      },
+      fetchIssueState: () => "OPEN",
+      closeIssue: (n) => closed.push(n),
+      branchExists: () => false,
+    });
+    expect(closed).toEqual([603]);
     expect(result.terminal).toBe(true);
     expect(result.ok).toBe(true);
+    expect(result.branchOutcome).toBe("already_gone");
   });
 
   it("returns non-terminal when PR is not live MERGED (no trust of ledger alone)", () => {
@@ -397,5 +446,52 @@ describe("#603 host reclaim gate — ledger precondition only (AC5)", () => {
         "success",
       ),
     ).toBe(false);
+  });
+
+  it("does not reclaim when last cleanup skipped branch delete with residue (tip drift)", () => {
+    const driftCleanup: CleanupResult = {
+      kind: "cleanup",
+      terminal: false,
+      ok: false,
+      branchOutcome: "skipped_tip_drift",
+    };
+    const ledger: LedgerEntry[] = [{ step: "S11", output: driftCleanup }];
+    expect(sliceCleanupTerminalForReclaim(ledger)).toBe(false);
+    expect(shouldReclaimSliceHost(ledger, "success")).toBe(false);
+    expect(cleanupResultReclaimEligible(driftCleanup)).toBe(false);
+  });
+});
+
+describe("#603 family host reclaim gate — ledger precondition only (AC5)", () => {
+  const terminalRow = (output: CleanupResult): FamilyLedgerEntry => ({
+    status: "post_merge_cleanup",
+    event: "post_merge_cleanup",
+    phase: "final",
+    familyHeadAfter: MERGED_HEAD,
+    cleanupOutput: output,
+  });
+
+  it("reclaims family host only on terminal+ok post_merge_cleanup ledger row", () => {
+    const ledger: FamilyLedgerEntry[] = [
+      terminalRow({
+        kind: "cleanup",
+        terminal: true,
+        ok: true,
+        branchOutcome: "deleted",
+      }),
+    ];
+    expect(shouldReclaimFamilyHost(ledger)).toBe(true);
+  });
+
+  it("does not reclaim family host on non-terminal cleanup (negative)", () => {
+    const ledger: FamilyLedgerEntry[] = [
+      terminalRow({
+        kind: "cleanup",
+        terminal: false,
+        ok: false,
+        branchOutcome: "skipped_tip_drift",
+      }),
+    ];
+    expect(shouldReclaimFamilyHost(ledger)).toBe(false);
   });
 });

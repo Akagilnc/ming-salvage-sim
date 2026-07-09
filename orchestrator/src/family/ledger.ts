@@ -19,10 +19,12 @@
  */
 
 import type {
+  CleanupResult,
   EscalationAnswerPayload,
   EscalationKind,
   FindingDisposition,
 } from "../types.js";
+import { isValidCleanupResult } from "../reviewLoopOutcome.js";
 import {
   decisionGateParkStopSummary,
   infraFailureStopSummary,
@@ -1131,6 +1133,65 @@ export async function recordPrMerged(
             sources: { actualFamilyHead: "pr_merged ledger row" },
           },
         }),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/** Fields a #603 post_merge_cleanup terminal event carries. */
+export interface PostMergeCleanupRecord {
+  readonly familyHeadAfter: string;
+  readonly cleanupOutput: CleanupResult;
+}
+
+export function isValidPostMergeCleanup(
+  entry: FamilyLedgerEntry,
+): entry is FamilyLedgerEntry & {
+  readonly status: "post_merge_cleanup";
+  readonly event: "post_merge_cleanup";
+  readonly familyHeadAfter: string;
+  readonly cleanupOutput: CleanupResult;
+} {
+  return (
+    entry.status === "post_merge_cleanup" &&
+    entry.event === "post_merge_cleanup" &&
+    typeof entry.familyHeadAfter === "string" &&
+    entry.familyHeadAfter.trim().length > 0 &&
+    entry.cleanupOutput !== undefined &&
+    isValidCleanupResult(entry.cleanupOutput)
+  );
+}
+
+/**
+ * Append the PHASE-LEVEL `post_merge_cleanup` terminal marker (#603).
+ */
+export async function recordPostMergeCleanup(
+  backend: FamilyBackend,
+  record: PostMergeCleanupRecord,
+): Promise<void> {
+  const familyHeadAfter = record.familyHeadAfter.trim();
+  if (familyHeadAfter.length === 0) {
+    throw new Error(
+      "family post_merge_cleanup marker must include a non-empty familyHeadAfter",
+    );
+  }
+  if (!isValidCleanupResult(record.cleanupOutput)) {
+    throw new Error(
+      "family post_merge_cleanup marker must include a valid cleanupOutput",
+    );
+  }
+  await backend.appendFamilyLedger(
+    compact({
+      status: "post_merge_cleanup",
+      event: "post_merge_cleanup",
+      phase: "final",
+      familyHeadAfter,
+      cleanupOutput: record.cleanupOutput,
+      stopSummary: successStopSummary({
+        heads: {
+          actualFamilyHead: familyHeadAfter,
+          sources: { actualFamilyHead: "post_merge_cleanup ledger row" },
+        },
+      }),
     }) as FamilyLedgerEntry,
   );
 }

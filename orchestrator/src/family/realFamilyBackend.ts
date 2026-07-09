@@ -619,6 +619,19 @@ export class RealFamilyBackend implements FamilyBackend {
     return this.opts.workingRepo;
   }
 
+  /**
+   * Terminal-success GC (#603 / ADR 0024): remove the dedicated family clone.
+   * Caller must have verified ledger terminal+ok post_merge_cleanup first.
+   */
+  async reapFamilyHost(familyBase: string): Promise<void> {
+    if (familyBase !== this.opts.familyBase) return;
+    try {
+      rmSync(this.opts.workingRepo, { recursive: true, force: true });
+    } catch {
+      // Best-effort: an already-reclaimed clone is success.
+    }
+  }
+
   // ─────────────────────────── merge ───────────────────────────
 
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {

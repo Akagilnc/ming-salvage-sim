@@ -63,6 +63,9 @@ import {
 } from "./familyAutoMerge.js";
 import { buildCleanupLanding } from "../postMergeCleanup.js";
 import {
+  shouldReclaimFamilyHost,
+} from "../hostReclaim.js";
+import {
   buildRoundTrigger,
   convergenceHeadToRecord,
   inadmissibleWorkerOutcomeReason,
@@ -145,6 +148,7 @@ import {
   recordShipped,
   familyPrMergedForHead,
   mergedSet,
+  recordPostMergeCleanup,
 } from "./ledger.js";
 import { isFilledString } from "../shipOutcome.js";
 import { isCompleteRepairEvidence } from "../validate.js";
@@ -3211,6 +3215,21 @@ export async function runVerifyCmr(
         }),
       });
       return INCOMPLETE_GATE;
+    }
+    await recordPostMergeCleanup(familyBackend, {
+      familyHeadAfter: convergedFamilyHead,
+      cleanupOutput: cleanupResult.output,
+    });
+    const postCleanupLedger = await familyBackend.readFamilyLedger();
+    if (
+      shouldReclaimFamilyHost(postCleanupLedger) &&
+      familyBackend.reapFamilyHost !== undefined
+    ) {
+      try {
+        await familyBackend.reapFamilyHost(familyBase);
+      } catch {
+        // Best-effort terminal GC — must not flip a successful final barrier.
+      }
     }
   }
   return { ok: true, ran: true };
