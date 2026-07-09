@@ -79,8 +79,8 @@ const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
   fixer: "/fixer",
   // TODO(#600/#603): real /cleanup skill + prompt (cleanup.md) lands later; skeleton only.
   cleanup: "/cleanup",
-  // TODO(#600/#603): real /doc-release skill + prompt (docRelease.md) lands later; skeleton only.
-  docRelease: "/doc-release",
+  // #735: real 文档发布 — invoke /gstack-document-release (not a path-allowlist gate).
+  docRelease: "/gstack-document-release",
 };
 
 /**
@@ -329,8 +329,8 @@ export function shipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   };
 }
 
-// TODO(#600/#603): placeholder prompts for review-loop workers; real impl + files
-// live in #600 (verify/fixer) / #603 (cleanup/docRelease). Do not remove markers.
+// TODO(#600/#603): placeholder prompts for verify/fixer remain skeleton-adjacent;
+// cleanup real path is #603; docRelease real path is #735.
 export const VERIFY_PROMPT_FILE = "verify.md";
 export const FIXER_PROMPT_FILE = "fixer.md";
 export const CLEANUP_PROMPT_FILE = "cleanup.md";
@@ -396,8 +396,12 @@ export function cleanupWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   };
 }
 
-/** S12 documentation / release worker spec (#596 skeleton). */
-// TODO(#600/#603): skill/prompt wiring is inert placeholder here.
+/**
+ * S12 文档发布 worker (#735): invoke `/gstack-document-release` in a spawned /
+ * non-interactive session. Success (including 文档发布空跑) → `released:true`;
+ * skill crash / hang / explicit fail / required push fail → not released.
+ * Offline/test may still synthesize via the offline hatch only.
+ */
 export function docReleaseWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S12",
@@ -471,17 +475,10 @@ export async function legacyDispatchWorker(
     }
   }
 
-  // S12 docRelease remains a deterministic stub until a dedicated doc-release slice.
-  if (spec.kind === "docRelease") {
-    const stub = skeletonReviewLoopWorkerResult(spec.kind);
-    if (stub !== undefined) {
-      return stub;
-    }
-  }
-
   // #596 skeleton: explicit offline/test contexts only when the backend has no
   // `dispatchWorker` seam (#600 r5 — mirror family legacy gate; live paths must
   // fail closed instead of synthesizing convergence).
+  // #735: docRelease joins verify/fixer here — no unconditional forever-stub.
   const skeletonResult = skeletonReviewLoopWorkerResult(spec.kind);
   if (skeletonResult !== undefined && backend.dispatchWorker === undefined) {
     if (offlineReviewLoopDispatchAdmissible(ctx)) {
@@ -497,19 +494,21 @@ export async function legacyDispatchWorker(
 
   // FAIL-CLOSED on the worker kind (online review r1, 3 bots): only agent +
   // review-loop workers belong on the `runStep`/`resumeSession` path below.
+  // #735: docRelease is a real agent worker (invoke /gstack-document-release).
+  // cleanup stays deterministic (landing) or offline-stub above — not runStep.
   const runStepKinds = new Set<WorkerKind>([
     "coder",
     "reviewer",
     "verify",
     "fixer",
+    "docRelease",
   ]);
   if (!runStepKinds.has(spec.kind)) {
     throw new Error(
       `legacyDispatchWorker: worker kind '${spec.kind}' (${spec.id}) has no legacy ` +
-        `dispatch path — only coder/reviewer/verify/fixer (agent), ship, and the ` +
-        `#596 review-loop stubs (cleanup/docRelease until #603) are forwarded. A ` +
-        `cmr/merge worker must go through a backend implementing the unified ` +
-        `dispatchWorker seam.`,
+        `dispatch path — only coder/reviewer/verify/fixer/docRelease (agent), ship, ` +
+        `and the #603 cleanup path are forwarded. A cmr/merge worker must go ` +
+        `through a backend implementing the unified dispatchWorker seam.`,
     );
   }
   // coder / reviewer agent worker → runStep | resumeSession (legacy seam).

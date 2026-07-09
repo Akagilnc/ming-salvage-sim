@@ -333,7 +333,10 @@ export function stubCleanupResult(): CleanupResult {
   };
 }
 
-/** Deterministic skeleton verdict used by the legacy dispatch path for S12. */
+/**
+ * Deterministic offline/test skeleton for S12 文档发布.
+ * Live paths must not use this unconditionally (#735) — only the offline hatch.
+ */
 export function stubDocReleaseResult(): DocReleaseResult {
   return { kind: "docRelease", released: true };
 }

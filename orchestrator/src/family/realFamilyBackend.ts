@@ -1144,17 +1144,10 @@ export class RealFamilyBackend implements FamilyBackend {
         reason: `family ${spec.kind} stub unavailable`,
       };
     }
-    if (spec.kind === "docRelease") {
-      const stub = skeletonReviewLoopWorkerResult(spec.kind);
-      if (stub !== undefined) {
-        return stub;
-      }
-      return {
-        kind: "failed",
-        reason: `family ${spec.kind} stub unavailable`,
-      };
-    }
-    if (spec.kind === "verify" || spec.kind === "fixer") {
+    // #735: real 文档发布 worker shares the family review-loop agent path
+    // (invoke /gstack-document-release). Offline/test stubs stay on backends
+    // that short-circuit dispatchWorker or on the legacy offline hatch.
+    if (spec.kind === "verify" || spec.kind === "fixer" || spec.kind === "docRelease") {
       return this.runFamilyReviewLoopWorker(spec, ctx, landing);
     }
     if (spec.kind !== "cmr") {
@@ -1720,10 +1713,13 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
-      const onlineReviewLanding = this.writeFamilyOnlineReviewLandingFile(
-        ctx,
-        landing,
-      );
+      // verify/fixer need the bot-evidence landing; docRelease only invokes
+      // /gstack-document-release and does not read the online-review snapshot.
+      const onlineReviewLanding =
+        spec.kind === "docRelease" &&
+        landing?.onlineReviewSnapshot === undefined
+          ? undefined
+          : this.writeFamilyOnlineReviewLandingFile(ctx, landing);
       try {
         const result = await this.runAgentSandbox({
           name: `family-${spec.kind}`,
@@ -1743,7 +1739,9 @@ export class RealFamilyBackend implements FamilyBackend {
         });
         return this.familyReviewLoopResultFromRun(result, spec);
       } finally {
-        rmSync(onlineReviewLanding.path, { force: true });
+        if (onlineReviewLanding !== undefined) {
+          rmSync(onlineReviewLanding.path, { force: true });
+        }
       }
     } finally {
       this.cleanupTempAuthDirs([auth.codexAuthDir]);
@@ -1782,7 +1780,7 @@ export class RealFamilyBackend implements FamilyBackend {
     auth: ShipAuth,
     spec: WorkerSpec,
     ctx: DispatchContext,
-    onlineReviewLanding: { path: string; sandboxPath: string },
+    onlineReviewLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
     return docker(
       this.familyReviewLoopSandboxConfig(auth, spec, ctx, onlineReviewLanding),
@@ -1793,7 +1791,7 @@ export class RealFamilyBackend implements FamilyBackend {
     auth: ShipAuth,
     spec: WorkerSpec,
     ctx: DispatchContext,
-    onlineReviewLanding: { path: string; sandboxPath: string },
+    onlineReviewLanding?: { path: string; sandboxPath: string },
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -1807,8 +1805,10 @@ export class RealFamilyBackend implements FamilyBackend {
       ...SPAWNED_WORKER_ENV,
       [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
-      [SANDBOX_ONLINE_REVIEW_PATH_ENV]: onlineReviewLanding.sandboxPath,
     };
+    if (onlineReviewLanding !== undefined) {
+      env[SANDBOX_ONLINE_REVIEW_PATH_ENV] = onlineReviewLanding.sandboxPath;
+    }
     if (ctx.familyIssue !== undefined) {
       const issue = String(ctx.familyIssue);
       env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
@@ -1816,13 +1816,14 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
-    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
-      {
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
+    if (onlineReviewLanding !== undefined) {
+      mounts.push({
         hostPath: onlineReviewLanding.path,
         sandboxPath: onlineReviewLanding.sandboxPath,
         readonly: true,
-      },
-    ];
+      });
+    }
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }

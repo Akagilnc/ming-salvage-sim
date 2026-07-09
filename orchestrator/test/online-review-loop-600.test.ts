@@ -4917,7 +4917,7 @@ describe("#600 r5 legacy skeleton gate — family + slice", () => {
     }
   });
 
-  it("pin r15: S11/S12 legacy dispatch returns stub without runStep even when dispatchWorker seam exists", async () => {
+  it("pin r15/#735: S11 cleanup still stubs without runStep; S12 docRelease is a real agent path", async () => {
     let runStepCalls = 0;
     const legacyBackend = {
       dispatchWorker: async () => ({
@@ -4926,15 +4926,31 @@ describe("#600 r5 legacy skeleton gate — family + slice", () => {
       }),
       async runStep(): Promise<StepOutput> {
         runStepCalls += 1;
-        throw new Error("runStep must not run for S11/S12 stub workers");
+        // #735: real docRelease may reach runStep when not offline-stubbed.
+        return { kind: "docRelease", released: true };
       },
     } as unknown as Backend;
-    for (const spec of [cleanupWorkerSpec(), docReleaseWorkerSpec()]) {
-      const result = await legacyDispatchWorker(legacyBackend, spec, { worktree });
-      expect(result.kind).toBe("completed");
-      expect(workerOutcomeAdmissible(result, spec)).toBe(true);
-    }
+
+    const cleanup = await legacyDispatchWorker(
+      legacyBackend,
+      cleanupWorkerSpec(),
+      { worktree },
+    );
+    expect(cleanup.kind).toBe("completed");
+    expect(workerOutcomeAdmissible(cleanup, cleanupWorkerSpec())).toBe(true);
     expect(runStepCalls).toBe(0);
+
+    const doc = await legacyDispatchWorker(
+      legacyBackend,
+      docReleaseWorkerSpec(),
+      { worktree, prUrl: liveCtx.prUrl, repo: liveCtx.repo },
+    );
+    // Live context + dispatchWorker seam present → agent runStep, not forever-stub.
+    expect(runStepCalls).toBe(1);
+    expect(doc.kind).toBe("completed");
+    if (doc.kind === "completed") {
+      expect(doc.output).toEqual({ kind: "docRelease", released: true });
+    }
   });
 });
 
@@ -5614,7 +5630,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("pin r15: RealFamilyBackend S11/S12 stub at dispatchWorker — verify only hits runFamilyReviewLoopWorker", async () => {
+  it("pin r15/#735: RealFamilyBackend routes verify+docRelease through runFamilyReviewLoopWorker", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     const here = dirname(fileURLToPath(import.meta.url));
@@ -5652,8 +5668,9 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         ship: offlineShip,
       });
       expect(result.ok).toBe(true);
-      expect(backend.reviewLoopKinds).toEqual(["verify"]);
-      expect(backend.landings).toHaveLength(1);
+      // #735: docRelease is a real agent worker, same path as verify (not forever-stub).
+      expect(backend.reviewLoopKinds).toEqual(["verify", "docRelease"]);
+      expect(backend.landings.length).toBeGreaterThanOrEqual(1);
       expect(backend.landings[0]?.onlineReviewSnapshot).toBeDefined();
     } finally {
       if (prev === undefined) {
