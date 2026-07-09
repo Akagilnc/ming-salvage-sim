@@ -2414,7 +2414,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
               terminal: false,
               ok: false,
               skippedReasons: ["live_pr_fetch_failed:gh unavailable"],
-              branchOutcome: "skipped_pr_not_merged",
+              branchOutcome: "skipped_precondition",
             },
           };
         }
@@ -2449,7 +2449,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
           terminal: false,
           ok: false,
           skippedReasons: ["live_pr_fetch_failed:gh unavailable"],
-          branchOutcome: "skipped_pr_not_merged",
+          branchOutcome: "skipped_precondition",
         },
         "session-prior",
         convergedHead,

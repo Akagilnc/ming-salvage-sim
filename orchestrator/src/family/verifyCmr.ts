@@ -3200,7 +3200,6 @@ export async function ensureFamilyPostMergeCleanup(input: {
     phase = "final",
     recordAbortOnFailure = false,
   } = input;
-  const resolvedRoute = input.resolvedRoute ?? resolveActiveModelRoute();
   const ledger = await familyBackend.readFamilyLedger();
   const priorCleanup = familyPostMergeCleanupForHead(ledger, familyHeadAfter);
   if (priorCleanup !== undefined) {
@@ -3210,6 +3209,10 @@ export async function ensureFamilyPostMergeCleanup(input: {
   if (prMergedRow === undefined) {
     return { ok: true };
   }
+  // Resolve only when about to dispatch cleanup — short-circuits above must
+  // not fail on a broken ORCHESTRATOR_ROUTE after cleanup is already done /
+  // when pr_merged is not yet present.
+  const resolvedRoute = input.resolvedRoute ?? resolveActiveModelRoute();
   const familyRepo =
     process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
   const coveredIssues = [...mergedSet(ledger)];
