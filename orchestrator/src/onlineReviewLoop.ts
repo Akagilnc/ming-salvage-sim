@@ -1352,7 +1352,8 @@ export async function runOnlineReviewLoopStage(
     const fixKeys = fixMarkedKeysFromVerify(verify);
     landing = { ...landing, fixMarkedFindingIdentityKeys: fixKeys };
 
-    if (verify.converged && checkRunsConverged(landing.onlineReviewSnapshot?.checkRuns ?? [])) {
+    const checkRuns = landing.onlineReviewSnapshot?.checkRuns ?? [];
+    if (verify.converged && checkRunsConverged(checkRuns)) {
       const cleanupOk = await dispatch.dispatchCleanup(landing);
       if (!cleanupOk) {
         return { ok: false, terminalState: "decision_gate_raised", round };
@@ -1362,6 +1363,27 @@ export async function runOnlineReviewLoopStage(
         return { ok: false, terminalState: "decision_gate_raised", round };
       }
       return { ok: true, terminalState: "mergeable", round };
+    }
+
+    // CI failed + no bot fix marks: do not dispatch fixer (would park with
+    // misleading "nothing to fix while findings remain") — online R8 Gemini high.
+    // clamp may have set converged:false for failed CI while worker had no findings.
+    if (
+      classifyCheckRuns(checkRuns) === "failed" &&
+      fixKeys.length === 0
+    ) {
+      return {
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round,
+        stopSummary: {
+          reason: "infra_failure",
+          summary:
+            "online review bots are clean but CI check-runs failed on the PR head",
+          repairHint:
+            "fix the CI failures on the PR head and re-run the online review loop",
+        },
+      };
     }
 
     // ADR 0061: round MAX+1 is verify-only — no further fixer after the cap.
