@@ -233,33 +233,35 @@ function parseReviewThreadsGraphqlPage(parsed: unknown): ParsedReviewThreadsPage
     }
   }
 
-  const connection: ReviewThreadsConnection | undefined =
+  const connection: ReviewThreadsConnection | null | undefined =
     parsed != null && typeof parsed === "object"
       ? (
           parsed as {
             data?: {
               repository?: {
-                pullRequest?: { reviewThreads?: ReviewThreadsConnection };
+                pullRequest?: { reviewThreads?: ReviewThreadsConnection | null };
               };
             };
           }
         ).data?.repository?.pullRequest?.reviewThreads
       : undefined;
-  if (connection === undefined) {
+  // GraphQL nullable field may be null (not undefined) — use == null (repo rule).
+  if (connection == null) {
     throw new Error(
       "botPolling: malformed GraphQL reviewThreads response (missing connection)",
     );
   }
 
   const pageInfo = connection.pageInfo;
-  if (pageInfo === undefined || typeof pageInfo !== "object") {
+  // typeof null === "object" in JS — must exclude null explicitly.
+  if (pageInfo == null || typeof pageInfo !== "object") {
     throw new Error(
       "botPolling: malformed GraphQL reviewThreads response (missing pageInfo)",
     );
   }
 
   const rawNodes = connection.nodes;
-  if (rawNodes === undefined) {
+  if (rawNodes == null) {
     throw new Error(
       "botPolling: malformed GraphQL reviewThreads response (missing nodes)",
     );
@@ -373,6 +375,7 @@ type BotComment = {
   author?: { login?: string };
   body?: string;
   created_at?: string;
+  updated_at?: string;
   commit_id?: string;
 };
 
@@ -553,11 +556,19 @@ export function classifyCheckRuns(
   if (runs.length === 0) return "converged";
   let sawPending = false;
   for (const run of runs) {
-    if (run.status !== "completed") {
+    const status = (run.status ?? "").toLowerCase();
+    if (status !== "completed") {
       sawPending = true;
       continue;
     }
-    if (run.conclusion !== "success") {
+    // GitHub Actions: skipped/neutral are not failures and should not block
+    // online-review mergeability (verified against GH check-run conclusions).
+    const conclusion = (run.conclusion ?? "").toLowerCase();
+    if (
+      conclusion !== "success" &&
+      conclusion !== "skipped" &&
+      conclusion !== "neutral"
+    ) {
       return "failed";
     }
   }
@@ -769,8 +780,19 @@ export function pollPrReviewState(
       `repos/${repo}/issues/${prNumber}/reactions`,
     ) as BotReaction[]),
   ];
+  // Fetch reactions only where online-review bots signal (not every human
+  // comment — rate-limit poison). Include: (1) bot-authored comments, (2)
+  // re-trigger comments bots often react on (Codex eyes/+1).
+  const shouldFetchReactions = (comment: BotComment): boolean => {
+    if (comment.id === undefined) return false;
+    const login = commentAuthorLogin(comment);
+    if (ONLINE_REVIEW_BOT_IDS.some((bot) => loginMatchesBot(login, bot))) {
+      return true;
+    }
+    return isBotRetriggerCommentBody(comment.body ?? "");
+  };
   for (const comment of issueComments) {
-    if (comment.id === undefined) continue;
+    if (!shouldFetchReactions(comment)) continue;
     const raw = paginateGhApi(
       sh,
       `repos/${repo}/issues/comments/${comment.id}/reactions`,
@@ -778,7 +800,7 @@ export function pollPrReviewState(
     reactions.push(...raw);
   }
   for (const comment of reviewComments) {
-    if (comment.id === undefined) continue;
+    if (!shouldFetchReactions(comment)) continue;
     const raw = paginateGhApi(
       sh,
       `repos/${repo}/pulls/comments/${comment.id}/reactions`,
