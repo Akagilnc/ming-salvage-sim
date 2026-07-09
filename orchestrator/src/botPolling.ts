@@ -815,6 +815,12 @@ export function isBotRetriggerCommentBody(body: string): boolean {
 /**
  * Find an admissible R2/R3 re-trigger comment already on the PR (#600 r34 gap-resume).
  * Uses the same issue-comment evidence collection as pollPrReviewState.
+ *
+ * Invariant (head-drift fail-closed, deep self-check of online R2–R6 Codex chain):
+ * - If live PR head !== gapTrigger.headOid → **never** reuse an existing re-trigger
+ *   comment (timestamp-only comments from the prior head would otherwise look
+ *   "fresh" after re-anchor). Caller must post a new re-trigger for the new head.
+ * - If heads match → admit comments by gapTrigger timestamp window only.
  */
 export function findAdmissibleRetriggerComment(
   sh: Sh,
@@ -828,11 +834,11 @@ export function findAdmissibleRetriggerComment(
     pollCount: 0,
     roundTrigger: gapTrigger,
   });
-  // Use re-anchored probe trigger for evidence (online R6 Codex P1): if the live
-  // head advanced past gapTrigger.headOid, admitting timestamp-only re-trigger
-  // comments against the stale gapTrigger would reuse a previous-head re-trigger
-  // and skip posting a fresh one for the new head.
-  const evidenceTrigger = headProbe.roundTriggerUsed;
+  // Live head left the gap fix SHA → force a fresh re-trigger (do not search).
+  if (headProbe.headOid !== gapTrigger.headOid) {
+    return undefined;
+  }
+  const evidenceTrigger = gapTrigger;
   const { prNumber } = parsePrRef(prUrl, repo);
   const issueComments = paginateGhApi(
     sh,

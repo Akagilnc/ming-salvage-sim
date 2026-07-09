@@ -1556,19 +1556,35 @@ export async function runFamilyOnlineReviewLoop(input: {
         shipTriggeredAt,
       );
   if (livePoll && pendingGapRetrigger !== undefined) {
-    const ensured = ensureOnlineReviewRetriggerAfterFixGap({
-      sh: ghSh,
-      repo,
-      prUrl,
-      gapTrigger: pendingGapRetrigger,
-    });
-    lastRoundTrigger = ensured.roundTrigger;
-    await recordOnlineReviewRoundRetrigger(input.familyBackend, {
-      roundTriggerHeadOid: ensured.roundTrigger.headOid,
-      roundTriggerAt: ensured.roundTrigger.triggeredAt,
-      onlineReviewRound: loopState.round,
-      pr: prUrl,
-    });
+    try {
+      const ensured = ensureOnlineReviewRetriggerAfterFixGap({
+        sh: ghSh,
+        repo,
+        prUrl,
+        gapTrigger: pendingGapRetrigger,
+      });
+      lastRoundTrigger = ensured.roundTrigger;
+      await recordOnlineReviewRoundRetrigger(input.familyBackend, {
+        roundTriggerHeadOid: ensured.roundTrigger.headOid,
+        roundTriggerAt: ensured.roundTrigger.triggeredAt,
+        onlineReviewRound: loopState.round,
+        pr: prUrl,
+      });
+    } catch (err) {
+      // Same-type as single-slice fix-gap resume (deep self-check): do not throw
+      // out of family online review — park with decision_gate so re-feed can retry.
+      return {
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round: loopState.round,
+        stopSummary: {
+          reason: "infra_failure",
+          summary: `family online review fix-gap re-trigger failed: ${err instanceof Error ? err.message : String(err)}`,
+          repairHint:
+            "re-feed the family run — fix-gap recovery will post the bot re-trigger and continue verify",
+        },
+      };
+    }
   }
   let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
 
