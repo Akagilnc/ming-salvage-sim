@@ -2812,8 +2812,9 @@ describe("#600 r4 central evidence admissibility gate", () => {
     ).toBe("stale");
   });
 
-  it("pin botPolling r15: issue-comment reaction after round trigger counts as bot evidence", () => {
-    // Codex ACKs the manual re-trigger via reaction on the issue comment (not the PR body).
+  it("pin botPolling r15/r14: eyes ACK on re-trigger is alive-only, not complete", () => {
+    // Codex ACKs the manual re-trigger via `eyes` on the issue comment — that is
+    // NOT a finished review (R14 Codex P1). Leg stays pending until review/+1.
     // https://docs.github.com/en/rest/reactions/reactions?apiVersion=2022-11-28#list-reactions-for-an-issue-comment
     const calls: string[] = [];
     const sh: Sh = (file, args) => {
@@ -2876,8 +2877,8 @@ describe("#600 r4 central evidence admissibility gate", () => {
     expect(
       calls.some((c) => c.includes("repos/o/r/issues/comments/8801/reactions")),
     ).toBe(true);
-    expect(snap.bots.codex).toEqual({ state: "complete", findingCount: 0 });
-    expect(snap.bots.codex.state).not.toBe("pending");
+    expect(snap.bots.codex.state).toBe("pending");
+    expect(snap.bots.codex).not.toEqual({ state: "complete", findingCount: 0 });
   });
 
   it("pin botPolling r17: Codex PR-level +1 reaction is completion evidence, not a finding", () => {
