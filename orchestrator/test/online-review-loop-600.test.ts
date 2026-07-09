@@ -3636,6 +3636,20 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
         },
       ]),
     ).toBe(false);
+    // R20: pending-CI park uses same resume-to-S9 predicate.
+    expect(
+      sliceOnlineReviewCiFailedPending([
+        {
+          step: "S9",
+          output: { kind: "verify", converged: true },
+        },
+        {
+          step: "S9",
+          event: "online_review_ci_pending",
+          prHead: "headsha1",
+        },
+      ]),
+    ).toBe(true);
   });
 
   it("pin r11: fix-gap picks chronologically latest unpaired fix (not last ledger order)", () => {

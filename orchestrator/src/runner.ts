@@ -1605,13 +1605,26 @@ function planResume(
       priorLedger: priorForResume,
     };
   }
-  // R18 Codex P2: bots clean + CI red parks with online_review_ci_failed. Re-feed
-  // must re-enter S9 (re-poll CI), not route S9(converged:false) → S10 empty fixer.
+  // R18/R20 Codex: CI park markers → re-enter S9 (re-poll CI), not S10/S8(error).
   if (sliceOnlineReviewCiFailedPending(ledger)) {
     return {
       resumeStep: "S9",
       lastOutput: undefined,
       priorLedger: priorForResume,
+    };
+  }
+  // R20 Codex P2: last executable S9 converged:true routes to S11 and would skip
+  // the live CI recheck on the S9 entry path. Force resume at S9 so check-runs
+  // are re-polled before cleanup/doc-release.
+  if (
+    decision.kind === "next" &&
+    decision.step === "S11" &&
+    routeFrom === "S9"
+  ) {
+    return {
+      resumeStep: "S9",
+      lastOutput: undefined,
+      priorLedger: priorLedgerThroughLastShip(ledger),
     };
   }
   if (decision.kind === "handoff") {
@@ -3656,22 +3669,76 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             ) {
               pendingCiS9Polls += 1;
               if (pendingCiS9Polls > BOT_OVERDUE_POLL_COUNT) {
-                return await errorTermination(
-                  reviewStep,
-                  new Error(
-                    "online review verify is green but CI check-runs stayed non-terminal past the overdue poll window",
-                  ),
-                  {
+                // R20 Codex P2: park resumable at S9 — do not S8(error) terminal
+                // (re-feed after CI finishes must re-poll S9, not report old error).
+                output = verifyOutput;
+                step = reviewStep;
+                stepSessionId = result.sessionId;
+                lastOutput = verifyOutput;
+                ledger.push({
+                  step: "S9",
+                  output: verifyOutput,
+                  ...(result.sessionId !== undefined
+                    ? { sessionId: result.sessionId }
+                    : {}),
+                });
+                try {
+                  await emitLedger(
+                    "S9",
+                    verifyOutput,
+                    promptFile,
+                    undefined,
+                    result.sessionId,
+                  );
+                } catch (ledgerErr) {
+                  return await errorTermination("S9", ledgerErr, {
+                    recordInMemory: false,
                     output: verifyOutput,
-                    stopSummary: {
-                      reason: "infra_failure",
-                      summary:
-                        "online review verify is green but CI check-runs stayed non-terminal past the overdue poll window",
-                      repairHint:
-                        "wait for CI to complete (or fail) on the PR head, then re-run online review",
-                    },
+                  });
+                }
+                const pendingHead =
+                  onlineReviewLanding?.onlineReviewSnapshot?.headOid ??
+                  lastOnlineReviewFixCommitSha ??
+                  lastShipOutput.prHead;
+                const pendingMarker = {
+                  step: "S9" as const,
+                  event: "online_review_ci_pending" as const,
+                  prUrl: lastShipOutput.pr,
+                  prHead: pendingHead,
+                  onlineReviewRound,
+                };
+                ledger.push(pendingMarker);
+                if (stateDir !== undefined) {
+                  try {
+                    await backend.writeLedger(
+                      {
+                        ...pendingMarker,
+                        sessionId,
+                        prompt_hash: await hashPrompt(promptFile, "S9", backend),
+                        branchHEAD: await resolveBranchHEAD(),
+                        ts: new Date().toISOString(),
+                      },
+                      stateDir,
+                    );
+                  } catch (err) {
+                    return await errorTermination("S9", err, {
+                      recordInMemory: false,
+                      output: verifyOutput,
+                    });
+                  }
+                }
+                return {
+                  status: "escalate",
+                  stepLedger: ledger,
+                  stopSummary: {
+                    reason: "infra_failure",
+                    summary:
+                      "online review verify is green but CI check-runs stayed non-terminal past the overdue poll window",
+                    repairHint:
+                      "wait for CI to complete (or fail) on the PR head, then re-feed — resume re-enters S9",
                   },
-                );
+                  deferredFindings,
+                };
               }
               reenterS9ForPendingCi = true;
               output = verifyOutput;

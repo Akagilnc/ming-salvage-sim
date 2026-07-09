@@ -396,13 +396,25 @@ export interface OnlineReviewCiFailedEvent {
   readonly onlineReviewRound: number;
 }
 
+/**
+ * Bots green but CI still pending past overdue window (#600 R20). Park
+ * resumable at S9 — not S8(error) terminal.
+ */
+export interface OnlineReviewCiPendingEvent {
+  readonly event: "online_review_ci_pending";
+  readonly prUrl?: string;
+  readonly prHead?: string;
+  readonly onlineReviewRound: number;
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
   | OnlineReviewConvergedEvent
   | OnlineReviewRoundRetriggerEvent
   | OnlineReviewFixCommittedEvent
-  | OnlineReviewCiFailedEvent;
+  | OnlineReviewCiFailedEvent
+  | OnlineReviewCiPendingEvent;
 
 /**
  * The structured output of any worker step.
