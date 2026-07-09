@@ -989,6 +989,21 @@ export const immediateBotPollClock: BotPollClock = {
 };
 
 /**
+ * Shared pending-CI re-poll delay (single-slice + family stage).
+ * Under Vitest use the immediate clock so unit tests do not wall-clock sleep.
+ * Production uses real 2-minute cadence so CI latency does not burn the overdue
+ * budget in milliseconds (online R4/R5 Codex+Gemini chain).
+ */
+export async function sleepPendingCiPollInterval(
+  clock?: BotPollClock,
+): Promise<void> {
+  const resolved =
+    clock ??
+    (process.env.VITEST !== undefined ? immediateBotPollClock : realBotPollClock);
+  await resolved.sleep(BOT_POLL_INTERVAL_MS);
+}
+
+/**
  * Poll until bots are quiescent or the poll budget for this wait is exhausted.
  * Enforces ~2-minute cadence between polls; production defaults to the ~5-poll
  * overdue window. Pass `maxPolls: 1` and `clock: immediateBotPollClock` in unit tests.
@@ -1042,6 +1057,7 @@ export function ensureOnlineReviewRetriggerAfterFixGap(input: {
   readonly prUrl: string;
   readonly gapTrigger: RoundTrigger;
 }): { readonly roundTrigger: RoundTrigger; readonly posted: boolean } {
+  // findAdmissible polls once and fail-closes when live head left gapTrigger.head.
   const existing = findAdmissibleRetriggerComment(
     input.sh,
     input.repo,
@@ -1051,15 +1067,18 @@ export function ensureOnlineReviewRetriggerAfterFixGap(input: {
   if (existing !== undefined) {
     return { roundTrigger: existing, posted: false };
   }
-  const { prNumber } = parsePrRef(input.prUrl, input.repo);
+  // Post against the live head (probe again so post uses current headOid even if
+  // HEAD advanced between find and post — rare; second poll is intentional).
   const headProbe = pollPrReviewState(input.sh, {
     repo: input.repo,
     prUrl: input.prUrl,
     pollCount: 0,
     roundTrigger: input.gapTrigger,
   });
+  const { prNumber } = parsePrRef(input.prUrl, input.repo);
   const triggeredAt = new Date().toISOString();
   postBotRetriggerComment(input.sh, input.repo, prNumber, BOT_RETRIGGER_COMMENT);
+  // Always key the new trigger to the live head + post time (not gap fix SHA alone).
   return {
     roundTrigger: buildRoundTrigger(headProbe.headOid, triggeredAt),
     posted: true,
@@ -1307,14 +1326,9 @@ export async function runOnlineReviewLoopStage(
           },
         };
       }
-      // Bots may already be quiescent — poll returns immediately. Sleep one
-      // interval before re-poll so normal CI latency does not burn the overdue
-      // budget in milliseconds (online R5 Codex P1 / Gemini high).
-      const clock =
-        process.env.VITEST !== undefined
-          ? immediateBotPollClock
-          : realBotPollClock;
-      await clock.sleep(BOT_POLL_INTERVAL_MS);
+      // Bots may already be quiescent — poll returns immediately. Shared delay
+      // so single-slice and family cannot diverge (deep self-check of pending-CI).
+      await sleepPendingCiPollInterval();
       continue;
     }
     pendingCiPolls = 0;

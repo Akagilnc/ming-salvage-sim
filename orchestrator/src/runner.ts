@@ -67,7 +67,6 @@ import {
 } from "./reviewLoopOutcome.js";
 import {
   BOT_OVERDUE_POLL_COUNT,
-  BOT_POLL_INTERVAL_MS,
   isLiveGithubReviewPollEnabled,
   pollPrReviewState,
   type PrReviewSnapshot,
@@ -79,6 +78,7 @@ import {
   enforceRunnerOwnedRecheck,
   verifyBlockedOnlyOnPendingCheckRuns,
   immediateBotPollClock,
+  sleepPendingCiPollInterval,
   lastOnlineReviewFixCommitShaFromLedger,
   offlinePrReviewSnapshot,
   onlineReviewConvergedForHead,
@@ -2625,10 +2625,34 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               stateDir,
             );
           } catch (err) {
-            return await errorTermination("S9", err, { recordInMemory: false });
+            // Ledger write failed but gap may still be recoverable — park in-band.
+            return {
+              status: "escalate",
+              stepLedger: ledger,
+              stopSummary: {
+                reason: "infra_failure",
+                summary: `online review fix-gap retrigger marker persist failed: ${err instanceof Error ? err.message : String(err)}`,
+                repairHint:
+                  "re-feed the issue — fix-gap recovery will retry bot re-trigger persistence",
+              },
+              deferredFindings,
+            };
           }
         } catch (err) {
-          return await errorTermination("S9", err, { recordInMemory: false });
+          // Same-type as live S10 retrigger fail (R3 P1): do not S8(error) — leave
+          // pending gap for a later re-feed instead of stranding a fixed branch.
+          lastOnlineReviewPendingRoundTrigger = pendingGapRetrigger;
+          return {
+            status: "escalate",
+            stepLedger: ledger,
+            stopSummary: {
+              reason: "infra_failure",
+              summary: `online review fix-gap re-trigger failed on resume: ${err instanceof Error ? err.message : String(err)}`,
+              repairHint:
+                "re-feed the issue — fix-gap recovery will post the bot re-trigger and continue S9 verify",
+            },
+            deferredFindings,
+          };
         }
       }
     }
@@ -3770,17 +3794,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
 
     // Pending CI re-poll: stay on S9 without ledger/route advance (online R2 Codex P2).
-    // Sleep one poll interval so we do not hot-loop verify while CI is still running
-    // (online R4 Codex P1) — same cadence as waitForBotQuiescence. Vitest uses the
-    // immediate clock so unit tests do not wall-clock sleep 2 minutes per re-entry.
+    // Shared delay with family stage (sleepPendingCiPollInterval).
     if (reenterS9ForPendingCi) {
       reenterS9ForPendingCi = false;
       step = "S9";
-      const clock =
-        process.env.VITEST !== undefined
-          ? immediateBotPollClock
-          : realBotPollClock;
-      await clock.sleep(BOT_POLL_INTERVAL_MS);
+      await sleepPendingCiPollInterval();
       continue;
     }
 
