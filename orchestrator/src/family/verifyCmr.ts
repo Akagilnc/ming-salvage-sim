@@ -1597,7 +1597,8 @@ export async function runFamilyOnlineReviewLoop(input: {
             ? immediateBotPollClock
             : realBotPollClock,
       });
-      lastRoundTrigger = buildRoundTrigger(snapshot.headOid, lastRoundTrigger.triggeredAt);
+      // Chain re-anchored trigger (online R5 Codex P1) — do not keep old triggeredAt.
+      lastRoundTrigger = snapshot.roundTriggerUsed;
       return snapshot;
     },
     dispatchVerify: async (landing, round) => {

@@ -82,6 +82,14 @@ export interface PrReviewSnapshot {
   readonly checkRuns: ReadonlyArray<CheckRunSnapshot>;
   readonly totalFindingCount: number;
   readonly quiescent: boolean;
+  /**
+   * Round trigger actually used for evidence on this poll (online R5 Codex P1).
+   * Equals the input trigger when head matches; after mid-round head drift this
+   * is the re-anchored trigger — callers must chain it into subsequent polls /
+   * ledger markers so the next poll does not re-anchor with a newer now and
+   * stale out real post-drift bot replies.
+   */
+  readonly roundTriggerUsed: RoundTrigger;
 }
 
 export interface PollPrReviewInput {
@@ -787,6 +795,7 @@ export function pollPrReviewState(
     checkRuns,
     totalFindingCount,
     quiescent,
+    roundTriggerUsed: roundTrigger,
   };
 }
 

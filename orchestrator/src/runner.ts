@@ -2018,6 +2018,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           checkRuns: landing.checkRuns ?? [],
           totalFindingCount: landing.totalFindingCount,
           quiescent: landing.quiescent,
+          roundTriggerUsed: buildRoundTrigger(
+            landing.headOid,
+            "1970-01-01T00:00:00.000Z",
+          ),
         };
       }
       return offlinePrReviewSnapshot({
@@ -2049,10 +2053,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           ? immediateBotPollClock
           : realBotPollClock,
     });
-    lastOnlineReviewRoundTrigger = buildRoundTrigger(
-      snapshot.headOid,
-      roundTrigger.triggeredAt,
-    );
+    // Persist the trigger actually used for evidence (may re-anchor on head drift).
+    lastOnlineReviewRoundTrigger = snapshot.roundTriggerUsed;
     return snapshot;
   }
 
