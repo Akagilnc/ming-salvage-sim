@@ -386,6 +386,37 @@ export function planVerifySideEffects(
     });
   }
 
+  // Reject dispositions require an evidence reply on the PR thread (online R3
+  // Codex P2). Synthesize from disposition.reason when the worker omitted
+  // threadReplies; fail closed when reason is also missing.
+  for (const disposition of verify.findingDispositions ?? []) {
+    if (disposition.action !== "reject") {
+      continue;
+    }
+    const existing = findReplyForThread(
+      disposition.threadId,
+      existingReplies,
+      verify,
+      landingThreads,
+    );
+    if (existing !== undefined) {
+      continue;
+    }
+    const reason = disposition.reason?.trim() ?? "";
+    if (reason.length === 0) {
+      throw new Error(
+        `applyVerifySideEffects: reject disposition for ${disposition.identityKey} requires a threadReplies entry or a non-empty reason`,
+      );
+    }
+    const body = reason.toLowerCase().startsWith("rejected:")
+      ? reason
+      : `rejected: ${reason}`;
+    replies.push({
+      commentId: restCommentIdForReply(disposition.threadId, landingThreads),
+      body,
+    });
+  }
+
   const fixingCommitSha = input.fixingCommitSha;
   const resolves: ResolveSideEffectPlan[] = [];
   for (const threadId of verify.threadsToResolve ?? []) {

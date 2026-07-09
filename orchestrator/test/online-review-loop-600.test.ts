@@ -928,6 +928,63 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     );
   });
 
+  it("pin online R3 Codex P2: reject without threadReplies synthesizes rejected: reply from reason", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      if (args.join(" ").includes("/replies")) {
+        return JSON.stringify(GITHUB_REPLY_SHAPE);
+      }
+      return JSON.stringify(GITHUB_REPLY_SHAPE);
+    };
+    const result = applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      verify: {
+        kind: "verify",
+        converged: true,
+        findingDispositions: [
+          {
+            identityKey: "t:2",
+            threadId: "2",
+            action: "reject",
+            reason: "false positive on line 10",
+          },
+        ],
+        // no threadReplies — host must still post evidence
+      },
+    });
+    expect(result.repliesPosted).toEqual([
+      { threadId: "2", body: "rejected: false positive on line 10" },
+    ]);
+    expect(calls.some((c) => c.includes("/replies"))).toBe(true);
+  });
+
+  it("pin online R3 Codex P2: reject without reply and without reason fails closed", () => {
+    const sh: Sh = () => {
+      throw new Error("gh should not be called");
+    };
+    expect(() =>
+      applyVerifySideEffects({
+        sh,
+        repo: "o/r",
+        prUrl: "https://github.com/o/r/pull/42",
+        verify: {
+          kind: "verify",
+          converged: true,
+          findingDispositions: [
+            {
+              identityKey: "t:2",
+              threadId: "2",
+              action: "reject",
+            },
+          ],
+        },
+      }),
+    ).toThrow(/reject disposition.*requires a threadReplies entry or a non-empty reason/);
+  });
+
   it("applyVerifySideEffects posts evidence replies and creates defer issues", () => {
     const calls: string[] = [];
     const sh: Sh = (file, args) => {

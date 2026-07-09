@@ -3623,43 +3623,97 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   });
                 }
               }
-              const retriggered = retriggerBotsAndPoll(
-                ghSh,
-                reviewCtx.repo!,
-                lastShipOutput.pr,
-                1,
-                lastOnlineReviewFixCommitSha ??
-                  lastOnlineReviewRoundTrigger?.headOid ??
-                  lastShipOutput.prHead ??
-                  "offline-review-head",
-              );
-              lastOnlineReviewRoundTrigger = retriggered.roundTrigger;
-              lastOnlineReviewPendingRoundTrigger = undefined;
-              const retriggerMarker = {
-                step: "S10" as const,
-                event: "online_review_round_retrigger" as const,
-                roundTriggerHeadOid: retriggered.roundTrigger.headOid,
-                roundTriggerAt: retriggered.roundTrigger.triggeredAt,
-                onlineReviewRound: nextRound,
-              };
-              ledger.push(retriggerMarker);
-              if (stateDir !== undefined) {
+              // fix_committed is already durable. retriggerBotsAndPoll must not
+              // escape to S8(error) — that blocks fix-gap recovery on re-feed
+              // (online R3 Codex P1). Match stage retriggerAfterFix: in-band park
+              // with fix_committed gap left for ensureOnlineReviewRetriggerAfterFixGap.
+              try {
+                const retriggered = retriggerBotsAndPoll(
+                  ghSh,
+                  reviewCtx.repo!,
+                  lastShipOutput.pr,
+                  1,
+                  lastOnlineReviewFixCommitSha ??
+                    lastOnlineReviewRoundTrigger?.headOid ??
+                    lastShipOutput.prHead ??
+                    "offline-review-head",
+                );
+                lastOnlineReviewRoundTrigger = retriggered.roundTrigger;
+                lastOnlineReviewPendingRoundTrigger = undefined;
+                const retriggerMarker = {
+                  step: "S10" as const,
+                  event: "online_review_round_retrigger" as const,
+                  roundTriggerHeadOid: retriggered.roundTrigger.headOid,
+                  roundTriggerAt: retriggered.roundTrigger.triggeredAt,
+                  onlineReviewRound: nextRound,
+                };
+                ledger.push(retriggerMarker);
+                if (stateDir !== undefined) {
+                  try {
+                    await backend.writeLedger(
+                      {
+                        ...retriggerMarker,
+                        sessionId,
+                        prompt_hash: await hashPrompt(promptFile, "S10", backend),
+                        branchHEAD: lastOnlineReviewFixCommitSha,
+                        ts: new Date().toISOString(),
+                      },
+                      stateDir,
+                    );
+                  } catch (err) {
+                    return await errorTermination(reviewStep, err, {
+                      recordInMemory: false,
+                      output: result.output,
+                      stopSummary: verifySideEffectFailureStopSummary(err),
+                    });
+                  }
+                }
+              } catch (err) {
+                // Leave unpaired fix_committed as a resumable gap (no S8 error).
+                lastOnlineReviewPendingRoundTrigger = buildRoundTrigger(
+                  lastOnlineReviewFixCommitSha!,
+                  new Date().toISOString(),
+                );
+                output = result.output;
+                step = reviewStep;
+                stepSessionId = result.sessionId;
+                lastOutput = output;
+                onlineReviewRound += 1;
+                // Push S10 success row then park in-band (escalate, not error).
+                ledger.push({
+                  step: "S10",
+                  output: result.output,
+                  ...(result.sessionId !== undefined
+                    ? { sessionId: result.sessionId }
+                    : {}),
+                });
                 try {
-                  await backend.writeLedger(
-                    {
-                      ...retriggerMarker,
-                      sessionId,
-                      prompt_hash: await hashPrompt(promptFile, "S10", backend),
-                      branchHEAD: lastOnlineReviewFixCommitSha,
-                      ts: new Date().toISOString(),
-                    },
-                    stateDir,
+                  await emitLedger(
+                    "S10",
+                    result.output,
+                    promptFile,
+                    undefined,
+                    result.sessionId,
                   );
-                } catch (err) {
-                  return await errorTermination(reviewStep, err, {
+                } catch (ledgerErr) {
+                  return await errorTermination("S10", ledgerErr, {
                     recordInMemory: false,
+                    output: result.output,
                   });
                 }
+                const detail =
+                  err instanceof Error ? err.message : String(err);
+                return {
+                  status: "escalate",
+                  stepLedger: ledger,
+                  stopSummary: {
+                    reason: "infra_failure",
+                    summary: `online review bot re-trigger failed after fix committed: ${detail}`,
+                    repairHint:
+                      "re-feed the issue — fix-gap recovery will post the bot re-trigger and continue S9 verify",
+                  },
+                  deferredFindings,
+                };
               }
             }
             onlineReviewRound += 1;
