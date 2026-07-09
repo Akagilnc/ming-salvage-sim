@@ -447,6 +447,39 @@ export function slicePostFixVerifyPendingFromMarkerGap(
   return false;
 }
 
+/**
+ * True when the latest durable online-review marker is `online_review_ci_failed`
+ * (bots clean, CI red, no fix marks). Resume must re-enter S9 to re-poll CI —
+ * not route S9(converged:false) → S10 empty fixer (R18 Codex P2).
+ */
+export function sliceOnlineReviewCiFailedPending(
+  ledger: ReadonlyArray<{
+    readonly step?: string;
+    readonly event?: string;
+    readonly output?: { readonly kind?: string; readonly converged?: boolean };
+  }>,
+): boolean {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.event === "online_review_ci_failed") return true;
+    if (entry.event === "online_review_converged") return false;
+    if (entry.event === "online_review_fix_committed") return false;
+    if (entry.event === "online_review_round_retrigger") return false;
+    // Executable progress past the CI park clears the pending flag.
+    if (entry.event === undefined && entry.step === "S10") return false;
+    if (entry.event === undefined && entry.step === "S11") return false;
+    if (
+      entry.event === undefined &&
+      entry.step === "S9" &&
+      entry.output?.kind === "verify" &&
+      entry.output.converged === true
+    ) {
+      return false;
+    }
+  }
+  return false;
+}
+
 /** Single-slice ledger: S10 fix landed but retrigger persistence crashed mid-gap (#600 r27). */
 export function slicePendingRoundTriggerFromFixGap(
   ledger: ReadonlyArray<{

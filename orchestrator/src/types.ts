@@ -385,12 +385,24 @@ export interface OnlineReviewFixCommittedEvent {
   readonly onlineReviewRound: number;
 }
 
+/**
+ * Bots clean + CI red, no fix-marked findings (#600 R18). Resume re-enters S9
+ * (re-poll CI), not S10 empty fixer.
+ */
+export interface OnlineReviewCiFailedEvent {
+  readonly event: "online_review_ci_failed";
+  readonly prUrl?: string;
+  readonly prHead?: string;
+  readonly onlineReviewRound: number;
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
   | OnlineReviewConvergedEvent
   | OnlineReviewRoundRetriggerEvent
-  | OnlineReviewFixCommittedEvent;
+  | OnlineReviewFixCommittedEvent
+  | OnlineReviewCiFailedEvent;
 
 /**
  * The structured output of any worker step.
