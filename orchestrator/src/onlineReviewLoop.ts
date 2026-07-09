@@ -448,9 +448,9 @@ export function slicePostFixVerifyPendingFromMarkerGap(
 }
 
 /**
- * True when the latest durable online-review marker is `online_review_ci_failed`
- * (bots clean, CI red, no fix marks). Resume must re-enter S9 to re-poll CI —
- * not route S9(converged:false) → S10 empty fixer (R18 Codex P2).
+ * True when the latest durable online-review marker is a CI park
+ * (`online_review_ci_failed` or `online_review_ci_pending`). Resume re-enters S9
+ * to re-poll CI — not S10 empty fixer / not terminal S8(error) (R18–R20 Codex).
  */
 export function sliceOnlineReviewCiFailedPending(
   ledger: ReadonlyArray<{
@@ -466,14 +466,19 @@ export function sliceOnlineReviewCiFailedPending(
 ): boolean {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
-    if (entry.event === "online_review_ci_failed") return true;
+    if (
+      entry.event === "online_review_ci_failed" ||
+      entry.event === "online_review_ci_pending"
+    ) {
+      return true;
+    }
     if (entry.event === "online_review_converged") return false;
     if (entry.event === "online_review_fix_committed") return false;
     if (entry.event === "online_review_round_retrigger") return false;
     // Executable progress past the CI park clears the pending flag.
     if (entry.event === undefined && entry.step === "S10") return false;
     if (entry.event === undefined && entry.step === "S11") return false;
-    // R19 Codex P2: any newer executable S9 verify supersedes the CI-red park
+    // R19 Codex P2: any newer executable S9 verify supersedes the CI park
     // (including converged:false + fix marks → must route to S10, not stick on S9).
     if (
       entry.event === undefined &&
