@@ -91,6 +91,29 @@ class DispatchBackend implements Backend {
     this.pushCount += 1;
     throw new Error("push should not be called directly (#331)");
   }
+  async pollOnlineReviewState(input: {
+    repo: string;
+    prUrl: string;
+    pollCount: number;
+  }) {
+    void input;
+    return {
+      prUrl: "pr://slice/offline-331",
+      headOid: "deadbeef",
+      totalFindingCount: 0,
+      quiescent: true,
+      bots: {
+        coderabbit: { state: "complete", findingCount: 0 },
+        sourcery: { state: "complete", findingCount: 0 },
+        codex: { state: "complete", findingCount: 0 },
+        gemini: { state: "complete", findingCount: 0 },
+      },
+      droppedBots: [],
+      threads: [],
+      checkRuns: [],
+    };
+  }
+
   async writeLedger(
     _entry: PersistentLedgerEntry,
     _stateDir: string,
@@ -121,10 +144,15 @@ class DispatchBackend implements Backend {
     if (skeleton !== undefined) {
       return skeleton;
     }
-    // ship (S7)
+    // ship (S7) — pr_opened engages the online review loop (#600)
     return {
       kind: "completed",
-      output: { kind: "ship", branch: this.worktree.branch, status: "pushed" },
+      output: {
+        kind: "ship",
+        branch: this.worktree.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-331",
+      },
     };
   }
 }
@@ -155,7 +183,6 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
       "S3:reviewer:reviewer:fresh:clean:/code-review",
       "S7:ship:coder:fresh:clean:gstack-ship",
       "S9:verify:verify:fresh:clean:/verify",
-      "S10:fixer:fixer:fresh:retain:/fixer",
       "S11:cleanup:cleanup:fresh:clean:/cleanup",
       "S12:docRelease:docRelease:fresh:clean:/doc-release",
     ]);
@@ -304,7 +331,12 @@ describe("#596 S9 (verify) worker must return a valid verify payload — finding
       if (skeleton != null) return skeleton;
       return {
         kind: "completed",
-        output: { kind: "ship", branch: this.worktree.branch, status: "pushed" },
+        output: {
+          kind: "ship",
+          branch: this.worktree.branch,
+          status: "pr_opened",
+          pr: "pr://slice/offline-331",
+        },
       };
     }
   }

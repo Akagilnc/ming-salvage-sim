@@ -25,16 +25,17 @@
 
 import { describe, expect, it } from "vitest";
 import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../src/dispatchRetry.js";
+import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import { runOrchestrator } from "../src/runner.js";
 import { dispatchFamilyWorker } from "../src/family/dispatchFamilyWorker.js";
 import { runVerifyCmr } from "../src/family/verifyCmr.js";
-import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
   CmrResult,
   DispatchContext,
   IssueMeta,
   IssueSnapshot,
+  OnlineReviewLandingSnapshot,
   StepOutput,
   WorkerLandingPayload,
   WorkerResult,
@@ -83,6 +84,28 @@ abstract class RoleRetryBackend implements Backend {
   }
   async push(): Promise<void> {}
   async writeLedger(): Promise<void> {}
+  async pollOnlineReviewState(input: {
+    repo: string;
+    prUrl: string;
+    pollCount: number;
+  }): Promise<OnlineReviewLandingSnapshot> {
+    void input;
+    return {
+      prUrl: "pr://slice/offline-601",
+      headOid: "deadbeef",
+      totalFindingCount: 0,
+      quiescent: true,
+      bots: {
+        coderabbit: { state: "complete", findingCount: 0 },
+        sourcery: { state: "complete", findingCount: 0 },
+        codex: { state: "complete", findingCount: 0 },
+        gemini: { state: "complete", findingCount: 0 },
+      },
+      droppedBots: [],
+      threads: [],
+      checkRuns: [],
+    };
+  }
   abstract dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
@@ -97,6 +120,10 @@ abstract class RoleRetryBackend implements Backend {
  * fixtures share one tail, not a copy each.
  */
 function cleanSuccessTail(spec: WorkerSpec): WorkerResult {
+  const reviewLoop = skeletonReviewLoopWorkerResult(spec.kind);
+  if (reviewLoop !== undefined) {
+    return reviewLoop;
+  }
   if (spec.kind === "reviewer") {
     return { kind: "completed", output: { kind: "reviewer", findings: [] } };
   }
@@ -309,7 +336,7 @@ describe("#601 AC#2 — a ship worker returning 'no valid result (crash/malforme
               kind: "ship",
               branch: ROLE_WORKTREE.branch,
               status: "pr_opened",
-              pr: "https://example.com/pr/601",
+              pr: "pr://slice/offline-601",
             },
           };
         }
@@ -581,10 +608,10 @@ class FamilyShipMalformedAfterCmrBackend implements FamilyBackend {
 //
 // HONESTY NOTE (review R1 finding 1): the production family seam
 // (`dispatchOrAbort` in verifyCmr.ts) owns ALL resolved results via
-// `callerOwns: (o) => "result" in o || (writeCapable && o.kind === "thrown")` —
-// so a resolved `malformed` is DEFERRED to the gate, NOT retried by the generic
-// layer. The gate's write-worker reset idempotency (which would let it retry
-// safely) is deferred to #661. This section is therefore split into TWO tests:
+// `callerOwns: (o) => "result" in o` — so a resolved `malformed` is DEFERRED to
+// the gate, NOT retried by the generic layer. Write-capable worker crashes retry
+// on the current worktree like every other role (2026-07-08). This section is
+// therefore split into TWO tests:
 //   1. REAL-VALIDATION PIN — exercises the runner's ACTUAL downstream
 //      source/scope/boundedReopen re-validation (cmrClosureFailureReason →
 //      trustedAcceptedSuppressionDisposition → hasAcceptedSuppressionAuthority)

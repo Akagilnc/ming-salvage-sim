@@ -15,6 +15,7 @@ const ROUTE_ENV_KEYS = [
 ] as const;
 
 process.env.ORCHESTRATOR_ROUTE = "normal";
+process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
 for (const key of ROUTE_ENV_KEYS) {
   delete process.env[key];
 }
@@ -22,6 +23,7 @@ for (const key of ROUTE_ENV_KEYS) {
 beforeEach(() => {
   vi.unstubAllEnvs();
   vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+  vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
   for (const key of ROUTE_ENV_KEYS) {
     delete process.env[key];
   }

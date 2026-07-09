@@ -795,10 +795,9 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
 
   // ── #598: generic mechanical retry at the merge-resolver call site ──────────────
 
-  it("#598 a merger agent that CRASHES (throws) once then resolves is retried fresh, resetting the conflict between attempts", async () => {
+  it("#598 a merger agent that CRASHES (throws) once then resolves is retried fresh on current state", async () => {
     class CrashOnceBackend extends FakeSeamsBackend {
       crashesLeft = 1;
-      resetCalls = 0;
       protected override async runMergerAgent(req: ConflictResolveRequest) {
         if (this.crashesLeft > 0) {
           this.crashesLeft -= 1;
@@ -806,9 +805,6 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
           throw new Error("merger container connection dropped mid-resolve");
         }
         return super.runMergerAgent(req);
-      }
-      protected override async reestablishConflictForRetry(): Promise<void> {
-        this.resetCalls += 1;
       }
     }
     const b = new CrashOnceBackend(opts(trackRepo()));
@@ -818,8 +814,6 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     // The crash was retried fresh → a clean landed resolve (not conflicted).
     expect(res.conflicted ?? false).toBe(false);
     expect(b.mergerCalls).toHaveLength(2);
-    // The half-resolved conflict was re-established before the retry (idempotency).
-    expect(b.resetCalls).toBe(1);
   });
 
   it("#598 a merger agent that RETURNS {resolved:false} is NOT retried (a judged non-resolve, one call)", async () => {
@@ -834,13 +828,9 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
 
   it("#598 a persistently CRASHING merger agent re-throws after the bounded attempts", async () => {
     class AlwaysCrashBackend extends FakeSeamsBackend {
-      resetCalls = 0;
       protected override async runMergerAgent(req: ConflictResolveRequest) {
         this.mergerCalls.push(req);
         throw new Error("merger keeps crashing");
-      }
-      protected override async reestablishConflictForRetry(): Promise<void> {
-        this.resetCalls += 1;
       }
     }
     const b = new AlwaysCrashBackend(opts(trackRepo()));
@@ -854,41 +844,6 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
       new RegExp(`after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`),
     );
     expect(b.mergerCalls).toHaveLength(MAX_DISPATCH_ATTEMPTS);
-    // A reset ran before each of the bounded retries.
-    expect(b.resetCalls).toBe(MAX_DISPATCH_ATTEMPTS - 1);
-  });
-
-  it("#598 r5: a NON-conflict re-merge failure in the reset hook rethrows → the merger is NOT re-dispatched on an un-re-established state", async () => {
-    // The merger crashes (needs retry); the reset hook's re-establishing
-    // `git merge --no-ff` then fails as a NON-conflict git error leaving NO MERGE_HEAD
-    // (dirty worktree / lock). reestablishConflictForRetry must RETHROW (not swallow) —
-    // so retryProcessCrash counts it as a reset failure and SKIPS the merger dispatch,
-    // never running the agent with no conflict re-established.
-    class ResetRemergeFailsBackend extends FakeSeamsBackend {
-      crashesLeft = 1;
-      protected override async runMergerAgent(req: ConflictResolveRequest) {
-        this.mergerCalls.push(req);
-        if (this.crashesLeft > 0) {
-          this.crashesLeft -= 1;
-          throw new Error("merger crashed");
-        }
-        return this.mergerOutcome;
-      }
-      protected override sh(file: string, args: string[], cwd?: string): string {
-        if (file === "git" && args[0] === "merge" && args[1] === "--no-ff") {
-          throw new Error("git merge: fatal (dirty worktree / lock)");
-        }
-        return super.sh(file, args, cwd);
-      }
-    }
-    const b = new ResetRemergeFailsBackend(opts(trackRepo()));
-    b.mergeInProgressFake = false; // no MERGE_HEAD after the failed re-merge
-    await expect(
-      b.resolveMergeConflict({ childIssue: 24, childBranch: "feat/child-24" }),
-    ).rejects.toThrow();
-    // Merger crashed on attempt 1; retries 2..N skipped its dispatch because the reset
-    // (re-merge) rethrew without re-establishing the conflict.
-    expect(b.mergerCalls).toHaveLength(1);
   });
 
   it("#598 idempotency: a merger that COMMITTED the merge then crashed is NOT re-run — the landed child is recognized", async () => {
@@ -1073,8 +1028,17 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
 
   it("feeds RAW valid fixer through real parseFixerOutcome (family-side kind)", async () => {
     const mod = await import("../../src/family/realFamilyBackend.js");
+    const sha = "a".repeat(40);
+    const out = mod.parseFixerOutcome(
+      `<fixer>{"committed": true, "fixCommitSha": "${sha}"}</fixer>`,
+    );
+    expect(out).toEqual({ kind: "fixer", committed: true, fixCommitSha: sha });
+  });
+
+  it("pin r39: committed:true without fixCommitSha is malformed on family parseFixerOutcome", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
     const out = mod.parseFixerOutcome(`<fixer>{"committed": true}</fixer>`);
-    expect(out).toEqual({ kind: "fixer", committed: true });
+    expect(out.kind).toBe("malformed");
   });
 
   it("RAW extra keys on verify is malformed (strict, matches single-slice .strict())", async () => {

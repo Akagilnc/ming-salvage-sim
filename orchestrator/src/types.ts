@@ -362,7 +362,59 @@ export interface ContinueFixingEvent {
   readonly reason?: string;
 }
 
-export type LedgerBookkeepingEvent = EscalationAnswerEvent | ContinueFixingEvent;
+/** Phase-level marker: online bot review loop converged for a PR head (#600). */
+export interface OnlineReviewConvergedEvent {
+  readonly event: "online_review_converged";
+  readonly prUrl: string;
+  readonly prHead: string;
+  readonly onlineReviewRound: number;
+}
+
+/** Round ≥2 freshness anchor persisted after S10 re-trigger (#600 r25). */
+export interface OnlineReviewRoundRetriggerEvent {
+  readonly event: "online_review_round_retrigger";
+  readonly roundTriggerHeadOid: string;
+  readonly roundTriggerAt: string;
+  readonly onlineReviewRound: number;
+}
+
+/** Fixer commit marker persisted after retrigger (#600 r27 crash-safe ordering). */
+export interface OnlineReviewFixCommittedEvent {
+  readonly event: "online_review_fix_committed";
+  readonly fixCommitSha: string;
+  readonly onlineReviewRound: number;
+}
+
+/**
+ * Bots clean + CI red, no fix-marked findings (#600 R18). Resume re-enters S9
+ * (re-poll CI), not S10 empty fixer.
+ */
+export interface OnlineReviewCiFailedEvent {
+  readonly event: "online_review_ci_failed";
+  readonly prUrl?: string;
+  readonly prHead?: string;
+  readonly onlineReviewRound: number;
+}
+
+/**
+ * Bots green but CI still pending past overdue window (#600 R20). Park
+ * resumable at S9 — not S8(error) terminal.
+ */
+export interface OnlineReviewCiPendingEvent {
+  readonly event: "online_review_ci_pending";
+  readonly prUrl?: string;
+  readonly prHead?: string;
+  readonly onlineReviewRound: number;
+}
+
+export type LedgerBookkeepingEvent =
+  | EscalationAnswerEvent
+  | ContinueFixingEvent
+  | OnlineReviewConvergedEvent
+  | OnlineReviewRoundRetriggerEvent
+  | OnlineReviewFixCommittedEvent
+  | OnlineReviewCiFailedEvent
+  | OnlineReviewCiPendingEvent;
 
 /**
  * The structured output of any worker step.
@@ -547,6 +599,76 @@ export interface WorkerSpec {
  * for a fate decision — it only搬运s them into the landing file the coder-fix
  * worker reads. DispatchContext keeps ONLY the identity keys + count.
  */
+/** Bot snapshot landing content for online review verify/fixer workers (#600). */
+/** Per-finding judgment from the verify worker (#600): fix / reject / defer. */
+export type OnlineReviewFindingAction = "fix" | "reject" | "defer";
+
+export interface OnlineReviewFindingDisposition {
+  readonly identityKey: string;
+  readonly threadId: string;
+  readonly action: OnlineReviewFindingAction;
+  readonly reason?: string;
+}
+
+/** Evidence-bearing thread reply authored by the verify worker (#600 AC6). */
+export interface OnlineReviewThreadReply {
+  readonly threadId: string;
+  readonly body: string;
+}
+
+/** Terminal states a verify worker may self-declare (#600 wire schema). */
+export type VerifyWorkerTerminalState =
+  | "mergeable"
+  | "round_budget_exhausted"
+  | "decision_gate_raised";
+
+/** Runner-internal online review terminals (adds contract_drift from HEAD drift). */
+export type OnlineReviewTerminalState =
+  | VerifyWorkerTerminalState
+  | "contract_drift";
+
+export type OnlineReviewBotLegLanding =
+  | { readonly state: "pending" }
+  | { readonly state: "complete"; readonly findingCount: number }
+  | { readonly state: "dropped"; readonly reason: string };
+
+export interface OnlineReviewLandingSnapshot {
+  readonly prUrl: string;
+  readonly headOid: string;
+  readonly totalFindingCount: number;
+  readonly quiescent: boolean;
+  /** Per-bot terminal/pending legs — dropped bots are not clean-silence evidence (#600). */
+  readonly bots: Readonly<Record<string, OnlineReviewBotLegLanding>>;
+  /** Convenience list of bot ids dropped after the overdue window. */
+  readonly droppedBots: ReadonlyArray<string>;
+  readonly threads: ReadonlyArray<{
+    /** Top-level review-comment databaseId — REST reply parent. */
+    readonly id: string;
+    /** GraphQL reviewThread node id — resolution target. */
+    readonly threadNodeId?: string;
+    readonly path?: string;
+    readonly line?: number;
+    readonly body: string;
+    readonly isResolved: boolean;
+    /** Native commit_id when GitHub exposes it; undefined for artifact bots. */
+    readonly headOid?: string;
+    readonly authorLogin?: string;
+  }>;
+  /** Head-correlated CI check-runs for verify default-deny (#600 / ADR 0061). */
+  readonly checkRuns: ReadonlyArray<{
+    readonly id: number;
+    readonly name: string;
+    readonly headSha: string;
+    readonly status: string;
+    readonly conclusion?: string;
+  }>;
+  /**
+   * How empty checkRuns is classified: offline="converged", live="pending"
+   * (post-push race before checks appear — Cursor medium, verified).
+   */
+  readonly checkRunsEmptyMeans?: "converged" | "pending";
+}
+
 export interface WorkerLandingPayload {
   /**
    * S5 / family coder-fix worker only: the blocking reviewer findings (full
@@ -554,6 +676,19 @@ export interface WorkerLandingPayload {
    * them to the landing file; the runner does not read them.
    */
   readonly blockingFindings?: ReadonlyArray<Finding>;
+  /** S9/S10 online review workers: paginated bot/thread snapshot (#600). */
+  readonly onlineReviewSnapshot?: OnlineReviewLandingSnapshot;
+  /** S9/S10: ship delivery metadata threaded from S7 (pr URL/head). */
+  readonly shipDelivery?: {
+    readonly branch: string;
+    readonly pr?: string;
+    readonly prHead?: string;
+    readonly status: string;
+  };
+  /** S9/S10: 1-based online review round (runner-enforced cap). */
+  readonly onlineReviewRound?: number;
+  /** S10 fixer only: fix-marked finding identity keys from verify worker. */
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
 }
 
 /**
@@ -657,6 +792,14 @@ export interface DispatchContext {
    * closure keys outside this protected set.
    */
   readonly priorCmrFindingIdentityKeys?: ReadonlyArray<string>;
+  /** S9/S10 online review: opened PR URL from S7 ship (undefined when pushed-only). */
+  readonly prUrl?: string;
+  /** S9/S10 online review: verified PR head OID/SHA. */
+  readonly prHead?: string;
+  /** GitHub `owner/repo` for gh api polling. */
+  readonly repo?: string;
+  /** 1-based online review round — runner enforces MAX_ONLINE_REVIEW_ROUNDS (#600). */
+  readonly onlineReviewRound?: number;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */
@@ -746,15 +889,28 @@ export interface MergeWorkerResult {
 }
 
 /**
- * Online review/PR-check worker output (#596 skeleton). The real bot-polling
- * logic is out of scope for this slice; the skeleton stub returns a deterministic
- * `converged:true` verdict through the legacy dispatch path so the runner can
- * exercise the S9 step seam.
+ * Online review verify worker output (#600). The verify worker owns per-finding
+ * fix / reject / defer judgment; the runner applies GitHub side effects and only
+ * counts findings (0 / non-0) for routing — it does not interpret finding content.
  */
 export interface VerifyResult {
   readonly kind: "verify";
   /** Bot/online review converged (green) ⇒ the fix loop can stop. */
   readonly converged: boolean;
+  /** Per-finding dispositions judged by the verify worker. */
+  readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
+  /** Identity keys the fixer may act on (fix-marked only). */
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /** Evidence-bearing replies for reject/defer/fixed outcomes (#600 AC6). */
+  readonly threadReplies?: ReadonlyArray<OnlineReviewThreadReply>;
+  /** Thread IDs to resolve only after a fresh re-check confirms the fix. */
+  readonly threadsToResolve?: ReadonlyArray<string>;
+  /** Tracked issue URLs created for deferred findings (runner-populated). */
+  readonly deferredIssueUrls?: ReadonlyArray<string>;
+  /** Documented terminal state when the loop ends (#600 AC1/AC5). */
+  readonly terminalState?: VerifyWorkerTerminalState;
+  /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
+  readonly isRecheck?: boolean;
 }
 
 /**
@@ -765,6 +921,18 @@ export interface FixerResult {
   readonly kind: "fixer";
   /** Whether the fixer produced commits for the requested repairs. */
   readonly committed: boolean;
+  /**
+   * When `committed` is false: assigned fix-marked findings are already resolved
+   * on the current branch (e.g. a prior crashed attempt landed the fix).
+   * The stage proceeds to verify using {@link fixCommitSha}, not decision_gate.
+   */
+  readonly alreadySatisfied?: boolean;
+  /**
+   * Fixing commit SHA from the fixer envelope. Required when {@link committed} is
+   * true (new fix this turn) or when {@link alreadySatisfied} is true. Runner/stage
+   * never re-read live git for this value (ADR 0030).
+   */
+  readonly fixCommitSha?: string;
 }
 
 /**
@@ -948,7 +1116,7 @@ export interface LedgerEntry {
   /** Active finding scope targeted by a continue-fixing bookkeeping event. */
   readonly findingScope?: FindingRepairScope;
   /** Source of a bookkeeping event, when recorded. */
-  readonly source?: LedgerBookkeepingEvent["source"];
+  readonly source?: EscalationAnswerPayload["source"];
   /** Timestamp for a bookkeeping event, when recorded. */
   readonly ts?: string;
   /** Optional reason for a bookkeeping event. */
@@ -970,6 +1138,16 @@ export interface LedgerEntry {
   readonly repairMovementPaths?: ReadonlyArray<string>;
   /** Runner-owned terminal stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
+  /** Online review converged marker (#600): PR URL covered by this convergence. */
+  readonly prUrl?: string;
+  /** Online review converged marker (#600): reviewed PR head SHA. */
+  readonly prHead?: string;
+  /** Online review converged marker (#600): final round number. */
+  readonly onlineReviewRound?: number;
+  /** Online review round re-trigger marker (#600 r25): anchored PR head OID. */
+  readonly roundTriggerHeadOid?: string;
+  /** Online review round re-trigger marker (#600 r25): ISO instant the round began. */
+  readonly roundTriggerAt?: string;
 }
 
 /**
@@ -1219,9 +1397,7 @@ export interface Backend {
    * then falls back to the branch name).
    *
    * OPTIONAL so the zero-container fake Backends need no change: when absent the
-   * runner keeps the v0.1 branch-name value. codex#2 consistency check
-   * (ledger.branchHEAD vs the live worktree HEAD) is built on this in the real
-   * Backend.
+   * runner keeps the v0.1 branch-name value.
    */
   worktreeHead?(worktree: WorktreeHandle): Promise<string | undefined>;
   /**
@@ -1250,6 +1426,17 @@ export interface Backend {
    * `<stateDir>/steps.jsonl`.  The runner calls this once per step, including
    * the S8 handoff entry, BEFORE returning the final result.
    */
+  /**
+   * Optional (#600): inject bot-poll results for the online review loop in explicit
+   * offline/test handles only (`pr://…` + `ORCHESTRATOR_OFFLINE_REVIEW_POLL`). When
+   * absent the runner uses live `gh` polling or `offlinePrReviewSnapshot` under the
+   * same central admissibility gate — never for live GitHub PR URLs outside test mode.
+   */
+  pollOnlineReviewState?(input: {
+    readonly repo: string;
+    readonly prUrl: string;
+    readonly pollCount: number;
+  }): Promise<OnlineReviewLandingSnapshot>;
   writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void>;
 }
 
@@ -1272,6 +1459,7 @@ export interface WorkerOutcomeLandingFile {
 /** Optional agent-step execution metadata consumed by real sandboxes. */
 export interface AgentStepRunOptions {
   readonly fixFindingsLanding?: FixFindingsLandingFile;
+  readonly onlineReviewLanding?: FixFindingsLandingFile;
   readonly outcomeLanding?: WorkerOutcomeLandingFile;
 }
 

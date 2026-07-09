@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from "vitest";
 import { findingIdentityKey } from "../../src/findings.js";
+import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import { isValidFinding } from "../../src/validate.js";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
 import type {
@@ -32,6 +33,22 @@ import type {
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
 } as const;
+
+/** #600: successful pr_opened ship is followed by the shared online review-loop stage. */
+const ONLINE_REVIEW_DISPATCH_TAIL = [
+  expect.objectContaining({ kind: "verify", promptFile: "verify.md" }),
+  expect.objectContaining({ kind: "cleanup", promptFile: "cleanup.md" }),
+  expect.objectContaining({ kind: "docRelease", promptFile: "docRelease.md" }),
+] as const;
+
+/** Deterministic skeleton for verify/fixer/cleanup/docRelease after ship (#600). */
+function onlineReviewLoopWorkerOrThrow(spec: WorkerSpec): WorkerResult {
+  const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+  if (skeleton !== undefined) {
+    return skeleton;
+  }
+  throw new Error(`unexpected worker kind ${spec.kind}`);
+}
 
 /** One recorded worker dispatch (the kind + the session mode). */
 interface DispatchRecord {
@@ -125,7 +142,7 @@ class SchedulerFamilyBackend implements FamilyBackend {
         }
       );
     }
-    throw new Error(`unexpected worker kind ${spec.kind}`);
+    return onlineReviewLoopWorkerOrThrow(spec);
   }
 }
 
@@ -322,7 +339,7 @@ class ReviewFixRereviewBackend implements FamilyBackend {
       };
     }
 
-    throw new Error(`unexpected worker kind ${spec.kind}`);
+    return onlineReviewLoopWorkerOrThrow(spec);
   }
 }
 
@@ -452,7 +469,7 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
       };
     }
 
-    throw new Error(`unexpected worker kind ${spec.kind}`);
+    return onlineReviewLoopWorkerOrThrow(spec);
   }
 }
 
@@ -577,7 +594,7 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
       };
     }
 
-    throw new Error(`unexpected worker kind ${spec.kind}`);
+    return onlineReviewLoopWorkerOrThrow(spec);
   }
 }
 
@@ -741,7 +758,7 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
       };
     }
 
-    throw new Error(`unexpected worker kind ${spec.kind}`);
+    return onlineReviewLoopWorkerOrThrow(spec);
   }
 }
 
@@ -871,7 +888,7 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
       };
     }
 
-    throw new Error(`unexpected worker kind ${spec.kind}`);
+    return onlineReviewLoopWorkerOrThrow(spec);
   }
 }
 
@@ -1019,7 +1036,7 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
       };
     }
 
-    throw new Error(`unexpected worker kind ${spec.kind}`);
+    return onlineReviewLoopWorkerOrThrow(spec);
   }
 }
 
@@ -1160,7 +1177,7 @@ class EscalateOnNonConvergenceBackend implements FamilyBackend {
       throw new Error("ship must never be dispatched on a non-converging escalate");
     }
 
-    throw new Error(`unexpected worker kind ${spec.kind}`);
+    return onlineReviewLoopWorkerOrThrow(spec);
   }
 }
 
@@ -1453,7 +1470,7 @@ class ReviewerChecksOutOtherHeadBackend implements FamilyBackend {
         },
       };
     }
-    throw new Error(`unexpected worker kind ${spec.kind}`);
+    return onlineReviewLoopWorkerOrThrow(spec);
   }
 }
 
@@ -1484,7 +1501,7 @@ class MalformedReviewerMovesFamilyHeadBackend extends ReviewFixRereviewBackend {
       this.currentFamilyHead = "head-after-reviewer-commit";
       return { kind: "malformed", reason: "no parseable CMR-VERDICT" };
     }
-    throw new Error(`unexpected worker kind ${spec.kind}`);
+    return onlineReviewLoopWorkerOrThrow(spec);
   }
 }
 
@@ -1521,7 +1538,7 @@ class MalformedReviewerWrongHeadBeforeRewriteBackend extends ReviewFixRereviewBa
         sessionId: "cmr-session-wrong-head",
       };
     }
-    throw new Error(`unexpected worker kind ${spec.kind}`);
+    return onlineReviewLoopWorkerOrThrow(spec);
   }
 
   override async rewriteWorkerOutcome(): Promise<WorkerResult> {
@@ -1585,6 +1602,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         cmrPass: "correctness",
       }),
       expect.objectContaining({ kind: "ship", promptFile: "family_ship.md" }),
+      ...ONLINE_REVIEW_DISPATCH_TAIL,
     ]);
     expect(backend.ledger).toEqual(
       expect.arrayContaining([
@@ -1662,6 +1680,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship", promptFile: "family_ship.md" }),
+      ...ONLINE_REVIEW_DISPATCH_TAIL,
     ]);
     expect(
       backend.ledger.filter((entry) => entry.status === "cmr_reviewed"),
@@ -1795,6 +1814,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
       expect.objectContaining({ kind: "ship", promptFile: "family_ship.md" }),
+      ...ONLINE_REVIEW_DISPATCH_TAIL,
     ]);
   });
 
@@ -1864,6 +1884,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship" }),
+      ...ONLINE_REVIEW_DISPATCH_TAIL,
     ]);
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_fix_committed",
@@ -1925,6 +1946,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship" }),
+      ...ONLINE_REVIEW_DISPATCH_TAIL,
     ]);
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_fix_committed",
@@ -1957,6 +1979,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship" }),
+      ...ONLINE_REVIEW_DISPATCH_TAIL,
     ]);
   });
 
@@ -2757,6 +2780,9 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       "cmr",
       "cmr",
       "ship",
+      "verify",
+      "cleanup",
+      "docRelease",
     ]);
   });
 

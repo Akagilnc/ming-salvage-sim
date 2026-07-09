@@ -48,6 +48,8 @@ const HOME = "/tmp/home-593";
 const CLONE = clonePathFor(HOME, repoSlug(SOURCE, REMOTE), ISSUE);
 const EXISTING_WT = `${CLONE}/.sandcastle/worktrees/issue-593`;
 const HEAD_SHA = "a".repeat(40);
+const ADVANCED_HEAD_SHA = "b".repeat(40);
+const LEDGER_HEAD_SHA = "c".repeat(40);
 
 function porcelainForBranch(branch: string, path = EXISTING_WT): string {
   return [`worktree ${path}`, `HEAD ${HEAD_SHA}`, `branch refs/heads/${branch}`].join("\n");
@@ -61,6 +63,7 @@ class RecordingBackend extends RealBackend {
   }
   createWorktreeCalls = 0;
   porcelain = porcelainForBranch(NEW_BRANCH);
+  liveHeadSha = HEAD_SHA;
 
   protected override cloneDirExists(): boolean {
     return true;
@@ -80,7 +83,7 @@ class RecordingBackend extends RealBackend {
       return this.porcelain;
     }
     if (file === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
-      return HEAD_SHA;
+      return this.liveHeadSha;
     }
     return "";
   }
@@ -260,6 +263,41 @@ describe("RealBackend findResumeState old-branch fallback (#593)", () => {
 
     const backend = newBackend(porcelainForBranch(OLD_BRANCH, existingWt));
     expect(await backend.findResumeState(ISSUE)).toBeUndefined();
+  });
+
+  it("pin r34: live HEAD advanced past ledger HEAD continues resume (no abort)", async () => {
+    const wtRoot = mkDir("wt-head-advanced-resume-");
+    const existingWt = join(wtRoot, "issue-593");
+    mkdirSync(existingWt, { recursive: true });
+
+    const backend = newBackend(porcelainForBranch(NEW_BRANCH, existingWt));
+    backend.liveHeadSha = ADVANCED_HEAD_SHA;
+    const ledgerLine = `${JSON.stringify({
+      step: "S9",
+      branchHEAD: LEDGER_HEAD_SHA,
+      output: { kind: "online_review", verdict: "needs_fix" },
+    })}\n`;
+    const stateDir = writeLedger(existingWt, ISSUE, ledgerLine);
+
+    const resume = await backend.findResumeState(ISSUE);
+
+    expect(resume).toBeDefined();
+    expect(resume?.worktree.path).toBe(existingWt);
+    expect(resume?.stateDir).toBe(stateDir);
+    expect(resume?.ledger).toHaveLength(1);
+    expect(resume?.ledger[0]?.branchHEAD).toBe(LEDGER_HEAD_SHA);
+  });
+
+  it("corrupt ledger still aborts resume (infra fail-closed)", async () => {
+    const wtRoot = mkDir("wt-corrupt-ledger-resume-");
+    const existingWt = join(wtRoot, "issue-593");
+    mkdirSync(existingWt, { recursive: true });
+
+    const backend = newBackend(porcelainForBranch(NEW_BRANCH, existingWt));
+    const stateDir = writeLedger(existingWt, ISSUE, "{not valid json}\n");
+
+    await expect(backend.findResumeState(ISSUE)).rejects.toThrow(/corrupt ledger/i);
+    expect(stateDir).toBeDefined();
   });
 });
 

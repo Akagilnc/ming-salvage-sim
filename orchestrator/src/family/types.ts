@@ -171,7 +171,9 @@ export interface FamilyLedgerEntry {
     | "escalated"
     | "child_decision_parked"
     | "escalation_answered"
-    | "admission_skipped";
+    | "admission_skipped"
+    | "online_review_fix_committed"
+    | "online_review_round_retrigger";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -215,7 +217,9 @@ export interface FamilyLedgerEntry {
     | "escalated"
     | "child_decision_parked"
     | "escalation_answered"
-    | "admission_skipped";
+    | "admission_skipped"
+    | "online_review_fix_committed"
+    | "online_review_round_retrigger";
   /**
    * Which phase this PHASE-LEVEL event belongs to. Set on `aborted` entries and
    * on `cmr_passed` audit entries; `merged` / `reconciled` entries omit it because
@@ -312,6 +316,14 @@ export interface FamilyLedgerEntry {
   readonly note?: string;
   /** Unified run-level/family-level stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
+  /** ISO-8601 instant when this ledger row was written (#600 r9 round-1 trigger truth). */
+  readonly ts?: string;
+  /** Online review round re-trigger marker (#600 r26): anchored PR head OID. */
+  readonly roundTriggerHeadOid?: string;
+  /** Online review round re-trigger marker (#600 r26): ISO instant the round began. */
+  readonly roundTriggerAt?: string;
+  /** Online review loop round (#600 r26): 1-based round at fix/retrigger time. */
+  readonly onlineReviewRound?: number;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────
@@ -473,7 +485,6 @@ export interface FamilyBackend {
    * tracked edits behind even when HEAD is unchanged.
    */
   readFamilyTrackedStatus?(familyBase: string): Promise<readonly string[]>;
-
   /**
    * THE unified worker-dispatch seam at the FAMILY layer (ADR 0026 / PRD #330
    * #331) — parallel to {@link Backend.dispatchWorker}. The family-LEVEL worker
