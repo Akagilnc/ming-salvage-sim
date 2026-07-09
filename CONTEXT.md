@@ -546,6 +546,14 @@ _Avoid_: 自评自修、顺手修一下、把 CMR reviewer 当 coder-fix。
 被 runner 派出、专门修复上一轮 reviewer/CMR worker 给出的 blocking findings 的 worker。它必须产出独立新 commit,并留下修复证据;runner 只用这些硬证据判断能否进入 fresh re-review,不判断修复语义是否正确。证据缺失、不匹配或没有真实新 commit 时,runner 打回 coder-fix 补齐,而不是自己猜修好了没有。边界取舍见 0050。
 _Avoid_: reviewer 自修、amend 折叠、无 commit 修复、runner 代判修复正确。
 
+**文档发布 (docRelease)**:
+线上评审 loop 收敛之后、自动合并之前的 worker 步：在 PR 头上跑 `/gstack-document-release`，把刚交付的代码与项目文档对齐。成功收尾（含合法空跑）才算发布完成；有文档 commit 时由该 worker 推到 PR 远端头。单切片与 family 共用同一步，不按来源分叉。
+_Avoid_: 把文档发布当成 merge 本身、runner 直接改文档、用路径白名单当发布成败判据、只在本地 commit 不推远端。
+
+**文档发布空跑**:
+`/gstack-document-release` 判定当前无文档债、不产生 commit 的合法成功收尾。空跑仍算文档发布完成，不挡后续自动合并。
+_Avoid_: 把空跑当失败、为凑 commit 造空提交、把「没改文件」等同 skill 崩溃。
+
 **修复证据**:
 coder-fix worker 随本轮 fix 提供的可追踪材料:新增 commit/head 移动、对应 diff、finding scope 对应关系、focused test log、same-class bug scan、introduced-regression check。它是进入 fresh re-review 的机械门票,不是修复正确性的最终证明;正确性仍由下一轮 reviewer/CMR worker 判断。
 _Avoid_: 口头说已修、只贴总结不落 commit/test、自查二连缺席、把修复证据当 reviewer concurrence。
