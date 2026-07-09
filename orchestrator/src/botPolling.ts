@@ -828,6 +828,11 @@ export function findAdmissibleRetriggerComment(
     pollCount: 0,
     roundTrigger: gapTrigger,
   });
+  // Use re-anchored probe trigger for evidence (online R6 Codex P1): if the live
+  // head advanced past gapTrigger.headOid, admitting timestamp-only re-trigger
+  // comments against the stale gapTrigger would reuse a previous-head re-trigger
+  // and skip posting a fresh one for the new head.
+  const evidenceTrigger = headProbe.roundTriggerUsed;
   const { prNumber } = parsePrRef(prUrl, repo);
   const issueComments = paginateGhApi(
     sh,
@@ -843,10 +848,10 @@ export function findAdmissibleRetriggerComment(
         liveArtifactEvidenceRecord({
           timestamp,
           head: headProbe.headOid,
-          roundTrigger: gapTrigger,
+          roundTrigger: evidenceTrigger,
         }),
         headProbe.headOid,
-        gapTrigger,
+        evidenceTrigger,
       )
     ) {
       continue;
