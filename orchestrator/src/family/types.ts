@@ -588,9 +588,10 @@ export interface FamilyBackend {
   /**
    * Absolute git working directory for the family base clone (#602 doc-release
    * fail-closed path reads). Optional — when absent, the LIVE auto-merge path
-   * cannot compute docReleasePaths and fails CLOSED (blocks merge); only the
-   * offline/test-only `allowUnverifiedDocReleasePaths` hatch skips the gate,
-   * and production host wiring must never set that hatch.
+   * cannot compute docReleasePaths and fails CLOSED (blocks merge); offline
+   * `pr://` test handles may pass `allowUnverifiedDocReleasePaths: true` via
+   * `offlineAutoMergeAllowUnverifiedDocPaths` — production host wiring must never
+   * set that hatch directly.
    */
   resolveFamilyWorkingRepo?(): string | undefined;
   /**

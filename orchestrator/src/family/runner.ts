@@ -1465,7 +1465,8 @@ export async function runFamily(
               actualFamilyHead: "current family head",
               reportedFamilyHead: "review_loop_converged ledger row",
               verifiedCmrHead:
-                convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead != null
+                typeof convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ===
+                "string"
                   ? "review_loop_converged ledger stop summary"
                   : "review_loop_converged ledger row",
             },
@@ -1478,17 +1479,20 @@ export async function runFamily(
         familyHead,
         stopSummary: alreadyDoneSummary,
         children,
-        ...(epic.admissionSkipped != null && epic.admissionSkipped.length > 0
+        ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
           ? { admissionSkipped: epic.admissionSkipped }
           : {}),
       };
     }
 
-    if (isFamilyPrLiveMerged(convergedRecord.pr)) {
+    if (
+      isFamilyPrLiveMerged(convergedRecord.pr) &&
+      preFinalFamilyHead !== undefined
+    ) {
       const mergedBackfill = await runFamilyAutoMergeStage({
         familyBackend,
         familyBase,
-        convergedHeadOid: preFinalFamilyHead!,
+        convergedHeadOid: preFinalFamilyHead,
         prUrl: convergedRecord.pr,
       });
       if (!familyAutoMergeIncomplete(mergedBackfill)) {
@@ -1508,7 +1512,8 @@ export async function runFamily(
                 actualFamilyHead: "current family head",
                 reportedFamilyHead: "review_loop_converged ledger row",
                 verifiedCmrHead:
-                  convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead != null
+                  typeof convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ===
+                  "string"
                     ? "review_loop_converged ledger stop summary"
                     : "review_loop_converged ledger row",
               },
@@ -1521,7 +1526,7 @@ export async function runFamily(
           familyHead,
           stopSummary: alreadyDoneSummary,
           children,
-          ...(epic.admissionSkipped != null && epic.admissionSkipped.length > 0
+          ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
             ? { admissionSkipped: epic.admissionSkipped }
             : {}),
         };

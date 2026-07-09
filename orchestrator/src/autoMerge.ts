@@ -8,6 +8,9 @@
 import { execFileSync } from "node:child_process";
 
 import {
+  offlineSyntheticPollAdmissible,
+} from "./evidenceAdmissibility.js";
+import {
   classifyCheckRuns,
   isLiveGithubReviewPollEnabled,
   parsePrRef,
@@ -236,8 +239,18 @@ export function executePrMergeCommit(
   sh: Sh,
   repo: string,
   prNumber: number,
+  expectedHeadOid: string,
 ): void {
-  sh("gh", ["pr", "merge", String(prNumber), "--merge", "--repo", repo]);
+  sh("gh", [
+    "pr",
+    "merge",
+    String(prNumber),
+    "--merge",
+    "--match-head-commit",
+    expectedHeadOid,
+    "--repo",
+    repo,
+  ]);
 }
 
 /** Confirm merge via live GitHub state — not the merge command's exit code. */
@@ -401,9 +414,21 @@ function unverifiedDocReleasePathsSummary(): StopSummary {
 function allowUnverifiedDocReleasePathsHatch(
   input: Pick<AutoMergeStageInput, "allowUnverifiedDocReleasePaths">,
 ): boolean {
-  if (input.allowUnverifiedDocReleasePaths === false) return false;
-  if (input.allowUnverifiedDocReleasePaths === true) return true;
-  return process.env.ORCHESTRATOR_AUTO_MERGE_ALLOW_UNVERIFIED_DOC_PATHS === "1";
+  return input.allowUnverifiedDocReleasePaths === true;
+}
+
+/** Test-only: admit unverified doc paths for offline `pr://` auto-merge fakes. */
+export function offlineAutoMergeAllowUnverifiedDocPaths(
+  prUrl: string,
+  repo: string,
+  offlineSynthetic: boolean,
+  docReleasePaths: readonly string[] | undefined,
+): boolean {
+  return (
+    offlineSynthetic &&
+    (docReleasePaths === undefined || docReleasePaths.length === 0) &&
+    offlineSyntheticPollAdmissible(prUrl, repo)
+  );
 }
 
 function docReleasePathGateResult(
@@ -602,9 +627,11 @@ export async function runAutoMergeStage(
     };
   }
 
+  const expectedMergeHead = live.headOid;
   const doMerge =
     input.executeMerge ??
-    ((prNumber: number) => executePrMergeCommit(input.sh, input.repo, prNumber));
+    ((prNumber: number) =>
+      executePrMergeCommit(input.sh, input.repo, prNumber, expectedMergeHead));
   doMerge(live.prNumber);
 
   const retryDelayMs = input.mergeConfirmRetryDelayMs ?? 2000;

@@ -77,6 +77,7 @@ import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetr
 import {
   docReleasePathsFromCommit,
   isPrMergedMarker,
+  offlineAutoMergeAllowUnverifiedDocPaths,
   runAutoMergeStage,
   type PrMergedTerminalRecord,
 } from "./autoMerge.js";
@@ -2079,12 +2080,30 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
   }
 
+  async function pollMergeReadinessForShip(
+    ship: ShipResult,
+    pollCount: number,
+    mergeHeadOid: string,
+  ): Promise<PrReviewSnapshot> {
+    const prUrl = ship.pr;
+    if (typeof prUrl !== "string" || prUrl.trim().length === 0) {
+      throw new Error("merge readiness poll requires a non-empty PR URL from ship");
+    }
+    const repo = defaultRepo();
+    return pollPrReviewState(ghSh, {
+      repo,
+      prUrl,
+      pollCount,
+      roundTrigger: buildRoundTrigger(mergeHeadOid),
+    });
+  }
+
   async function pollOnlineReviewForShip(
     ship: ShipResult,
     pollCount: number,
   ): Promise<PrReviewSnapshot> {
     const prUrl = ship.pr;
-    if (prUrl == null || prUrl.trim().length === 0) {
+    if (typeof prUrl !== "string" || prUrl.trim().length === 0) {
       throw new Error("online review poll requires a non-empty PR URL from ship");
     }
     const repo = defaultRepo();
@@ -2218,7 +2237,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     | { readonly kind: "escalate"; readonly stopSummary: StopSummary }
   > {
     const prUrl = ship.pr;
-    if (prUrl == null || prUrl.trim().length === 0) {
+    if (typeof prUrl !== "string" || prUrl.trim().length === 0) {
       return {
         kind: "escalate",
         stopSummary: {
@@ -2234,6 +2253,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const docReleasePaths = docReleasePathsFromHead(worktree, docReleaseOid);
     const expectedMergeHeadOid =
       docReleaseOid ?? gitHead(worktree) ?? convergedHeadOid;
+    const offlineSynthetic = !livePoll;
+    const allowUnverifiedDocPaths = offlineAutoMergeAllowUnverifiedDocPaths(
+      prUrl,
+      repo,
+      offlineSynthetic,
+      docReleasePaths,
+    );
     const mergeResult = await runAutoMergeStage({
       sh: ghSh,
       repo,
@@ -2246,11 +2272,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         convergedHeadOid,
       ),
       prMergedMarkerPresent: slicePrMergedMarkerPresent(ledger, convergedHeadOid),
-      offlineSynthetic: !livePoll,
+      offlineSynthetic,
       ...(docReleasePaths !== undefined ? { docReleasePaths } : {}),
+      ...(allowUnverifiedDocPaths ? { allowUnverifiedDocReleasePaths: true } : {}),
       poll: async (round) => {
         if (livePoll) {
-          return pollOnlineReviewForShip(ship, round);
+          return pollMergeReadinessForShip(ship, round, expectedMergeHeadOid);
         }
         // Post-doc-release merge readiness in offline/test: use the same
         // converged synthetic snapshot as family auto-merge — not the S9 verify
@@ -2944,7 +2971,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         onlineReviewResumeHeadKeyFromLedger(ledger) ?? lastShipOutput?.prHead;
       const resumeAutoMergePending =
         plan.terminalStatus === "success" &&
-        lastShipOutput?.pr != null &&
+        typeof lastShipOutput?.pr === "string" &&
         sliceAutoMergePending(ledger, resumeConvergedHead);
       if (!resumeAutoMergePending) {
       // The prior run already reached a terminal handoff that is NOT being
@@ -4552,7 +4579,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       if (
         decision.status === "success" &&
         step === "S12" &&
-        lastShipOutput?.pr != null
+        typeof lastShipOutput?.pr === "string"
       ) {
         const convergedHead =
           onlineReviewResumeHeadKeyFromLedger(ledger) ??
