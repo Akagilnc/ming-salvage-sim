@@ -1420,7 +1420,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(sessionId).toBe("session-escalated-S2");
   });
 
-  it("AC2: crash inside review-loop (ledger truncated at S10) resumes at S9 re-verify — prior S9/S10 skipped, run completes verify→S11→S12→S8 (F3)", async () => {
+  it("AC2: crash inside review-loop (ledger truncated at S10) resumes at S9 re-verify — prior S9/S10 skipped, run completes verify→S12→S11→S8 (F3)", async () => {
     const prior = [
       entry("S0"),
       entry("S1"),
@@ -1461,16 +1461,16 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       "S7",
       "S9", // fresh re-verify after truncated S9(false)→S10 loop-back
       "S9", // online_review_converged marker
+      "S12",
+      "S12",
       "S11",
-      "S12",
       "S8",
-      "S12",
     ]);
-    // Prior S9/S10 were skipped on this resume; fresh re-verify at S9 then cleanup/docRelease
+    // Prior S9/S10 were skipped on this resume; fresh re-verify at S9 then docRelease/post-merge cleanup
     const reviewLoopDispatched = backend.dispatchSpecs
       .filter((s) => ["S9", "S10", "S11", "S12"].includes(s.id))
       .map((s) => s.id);
-    expect(reviewLoopDispatched).toEqual(["S9", "S11", "S12"]);
+    expect(reviewLoopDispatched).toEqual(["S9", "S12", "S11"]);
   });
 
   it("AC2 r7: crash after S9(converged:false) resumes S10 with reconstructed landing (#600 F1)", async () => {
@@ -2252,7 +2252,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
   });
 
-  it("pin r26: crash after converged marker resumes into S11 (skips re-verify)", async () => {
+  it("pin r26: crash after converged marker resumes into S12 (skips re-verify)", async () => {
     const prior = [
       entry("S0"),
       entry("S1"),
@@ -2283,7 +2283,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
 
     expect(result.status).toBe("success");
     expect(backend.dispatchSpecs.filter((s) => s.id === "S9")).toHaveLength(0);
-    expect(backend.dispatchSpecs.map((s) => s.id)).toEqual(["S11", "S12"]);
+    expect(backend.dispatchSpecs.map((s) => s.id)).toEqual(["S12", "S11"]);
     expect(result.stepLedger.map((e) => e.step)).toEqual([
       "S0",
       "S1",
@@ -2292,10 +2292,10 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       "S4",
       "S7",
       "S9",
+      "S12",
+      "S12",
       "S11",
-      "S12",
       "S8",
-      "S12",
     ]);
   });
 });

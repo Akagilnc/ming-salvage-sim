@@ -898,8 +898,8 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       "cmr:correctness",
       "ship:none",
       "verify:none",
-      "cleanup:none",
       "docRelease:none",
+      "cleanup:none",
     ]);
     expect(familyBackend.ledger).not.toContainEqual(
       expect.objectContaining({

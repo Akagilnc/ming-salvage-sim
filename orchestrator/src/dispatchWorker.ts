@@ -34,6 +34,8 @@ import {
 import { join, resolve } from "node:path";
 
 import { offlineReviewLoopDispatchAdmissible } from "./evidenceAdmissibility.js";
+import { dispatchPostMergeCleanup } from "./postMergeCleanup.js";
+import type { Sh } from "./familyDriver.js";
 import { modelForSlot, type ResolvedModelRoute } from "./modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
 import type {
@@ -444,9 +446,33 @@ export async function legacyDispatchWorker(
     };
   }
 
-  // S11/S12 remain deterministic stubs until #603 (cleanup.md / docRelease.md +
-  // soul files are #603 deliverables). Never reach runStep / prompt resolution.
-  if (spec.kind === "cleanup" || spec.kind === "docRelease") {
+  // S11 post-merge cleanup (#603): deterministic verify+act when landing carries
+  // pr_merged; offline/test without landing keeps the skeleton stub.
+  if (spec.kind === "cleanup") {
+    if (landing?.cleanupDispatch !== undefined) {
+      const ghSh: Sh = (file, args) =>
+        execFileSync(file, args, {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }).trim();
+      try {
+        const output = dispatchPostMergeCleanup(landing, ctx, ghSh);
+        return { kind: "completed", output };
+      } catch (err) {
+        return {
+          kind: "failed",
+          reason: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
+    const stub = skeletonReviewLoopWorkerResult(spec.kind);
+    if (stub !== undefined) {
+      return stub;
+    }
+  }
+
+  // S12 docRelease remains a deterministic stub until a dedicated doc-release slice.
+  if (spec.kind === "docRelease") {
     const stub = skeletonReviewLoopWorkerResult(spec.kind);
     if (stub !== undefined) {
       return stub;

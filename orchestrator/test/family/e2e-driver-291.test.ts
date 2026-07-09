@@ -253,6 +253,20 @@ class E2EFamilyBackend extends RealFamilyBackend {
     }
     return { kind: "failed", reason: `unexpected online review worker ${spec.kind}` };
   }
+  override async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    // #603 post-merge cleanup would invoke live `gh`; keep e2e offline/deterministic.
+    if (spec.kind === "cleanup" && landing?.cleanupDispatch !== undefined) {
+      const skeleton = skeletonReviewLoopWorkerResult("cleanup");
+      if (skeleton !== undefined) {
+        return skeleton;
+      }
+    }
+    return super.dispatchWorker(spec, ctx, landing);
+  }
 }
 
 describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {

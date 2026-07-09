@@ -1186,7 +1186,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
                     fixCommitSha: "fixsha1111111111111111111111111111111111",
                   }
                   : spec.kind === "cleanup"
-                    ? { kind: "cleanup", ok: true }
+                    ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
                     : { kind: "docRelease", released: true },
           };
         }

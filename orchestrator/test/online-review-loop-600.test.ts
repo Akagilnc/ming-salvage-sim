@@ -776,14 +776,14 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toEqual({ kind: "next", step: "S9" });
   });
 
-  it("S9 converged skips fixer → S11", () => {
+  it("S9 converged skips fixer → S12", () => {
     expect(
       route({
         from: "S9",
         output: { kind: "verify", converged: true },
         onlineReviewRound: 1,
       }),
-    ).toEqual({ kind: "next", step: "S11" });
+    ).toEqual({ kind: "next", step: "S12" });
   });
 
   it("S9 not converged routes to S10 when under round cap", () => {
@@ -5178,7 +5178,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     status: "pr_opened" as const,
   };
 
-  it("happy path passes onlineReviewSnapshot landing into cleanup and docRelease", async () => {
+  it("happy path passes onlineReviewSnapshot landing into docRelease (cleanup is post-merge)", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     try {
@@ -5189,7 +5189,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         ship: offlineShip,
       });
       expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
-      expect(backend.reviewLoopLandings).toHaveLength(2);
+      expect(backend.reviewLoopLandings).toHaveLength(1);
       expect(
         backend.reviewLoopLandings.every(
           (l) => l.onlineReviewSnapshot !== undefined,

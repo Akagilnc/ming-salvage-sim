@@ -139,13 +139,16 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       cmrPass?: DispatchContext["cmrPass"];
       escalationAnswer?: DispatchContext["escalationAnswer"];
     }> = [];
+    readonly ledger: FamilyLedgerEntry[] = [];
     completenessConverged = true;
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
-    async appendFamilyLedger(): Promise<void> {}
-    async readFamilyLedger(): Promise<[]> {
-      return [];
+    async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+      this.ledger.push(entry);
+    }
+    async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+      return this.ledger;
     }
     async readFamilyHead(): Promise<string> {
       return "head-1";
@@ -210,7 +213,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
                   fixCommitSha: "fixsha1111111111111111111111111111111111",
                 }
                 : spec.kind === "cleanup"
-                  ? { kind: "cleanup", ok: true }
+                  ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
                   : { kind: "docRelease", released: true },
         };
       }
@@ -239,8 +242,8 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       },
       { kind: "ship", promptFile: "family_ship.md" },
       { kind: "verify", promptFile: "verify.md" },
-      { kind: "cleanup", promptFile: "cleanup.md" },
       { kind: "docRelease", promptFile: "docRelease.md" },
+      { kind: "cleanup", promptFile: "cleanup.md" },
     ]);
   });
 
@@ -274,8 +277,8 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       },
       { kind: "ship", promptFile: "family_ship.md", escalationAnswer },
       { kind: "verify", promptFile: "verify.md" },
-      { kind: "cleanup", promptFile: "cleanup.md" },
       { kind: "docRelease", promptFile: "docRelease.md" },
+      { kind: "cleanup", promptFile: "cleanup.md" },
     ]);
   });
 
@@ -407,7 +410,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
                   fixCommitSha: "fixsha1111111111111111111111111111111111",
                 }
                 : spec.kind === "cleanup"
-                  ? { kind: "cleanup", ok: true }
+                  ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
                   : { kind: "docRelease", released: true },
         };
       }
