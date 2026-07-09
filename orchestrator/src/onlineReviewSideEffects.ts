@@ -130,7 +130,7 @@ export function resolveReviewThread(
     "resolveReviewThread(input:{threadId:$threadId}){",
     "thread{isResolved}}}",
   ].join("");
-  sh("gh", [
+  const raw = sh("gh", [
     "api",
     "graphql",
     "-f",
@@ -138,6 +138,33 @@ export function resolveReviewThread(
     "-f",
     `threadId=${threadNodeId}`,
   ]);
+  // Fail-closed: gh may exit 0 with GraphQL `errors` or isResolved:false (Cursor R12).
+  let parsed: {
+    errors?: ReadonlyArray<{ message?: string }>;
+    data?: {
+      resolveReviewThread?: { thread?: { isResolved?: boolean } };
+    };
+  };
+  try {
+    parsed = JSON.parse(raw) as typeof parsed;
+  } catch {
+    throw new Error(
+      `onlineReviewSideEffects: resolveReviewThread returned non-JSON: ${raw.slice(0, 200)}`,
+    );
+  }
+  if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
+    const msg = parsed.errors
+      .map((e) => e.message ?? "unknown")
+      .join("; ");
+    throw new Error(
+      `onlineReviewSideEffects: resolveReviewThread GraphQL errors: ${msg}`,
+    );
+  }
+  if (parsed.data?.resolveReviewThread?.thread?.isResolved !== true) {
+    throw new Error(
+      `onlineReviewSideEffects: resolveReviewThread did not set isResolved=true for ${threadNodeId}`,
+    );
+  }
 }
 
 function findLandingThread(

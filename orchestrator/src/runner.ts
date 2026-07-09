@@ -3304,7 +3304,44 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reviewStep === "S9" &&
           onlineReviewConvergedForHead(ledger, reviewHeadKey)
         ) {
-          reviewStep = "S11";
+          // Cursor R12 medium: prior converged marker ≠ current CI still green.
+          // Re-poll check-runs; stay on S9 if pending/failed so cleanup cannot
+          // run under a red or invisible CI state.
+          let ciStillAllowsSkip = true;
+          if (
+            isLiveGithubReviewPollEnabled(
+              lastShipOutput.pr,
+              defaultRepo(),
+            )
+          ) {
+            try {
+              const ghSh: (
+                file: string,
+                args: string[],
+              ) => string = (file, args) =>
+                execFileSync(file, args, {
+                  encoding: "utf8",
+                  stdio: ["ignore", "pipe", "pipe"],
+                }).trim();
+              const recheck = pollPrReviewState(ghSh, {
+                repo: defaultRepo(),
+                prUrl: lastShipOutput.pr,
+                pollCount: 0,
+                roundTrigger: buildRoundTrigger(
+                  reviewHeadKey ?? lastShipOutput.prHead ?? "resume-head",
+                  new Date().toISOString(),
+                ),
+              });
+              const emptyMeans = recheck.checkRunsEmptyMeans ?? "pending";
+              const gate = classifyCheckRuns(recheck.checkRuns, emptyMeans);
+              ciStillAllowsSkip = gate === "converged";
+            } catch {
+              ciStillAllowsSkip = false;
+            }
+          }
+          if (ciStillAllowsSkip) {
+            reviewStep = "S11";
+          }
         }
         const reviewLoopSpec =
           reviewStep === "S9"
@@ -3776,11 +3813,48 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       stateDir,
                     );
                   } catch (err) {
-                    return await errorTermination(reviewStep, err, {
-                      recordInMemory: false,
+                    // Codex R12 P2: marker-only write failure after bots already
+                    // re-triggered must park in-band (not S8 error). Unpaired /
+                    // partial gap remains recoverable on re-feed.
+                    const detail =
+                      err instanceof Error ? err.message : String(err);
+                    output = result.output;
+                    step = reviewStep;
+                    stepSessionId = result.sessionId;
+                    lastOutput = output;
+                    onlineReviewRound = nextRound;
+                    ledger.push({
+                      step: "S10",
                       output: result.output,
-                      stopSummary: verifySideEffectFailureStopSummary(err),
+                      ...(result.sessionId !== undefined
+                        ? { sessionId: result.sessionId }
+                        : {}),
                     });
+                    try {
+                      await emitLedger(
+                        "S10",
+                        result.output,
+                        promptFile,
+                        undefined,
+                        result.sessionId,
+                      );
+                    } catch (ledgerErr) {
+                      return await errorTermination("S10", ledgerErr, {
+                        recordInMemory: false,
+                        output: result.output,
+                      });
+                    }
+                    return {
+                      status: "escalate",
+                      stepLedger: ledger,
+                      stopSummary: {
+                        reason: "infra_failure",
+                        summary: `online review round-retrigger marker write failed after bots re-triggered: ${detail}`,
+                        repairHint:
+                          "re-feed the issue — fix-gap / resume will rebuild round trigger from markers and continue S9 verify",
+                      },
+                      deferredFindings,
+                    };
                   }
                 }
               } catch (err) {

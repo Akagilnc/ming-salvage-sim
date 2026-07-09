@@ -728,10 +728,16 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
   });
 
   it("pin BOT_RETRIGGER_COMMENT matches wiki concepts/pr-review-loop.md bot commands", () => {
-    // Authoritative contract: wiki/concepts/pr-review-loop.md (ADR 0061).
+    // Wiki core (ADR 0061) + `/gemini review` slash form (Codex R12 / current Gemini docs).
     expect(BOT_RETRIGGER_COMMENT).toBe(
-      "@sourcery-ai review\n@codex review\n@gemini-code-assist please review",
+      "@sourcery-ai review\n@codex review\n@gemini-code-assist please review\n/gemini review",
     );
+    // Old 3-line wiki body still admissible for gap recovery.
+    expect(
+      isBotRetriggerCommentBody(
+        "@sourcery-ai review\n@codex review\n@gemini-code-assist please review",
+      ),
+    ).toBe(true);
   });
 
   it("postBotRetriggerComment posts the R2/R3 manual re-trigger body", () => {
