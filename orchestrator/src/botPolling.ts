@@ -92,6 +92,13 @@ export interface PollPrReviewInput {
   readonly roundTrigger: RoundTrigger;
   /** Per-bot poll counts without a completion signal — used to drop overdue bots. */
   readonly botPendingPolls?: Readonly<Partial<Record<OnlineReviewBotId, number>>>;
+  /**
+   * Optional clock for fail-closed head-drift re-anchor (online R2 Codex P2).
+   * When the live PR head differs from the round trigger head, a new trigger is
+   * built with this instant (default: now) so timestamp-only bot artifacts from
+   * the previous head cannot satisfy the new head.
+   */
+  readonly nowIso?: string;
 }
 
 /**
@@ -504,13 +511,37 @@ function countBotFindings(
   return count;
 }
 
+/**
+ * CI check-run gate for online-review convergence (ADR 0061).
+ * - empty list: offline/synthetic → treated as converged
+ * - any non-completed (queued/in_progress): pending (re-poll; do not fixer)
+ * - any completed non-success: failed (block merge)
+ * - else all completed success: converged
+ */
+export type CheckRunsGate = "converged" | "pending" | "failed";
+
+export function classifyCheckRuns(
+  runs: ReadonlyArray<CheckRunSnapshot>,
+): CheckRunsGate {
+  if (runs.length === 0) return "converged";
+  let sawPending = false;
+  for (const run of runs) {
+    if (run.status !== "completed") {
+      sawPending = true;
+      continue;
+    }
+    if (run.conclusion !== "success") {
+      return "failed";
+    }
+  }
+  return sawPending ? "pending" : "converged";
+}
+
 /** True when every admissible head-correlated check-run completed successfully. */
 export function checkRunsConverged(
   runs: ReadonlyArray<CheckRunSnapshot>,
 ): boolean {
-  return runs.every(
-    (run) => run.status === "completed" && run.conclusion === "success",
-  );
+  return classifyCheckRuns(runs) === "converged";
 }
 
 function resolveBotStatuses(
@@ -672,10 +703,17 @@ export function pollPrReviewState(
     throw new Error(`botPolling: PR ${input.prUrl} has no head sha`);
   }
 
+  // Fail closed on mid-round head advance (online R2 Codex P2): re-anchor the
+  // trigger to the new head with a fresh timestamp. Keeping the old triggeredAt
+  // would admit timestamp-only bot artifacts (no commit_id) from the previous
+  // head against the new SHA and let the loop converge without a re-review.
   const roundTrigger =
     input.roundTrigger.headOid === headOid
       ? input.roundTrigger
-      : buildRoundTrigger(headOid, input.roundTrigger.triggeredAt);
+      : buildRoundTrigger(
+          headOid,
+          input.nowIso ?? new Date().toISOString(),
+        );
 
   const issueComments = paginateGhApi(
     sh,

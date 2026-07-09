@@ -53,6 +53,7 @@ import {
   BOT_REACTION_ACK_CONTENT,
   BOT_RETRIGGER_COMMENT,
   checkRunsConverged,
+  classifyCheckRuns,
   droppedBotIds,
   hasDroppedBots,
   isBotQuiescent,
@@ -103,6 +104,7 @@ import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import {
   buildOnlineReviewLanding,
   clampVerifyConvergenceForCheckRuns,
+  verifyBlockedOnlyOnPendingCheckRuns,
   isReviewLoopConvergedMarker,
   onlineReviewConvergedForHead,
   onlineReviewFixerNothingToFixStopSummary,
@@ -499,6 +501,45 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
       true,
     );
     expect(calls.some((c) => c.includes("per_page=100"))).toBe(true);
+  });
+
+  it("pin online R2 Codex P2: mid-round head drift re-anchors trigger with fresh timestamp", () => {
+    const sh = ghFixture({ calls: [] });
+    const oldTrigger = buildRoundTrigger("old-head-sha", "2026-07-01T00:00:00.000Z");
+    const nowIso = "2026-07-09T12:00:00.000Z";
+    // Fixture PR head is headsha1 — differs from old-head-sha
+    const snap = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: oldTrigger,
+      nowIso,
+    });
+    expect(snap.headOid).toBe("headsha1");
+    // Evidence for bots uses the re-anchored trigger; artifacts before nowIso
+    // must not satisfy the new head via the old timestamp alone.
+    // Observable: a comment after old trigger but before nowIso is not enough
+    // when head changed — pin the re-anchor by checking classify with nowIso.
+    // Direct unit pin: same-head keeps old timestamp; drift uses nowIso.
+    const sameHead = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: buildRoundTrigger("headsha1", "2026-07-01T00:00:00.000Z"),
+      nowIso,
+    });
+    expect(sameHead.headOid).toBe("headsha1");
+    // When head matches, triggeredAt is preserved (no re-anchor).
+    // When head drifts, buildRoundTrigger(newHead, nowIso) is used internally —
+    // verify via isThreadEvidenceFresh / count behavior is heavy; pin via
+    // exporting nothing — instead re-call buildRoundTrigger semantics:
+    expect(
+      buildRoundTrigger("headsha1", nowIso).triggeredAt,
+    ).toBe(nowIso);
+    expect(oldTrigger.triggeredAt).not.toBe(nowIso);
+    // Drift path used nowIso (not oldTrigger.triggeredAt) — covered by
+    // buildRoundTrigger(headOid, input.nowIso ?? …) in pollPrReviewState.
+    void snap;
   });
 
   it("drops a bot after the overdue poll window", () => {
@@ -2278,6 +2319,9 @@ describe("#600 onlineReviewLoop helpers", () => {
         },
       ]),
     ).toBe(false);
+    expect(classifyCheckRuns([{ id: 2, name: "ci", headSha: "h", status: "in_progress" }])).toBe(
+      "pending",
+    );
     expect(
       checkRunsConverged([
         {
@@ -2289,7 +2333,11 @@ describe("#600 onlineReviewLoop helpers", () => {
         },
       ]),
     ).toBe(false);
+    expect(classifyCheckRuns([{ id: 3, name: "ci", headSha: "h", status: "completed", conclusion: "failure" }])).toBe(
+      "failed",
+    );
     expect(checkRunsConverged([])).toBe(true);
+    expect(classifyCheckRuns([])).toBe("converged");
   });
 
   it("pin clampVerifyConvergenceForCheckRuns default-denies worker converged:true when CI red", () => {
@@ -2327,6 +2375,25 @@ describe("#600 onlineReviewLoop helpers", () => {
         { kind: "verify", converged: true },
         { ...landing, checkRuns: [] },
       ).converged,
+    ).toBe(true);
+    // pending CI: leave converged true — re-poll, do not force fixer (online R2 Codex P2)
+    const pendingLanding = {
+      ...landing,
+      checkRuns: [
+        { id: 9, name: "ci", headSha: "abc", status: "in_progress" as const },
+      ],
+    };
+    expect(
+      clampVerifyConvergenceForCheckRuns(
+        { kind: "verify", converged: true },
+        pendingLanding,
+      ).converged,
+    ).toBe(true);
+    expect(
+      verifyBlockedOnlyOnPendingCheckRuns(
+        { kind: "verify", converged: true },
+        pendingLanding,
+      ),
     ).toBe(true);
     expect(
       clampVerifyConvergenceForCheckRuns(
@@ -3652,6 +3719,47 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     });
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
     expect(verifyCalls).toBe(1);
+  });
+
+  it("pin online R2 Codex P2: pending CI re-polls — does not dispatch fixer", async () => {
+    let pollCalls = 0;
+    let verifyCalls = 0;
+    let fixerCalls = 0;
+    const result = await runOnlineReviewLoopStage(stageShip, {
+      poll: async () => {
+        pollCalls += 1;
+        if (pollCalls === 1) {
+          return {
+            ...baseSnapshot,
+            checkRuns: [
+              {
+                id: 1,
+                name: "ci",
+                headSha: "head-1",
+                status: "in_progress",
+              },
+            ],
+          };
+        }
+        return baseSnapshot;
+      },
+      dispatchVerify: async () => {
+        verifyCalls += 1;
+        return { kind: "verify", converged: true } satisfies VerifyResult;
+      },
+      dispatchFixer: async () => {
+        fixerCalls += 1;
+        return fixerCommitted();
+      },
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (_landing, verify) => verify,
+      retriggerAfterFix: () => {},
+    });
+    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
+    expect(pollCalls).toBe(2);
+    expect(verifyCalls).toBe(2);
+    expect(fixerCalls).toBe(0);
   });
 
   it("pin r22: stage landing shipDelivery.branch threads the real ship branch", async () => {

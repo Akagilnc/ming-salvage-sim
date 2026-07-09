@@ -27,6 +27,7 @@ import {
   BOT_POLL_INTERVAL_MS,
   BOT_RETRIGGER_COMMENT,
   checkRunsConverged,
+  classifyCheckRuns,
   findAdmissibleRetriggerComment,
   parsePrRef,
   pollPrReviewState,
@@ -101,8 +102,13 @@ function toLandingSnapshot(snapshot: PrReviewSnapshot): OnlineReviewLandingSnaps
 }
 
 /**
- * Host-side default-deny: verify `converged:true` is inadmissible while CI check-runs
- * are in-progress or non-success (ADR 0061 — runner enforces, worker still sees runs).
+ * Host-side default-deny: verify `converged:true` is inadmissible when CI has a
+ * terminal non-success (ADR 0061 — runner enforces, worker still sees runs).
+ *
+ * Pending (queued/in_progress) check-runs are NOT clamped to false — that would
+ * route a clean bot verify into the fixer with empty fix keys and park at the
+ * decision gate (online R2 Codex P2). Callers must re-poll while CI is pending
+ * via {@link verifyBlockedOnlyOnPendingCheckRuns}.
  */
 export function clampVerifyConvergenceForCheckRuns(
   verify: VerifyResult,
@@ -111,10 +117,24 @@ export function clampVerifyConvergenceForCheckRuns(
   if (!verify.converged || landing === undefined) {
     return verify;
   }
-  if (!checkRunsConverged(landing.checkRuns)) {
+  if (classifyCheckRuns(landing.checkRuns) === "failed") {
     return { ...verify, converged: false };
   }
   return verify;
+}
+
+/**
+ * Worker is green but CI is still running — re-poll / re-verify, do not fixer
+ * and do not merge (online R2 Codex P2).
+ */
+export function verifyBlockedOnlyOnPendingCheckRuns(
+  verify: VerifyResult,
+  landing: OnlineReviewLandingSnapshot | undefined,
+): boolean {
+  if (!verify.converged || landing === undefined) {
+    return false;
+  }
+  return classifyCheckRuns(landing.checkRuns) === "pending";
 }
 
 type OnlineReviewRetriggerRecoveryEntry = {
@@ -1214,6 +1234,8 @@ export async function runOnlineReviewLoopStage(
 ): Promise<OnlineReviewLoopStageResult> {
   let round = opts?.initialRound ?? 1;
   let lastFixCommitSha = opts?.initialFixCommitSha;
+  /** Consecutive poll cycles blocked only on pending CI (not fixer rounds). */
+  let pendingCiPolls = 0;
 
   while (round <= MAX_ONLINE_REVIEW_ROUNDS + 1) {
     let snapshot: PrReviewSnapshot;
@@ -1255,6 +1277,32 @@ export async function runOnlineReviewLoopStage(
       };
     }
     verify = recheckOutcome;
+    // Pending CI only: re-poll — do not apply "all clear" side effects, do not fixer
+    // (online R2 Codex P2: empty fix list → decision_gate park).
+    if (
+      verifyBlockedOnlyOnPendingCheckRuns(
+        verify,
+        landing.onlineReviewSnapshot,
+      )
+    ) {
+      pendingCiPolls += 1;
+      if (pendingCiPolls > BOT_OVERDUE_POLL_COUNT) {
+        return {
+          ok: false,
+          terminalState: "decision_gate_raised",
+          round,
+          stopSummary: {
+            reason: "infra_failure",
+            summary:
+              "online review verify is green but CI check-runs stayed non-terminal past the overdue poll window",
+            repairHint:
+              "wait for CI to complete (or fail) on the PR head, then re-run online review",
+          },
+        };
+      }
+      continue;
+    }
+    pendingCiPolls = 0;
     try {
       verify = dispatch.applySideEffects(
         landing,
@@ -1275,7 +1323,7 @@ export async function runOnlineReviewLoopStage(
     const fixKeys = fixMarkedKeysFromVerify(verify);
     landing = { ...landing, fixMarkedFindingIdentityKeys: fixKeys };
 
-    if (verify.converged) {
+    if (verify.converged && checkRunsConverged(landing.onlineReviewSnapshot?.checkRuns ?? [])) {
       const cleanupOk = await dispatch.dispatchCleanup(landing);
       if (!cleanupOk) {
         return { ok: false, terminalState: "decision_gate_raised", round };
