@@ -93,6 +93,7 @@ import {
   ensureOnlineReviewRetriggerAfterFixGap,
   retriggerBotsAndPoll,
   shipLedgerTriggeredAtFromSliceLedger,
+  sliceOnlineReviewCiFailedPending,
   slicePendingRoundTriggerFromFixGap,
   slicePostFixVerifyPendingFromMarkerGap,
   onlineReviewFixerNothingToFixStopSummary,
@@ -1598,6 +1599,15 @@ function planResume(
     decision.kind === "next" &&
     decision.step === "S10"
   ) {
+    return {
+      resumeStep: "S9",
+      lastOutput: undefined,
+      priorLedger: priorForResume,
+    };
+  }
+  // R18 Codex P2: bots clean + CI red parks with online_review_ci_failed. Re-feed
+  // must re-enter S9 (re-poll CI), not route S9(converged:false) → S10 empty fixer.
+  if (sliceOnlineReviewCiFailedPending(ledger)) {
     return {
       resumeStep: "S9",
       lastOutput: undefined,
@@ -3768,6 +3778,40 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   output: verifyOutput,
                 });
               }
+              // R18 Codex P2: durable marker so re-feed resumes at S9 (re-poll CI),
+              // not route(S9, converged:false) → S10 empty fixer.
+              const ciFailHead =
+                s9Snap?.headOid ??
+                lastOnlineReviewFixCommitSha ??
+                lastShipOutput.prHead ??
+                headAfter;
+              const ciFailMarker = {
+                step: "S9" as const,
+                event: "online_review_ci_failed" as const,
+                prUrl: lastShipOutput.pr,
+                prHead: ciFailHead,
+                onlineReviewRound,
+              };
+              ledger.push(ciFailMarker);
+              if (stateDir !== undefined) {
+                try {
+                  await backend.writeLedger(
+                    {
+                      ...ciFailMarker,
+                      sessionId,
+                      prompt_hash: await hashPrompt(promptFile, "S9", backend),
+                      branchHEAD: headAfter,
+                      ts: new Date().toISOString(),
+                    },
+                    stateDir,
+                  );
+                } catch (err) {
+                  return await errorTermination("S9", err, {
+                    recordInMemory: false,
+                    output: verifyOutput,
+                  });
+                }
+              }
               return {
                 status: "escalate",
                 stepLedger: ledger,
@@ -3776,7 +3820,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   summary:
                     "online review bots are clean but CI check-runs failed on the PR head",
                   repairHint:
-                    "fix the CI failures on the PR head and re-run the online review loop",
+                    "fix the CI failures on the PR head and re-feed — resume re-enters S9 (not S10 fixer)",
                 },
                 deferredFindings,
               };

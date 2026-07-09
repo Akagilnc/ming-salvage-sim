@@ -93,6 +93,7 @@ import {
   retriggerBotsAndPoll,
   familyPendingRoundTriggerFromFixGap,
   resolveOnlineReviewRoundTrigger,
+  sliceOnlineReviewCiFailedPending,
   slicePendingRoundTriggerFromFixGap,
   slicePostFixVerifyPendingFromMarkerGap,
   runOnlineReviewLoopStage,
@@ -3578,6 +3579,48 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       converged: true,
       isRecheck: true,
     });
+  });
+
+  it("pin r18: CI-failed marker keeps resume on S9 (not S10 empty fixer)", () => {
+    const s9Red = {
+      step: "S9",
+      output: { kind: "verify" as const, converged: false },
+      ts: "2026-07-09T12:00:00.000Z",
+    };
+    const ciFailed = {
+      step: "S9",
+      event: "online_review_ci_failed" as const,
+      prHead: "headsha1",
+      ts: "2026-07-09T12:00:01.000Z",
+    };
+    expect(sliceOnlineReviewCiFailedPending([s9Red, ciFailed])).toBe(true);
+    // Later green S9 clears the park.
+    expect(
+      sliceOnlineReviewCiFailedPending([
+        s9Red,
+        ciFailed,
+        {
+          step: "S9",
+          output: { kind: "verify", converged: true },
+          ts: "2026-07-09T13:00:00.000Z",
+        },
+      ]),
+    ).toBe(false);
+    // Stray S10 after CI park also clears (progressed past park).
+    expect(
+      sliceOnlineReviewCiFailedPending([
+        s9Red,
+        ciFailed,
+        {
+          step: "S10",
+          output: {
+            kind: "fixer",
+            committed: false,
+            alreadySatisfied: true,
+          },
+        },
+      ]),
+    ).toBe(false);
   });
 
   it("pin r11: fix-gap picks chronologically latest unpaired fix (not last ledger order)", () => {
