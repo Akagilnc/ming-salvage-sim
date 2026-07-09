@@ -2555,6 +2555,69 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(refeed.status).not.toBe("error");
     expect(resumeBackend.dispatchSpecs.map((s) => s.id)).toEqual(["S12"]);
   });
+
+  it("#735 Codex P2: S12 process-failure retry resets worktree residue before re-dispatch", async () => {
+    const convergedHead = "deadbeefcommitsha";
+    const prior: PersistentLedgerEntry[] = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+        prHead: convergedHead,
+      }),
+      {
+        ...entry("S9", { kind: "verify", converged: true }),
+        event: "online_review_converged",
+        prUrl: "pr://slice/offline-255",
+        prHead: convergedHead,
+        onlineReviewRound: 1,
+      },
+    ];
+
+    class FlakyDocReleaseBackend extends DispatchRecordingResumeBackend {
+      docReleaseAttempts = 0;
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "docRelease") {
+          this.dispatchSpecs.push(spec);
+          this.dispatchContexts.push(ctx);
+          this.dispatchLandings.push(landing);
+          this.docReleaseAttempts += 1;
+          if (this.docReleaseAttempts === 1) {
+            return {
+              kind: "failed",
+              reason: "docRelease sandbox crash mid skill (no tag yet)",
+            };
+          }
+          return {
+            kind: "completed",
+            output: { kind: "docRelease", released: true },
+          };
+        }
+        return super.dispatchWorker(spec, ctx, landing);
+      }
+    }
+
+    const backend = new FlakyDocReleaseBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+    expect(result.status).toBe("success");
+    expect(backend.docReleaseAttempts).toBe(2);
+    // resume residue clean (1) + S12 retry reset (1) — proves resetBeforeRetry wired
+    expect(backend.cleanResidueCount).toBeGreaterThanOrEqual(2);
+  });
 });
 
 // ─── C-1 (integ-cmr int-r1): S7 SHIP escalate-resume re-dispatches the ship worker
