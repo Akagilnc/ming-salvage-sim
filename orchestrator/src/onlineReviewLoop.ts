@@ -281,6 +281,31 @@ function retriggerPairedFixHead(entry: {
   return undefined;
 }
 
+/**
+ * Among unpaired fix signals, pick the chronologically latest by `ts`
+ * (Cursor R11 medium — not last-in-ledger-order, which can lag a later fix
+ * if ledger rows are not strictly append-time-ordered).
+ */
+function latestFixSignalByTimestamp(
+  signals: ReadonlyArray<{ readonly sha: string; readonly ts: string }>,
+): { readonly sha: string; readonly ts: string } | undefined {
+  let latest: { readonly sha: string; readonly ts: string } | undefined;
+  for (const signal of signals) {
+    if (latest === undefined) {
+      latest = signal;
+      continue;
+    }
+    const signalMs = Date.parse(signal.ts);
+    const latestMs = Date.parse(latest.ts);
+    if (Number.isFinite(signalMs) && Number.isFinite(latestMs)) {
+      if (signalMs >= latestMs) latest = signal;
+    } else if (Number.isFinite(signalMs)) {
+      latest = signal;
+    }
+  }
+  return latest;
+}
+
 /** Family ledger: fix-committed landed but retrigger persistence crashed mid-gap (#600 r27). */
 export function familyPendingRoundTriggerFromFixGap(
   entries: ReadonlyArray<{
@@ -299,7 +324,7 @@ export function familyPendingRoundTriggerFromFixGap(
       pairedFixShas.add(head);
     }
   }
-  let latestUnpaired: { readonly sha: string; readonly ts: string } | undefined;
+  const unpaired: Array<{ readonly sha: string; readonly ts: string }> = [];
   for (const entry of entries) {
     if (
       entry.status === "online_review_fix_committed" &&
@@ -310,9 +335,10 @@ export function familyPendingRoundTriggerFromFixGap(
       entry.ts.length > 0 &&
       !pairedFixShas.has(entry.familyHeadAfter)
     ) {
-      latestUnpaired = { sha: entry.familyHeadAfter, ts: entry.ts };
+      unpaired.push({ sha: entry.familyHeadAfter, ts: entry.ts });
     }
   }
+  const latestUnpaired = latestFixSignalByTimestamp(unpaired);
   if (latestUnpaired === undefined) {
     return undefined;
   }
@@ -474,12 +500,8 @@ export function slicePendingRoundTriggerFromFixGap(
     }
   }
 
-  let latestUnpaired: { readonly sha: string; readonly ts: string } | undefined;
-  for (const signal of fixSignals) {
-    if (!pairedFixShas.has(signal.sha)) {
-      latestUnpaired = signal;
-    }
-  }
+  const unpaired = fixSignals.filter((signal) => !pairedFixShas.has(signal.sha));
+  const latestUnpaired = latestFixSignalByTimestamp(unpaired);
   if (latestUnpaired === undefined) {
     return undefined;
   }
@@ -943,6 +965,8 @@ export function buildOnlineReviewLanding(
   ship: ShipResult,
   round: number,
 ): WorkerLandingPayload {
+  // Fail-closed: never non-null-assert a missing convergence head (Cursor R11 low).
+  // Prefer snapshot/post-fix head; omit prHead when neither side supplies one.
   const prHead = onlineReviewConvergenceHeadKey({
     snapshotHeadOid: snapshot.headOid,
     shipPrHead: ship.prHead,
@@ -952,7 +976,7 @@ export function buildOnlineReviewLanding(
     shipDelivery: {
       branch: ship.branch,
       pr: ship.pr,
-      prHead: prHead!,
+      ...(prHead !== undefined && prHead.length > 0 ? { prHead } : {}),
       status: ship.status,
     },
     onlineReviewRound: round,
