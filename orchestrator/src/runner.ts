@@ -75,6 +75,7 @@ import {
   buildOnlineReviewLanding,
   clampVerifyConvergenceForCheckRuns,
   enforceRunnerOwnedRecheck,
+  verifyBlockedOnlyOnPendingCheckRuns,
   immediateBotPollClock,
   lastOnlineReviewFixCommitShaFromLedger,
   offlinePrReviewSnapshot,
@@ -1941,6 +1942,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastOnlineReviewFixCommitSha: string | undefined;
   let lastOnlineReviewRoundTrigger: RoundTrigger | undefined;
   let lastOnlineReviewPendingRoundTrigger: RoundTrigger | undefined;
+  /** S9 worker green but CI still queued/in_progress — re-poll S9, do not fixer/merge. */
+  let reenterS9ForPendingCi = false;
 
   function ghSh(file: string, args: string[]): string {
     return execFileSync(file, args, {
@@ -3467,6 +3470,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               );
             }
             verifyOutput = recheckOutcome;
+            // Pending CI only: re-poll S9 — do not fixer, do not merge, do not
+            // apply "all clear" side effects (online R2 Codex P2).
+            if (
+              verifyBlockedOnlyOnPendingCheckRuns(
+                verifyOutput,
+                onlineReviewLanding?.onlineReviewSnapshot,
+              )
+            ) {
+              reenterS9ForPendingCi = true;
+              output = verifyOutput;
+              step = reviewStep;
+              stepSessionId = result.sessionId;
+              lastOutput = verifyOutput;
+              break;
+            }
             try {
               await assertVerifyReadOnlyContract();
             } catch (err) {
@@ -3666,6 +3684,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const never: never = step;
         throw new Error(`runner: step ${String(never)} not handled`);
       }
+    }
+
+    // Pending CI re-poll: stay on S9 without ledger/route advance (online R2 Codex P2).
+    if (reenterS9ForPendingCi) {
+      reenterS9ForPendingCi = false;
+      step = "S9";
+      continue;
     }
 
     const stepFindingDispositions =
