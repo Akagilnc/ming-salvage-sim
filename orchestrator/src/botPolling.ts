@@ -46,10 +46,26 @@ const BOT_RETRIGGER_REQUIRED_LINES = [
 ] as const;
 
 /**
- * GitHub reaction `content` values that signal bot completion/ack — not actionable
- * findings (wiki: Codex PR `+1` is an approval verdict; `eyes` is an ACK).
+ * Pure ACK reactions — bot is alive/queued, NOT a completed review (wiki +
+ * online R14 Codex P1: `eyes` only must not flip the leg to complete/0 findings).
  */
-export const BOT_REACTION_ACK_CONTENT = new Set(["+1", "eyes"]);
+export const BOT_REACTION_ACK_ONLY_CONTENT = new Set(["eyes"]);
+
+/**
+ * Verdict reactions that complete a bot leg with zero findings (wiki: Codex
+ * PR `+1` is an approval). Not counted as findings in {@link countBotFindings}.
+ */
+export const BOT_REACTION_VERDICT_CONTENT = new Set(["+1"]);
+
+/**
+ * @deprecated Prefer {@link BOT_REACTION_ACK_ONLY_CONTENT} /
+ * {@link BOT_REACTION_VERDICT_CONTENT}. Kept as the union of non-finding
+ * reaction contents for callers that only need "not a finding".
+ */
+export const BOT_REACTION_ACK_CONTENT = new Set([
+  ...BOT_REACTION_ACK_ONLY_CONTENT,
+  ...BOT_REACTION_VERDICT_CONTENT,
+]);
 
 export type BotLegStatus =
   | { readonly state: "pending" }
@@ -440,7 +456,11 @@ function isAdmissibleBotArtifact(
   );
 }
 
-/** True when the bot left any fresh review signal (findings optional — zero is valid completion). */
+/**
+ * True when the bot left a fresh **completion** signal (findings optional —
+ * zero is valid when the signal is a real review/comment or a verdict reaction).
+ * Pure ACK reactions (`eyes`) do not complete the leg (R14 Codex P1).
+ */
 function hasBotReviewSignal(
   bot: OnlineReviewBotId,
   comments: ReadonlyArray<BotComment>,
@@ -489,7 +509,13 @@ function hasBotReviewSignal(
     ) {
       continue;
     }
-    if ((reaction.content ?? "").trim().length > 0) return true;
+    const content = (reaction.content ?? "").trim();
+    // Verdict (+1) completes; pure ACK (eyes) does not.
+    if (BOT_REACTION_VERDICT_CONTENT.has(content)) return true;
+    if (content.length > 0 && !BOT_REACTION_ACK_ONLY_CONTENT.has(content)) {
+      // Unknown non-empty reaction (e.g. rocket) — treat as signal, not pure ACK.
+      return true;
+    }
   }
   return false;
 }
@@ -548,7 +574,12 @@ function countBotFindings(
       continue;
     }
     const content = (reaction.content ?? "").trim();
-    if (content.length > 0 && !BOT_REACTION_ACK_CONTENT.has(content)) {
+    // ACK-only and verdict reactions are not findings (+1 = clean approve).
+    if (
+      content.length > 0 &&
+      !BOT_REACTION_ACK_ONLY_CONTENT.has(content) &&
+      !BOT_REACTION_VERDICT_CONTENT.has(content)
+    ) {
       count += 1;
     }
   }
