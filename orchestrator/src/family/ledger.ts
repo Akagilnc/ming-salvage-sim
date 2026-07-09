@@ -1139,11 +1139,13 @@ export function familyPrMergedForHead(
   entries: ReadonlyArray<FamilyLedgerEntry>,
   familyHeadAfter: string | undefined,
 ): PrMergedRecord | undefined {
-  if (familyHeadAfter == null || familyHeadAfter.trim().length === 0) return undefined;
+  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) {
+    return undefined;
+  }
   const merged = entries.find(
     (e) => isValidPrMerged(e) && e.familyHeadAfter === familyHeadAfter,
   );
-  if (merged == null) return undefined;
+  if (merged === undefined) return undefined;
   const row = merged as FamilyLedgerEntry & {
     readonly pr: string;
     readonly prNumber: number;

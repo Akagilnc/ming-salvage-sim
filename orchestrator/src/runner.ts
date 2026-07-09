@@ -995,7 +995,7 @@ function slicePrMergedMarkerPresent(
   ledger: ReadonlyArray<LedgerEntry>,
   convergedHeadOid: string | undefined,
 ): boolean {
-  if (convergedHeadOid == null || convergedHeadOid.trim().length === 0) {
+  if (convergedHeadOid === undefined || convergedHeadOid.trim().length === 0) {
     return false;
   }
   return ledger.some((entry) => isPrMergedMarker(entry, convergedHeadOid));
@@ -1036,7 +1036,7 @@ function sliceAutoMergePending(
   convergedHeadOid: string | undefined,
 ): boolean {
   if (!sliceDocReleaseCompleted(ledger)) return false;
-  if (convergedHeadOid == null || convergedHeadOid.trim().length === 0) {
+  if (convergedHeadOid === undefined || convergedHeadOid.trim().length === 0) {
     return false;
   }
   if (!onlineReviewConvergedForHead(ledger, convergedHeadOid)) return false;
@@ -2275,7 +2275,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       };
     }
     if (mergeResult.terminalState !== "already_recorded") {
-      await persistPrMergedMarker(mergeResult.record, convergedHeadOid);
+      try {
+        await persistPrMergedMarker(mergeResult.record, convergedHeadOid);
+      } catch (err) {
+        const cause = err instanceof Error ? err.message : String(err);
+        return {
+          kind: "escalate",
+          stopSummary: {
+            reason: "infra_failure",
+            summary: `writeLedger failed while persisting pr_merged marker: ${cause}`,
+            repairHint:
+              "fix ledger persistence and re-feed to resume auto-merge",
+          },
+        };
+      }
     }
     return { kind: "ok", record: mergeResult.record };
   }
@@ -2977,7 +2990,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         deferredFindings,
       };
       }
-      if (resumeConvergedHead != null && lastShipOutput != null) {
+      if (resumeConvergedHead !== undefined && lastShipOutput !== undefined) {
         const autoMerge = await runSliceAutoMergeHost(
           lastShipOutput,
           resumeConvergedHead,
@@ -4549,7 +4562,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             postFixHead: lastOnlineReviewFixCommitSha,
           }) ??
           lastShipOutput.prHead;
-        if (convergedHead != null && sliceAutoMergePending(ledger, convergedHead)) {
+        if (
+          convergedHead !== undefined &&
+          sliceAutoMergePending(ledger, convergedHead)
+        ) {
           const autoMerge = await runSliceAutoMergeHost(
             lastShipOutput,
             convergedHead,
