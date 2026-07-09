@@ -49,7 +49,9 @@ const fixerAlreadySatisfied = (fixCommitSha: string): FixerResult => ({
 });
 import {
   BOT_OVERDUE_POLL_COUNT,
+  BOT_OVERDUE_MIN_WALL_MS,
   BOT_POLL_INTERVAL_MS,
+  botOverdueWallClockMs,
   BOT_REACTION_ACK_CONTENT,
   BOT_RETRIGGER_COMMENT,
   checkRunsConverged,
@@ -2059,7 +2061,31 @@ describe("#600 retriggerBotsAndPoll (#600 AC2)", () => {
     expect(sleepMs).toEqual(
       Array.from({ length: BOT_OVERDUE_POLL_COUNT - 1 }, () => BOT_POLL_INTERVAL_MS),
     );
+    // Pin R16 arithmetic: N polls ⇒ N−1 sleeps; wall clock ≥ 15 min.
+    expect(sleepMs.length).toBe(BOT_OVERDUE_POLL_COUNT - 1);
+    expect(botOverdueWallClockMs(BOT_OVERDUE_POLL_COUNT)).toBe(
+      sleepMs.length * BOT_POLL_INTERVAL_MS,
+    );
+    expect(botOverdueWallClockMs(BOT_OVERDUE_POLL_COUNT)).toBeGreaterThanOrEqual(
+      BOT_OVERDUE_MIN_WALL_MS,
+    );
+    // Regression: N=8 would only sleep 7×2m = 14m (< 15m).
+    expect(botOverdueWallClockMs(8)).toBeLessThan(BOT_OVERDUE_MIN_WALL_MS);
     expect(hasDroppedBots(snap)).toBe(true);
+  });
+
+  it("pin overdue constants: N = ceil(15m/interval)+1 so wall clock cannot be mis-counted", () => {
+    expect(BOT_POLL_INTERVAL_MS).toBe(120_000);
+    expect(BOT_OVERDUE_MIN_WALL_MS).toBe(15 * 60_000);
+    expect(BOT_OVERDUE_POLL_COUNT).toBe(
+      Math.ceil(BOT_OVERDUE_MIN_WALL_MS / BOT_POLL_INTERVAL_MS) + 1,
+    );
+    expect(BOT_OVERDUE_POLL_COUNT).toBe(9);
+    // sleeps before drop
+    expect(BOT_OVERDUE_POLL_COUNT - 1).toBe(8);
+    expect(botOverdueWallClockMs(9)).toBe(16 * 60_000);
+    expect(botOverdueWallClockMs(1)).toBe(0);
+    expect(botOverdueWallClockMs(0)).toBe(0);
   });
 });
 

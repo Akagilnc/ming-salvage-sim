@@ -27,13 +27,31 @@ export const ONLINE_REVIEW_BOT_IDS = [
 export type OnlineReviewBotId = (typeof ONLINE_REVIEW_BOT_IDS)[number];
 
 /**
- * ~2-minute poll cadence. Overdue poll **count** must yield **≥15 min wall clock**
- * of sleeps before drop (R15/R16 Codex P1):
- * `waitForBotQuiescence` polls 1..N with sleep only when `poll < N`, so N polls
- * ⇒ N−1 intervals. N=9 ⇒ 8×2 min = 16 min body window.
+ * Bot-poll cadence and overdue window (R15–R16 Codex P1 — do not hand-count).
+ *
+ * `waitForBotQuiescence` does:
+ *   for poll = 1..N: pollOnce(); if poll < N: sleep(INTERVAL)
+ * so wall-clock sleeps = N − 1 (first poll is immediate).
+ *
+ * Codex body often lands 9–13+ min after `eyes`; require ≥15 min of sleeps:
+ *   N = ceil(MIN_WALL / INTERVAL) + 1
+ *   e.g. 15 min / 2 min → 8 sleeps → N = 9 → 16 min wall clock.
  */
 export const BOT_POLL_INTERVAL_MS = 120_000;
-export const BOT_OVERDUE_POLL_COUNT = 9;
+/** Minimum quiet wall-clock before a bot leg may be dropped. */
+export const BOT_OVERDUE_MIN_WALL_MS = 15 * 60_000;
+/**
+ * Polls until drop (inclusive). Derived — never set by hand without the +1.
+ * @see {@link botOverdueWallClockMs}
+ */
+export const BOT_OVERDUE_POLL_COUNT =
+  Math.ceil(BOT_OVERDUE_MIN_WALL_MS / BOT_POLL_INTERVAL_MS) + 1;
+
+/** Wall-clock ms after completing `pollCount` polls (first poll at t=0). */
+export function botOverdueWallClockMs(pollCount: number): number {
+  if (!Number.isFinite(pollCount) || pollCount < 1) return 0;
+  return Math.max(0, pollCount - 1) * BOT_POLL_INTERVAL_MS;
+}
 
 /**
  * Manual re-trigger comment posted for Sourcery / Codex / Gemini after a fix push.
@@ -659,10 +677,7 @@ function resolveBotStatuses(
     }
     const waited = pending[bot] ?? input.pollCount;
     if (waited >= BOT_OVERDUE_POLL_COUNT) {
-      // Wall-clock sleeps ≈ (polls − 1) intervals (first poll is immediate).
-      const approxMin = Math.round(
-        (Math.max(0, waited - 1) * BOT_POLL_INTERVAL_MS) / 60_000,
-      );
+      const approxMin = Math.round(botOverdueWallClockMs(waited) / 60_000);
       bots[bot] = {
         state: "dropped",
         reason: `no review signal after ${waited} polls (~${approxMin} min)`,
