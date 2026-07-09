@@ -212,10 +212,9 @@ export function runPostMergeCleanup(
   const skippedReasons: string[] = [];
   const issuesClosed: number[] = [];
 
-  const offlineSynthetic = !isLiveGithubReviewPollEnabled(
-    input.prMerged.prUrl,
-    input.repo,
-  );
+  const offlineSynthetic =
+    !isLiveGithubReviewPollEnabled(input.prMerged.prUrl, input.repo) &&
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1";
 
   let live;
   if (offlineSynthetic) {
@@ -327,7 +326,13 @@ export function runPostMergeCleanup(
     case "skip_tip_drift":
       skippedReasons.push("branch_tip_drift");
       branchOutcome = "skipped_tip_drift";
-      break;
+      return cleanupResultFromActs({
+        allStepsComplete: false,
+        issuesClosed,
+        parentIssueClosed,
+        branchOutcome,
+        skippedReasons,
+      });
     case "skip_pr_not_merged":
       skippedReasons.push("pr_not_merged");
       branchOutcome = "skipped_pr_not_merged";
