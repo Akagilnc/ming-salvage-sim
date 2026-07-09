@@ -298,39 +298,104 @@ export function familyPendingRoundTriggerFromFixGap(
 
 /**
  * True when audit markers prove the fixer finished but the executable S10 row is
- * still missing (#600 r28). Resume must enter post-fix verify (S9), not re-dispatch
- * the fixer.
+ * still missing for that fix (#600 r28). Resume must enter post-fix verify (S9),
+ * not re-dispatch the fixer.
+ *
+ * Pair by fix SHA / retrigger head — not ledger index order (online R1 Codex P2).
+ * Index order stays true forever once a recovery path writes markers *after* an
+ * S10 row for the same fix; a later recheck S9 `converged:false` would then be
+ * stolen back to S9 (duplicate verify side effects) instead of the pending fixer.
  */
 export function slicePostFixVerifyPendingFromMarkerGap(
   ledger: ReadonlyArray<{
     readonly step?: string;
     readonly event?: string;
+    readonly fixCommitSha?: string;
+    readonly roundTriggerHeadOid?: string;
+    readonly branchHEAD?: string;
     readonly output?: {
       readonly kind?: string;
       readonly committed?: boolean;
       readonly alreadySatisfied?: boolean;
+      readonly fixCommitSha?: string;
     };
   }>,
 ): boolean {
-  let lastCommittedS10Idx = -1;
-  let lastFixSignalIdx = -1;
-  for (let i = 0; i < ledger.length; i++) {
-    const entry = ledger[i]!;
+  const s10FixShas = new Set<string>();
+  let hasProceedingS10 = false;
+  for (const entry of ledger) {
     if (
-      entry.step === "S10" &&
-      entry.event === undefined &&
-      fixerLedgerOutputProceeds(entry.output)
+      entry.step !== "S10" ||
+      entry.event !== undefined ||
+      !fixerLedgerOutputProceeds(entry.output)
     ) {
-      lastCommittedS10Idx = i;
+      continue;
     }
-    if (
-      entry.event === "online_review_fix_committed" ||
-      entry.event === "online_review_round_retrigger"
-    ) {
-      lastFixSignalIdx = i;
+    hasProceedingS10 = true;
+    const sha = fixerLedgerFixCommitSha(entry);
+    if (sha !== undefined) {
+      s10FixShas.add(sha);
     }
   }
-  return lastFixSignalIdx > lastCommittedS10Idx;
+
+  let sawUncoveredFixCommitted = false;
+  let sawFixCommitted = false;
+  for (const entry of ledger) {
+    if (entry.event !== "online_review_fix_committed") {
+      continue;
+    }
+    sawFixCommitted = true;
+    const sha =
+      typeof entry.fixCommitSha === "string" && entry.fixCommitSha.length > 0
+        ? entry.fixCommitSha
+        : undefined;
+    if (sha === undefined) {
+      // Marker without SHA: only a gap if no proceeding S10 exists at all.
+      if (!hasProceedingS10) {
+        sawUncoveredFixCommitted = true;
+      }
+      continue;
+    }
+    if (!s10FixShas.has(sha)) {
+      sawUncoveredFixCommitted = true;
+    }
+  }
+  if (sawUncoveredFixCommitted) {
+    return true;
+  }
+
+  // Retrigger-only (or retrigger whose head is not covered by any S10 fix SHA).
+  // When fix_committed already covered every SHA, a same-head retrigger after S10
+  // (fix-gap recovery order) is not a missing-S10 gap.
+  for (const entry of ledger) {
+    if (entry.event !== "online_review_round_retrigger") {
+      continue;
+    }
+    const head =
+      typeof entry.roundTriggerHeadOid === "string" &&
+      entry.roundTriggerHeadOid.length > 0
+        ? entry.roundTriggerHeadOid
+        : typeof entry.branchHEAD === "string" && entry.branchHEAD.length > 0
+          ? entry.branchHEAD
+          : undefined;
+    if (head !== undefined && s10FixShas.has(head)) {
+      continue;
+    }
+    if (!hasProceedingS10) {
+      return true;
+    }
+    // Proceeding S10 exists but this retrigger head does not match any fix SHA —
+    // only treat as gap when there was no fix_committed coverage path either
+    // (legacy retrigger-only / mismatched head after a sha-less S10).
+    if (!sawFixCommitted && head !== undefined && !s10FixShas.has(head)) {
+      return true;
+    }
+    if (!sawFixCommitted && head === undefined) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /** Single-slice ledger: S10 fix landed but retrigger persistence crashed mid-gap (#600 r27). */
@@ -682,7 +747,20 @@ export function readOnlineReviewSnapshotFile(
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     if (parsed == null || typeof parsed !== "object") return undefined;
-    return parsed as PrReviewSnapshot;
+    const candidate = parsed as Partial<PrReviewSnapshot>;
+    if (
+      typeof candidate.prUrl !== "string" ||
+      typeof candidate.headOid !== "string" ||
+      typeof candidate.totalFindingCount !== "number" ||
+      typeof candidate.quiescent !== "boolean" ||
+      !Array.isArray(candidate.threads) ||
+      !Array.isArray(candidate.checkRuns) ||
+      candidate.bots == null ||
+      typeof candidate.bots !== "object"
+    ) {
+      return undefined;
+    }
+    return candidate as PrReviewSnapshot;
   } catch {
     return undefined;
   }
@@ -906,6 +984,9 @@ export async function waitForBotQuiescence(
   },
 ): Promise<PrReviewSnapshot> {
   const maxPolls = input.maxPolls ?? BOT_OVERDUE_POLL_COUNT;
+  if (maxPolls < 1) {
+    throw new Error("waitForBotQuiescence requires maxPolls >= 1");
+  }
   const clock = input.clock ?? realBotPollClock;
   let last: PrReviewSnapshot | undefined;
   for (let poll = 1; poll <= maxPolls; poll += 1) {

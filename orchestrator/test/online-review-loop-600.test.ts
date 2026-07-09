@@ -3053,7 +3053,8 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
         s10Row,
       ]),
     ).toBe(false);
-    // round-2 markers after round-1 executable S10 → post-fix pending again
+    // same-SHA markers after executable S10 (fix-gap recovery order) are NOT a
+    // missing-S10 gap — pair by fix SHA, not index order (online R1 Codex P2)
     expect(
       slicePostFixVerifyPendingFromMarkerGap([
         s9False,
@@ -3061,7 +3062,82 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
         retrigger,
         fixCommitted,
       ]),
+    ).toBe(false);
+    // different-SHA marker after S10 → still a gap (S10 does not cover that fix)
+    expect(
+      slicePostFixVerifyPendingFromMarkerGap([
+        s9False,
+        s10Row,
+        {
+          ...fixCommitted,
+          fixCommitSha: "otherfixsha0000000000000000000000000001",
+        },
+      ]),
     ).toBe(true);
+  });
+
+  it("pin online R1 Codex P2: recheck S9 false after same-SHA markers must not force post-fix gap", () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const s9False = {
+      step: "S9",
+      output: { kind: "verify", converged: false },
+      ts: "2026-07-08T12:00:00.000Z",
+    };
+    const s10Row = {
+      step: "S10",
+      output: { kind: "fixer", committed: true, fixCommitSha: FIXER_ENVELOPE_SHA },
+      branchHEAD: fixSha,
+      ts: fixTs,
+    };
+    const retrigger = {
+      step: "S10",
+      event: "online_review_round_retrigger" as const,
+      roundTriggerHeadOid: fixSha,
+      roundTriggerAt: RETRIGGER_TS,
+      onlineReviewRound: 2,
+      ts: fixTs,
+    };
+    const fixCommitted = {
+      step: "S10",
+      event: "online_review_fix_committed" as const,
+      fixCommitSha: fixSha,
+      onlineReviewRound: 1,
+      ts: fixTs,
+    };
+    const s9RecheckFalse = {
+      step: "S9",
+      output: {
+        kind: "verify",
+        converged: false,
+        isRecheck: true,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      },
+      ts: "2026-07-08T14:00:00.000Z",
+    };
+    // Production-ish: markers then S10 then recheck false
+    expect(
+      slicePostFixVerifyPendingFromMarkerGap([
+        s9False,
+        fixCommitted,
+        retrigger,
+        s10Row,
+        s9RecheckFalse,
+      ]),
+    ).toBe(false);
+    // Recovery order: S10 then markers then recheck false — must also be false
+    // so planResume routes to S10 fixer, not stolen back to S9
+    expect(
+      slicePostFixVerifyPendingFromMarkerGap([
+        s9False,
+        s10Row,
+        fixCommitted,
+        retrigger,
+        s9RecheckFalse,
+      ]),
+    ).toBe(false);
   });
 
   it("pin r29: retrigger-only marker gap restores round for recheck (single-slice)", () => {

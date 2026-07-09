@@ -237,10 +237,10 @@ export function inadmissibleWorkerOutcomeReason(
   if (result.kind === "failed" || result.kind === "malformed") {
     return "reason" in result && result.reason.length > 0
       ? result.reason
-      : `family ${spec.kind} worker ${result.kind}`;
+      : `${spec.kind} worker ${result.kind}`;
   }
   if (result.kind === "escalated") {
-    return `family ${spec.kind} worker escalated`;
+    return `${spec.kind} worker escalated`;
   }
-  return `family ${spec.kind} worker dispatch inadmissible: ${result.kind}`;
+  return `${spec.kind} worker dispatch inadmissible: ${result.kind}`;
 }

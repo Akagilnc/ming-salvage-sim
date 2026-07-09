@@ -851,13 +851,19 @@ export function familyShippedRecordForReviewLoopResume(
   let markerPr: string | undefined;
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
-    if (
-      entry.event === "online_review_fix_committed" ||
-      entry.event === "online_review_round_retrigger"
-    ) {
-      if (typeof entry.pr === "string" && entry.pr.trim().length > 0) {
-        markerPr = entry.pr.trim();
-      }
+    const markerHead =
+      entry.event === "online_review_fix_committed" &&
+      typeof entry.familyHeadAfter === "string"
+        ? entry.familyHeadAfter.trim()
+        : entry.event === "online_review_round_retrigger" &&
+            typeof entry.roundTriggerHeadOid === "string"
+          ? entry.roundTriggerHeadOid.trim()
+          : undefined;
+    if (markerHead === undefined || markerHead !== currentHead) {
+      continue;
+    }
+    if (typeof entry.pr === "string" && entry.pr.trim().length > 0) {
+      markerPr = entry.pr.trim();
       break;
     }
   }
@@ -949,9 +955,15 @@ export async function recordOnlineReviewRoundRetrigger(
 ): Promise<void> {
   const headOid = record.roundTriggerHeadOid.trim();
   const triggeredAt = record.roundTriggerAt.trim();
+  const onlineReviewRound = record.onlineReviewRound;
   if (headOid.length === 0 || triggeredAt.length === 0) {
     throw new Error(
       "family online_review_round_retrigger marker must include roundTriggerHeadOid and roundTriggerAt",
+    );
+  }
+  if (!Number.isSafeInteger(onlineReviewRound) || onlineReviewRound < 2) {
+    throw new Error(
+      "family online_review_round_retrigger marker must include onlineReviewRound >= 2",
     );
   }
   await backend.appendFamilyLedger(
@@ -961,7 +973,7 @@ export async function recordOnlineReviewRoundRetrigger(
       phase: "final",
       roundTriggerHeadOid: headOid,
       roundTriggerAt: triggeredAt,
-      onlineReviewRound: record.onlineReviewRound,
+      onlineReviewRound,
       ...(record.pr !== undefined && record.pr.trim().length > 0
         ? { pr: record.pr.trim() }
         : {}),

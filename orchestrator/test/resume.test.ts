@@ -1900,6 +1900,91 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     }
   });
 
+  it("pin online R1 Codex P2: recheck S9 false after same-SHA markers resumes S10 fixer not S9", async () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-codex-p2-"));
+    writeResumeOnlineReviewSnapshot(stateDir);
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+      // recovery order: executable S10 then markers for the same fix SHA
+      entry(
+        "S10",
+        {
+          kind: "fixer",
+          committed: true,
+          fixCommitSha: fixSha,
+        },
+        "session-fix",
+        fixSha,
+      ),
+      {
+        step: "S10",
+        event: "online_review_fix_committed",
+        fixCommitSha: fixSha,
+        onlineReviewRound: 1,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: fixTs,
+      },
+      {
+        step: "S10",
+        event: "online_review_round_retrigger",
+        roundTriggerHeadOid: fixSha,
+        roundTriggerAt: retriggerTs,
+        onlineReviewRound: 2,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: retriggerTs,
+      },
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        isRecheck: true,
+        findingDispositions: [
+          { identityKey: "f:2", threadId: "200", action: "fix" },
+        ],
+      }),
+    ];
+
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    // Must dispatch the pending fixer (S10), not steal back to a duplicate S9 verify
+    expect(backend.dispatchSpecs.filter((s) => s.id === "S10").length).toBeGreaterThanOrEqual(1);
+    const firstReviewLoop = backend.dispatchSpecs.findIndex(
+      (s) => s.id === "S9" || s.id === "S10",
+    );
+    expect(firstReviewLoop).toBeGreaterThanOrEqual(0);
+    expect(backend.dispatchSpecs[firstReviewLoop]?.id).toBe("S10");
+  });
+
   it("pin r28: crash after fix markers but before S10 row resumes S9 not fixer", async () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const retriggerTs = "2026-07-08T13:00:00.000Z";

@@ -1622,13 +1622,13 @@ export async function runFamily(
       return {
         status: "escalated",
         familyBase,
-        familyHead: preFinalFamilyHead,
+        familyHead: escalationFamilyHead ?? preFinalFamilyHead,
         stopSummary:
           reviewLoop.stopSummary ??
           familyStopSummary({
             status: "escalated",
             familyBase,
-            familyHead: preFinalFamilyHead,
+            familyHead: escalationFamilyHead ?? preFinalFamilyHead,
             children,
             escalationReason,
           }),
