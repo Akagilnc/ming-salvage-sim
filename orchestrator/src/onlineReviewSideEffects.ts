@@ -139,17 +139,23 @@ export function resolveReviewThread(
     `threadId=${threadNodeId}`,
   ]);
   // Fail-closed: gh may exit 0 with GraphQL `errors` or isResolved:false (Cursor R12).
+  // Gemini R13: JSON.parse can yield null — guard before property access.
   let parsed: {
     errors?: ReadonlyArray<{ message?: string }>;
     data?: {
       resolveReviewThread?: { thread?: { isResolved?: boolean } };
     };
-  };
+  } | null;
   try {
     parsed = JSON.parse(raw) as typeof parsed;
   } catch {
     throw new Error(
       `onlineReviewSideEffects: resolveReviewThread returned non-JSON: ${raw.slice(0, 200)}`,
+    );
+  }
+  if (parsed === null || typeof parsed !== "object") {
+    throw new Error(
+      `onlineReviewSideEffects: resolveReviewThread returned non-object JSON: ${raw.slice(0, 200)}`,
     );
   }
   if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
