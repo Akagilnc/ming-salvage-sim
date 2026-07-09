@@ -90,6 +90,12 @@ export interface PrReviewSnapshot {
    * stale out real post-drift bot replies.
    */
   readonly roundTriggerUsed: RoundTrigger;
+  /**
+   * How {@link classifyCheckRuns} treats an empty check-run list:
+   * - offline/synthetic: "converged" (no CI substrate)
+   * - live GitHub poll: "pending" (post-push race before checks appear)
+   */
+  readonly checkRunsEmptyMeans: "converged" | "pending";
 }
 
 export interface PollPrReviewInput {
@@ -552,8 +558,9 @@ export type CheckRunsGate = "converged" | "pending" | "failed";
 
 export function classifyCheckRuns(
   runs: ReadonlyArray<CheckRunSnapshot>,
+  emptyMeans: "converged" | "pending" = "converged",
 ): CheckRunsGate {
-  if (runs.length === 0) return "converged";
+  if (runs.length === 0) return emptyMeans;
   let sawPending = false;
   for (const run of runs) {
     const status = (run.status ?? "").toLowerCase();
@@ -578,8 +585,9 @@ export function classifyCheckRuns(
 /** True when every admissible head-correlated check-run completed successfully. */
 export function checkRunsConverged(
   runs: ReadonlyArray<CheckRunSnapshot>,
+  emptyMeans: "converged" | "pending" = "converged",
 ): boolean {
-  return classifyCheckRuns(runs) === "converged";
+  return classifyCheckRuns(runs, emptyMeans) === "converged";
 }
 
 function resolveBotStatuses(
@@ -845,6 +853,8 @@ export function pollPrReviewState(
     totalFindingCount,
     quiescent,
     roundTriggerUsed: roundTrigger,
+    // Live API empty check_runs is a post-push race, not "CI green".
+    checkRunsEmptyMeans: "pending",
   };
 }
 

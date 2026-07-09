@@ -62,6 +62,7 @@ import {
   convergenceHeadToRecord,
   inadmissibleWorkerOutcomeReason,
   workerOutcomeAdmissible,
+  type RoundTrigger,
 } from "../evidenceAdmissibility.js";
 import {
   cleanupWorkerSpec,
@@ -1539,24 +1540,25 @@ export async function runFamilyOnlineReviewLoop(input: {
     lastFixSha: lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedger),
   };
   const pendingGapRetrigger = familyPendingRoundTriggerFromFixGap(familyLedger);
-  let lastRoundTrigger = livePoll
-    ? resolveOnlineReviewRoundTrigger({
-        onlineReviewRound: loopState.round,
-        persistedRoundTrigger:
-          onlineReviewRoundTriggerFromFamilyLedger(familyLedger),
-        pendingRetriggerFromFixGap: pendingGapRetrigger,
-        fixCommitSha: loopState.lastFixSha,
-        shipPrHead: input.ship.prHead,
-        shipLedgerTriggeredAt: shipTriggeredAt,
-      })
-    : buildRoundTrigger(
-        loopState.lastFixSha ??
-          input.ship.prHead ??
-          "offline-review-head",
-        shipTriggeredAt,
-      );
-  if (livePoll && pendingGapRetrigger !== undefined) {
-    try {
+  let lastRoundTrigger: RoundTrigger;
+  try {
+    lastRoundTrigger = livePoll
+      ? resolveOnlineReviewRoundTrigger({
+          onlineReviewRound: loopState.round,
+          persistedRoundTrigger:
+            onlineReviewRoundTriggerFromFamilyLedger(familyLedger),
+          pendingRetriggerFromFixGap: pendingGapRetrigger,
+          fixCommitSha: loopState.lastFixSha,
+          shipPrHead: input.ship.prHead,
+          shipLedgerTriggeredAt: shipTriggeredAt,
+        })
+      : buildRoundTrigger(
+          loopState.lastFixSha ??
+            input.ship.prHead ??
+            "offline-review-head",
+          shipTriggeredAt,
+        );
+    if (livePoll && pendingGapRetrigger !== undefined) {
       const ensured = ensureOnlineReviewRetriggerAfterFixGap({
         sh: ghSh,
         repo,
@@ -1570,21 +1572,22 @@ export async function runFamilyOnlineReviewLoop(input: {
         onlineReviewRound: loopState.round,
         pr: prUrl,
       });
-    } catch (err) {
-      // Same-type as single-slice fix-gap resume (deep self-check): do not throw
-      // out of family online review — park with decision_gate so re-feed can retry.
-      return {
-        ok: false,
-        terminalState: "decision_gate_raised",
-        round: loopState.round,
-        stopSummary: {
-          reason: "infra_failure",
-          summary: `family online review fix-gap re-trigger failed: ${err instanceof Error ? err.message : String(err)}`,
-          repairHint:
-            "re-feed the family run — fix-gap recovery will post the bot re-trigger and continue verify",
-        },
-      };
     }
+  } catch (err) {
+    // resolveOnlineReviewRoundTrigger / ensure may throw (round≥2 missing anchor).
+    // In-band decision_gate — do not abort the whole family runner (Cursor medium,
+    // verified: call was outside try previously).
+    return {
+      ok: false,
+      terminalState: "decision_gate_raised",
+      round: loopState.round,
+      stopSummary: {
+        reason: "infra_failure",
+        summary: `family online review round-trigger setup failed: ${err instanceof Error ? err.message : String(err)}`,
+        repairHint:
+          "repair ledger round-trigger / fix-gap anchors and re-feed the family run",
+      },
+    };
   }
   let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
 
