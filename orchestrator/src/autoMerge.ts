@@ -67,12 +67,18 @@ export interface AutoMergeStageResult {
   readonly stopSummary?: StopSummary;
 }
 
-const DOC_RELEASE_ALLOWED_PATH_RE =
-  /^(?:VERSION|CHANGELOG\.md|orchestrator\/CHANGELOG\.md|docs\/)/;
-
 /** True when a changed path is admissible for a doc-only doc-release commit. */
 export function isDocOnlyPath(path: string): boolean {
-  return DOC_RELEASE_ALLOWED_PATH_RE.test(path);
+  const normalized = path.trim().replace(/\\/g, "/");
+  if (normalized.length === 0) return false;
+  if (normalized.includes("..")) return false;
+  if (normalized === "VERSION") return true;
+  if (normalized === "CHANGELOG.md") return true;
+  if (normalized === "orchestrator/CHANGELOG.md") return true;
+  if (normalized.startsWith("docs/") && normalized.length > "docs/".length) {
+    return true;
+  }
+  return false;
 }
 
 /** Fail closed when any changed path falls outside the doc-release allow-list. */
@@ -256,10 +262,17 @@ export function confirmPrMergedLive(
 export function prMergedRecordFromLive(
   live: PrMergeLiveState,
   convergedHeadOid: string,
+  expectedMergeHeadOid?: string,
 ): PrMergedTerminalRecord | undefined {
   if (live.state !== "MERGED") return undefined;
   if (live.headOid.length === 0) return undefined;
-  if (live.headOid !== convergedHeadOid) return undefined;
+  const mergeTip =
+    expectedMergeHeadOid !== undefined && expectedMergeHeadOid.trim().length > 0
+      ? expectedMergeHeadOid
+      : convergedHeadOid;
+  if (live.headOid !== mergeTip && live.headOid !== convergedHeadOid) {
+    return undefined;
+  }
   return {
     prUrl: live.prUrl,
     prNumber: live.prNumber,
@@ -292,6 +305,8 @@ export interface AutoMergeStageInput {
   readonly repo: string;
   readonly prUrl: string;
   readonly convergedHeadOid: string;
+  /** Post-doc-release PR tip when it differs from the #600 convergence key. */
+  readonly expectedMergeHeadOid?: string;
   readonly docReleaseCompleted: boolean;
   readonly priorConvergenceRecorded: boolean;
   readonly prMergedMarkerPresent: boolean;
@@ -300,6 +315,11 @@ export interface AutoMergeStageInput {
   readonly executeMerge?: (prNumber: number) => void;
   /** Offline/test: skip live gh pr view/merge and synthesize MERGED from poll readiness. */
   readonly offlineSynthetic?: boolean;
+  /**
+   * Test-only hatch: allow offline synthetic merge when docReleasePaths cannot
+   * be verified. Host wiring must never set this; production stays fail-closed.
+   */
+  readonly allowUnverifiedDocReleasePaths?: boolean;
 }
 
 function offlineSyntheticLiveState(
@@ -373,10 +393,20 @@ function unverifiedDocReleasePathsSummary(): StopSummary {
   };
 }
 
+function allowUnverifiedDocReleasePathsHatch(
+  input: Pick<AutoMergeStageInput, "allowUnverifiedDocReleasePaths">,
+): boolean {
+  if (input.allowUnverifiedDocReleasePaths === false) return false;
+  if (input.allowUnverifiedDocReleasePaths === true) return true;
+  return process.env.ORCHESTRATOR_AUTO_MERGE_ALLOW_UNVERIFIED_DOC_PATHS === "1";
+}
+
 function docReleasePathGateResult(
   docReleasePaths: readonly string[] | undefined,
+  opts?: { readonly allowUnverified?: boolean },
 ): AutoMergeStageResult | undefined {
   if (docReleasePaths === undefined || docReleasePaths.length === 0) {
+    if (opts?.allowUnverified === true) return undefined;
     return {
       ok: false,
       terminalState: "decision_gate",
@@ -421,7 +451,11 @@ export async function tryResumePrMergedBackfill(
       stopSummary: externallyMergedNeverConvergedSummary(),
     };
   }
-  const record = prMergedRecordFromLive(live, input.convergedHeadOid);
+  const record = prMergedRecordFromLive(
+    live,
+    input.convergedHeadOid,
+    input.expectedMergeHeadOid,
+  );
   if (record === undefined) return undefined;
   return { ok: true, terminalState: "merged", record };
 }
@@ -453,15 +487,11 @@ export async function runAutoMergeStage(
           process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1";
 
   if (offlineSynthetic) {
-    if (
-      input.docReleasePaths !== undefined &&
-      !isDocOnlyFileList(input.docReleasePaths)
-    ) {
-      return {
-        ok: false,
-        terminalState: "decision_gate",
-        stopSummary: nonDocReleaseSummary(),
-      };
+    const offlineDocGate = docReleasePathGateResult(input.docReleasePaths, {
+      allowUnverified: allowUnverifiedDocReleasePathsHatch(input),
+    });
+    if (offlineDocGate !== undefined) {
+      return offlineDocGate;
     }
     return runOfflineSyntheticAutoMerge(input);
   }
@@ -471,6 +501,7 @@ export async function runAutoMergeStage(
     return backfill;
   }
 
+  // Live path: never honor the test-only unverified-paths hatch.
   const docReleaseGate = docReleasePathGateResult(input.docReleasePaths);
   if (docReleaseGate !== undefined) {
     return docReleaseGate;
@@ -485,7 +516,11 @@ export async function runAutoMergeStage(
         stopSummary: externallyMergedNeverConvergedSummary(),
       };
     }
-    const record = prMergedRecordFromLive(live, input.convergedHeadOid);
+    const record = prMergedRecordFromLive(
+      live,
+      input.convergedHeadOid,
+      input.expectedMergeHeadOid,
+    );
     if (record !== undefined) {
       return { ok: true, terminalState: "merged", record };
     }
@@ -499,6 +534,19 @@ export async function runAutoMergeStage(
   const snapshot = await input.poll(1);
   if (snapshot.headOid !== live.headOid) {
     live = fetchPrMergeLiveState(input.sh, input.repo, input.prUrl);
+    if (snapshot.headOid !== live.headOid) {
+      return {
+        ok: false,
+        terminalState: "decision_gate",
+        stopSummary: {
+          reason: "infra_failure",
+          summary:
+            "live PR head still mismatches readiness snapshot after re-fetch",
+          repairHint:
+            "wait for GitHub to settle on one head, then re-feed the run",
+        },
+      };
+    }
   }
   const readiness = assessMergeReadiness(live, snapshot);
   if (!readiness.ready) {

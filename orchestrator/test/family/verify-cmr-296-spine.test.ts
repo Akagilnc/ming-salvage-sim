@@ -20,6 +20,10 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { findingIdentityKey } from "../../src/findings.js";
 import { recordFamilyEscalated } from "../../src/family/ledger.js";
 import { runFamily } from "../../src/family/runner.js";
@@ -83,6 +87,21 @@ class ChildBackend implements Backend {
 }
 
 /** A family backend with the #296 verify/cmr/PR/abort/escalate capabilities. */
+// ─── fakes ────────────────────────────────────────────────────────────────────
+
+function makeFamilyDocReleaseRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), "capable-family-doc-"));
+  const git = (args: string[]) =>
+    execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  git(["init"]);
+  git(["config", "user.email", "t@example.com"]);
+  git(["config", "user.name", "t"]);
+  writeFileSync(join(dir, "VERSION"), "1.0.0\n");
+  git(["add", "."]);
+  git(["commit", "-m", "doc-release"]);
+  return dir;
+}
+
 class CapableFamilyBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly merges: MergeRequest[] = [];
@@ -92,6 +111,7 @@ class CapableFamilyBackend implements FamilyBackend {
   readonly escalations: FamilyEscalation[] = [];
   readonly prCalls: OpenFamilyPrRequest[] = [];
   readonly verifyShippedPrCalls: Array<{ pr: string; familyBase: string; expectedHead: string }> = [];
+  readonly workingRepo: string;
   liveHead: string | undefined;
   shippedPrOk = true;
   shippedPrFailureReason = "shipped PR is stale";
@@ -101,7 +121,10 @@ class CapableFamilyBackend implements FamilyBackend {
       verify?: (req: FamilyVerifyRequest) => FamilyVerifyResult;
       cmr?: (req: IntegratedCmrRequest) => IntegratedCmrResult;
     } = {},
-  ) {}
+    workingRepo?: string,
+  ) {
+    this.workingRepo = workingRepo ?? makeFamilyDocReleaseRepo();
+  }
 
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
     this.merges.push(child);
@@ -139,6 +162,9 @@ class CapableFamilyBackend implements FamilyBackend {
     return this.shippedPrOk
       ? { ok: true }
       : { ok: false, reason: this.shippedPrFailureReason };
+  }
+  resolveFamilyWorkingRepo(): string | undefined {
+    return this.workingRepo;
   }
   async recordAborted(event: FamilyAbortedEvent): Promise<void> {
     this.aborted.push(event);

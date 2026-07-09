@@ -102,6 +102,13 @@ describe("#602 isDocOnlyFileList", () => {
     expect(isDocOnlyFileList(["orchestrator/src/runner.ts"])).toBe(false);
     expect(isDocOnlyFileList(["VERSION", "ming_sim/db.py"])).toBe(false);
   });
+
+  it("rejects spoofed VERSION/CHANGELOG prefixes and docs/.. traversal", () => {
+    expect(isDocOnlyFileList(["VERSION.evil.ts"])).toBe(false);
+    expect(isDocOnlyFileList(["CHANGELOG.md.evil"])).toBe(false);
+    expect(isDocOnlyFileList(["docs/../orchestrator/src/runner.ts"])).toBe(false);
+    expect(isDocOnlyFileList(["docs/"])).toBe(false);
+  });
 });
 
 describe("#602 docReleasePathsFromCommit", () => {
@@ -130,9 +137,20 @@ describe("#602 docReleasePathsFromCommit", () => {
 describe("#602 runFamilyAutoMergeStage", () => {
   class MinimalFamilyBackend implements FamilyBackend {
     readonly ledger: FamilyLedgerEntry[] = [];
-    readonly workingRepo?: string;
+    readonly workingRepo: string;
     constructor(workingRepo?: string) {
-      this.workingRepo = workingRepo;
+      this.workingRepo = workingRepo ?? (() => {
+        const dir = mkdtempSync(join(tmpdir(), "family-offline-doc-"));
+        const git = (args: string[]) =>
+          execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+        git(["init"]);
+        git(["config", "user.email", "t@example.com"]);
+        git(["config", "user.name", "t"]);
+        writeFileSync(join(dir, "VERSION"), "1.0.0\n");
+        git(["add", "."]);
+        git(["commit", "-m", "doc-release"]);
+        return dir;
+      })();
     }
     async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
       return { familyHead: "head" };
@@ -568,7 +586,7 @@ describe("#602 runAutoMergeStage", () => {
     expect(result?.record?.mergedHeadOid).toBe("merged-head");
   });
 
-  it("resume backfill rejects MERGED when live head !== convergedHeadOid (AC9)", async () => {
+  it("resume backfill rejects MERGED when live head matches neither convergence nor doc-release tip (AC9)", async () => {
     const result = await tryResumePrMergedBackfill({
       sh: fakeSh({
         "gh pr view": () =>
@@ -584,10 +602,41 @@ describe("#602 runAutoMergeStage", () => {
       repo: REPO,
       prUrl: PR_URL,
       convergedHeadOid: "expected-converged-head",
+      expectedMergeHeadOid: "expected-doc-release-head",
       priorConvergenceRecorded: true,
       prMergedMarkerPresent: false,
     });
     expect(result).toBeUndefined();
+  });
+
+  it("resume backfill: S9 convergence key + post-doc MERGED tip → terminal marker (AC9)", async () => {
+    const merge = vi.fn();
+    const result = await tryResumePrMergedBackfill({
+      sh: fakeSh({
+        "gh pr view": () =>
+          JSON.stringify({
+            number: 602,
+            url: PR_URL,
+            state: "MERGED",
+            headRefName: "feat/x",
+            headRefOid: "post-doc-release-head",
+            mergeStateStatus: "UNKNOWN",
+          }),
+      }),
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "s9-pre-doc-head",
+      expectedMergeHeadOid: "post-doc-release-head",
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      executeMerge: merge,
+    });
+    expect(merge).not.toHaveBeenCalled();
+    expect(result?.terminalState).toBe("merged");
+    expect(result?.record).toMatchObject({
+      mergedHeadOid: "post-doc-release-head",
+      convergedHeadOid: "s9-pre-doc-head",
+    });
   });
 
   it("pending post-doc-release CI blocks merge at runAutoMergeStage (AC6)", async () => {
@@ -699,10 +748,62 @@ describe("#602 runAutoMergeStage", () => {
     expect(result.ok).toBe(true);
     expect(result.record?.mergedHeadOid).toBe("post-doc-head");
   });
+
+  it("offline synthetic fails closed when docReleasePaths is missing", async () => {
+    const merge = vi.fn();
+    const result = await runAutoMergeStage({
+      sh: fakeSh({}),
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "head-1",
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      offlineSynthetic: true,
+      allowUnverifiedDocReleasePaths: false,
+      poll: async () => readySnapshot(),
+      executeMerge: merge,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate");
+    expect(result.stopSummary?.summary).toMatch(/doc-release commit paths/i);
+    expect(merge).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when live head still mismatches snapshot after re-fetch", async () => {
+    const merge = vi.fn();
+    const result = await runAutoMergeStage({
+      sh: fakeSh({
+        "gh pr view": () =>
+          JSON.stringify({
+            number: 602,
+            url: PR_URL,
+            state: "OPEN",
+            headRefName: "feat/x",
+            headRefOid: "still-stale-head",
+            mergeStateStatus: "CLEAN",
+          }),
+      }),
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "post-doc-head",
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      offlineSynthetic: false,
+      docReleasePaths: ["VERSION"],
+      poll: async () => readySnapshot({ headOid: "post-doc-head" }),
+      executeMerge: merge,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate");
+    expect(result.stopSummary?.summary).toMatch(/still mismatches readiness snapshot/i);
+    expect(merge).not.toHaveBeenCalled();
+  });
 });
 
 describe("#602 prMergedRecordFromLive", () => {
-  it("requires live headOid to match convergedHeadOid", () => {
+  it("requires live headOid to match expected merge tip or convergence key", () => {
     expect(
       prMergedRecordFromLive(
         {
@@ -714,8 +815,26 @@ describe("#602 prMergedRecordFromLive", () => {
           mergeStateStatus: "UNKNOWN",
         },
         "expected-head",
+        "doc-release-head",
       ),
     ).toBeUndefined();
+    expect(
+      prMergedRecordFromLive(
+        {
+          prNumber: 602,
+          prUrl: PR_URL,
+          state: "MERGED",
+          headOid: "doc-release-head",
+          headRefName: "feat/x",
+          mergeStateStatus: "UNKNOWN",
+        },
+        "s9-head",
+        "doc-release-head",
+      ),
+    ).toMatchObject({
+      mergedHeadOid: "doc-release-head",
+      convergedHeadOid: "s9-head",
+    });
   });
 });
 
@@ -788,12 +907,21 @@ describe("#602 mergeReadinessStopSummary", () => {
 });
 
 describe("#602 runOrchestrator slice path — AC8 pr_merged ledger", () => {
-  const CONVERGED_HEAD = "abc1234567890def1234567890abcd1234567890ab";
   const OFFLINE_PR = "pr://slice/offline-602-ac8";
+  const worktreeDir = mkdtempSync(join(tmpdir(), "slice-ac8-wt-"));
+  const git = (args: string[]) =>
+    execFileSync("git", ["-C", worktreeDir, ...args], { encoding: "utf8" });
+  git(["init"]);
+  git(["config", "user.email", "t@example.com"]);
+  git(["config", "user.name", "t"]);
+  writeFileSync(join(worktreeDir, "VERSION"), "1.0.0\n");
+  git(["add", "."]);
+  git(["commit", "-m", "doc-release"]);
+  const CONVERGED_HEAD = git(["rev-parse", "HEAD"]).trim();
   const WORKTREE = {
     branch: "feat/issue-602-ac8",
     base: "main",
-    path: "/resident/worktrees/issue-602-ac8",
+    path: worktreeDir,
   };
   const STATE_DIR = "/resident/worktrees/.ledger-602-ac8";
 
