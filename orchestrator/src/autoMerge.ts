@@ -433,6 +433,30 @@ function mergeNotConfirmedSummary(): StopSummary {
   };
 }
 
+function expectedMergeTipMismatchSummary(): StopSummary {
+  return {
+    reason: "decision_gate_park",
+    summary:
+      "auto-merge blocked: live PR tip does not match expected post-doc-release head",
+    repairHint:
+      "ensure the PR head equals the doc-release commit before merge",
+  };
+}
+
+function expectedMergeTipMismatch(
+  liveHeadOid: string,
+  expectedMergeHeadOid?: string,
+): StopSummary | undefined {
+  const expected =
+    expectedMergeHeadOid !== undefined && expectedMergeHeadOid.trim().length > 0
+      ? expectedMergeHeadOid
+      : undefined;
+  if (expected !== undefined && liveHeadOid !== expected) {
+    return expectedMergeTipMismatchSummary();
+  }
+  return undefined;
+}
+
 export async function tryResumePrMergedBackfill(
   input: Omit<
     AutoMergeStageInput,
@@ -560,6 +584,18 @@ export async function runAutoMergeStage(
     };
   }
 
+  const tipMismatch = expectedMergeTipMismatch(
+    live.headOid,
+    input.expectedMergeHeadOid,
+  );
+  if (tipMismatch !== undefined) {
+    return {
+      ok: false,
+      terminalState: "decision_gate",
+      stopSummary: tipMismatch,
+    };
+  }
+
   const doMerge =
     input.executeMerge ??
     ((prNumber: number) => executePrMergeCommit(input.sh, input.repo, prNumber));
@@ -571,6 +607,17 @@ export async function runAutoMergeStage(
     input.prUrl,
     live.headOid,
   );
+  const confirmTipMismatch =
+    record !== undefined
+      ? expectedMergeTipMismatch(record.mergedHeadOid, input.expectedMergeHeadOid)
+      : undefined;
+  if (confirmTipMismatch !== undefined) {
+    return {
+      ok: false,
+      terminalState: "decision_gate",
+      stopSummary: confirmTipMismatch,
+    };
+  }
   if (record === undefined) {
     return {
       ok: false,
