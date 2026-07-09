@@ -522,6 +522,20 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
           html_url: "https://github.com/o/r/pull/42",
         });
       }
+      if (cmd.includes("graphql") && cmd.includes("reviewThreads")) {
+        return JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  pageInfo: { endCursor: "c1", hasNextPage: false },
+                  nodes: [],
+                },
+              },
+            },
+          },
+        });
+      }
       if (cmd.includes("issues/42/comments") || cmd.includes("pulls/42/comments")) {
         return JSON.stringify([
           {
@@ -555,20 +569,6 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
         return JSON.stringify({ check_runs: [] });
       }
       if (cmd.includes("reactions")) return "[]";
-      if (cmd.includes("graphql")) {
-        return JSON.stringify({
-          data: {
-            repository: {
-              pullRequest: {
-                reviewThreads: {
-                  nodes: [],
-                  pageInfo: { hasNextPage: false },
-                },
-              },
-            },
-          },
-        });
-      }
       return "[]";
     };
     const snap = pollPrReviewState(sh, {
@@ -579,9 +579,79 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
       nowIso: NOW_TS,
     });
     expect(snap.headOid).toBe(NEW_HEAD);
+    expect(snap.roundTriggerUsed.headOid).toBe(NEW_HEAD);
+    expect(snap.roundTriggerUsed.triggeredAt).toBe(NOW_TS);
     for (const bot of ONLINE_REVIEW_BOT_IDS) {
       expect(snap.bots[bot].state).not.toBe("complete");
     }
+  });
+
+  it("pin online R5 Codex P1: chained poll reuses re-anchored trigger (no re-now)", () => {
+    const OLD_TS = "2026-07-01T00:00:00.000Z";
+    const HEAD1 = "head1111111111111111111111111111111111111";
+    const HEAD_OLD = "head0000000000000000000000000000000000000";
+    const emptyGql = JSON.stringify({
+      data: {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              pageInfo: { endCursor: "c1", hasNextPage: false },
+              nodes: [],
+            },
+          },
+        },
+      },
+    });
+    const sh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      // graphql before reviews — "reviewThreads" contains "reviews"
+      if (cmd.includes("graphql") && cmd.includes("reviewThreads")) {
+        return emptyGql;
+      }
+      if (
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews")
+      ) {
+        return JSON.stringify({
+          head: { sha: HEAD1 },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") || cmd.includes("pulls/42/comments")) {
+        return "[]";
+      }
+      if (cmd.includes("pulls/42/reviews")) return "[]";
+      if (cmd.includes("check-runs")) {
+        return JSON.stringify({ check_runs: [] });
+      }
+      if (cmd.includes("reactions")) return "[]";
+      return "[]";
+    };
+    const first = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: buildRoundTrigger(HEAD_OLD, OLD_TS),
+      nowIso: "2026-07-09T12:00:00.000Z",
+    });
+    expect(first.roundTriggerUsed.headOid).toBe(HEAD1);
+    expect(first.roundTriggerUsed.triggeredAt).toBe("2026-07-09T12:00:00.000Z");
+
+    // Second poll must pass first.roundTriggerUsed — if wrongly re-anchored with a
+    // newer now, triggeredAt would change even when head is stable.
+    const second = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 2,
+      roundTrigger: first.roundTriggerUsed,
+      nowIso: "2026-07-09T12:05:00.000Z",
+    });
+    expect(second.roundTriggerUsed.headOid).toBe(HEAD1);
+    expect(second.roundTriggerUsed.triggeredAt).toBe(
+      first.roundTriggerUsed.triggeredAt,
+    );
+    expect(second.roundTriggerUsed.triggeredAt).not.toBe("2026-07-09T12:05:00.000Z");
   });
 
   it("drops a bot after the overdue poll window", () => {

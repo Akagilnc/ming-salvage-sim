@@ -900,6 +900,7 @@ export function offlinePrReviewSnapshot(input: {
     checkRuns: [],
     totalFindingCount: 0,
     quiescent: true,
+    roundTriggerUsed: buildRoundTrigger(input.headOid, "1970-01-01T00:00:00.000Z"),
   };
 }
 
@@ -1008,15 +1009,20 @@ export async function waitForBotQuiescence(
     throw new Error("waitForBotQuiescence requires maxPolls >= 1");
   }
   const clock = input.clock ?? realBotPollClock;
+  // Chain re-anchored triggers across polls (online R5 Codex P1): after head
+  // drift, pollPrReviewState re-anchors once; subsequent polls must reuse that
+  // anchor rather than re-anchoring with a newer now (which stales real replies).
+  let roundTrigger = input.roundTrigger;
   let last: PrReviewSnapshot | undefined;
   for (let poll = 1; poll <= maxPolls; poll += 1) {
     last = pollPrReviewState(sh, {
       repo: input.repo,
       prUrl: input.prUrl,
       pollCount: poll,
-      roundTrigger: input.roundTrigger,
+      roundTrigger,
       botPendingPolls: input.botPendingPolls as never,
     });
+    roundTrigger = last.roundTriggerUsed;
     if (last.quiescent) return last;
     if (poll < maxPolls) {
       await clock.sleep(BOT_POLL_INTERVAL_MS);
@@ -1084,7 +1090,8 @@ export function retriggerBotsAndPoll(
     pollCount,
     roundTrigger,
   });
-  return { snapshot, roundTrigger };
+  // Prefer snapshot.roundTriggerUsed (identity with roundTrigger when no further drift).
+  return { snapshot, roundTrigger: snapshot.roundTriggerUsed };
 }
 
 /** Thrown when a read-only verify worker mutates HEAD (runner catches → contract drift). */
@@ -1300,6 +1307,14 @@ export async function runOnlineReviewLoopStage(
           },
         };
       }
+      // Bots may already be quiescent — poll returns immediately. Sleep one
+      // interval before re-poll so normal CI latency does not burn the overdue
+      // budget in milliseconds (online R5 Codex P1 / Gemini high).
+      const clock =
+        process.env.VITEST !== undefined
+          ? immediateBotPollClock
+          : realBotPollClock;
+      await clock.sleep(BOT_POLL_INTERVAL_MS);
       continue;
     }
     pendingCiPolls = 0;
