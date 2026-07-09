@@ -3408,7 +3408,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             if (err instanceof VerifyWorkerWorktreeDirtyError) {
               const stopSummary = verifyReviewerWorktreeDirtyStopSummary({
                 trackedStatus: err.porcelainAfter
-                  .split("\n")
+                  .trim()
+                  .split(/\r?\n/)
                   .filter((line) => line.length > 0),
               });
               return await errorTermination(reviewStep, err, { stopSummary });
@@ -3479,7 +3480,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               if (err instanceof VerifyWorkerWorktreeDirtyError) {
                 const stopSummary = verifyReviewerWorktreeDirtyStopSummary({
                   trackedStatus: err.porcelainAfter
-                    .split("\n")
+                    .trim()
+                    .split(/\r?\n/)
                     .filter((line) => line.length > 0),
                 });
                 return await errorTermination(reviewStep, err, { stopSummary });
