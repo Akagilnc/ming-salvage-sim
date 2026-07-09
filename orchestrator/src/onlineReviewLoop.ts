@@ -98,6 +98,7 @@ function toLandingSnapshot(snapshot: PrReviewSnapshot): OnlineReviewLandingSnaps
       authorLogin: t.authorLogin,
     })),
     checkRuns: snapshot.checkRuns,
+    checkRunsEmptyMeans: snapshot.checkRunsEmptyMeans,
   };
 }
 
@@ -117,7 +118,8 @@ export function clampVerifyConvergenceForCheckRuns(
   if (!verify.converged || landing === undefined) {
     return verify;
   }
-  if (classifyCheckRuns(landing.checkRuns) === "failed") {
+  const emptyMeans = landing.checkRunsEmptyMeans ?? "converged";
+  if (classifyCheckRuns(landing.checkRuns, emptyMeans) === "failed") {
     return { ...verify, converged: false };
   }
   return verify;
@@ -134,7 +136,8 @@ export function verifyBlockedOnlyOnPendingCheckRuns(
   if (!verify.converged || landing === undefined) {
     return false;
   }
-  return classifyCheckRuns(landing.checkRuns) === "pending";
+  const emptyMeans = landing.checkRunsEmptyMeans ?? "converged";
+  return classifyCheckRuns(landing.checkRuns, emptyMeans) === "pending";
 }
 
 type OnlineReviewRetriggerRecoveryEntry = {
@@ -901,6 +904,7 @@ export function offlinePrReviewSnapshot(input: {
     totalFindingCount: 0,
     quiescent: true,
     roundTriggerUsed: buildRoundTrigger(input.headOid, "1970-01-01T00:00:00.000Z"),
+    checkRunsEmptyMeans: "converged",
   };
 }
 
@@ -1352,8 +1356,10 @@ export async function runOnlineReviewLoopStage(
     const fixKeys = fixMarkedKeysFromVerify(verify);
     landing = { ...landing, fixMarkedFindingIdentityKeys: fixKeys };
 
-    const checkRuns = landing.onlineReviewSnapshot?.checkRuns ?? [];
-    if (verify.converged && checkRunsConverged(checkRuns)) {
+    const reviewSnap = landing.onlineReviewSnapshot;
+    const checkRuns = reviewSnap?.checkRuns ?? [];
+    const emptyMeans = reviewSnap?.checkRunsEmptyMeans ?? "converged";
+    if (verify.converged && checkRunsConverged(checkRuns, emptyMeans)) {
       const cleanupOk = await dispatch.dispatchCleanup(landing);
       if (!cleanupOk) {
         return { ok: false, terminalState: "decision_gate_raised", round };
@@ -1369,7 +1375,7 @@ export async function runOnlineReviewLoopStage(
     // misleading "nothing to fix while findings remain") — online R8 Gemini high.
     // clamp may have set converged:false for failed CI while worker had no findings.
     if (
-      classifyCheckRuns(checkRuns) === "failed" &&
+      classifyCheckRuns(checkRuns, emptyMeans) === "failed" &&
       fixKeys.length === 0
     ) {
       return {

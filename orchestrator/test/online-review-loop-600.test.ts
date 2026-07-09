@@ -2583,6 +2583,9 @@ describe("#600 onlineReviewLoop helpers", () => {
     );
     expect(checkRunsConverged([])).toBe(true);
     expect(classifyCheckRuns([])).toBe("converged");
+    // Live post-push race: empty check_runs must not mean CI green
+    expect(classifyCheckRuns([], "pending")).toBe("pending");
+    expect(checkRunsConverged([], "pending")).toBe(false);
   });
 
   it("pin clampVerifyConvergenceForCheckRuns default-denies worker converged:true when CI red", () => {

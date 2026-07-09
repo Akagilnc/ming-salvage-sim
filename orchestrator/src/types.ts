@@ -638,6 +638,11 @@ export interface OnlineReviewLandingSnapshot {
     readonly status: string;
     readonly conclusion?: string;
   }>;
+  /**
+   * How empty checkRuns is classified: offline="converged", live="pending"
+   * (post-push race before checks appear — Cursor medium, verified).
+   */
+  readonly checkRunsEmptyMeans?: "converged" | "pending";
 }
 
 export interface WorkerLandingPayload {

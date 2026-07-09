@@ -2023,6 +2023,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             landing.headOid,
             "1970-01-01T00:00:00.000Z",
           ),
+          checkRunsEmptyMeans: "converged",
         };
       }
       return offlinePrReviewSnapshot({
@@ -3604,10 +3605,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             }
             // Same-type as stage (R8 Gemini): CI red + no bot fix marks → park with
             // CI failure summary, do not route to S10 fixer ("nothing to fix").
-            const s9CheckRuns =
-              onlineReviewLanding?.onlineReviewSnapshot?.checkRuns ?? [];
+            const s9Snap = onlineReviewLanding?.onlineReviewSnapshot;
+            const s9CheckRuns = s9Snap?.checkRuns ?? [];
+            const s9EmptyMeans = s9Snap?.checkRunsEmptyMeans ?? "converged";
             if (
-              classifyCheckRuns(s9CheckRuns) === "failed" &&
+              classifyCheckRuns(s9CheckRuns, s9EmptyMeans) === "failed" &&
               fixKeys.length === 0
             ) {
               output = verifyOutput;
