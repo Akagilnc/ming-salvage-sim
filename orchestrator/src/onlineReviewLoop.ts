@@ -456,7 +456,12 @@ export function sliceOnlineReviewCiFailedPending(
   ledger: ReadonlyArray<{
     readonly step?: string;
     readonly event?: string;
-    readonly output?: { readonly kind?: string; readonly converged?: boolean };
+    readonly output?: {
+      readonly kind?: string;
+      readonly converged?: boolean;
+      readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+      readonly dispositions?: ReadonlyArray<{ readonly action?: string }>;
+    };
   }>,
 ): boolean {
   for (let i = ledger.length - 1; i >= 0; i--) {
@@ -468,11 +473,12 @@ export function sliceOnlineReviewCiFailedPending(
     // Executable progress past the CI park clears the pending flag.
     if (entry.event === undefined && entry.step === "S10") return false;
     if (entry.event === undefined && entry.step === "S11") return false;
+    // R19 Codex P2: any newer executable S9 verify supersedes the CI-red park
+    // (including converged:false + fix marks → must route to S10, not stick on S9).
     if (
       entry.event === undefined &&
       entry.step === "S9" &&
-      entry.output?.kind === "verify" &&
-      entry.output.converged === true
+      entry.output?.kind === "verify"
     ) {
       return false;
     }
