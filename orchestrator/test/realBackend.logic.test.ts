@@ -1390,13 +1390,13 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
 
   it("decodeOutput on RAW valid cleanup produces CleanupResult via real seam", () => {
     const backend = makeBackend();
-    const raw = extractCleanupTag('<cleanup>{"ok": true}</cleanup>');
+    const raw = extractCleanupTag('<cleanup>{"terminal": true, "ok": true}</cleanup>');
     const decoded = (
       backend as unknown as {
         decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
       }
     ).decodeOutput(cleanupSpec, raw, undefined);
-    expect(decoded).toEqual({ kind: "cleanup", ok: true });
+    expect(decoded).toEqual({ kind: "cleanup", terminal: true, ok: true });
   });
 
   it("decodeOutput on RAW valid docRelease produces DocReleaseResult via real seam", () => {
@@ -1417,7 +1417,7 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
         backend as unknown as {
           decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
         }
-      ).decodeOutput(cleanupSpec, extractCleanupTag('<cleanup>{"ok": true, "extra": 1}</cleanup>'), undefined),
+      ).decodeOutput(cleanupSpec, extractCleanupTag('<cleanup>{"terminal": true, "ok": true, "extra": 1}</cleanup>'), undefined),
     ).toThrow();
   });
 

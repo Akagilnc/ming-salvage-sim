@@ -9,7 +9,7 @@
  * worker boundaries:
  *
  *   S0→S1→S2(implement)→S3(review)→S4(classify)
- *     clean/deferred only → S7(ship)→S9(verify)→S10(fixer)→S11(cleanup)→S12(docRelease)→S8(success)
+ *     clean/deferred only → S7(ship)→S9(verify)→S10(fixer)→S12(docRelease)→S11(cleanup)→S8(success)
  *     blocking → S5(fix)→S6(fresh full-diff review)→S4
  *
  * Escalate stays the global stop edge (checked FIRST).
@@ -182,7 +182,7 @@ export function route(ctx: RouteContext): RouteDecision {
       if (ctx.output.converged) {
         return {
           kind: "next",
-          step: "S11",
+          step: "S12",
         };
       }
       const round = ctx.onlineReviewRound ?? 1;
@@ -219,10 +219,13 @@ export function route(ctx: RouteContext): RouteDecision {
       if (!isValidCleanupResult(ctx.output)) {
         return { kind: "handoff", status: "error" };
       }
+      if (!ctx.output.terminal) {
+        return { kind: "handoff", status: "error" };
+      }
       if (!ctx.output.ok) {
         return { kind: "handoff", status: "error" };
       }
-      return { kind: "next", step: "S12" };
+      return { kind: "handoff", status: "success" };
     }
 
     case "S12": {
@@ -232,7 +235,7 @@ export function route(ctx: RouteContext): RouteDecision {
       if (!ctx.output.released) {
         return { kind: "handoff", status: "error" };
       }
-      return { kind: "handoff", status: "success" };
+      return { kind: "next", step: "S11" };
     }
 
     case "S8":

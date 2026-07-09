@@ -1293,7 +1293,8 @@ export interface OnlineReviewLoopDispatch {
     round: number,
   ) => Promise<VerifyResult>;
   readonly dispatchFixer: (landing: WorkerLandingPayload) => Promise<FixerResult>;
-  readonly dispatchCleanup: (landing: WorkerLandingPayload) => Promise<boolean>;
+  /** Post-merge cleanup (#603) — optional; not part of the review loop itself. */
+  readonly dispatchCleanup?: (landing: WorkerLandingPayload) => Promise<boolean>;
   readonly dispatchDocRelease: (landing: WorkerLandingPayload) => Promise<boolean>;
   readonly applySideEffects: (
     landing: WorkerLandingPayload,
@@ -1321,7 +1322,7 @@ export interface OnlineReviewLoopStageResult {
 
 /**
  * Shared online review-loop stage for single-slice and family PRs (#600 AC7).
- * S11/S12 remain stub workers until #603.
+ * Post-merge cleanup (#603) runs after host auto-merge, not inside this loop.
  */
 export async function runOnlineReviewLoopStage(
   ship: ShipResult,
@@ -1429,10 +1430,6 @@ export async function runOnlineReviewLoopStage(
     const checkRuns = reviewSnap?.checkRuns ?? [];
     const emptyMeans = reviewSnap?.checkRunsEmptyMeans ?? "converged";
     if (verify.converged && checkRunsConverged(checkRuns, emptyMeans)) {
-      const cleanupOk = await dispatch.dispatchCleanup(landing);
-      if (!cleanupOk) {
-        return { ok: false, terminalState: "decision_gate_raised", round };
-      }
       const released = await dispatch.dispatchDocRelease(landing);
       if (!released) {
         return { ok: false, terminalState: "decision_gate_raised", round };

@@ -19,10 +19,12 @@
  */
 
 import type {
+  CleanupResult,
   EscalationAnswerPayload,
   EscalationKind,
   FindingDisposition,
 } from "../types.js";
+import { isValidCleanupResult } from "../reviewLoopOutcome.js";
 import {
   decisionGateParkStopSummary,
   infraFailureStopSummary,
@@ -1135,6 +1137,65 @@ export async function recordPrMerged(
   );
 }
 
+/** Fields a #603 post_merge_cleanup terminal event carries. */
+export interface PostMergeCleanupRecord {
+  readonly familyHeadAfter: string;
+  readonly cleanupOutput: CleanupResult;
+}
+
+export function isValidPostMergeCleanup(
+  entry: FamilyLedgerEntry,
+): entry is FamilyLedgerEntry & {
+  readonly status: "post_merge_cleanup";
+  readonly event: "post_merge_cleanup";
+  readonly familyHeadAfter: string;
+  readonly cleanupOutput: CleanupResult;
+} {
+  return (
+    entry.status === "post_merge_cleanup" &&
+    entry.event === "post_merge_cleanup" &&
+    typeof entry.familyHeadAfter === "string" &&
+    entry.familyHeadAfter.trim().length > 0 &&
+    entry.cleanupOutput !== undefined &&
+    isValidCleanupResult(entry.cleanupOutput)
+  );
+}
+
+/**
+ * Append the PHASE-LEVEL `post_merge_cleanup` terminal marker (#603).
+ */
+export async function recordPostMergeCleanup(
+  backend: FamilyBackend,
+  record: PostMergeCleanupRecord,
+): Promise<void> {
+  const familyHeadAfter = record.familyHeadAfter.trim();
+  if (familyHeadAfter.length === 0) {
+    throw new Error(
+      "family post_merge_cleanup marker must include a non-empty familyHeadAfter",
+    );
+  }
+  if (!isValidCleanupResult(record.cleanupOutput)) {
+    throw new Error(
+      "family post_merge_cleanup marker must include a valid cleanupOutput",
+    );
+  }
+  await backend.appendFamilyLedger(
+    compact({
+      status: "post_merge_cleanup",
+      event: "post_merge_cleanup",
+      phase: "final",
+      familyHeadAfter,
+      cleanupOutput: record.cleanupOutput,
+      stopSummary: successStopSummary({
+        heads: {
+          actualFamilyHead: familyHeadAfter,
+          sources: { actualFamilyHead: "post_merge_cleanup ledger row" },
+        },
+      }),
+    }) as FamilyLedgerEntry,
+  );
+}
+
 export function familyPrMergedForHead(
   entries: ReadonlyArray<FamilyLedgerEntry>,
   familyHeadAfter: string | undefined,
@@ -1161,6 +1222,38 @@ export function familyPrMergedForHead(
     familyHeadAfter: row.familyHeadAfter,
     ...(row.stopSummary !== undefined ? { stopSummary: row.stopSummary } : {}),
   };
+}
+
+/**
+ * Terminal+ok `post_merge_cleanup` row for THIS family HEAD (#603).
+ * Resume / already_done success requires this after `pr_merged`.
+ */
+export function familyPostMergeCleanupForHead(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
+):
+  | (FamilyLedgerEntry & {
+      readonly status: "post_merge_cleanup";
+      readonly event: "post_merge_cleanup";
+      readonly familyHeadAfter: string;
+      readonly cleanupOutput: CleanupResult;
+    })
+  | undefined {
+  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) {
+    return undefined;
+  }
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (!isValidPostMergeCleanup(entry)) continue;
+    if (entry.familyHeadAfter !== familyHeadAfter) continue;
+    if (
+      entry.cleanupOutput.terminal === true &&
+      entry.cleanupOutput.ok === true
+    ) {
+      return entry;
+    }
+  }
+  return undefined;
 }
 
 /**

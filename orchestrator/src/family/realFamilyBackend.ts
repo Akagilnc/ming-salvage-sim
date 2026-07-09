@@ -123,6 +123,8 @@ import {
 } from "../modelRoutes.js";
 import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import { retryProcessCrash } from "../dispatchRetry.js";
+import { dispatchPostMergeCleanup } from "../postMergeCleanup.js";
+import type { Sh } from "../familyDriver.js";
 import { recordFamilyEscalated } from "./ledger.js";
 import {
   isFilledString,
@@ -617,6 +619,19 @@ export class RealFamilyBackend implements FamilyBackend {
     return this.opts.workingRepo;
   }
 
+  /**
+   * Terminal-success GC (#603 / ADR 0024): remove the dedicated family clone.
+   * Caller must have verified ledger terminal+ok post_merge_cleanup first.
+   */
+  async reapFamilyHost(familyBase: string): Promise<void> {
+    if (familyBase !== this.opts.familyBase) return;
+    try {
+      rmSync(this.opts.workingRepo, { recursive: true, force: true });
+    } catch {
+      // Best-effort: an already-reclaimed clone is success.
+    }
+  }
+
   // ─────────────────────────── merge ───────────────────────────
 
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {
@@ -1102,8 +1117,34 @@ export class RealFamilyBackend implements FamilyBackend {
     if (spec.kind === "coder") {
       return this.runFamilyCoderFixWorker(spec, ctx, landing);
     }
-    // S11/S12 remain deterministic stubs until #603 (prompt/soul files land later).
-    if (spec.kind === "cleanup" || spec.kind === "docRelease") {
+    // S11 post-merge cleanup (#603): deterministic when landing carries pr_merged.
+    if (spec.kind === "cleanup") {
+      if (landing?.cleanupDispatch !== undefined) {
+        const ghSh: Sh = (file, args) =>
+          execFileSync(file, args, {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          }).trim();
+        try {
+          const output = dispatchPostMergeCleanup(landing, ctx, ghSh);
+          return { kind: "completed", output };
+        } catch (err) {
+          return {
+            kind: "failed",
+            reason: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+      const stub = skeletonReviewLoopWorkerResult(spec.kind);
+      if (stub !== undefined) {
+        return stub;
+      }
+      return {
+        kind: "failed",
+        reason: `family ${spec.kind} stub unavailable`,
+      };
+    }
+    if (spec.kind === "docRelease") {
       const stub = skeletonReviewLoopWorkerResult(spec.kind);
       if (stub !== undefined) {
         return stub;
@@ -3686,7 +3727,23 @@ export function parseCleanupOutcome(
       reason: "cleanup worker <cleanup> tag did not satisfy cleanupOutputSchema (extra keys or wrong types)",
     };
   }
-  const candidate: CleanupResult = { kind: "cleanup", ok: shape.data.ok };
+  const candidate: CleanupResult = {
+    kind: "cleanup",
+    terminal: shape.data.terminal,
+    ok: shape.data.ok,
+    ...(shape.data.issuesClosed !== undefined
+      ? { issuesClosed: shape.data.issuesClosed }
+      : {}),
+    ...(shape.data.parentIssueClosed === true
+      ? { parentIssueClosed: true }
+      : {}),
+    ...(shape.data.branchOutcome !== undefined
+      ? { branchOutcome: shape.data.branchOutcome }
+      : {}),
+    ...(shape.data.skippedReasons !== undefined
+      ? { skippedReasons: shape.data.skippedReasons }
+      : {}),
+  };
   if (!isValidCleanupResult(candidate)) {
     return { kind: "malformed", reason: "cleanup worker <cleanup> tag did not satisfy isValidCleanupResult guard" };
   }

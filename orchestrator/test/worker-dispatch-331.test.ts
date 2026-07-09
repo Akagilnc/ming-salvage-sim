@@ -177,14 +177,14 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     // ADR 0030: implementation and review are separate runner-visible workers.
     // The reviewer is fresh/clean; a clean review is classified by S4 before S7.
     // #596: S7 ship is now INTERMEDIATE — the runner-visible review-loop skeleton
-    // (S9 verify → S10 fixer → S11 cleanup → S12 docRelease) runs before S8.
+    // (S9 verify → S10 fixer → S12 docRelease → S11 cleanup) runs before S8.
     expect(backend.dispatched).toEqual([
       "S2:coder:coder:fresh:retain:/tdd",
       "S3:reviewer:reviewer:fresh:clean:/code-review",
       "S7:ship:coder:fresh:clean:gstack-ship",
       "S9:verify:verify:fresh:clean:/verify",
-      "S11:cleanup:cleanup:fresh:clean:/cleanup",
       "S12:docRelease:docRelease:fresh:clean:/doc-release",
+      "S11:cleanup:cleanup:fresh:clean:/cleanup",
     ]);
   });
 

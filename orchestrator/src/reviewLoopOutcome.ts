@@ -253,12 +253,56 @@ export function fixerResultFromParsed(parsed: {
   return candidate;
 }
 
+const CLEANUP_BRANCH_OUTCOMES = new Set([
+  "deleted",
+  "already_gone",
+  "skipped_tip_drift",
+  "skipped_pr_not_merged",
+  "skipped_precondition",
+]);
+
 export function isValidCleanupResult(
   o: StepOutput | undefined,
 ): o is CleanupResult {
   if (o == null || typeof o !== "object") return false;
   const obj = o as unknown as Record<string, unknown>;
-  return obj.kind === "cleanup" && typeof obj.ok === "boolean";
+  if (obj.kind !== "cleanup") return false;
+  if (typeof obj.terminal !== "boolean" || typeof obj.ok !== "boolean") {
+    return false;
+  }
+  if (obj.terminal === false && obj.ok === true) return false;
+  if (obj.issuesClosed !== undefined) {
+    if (
+      !Array.isArray(obj.issuesClosed) ||
+      !obj.issuesClosed.every(
+        (n) => typeof n === "number" && Number.isFinite(n) && n > 0,
+      )
+    ) {
+      return false;
+    }
+  }
+  if (
+    obj.parentIssueClosed !== undefined &&
+    typeof obj.parentIssueClosed !== "boolean"
+  ) {
+    return false;
+  }
+  if (
+    obj.branchOutcome !== undefined &&
+    (typeof obj.branchOutcome !== "string" ||
+      !CLEANUP_BRANCH_OUTCOMES.has(obj.branchOutcome))
+  ) {
+    return false;
+  }
+  if (obj.skippedReasons !== undefined) {
+    if (
+      !Array.isArray(obj.skippedReasons) ||
+      !obj.skippedReasons.every((r) => typeof r === "string")
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function isValidDocReleaseResult(
@@ -279,9 +323,14 @@ export function stubFixerResult(): FixerResult {
   return { kind: "fixer", committed: true, fixCommitSha: "stub-fix-sha" };
 }
 
-/** Deterministic skeleton verdict used by the legacy dispatch path for S11. */
+/** Deterministic skeleton verdict used by offline/test paths for S11. */
 export function stubCleanupResult(): CleanupResult {
-  return { kind: "cleanup", ok: true };
+  return {
+    kind: "cleanup",
+    terminal: true,
+    ok: true,
+    branchOutcome: "already_gone",
+  };
 }
 
 /** Deterministic skeleton verdict used by the legacy dispatch path for S12. */

@@ -15,6 +15,7 @@
 
 import type {
   Backend,
+  CleanupResult,
   DispatchContext,
   Escalation,
   EscalationAnswerPayload,
@@ -138,6 +139,8 @@ export interface FamilyLedgerEntry {
    *   - `"pr_merged"` — the TERMINAL family auto-merge marker (#602). Written
    *     after live GitHub confirms the PR merged at the converged head. NOT
    *     counted as merged (no `childIssue`).
+   *   - `"post_merge_cleanup"` — the TERMINAL post-merge cleanup marker (#603).
+   *     Written after live verify+act cleanup succeeds. NOT counted as merged.
   *   - `"cmr_reviewed"` — a PHASE-LEVEL audit event recording one red integrated
  *     CMR review outcome before the runner dispatches coder-fix (#550). NOT
  *     counted as merged.
@@ -169,6 +172,7 @@ export interface FamilyLedgerEntry {
     | "shipped"
     | "review_loop_converged"
     | "pr_merged"
+    | "post_merge_cleanup"
     | "cmr_reviewed"
     | "cmr_fix_committed"
     | "cmr_passed"
@@ -195,6 +199,8 @@ export interface FamilyLedgerEntry {
    *     (#596).
    *   - `"pr_merged"` — paired with `status:"pr_merged"`; the terminal marker
    *     written after live GitHub confirms the PR merged (#602).
+   *   - `"post_merge_cleanup"` — paired with `status:"post_merge_cleanup"`;
+   *     the terminal marker written after post-merge verify+act cleanup (#603).
    *   - `"cmr_reviewed"` — paired with `status:"cmr_reviewed"`; records a red
    *     reviewer outcome before the runner sends it to coder-fix (#550).
    *   - `"cmr_fix_committed"` — paired with `status:"cmr_fix_committed"`; records
@@ -218,6 +224,7 @@ export interface FamilyLedgerEntry {
     | "shipped"
     | "review_loop_converged"
     | "pr_merged"
+    | "post_merge_cleanup"
     | "cmr_reviewed"
     | "cmr_fix_committed"
     | "cmr_passed"
@@ -307,6 +314,8 @@ export interface FamilyLedgerEntry {
   readonly remoteBranchName?: string;
   /** Merged head OID on `status:"pr_merged"` terminal entries (#602). */
   readonly mergedHeadOid?: string;
+  /** Cleanup worker output on `status:"post_merge_cleanup"` entries (#603). */
+  readonly cleanupOutput?: CleanupResult;
   /** Decision pauses can be reopened by an answer row; failure escalations cannot. */
   readonly escalationKind?: "decision" | "failure";
   /**
@@ -612,6 +621,11 @@ export interface FamilyBackend {
    * the red purely via the returned `{ok:false}`.
    */
   escalateFamily?(escalation: FamilyEscalation): Promise<void>;
+  /**
+   * #603 host-side family clone reclamation at terminal post-merge cleanup success.
+   * Optional — fakes omit it. Caller must verify ledger terminal+ok first.
+   */
+  reapFamilyHost?(familyBase: string): Promise<void>;
 }
 
 // ─────────────────────────── #296 verify-cmr I/O ───────────────────────────

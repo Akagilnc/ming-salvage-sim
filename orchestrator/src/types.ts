@@ -700,6 +700,16 @@ export interface WorkerLandingPayload {
   readonly onlineReviewRound?: number;
   /** S10 fixer only: fix-marked finding identity keys from verify worker. */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /** S11 cleanup (#603): host-computed close set + durable pr_merged record. */
+  readonly cleanupDispatch?: {
+    readonly coveredIssues: ReadonlyArray<number>;
+    readonly parentIssue?: number;
+    readonly prUrl: string;
+    readonly prNumber: number;
+    readonly remoteBranchName: string;
+    readonly mergedHeadOid: string;
+    readonly convergedHeadOid: string;
+  };
 }
 
 /**
@@ -946,14 +956,29 @@ export interface FixerResult {
   readonly fixCommitSha?: string;
 }
 
+/** Per-step branch-delete outcome recorded by the #603 cleanup worker. */
+export type CleanupBranchOutcome =
+  | "deleted"
+  | "already_gone"
+  | "skipped_tip_drift"
+  | "skipped_pr_not_merged"
+  | "skipped_precondition";
+
 /**
- * PR/issue cleanup worker output (#596 skeleton). The skeleton stubs a
- * deterministic `ok:true` verdict so the S11 step seam is exercisable.
+ * Post-merge cleanup worker output (#603). Distinguishes terminal vs retryable
+ * outcomes so the host reclaim gate can read ledger truth without trusting a
+ * worker self-report.
  */
 export interface CleanupResult {
   readonly kind: "cleanup";
-  /** Whether cleanup succeeded (e.g. closed stale review threads). */
+  /** False ⇒ mechanical retry may re-dispatch; true ⇒ no further cleanup attempts. */
+  readonly terminal: boolean;
+  /** True when remote acts completed or were verified N/A under live checks. */
   readonly ok: boolean;
+  readonly issuesClosed?: ReadonlyArray<number>;
+  readonly parentIssueClosed?: boolean;
+  readonly branchOutcome?: CleanupBranchOutcome;
+  readonly skippedReasons?: ReadonlyArray<string>;
 }
 
 /**
@@ -1449,6 +1474,12 @@ export interface Backend {
     readonly pollCount: number;
   }): Promise<OnlineReviewLandingSnapshot>;
   writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void>;
+  /**
+   * Optional (#603): reclaim the resident slice worktree at terminal success
+   * (ADR 0024 explicit GC). Must only be called when the host ledger shows a
+   * terminal cleanup row — never on park/retry/failure.
+   */
+  reapResidentWorktree?(worktree: WorktreeHandle): Promise<void>;
 }
 
 /** Runner-owned S5 findings file made visible inside the worker sandbox. */
