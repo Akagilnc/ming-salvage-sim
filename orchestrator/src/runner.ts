@@ -69,6 +69,7 @@ import {
   BOT_OVERDUE_POLL_COUNT,
   classifyCheckRuns,
   isLiveGithubReviewPollEnabled,
+  parsePrRef,
   pollPrReviewState,
   type PrReviewSnapshot,
 } from "./botPolling.js";
@@ -2047,6 +2048,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         pollCount,
       });
     }
+    // Resume gap: S7 ledger may lack prHead (pre-R17). Prefer live PR head so
+    // round-1 trigger does not use the offline sentinel and re-anchor away from
+    // the ship ledger timestamp (R17 Codex P2).
+    let shipPrHead = ship.prHead;
+    if (!isFilledString(shipPrHead) && isFilledString(ship.pr)) {
+      try {
+        const { prNumber } = parsePrRef(ship.pr, repo);
+        const raw = ghSh("gh", [
+          "api",
+          `repos/${repo}/pulls/${prNumber}`,
+          "--jq",
+          ".head.sha",
+        ]);
+        const live = raw.trim();
+        if (live.length > 0) shipPrHead = live;
+      } catch {
+        // leave undefined — resolve falls back to offline sentinel only if needed
+      }
+    }
     const roundTrigger = resolveOnlineReviewRoundTrigger({
       onlineReviewRound,
       persistedRoundTrigger: lastOnlineReviewRoundTrigger,
@@ -2054,7 +2074,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         lastOnlineReviewPendingRoundTrigger ??
         slicePendingRoundTriggerFromFixGap(ledger),
       fixCommitSha: lastOnlineReviewFixCommitSha,
-      shipPrHead: ship.prHead,
+      shipPrHead,
       shipLedgerTriggeredAt: shipLedgerTriggeredAtFromSliceLedger(ledger),
     });
     const snapshot = await waitForBotQuiescence(ghSh, {
@@ -3313,8 +3333,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // shipped branch/status and (for pr_opened) the PR URL, plus the ship
           // worker's sessionId. Assign them so the delivery is recoverable from
           // resume truth and surfaced to the caller.
-          output = ship;
-          lastShipOutput = ship;
+          //
+          // R17 Codex P2: always persist prHead for online-review round-1 anchor.
+          // RealBackend ship envelope historically omits it; without it resume uses
+          // "offline-review-head" → live poll re-anchors and stales timestamp-only bots.
+          let shipWithHead = ship;
+          if (!isFilledString(ship.prHead)) {
+            const headOid = await resolveBranchHEAD();
+            if (isFilledString(headOid)) {
+              shipWithHead = { ...ship, prHead: headOid };
+            }
+          }
+          output = shipWithHead;
+          lastShipOutput = shipWithHead;
           stepSessionId = shipResult.sessionId;
         } catch (err) {
           // Push failure → S8(error) with branch head so dev can diagnose
