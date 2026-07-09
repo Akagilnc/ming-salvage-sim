@@ -1,0 +1,476 @@
+/**
+ * Host-side automatic PR merge after online review + doc-release (#602).
+ *
+ * Deterministic gh queries + merge execution — no LLM. Merge-readiness always
+ * re-queries live GitHub state (mergeStateStatus / threads / CI), never a cache.
+ */
+
+import {
+  classifyCheckRuns,
+  isLiveGithubReviewPollEnabled,
+  parsePrRef,
+  unresolvedThreadCount,
+  type CheckRunSnapshot,
+  type PrReviewSnapshot,
+} from "./botPolling.js";
+import type { Sh } from "./familyDriver.js";
+import type { StopSummary } from "./stopSummary.js";
+
+export type MergeReadinessBlocker =
+  | "threads_unresolved"
+  | "ci_pending"
+  | "ci_failed"
+  | "ruleset_blocked"
+  | "not_open"
+  | "doc_release_non_doc_path";
+
+export interface PrMergeLiveState {
+  readonly prNumber: number;
+  readonly prUrl: string;
+  readonly state: string;
+  readonly headOid: string;
+  readonly headRefName: string;
+  readonly mergeStateStatus: string;
+  readonly mergeable?: string;
+}
+
+export interface MergeReadinessResult {
+  readonly ready: boolean;
+  readonly blockers: readonly MergeReadinessBlocker[];
+  readonly live: PrMergeLiveState;
+  readonly snapshot: PrReviewSnapshot;
+  readonly ciGate: "converged" | "pending" | "failed";
+  readonly unresolvedThreads: number;
+}
+
+export interface PrMergedTerminalRecord {
+  readonly prUrl: string;
+  readonly prNumber: number;
+  readonly remoteBranchName: string;
+  readonly mergedHeadOid: string;
+  readonly convergedHeadOid: string;
+}
+
+export type AutoMergeTerminalState =
+  | "merged"
+  | "not_ready"
+  | "decision_gate"
+  | "externally_merged_never_converged"
+  | "already_recorded";
+
+export interface AutoMergeStageResult {
+  readonly ok: boolean;
+  readonly terminalState: AutoMergeTerminalState;
+  readonly record?: PrMergedTerminalRecord;
+  readonly stopSummary?: StopSummary;
+}
+
+const DOC_RELEASE_ALLOWED_PATH_RE =
+  /^(?:VERSION|CHANGELOG\.md|orchestrator\/CHANGELOG\.md|docs\/)/;
+
+/** True when a changed path is admissible for a doc-only doc-release commit. */
+export function isDocOnlyPath(path: string): boolean {
+  return DOC_RELEASE_ALLOWED_PATH_RE.test(path);
+}
+
+/** Fail closed when any changed path falls outside the doc-release allow-list. */
+export function isDocOnlyFileList(files: readonly string[]): boolean {
+  return files.length > 0 && files.every(isDocOnlyPath);
+}
+
+function parsePrMergeLivePayload(raw: string, prUrl: string): PrMergeLiveState {
+  const parsed: unknown = JSON.parse(raw);
+  if (parsed == null || typeof parsed !== "object") {
+    throw new Error(`autoMerge: malformed gh pr view payload for ${prUrl}`);
+  }
+  const obj = parsed as Record<string, unknown>;
+  const prNumber = typeof obj.number === "number" ? obj.number : NaN;
+  const url = typeof obj.url === "string" ? obj.url.trim() : "";
+  const state = typeof obj.state === "string" ? obj.state.trim() : "";
+  const headRefName =
+    typeof obj.headRefName === "string" ? obj.headRefName.trim() : "";
+  const headRefOid =
+    typeof obj.headRefOid === "string" ? obj.headRefOid.trim() : "";
+  const mergeStateStatus =
+    typeof obj.mergeStateStatus === "string" ? obj.mergeStateStatus.trim() : "";
+  const mergeable =
+    typeof obj.mergeable === "string" ? obj.mergeable.trim() : undefined;
+  if (!Number.isFinite(prNumber) || prNumber <= 0) {
+    throw new Error(`autoMerge: gh pr view missing pr number for ${prUrl}`);
+  }
+  if (headRefOid.length === 0) {
+    throw new Error(`autoMerge: gh pr view missing headRefOid for ${prUrl}`);
+  }
+  return {
+    prNumber,
+    prUrl: url.length > 0 ? url : prUrl,
+    state,
+    headOid: headRefOid,
+    headRefName,
+    mergeStateStatus,
+    ...(mergeable !== undefined ? { mergeable } : {}),
+  };
+}
+
+/** Live GitHub PR metadata for merge gating (never cached by callers). */
+export function fetchPrMergeLiveState(
+  sh: Sh,
+  repo: string,
+  prUrl: string,
+): PrMergeLiveState {
+  const { prNumber } = parsePrRef(prUrl, repo);
+  const raw = sh("gh", [
+    "pr",
+    "view",
+    String(prNumber),
+    "--repo",
+    repo,
+    "--json",
+    "number,url,state,headRefName,headRefOid,mergeStateStatus,mergeable",
+  ]);
+  return parsePrMergeLivePayload(raw, prUrl);
+}
+
+export function assessMergeReadiness(
+  live: PrMergeLiveState,
+  snapshot: PrReviewSnapshot,
+): MergeReadinessResult {
+  const blockers: MergeReadinessBlocker[] = [];
+  if (live.state !== "OPEN" && live.state !== "MERGED") {
+    blockers.push("not_open");
+  }
+  if (live.state === "OPEN" && live.mergeStateStatus !== "CLEAN") {
+    blockers.push("ruleset_blocked");
+  }
+  const unresolvedThreads = unresolvedThreadCount(snapshot);
+  if (unresolvedThreads > 0) {
+    blockers.push("threads_unresolved");
+  }
+  const ciGate = classifyCheckRuns(
+    snapshot.checkRuns,
+    snapshot.checkRunsEmptyMeans,
+  );
+  if (ciGate === "pending") blockers.push("ci_pending");
+  if (ciGate === "failed") blockers.push("ci_failed");
+  return {
+    ready: blockers.length === 0 && live.state === "OPEN",
+    blockers,
+    live,
+    snapshot,
+    ciGate,
+    unresolvedThreads,
+  };
+}
+
+export function mergeReadinessStopSummary(
+  blockers: readonly MergeReadinessBlocker[],
+): StopSummary {
+  const pendingOnly =
+    blockers.length > 0 && blockers.every((b) => b === "ci_pending");
+  return {
+    reason: pendingOnly ? "decision_gate_park" : "decision_gate_park",
+    summary: `PR merge readiness blocked: ${blockers.join(", ")}`,
+    repairHint: pendingOnly
+      ? "wait for post-doc-release CI to finish, then re-feed to resume auto-merge"
+      : "resolve merge blockers (ruleset, threads, CI) or answer the decision gate",
+  };
+}
+
+/** Execute a merge commit (never squash) via gh. */
+export function executePrMergeCommit(
+  sh: Sh,
+  repo: string,
+  prNumber: number,
+): void {
+  sh("gh", ["pr", "merge", String(prNumber), "--merge", "--repo", repo]);
+}
+
+/** Confirm merge via live GitHub state — not the merge command's exit code. */
+export function confirmPrMergedLive(
+  sh: Sh,
+  repo: string,
+  prUrl: string,
+  expectedHeadOid: string,
+): PrMergedTerminalRecord | undefined {
+  const live = fetchPrMergeLiveState(sh, repo, prUrl);
+  if (live.state !== "MERGED") return undefined;
+  if (live.headOid !== expectedHeadOid) return undefined;
+  return {
+    prUrl: live.prUrl,
+    prNumber: live.prNumber,
+    remoteBranchName: live.headRefName,
+    mergedHeadOid: live.headOid,
+    convergedHeadOid: expectedHeadOid,
+  };
+}
+
+export function prMergedRecordFromLive(
+  live: PrMergeLiveState,
+  convergedHeadOid: string,
+): PrMergedTerminalRecord | undefined {
+  if (live.state !== "MERGED") return undefined;
+  if (live.headOid.length === 0) return undefined;
+  return {
+    prUrl: live.prUrl,
+    prNumber: live.prNumber,
+    remoteBranchName: live.headRefName,
+    mergedHeadOid: live.headOid,
+    convergedHeadOid,
+  };
+}
+
+export interface PrMergedMarkerLike {
+  readonly event?: string;
+  readonly prHead?: string;
+  readonly mergedHeadOid?: string;
+}
+
+export function isPrMergedMarker(
+  entry: PrMergedMarkerLike,
+  convergedHeadOid: string,
+): boolean {
+  return (
+    entry.event === "pr_merged" &&
+    typeof entry.mergedHeadOid === "string" &&
+    entry.mergedHeadOid.trim().length > 0 &&
+    (entry.prHead === undefined || entry.prHead === convergedHeadOid)
+  );
+}
+
+export interface AutoMergeStageInput {
+  readonly sh: Sh;
+  readonly repo: string;
+  readonly prUrl: string;
+  readonly convergedHeadOid: string;
+  readonly docReleaseCompleted: boolean;
+  readonly priorConvergenceRecorded: boolean;
+  readonly prMergedMarkerPresent: boolean;
+  readonly poll: (round: number) => Promise<PrReviewSnapshot>;
+  readonly docReleasePaths?: readonly string[];
+  readonly executeMerge?: (prNumber: number) => void;
+  /** Offline/test: skip live gh pr view/merge and synthesize MERGED from poll readiness. */
+  readonly offlineSynthetic?: boolean;
+}
+
+function offlineSyntheticLiveState(
+  snapshot: PrReviewSnapshot,
+  state: "OPEN" | "MERGED" = "OPEN",
+): PrMergeLiveState {
+  return {
+    prNumber: snapshot.prNumber > 0 ? snapshot.prNumber : 1,
+    prUrl: snapshot.prUrl,
+    state,
+    headOid: snapshot.headOid,
+    headRefName: "offline-branch",
+    mergeStateStatus: state === "OPEN" ? "CLEAN" : "UNKNOWN",
+  };
+}
+
+async function runOfflineSyntheticAutoMerge(
+  input: AutoMergeStageInput,
+): Promise<AutoMergeStageResult> {
+  const snapshot = await input.poll(1);
+  const live = offlineSyntheticLiveState(snapshot, "OPEN");
+  const readiness = assessMergeReadiness(live, snapshot);
+  if (!readiness.ready) {
+    const pendingOnly =
+      readiness.blockers.length > 0 &&
+      readiness.blockers.every((b) => b === "ci_pending");
+    return {
+      ok: false,
+      terminalState: pendingOnly ? "not_ready" : "decision_gate",
+      stopSummary: mergeReadinessStopSummary(readiness.blockers),
+    };
+  }
+  input.executeMerge?.(live.prNumber);
+  const record: PrMergedTerminalRecord = {
+    prUrl: snapshot.prUrl,
+    prNumber: live.prNumber,
+    remoteBranchName: live.headRefName,
+    mergedHeadOid: snapshot.headOid,
+    convergedHeadOid: input.convergedHeadOid,
+  };
+  return { ok: true, terminalState: "merged", record };
+}
+
+function externallyMergedNeverConvergedSummary(): StopSummary {
+  return {
+    reason: "decision_gate_park",
+    summary:
+      "PR is live MERGED but this run has no online_review_converged / review_loop_converged record (externally merged, never converged)",
+    repairHint:
+      "confirm whether the PR was merged outside the orchestrator review loop; answer the decision gate before cleanup",
+  };
+}
+
+function nonDocReleaseSummary(): StopSummary {
+  return {
+    reason: "decision_gate_park",
+    summary:
+      "doc-release commit is not doc-only — non-doc paths in the diff fail closed (no auto-merge)",
+    repairHint:
+      "revert non-doc changes from the doc-release commit or answer the decision gate",
+  };
+}
+
+function mergeNotConfirmedSummary(): StopSummary {
+  return {
+    reason: "infra_failure",
+    summary:
+      "gh pr merge returned but live GitHub state did not confirm MERGED at the expected head",
+    repairHint:
+      "inspect the PR on GitHub and re-feed once merge state is unambiguous",
+  };
+}
+
+export async function tryResumePrMergedBackfill(
+  input: Omit<
+    AutoMergeStageInput,
+    "docReleaseCompleted" | "poll" | "docReleasePaths"
+  >,
+): Promise<AutoMergeStageResult | undefined> {
+  if (input.prMergedMarkerPresent) {
+    return { ok: true, terminalState: "already_recorded" };
+  }
+  const live = fetchPrMergeLiveState(input.sh, input.repo, input.prUrl);
+  if (live.state !== "MERGED") return undefined;
+  if (!input.priorConvergenceRecorded) {
+    return {
+      ok: false,
+      terminalState: "externally_merged_never_converged",
+      stopSummary: externallyMergedNeverConvergedSummary(),
+    };
+  }
+  const record = prMergedRecordFromLive(live, input.convergedHeadOid);
+  if (record === undefined) return undefined;
+  return { ok: true, terminalState: "merged", record };
+}
+
+export async function runAutoMergeStage(
+  input: AutoMergeStageInput,
+): Promise<AutoMergeStageResult> {
+  if (!input.docReleaseCompleted) {
+    return {
+      ok: false,
+      terminalState: "not_ready",
+      stopSummary: {
+        reason: "decision_gate_park",
+        summary: "auto-merge blocked: doc-release has not completed",
+        repairHint: "complete S12 doc-release before merge",
+      },
+    };
+  }
+  if (input.prMergedMarkerPresent) {
+    return { ok: true, terminalState: "already_recorded" };
+  }
+
+  const offlineSynthetic =
+    input.offlineSynthetic === true
+      ? true
+      : input.offlineSynthetic === false
+        ? false
+        : !isLiveGithubReviewPollEnabled(input.prUrl, input.repo) &&
+          process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1";
+
+  if (offlineSynthetic) {
+    if (
+      input.docReleasePaths !== undefined &&
+      !isDocOnlyFileList(input.docReleasePaths)
+    ) {
+      return {
+        ok: false,
+        terminalState: "decision_gate",
+        stopSummary: nonDocReleaseSummary(),
+      };
+    }
+    return runOfflineSyntheticAutoMerge(input);
+  }
+
+  const backfill = await tryResumePrMergedBackfill(input);
+  if (backfill !== undefined) {
+    return backfill;
+  }
+
+  if (
+    input.docReleasePaths !== undefined &&
+    !isDocOnlyFileList(input.docReleasePaths)
+  ) {
+    return {
+      ok: false,
+      terminalState: "decision_gate",
+      stopSummary: nonDocReleaseSummary(),
+    };
+  }
+
+  const live = fetchPrMergeLiveState(input.sh, input.repo, input.prUrl);
+  if (live.state === "MERGED") {
+    if (!input.priorConvergenceRecorded) {
+      return {
+        ok: false,
+        terminalState: "externally_merged_never_converged",
+        stopSummary: externallyMergedNeverConvergedSummary(),
+      };
+    }
+    const record = prMergedRecordFromLive(live, input.convergedHeadOid);
+    if (record !== undefined) {
+      return { ok: true, terminalState: "merged", record };
+    }
+  }
+
+  const snapshot = await input.poll(1);
+  const readiness = assessMergeReadiness(live, snapshot);
+  if (!readiness.ready) {
+    const pendingOnly =
+      readiness.blockers.length > 0 &&
+      readiness.blockers.every((b) => b === "ci_pending");
+    return {
+      ok: false,
+      terminalState: pendingOnly ? "not_ready" : "decision_gate",
+      stopSummary: mergeReadinessStopSummary(readiness.blockers),
+    };
+  }
+
+  const doMerge =
+    input.executeMerge ??
+    ((prNumber: number) => executePrMergeCommit(input.sh, input.repo, prNumber));
+  doMerge(live.prNumber);
+
+  const record = confirmPrMergedLive(
+    input.sh,
+    input.repo,
+    input.prUrl,
+    live.headOid,
+  );
+  if (record === undefined) {
+    return {
+      ok: false,
+      terminalState: "decision_gate",
+      stopSummary: mergeNotConfirmedSummary(),
+    };
+  }
+  return { ok: true, terminalState: "merged", record };
+}
+
+/** Offline/test helper: build a minimal snapshot from check-runs only. */
+export function snapshotFromCheckRuns(
+  base: Pick<PrReviewSnapshot, "repo" | "prNumber" | "prUrl" | "headOid">,
+  checkRuns: ReadonlyArray<CheckRunSnapshot>,
+  threads: PrReviewSnapshot["threads"] = [],
+): PrReviewSnapshot {
+  return {
+    ...base,
+    pollCount: 1,
+    bots: {
+      coderabbit: { state: "complete", findingCount: 0 },
+      sourcery: { state: "complete", findingCount: 0 },
+      codex: { state: "complete", findingCount: 0 },
+      gemini: { state: "complete", findingCount: 0 },
+    },
+    threads,
+    checkRuns,
+    totalFindingCount: 0,
+    quiescent: true,
+    roundTriggerUsed: { headOid: base.headOid, triggeredAt: "1970-01-01T00:00:00.000Z" },
+    checkRunsEmptyMeans: "pending",
+  };
+}

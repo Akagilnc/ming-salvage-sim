@@ -55,8 +55,13 @@ export {
 export type { FamilyDriverOptions, Sh, SubIssueAdmission } from "./familyDriver.js";
 export { selectWave } from "./family/commander.js";
 export { mergeChild } from "./family/merger.js";
-export { recordMerged, recordAborted, mergedSet } from "./family/ledger.js";
-export type { MergedRecord, AbortedRecord } from "./family/ledger.js";
+export { recordMerged, recordAborted, mergedSet, recordPrMerged, familyPrMergedForHead } from "./family/ledger.js";
+export type { MergedRecord, AbortedRecord, PrMergedRecord } from "./family/ledger.js";
+export {
+  runAutoMergeStage,
+  assessMergeReadiness,
+  isPrMergedMarker,
+} from "./autoMerge.js";
 export { reconcileFamilyLedger } from "./family/reconcile.js";
 export { runVerifyCmr } from "./family/verifyCmr.js";
 export type {

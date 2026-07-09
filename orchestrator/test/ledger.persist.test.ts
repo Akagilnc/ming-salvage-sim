@@ -222,6 +222,7 @@ describe("persisted step ledger (#249)", () => {
       kind: "ship",
       branch: "feat/orchestrator/issue-249",
       status: "pushed",
+      prHead: "feat/orchestrator/issue-249",
     });
   });
 
