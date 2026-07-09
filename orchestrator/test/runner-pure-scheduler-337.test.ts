@@ -122,6 +122,28 @@ class SeamOnlyBackend implements Backend {
   }
   async writeSnapshot(): Promise<void> {}
   async writeLedger(): Promise<void> {}
+  async pollOnlineReviewState(input: {
+    repo: string;
+    prUrl: string;
+    pollCount: number;
+  }) {
+    void input;
+    return {
+      prUrl: "pr://slice/offline-337",
+      headOid: "deadbeef",
+      totalFindingCount: 0,
+      quiescent: true,
+      bots: {
+        coderabbit: { state: "complete", findingCount: 0 },
+        sourcery: { state: "complete", findingCount: 0 },
+        codex: { state: "complete", findingCount: 0 },
+        gemini: { state: "complete", findingCount: 0 },
+      },
+      droppedBots: [],
+      threads: [],
+      checkRuns: [],
+    };
+  }
 
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}:${spec.skill ?? "—"}`);
@@ -188,10 +210,6 @@ describe("#337 runner is a pure scheduler — no inline productive work (BEHAVIO
       "S5:coder:/tdd",
       "S6:reviewer:/code-review",
       "S7:ship:gstack-ship",
-      "S9:verify:/verify",
-      "S10:fixer:/fixer",
-      "S11:cleanup:/cleanup",
-      "S12:docRelease:/doc-release",
     ]);
   });
 });

@@ -54,13 +54,59 @@ import {
   type CmrEnvelope,
 } from "./cmrClassification.js";
 import type { FamilyModuleContext } from "./moduleDeclaration.js";
+import { execFileSync } from "node:child_process";
+
+import { isLiveGithubReviewPollEnabled } from "../botPolling.js";
+import {
+  buildRoundTrigger,
+  convergenceHeadToRecord,
+  inadmissibleWorkerOutcomeReason,
+  workerOutcomeAdmissible,
+  type RoundTrigger,
+} from "../evidenceAdmissibility.js";
+import {
+  cleanupWorkerSpec,
+  docReleaseWorkerSpec,
+  fixerWorkerSpec,
+  verifyWorkerSpec,
+} from "../dispatchWorker.js";
+import {
+  immediateBotPollClock,
+  OnlineReviewLoopTerminal,
+  lastOnlineReviewFixCommitShaFromFamilyLedger,
+  offlinePrReviewSnapshot,
+  onlineReviewRoundFromFamilyLedger,
+  onlineReviewRoundTriggerFromFamilyLedger,
+  realBotPollClock,
+  ensureOnlineReviewRetriggerAfterFixGap,
+  retriggerBotsAndPoll,
+  familyPendingRoundTriggerFromFixGap,
+  resolveOnlineReviewRoundTrigger,
+  runOnlineReviewLoopStage,
+  shipLedgerTriggeredAtFromFamilyLedger,
+  verifyReviewerHeadMovedStopSummary,
+  verifyReviewerWorktreeDirtyStopSummary,
+  waitForBotQuiescence,
+  type OnlineReviewLoopStageResult,
+} from "../onlineReviewLoop.js";
+import { applyVerifySideEffects } from "../onlineReviewSideEffects.js";
+import {
+  isValidCleanupResult,
+  isValidDocReleaseResult,
+  isValidFixerResult,
+  isValidVerifyResult,
+} from "../reviewLoopOutcome.js";
 import {
   familyCoderFixWorkerSpec,
   cmrWorkerSpec,
   dispatchFamilyWorker,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../dispatchRetry.js";
+import {
+  type DispatchOutcome,
+  MAX_DISPATCH_ATTEMPTS,
+  withMechanicalRetry,
+} from "../dispatchRetry.js";
 import {
   cmrLegAccountingFailure,
   modelRouteFingerprint,
@@ -74,6 +120,10 @@ import type {
   DispatchContext,
   EscalationAnswerPayload,
   FindingDisposition,
+  ShipResult,
+  StepOutput,
+  VerifyResult,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -84,6 +134,8 @@ import {
   recordCmrFixCommitted,
   recordCmrPassed,
   recordCmrReviewed,
+  recordOnlineReviewFixCommitted,
+  recordOnlineReviewRoundRetrigger,
   recordReviewLoopConverged,
   recordShipped,
 } from "./ledger.js";
@@ -91,6 +143,7 @@ import { isFilledString } from "../shipOutcome.js";
 import { isCompleteRepairEvidence } from "../validate.js";
 import {
   contractDriftStopSummary,
+  decisionGateParkStopSummary,
   infraFailureStopSummary,
   successStopSummary,
   stopReasonForFindingDisposition,
@@ -1034,7 +1087,6 @@ async function runCmrCoderFix(input: {
         ...(familyIssue !== undefined ? { familyIssue } : {}),
       },
       { blockingFindings: classification.blocking },
-      { writeCapable: true },
     );
     const familyHeadAfter = await readPostCmrFamilyHead(
       familyBackend,
@@ -1217,6 +1269,21 @@ async function readPostCmrTrackedStatus(
   );
 }
 
+/** Best-effort tracked status for online-review verify guard (skip when unreadable). */
+async function readOnlineVerifyTrackedStatus(
+  familyBackend: FamilyBackend,
+  familyBase: string,
+): Promise<readonly string[] | undefined> {
+  if (familyBackend.readFamilyTrackedStatus === undefined) {
+    return undefined;
+  }
+  try {
+    return await readPostCmrTrackedStatus(familyBackend, familyBase);
+  } catch {
+    return undefined;
+  }
+}
+
 async function readPostCmrCurrentHead(
   familyBackend: FamilyBackend,
 ): Promise<string | undefined> {
@@ -1351,6 +1418,38 @@ async function readRequiredFamilyHead(
   }
 }
 
+/**
+ * Re-read live family HEAD and key the convergence/abort marker via
+ * {@link convergenceHeadToRecord}. Prefer an explicit post-fix SHA (ledger /
+ * loop) when the live head reader is missing or returns the pre-fix ship head
+ * (Cursor R12 medium).
+ */
+async function familyConvergenceMarkerHead(
+  familyBackend: FamilyBackend,
+  familyBase: string,
+  shipHead: string,
+  knownPostFixHead?: string,
+): Promise<string> {
+  const liveHead = await readRequiredFamilyHead(familyBackend, familyBase);
+  const postFixHead =
+    knownPostFixHead !== undefined &&
+    knownPostFixHead.length > 0 &&
+    knownPostFixHead !== shipHead
+      ? knownPostFixHead
+      : liveHead !== undefined && liveHead !== shipHead
+        ? liveHead
+        : undefined;
+  return (
+    convergenceHeadToRecord({
+      shipHead,
+      postFixHead,
+    }) ??
+    liveHead ??
+    knownPostFixHead ??
+    shipHead
+  );
+}
+
 function describeShipPrState(ship: {
   readonly branch?: string;
   readonly status?: string;
@@ -1378,47 +1477,439 @@ function describeShipPrState(ship: {
  * before throwing. A NON-throwing dispatch is returned unchanged (escalated /
  * completed / malformed are handled by the callers).
  */
+function familyOnlineReviewLoopFailureStopSummary(
+  reviewLoop: OnlineReviewLoopStageResult,
+): StopSummary {
+  if (reviewLoop.stopSummary !== undefined) {
+    return reviewLoop.stopSummary;
+  }
+  const reason =
+    reviewLoop.terminalState === "round_budget_exhausted"
+      ? "family online review loop exhausted the 3-round budget"
+      : "family online review loop did not converge";
+  return infraFailureStopSummary({
+    summary: `${reason} (terminal: ${reviewLoop.terminalState})`,
+    repairHint: "resolve remaining online review findings or answer the decision gate",
+  });
+}
+
+async function dispatchFamilyReviewWorker(
+  familyBackend: FamilyBackend,
+  spec: WorkerSpec,
+  ctx: DispatchContext,
+  landing?: WorkerLandingPayload,
+  opts?: {
+    readonly afterEachAttempt?: () => Promise<void>;
+    readonly extraCallerOwns?: (outcome: DispatchOutcome) => boolean;
+  },
+): Promise<WorkerResult> {
+  const primary = await dispatchOrAbort(
+    familyBackend,
+    spec,
+    ctx,
+    landing,
+    opts,
+  );
+  if (workerOutcomeAdmissible(primary, spec)) {
+    return primary;
+  }
+  if (primary.kind === "escalated") {
+    return primary;
+  }
+  return {
+    kind: "failed",
+    reason: inadmissibleWorkerOutcomeReason(primary, spec),
+  };
+}
+
+export async function runFamilyOnlineReviewLoop(input: {
+  readonly familyBackend: FamilyBackend;
+  readonly familyBase: string;
+  readonly ship: ShipResult;
+  readonly resolvedRoute?: ResolvedModelRoute;
+}): Promise<OnlineReviewLoopStageResult> {
+  const repo =
+    process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
+  const prUrl = input.ship.pr;
+  if (prUrl == null || prUrl.trim().length === 0) {
+    return { ok: false, terminalState: "decision_gate_raised", round: 1 };
+  }
+  const ghSh = (file: string, args: string[]) =>
+    execFileSync(file, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  const baseCtx: DispatchContext = {
+    familyBase: input.familyBase,
+    repo,
+    prUrl,
+    prHead: input.ship.prHead,
+  };
+
+  const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
+  const familyLedger = await input.familyBackend.readFamilyLedger();
+  const shipTriggeredAt = shipLedgerTriggeredAtFromFamilyLedger(
+    familyLedger,
+    prUrl,
+  );
+  const loopState = {
+    round: onlineReviewRoundFromFamilyLedger(familyLedger),
+    lastFixSha: lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedger),
+  };
+  const pendingGapRetrigger = familyPendingRoundTriggerFromFixGap(familyLedger);
+  let lastRoundTrigger: RoundTrigger;
+  try {
+    lastRoundTrigger = livePoll
+      ? resolveOnlineReviewRoundTrigger({
+          onlineReviewRound: loopState.round,
+          persistedRoundTrigger:
+            onlineReviewRoundTriggerFromFamilyLedger(familyLedger),
+          pendingRetriggerFromFixGap: pendingGapRetrigger,
+          fixCommitSha: loopState.lastFixSha,
+          shipPrHead: input.ship.prHead,
+          shipLedgerTriggeredAt: shipTriggeredAt,
+        })
+      : buildRoundTrigger(
+          loopState.lastFixSha ??
+            input.ship.prHead ??
+            "offline-review-head",
+          shipTriggeredAt,
+        );
+    if (livePoll && pendingGapRetrigger !== undefined) {
+      const ensured = ensureOnlineReviewRetriggerAfterFixGap({
+        sh: ghSh,
+        repo,
+        prUrl,
+        gapTrigger: pendingGapRetrigger,
+      });
+      lastRoundTrigger = ensured.roundTrigger;
+      await recordOnlineReviewRoundRetrigger(input.familyBackend, {
+        roundTriggerHeadOid: ensured.roundTrigger.headOid,
+        roundTriggerAt: ensured.roundTrigger.triggeredAt,
+        onlineReviewRound: loopState.round,
+        pr: prUrl,
+      });
+    }
+  } catch (err) {
+    // resolveOnlineReviewRoundTrigger / ensure may throw (round≥2 missing anchor).
+    // In-band decision_gate — do not abort the whole family runner (Cursor medium,
+    // verified: call was outside try previously).
+    return {
+      ok: false,
+      terminalState: "decision_gate_raised",
+      round: loopState.round,
+      stopSummary: {
+        reason: "infra_failure",
+        summary: `family online review round-trigger setup failed: ${err instanceof Error ? err.message : String(err)}`,
+        repairHint:
+          "repair ledger round-trigger / fix-gap anchors and re-feed the family run",
+      },
+    };
+  }
+  let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
+
+  try {
+    return await runOnlineReviewLoopStage(
+      input.ship,
+      {
+    poll: async (round) => {
+      if (!livePoll) {
+        return offlinePrReviewSnapshot({
+          repo,
+          prUrl,
+          headOid:
+            familyLastFixCommitSha ??
+            input.ship.prHead ??
+            "offline-review-head",
+          pollCount: round,
+        });
+      }
+      const snapshot = await waitForBotQuiescence(ghSh, {
+        repo,
+        prUrl,
+        roundTrigger: lastRoundTrigger,
+        clock:
+          process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1"
+            ? immediateBotPollClock
+            : realBotPollClock,
+      });
+      // Chain re-anchored trigger (online R5 Codex P1) — do not keep old triggeredAt.
+      lastRoundTrigger = snapshot.roundTriggerUsed;
+      return snapshot;
+    },
+    dispatchVerify: async (landing, round) => {
+      const headBefore = await readRequiredFamilyHead(
+        input.familyBackend,
+        input.familyBase,
+      );
+      const trackedBefore = await readOnlineVerifyTrackedStatus(
+        input.familyBackend,
+        input.familyBase,
+      );
+      const assertFamilyVerifyReadOnlyContract = async (): Promise<void> => {
+        const headAfter = await readRequiredFamilyHead(
+          input.familyBackend,
+          input.familyBase,
+        );
+        const trackedAfter = await readOnlineVerifyTrackedStatus(
+          input.familyBackend,
+          input.familyBase,
+        );
+        if (
+          headBefore !== undefined &&
+          headAfter !== undefined &&
+          headAfter !== headBefore
+        ) {
+          throw new OnlineReviewLoopTerminal({
+            ok: false,
+            terminalState: "contract_drift",
+            round,
+            stopSummary: verifyReviewerHeadMovedStopSummary({
+              headBefore,
+              headAfter,
+            }),
+          });
+        }
+        if (
+          trackedBefore !== undefined &&
+          trackedAfter !== undefined &&
+          trackedAfter.join("\n") !== trackedBefore.join("\n")
+        ) {
+          throw new OnlineReviewLoopTerminal({
+            ok: false,
+            terminalState: "contract_drift",
+            round,
+            stopSummary: verifyReviewerWorktreeDirtyStopSummary({
+              trackedStatus: trackedAfter,
+            }),
+          });
+        }
+      };
+      const result = await dispatchFamilyReviewWorker(
+        input.familyBackend,
+        verifyWorkerSpec(input.resolvedRoute),
+        { ...baseCtx, onlineReviewRound: round },
+        landing,
+        {
+          afterEachAttempt: assertFamilyVerifyReadOnlyContract,
+          extraCallerOwns: (o) =>
+            "kind" in o &&
+            o.kind === "thrown" &&
+            o.error instanceof OnlineReviewLoopTerminal &&
+            o.error.result.terminalState === "contract_drift",
+        },
+      );
+      // Cursor R11 medium + self-check: escalated must park with decision_gate_park
+      // + escalate payload text — not a bare decision_gate_raised that drops reason.
+      if (result.kind === "escalated") {
+        throw new OnlineReviewLoopTerminal({
+          ok: false,
+          terminalState: "decision_gate_raised",
+          round,
+          stopSummary: decisionGateParkStopSummary({
+            summary: `family verify worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`,
+            repairHint:
+              "answer the decision gate / unstick the verify worker, then re-feed the family online review loop",
+          }),
+        });
+      }
+      if (result.kind !== "completed" || !isValidVerifyResult(result.output)) {
+        const detail =
+          result.kind === "failed" || result.kind === "malformed"
+            ? `: ${result.reason}`
+            : "";
+        throw new OnlineReviewLoopTerminal({
+          ok: false,
+          terminalState: "decision_gate_raised",
+          round,
+          stopSummary: infraFailureStopSummary({
+            summary: `family verify worker returned ${result.kind}${detail}`,
+            repairHint:
+              "inspect the verify worker envelope and re-feed the family online review loop",
+          }),
+        });
+      }
+      return result.output;
+    },
+    dispatchFixer: async (landing: WorkerLandingPayload) => {
+      const round = landing.onlineReviewRound ?? baseCtx.onlineReviewRound ?? 1;
+      const result = await dispatchFamilyReviewWorker(
+        input.familyBackend,
+        fixerWorkerSpec(input.resolvedRoute),
+        baseCtx,
+        landing,
+      );
+      if (result.kind === "escalated") {
+        throw new OnlineReviewLoopTerminal({
+          ok: false,
+          terminalState: "decision_gate_raised",
+          round,
+          stopSummary: decisionGateParkStopSummary({
+            summary: `family fixer worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`,
+            repairHint:
+              "answer the decision gate / unstick the fixer worker, then re-feed the family online review loop",
+          }),
+        });
+      }
+      if (result.kind !== "completed" || !isValidFixerResult(result.output)) {
+        const detail =
+          result.kind === "failed" || result.kind === "malformed"
+            ? `: ${result.reason}`
+            : "";
+        throw new OnlineReviewLoopTerminal({
+          ok: false,
+          terminalState: "decision_gate_raised",
+          round,
+          stopSummary: infraFailureStopSummary({
+            summary: `family fixer worker returned ${result.kind}${detail}`,
+            repairHint:
+              "inspect the fixer worker envelope and re-feed the family online review loop",
+          }),
+        });
+      }
+      return result.output;
+    },
+    dispatchCleanup: async (landing: WorkerLandingPayload) => {
+      const result = await dispatchFamilyReviewWorker(
+        input.familyBackend,
+        cleanupWorkerSpec(input.resolvedRoute),
+        baseCtx,
+        landing,
+      );
+      return (
+        result.kind === "completed" &&
+        isValidCleanupResult(result.output) &&
+        result.output.ok
+      );
+    },
+    dispatchDocRelease: async (landing: WorkerLandingPayload) => {
+      const result = await dispatchFamilyReviewWorker(
+        input.familyBackend,
+        docReleaseWorkerSpec(input.resolvedRoute),
+        baseCtx,
+        landing,
+      );
+      return (
+        result.kind === "completed" &&
+        isValidDocReleaseResult(result.output) &&
+        result.output.released
+      );
+    },
+    applySideEffects: (
+      landing: WorkerLandingPayload,
+      verify: VerifyResult,
+      fixingCommitSha?: string,
+    ) => {
+      if (!livePoll) {
+        return verify;
+      }
+      const applied = applyVerifySideEffects({
+        sh: ghSh,
+        repo,
+        prUrl,
+        verify,
+        fixingCommitSha,
+        landingThreads: landing.onlineReviewSnapshot?.threads,
+      });
+      return {
+        ...verify,
+        ...(applied.deferredIssueUrls.length > 0
+          ? { deferredIssueUrls: applied.deferredIssueUrls }
+          : {}),
+      };
+    },
+    retriggerAfterFix: async () => {
+      if (livePoll) {
+        const retriggered = retriggerBotsAndPoll(
+          ghSh,
+          repo,
+          prUrl,
+          1,
+          familyLastFixCommitSha ??
+            lastRoundTrigger.headOid ??
+            input.ship.prHead ??
+            "offline-review-head",
+        );
+        lastRoundTrigger = retriggered.roundTrigger;
+        const nextRound = loopState.round + 1;
+        await recordOnlineReviewRoundRetrigger(input.familyBackend, {
+          roundTriggerHeadOid: retriggered.roundTrigger.headOid,
+          roundTriggerAt: retriggered.roundTrigger.triggeredAt,
+          onlineReviewRound: nextRound,
+          pr: prUrl,
+        });
+        loopState.round = nextRound;
+      }
+    },
+    resolveFixCommitSha: async (envelopeFixSha: string) => {
+      const sha = envelopeFixSha;
+      familyLastFixCommitSha = sha;
+      loopState.lastFixSha = sha;
+      await recordOnlineReviewFixCommitted(input.familyBackend, {
+        familyHeadAfter: sha,
+        pr: prUrl,
+      });
+      return sha;
+    },
+  },
+      {
+        initialRound: loopState.round,
+        initialFixCommitSha: loopState.lastFixSha,
+      },
+    );
+  } catch (err) {
+    if (err instanceof OnlineReviewLoopTerminal) {
+      return err.result;
+    }
+    throw err;
+  }
+}
+
 async function dispatchOrAbort(
   familyBackend: FamilyBackend,
   spec: Parameters<typeof dispatchFamilyWorker>[1],
   ctx: Parameters<typeof dispatchFamilyWorker>[2],
   landing?: Parameters<typeof dispatchFamilyWorker>[3],
-  opts?: { readonly writeCapable?: boolean },
+  opts?: {
+    readonly afterEachAttempt?: () => Promise<void>;
+    readonly extraCallerOwns?: (outcome: DispatchOutcome) => boolean;
+  },
 ): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
-  // The READ-ONLY cmr reviewer leaves no local residue, so a thrown crash is safe to
-  // re-dispatch fresh. The WRITE-capable family coder-fix / ship can throw AFTER a
-  // partial edit/stage/commit, so a fresh re-dispatch would run on that residue — the
-  // exact idempotency violation #598 forbids ("reset local git residue before each
-  // retry"), and here there is no safe reset hook yet (a naive cleanResidue would
-  // `git clean -fd` the runner-written, NON-gitignored `.cmr-focus.md`). So a
-  // write-capable worker's crash is NOT retried on residue: it aborts (bubbles to the
-  // catch → the gate's INCOMPLETE_GATE), which vacuously satisfies "reset before
-  // retry" (no retry happens). Enabling a runner-param-preserving reset so these CAN
-  // retry safely is #661 (write-worker retry idempotency, ADR 0024 tension).
-  const writeCapable = opts?.writeCapable === true;
   try {
-    // #598: a family worker that CRASHES (throws) re-dispatches FRESH up to
-    // MAX_DISPATCH_ATTEMPTS — ONLY for the read-only reviewer (see above). Every
-    // RESOLVED result (failed / malformed / completed / escalated) is DEFERRED to this
-    // gate's own rich terminal handling — the gate classifies `failed`
-    // (provider_degraded / infra_failure), rewrites cmr `malformed` (the rewrite loop +
-    // its outer re-dispatch), and treats a ship/coder-fix `malformed` as a CONTRACT
-    // violation → contract_drift (a ship that emits no valid verdict is not a transient
-    // protocol failure; #451 dogfood replay). So the generic layer keeps its own
-    // counter and never double-counts. A crash that is not retried (reviewer exhausted,
-    // or a write-capable worker's first throw) is re-thrown so the catch below stamps
-    // the domain "threw on startup" message the gate surfaces as INCOMPLETE_GATE.
+    // #598 / 2026-07-08: a family worker that CRASHES (throws) re-dispatches a fresh
+    // session on the CURRENT worktree as-is, up to MAX_DISPATCH_ATTEMPTS — every role,
+    // read-only and write-capable alike. Every RESOLVED result (failed / malformed /
+    // completed / escalated) is DEFERRED to this gate's own rich terminal handling.
     return await withMechanicalRetry(
       spec,
       ctx,
-      (s, c) => dispatchFamilyWorker(familyBackend, s, c, landing),
+      async (s, c) => {
+        let dispatchError: unknown | undefined;
+        let workerResult: Awaited<ReturnType<typeof dispatchFamilyWorker>>;
+        try {
+          workerResult = await dispatchFamilyWorker(
+            familyBackend,
+            s,
+            c,
+            landing,
+          );
+        } catch (err) {
+          dispatchError = err;
+        }
+        // Always assert (online R10 Codex P1 / parity with single-slice S9):
+        // mutate-then-throw → contract_drift, not retry on dirty worktree.
+        await opts?.afterEachAttempt?.();
+        if (dispatchError !== undefined) throw dispatchError;
+        return workerResult!;
+      },
       {
         callerOwns: (o) =>
-          "result" in o || (writeCapable && o.kind === "thrown"),
+          opts?.extraCallerOwns?.(o) === true || "result" in o,
         rethrowOnExhaustion: true,
       },
     );
   } catch (err) {
+    if (err instanceof OnlineReviewLoopTerminal) throw err;
     const reason = `family ${spec.kind} worker threw on startup: ${
       err instanceof Error ? err.message : String(err)
     }`;
@@ -2293,7 +2784,6 @@ export async function runVerifyCmr(
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     },
     undefined,
-    { writeCapable: true },
   );
   // An ESCALATED family ship worker (gstack-ship STOP/HITL) is the family
   // escalate续跑 path, not a false success — call the escalate seam (codex cmr R4
@@ -2583,13 +3073,56 @@ export async function runVerifyCmr(
     stopSummary: shippedStopSummary,
   });
 
-  // #596: `shipped` is now an INTERMEDIATE marker. The terminal family review-loop
-  // skeleton records `review_loop_converged` so the spine's final-barrier resume
-  // guard skips re-run only when the FULL loop (verify → cmr → ship → review loop)
-  // has converged for the current head. Real bot-polling logic is out of scope.
+  // #600: run the shared online review-loop stage (bot poll → verify → fixer →
+  // fresh re-verify) before writing the terminal family review-loop marker.
+  const reviewLoop = await runFamilyOnlineReviewLoop({
+    familyBackend,
+    familyBase,
+    ship: {
+      kind: "ship",
+      branch: familyBase,
+      pr: ship.pr,
+      prHead: ship.prHead,
+      status: "pr_opened",
+    },
+    resolvedRoute,
+  });
+  const familyLedgerForHead = await familyBackend.readFamilyLedger();
+  const knownPostFixHead =
+    lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedgerForHead);
+  if (!reviewLoop.ok) {
+    const stopSummary = familyOnlineReviewLoopFailureStopSummary(reviewLoop);
+    const reason = stopSummary.summary;
+    const abortFamilyHead = await familyConvergenceMarkerHead(
+      familyBackend,
+      familyBase,
+      exactPostShipFamilyHead,
+      knownPostFixHead,
+    );
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: abortFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: abortFamilyHead,
+      stopSummary,
+    });
+    return INCOMPLETE_GATE;
+  }
+
+  const convergedFamilyHead = await familyConvergenceMarkerHead(
+    familyBackend,
+    familyBase,
+    exactPostShipFamilyHead,
+    knownPostFixHead,
+  );
   await recordReviewLoopConverged(familyBackend, {
     pr: ship.pr,
-    familyHeadAfter: exactPostShipFamilyHead,
+    familyHeadAfter: convergedFamilyHead,
     ...(shippedStopSummary !== undefined
       ? { stopSummary: shippedStopSummary }
       : {}),

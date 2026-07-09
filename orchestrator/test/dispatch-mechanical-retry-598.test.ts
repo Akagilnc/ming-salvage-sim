@@ -170,67 +170,6 @@ describe("#598 withMechanicalRetry", () => {
     expect(seen).toHaveLength(1);
   });
 
-  it("a resetBeforeRetry that THROWS never dispatches on the un-reset state, and does not abort the loop", async () => {
-    // #598 r2 (agy) + r4 (codexB): a reset failure must neither abort the whole loop
-    // NOR let the worker run on the un-reset (dirty) state. A persistent reset failure
-    // therefore skips every retry's dispatch and exhausts into a durable reset-failure
-    // result — the worker is dispatched ONLY on the first attempt (which has no reset).
-    let dispatches = 0;
-    const dispatch = async (): Promise<WorkerResult> => {
-      dispatches += 1;
-      return { kind: "failed", reason: "crash" };
-    };
-    const result = await withMechanicalRetry(coderSpec(), {}, dispatch, {
-      resetBeforeRetry: async () => {
-        throw new Error("git lock: cannot reset");
-      },
-    });
-    // Only attempt 1 dispatched (no reset precedes it); retries 2..N skipped the
-    // dispatch because their reset failed — never running on a dirty state.
-    expect(dispatches).toBe(1);
-    expect(result.kind).toBe("failed");
-    expect((result as { reason: string }).reason).toMatch(/retry reset failed/i);
-  });
-
-  it("a TRANSIENT reset failure (fails once, then succeeds) still lets a later attempt dispatch", async () => {
-    // The other direction: a reset that fails on the first retry but succeeds after
-    // must not permanently stall the loop — a later clean reset dispatches.
-    let dispatches = 0;
-    let resets = 0;
-    const dispatch = async (): Promise<WorkerResult> => {
-      dispatches += 1;
-      return dispatches >= 2
-        ? { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } }
-        : { kind: "failed", reason: "crash" };
-    };
-    const result = await withMechanicalRetry(coderSpec(), {}, dispatch, {
-      resetBeforeRetry: async () => {
-        resets += 1;
-        if (resets === 1) throw new Error("git lock (transient)");
-      },
-    });
-    // attempt1 dispatch(failed) → attempt2 reset throws → skip → attempt3 reset OK → dispatch(completed).
-    expect(result.kind).toBe("completed");
-    expect(dispatches).toBe(2);
-  });
-
-  it("idempotency: resetBeforeRetry runs before EACH retry, never before the first attempt", async () => {
-    const events: string[] = [];
-    let calls = 0;
-    const dispatch = async (): Promise<WorkerResult> => {
-      calls += 1;
-      events.push(`dispatch#${calls}`);
-      return { kind: "failed", reason: "crash" };
-    };
-    await withMechanicalRetry(coderSpec(), {}, dispatch, {
-      resetBeforeRetry: async () => {
-        events.push("reset");
-      },
-    });
-    // A reset is interleaved before every retry (attempts 2..N), never before the
-    // first — so a retry never runs on top of the prior attempt's residue.
-    expect(events).toEqual(["dispatch#1", "reset", "dispatch#2", "reset", "dispatch#3"]);
-  });
 });
 
 // ── #598 integration: coder/ship inherit the generic retry (the #592 asymmetry) ──

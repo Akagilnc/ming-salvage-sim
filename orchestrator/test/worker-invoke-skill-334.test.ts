@@ -39,6 +39,7 @@ import {
   RealBackend,
   SANDBOX_CODEX_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
+  SANDBOX_ONLINE_REVIEW_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
   SANDBOX_ISSUE_NUMBER_ENV,
@@ -152,6 +153,41 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     expect(cfg.env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV]).toBe("334");
     expect(cfg.env[SANDBOX_REPO_ENV]).toBe("owner/name");
     expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBe("gho_test");
+  });
+
+  it("mounts S9 online-review landing at the documented worktree-root path read-only", () => {
+    const cfg = makeBackend().config(
+      {
+        id: "S9",
+        kind: "verify",
+        role: "verify",
+        host: "claude",
+        session: "fresh",
+        contextRetention: "clean",
+        skill: "verify",
+        promptFile: "verify.md",
+        completionSignal: "VERIFY_STEP_COMPLETE",
+        maxIter: 1,
+        model: "opus",
+        soul: "verify",
+        toolchain: [],
+      },
+      {
+        onlineReviewLanding: {
+          path: "/host/.ledger-600/online-review.json",
+          sandboxPath: ".orchestrator-online-review.json",
+        },
+      },
+    );
+
+    expect(cfg.env[SANDBOX_ONLINE_REVIEW_PATH_ENV]).toBe(
+      ".orchestrator-online-review.json",
+    );
+    expect(cfg.mounts).toContainEqual({
+      hostPath: "/host/.ledger-600/online-review.json",
+      sandboxPath: ".orchestrator-online-review.json",
+      readonly: true,
+    });
   });
 
   it("mounts S5 fix findings at the documented worktree-root path read-only", () => {
@@ -471,6 +507,28 @@ class ReviewWorkerBackend implements Backend {
     throw new Error("push should not be called directly (#334)");
   }
   async writeLedger(): Promise<void> {}
+  async pollOnlineReviewState(input: {
+    repo: string;
+    prUrl: string;
+    pollCount: number;
+  }) {
+    void input;
+    return {
+      prUrl: "pr://slice/offline-334",
+      headOid: "deadbeef",
+      totalFindingCount: 0,
+      quiescent: true,
+      bots: {
+        coderabbit: { state: "complete", findingCount: 0 },
+        sourcery: { state: "complete", findingCount: 0 },
+        codex: { state: "complete", findingCount: 0 },
+        gemini: { state: "complete", findingCount: 0 },
+      },
+      droppedBots: [],
+      threads: [],
+      checkRuns: [],
+    };
+  }
 
   async dispatchWorker(
     spec: WorkerSpec,
@@ -550,10 +608,6 @@ describe("#334 ADR 0030 worker routing", () => {
       "S5:coder:/tdd",
       "S6:reviewer:/code-review",
       "S7:ship:gstack-ship",
-      "S9:verify:/verify",
-      "S10:fixer:/fixer",
-      "S11:cleanup:/cleanup",
-      "S12:docRelease:/doc-release",
     ]);
   });
 });
@@ -648,7 +702,12 @@ describe("#336 cmr S336 r4 — the terminal single-slice S7 gate re-asserts the 
   it("a legitimate pr_opened ship with a real pr URL ⇒ success", async () => {
     const status = await run({
       kind: "completed",
-      output: { kind: "ship", branch: wtBranch, status: "pr_opened", pr: "https://gh/pr/1" },
+      output: {
+        kind: "ship",
+        branch: wtBranch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-334",
+      },
     });
     expect(status).toBe("success");
   });

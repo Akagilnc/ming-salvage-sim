@@ -784,6 +784,7 @@ export async function recordShipped(
       phase: "final",
       pr,
       familyHeadAfter,
+      ts: new Date().toISOString(),
       stopSummary:
         record.stopSummary ??
         successStopSummary({
@@ -811,6 +812,84 @@ export function familyAlreadyShipped(
   return familyShippedRecordForHead(entries, familyHeadAfter) !== undefined;
 }
 
+/** Online-review loop markers prove an in-progress round at `familyHeadAfter`. */
+export function familyOnlineReviewLoopInProgressForHead(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string,
+): boolean {
+  const head = familyHeadAfter.trim();
+  if (head.length === 0) return false;
+  return entries.some(
+    (e) =>
+      (e.event === "online_review_fix_committed" &&
+        e.familyHeadAfter === head) ||
+      (e.event === "online_review_round_retrigger" &&
+        e.roundTriggerHeadOid === head),
+  );
+}
+
+/**
+ * Shipped resume anchor for the online review-loop (#600 r28).
+ *
+ * Exact head match first; when an in-loop fixer advanced HEAD past the shipped
+ * marker, accept the ancestor shipped row plus fix/retrigger markers for the
+ * current head chain.
+ */
+export function familyShippedRecordForReviewLoopResume(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
+): ShippedRecord | undefined {
+  const exact = familyShippedRecordForHead(entries, familyHeadAfter);
+  if (exact != null) return exact;
+  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) {
+    return undefined;
+  }
+  const currentHead = familyHeadAfter.trim();
+  if (!familyOnlineReviewLoopInProgressForHead(entries, currentHead)) {
+    return undefined;
+  }
+  let markerPr: string | undefined;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    const markerHead =
+      entry.event === "online_review_fix_committed" &&
+      typeof entry.familyHeadAfter === "string"
+        ? entry.familyHeadAfter.trim()
+        : entry.event === "online_review_round_retrigger" &&
+            typeof entry.roundTriggerHeadOid === "string"
+          ? entry.roundTriggerHeadOid.trim()
+          : undefined;
+    if (markerHead === undefined || markerHead !== currentHead) {
+      continue;
+    }
+    if (typeof entry.pr === "string" && entry.pr.trim().length > 0) {
+      markerPr = entry.pr.trim();
+      break;
+    }
+  }
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      isValidFamilyShipped(entry) &&
+      typeof entry.pr === "string" &&
+      entry.pr.trim().length > 0 &&
+      typeof entry.familyHeadAfter === "string" &&
+      entry.familyHeadAfter.trim().length > 0 &&
+      entry.familyHeadAfter !== currentHead &&
+      (markerPr === undefined || entry.pr.trim() === markerPr)
+    ) {
+      return {
+        pr: entry.pr,
+        familyHeadAfter: entry.familyHeadAfter,
+        ...(entry.stopSummary !== undefined
+          ? { stopSummary: entry.stopSummary }
+          : {}),
+      };
+    }
+  }
+  return undefined;
+}
+
 export function familyShippedRecordForHead(
   entries: ReadonlyArray<FamilyLedgerEntry>,
   familyHeadAfter: string | undefined,
@@ -834,6 +913,73 @@ export function familyShippedRecordForHead(
       ? { stopSummary: shipped.stopSummary }
       : {}),
   };
+}
+
+/** Append one online-review fixer commit audit row (#600 r26 family resume). */
+export async function recordOnlineReviewFixCommitted(
+  backend: FamilyBackend,
+  record: {
+    readonly familyHeadAfter: string;
+    readonly pr?: string;
+  },
+): Promise<void> {
+  const familyHeadAfter = record.familyHeadAfter.trim();
+  if (familyHeadAfter.length === 0) {
+    throw new Error(
+      "family online_review_fix_committed marker must include a non-empty familyHeadAfter",
+    );
+  }
+  await backend.appendFamilyLedger(
+    compact({
+      status: "online_review_fix_committed",
+      event: "online_review_fix_committed",
+      phase: "final",
+      familyHeadAfter,
+      ...(record.pr !== undefined && record.pr.trim().length > 0
+        ? { pr: record.pr.trim() }
+        : {}),
+      ts: new Date().toISOString(),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/** Append one online-review round ≥2 freshness anchor (#600 r26 family resume). */
+export async function recordOnlineReviewRoundRetrigger(
+  backend: FamilyBackend,
+  record: {
+    readonly roundTriggerHeadOid: string;
+    readonly roundTriggerAt: string;
+    readonly onlineReviewRound: number;
+    readonly pr?: string;
+  },
+): Promise<void> {
+  const headOid = record.roundTriggerHeadOid.trim();
+  const triggeredAt = record.roundTriggerAt.trim();
+  const onlineReviewRound = record.onlineReviewRound;
+  if (headOid.length === 0 || triggeredAt.length === 0) {
+    throw new Error(
+      "family online_review_round_retrigger marker must include roundTriggerHeadOid and roundTriggerAt",
+    );
+  }
+  if (!Number.isSafeInteger(onlineReviewRound) || onlineReviewRound < 2) {
+    throw new Error(
+      "family online_review_round_retrigger marker must include onlineReviewRound >= 2",
+    );
+  }
+  await backend.appendFamilyLedger(
+    compact({
+      status: "online_review_round_retrigger",
+      event: "online_review_round_retrigger",
+      phase: "final",
+      roundTriggerHeadOid: headOid,
+      roundTriggerAt: triggeredAt,
+      onlineReviewRound,
+      ...(record.pr !== undefined && record.pr.trim().length > 0
+        ? { pr: record.pr.trim() }
+        : {}),
+      ts: new Date().toISOString(),
+    }) as FamilyLedgerEntry,
+  );
 }
 
 /**

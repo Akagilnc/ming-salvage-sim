@@ -15,7 +15,7 @@
  * Escalate stays the global stop edge (checked FIRST).
  */
 
-import type { Finding, StepId, StepOutput } from "./types.js";
+import type { Finding, OnlineReviewTerminalState, StepId, StepOutput } from "./types.js";
 import { classifyFindings } from "./findings.js";
 // Shared seam guards — the SINGLE source of truth, also used by the runner, so
 // the coder-output / commitsAdded rules can never drift between two copies.
@@ -30,7 +30,9 @@ import {
   isValidEscalation,
   isValidReviewerOutput,
 } from "./validate.js";
+import { MAX_ONLINE_REVIEW_ROUNDS } from "./onlineReviewLoop.js";
 import {
+  fixerProceedsToVerify,
   isValidCleanupResult,
   isValidDocReleaseResult,
   isValidFixerResult,
@@ -40,7 +42,12 @@ import {
 /** What route() decides: the next step to run, or a terminal handoff. */
 export type RouteDecision =
   | { kind: "next"; step: StepId }
-  | { kind: "handoff"; status: "success" | "escalate" | "error" };
+  | {
+      kind: "handoff";
+      status: "success" | "escalate" | "error";
+      /** Documented online-review terminal when the loop ends (#600 AC1/AC5). */
+      onlineReviewTerminal?: OnlineReviewTerminalState;
+    };
 
 /** Inputs route() needs to decide the edge out of `from`. */
 export interface RouteContext {
@@ -63,6 +70,13 @@ export interface RouteContext {
    * were closure.
    */
   readonly pendingBlockingFindings?: ReadonlyArray<Finding>;
+  /**
+   * S7 ship output status — `pushed` skips the online review loop (#600 AC).
+   * When `pr_opened`, the runner enters S9+ after bot polling.
+   */
+  readonly shipStatus?: string;
+  /** 1-based online review round for S9/S10 routing (#600 / ADR 0061). */
+  readonly onlineReviewRound?: number;
 }
 
 /**
@@ -152,17 +166,34 @@ export function route(ctx: RouteContext): RouteDecision {
       return { kind: "next", step: "S6" };
     }
 
-    case "S7":
-      // S7 ship succeeded → enter the runner-visible review-loop skeleton.
-      // NOTE: ship failure is caught in runner.ts (the ship worker
-      // throws/escalates) and converted to S8(error)/S8(escalate) there — it
-      // does not flow through route() because route() is only called after a
-      // successful step body.
+    case "S7": {
+      // #600: a push-only delivery (`pushed`) does not engage the online review
+      // loop — only `pr_opened` with a PR URL enters S9+.
+      if (ctx.shipStatus === "pushed") {
+        return { kind: "handoff", status: "success" };
+      }
       return { kind: "next", step: "S9" };
+    }
 
     case "S9": {
       if (!isValidVerifyResult(ctx.output)) {
         return { kind: "handoff", status: "error" };
+      }
+      if (ctx.output.converged) {
+        return {
+          kind: "next",
+          step: "S11",
+        };
+      }
+      const round = ctx.onlineReviewRound ?? 1;
+      // AC5: round 3 remaining P2/nits are attempted by default — only exhaust
+      // after the final (round > cap) verify still has findings.
+      if (round > MAX_ONLINE_REVIEW_ROUNDS) {
+        return {
+          kind: "handoff",
+          status: "escalate",
+          onlineReviewTerminal: "round_budget_exhausted",
+        };
       }
       return { kind: "next", step: "S10" };
     }
@@ -171,11 +202,24 @@ export function route(ctx: RouteContext): RouteDecision {
       if (!isValidFixerResult(ctx.output)) {
         return { kind: "handoff", status: "error" };
       }
-      return { kind: "next", step: "S11" };
+      // fixer.md: committed:false + alreadySatisfied → fresh verify; genuinely
+      // not fixed → decision gate (not S8(error)).
+      if (!fixerProceedsToVerify(ctx.output)) {
+        return {
+          kind: "handoff",
+          status: "escalate",
+          onlineReviewTerminal: "decision_gate_raised",
+        };
+      }
+      // ADR 0061: fixer → fresh verify re-check (never fixer → cleanup direct).
+      return { kind: "next", step: "S9" };
     }
 
     case "S11": {
       if (!isValidCleanupResult(ctx.output)) {
+        return { kind: "handoff", status: "error" };
+      }
+      if (!ctx.output.ok) {
         return { kind: "handoff", status: "error" };
       }
       return { kind: "next", step: "S12" };
@@ -183,6 +227,9 @@ export function route(ctx: RouteContext): RouteDecision {
 
     case "S12": {
       if (!isValidDocReleaseResult(ctx.output)) {
+        return { kind: "handoff", status: "error" };
+      }
+      if (!ctx.output.released) {
         return { kind: "handoff", status: "error" };
       }
       return { kind: "handoff", status: "success" };

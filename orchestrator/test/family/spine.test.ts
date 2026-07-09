@@ -29,6 +29,7 @@ import type {
   MergeRequest,
 } from "../../src/family/types.js";
 import { resolveActiveModelRoute } from "../../src/modelRoutes.js";
+import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
 
@@ -223,6 +224,126 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     expect(singleSliceBackend.prepareBases).toEqual([]);
   });
 
+  it("pin r28: shipped resume re-enters review loop when fixer advanced HEAD with only markers", async () => {
+    const shipHead = "family-base-0";
+    const postFixHead = "family-base-postfix";
+    const pr = "pr://family/293-base";
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.head = postFixHead;
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: shipHead },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr,
+        familyHeadAfter: shipHead,
+      },
+      {
+        status: "online_review_round_retrigger",
+        event: "online_review_round_retrigger",
+        phase: "final",
+        roundTriggerHeadOid: postFixHead,
+        roundTriggerAt: "2026-07-08T13:00:00.000Z",
+        onlineReviewRound: 2,
+        pr,
+      },
+      {
+        status: "online_review_fix_committed",
+        event: "online_review_fix_committed",
+        phase: "final",
+        familyHeadAfter: postFixHead,
+        pr,
+      },
+    );
+    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
+
+    const verifyRounds: number[] = [];
+    familyBackend.dispatchWorker = async (spec, ctx) => {
+      if (spec.kind === "verify") {
+        verifyRounds.push(ctx?.onlineReviewRound ?? 0);
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      }
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("success");
+    expect(verifyRounds).toEqual([2]);
+    expect(singleSliceBackend.prepareBases).toEqual([]);
+    const convergedRows = familyBackend.ledger.filter(
+      (e) => e.status === "review_loop_converged",
+    );
+    expect(convergedRows).toHaveLength(1);
+    expect(convergedRows[0]?.familyHeadAfter).toBe(postFixHead);
+  });
+
+  it("shipped-only resume records post-fix family head when in-loop fixer advanced HEAD (cmr r7)", async () => {
+    const shipHead = "family-base-0";
+    const postFixHead = "family-base-postfix";
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.head = shipHead;
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: shipHead },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "pr://family/293-base",
+        familyHeadAfter: shipHead,
+      },
+    );
+    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
+
+    let verifyPass = 0;
+    familyBackend.dispatchWorker = async (spec) => {
+      if (spec.kind === "verify") {
+        verifyPass += 1;
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: verifyPass >= 2 },
+        };
+      }
+      if (spec.kind === "fixer") {
+        familyBackend.head = postFixHead;
+        return { kind: "completed", output: {
+                  kind: "fixer",
+                  committed: true,
+                  fixCommitSha: "fixsha1111111111111111111111111111111111",
+                } };
+      }
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("success");
+    const convergedRows = familyBackend.ledger.filter(
+      (e) => e.status === "review_loop_converged",
+    );
+    expect(convergedRows).toHaveLength(1);
+    expect(convergedRows[0]?.familyHeadAfter).toBe(postFixHead);
+    expect(singleSliceBackend.prepareBases).toEqual([]);
+  });
+
   it("shipped stopSummary with verifiedCmrHead is copied into review_loop_converged terminal marker and visible on resume (F1 regression: makes fresh-ship path consistent)", async () => {
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();
@@ -306,6 +427,24 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
             pr: "pr://family/293-base-fresh",
             prHead,
           },
+        };
+      }
+      const skeletonKinds = new Set(["verify", "fixer", "cleanup", "docRelease"]);
+      if (skeletonKinds.has(spec.kind)) {
+        return {
+          kind: "completed",
+          output:
+            spec.kind === "verify"
+              ? { kind: "verify", converged: true }
+              : spec.kind === "fixer"
+                ? {
+                  kind: "fixer",
+                  committed: true,
+                  fixCommitSha: "fixsha1111111111111111111111111111111111",
+                }
+                : spec.kind === "cleanup"
+                  ? { kind: "cleanup", ok: true }
+                  : { kind: "docRelease", released: true },
         };
       }
       return { kind: "failed", reason: "unexpected kind in #596 r2 fresh-ship spine test" };

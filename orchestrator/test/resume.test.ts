@@ -32,8 +32,18 @@
  * at step k, then asserts the runner reuses, cleans, and continues from k+1.
  */
 
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
+import { buildRoundTrigger } from "../src/evidenceAdmissibility.js";
+import {
+  ONLINE_REVIEW_SNAPSHOT_FILE,
+  onlineReviewRoundFromLedger,
+  lastOnlineReviewFixCommitShaFromLedger,
+} from "../src/onlineReviewLoop.js";
+import * as onlineReviewLoop from "../src/onlineReviewLoop.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
@@ -46,6 +56,8 @@ import type {
   StepId,
   StepOutput,
   StepSpec,
+  VerifyResult,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -78,15 +90,53 @@ function entry(
   step: StepId,
   output?: StepOutput,
   sessionId = "session-prior",
+  branchHEAD = "deadbeefcommitsha",
 ): PersistentLedgerEntry {
   return {
     step,
     sessionId,
     prompt_hash: `hash-${step}`,
-    branchHEAD: "deadbeefcommitsha",
+    branchHEAD,
     ts: "2026-06-21T00:00:00.000Z",
     ...(output !== undefined ? { output } : {}),
   };
+}
+
+function writeResumeOnlineReviewSnapshot(stateDir: string): void {
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(
+    join(stateDir, ONLINE_REVIEW_SNAPSHOT_FILE),
+    `${JSON.stringify(
+      {
+        repo: "Akagilnc/ming-salvage-sim",
+        prNumber: 0,
+        prUrl: "pr://slice/offline-255",
+        headOid: "deadbeefcommitsha",
+        pollCount: 1,
+        bots: {
+          coderabbit: { state: "complete", findingCount: 1 },
+          sourcery: { state: "complete", findingCount: 0 },
+          codex: { state: "complete", findingCount: 0 },
+          gemini: { state: "complete", findingCount: 0 },
+        },
+        threads: [
+          {
+            id: "100",
+            threadNodeId: "PRRT_resumeThread",
+            body: "fix this",
+            authorLogin: "bot",
+            isResolved: false,
+          },
+        ],
+        checkRuns: [],
+        totalFindingCount: 1,
+        quiescent: true,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
 }
 
 /** Build a terminal S8 entry tagged with its handoff status (#255). */
@@ -255,18 +305,44 @@ class ResumeBackend implements Backend {
   ): Promise<void> {
     this.ledgerWrites.push(entry);
   }
+
+  async pollOnlineReviewState(input: {
+    repo: string;
+    prUrl: string;
+    pollCount: number;
+  }) {
+    void input;
+    return {
+      prUrl: "pr://slice/offline-255",
+      headOid: "deadbeefcommitsha",
+      totalFindingCount: 0,
+      quiescent: true,
+      bots: {
+        coderabbit: { state: "complete", findingCount: 0 },
+        sourcery: { state: "complete", findingCount: 0 },
+        codex: { state: "complete", findingCount: 0 },
+        gemini: { state: "complete", findingCount: 0 },
+      },
+      droppedBots: [],
+      threads: [],
+      checkRuns: [],
+    };
+  }
 }
 
 class DispatchRecordingResumeBackend extends ResumeBackend {
   readonly dispatchSpecs: WorkerSpec[] = [];
   readonly dispatchContexts: DispatchContext[] = [];
+  readonly dispatchLandings: Array<WorkerLandingPayload | undefined> = [];
 
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     this.dispatchSpecs.push(spec);
     this.dispatchContexts.push(ctx);
+    this.dispatchLandings.push(landing);
 
     if (spec.kind === "ship") {
       if (ctx.worktree === undefined) {
@@ -305,6 +381,40 @@ class DispatchRecordingResumeBackend extends ResumeBackend {
   }
 }
 
+/** Records landing + drives verify→fixer→recheck for #600 r7 resume tests. */
+class ReviewLoopResumeBackend extends DispatchRecordingResumeBackend {
+  verifyDispatchCount = 0;
+
+  override async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    if (spec.kind === "verify") {
+      this.verifyDispatchCount += 1;
+      this.dispatchSpecs.push(spec);
+      this.dispatchContexts.push(ctx);
+      this.dispatchLandings.push(landing);
+      if (this.verifyDispatchCount === 1) {
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true } satisfies VerifyResult,
+        };
+      }
+      return {
+        kind: "completed",
+        output: {
+          kind: "verify",
+          converged: true,
+          isRecheck: true,
+          threadsToResolve: ["100"],
+        } satisfies VerifyResult,
+      };
+    }
+    return super.dispatchWorker(spec, ctx, landing);
+  }
+}
+
 class MissingCoderTagBackend extends ResumeBackend {
   override async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.id === "S2") {
@@ -327,7 +437,7 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
     expect(result.status).toBe("success");
     // Full happy path executed (ADR 0030: gate + load + implement + review + classify + ship).
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S10", "S11", "S12", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
     ]);
     // Fresh cut: prepareWorktree called once; cleanResidue never called.
     expect(backend.prepareWorktreeCount).toBe(1);
@@ -425,7 +535,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     // the resumed steps are appended after them.
     const steps = result.stepLedger.map((e) => e.step);
     // Prior S0/S1/S2 + resumed S3/S4/S7/S8.
-    expect(steps).toEqual(["S0", "S1", "S2", "S3", "S4", "S7", "S9", "S10", "S11", "S12", "S8"]);
+    expect(steps).toEqual(["S0", "S1", "S2", "S3", "S4", "S7", "S8"]);
     // The preserved S2 entry still carries its committed output.
     const s2 = result.stepLedger.find((e) => e.step === "S2");
     expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
@@ -474,10 +584,6 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       "S6",
       "S4",
       "S7",
-      "S9",
-      "S10",
-      "S11",
-      "S12",
       "S8",
     ]);
     const s5 = result.stepLedger.find((e) => e.step === "S5");
@@ -519,10 +625,6 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       "S3",
       "S4",
       "S7",
-      "S9",
-      "S10",
-      "S11",
-      "S12",
       "S8",
     ]);
     const s2 = result.stepLedger.find((e) => e.step === "S2");
@@ -1300,17 +1402,27 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(sessionId).toBe("session-escalated-S2");
   });
 
-  it("AC2: crash inside review-loop (ledger truncated at S10) resumes from S11 — S9 skipped, run completes S10→S12→S8 (F3)", async () => {
+  it("AC2: crash inside review-loop (ledger truncated at S10) resumes at S9 re-verify — prior S9/S10 skipped, run completes verify→S11→S12→S8 (F3)", async () => {
     const prior = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
       entry("S3", { kind: "reviewer", findings: [] }),
       entry("S4"),
-      entry("S7"),
-      entry("S9", { kind: "verify", converged: true }),
-      entry("S10", { kind: "fixer", committed: true }),
-      // truncated before S11; no S8 yet
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", { kind: "verify", converged: false }),
+      entry("S10", {
+        kind: "fixer",
+        committed: true,
+        fixCommitSha: "fixsha1111111111111111111111111111111111",
+      }),
+      // truncated before fresh re-verify / S11; no S8 yet — S9 false → S10 is the
+      // legal loop-back topology (not converged:true then fixer).
     ];
     const backend = new DispatchRecordingResumeBackend({
       worktree: WORKTREE,
@@ -1329,17 +1441,836 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       "S3",
       "S4",
       "S7",
-      "S9",
-      "S10",
+      "S9", // fresh re-verify after truncated S9(false)→S10 loop-back
+      "S9", // online_review_converged marker
       "S11",
       "S12",
       "S8",
     ]);
-    // S9 (and prior) were skipped on this resume; only S11/S12 newly dispatched in review-loop
+    // Prior S9/S10 were skipped on this resume; fresh re-verify at S9 then cleanup/docRelease
     const reviewLoopDispatched = backend.dispatchSpecs
       .filter((s) => ["S9", "S10", "S11", "S12"].includes(s.id))
       .map((s) => s.id);
-    expect(reviewLoopDispatched).toEqual(["S11", "S12"]);
+    expect(reviewLoopDispatched).toEqual(["S9", "S11", "S12"]);
+  });
+
+  it("AC2 r7: crash after S9(converged:false) resumes S10 with reconstructed landing (#600 F1)", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-snapshot-"));
+    writeResumeOnlineReviewSnapshot(stateDir);
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+    ];
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs.filter((s) => s.id === "S10")).toHaveLength(1);
+    const fixerIdx = backend.dispatchSpecs.findIndex((s) => s.id === "S10");
+    const fixerLanding = backend.dispatchLandings[fixerIdx];
+    expect(fixerLanding?.onlineReviewSnapshot).toBeDefined();
+    expect(fixerLanding?.fixMarkedFindingIdentityKeys).toEqual(["f:1"]);
+    expect(
+      backend.dispatchContexts.find((_, i) => backend.dispatchSpecs[i]?.id === "S10")
+        ?.onlineReviewRound,
+    ).toBe(1);
+  });
+
+  it("pin r29: crash after retrigger-only marker resumes S9 with round (no fix SHA)", async () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+      {
+        step: "S10",
+        event: "online_review_round_retrigger",
+        roundTriggerHeadOid: fixSha,
+        roundTriggerAt: retriggerTs,
+        onlineReviewRound: 2,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: retriggerTs,
+      },
+    ];
+    expect(onlineReviewRoundFromLedger(prior)).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromLedger(prior)).toBeUndefined();
+
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs.filter((s) => s.id === "S10")).toHaveLength(0);
+    const resumedVerifyIdx = backend.dispatchSpecs.findIndex((s) => s.id === "S9");
+    expect(resumedVerifyIdx).toBeGreaterThanOrEqual(0);
+    expect(backend.dispatchContexts[resumedVerifyIdx]?.onlineReviewRound).toBe(2);
+    expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("pin r30: crash after fix_committed only (before retrigger) resumes S9 not fixer", async () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+      {
+        step: "S10",
+        event: "online_review_fix_committed",
+        fixCommitSha: fixSha,
+        onlineReviewRound: 1,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: fixTs,
+      },
+    ];
+    expect(onlineReviewRoundFromLedger(prior)).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromLedger(prior)).toBe(fixSha);
+
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs.filter((s) => s.id === "S10")).toHaveLength(0);
+    const resumedVerifyIdx = backend.dispatchSpecs.findIndex((s) => s.id === "S9");
+    expect(resumedVerifyIdx).toBeGreaterThanOrEqual(0);
+    expect(backend.dispatchContexts[resumedVerifyIdx]?.onlineReviewRound).toBe(2);
+    expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("pin online R3 Codex P1: retrigger fail after fix_committed parks escalate (not S8 error)", async () => {
+    const livePr = "https://github.com/o/r/pull/255";
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-retrigger-fail-"));
+    writeResumeOnlineReviewSnapshot(stateDir);
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: livePr,
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+    ];
+
+    const pollSpy = vi
+      .spyOn(onlineReviewLoop, "waitForBotQuiescence")
+      .mockImplementation(async (_sh, input) => ({
+        repo: "o/r",
+        prNumber: 255,
+        prUrl: input.prUrl,
+        headOid: input.roundTrigger.headOid,
+        pollCount: 1,
+        bots: {
+          coderabbit: { state: "complete", findingCount: 0 },
+          sourcery: { state: "complete", findingCount: 0 },
+          codex: { state: "complete", findingCount: 0 },
+          gemini: { state: "complete", findingCount: 0 },
+        },
+        threads: [],
+        checkRuns: [],
+        totalFindingCount: 0,
+        quiescent: true,
+      }));
+    const retriggerSpy = vi
+      .spyOn(onlineReviewLoop, "retriggerBotsAndPoll")
+      .mockImplementation(() => {
+        throw new Error("retriggerBotsAndPoll: gh api failed");
+      });
+
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
+    vi.stubEnv("ORCHESTRATOR_REPO", "o/r");
+
+    try {
+      const backend = new ReviewLoopResumeBackend({
+        worktree: WORKTREE,
+        stateDir,
+        ledger: prior,
+      });
+      // First verify stays false so we go to fixer; fixer commits then retrigger throws.
+      backend.verifyDispatchCount = 0;
+      const origDispatch = backend.dispatchWorker.bind(backend);
+      backend.dispatchWorker = async (spec, ctx, landing) => {
+        if (spec.kind === "verify") {
+          backend.verifyDispatchCount += 1;
+          backend.dispatchSpecs.push(spec);
+          backend.dispatchContexts.push(ctx);
+          backend.dispatchLandings.push(landing);
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: false,
+              findingDispositions: [
+                { identityKey: "f:1", threadId: "100", action: "fix" },
+              ],
+            },
+          };
+        }
+        if (spec.kind === "fixer") {
+          backend.dispatchSpecs.push(spec);
+          backend.dispatchContexts.push(ctx);
+          backend.dispatchLandings.push(landing);
+          return {
+            kind: "completed",
+            output: {
+              kind: "fixer",
+              committed: true,
+              fixCommitSha: "fixsha1111111111111111111111111111111111",
+            },
+          };
+        }
+        return origDispatch(spec, ctx, landing);
+      };
+
+      const result = await runOrchestrator({ issueNumber: 255, backend });
+
+      expect(result.status).toBe("escalate");
+      expect(result.status).not.toBe("error");
+      expect(result.stopSummary.summary).toMatch(
+        /re-trigger failed after fix committed/i,
+      );
+      expect(
+        backend.ledgerWrites.some((e) => e.event === "online_review_fix_committed"),
+      ).toBe(true);
+      // No terminal S8 error tag that would block fix-gap recovery
+      expect(
+        backend.ledgerWrites.some(
+          (e) => e.step === "S8" && e.handoffStatus === "error",
+        ),
+      ).toBe(false);
+      // S10 executable row present so re-feed resumes S10→S9 + gap recovery
+      expect(
+        result.stepLedger.some(
+          (e) =>
+            e.step === "S10" &&
+            e.event === undefined &&
+            e.output?.kind === "fixer",
+        ),
+      ).toBe(true);
+      expect(retriggerSpy).toHaveBeenCalled();
+    } finally {
+      retriggerSpy.mockRestore();
+      pollSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("pin r33: fix-gap resume posts retrigger + marker then polls; non-gap unchanged", async () => {
+    const livePr = "https://github.com/o/r/pull/255";
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const ensuredRetriggerTs = "2026-07-08T13:30:00.000Z";
+    const gapTrigger = buildRoundTrigger(fixSha, fixTs);
+    const ensuredTrigger = buildRoundTrigger(fixSha, ensuredRetriggerTs);
+    const persistedTrigger = buildRoundTrigger(fixSha, retriggerTs);
+    const reviewLoopBase = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: livePr,
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+    ];
+
+    const pollSpy = vi
+      .spyOn(onlineReviewLoop, "waitForBotQuiescence")
+      .mockImplementation(async (_sh, input) => ({
+        repo: "o/r",
+        prNumber: 255,
+        prUrl: input.prUrl,
+        headOid: input.roundTrigger.headOid,
+        pollCount: 1,
+        bots: {
+          coderabbit: { state: "complete", findingCount: 0 },
+          sourcery: { state: "complete", findingCount: 0 },
+          codex: { state: "complete", findingCount: 0 },
+          gemini: { state: "complete", findingCount: 0 },
+        },
+        threads: [],
+        checkRuns: [],
+        totalFindingCount: 0,
+        quiescent: true,
+      }));
+    const ensureSpy = vi
+      .spyOn(onlineReviewLoop, "ensureOnlineReviewRetriggerAfterFixGap")
+      .mockImplementation(({ gapTrigger: gap }) => ({
+        roundTrigger: buildRoundTrigger(gap.headOid, ensuredRetriggerTs),
+        posted: true,
+      }));
+
+    const prevOffline = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    const prevRepo = process.env.ORCHESTRATOR_REPO;
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
+    vi.stubEnv("ORCHESTRATOR_REPO", "o/r");
+
+    try {
+      const fixGapPrior = [
+        ...reviewLoopBase,
+        {
+          step: "S10",
+          event: "online_review_fix_committed",
+          fixCommitSha: fixSha,
+          onlineReviewRound: 1,
+          sessionId: "session-prior",
+          prompt_hash: "hash-S10",
+          branchHEAD: fixSha,
+          ts: fixTs,
+        },
+      ];
+      expect(onlineReviewLoop.slicePendingRoundTriggerFromFixGap(fixGapPrior)).toEqual(
+        gapTrigger,
+      );
+
+      const fixGapBackend = new ReviewLoopResumeBackend({
+        worktree: WORKTREE,
+        stateDir: STATE_DIR,
+        ledger: fixGapPrior,
+      });
+      pollSpy.mockClear();
+      const fixGapResult = await runOrchestrator({
+        issueNumber: 255,
+        backend: fixGapBackend,
+      });
+
+      expect(fixGapResult.status).toBe("success");
+      expect(ensureSpy).toHaveBeenCalledTimes(1);
+      expect(ensureSpy.mock.calls[0]![0].gapTrigger).toEqual(gapTrigger);
+      expect(
+        fixGapBackend.ledgerWrites.some(
+          (e) => e.event === "online_review_round_retrigger",
+        ),
+      ).toBe(true);
+      expect(pollSpy).toHaveBeenCalledTimes(1);
+      expect(pollSpy.mock.calls[0]![1].roundTrigger).toEqual(ensuredTrigger);
+      expect(pollSpy.mock.calls[0]![1].roundTrigger.triggeredAt).toBe(
+        ensuredRetriggerTs,
+      );
+      expect(fixGapBackend.dispatchSpecs.filter((s) => s.id === "S10")).toHaveLength(
+        0,
+      );
+      const fixGapVerifyIdx = fixGapBackend.dispatchSpecs.findIndex(
+        (s) => s.id === "S9",
+      );
+      expect(fixGapVerifyIdx).toBeGreaterThanOrEqual(0);
+      expect(
+        fixGapBackend.dispatchContexts[fixGapVerifyIdx]?.onlineReviewRound,
+      ).toBe(2);
+      expect(fixGapBackend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
+
+      const retriggerPrior = [
+        ...reviewLoopBase,
+        {
+          step: "S10",
+          event: "online_review_round_retrigger",
+          roundTriggerHeadOid: fixSha,
+          roundTriggerAt: retriggerTs,
+          onlineReviewRound: 2,
+          sessionId: "session-prior",
+          prompt_hash: "hash-S10",
+          branchHEAD: fixSha,
+          ts: retriggerTs,
+        },
+      ];
+      expect(onlineReviewLoop.slicePendingRoundTriggerFromFixGap(retriggerPrior)).toBe(
+        undefined,
+      );
+
+      const retriggerBackend = new ReviewLoopResumeBackend({
+        worktree: WORKTREE,
+        stateDir: STATE_DIR,
+        ledger: retriggerPrior,
+      });
+      ensureSpy.mockClear();
+      pollSpy.mockClear();
+      const retriggerResult = await runOrchestrator({
+        issueNumber: 255,
+        backend: retriggerBackend,
+      });
+
+      expect(retriggerResult.status).toBe("success");
+      expect(ensureSpy).not.toHaveBeenCalled();
+      expect(pollSpy).toHaveBeenCalledTimes(1);
+      expect(pollSpy.mock.calls[0]![1].roundTrigger).toEqual(persistedTrigger);
+      expect(pollSpy.mock.calls[0]![1].roundTrigger.triggeredAt).toBe(retriggerTs);
+      expect(
+        retriggerBackend.dispatchSpecs.filter((s) => s.id === "S10"),
+      ).toHaveLength(0);
+      expect(retriggerBackend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
+    } finally {
+      ensureSpy.mockRestore();
+      pollSpy.mockRestore();
+      if (prevOffline === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prevOffline;
+      }
+      if (prevRepo === undefined) {
+        delete process.env.ORCHESTRATOR_REPO;
+      } else {
+        process.env.ORCHESTRATOR_REPO = prevRepo;
+      }
+    }
+  });
+
+  it("pin r35: live happy-path ledger does not duplicate retrigger on resume", async () => {
+    const livePr = "https://github.com/o/r/pull/255";
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const s10LaterTs = "2026-07-08T13:05:00.000Z";
+    const persistedTrigger = buildRoundTrigger(fixSha, retriggerTs);
+    const reviewLoopBase = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: livePr,
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+    ];
+    const happyPrior = [
+      ...reviewLoopBase,
+      {
+        step: "S10",
+        event: "online_review_fix_committed",
+        fixCommitSha: fixSha,
+        onlineReviewRound: 1,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: fixTs,
+      },
+      {
+        step: "S10",
+        event: "online_review_round_retrigger",
+        roundTriggerHeadOid: fixSha,
+        roundTriggerAt: retriggerTs,
+        onlineReviewRound: 2,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: retriggerTs,
+      },
+      {
+        step: "S10",
+        output: {
+          kind: "fixer",
+          committed: true,
+          fixCommitSha: "fixsha1111111111111111111111111111111111",
+        },
+        branchHEAD: fixSha,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        ts: s10LaterTs,
+      },
+    ];
+    expect(onlineReviewLoop.slicePendingRoundTriggerFromFixGap(happyPrior)).toBeUndefined();
+
+    const pollSpy = vi
+      .spyOn(onlineReviewLoop, "waitForBotQuiescence")
+      .mockImplementation(async (_sh, input) => ({
+        repo: "o/r",
+        prNumber: 255,
+        prUrl: input.prUrl,
+        headOid: input.roundTrigger.headOid,
+        pollCount: 1,
+        bots: {
+          coderabbit: { state: "complete", findingCount: 0 },
+          sourcery: { state: "complete", findingCount: 0 },
+          codex: { state: "complete", findingCount: 0 },
+          gemini: { state: "complete", findingCount: 0 },
+        },
+        threads: [],
+        checkRuns: [],
+        totalFindingCount: 0,
+        quiescent: true,
+      }));
+    const ensureSpy = vi.spyOn(
+      onlineReviewLoop,
+      "ensureOnlineReviewRetriggerAfterFixGap",
+    );
+
+    const prevOffline = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    const prevRepo = process.env.ORCHESTRATOR_REPO;
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
+    vi.stubEnv("ORCHESTRATOR_REPO", "o/r");
+
+    try {
+      const backend = new ReviewLoopResumeBackend({
+        worktree: WORKTREE,
+        stateDir: STATE_DIR,
+        ledger: happyPrior,
+      });
+      const result = await runOrchestrator({
+        issueNumber: 255,
+        backend,
+      });
+
+      expect(result.status).toBe("success");
+      expect(ensureSpy).not.toHaveBeenCalled();
+      expect(pollSpy).toHaveBeenCalledTimes(1);
+      expect(pollSpy.mock.calls[0]![1].roundTrigger).toEqual(persistedTrigger);
+      expect(pollSpy.mock.calls[0]![1].roundTrigger.triggeredAt).toBe(retriggerTs);
+      expect(backend.dispatchSpecs.filter((s) => s.id === "S10")).toHaveLength(0);
+      expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
+    } finally {
+      ensureSpy.mockRestore();
+      pollSpy.mockRestore();
+      if (prevOffline === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prevOffline;
+      }
+      if (prevRepo === undefined) {
+        delete process.env.ORCHESTRATOR_REPO;
+      } else {
+        process.env.ORCHESTRATOR_REPO = prevRepo;
+      }
+    }
+  });
+
+  it("pin online R1 Codex P2: recheck S9 false after same-SHA markers resumes S10 fixer not S9", async () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-codex-p2-"));
+    writeResumeOnlineReviewSnapshot(stateDir);
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+      // recovery order: executable S10 then markers for the same fix SHA
+      entry(
+        "S10",
+        {
+          kind: "fixer",
+          committed: true,
+          fixCommitSha: fixSha,
+        },
+        "session-fix",
+        fixSha,
+      ),
+      {
+        step: "S10",
+        event: "online_review_fix_committed",
+        fixCommitSha: fixSha,
+        onlineReviewRound: 1,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: fixTs,
+      },
+      {
+        step: "S10",
+        event: "online_review_round_retrigger",
+        roundTriggerHeadOid: fixSha,
+        roundTriggerAt: retriggerTs,
+        onlineReviewRound: 2,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: retriggerTs,
+      },
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        isRecheck: true,
+        findingDispositions: [
+          { identityKey: "f:2", threadId: "200", action: "fix" },
+        ],
+      }),
+    ];
+
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    // Must dispatch the pending fixer (S10), not steal back to a duplicate S9 verify
+    expect(backend.dispatchSpecs.filter((s) => s.id === "S10").length).toBeGreaterThanOrEqual(1);
+    const firstReviewLoop = backend.dispatchSpecs.findIndex(
+      (s) => s.id === "S9" || s.id === "S10",
+    );
+    expect(firstReviewLoop).toBeGreaterThanOrEqual(0);
+    expect(backend.dispatchSpecs[firstReviewLoop]?.id).toBe("S10");
+  });
+
+  it("pin r28: crash after fix markers but before S10 row resumes S9 not fixer", async () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const fixTs = "2026-07-08T12:30:00.000Z";
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+      {
+        step: "S10",
+        event: "online_review_round_retrigger",
+        roundTriggerHeadOid: fixSha,
+        roundTriggerAt: retriggerTs,
+        onlineReviewRound: 2,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: retriggerTs,
+      },
+      {
+        step: "S10",
+        event: "online_review_fix_committed",
+        fixCommitSha: fixSha,
+        onlineReviewRound: 1,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: fixTs,
+      },
+    ];
+    expect(onlineReviewRoundFromLedger(prior)).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromLedger(prior)).toBe(fixSha);
+
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs.filter((s) => s.id === "S10")).toHaveLength(0);
+    const resumedVerifyIdx = backend.dispatchSpecs.findIndex((s) => s.id === "S9");
+    expect(resumedVerifyIdx).toBeGreaterThanOrEqual(0);
+    expect(backend.dispatchContexts[resumedVerifyIdx]?.onlineReviewRound).toBe(2);
+    expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("AC2 r7: crash after S10 resumes S9 with round+fix SHA from full ledger (#600 F1)", async () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+      entry(
+        "S10",
+        {
+          kind: "fixer",
+          committed: true,
+          fixCommitSha: "fixsha1111111111111111111111111111111111",
+        },
+        "session-fix",
+        fixSha,
+      ),
+    ];
+    expect(onlineReviewRoundFromLedger(prior)).toBe(2);
+    expect(lastOnlineReviewFixCommitShaFromLedger(prior)).toBe(fixSha);
+
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    const resumedVerifyIdx = backend.dispatchSpecs.findIndex((s) => s.id === "S9");
+    expect(resumedVerifyIdx).toBeGreaterThanOrEqual(0);
+    expect(backend.dispatchContexts[resumedVerifyIdx]?.onlineReviewRound).toBe(2);
+    expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("pin r26: crash after converged marker resumes into S11 (skips re-verify)", async () => {
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      {
+        ...entry("S9", { kind: "verify", converged: true }),
+        event: "online_review_converged",
+        prUrl: "pr://slice/offline-255",
+        prHead: "deadbeefcommitsha",
+        onlineReviewRound: 1,
+      },
+    ];
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs.filter((s) => s.id === "S9")).toHaveLength(0);
+    expect(backend.dispatchSpecs.map((s) => s.id)).toEqual(["S11", "S12"]);
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S7",
+      "S9",
+      "S11",
+      "S12",
+      "S8",
+    ]);
   });
 });
 
@@ -1480,7 +2411,7 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     expect(s7Entries[0]!.output).toBeDefined();
     // The full re-opened ledger has the clean happy-path shape (ADR 0030), no S7 twice.
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S10", "S11", "S12", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
     ]);
   });
 
@@ -1499,7 +2430,7 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     expect(s7Entries).toHaveLength(1);
     expect(s7Entries[0]!.output).toBeDefined();
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S10", "S11", "S12", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
     ]);
     expect(result.stepLedger).not.toEqual(
       expect.arrayContaining([
@@ -1592,7 +2523,7 @@ describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", (
     expect(backend.pushCount).toBe(1);
     expect(result.status).toBe("success");
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S10", "S11", "S12", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
     ]);
   });
 

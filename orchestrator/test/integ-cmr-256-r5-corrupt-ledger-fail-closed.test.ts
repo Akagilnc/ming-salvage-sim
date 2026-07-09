@@ -12,16 +12,15 @@
  *
  *   (B) ALL lines corrupted made readLedger return `[]` (empty ledger) instead of
  *       `undefined`. `findResumeState`'s `if (ledger === undefined) return` no
- *       longer fired, `lastLedgerBranchHead([])` = undefined bypassed the codex#2
- *       HEAD-consistency check ({ok:true}, nothing to contradict), and planResume
- *       Case 1 ran it as fresh-from-S0 — over a RESIDENT branch that prepareWorktree
- *       reuses WITH prior commits. A corrupt ledger got silently reinterpreted as
- *       "no progress" instead of failing open/closed.
+ *       longer fired, and planResume Case 1 ran it as fresh-from-S0 — over a
+ *       RESIDENT branch that prepareWorktree reuses WITH prior commits. A corrupt
+ *       ledger got silently reinterpreted as "no progress" instead of failing
+ *       closed.
  *
  * Fix (fail closed, mirroring r2 F2 "completeness failure must not be a lenient
  * default"): any non-empty JSONL line that does not parse means the ledger is
- * CORRUPT — throw, so findResumeState bails to the same S8(error) path as the
- * codex#2 HEAD-mismatch. The rule is pinned here so the truncation-recovery
+ * CORRUPT — throw, so findResumeState bails to the runner's S8(error) path. The
+ * rule is pinned here so the truncation-recovery
  * boundary (blank-line tolerance only, never terminal-state / branch-progress
  * drift) is a tested invariant, not an implicit one.
  */

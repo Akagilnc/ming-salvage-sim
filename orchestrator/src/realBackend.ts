@@ -21,8 +21,8 @@
  * MANUAL smoke (a real container + a real model + a real `gh` is required), NOT
  * the zero-container automated suite. So this file is split:
  *   - PURE host-side logic — gh-snapshot parsing, the auth-mount path
- *     construction, the prompt-content hash, the branchHEAD consistency check,
- *     the failedStep attribution, the resume error fallback decision — is
+ *     construction, the prompt-content hash, the failedStep attribution, the
+ *     resume error fallback decision — is
  *     factored into exported, dependency-light functions
  *     that `realBackend.logic.test.ts` unit-tests WITHOUT a container.
  *   - The thin container glue calls those pure functions and Sandcastle.
@@ -618,6 +618,8 @@ export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
 export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
 /** S5 coder-fix worker path to runner-owned blocking findings JSON. */
 export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
+/** S9/S10 online-review landing file path (bot snapshot + ship metadata). */
+export const SANDBOX_ONLINE_REVIEW_PATH_ENV = "ORCHESTRATOR_ONLINE_REVIEW_PATH";
 /** Worker path to the runner-owned machine outcome sidecar JSON. */
 export const SANDBOX_OUTCOME_PATH_ENV = "ORCHESTRATOR_OUTCOME_PATH";
 /** Optional ship-worker focus file read by the ship prompt before gstack-ship. */
@@ -1309,52 +1311,6 @@ export function reconcileResumeCoderCommits(
   }
 }
 
-// ── branchHEAD consistency (codex#2) ────────────────────────────────────────
-
-/**
- * codex#2 — ledger.branchHEAD vs the live worktree HEAD consistency check.
- *
- * After an agent step, the runner records the worktree HEAD SHA in the ledger
- * (#256 branchHEAD truth). On resume the recorded SHA must still match the live
- * worktree HEAD — a mismatch means the resident branch moved out from under the
- * ledger (a stray external commit, a wrong-worktree reuse, a corrupted ledger),
- * so continuing would attribute new work to a base the ledger never saw.
- *
- * Returns a structured verdict: `ok` when the two agree (or when the ledger has
- * no recorded SHA yet — nothing to contradict), else a `mismatch` carrying both
- * SHAs so the caller can decide (the real Backend logs + bails to a clean error
- * rather than silently continuing on a divergent base).
- *
- * Pure (string compare) so it is unit-tested without git.
- */
-export type HeadConsistency =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly ledgerHead: string; readonly liveHead: string };
-
-export function checkBranchHeadConsistency(
-  ledgerBranchHEAD: string | undefined,
-  liveHead: string | undefined,
-): HeadConsistency {
-  // No recorded SHA (fresh / branch-name fallback) or no live SHA to compare —
-  // nothing to contradict.
-  if (
-    ledgerBranchHEAD === undefined ||
-    ledgerBranchHEAD.length === 0 ||
-    liveHead === undefined ||
-    liveHead.length === 0
-  ) {
-    return { ok: true };
-  }
-  // A SHA is a 40-char hex (or an abbreviation) — only compare when the ledger
-  // value looks like a SHA, not the v0.1 branch-name fallback (which contains
-  // "/" or non-hex chars). A branch-name ledger value pre-dates the SHA truth
-  // and must not raise a false mismatch.
-  if (!isLikelySha(ledgerBranchHEAD)) return { ok: true };
-  return ledgerBranchHEAD === liveHead
-    ? { ok: true }
-    : { ok: false, ledgerHead: ledgerBranchHEAD, liveHead };
-}
-
 /** A git SHA / abbreviation: only lower-case hex, length 7–40. */
 export function isLikelySha(s: string): boolean {
   return /^[0-9a-f]{7,40}$/.test(s);
@@ -1379,9 +1335,9 @@ export function isLikelySha(s: string): boolean {
  *     progress" and re-run fresh-from-S0 over a RESIDENT branch that still carries
  *     prior commits. Both are wrong terminal-state / branch-progress rebuilds.
  *
- * The throw propagates out of {@link RealBackend.findResumeState} to the same
- * S8(error) bail the codex#2 HEAD-mismatch uses — fail closed, exactly as the
- * r2 F2 rule (a completeness failure must not become a lenient default) requires.
+ * The throw propagates out of {@link RealBackend.findResumeState} to the runner's
+ * S8(error) bail — fail closed, exactly as the r2 F2 rule (a completeness failure
+ * must not become a lenient default) requires.
  *
  * Pure (string scan) so the corrupt-ledger boundary is unit-tested without the
  * filesystem.
@@ -1484,42 +1440,6 @@ export function parseLedgerJsonl(raw: string): ResumeState["ledger"] {
     entries.push(parsed);
   }
   return entries;
-}
-
-/**
- * The most recent recorded `branchHEAD` **SHA** in a persisted ledger (codex#2
- * resume reconciliation). Scans from the end and returns the FIRST value that
- * passes {@link isLikelySha} — i.e. skips branch-name fallbacks ENTIRELY, not
- * just empty entries.
- *
- * Why SHA-only (integ-cmr 256 r2, F1): `resolveBranchHEAD` records the branch
- * NAME whenever `worktreeHead()` returns undefined / throws (a transient git
- * read fault), so a ledger can interleave `[realSha, branchNameFallback]` — a
- * later name fallback masking an earlier REAL SHA. If this returned the latest
- * non-empty value, that name would flow into {@link checkBranchHeadConsistency},
- * which sees a non-SHA and returns `{ok:true}` — SKIPPING a real divergence and
- * defeating the entire codex#2 guard (resume could continue on a divergent
- * base). Returning the last REAL recorded SHA makes the consistency check always
- * reconcile against the true base. Returns undefined when no entry carries a SHA
- * (fresh / name-only ledger) — the consistency check then has nothing to
- * contradict.
- *
- * Pure (array scan) so the resume reconciliation decision is unit-tested
- * without git: `lastLedgerBranchHead(ledger)` feeds
- * {@link checkBranchHeadConsistency} against the live HEAD, and a mismatch bails
- * `findResumeState` to a clean error (S8(error) at the runner).
- */
-export function lastLedgerBranchHead(
-  ledger: ReadonlyArray<{ readonly branchHEAD?: string }>,
-): string | undefined {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const head = ledger[i]?.branchHEAD;
-    // Only a real SHA counts: a branch-name fallback (later git read fault) must
-    // NOT mask an earlier real SHA, or the consistency check would short-circuit
-    // to {ok:true} and skip a genuine divergence (F1).
-    if (typeof head === "string" && isLikelySha(head)) return head;
-  }
-  return undefined;
 }
 
 // ── resumeSession fallback decision (#256/#285) ─────────────────────────────
@@ -2000,12 +1920,70 @@ const coderOutputSchema = z.object({
 // #596 F2: minimal schemas for the 4 review-loop kinds. Used for outputFor (Sandcastle typed)
 // and initial parse in decodeOutput; final decode validation uses the isValid*Result guards
 // from reviewLoopOutcome.ts (per AC2). .strict() so off-shape (extra keys, wrong types) fails closed.
+const onlineReviewFindingDispositionSchema = z
+  .object({
+    identityKey: z.string().min(1),
+    threadId: z.string().min(1),
+    action: z.enum(["fix", "reject", "defer"]),
+    reason: z.string().optional(),
+  })
+  .strict();
+
+const onlineReviewThreadReplySchema = z
+  .object({
+    threadId: z.string().min(1),
+    body: z.string().min(1),
+  })
+  .strict();
+
 export const verifyOutputSchema = z
-  .object({ converged: z.boolean() })
+  .object({
+    converged: z.boolean(),
+    findingDispositions: z.array(onlineReviewFindingDispositionSchema).optional(),
+    fixMarkedFindingIdentityKeys: z.array(z.string()).optional(),
+    threadReplies: z.array(onlineReviewThreadReplySchema).optional(),
+    threadsToResolve: z.array(z.string()).optional(),
+    deferredIssueUrls: z.array(z.string()).optional(),
+    terminalState: z
+      .enum(["mergeable", "round_budget_exhausted", "decision_gate_raised"])
+      .optional(),
+    isRecheck: z.boolean().optional(),
+  })
   .strict();
 export const fixerOutputSchema = z
-  .object({ committed: z.boolean() })
-  .strict();
+  .object({
+    committed: z.boolean(),
+    alreadySatisfied: z.boolean().optional(),
+    fixCommitSha: z.string().min(1).optional(),
+  })
+  .strict()
+  .superRefine((data, ctx) => {
+    if (data.committed && data.alreadySatisfied === true) {
+      ctx.addIssue({
+        code: "custom",
+        message: "alreadySatisfied is incompatible with committed:true",
+      });
+    }
+    if (
+      data.committed === true &&
+      (data.fixCommitSha === undefined || data.fixCommitSha.length === 0)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "fixCommitSha is required when committed is true",
+      });
+    }
+    if (
+      data.committed === false &&
+      data.alreadySatisfied === true &&
+      data.fixCommitSha === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "fixCommitSha is required when alreadySatisfied is true",
+      });
+    }
+  });
 export const cleanupOutputSchema = z
   .object({ ok: z.boolean() })
   .strict();
@@ -2650,6 +2628,10 @@ export class RealBackend implements Backend {
       env[SANDBOX_FIX_FINDINGS_PATH_ENV] =
         options.fixFindingsLanding.sandboxPath;
     }
+    if (options?.onlineReviewLanding !== undefined) {
+      env[SANDBOX_ONLINE_REVIEW_PATH_ENV] =
+        options.onlineReviewLanding.sandboxPath;
+    }
     if (options?.outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = options.outcomeLanding.sandboxPath;
     }
@@ -2664,6 +2646,13 @@ export class RealBackend implements Backend {
       mounts.push({
         hostPath: options.fixFindingsLanding.path,
         sandboxPath: options.fixFindingsLanding.sandboxPath,
+        readonly: true,
+      });
+    }
+    if (options?.onlineReviewLanding !== undefined) {
+      mounts.push({
+        hostPath: options.onlineReviewLanding.path,
+        sandboxPath: options.onlineReviewLanding.sandboxPath,
         readonly: true,
       });
     }
@@ -2828,7 +2817,25 @@ export class RealBackend implements Backend {
     // Shape-valid but false flags (converged:false etc) pass this layer (no semantic).
     if (spec.role === "verify") {
       const v = verifyOutputSchema.parse(raw);
-      const candidate: VerifyResult = { kind: "verify", converged: v.converged };
+      const candidate: VerifyResult = {
+        kind: "verify",
+        converged: v.converged,
+        ...(v.findingDispositions !== undefined
+          ? { findingDispositions: v.findingDispositions }
+          : {}),
+        ...(v.fixMarkedFindingIdentityKeys !== undefined
+          ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
+          : {}),
+        ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
+        ...(v.threadsToResolve !== undefined
+          ? { threadsToResolve: v.threadsToResolve }
+          : {}),
+        ...(v.deferredIssueUrls !== undefined
+          ? { deferredIssueUrls: v.deferredIssueUrls }
+          : {}),
+        ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
+        ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
+      };
       if (!isValidVerifyResult(candidate)) {
         const err = new Error(
           "realBackend: verify output did not satisfy isValidVerifyResult guard",
@@ -2840,7 +2847,12 @@ export class RealBackend implements Backend {
     }
     if (spec.role === "fixer") {
       const f = fixerOutputSchema.parse(raw);
-      const candidate: FixerResult = { kind: "fixer", committed: f.committed };
+      const candidate: FixerResult = {
+        kind: "fixer",
+        committed: f.committed,
+        ...(f.alreadySatisfied === true ? { alreadySatisfied: true } : {}),
+        ...(f.fixCommitSha !== undefined ? { fixCommitSha: f.fixCommitSha } : {}),
+      };
       if (!isValidFixerResult(candidate)) {
         const err = new Error(
           "realBackend: fixer output did not satisfy isValidFixerResult guard",
@@ -3543,28 +3555,6 @@ export class RealBackend implements Backend {
     const ledger = this.readLedger(stateDir);
     if (ledger === undefined) return undefined;
     const worktree = { branch: existing.branch, base: "main", path: existing.path };
-
-    // codex#2 — before reusing the resident branch, verify the LAST recorded
-    // branchHEAD SHA still matches the live worktree HEAD (integ-cmr 256 r1,
-    // F5). A mismatch means the branch moved out from under the ledger (a stray
-    // external commit, a wrong-worktree reuse, a corrupted ledger), so resuming
-    // would attribute new work to a base the ledger never saw — log + bail to a
-    // clean error rather than silently continuing on a divergent base. The
-    // runner catches this `findResumeState` throw and turns it into S8(error).
-    const ledgerHead = lastLedgerBranchHead(ledger);
-    const liveHead = await this.worktreeHead(worktree);
-    const verdict = checkBranchHeadConsistency(ledgerHead, liveHead);
-    if (!verdict.ok) {
-      const msg =
-        `resume aborted for issue #${issueNumber}: the resident branch HEAD ` +
-        `(${verdict.liveHead}) diverged from the last recorded ledger SHA ` +
-        `(${verdict.ledgerHead}). The branch moved out from under the ledger ` +
-        `(stray commit / wrong-worktree reuse / corrupted ledger); continuing ` +
-        `would attribute new work to a base the ledger never saw.`;
-      console.error(`[realBackend] ${msg}`);
-      throw new Error(msg);
-    }
-
     return { worktree, stateDir, ledger };
   }
 
@@ -3590,8 +3580,8 @@ export class RealBackend implements Backend {
     }
     // The ledger file EXISTS: parse it fail-closed. A non-empty line that does
     // not parse means the ledger is CORRUPT — parseLedgerJsonl throws, which
-    // propagates out of findResumeState to the same S8(error) bail path as the
-    // codex#2 HEAD-mismatch. We must NOT skip corrupt lines (256 r5): a skipped
+    // propagates out of findResumeState to the runner's S8(error) bail path.
+    // We must NOT skip corrupt lines (256 r5): a skipped
     // tagged S8(error) would re-report ERROR as SUCCESS, and an all-corrupt file
     // collapsing to [] would be reinterpreted as "no progress" over a resident
     // branch that still carries prior commits.

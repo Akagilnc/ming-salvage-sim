@@ -82,7 +82,9 @@ import {
   reconcileCoderCommits,
   SANDBOX_CODEX_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
+  SANDBOX_ONLINE_REVIEW_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
+  soulForStep,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
   SANDBOX_ISSUE_NUMBER_ENV,
   SANDBOX_REPO_ENV,
@@ -106,13 +108,9 @@ import {
   isValidDocReleaseResult,
   isValidFixerResult,
   isValidVerifyResult,
+  skeletonReviewLoopWorkerResult,
 } from "../reviewLoopOutcome.js";
-import type {
-  CleanupResult,
-  DocReleaseResult,
-  FixerResult,
-  VerifyResult,
-} from "../types.js";
+import { ONLINE_REVIEW_LANDING_FILE } from "../onlineReviewLoop.js";
 import {
   WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
@@ -133,11 +131,15 @@ import {
 } from "../shipOutcome.js";
 
 import type {
+  CleanupResult,
   CoderResult,
   DispatchContext,
+  DocReleaseResult,
   Finding,
+  FixerResult,
   PriorFindingDisposition,
   StepSoul,
+  VerifyResult,
   WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
@@ -665,28 +667,18 @@ export class RealFamilyBackend implements FamilyBackend {
     // → commit the merge (NEVER `--abort`). The real `sc.run` is behind the
     // {@link runMergerAgent} seam (fake-able; the real container only on the
     // driver / manual-smoke path).
-    // #598: a merger agent that CRASHES (throws — e.g. a container/connection
-    // failure inside the sc.run) is retried fresh up to the bound; before each retry
-    // the half-resolved conflict is re-established so the retry starts from the same
-    // clean conflicted state (idempotency). A RETURNED `{resolved:false}` is a JUDGED
-    // non-resolve — surfaced below, never retried. A persistent crash re-throws.
-    const outcome = await retryProcessCrash(
-      async () => {
-        // #598 idempotency: if a PRIOR crashed attempt already COMMITTED the merge,
-        // the child is LANDED (git truth). Do NOT re-run the merger on a no-conflict
-        // state — `reestablishConflictForRetry` would `git merge --abort` (a no-op
-        // after a commit) then re-merge "already up to date", leaving the merger to
-        // run with nothing to resolve and FAIL a child that was already correctly
-        // merged. Recognize the landed merge instead (the post-state check below
-        // then returns it clean). On attempt 1 the merge is still in-progress, so
-        // this is false and the merger runs normally.
-        if (this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo)) {
-          return { resolved: true };
-        }
-        return await this.runMergerAgent(req);
-      },
-      { resetBeforeRetry: () => this.reestablishConflictForRetry(req) },
-    );
+    // #598 / 2026-07-08: a merger agent that CRASHES (throws) is retried fresh up to
+    // the bound on the CURRENT worktree as-is. A RETURNED `{resolved:false}` is a
+    // JUDGED non-resolve — surfaced below, never retried. A persistent crash re-throws.
+    const outcome = await retryProcessCrash(async () => {
+      // If a PRIOR crashed attempt already COMMITTED the merge, the child is LANDED
+      // (git truth). Do NOT re-run the merger on a no-conflict state — recognize the
+      // landed merge instead (the post-state check below then returns it clean).
+      if (this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo)) {
+        return { resolved: true };
+      }
+      return await this.runMergerAgent(req);
+    });
     if (!outcome.resolved) {
       // The resolver could not resolve (escalated / failed) → surface it; the
       // merger does NOT write a `merged` entry (an unresolved conflict never looks
@@ -738,40 +730,6 @@ export class RealFamilyBackend implements FamilyBackend {
       familyHead !== familyHeadBefore &&
       this.isAncestorOf(childHead, familyHead, repo)
     );
-  }
-
-  /**
-   * #598 idempotency: re-establish the SAME in-progress merge conflict that a
-   * CRASHED {@link runMergerAgent} attempt left half-resolved, so the retry starts
-   * from the clean conflicted state (never on top of a half-added index). Abort the
-   * half-done merge, check out the family base, then re-run the deterministic
-   * `git merge --no-ff` — a real conflict exits non-zero and leaves MERGE_HEAD,
-   * which is exactly the state the retry's merger resolves. A protected seam so the
-   * retry path is unit-testable without a real conflicting repo.
-   */
-  protected async reestablishConflictForRetry(
-    req: ConflictResolveRequest,
-  ): Promise<void> {
-    const repo = this.opts.workingRepo;
-    try {
-      this.sh("git", ["merge", "--abort"], repo);
-    } catch {
-      // No in-progress merge to abort (the crash may have left none) — fine.
-    }
-    this.sh("git", ["checkout", this.opts.familyBase], repo);
-    const msg = `Merge child #${req.childIssue} (${req.childBranch}) into ${this.opts.familyBase}`;
-    try {
-      this.sh("git", ["merge", "--no-ff", "-m", msg, req.childBranch], repo);
-    } catch (err) {
-      // #598 r5 (codexA/B, mirroring mergeChildLocked): only a REAL content conflict
-      // exits non-zero AND leaves MERGE_HEAD — that is the re-established state the
-      // retry resolves, so swallow it. A NON-conflict git failure (dirty worktree /
-      // lock / bad ref) leaves NO MERGE_HEAD; swallowing it would let the retry's
-      // merger run with no conflict re-established. Rethrow so retryProcessCrash counts
-      // this as a reset failure and SKIPS the merger dispatch (never runs on an
-      // un-re-established state), retrying the reset next attempt / exhausting.
-      if (!this.mergeInProgress(repo)) throw err;
-    }
   }
 
   /** True iff `ancestor` is an ancestor of `descendant` (`git merge-base --is-ancestor`). */
@@ -1139,6 +1097,20 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (spec.kind === "coder") {
       return this.runFamilyCoderFixWorker(spec, ctx, landing);
+    }
+    // S11/S12 remain deterministic stubs until #603 (prompt/soul files land later).
+    if (spec.kind === "cleanup" || spec.kind === "docRelease") {
+      const stub = skeletonReviewLoopWorkerResult(spec.kind);
+      if (stub !== undefined) {
+        return stub;
+      }
+      return {
+        kind: "failed",
+        reason: `family ${spec.kind} stub unavailable`,
+      };
+    }
+    if (spec.kind === "verify" || spec.kind === "fixer") {
+      return this.runFamilyReviewLoopWorker(spec, ctx, landing);
     }
     if (spec.kind !== "cmr") {
       // Any other family worker kind (merge — B 段) forwards to the legacy seam.
@@ -1674,6 +1646,187 @@ export class RealFamilyBackend implements FamilyBackend {
         : {}),
       ...(output.escalate !== undefined ? { escalate: output.escalate } : {}),
     };
+  }
+
+  protected async runFamilyReviewLoopWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    if (ctx.familyBase === undefined) {
+      throw new Error(
+        `dispatchWorker(${spec.kind}): a family ${spec.kind} worker requires ` +
+          "ctx.familyBase (the merged base whose PR is under online review).",
+      );
+    }
+    const auth = this.mountShipAuth();
+    try {
+      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
+        return {
+          kind: "escalated",
+          escalation: {
+            reason:
+              `no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the family ${spec.kind} worker cannot start`,
+            diagnosis:
+              `the family ${spec.kind} worker is a top-level Claude worker when the ` +
+              "active route selects a Claude-family model; provide " +
+              "CLAUDE_CODE_OAUTH_TOKEN / ~/.sc-claude-token or select a non-Claude route.",
+          },
+        };
+      }
+      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+      const onlineReviewLanding = this.writeFamilyOnlineReviewLandingFile(
+        ctx,
+        landing,
+      );
+      try {
+        const result = await this.runAgentSandbox({
+          name: `family-${spec.kind}`,
+          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+          cwd: this.opts.workingRepo,
+          sandbox: this.familyReviewLoopSandbox(
+            auth,
+            spec,
+            ctx,
+            onlineReviewLanding,
+          ),
+          agent: this.agentForSpec(spec),
+          maxIterations: spec.maxIter,
+          completionSignal: spec.completionSignal,
+          branchStrategy: { type: "head" },
+          promptFile: join(this.opts.promptsDir, spec.promptFile),
+        });
+        return this.familyReviewLoopResultFromRun(result, spec);
+      } finally {
+        rmSync(onlineReviewLanding.path, { force: true });
+      }
+    } finally {
+      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+    }
+  }
+
+  protected writeFamilyOnlineReviewLandingFile(
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): { path: string; sandboxPath: string } {
+    if (landing?.onlineReviewSnapshot === undefined) {
+      throw new Error(
+        "writeFamilyOnlineReviewLandingFile: online review landing requires onlineReviewSnapshot",
+      );
+    }
+    this.excludeOptionalRuntimeFileFromGit(ONLINE_REVIEW_LANDING_FILE);
+    const path = join(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
+    writeFileSync(
+      path,
+      `${JSON.stringify(
+        {
+          onlineReviewSnapshot: landing.onlineReviewSnapshot,
+          shipDelivery: landing.shipDelivery,
+          onlineReviewRound: landing.onlineReviewRound ?? ctx.onlineReviewRound,
+          fixMarkedFindingIdentityKeys: landing.fixMarkedFindingIdentityKeys ?? [],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    return { path, sandboxPath: ONLINE_REVIEW_LANDING_FILE };
+  }
+
+  protected familyReviewLoopSandbox(
+    auth: ShipAuth,
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    onlineReviewLanding: { path: string; sandboxPath: string },
+  ): sc.SandboxProvider {
+    return docker(
+      this.familyReviewLoopSandboxConfig(auth, spec, ctx, onlineReviewLanding),
+    );
+  }
+
+  protected familyReviewLoopSandboxConfig(
+    auth: ShipAuth,
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    onlineReviewLanding: { path: string; sandboxPath: string },
+  ): {
+    imageName: string;
+    env: Record<string, string>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+  } {
+    const soul = soulForStep({
+      role: spec.role,
+      soul: spec.soul,
+    });
+    const env: Record<string, string> = {
+      ...SPAWNED_WORKER_ENV,
+      [SANDBOX_SOUL_ENV]: soul,
+      [SANDBOX_REPO_ENV]: this.opts.repo,
+      [SANDBOX_ONLINE_REVIEW_PATH_ENV]: onlineReviewLanding.sandboxPath,
+    };
+    if (ctx.familyIssue !== undefined) {
+      const issue = String(ctx.familyIssue);
+      env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
+      env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV] = issue;
+    }
+    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
+      {
+        hostPath: onlineReviewLanding.path,
+        sandboxPath: onlineReviewLanding.sandboxPath,
+        readonly: true,
+      },
+    ];
+    if (auth.codexAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    mounts.push(soulsMount(this.opts.soulsDir));
+    return { imageName: this.opts.imageName, env, mounts };
+  }
+
+  protected familyReviewLoopResultFromRun(
+    result: Pick<Awaited<ReturnType<typeof sc.run>>, "completionSignal" | "stdout" | "iterations">,
+    spec: WorkerSpec,
+  ): WorkerResult {
+    try {
+      assertCompletionSignal(result, spec.completionSignal, `family-${spec.kind}`);
+      const sessionId = lastSessionIdIfPresent(result);
+      if (spec.kind === "verify") {
+        const parsed = parseVerifyOutcome(result.stdout);
+        if (parsed.kind === "malformed") {
+          return { kind: "malformed", reason: parsed.reason, sessionId };
+        }
+        return { kind: "completed", output: parsed, sessionId };
+      }
+      if (spec.kind === "fixer") {
+        const parsed = parseFixerOutcome(result.stdout);
+        if (parsed.kind === "malformed") {
+          return { kind: "malformed", reason: parsed.reason, sessionId };
+        }
+        return { kind: "completed", output: parsed, sessionId };
+      }
+      if (spec.kind === "cleanup") {
+        const parsed = parseCleanupOutcome(result.stdout);
+        if (parsed.kind === "malformed") {
+          return { kind: "malformed", reason: parsed.reason, sessionId };
+        }
+        return { kind: "completed", output: parsed, sessionId };
+      }
+      const parsed = parseDocReleaseOutcome(result.stdout);
+      if (parsed.kind === "malformed") {
+        return { kind: "malformed", reason: parsed.reason, sessionId };
+      }
+      return { kind: "completed", output: parsed, sessionId };
+    } catch (err) {
+      return {
+        kind: "malformed",
+        reason:
+          `family ${spec.kind} worker output malformed: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+        sessionId: lastSessionIdIfPresent(result),
+      };
+    }
   }
 
   private captureOutcomeRewriteGitEvidence(): {
@@ -3439,7 +3592,26 @@ export function parseVerifyOutcome(
       reason: "verify worker <verify> tag did not satisfy verifyOutputSchema (extra keys or wrong types)",
     };
   }
-  const candidate: VerifyResult = { kind: "verify", converged: shape.data.converged };
+  const v = shape.data;
+  const candidate: VerifyResult = {
+    kind: "verify",
+    converged: v.converged,
+    ...(v.findingDispositions !== undefined
+      ? { findingDispositions: v.findingDispositions }
+      : {}),
+    ...(v.fixMarkedFindingIdentityKeys !== undefined
+      ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
+      : {}),
+    ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
+    ...(v.threadsToResolve !== undefined
+      ? { threadsToResolve: v.threadsToResolve }
+      : {}),
+    ...(v.deferredIssueUrls !== undefined
+      ? { deferredIssueUrls: v.deferredIssueUrls }
+      : {}),
+    ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
+    ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
+  };
   if (!isValidVerifyResult(candidate)) {
     return { kind: "malformed", reason: "verify worker <verify> tag did not satisfy isValidVerifyResult guard" };
   }
@@ -3471,7 +3643,14 @@ export function parseFixerOutcome(
       reason: "fixer worker <fixer> tag did not satisfy fixerOutputSchema (extra keys or wrong types)",
     };
   }
-  const candidate: FixerResult = { kind: "fixer", committed: shape.data.committed };
+  const candidate: FixerResult = {
+    kind: "fixer",
+    committed: shape.data.committed,
+    ...(shape.data.alreadySatisfied === true ? { alreadySatisfied: true } : {}),
+    ...(shape.data.fixCommitSha !== undefined
+      ? { fixCommitSha: shape.data.fixCommitSha }
+      : {}),
+  };
   if (!isValidFixerResult(candidate)) {
     return { kind: "malformed", reason: "fixer worker <fixer> tag did not satisfy isValidFixerResult guard" };
   }

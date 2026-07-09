@@ -58,12 +58,65 @@ import {
   workerResultToStep,
 } from "./dispatchWorker.js";
 import {
+  fixerEnvelopeFixCommitSha,
+  fixerProceedsToVerify,
   isValidCleanupResult,
   isValidDocReleaseResult,
   isValidFixerResult,
   isValidVerifyResult,
 } from "./reviewLoopOutcome.js";
+import {
+  BOT_OVERDUE_POLL_COUNT,
+  classifyCheckRuns,
+  isLiveGithubReviewPollEnabled,
+  parsePrRef,
+  pollPrReviewState,
+  type PrReviewSnapshot,
+} from "./botPolling.js";
 import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetry.js";
+import {
+  buildOnlineReviewLanding,
+  clampVerifyConvergenceForCheckRuns,
+  enforceRunnerOwnedRecheck,
+  verifyBlockedOnlyOnPendingCheckRuns,
+  immediateBotPollClock,
+  sleepPendingCiPollInterval,
+  lastOnlineReviewFixCommitShaFromLedger,
+  offlinePrReviewSnapshot,
+  onlineReviewConvergedForHead,
+  onlineReviewResumeHeadKeyFromLedger,
+  onlineReviewRoundFromLedger,
+  onlineReviewRoundTriggerFromLedger,
+  resolveOnlineReviewRoundTrigger,
+  realBotPollClock,
+  reconstructOnlineReviewLandingForResume,
+  ensureOnlineReviewRetriggerAfterFixGap,
+  retriggerBotsAndPoll,
+  shipLedgerTriggeredAtFromSliceLedger,
+  sliceOnlineReviewCiFailedPending,
+  slicePendingRoundTriggerFromFixGap,
+  slicePostFixVerifyPendingFromMarkerGap,
+  onlineReviewFixerNothingToFixStopSummary,
+  VerifyWorkerHeadMovedError,
+  VerifyWorkerWorktreeDirtyError,
+  verifyReadOnlyWorktreeDrift,
+  verifyReviewerHeadMovedStopSummary,
+  verifyReviewerWorktreeDirtyStopSummary,
+  worktreePorcelainFingerprint,
+  verifySideEffectFailureStopSummary,
+  waitForBotQuiescence,
+  writeOnlineReviewSnapshotFile,
+} from "./onlineReviewLoop.js";
+import {
+  assertOfflineSyntheticPollAdmissible,
+  buildRoundTrigger,
+  convergenceHeadToRecord,
+  type RoundTrigger,
+} from "./evidenceAdmissibility.js";
+import {
+  applyVerifySideEffects,
+  fixMarkedKeysFromVerify,
+} from "./onlineReviewSideEffects.js";
 import {
   applyRuntimeTightRoutePolicy,
   modelForSlot,
@@ -82,6 +135,7 @@ import {
 } from "./validate.js";
 import {
   contractDriftStopSummary,
+  decisionGateParkStopSummary,
   infraFailureStopSummary,
   stopSummaryFromFindingDispositionEvidence,
   successStopSummary,
@@ -107,8 +161,10 @@ import type {
   RunInput,
   RunResult,
   StepId,
+  ShipResult,
   StepOutput,
   StepSpec,
+  WorkerLandingPayload,
   WorktreeHandle,
 } from "./types.js";
 
@@ -878,6 +934,44 @@ function lastNonTerminalStep(
   return undefined;
 }
 
+function isReviewLoopStep(step: StepId): boolean {
+  return step === "S9" || step === "S10" || step === "S11" || step === "S12";
+}
+
+function shipStatusFromLedger(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): string | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.step === "S7" && entry.output?.kind === "ship") {
+      return entry.output.status;
+    }
+  }
+  return undefined;
+}
+
+/** Drop superseded S9–S12 entries when resuming mid online-review loop (#600 F3). */
+function priorLedgerThroughLastShip(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): ReadonlyArray<LedgerEntry> {
+  let shipIdx = -1;
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (
+      !isBookkeepingEntry(entry) &&
+      entry.step === "S7" &&
+      entry.output?.kind === "ship"
+    ) {
+      shipIdx = i;
+      break;
+    }
+  }
+  if (shipIdx < 0) {
+    return ledger as ReadonlyArray<LedgerEntry>;
+  }
+  return ledger.slice(0, shipIdx + 1) as ReadonlyArray<LedgerEntry>;
+}
+
 function isLikelyGitSha(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{7,64}$/.test(value);
 }
@@ -1465,25 +1559,86 @@ function planResume(
     routeFrom === "S4"
       ? adjudicatedBlockingFindingsForPersistedS4(executableLedger)
       : undefined;
+  const routeOutput =
+    isReviewLoopStep(routeFrom) && routeFrom === lastEntry.step
+      ? lastEntry.output
+      : agentEntry?.output;
+  const shipStatusForRoute =
+    routeFrom === "S7"
+      ? shipStatusFromLedger(executableLedger) ?? "pushed"
+      : undefined;
+  const onlineReviewRoundForRoute =
+    routeFrom === "S9" || routeFrom === "S10"
+      ? onlineReviewRoundFromLedger(executableLedger)
+      : undefined;
   const decision = route({
     from: routeFrom,
-    output: agentEntry?.output,
+    output: routeOutput,
     ...(pendingBlockingFindings !== undefined
       ? { pendingBlockingFindings }
       : {}),
+    ...(shipStatusForRoute !== undefined
+      ? { shipStatus: shipStatusForRoute }
+      : {}),
+    ...(onlineReviewRoundForRoute !== undefined
+      ? { onlineReviewRound: onlineReviewRoundForRoute }
+      : {}),
   });
+  const truncateReviewLoop =
+    isReviewLoopStep(routeFrom) && decision.kind === "next";
+  const priorForResume = truncateReviewLoop
+    ? priorLedgerThroughLastShip(ledger)
+    : (ledger as ReadonlyArray<LedgerEntry>);
+  const resumeLastOutput = truncateReviewLoop
+    ? undefined
+    : routeOutput;
+  // #600 r28: markers persist before the executable S10 row — crash in that window
+  // must resume into post-fix verify, not re-dispatch the fixer.
+  if (
+    slicePostFixVerifyPendingFromMarkerGap(ledger) &&
+    decision.kind === "next" &&
+    decision.step === "S10"
+  ) {
+    return {
+      resumeStep: "S9",
+      lastOutput: undefined,
+      priorLedger: priorForResume,
+    };
+  }
+  // R18/R20 Codex: CI park markers → re-enter S9 (re-poll CI), not S10/S8(error).
+  if (sliceOnlineReviewCiFailedPending(ledger)) {
+    return {
+      resumeStep: "S9",
+      lastOutput: undefined,
+      priorLedger: priorForResume,
+    };
+  }
+  // R20 Codex P2: last executable S9 converged:true routes to S11 and would skip
+  // the live CI recheck on the S9 entry path. Force resume at S9 so check-runs
+  // are re-polled before cleanup/doc-release.
+  if (
+    decision.kind === "next" &&
+    decision.step === "S11" &&
+    routeFrom === "S9"
+  ) {
+    return {
+      resumeStep: "S9",
+      lastOutput: undefined,
+      priorLedger: priorLedgerThroughLastShip(ledger),
+    };
+  }
   if (decision.kind === "handoff") {
     return {
       terminalStatus: decision.status,
       resumeStep: "S8",
-      lastOutput: agentEntry?.output,
-      priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+      lastOutput: resumeLastOutput ?? agentEntry?.output,
+      priorLedger: priorForResume,
     };
   }
   return {
     resumeStep: decision.step,
-    lastOutput: agentEntry?.output,
-    priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+    lastOutput: resumeLastOutput,
+    priorLedger: priorForResume,
   };
 }
 
@@ -1819,6 +1974,145 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastCoderRepairEvidence: RepairEvidence | undefined;
   let lastCoderActualRepairPaths: ReadonlyArray<string> = [];
   const noProgressByFindingIdentityKey = new Map<string, number>();
+  let lastShipOutput: ShipResult | undefined;
+  let onlineReviewRound = 1;
+  let onlineReviewLanding: WorkerLandingPayload | undefined;
+  let lastOnlineReviewFixCommitSha: string | undefined;
+  let lastOnlineReviewRoundTrigger: RoundTrigger | undefined;
+  let lastOnlineReviewPendingRoundTrigger: RoundTrigger | undefined;
+  /** S9 worker green but CI still queued/in_progress — re-poll S9, do not fixer/merge. */
+  let reenterS9ForPendingCi = false;
+  /** Consecutive pending-CI S9 re-entries (online R4 Codex P1 — must be bounded). */
+  let pendingCiS9Polls = 0;
+
+  function ghSh(file: string, args: string[]): string {
+    return execFileSync(file, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+    }).trim();
+  }
+
+  function defaultRepo(): string {
+    const fromEnv = process.env.ORCHESTRATOR_REPO?.trim();
+    if (fromEnv && fromEnv.length > 0) return fromEnv;
+    if (process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1") {
+      return "Akagilnc/ming-salvage-sim";
+    }
+    try {
+      return execFileSync("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    } catch {
+      return "Akagilnc/ming-salvage-sim";
+    }
+  }
+
+  async function pollOnlineReviewForShip(
+    ship: ShipResult,
+    pollCount: number,
+  ): Promise<PrReviewSnapshot> {
+    const prUrl = ship.pr;
+    if (prUrl == null || prUrl.trim().length === 0) {
+      throw new Error("online review poll requires a non-empty PR URL from ship");
+    }
+    const repo = defaultRepo();
+    const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
+    if (!livePoll) {
+      // #600 r6: hook and offline synthesis share the central admissibility gate —
+      // test backends may inject poll results only under explicit offline/test handles.
+      assertOfflineSyntheticPollAdmissible(prUrl, repo);
+      if (backend.pollOnlineReviewState !== undefined) {
+        const landing = await backend.pollOnlineReviewState({
+          repo,
+          prUrl,
+          pollCount,
+        });
+        const defaultBots = {
+          coderabbit: { state: "complete" as const, findingCount: 0 },
+          sourcery: { state: "complete" as const, findingCount: 0 },
+          codex: { state: "complete" as const, findingCount: 0 },
+          gemini: { state: "complete" as const, findingCount: 0 },
+        };
+        return {
+          repo,
+          prNumber: 0,
+          prUrl: landing.prUrl,
+          headOid: landing.headOid,
+          pollCount,
+          bots: (landing.bots ?? defaultBots) as PrReviewSnapshot["bots"],
+          threads: landing.threads.map((t) => ({
+            id: t.id,
+            threadNodeId: t.threadNodeId ?? t.id,
+            path: t.path,
+            line: t.line,
+            body: t.body,
+            authorLogin: t.authorLogin ?? "unknown",
+            isResolved: t.isResolved,
+            headOid: t.headOid,
+          })),
+          checkRuns: landing.checkRuns ?? [],
+          totalFindingCount: landing.totalFindingCount,
+          quiescent: landing.quiescent,
+          roundTriggerUsed: buildRoundTrigger(
+            landing.headOid,
+            "1970-01-01T00:00:00.000Z",
+          ),
+          checkRunsEmptyMeans: "converged",
+        };
+      }
+      return offlinePrReviewSnapshot({
+        repo,
+        prUrl,
+        headOid:
+          lastOnlineReviewFixCommitSha ??
+          ship.prHead ??
+          "offline-review-head",
+        pollCount,
+      });
+    }
+    // Resume gap: S7 ledger may lack prHead (pre-R17). Prefer live PR head so
+    // round-1 trigger does not use the offline sentinel and re-anchor away from
+    // the ship ledger timestamp (R17 Codex P2).
+    let shipPrHead = ship.prHead;
+    if (!isFilledString(shipPrHead) && isFilledString(ship.pr)) {
+      try {
+        const { prNumber } = parsePrRef(ship.pr, repo);
+        const raw = ghSh("gh", [
+          "api",
+          `repos/${repo}/pulls/${prNumber}`,
+          "--jq",
+          ".head.sha",
+        ]);
+        const live = raw.trim();
+        if (live.length > 0) shipPrHead = live;
+      } catch {
+        // leave undefined — resolve falls back to offline sentinel only if needed
+      }
+    }
+    const roundTrigger = resolveOnlineReviewRoundTrigger({
+      onlineReviewRound,
+      persistedRoundTrigger: lastOnlineReviewRoundTrigger,
+      pendingRetriggerFromFixGap:
+        lastOnlineReviewPendingRoundTrigger ??
+        slicePendingRoundTriggerFromFixGap(ledger),
+      fixCommitSha: lastOnlineReviewFixCommitSha,
+      shipPrHead,
+      shipLedgerTriggeredAt: shipLedgerTriggeredAtFromSliceLedger(ledger),
+    });
+    const snapshot = await waitForBotQuiescence(ghSh, {
+      repo,
+      prUrl,
+      roundTrigger,
+      clock:
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1"
+          ? immediateBotPollClock
+          : realBotPollClock,
+    });
+    // Persist the trigger actually used for evidence (may re-anchor on head drift).
+    lastOnlineReviewRoundTrigger = snapshot.roundTriggerUsed;
+    return snapshot;
+  }
 
   function seedClassificationFromReviewerOutput(
     reviewerOutput: StepOutput | undefined,
@@ -1992,6 +2286,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       stopSummary,
     });
 
+    const mirrorInMemoryLedgerTs = (step: StepId, ts: string): void => {
+      for (let i = ledger.length - 1; i >= 0; i--) {
+        if (ledger[i]!.step === step) {
+          ledger[i] = { ...ledger[i]!, ts };
+          break;
+        }
+      }
+    };
+
     if (stateDir === undefined) {
       // stateDir not yet known — buffer until S1 resolves the worktree path.
       pendingEntries.push(entry);
@@ -2002,10 +2305,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // each item ONLY AFTER its write succeeds.  If writeLedger rejects, the
     // remaining entries stay in the buffer — they are never silently dropped.
     while (pendingEntries.length > 0) {
-      await backend.writeLedger(pendingEntries[0]!, stateDir);
+      const buffered = pendingEntries[0]!;
+      await backend.writeLedger(buffered, stateDir);
       pendingEntries.shift();
+      mirrorInMemoryLedgerTs(buffered.step, buffered.ts);
     }
     await backend.writeLedger(entry, stateDir);
+    mirrorInMemoryLedgerTs(s, entry.ts);
   }
 
   /**
@@ -2326,6 +2632,87 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
+    for (const e of plan.priorLedger) {
+      if (e.step === "S7" && e.output?.kind === "ship") {
+        lastShipOutput = e.output;
+      }
+    }
+    // #600 r7: derive review-loop runtime from the FULL executable ledger before
+    // priorLedgerThroughLastShip drops superseded S9–S12 entries for display seed.
+    onlineReviewRound = onlineReviewRoundFromLedger(resumeLedger);
+    lastOnlineReviewFixCommitSha =
+      lastOnlineReviewFixCommitShaFromLedger(resumeLedger);
+    lastOnlineReviewRoundTrigger =
+      onlineReviewRoundTriggerFromLedger(resumeLedger);
+    lastOnlineReviewPendingRoundTrigger =
+      slicePendingRoundTriggerFromFixGap(resumeLedger);
+
+    const pendingGapRetrigger = lastOnlineReviewPendingRoundTrigger;
+    if (pendingGapRetrigger !== undefined && lastShipOutput?.pr != null) {
+      const resumeRepo = defaultRepo();
+      if (isLiveGithubReviewPollEnabled(lastShipOutput.pr, resumeRepo)) {
+        try {
+          const ensured = ensureOnlineReviewRetriggerAfterFixGap({
+            sh: ghSh,
+            repo: resumeRepo,
+            prUrl: lastShipOutput.pr,
+            gapTrigger: pendingGapRetrigger,
+          });
+          lastOnlineReviewRoundTrigger = ensured.roundTrigger;
+          lastOnlineReviewPendingRoundTrigger = undefined;
+          const retriggerMarker = {
+            step: "S10" as const,
+            event: "online_review_round_retrigger" as const,
+            roundTriggerHeadOid: ensured.roundTrigger.headOid,
+            roundTriggerAt: ensured.roundTrigger.triggeredAt,
+            onlineReviewRound,
+          };
+          ledger.push(retriggerMarker);
+          try {
+            await backend.writeLedger(
+              {
+                ...retriggerMarker,
+                sessionId,
+                prompt_hash: await hashPrompt(undefined, "S10", backend),
+                branchHEAD:
+                  lastOnlineReviewFixCommitSha ?? ensured.roundTrigger.headOid,
+                ts: new Date().toISOString(),
+              },
+              stateDir,
+            );
+          } catch (err) {
+            // Ledger write failed but gap may still be recoverable — park in-band.
+            return {
+              status: "escalate",
+              stepLedger: ledger,
+              stopSummary: {
+                reason: "infra_failure",
+                summary: `online review fix-gap retrigger marker persist failed: ${err instanceof Error ? err.message : String(err)}`,
+                repairHint:
+                  "re-feed the issue — fix-gap recovery will retry bot re-trigger persistence",
+              },
+              deferredFindings,
+            };
+          }
+        } catch (err) {
+          // Same-type as live S10 retrigger fail (R3 P1): do not S8(error) — leave
+          // pending gap for a later re-feed instead of stranding a fixed branch.
+          lastOnlineReviewPendingRoundTrigger = pendingGapRetrigger;
+          return {
+            status: "escalate",
+            stepLedger: ledger,
+            stopSummary: {
+              reason: "infra_failure",
+              summary: `online review fix-gap re-trigger failed on resume: ${err instanceof Error ? err.message : String(err)}`,
+              repairHint:
+                "re-feed the issue — fix-gap recovery will post the bot re-trigger and continue S9 verify",
+            },
+            deferredFindings,
+          };
+        }
+      }
+    }
+
     // ADR 0030: persisted S4 boundaries are the runner's closure truth. Resume
     // must replay the prior S4 adjudications, because an S6 reviewer may carry an
     // empty `findings[]` plus `still-active` dispositions for blockers inherited
@@ -2347,6 +2734,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const latestRepair = latestCoderRepair(plan.priorLedger);
     lastCoderRepairEvidence = latestRepair.repairEvidence;
     lastCoderActualRepairPaths = latestRepair.repairMovementPaths;
+
+    if (
+      plan.resumeStep === "S10" &&
+      lastShipOutput !== undefined &&
+      onlineReviewLanding === undefined
+    ) {
+      const reconstructed = reconstructOnlineReviewLandingForResume({
+        fullLedger: resumeLedger,
+        ship: lastShipOutput,
+        stateDir,
+        round: onlineReviewRound,
+      });
+      if (reconstructed?.onlineReviewSnapshot !== undefined) {
+        onlineReviewLanding = reconstructed;
+      }
+    }
 
     if (plan.terminalStatus !== undefined) {
       // The prior run already reached a terminal handoff that is NOT being
@@ -2634,12 +3037,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               //    crash (connection drop / container start), recovering a transient one;
               //    a persistent crash is re-thrown so the reviewer loop surfaces it.
               //
-              // Idempotency (#598): before any retry, reset the worktree's UNCOMMITTED
-              // git residue (`cleanResidue` = reset --hard HEAD + clean -fd) the crashed
-              // attempt may have left, so the fresh re-dispatch does not run on top of a
-              // dirty index / untracked junk. Committed progress on the resident branch
-              // HEAD is deliberately preserved (cleanResidue contract / ADR 0024 — it is
-              // the resume anchor). A worktree-less family worker has no local residue.
+              // Idempotency (#598, from main): before any retry, reset the worktree's
+              // UNCOMMITTED git residue (`cleanResidue` = reset --hard HEAD + clean -fd)
+              // the crashed attempt may have left, so the fresh re-dispatch does not run
+              // on top of a dirty index / untracked junk. Committed progress on the
+              // resident branch HEAD is deliberately preserved (cleanResidue contract /
+              // ADR 0024 — it is the resume anchor). A worktree-less family worker has
+              // no local residue.
               //
               // DEFERRED (#661, needs-design): a coder that COMMITTED a partial attempt
               // then crashed keeps that commit at HEAD, so the retry continues on it
@@ -2648,6 +3052,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // continuing on preserved progress is bounded (the reviewer catches broken
               // partial work) and is what ADR 0024 intends; whether a mechanical retry
               // should override that committed-preservation is a design decision.
+              //
+              // Note: S9 online-review verify uses a separate path with read-only
+              // contract_drift (no cleanResidue) — that intent is preserved there.
               const worktreeForReset = worktree;
               // #709 exemption: keep strict !== undefined (not != null) for reset wiring on retry path;
               // worktree is | undefined (never null in this scope), and the sentinel/omission in opts must
@@ -2868,7 +3275,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // `withMechanicalRetry` path the coder uses (#592 "no role treated specially"):
           // the structural no-output case retries, the judged-verdict case does not.
           // The worktree's uncommitted residue is reset before each retry (idempotency);
-          // gstack-ship's re-runnable design keeps push/PR idempotent.
+          // gstack-ship's re-runnable design keeps push/PR idempotent. (from main)
           const shipWorktree = worktree;
           // Mirror the coder/reviewer reset guard: only wire cleanResidue when a
           // worktree exists (a worktree-less worker has no local residue), so a retry
@@ -2949,7 +3356,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // shipped branch/status and (for pr_opened) the PR URL, plus the ship
           // worker's sessionId. Assign them so the delivery is recoverable from
           // resume truth and surfaced to the caller.
-          output = ship;
+          //
+          // R17 Codex P2: always persist prHead for online-review round-1 anchor.
+          // RealBackend ship envelope historically omits it; without it resume uses
+          // "offline-review-head" → live poll re-anchors and stales timestamp-only bots.
+          let shipWithHead = ship;
+          if (!isFilledString(ship.prHead)) {
+            const headOid = await resolveBranchHEAD();
+            if (isFilledString(headOid)) {
+              shipWithHead = { ...ship, prHead: headOid };
+            }
+          }
+          output = shipWithHead;
+          lastShipOutput = shipWithHead;
           stepSessionId = shipResult.sessionId;
         } catch (err) {
           // Push failure → S8(error) with branch head so dev can diagnose
@@ -2964,60 +3383,724 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       case "S10":
       case "S11":
       case "S12": {
-        // #596 review-loop skeleton: S9 verify → S10 fixer → S11 cleanup →
-        // S12 docRelease. Real bot-polling logic is out of scope; this slice
-        // only wires the dispatch seam and fail-closed output validation.
+        // #600 online review loop: bot poll → fresh verify → fixer → fresh verify
+        // (ADR 0061). S11/S12 remain stub workers until #603.
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
+        if (lastShipOutput === undefined || lastShipOutput.pr === undefined) {
+          return await errorTermination(
+            step,
+            new Error(
+              `${step} requires a prior S7 pr_opened ship output with a PR URL`,
+            ),
+          );
+        }
+        let reviewStep = step;
+        const reviewHeadKey =
+          onlineReviewResumeHeadKeyFromLedger(ledger) ??
+          convergenceHeadToRecord({
+            shipHead: lastShipOutput.prHead,
+            snapshotHead: onlineReviewLanding?.onlineReviewSnapshot?.headOid,
+            postFixHead: lastOnlineReviewFixCommitSha,
+          });
+        if (
+          reviewStep === "S9" &&
+          onlineReviewConvergedForHead(ledger, reviewHeadKey)
+        ) {
+          // Cursor R12 medium: prior converged marker ≠ current CI still green.
+          // Re-poll check-runs; stay on S9 if pending/failed so cleanup cannot
+          // run under a red or invisible CI state.
+          let ciStillAllowsSkip = true;
+          if (
+            isLiveGithubReviewPollEnabled(
+              lastShipOutput.pr,
+              defaultRepo(),
+            )
+          ) {
+            try {
+              const ghSh: (
+                file: string,
+                args: string[],
+              ) => string = (file, args) =>
+                execFileSync(file, args, {
+                  encoding: "utf8",
+                  stdio: ["ignore", "pipe", "pipe"],
+                }).trim();
+              const recheck = pollPrReviewState(ghSh, {
+                repo: defaultRepo(),
+                prUrl: lastShipOutput.pr,
+                pollCount: 0,
+                roundTrigger: buildRoundTrigger(
+                  reviewHeadKey ?? lastShipOutput.prHead ?? "resume-head",
+                  new Date().toISOString(),
+                ),
+              });
+              const emptyMeans = recheck.checkRunsEmptyMeans ?? "pending";
+              const gate = classifyCheckRuns(recheck.checkRuns, emptyMeans);
+              ciStillAllowsSkip = gate === "converged";
+            } catch {
+              ciStillAllowsSkip = false;
+            }
+          }
+          if (ciStillAllowsSkip) {
+            reviewStep = "S11";
+          }
+        }
         const reviewLoopSpec =
-          step === "S9"
+          reviewStep === "S9"
             ? verifyWorkerSpec(routePolicy.route)
-            : step === "S10"
+            : reviewStep === "S10"
               ? fixerWorkerSpec(routePolicy.route)
-              : step === "S11"
+              : reviewStep === "S11"
                 ? cleanupWorkerSpec(routePolicy.route)
                 : docReleaseWorkerSpec(routePolicy.route);
         promptFile = reviewLoopSpec.promptFile;
         try {
-          const result = await dispatchWorker(backend, reviewLoopSpec, {
+          if (reviewStep === "S9") {
+            const snapshot = await pollOnlineReviewForShip(
+              lastShipOutput,
+              onlineReviewRound,
+            );
+            if (stateDir !== undefined) {
+              writeOnlineReviewSnapshotFile(stateDir, snapshot);
+            }
+            onlineReviewLanding = buildOnlineReviewLanding(
+              snapshot,
+              lastShipOutput,
+              onlineReviewRound,
+            );
+          }
+          const reviewCtx = {
             worktree,
             stateDir,
-          });
-          if (result.kind !== "completed") {
+            repo: defaultRepo(),
+            prUrl: lastShipOutput.pr,
+            prHead:
+              onlineReviewLanding?.shipDelivery?.prHead ?? lastShipOutput.prHead,
+            onlineReviewRound,
+          };
+          const headBefore =
+            reviewStep === "S9" ? await resolveBranchHEAD() : undefined;
+          const porcelainBefore =
+            reviewStep === "S9" && worktree != null
+              ? worktreePorcelainFingerprint(
+                  gitOutputLines(worktree, ["status", "--porcelain"]),
+                )
+              : undefined;
+          const assertVerifyReadOnlyContract = async (): Promise<void> => {
+            if (reviewStep !== "S9" || headBefore === undefined) return;
+            const headAfterAttempt = await resolveBranchHEAD();
+            const porcelainAfter =
+              worktree != null
+                ? worktreePorcelainFingerprint(
+                    gitOutputLines(worktree, ["status", "--porcelain"]),
+                  )
+                : "";
+            const drift = verifyReadOnlyWorktreeDrift({
+              headBefore,
+              headAfter: headAfterAttempt,
+              porcelainBefore: porcelainBefore ?? "",
+              porcelainAfter,
+            });
+            if (drift === "head") {
+              throw new VerifyWorkerHeadMovedError(headBefore, headAfterAttempt);
+            }
+            if (drift === "worktree") {
+              throw new VerifyWorkerWorktreeDirtyError(
+                porcelainBefore ?? "",
+                porcelainAfter,
+              );
+            }
+          };
+          const reviewResetOpt: MechanicalRetryOptions =
+            reviewStep === "S9"
+              ? {
+                  callerOwns: (o) =>
+                    "kind" in o &&
+                    o.kind === "thrown" &&
+                    (o.error instanceof VerifyWorkerHeadMovedError ||
+                      o.error instanceof VerifyWorkerWorktreeDirtyError),
+                  rethrowOnExhaustion: true,
+                }
+              : {};
+          if (
+            reviewStep === "S10" &&
+            (onlineReviewLanding === undefined ||
+              onlineReviewLanding.onlineReviewSnapshot === undefined)
+          ) {
             return await errorTermination(
-              step,
+              reviewStep,
               new Error(
-                `${step} worker returned ${result.kind}` +
+                `${reviewStep} requires a reconstructed online review landing with ` +
+                  "onlineReviewSnapshot — resume must rebuild from the full ledger " +
+                  "and persisted snapshot before dispatching the fixer",
+              ),
+            );
+          }
+          const fixerLanding =
+            reviewStep === "S10" && onlineReviewLanding !== undefined
+              ? {
+                  ...onlineReviewLanding,
+                  fixMarkedFindingIdentityKeys:
+                    onlineReviewLanding.fixMarkedFindingIdentityKeys ?? [],
+                }
+              : onlineReviewLanding;
+          let result: Awaited<ReturnType<typeof withMechanicalRetry>>;
+          try {
+            result = await withMechanicalRetry(
+              reviewLoopSpec,
+              reviewCtx,
+              async (s, c) => {
+                let dispatchError: unknown | undefined;
+                let workerResult: Awaited<ReturnType<typeof dispatchWorker>>;
+                try {
+                  workerResult = await dispatchWorker(
+                    backend,
+                    s,
+                    c,
+                    reviewStep === "S9" || reviewStep === "S10"
+                      ? fixerLanding
+                      : undefined,
+                  );
+                } catch (err) {
+                  dispatchError = err;
+                }
+                // Always assert (online R10 Codex P1): mutate-then-throw must
+                // surface contract_drift, not mechanical-retry on a dirty tree.
+                await assertVerifyReadOnlyContract();
+                if (dispatchError !== undefined) throw dispatchError;
+                return workerResult!;
+              },
+              reviewResetOpt,
+            );
+          } catch (err) {
+            if (err instanceof VerifyWorkerHeadMovedError) {
+              const stopSummary = verifyReviewerHeadMovedStopSummary({
+                headBefore: err.headBefore,
+                headAfter: err.headAfter,
+              });
+              return await errorTermination(reviewStep, err, { stopSummary });
+            }
+            if (err instanceof VerifyWorkerWorktreeDirtyError) {
+              const stopSummary = verifyReviewerWorktreeDirtyStopSummary({
+                trackedStatus: err.porcelainAfter
+                  .trim()
+                  .split(/\r?\n/)
+                  .filter((line) => line.length > 0),
+              });
+              return await errorTermination(reviewStep, err, { stopSummary });
+            }
+            throw err;
+          }
+          if (result.kind !== "completed") {
+            // Self-check twin of family verify/fixer (Cursor R11): preserve
+            // escalated payload as decision_gate_park, not a bare process error.
+            if (result.kind === "escalated") {
+              const summary = `${reviewStep} worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
+              return await errorTermination(reviewStep, new Error(summary), {
+                stopSummary: decisionGateParkStopSummary({
+                  summary,
+                  repairHint:
+                    "answer the decision gate / unstick the worker, then resume the online review loop",
+                }),
+              });
+            }
+            return await errorTermination(
+              reviewStep,
+              new Error(
+                `${reviewStep} worker returned ${result.kind}` +
                   ("reason" in result ? `: ${result.reason}` : ""),
               ),
             );
           }
           const outputValid =
-            (step === "S9" && isValidVerifyResult(result.output)) ||
-            (step === "S10" && isValidFixerResult(result.output)) ||
-            (step === "S11" && isValidCleanupResult(result.output)) ||
-            (step === "S12" && isValidDocReleaseResult(result.output));
+            (reviewStep === "S9" && isValidVerifyResult(result.output)) ||
+            (reviewStep === "S10" && isValidFixerResult(result.output)) ||
+            (reviewStep === "S11" && isValidCleanupResult(result.output)) ||
+            (reviewStep === "S12" && isValidDocReleaseResult(result.output));
           if (!outputValid) {
-            // Defensive: result.output may be nullish (malformed worker) even on
-            // "completed" — the isValid* guards already rejected it. Do not throw
-            // constructing the message; let errorTermination record the clean error.
             const badKind = (result.output as { kind?: unknown } | undefined | null)?.kind;
             return await errorTermination(
-              step,
+              reviewStep,
               new Error(
-                `${step} worker returned non-${step} output kind '${String(badKind)}'`,
+                `${reviewStep} worker returned non-${reviewStep} output kind '${String(badKind)}'`,
               ),
             );
           }
-          output = result.output;
+          if (reviewStep === "S9" && isValidVerifyResult(result.output)) {
+            let verifyOutput = clampVerifyConvergenceForCheckRuns(
+              result.output,
+              onlineReviewLanding?.onlineReviewSnapshot,
+            );
+            const recheckOutcome = enforceRunnerOwnedRecheck(
+              verifyOutput,
+              onlineReviewRound,
+            );
+            if (recheckOutcome.kind === "recheck_contradiction") {
+              return await errorTermination(
+                reviewStep,
+                new Error(
+                  "online review verify worker contradicted runner-owned recheck truth (isRecheck)",
+                ),
+                {
+                  output: verifyOutput,
+                  stopSummary: {
+                    reason: "infra_failure",
+                    summary:
+                      "online review verify worker contradicted runner-owned recheck truth (isRecheck)",
+                    repairHint:
+                      "omit isRecheck on round-1 verify; set isRecheck:true only on post-fixer re-check rounds",
+                  },
+                },
+              );
+            }
+            verifyOutput = recheckOutcome;
+            // Pending CI only: re-poll S9 — do not fixer, do not merge, do not
+            // apply "all clear" side effects (online R2 Codex P2).
+            // Bound re-entry: bots may already be quiescent so poll returns
+            // immediately — without a counter/sleep this hot-loops S9 forever
+            // while CI runs (online R4 Codex P1).
+            if (
+              verifyBlockedOnlyOnPendingCheckRuns(
+                verifyOutput,
+                onlineReviewLanding?.onlineReviewSnapshot,
+              )
+            ) {
+              pendingCiS9Polls += 1;
+              if (pendingCiS9Polls > BOT_OVERDUE_POLL_COUNT) {
+                // R20 Codex P2: park resumable at S9 — do not S8(error) terminal
+                // (re-feed after CI finishes must re-poll S9, not report old error).
+                output = verifyOutput;
+                step = reviewStep;
+                stepSessionId = result.sessionId;
+                lastOutput = verifyOutput;
+                ledger.push({
+                  step: "S9",
+                  output: verifyOutput,
+                  ...(result.sessionId !== undefined
+                    ? { sessionId: result.sessionId }
+                    : {}),
+                });
+                try {
+                  await emitLedger(
+                    "S9",
+                    verifyOutput,
+                    promptFile,
+                    undefined,
+                    result.sessionId,
+                  );
+                } catch (ledgerErr) {
+                  return await errorTermination("S9", ledgerErr, {
+                    recordInMemory: false,
+                    output: verifyOutput,
+                  });
+                }
+                const pendingHead =
+                  onlineReviewLanding?.onlineReviewSnapshot?.headOid ??
+                  lastOnlineReviewFixCommitSha ??
+                  lastShipOutput.prHead;
+                const pendingMarker = {
+                  step: "S9" as const,
+                  event: "online_review_ci_pending" as const,
+                  prUrl: lastShipOutput.pr,
+                  prHead: pendingHead,
+                  onlineReviewRound,
+                };
+                ledger.push(pendingMarker);
+                if (stateDir !== undefined) {
+                  try {
+                    await backend.writeLedger(
+                      {
+                        ...pendingMarker,
+                        sessionId,
+                        prompt_hash: await hashPrompt(promptFile, "S9", backend),
+                        branchHEAD: await resolveBranchHEAD(),
+                        ts: new Date().toISOString(),
+                      },
+                      stateDir,
+                    );
+                  } catch (err) {
+                    return await errorTermination("S9", err, {
+                      recordInMemory: false,
+                      output: verifyOutput,
+                    });
+                  }
+                }
+                return {
+                  status: "escalate",
+                  stepLedger: ledger,
+                  stopSummary: {
+                    reason: "infra_failure",
+                    summary:
+                      "online review verify is green but CI check-runs stayed non-terminal past the overdue poll window",
+                    repairHint:
+                      "wait for CI to complete (or fail) on the PR head, then re-feed — resume re-enters S9",
+                  },
+                  deferredFindings,
+                };
+              }
+              reenterS9ForPendingCi = true;
+              output = verifyOutput;
+              step = reviewStep;
+              stepSessionId = result.sessionId;
+              lastOutput = verifyOutput;
+              break;
+            }
+            pendingCiS9Polls = 0;
+            try {
+              await assertVerifyReadOnlyContract();
+            } catch (err) {
+              if (err instanceof VerifyWorkerHeadMovedError) {
+                const stopSummary = verifyReviewerHeadMovedStopSummary({
+                  headBefore: err.headBefore,
+                  headAfter: err.headAfter,
+                });
+                return await errorTermination(reviewStep, err, { stopSummary });
+              }
+              if (err instanceof VerifyWorkerWorktreeDirtyError) {
+                const stopSummary = verifyReviewerWorktreeDirtyStopSummary({
+                  trackedStatus: err.porcelainAfter
+                    .trim()
+                    .split(/\r?\n/)
+                    .filter((line) => line.length > 0),
+                });
+                return await errorTermination(reviewStep, err, { stopSummary });
+              }
+              throw err;
+            }
+            const headAfter = await resolveBranchHEAD();
+            let sideEffects: ReturnType<typeof applyVerifySideEffects>;
+            try {
+              sideEffects =
+                lastShipOutput.pr != null &&
+                isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
+                  ? applyVerifySideEffects({
+                      sh: ghSh,
+                      repo: reviewCtx.repo!,
+                      prUrl: lastShipOutput.pr,
+                      verify: verifyOutput,
+                      fixingCommitSha:
+                        onlineReviewRound > 1
+                          ? lastOnlineReviewFixCommitSha
+                          : undefined,
+                      landingThreads:
+                        onlineReviewLanding?.onlineReviewSnapshot?.threads,
+                    })
+                  : {
+                      deferredIssueUrls: [],
+                      repliesPosted: [],
+                      threadsResolved: [],
+                    };
+            } catch (err) {
+              return await errorTermination(reviewStep, err, {
+                output: verifyOutput,
+                stopSummary: verifySideEffectFailureStopSummary(err),
+              });
+            }
+            verifyOutput = {
+              ...verifyOutput,
+              ...(sideEffects.deferredIssueUrls.length > 0
+                ? { deferredIssueUrls: sideEffects.deferredIssueUrls }
+                : {}),
+            };
+            const fixKeys = fixMarkedKeysFromVerify(verifyOutput);
+            if (onlineReviewLanding !== undefined) {
+              onlineReviewLanding = {
+                ...onlineReviewLanding,
+                fixMarkedFindingIdentityKeys: fixKeys,
+              };
+            }
+            // Same-type as stage (R8 Gemini): CI red + no bot fix marks → park with
+            // CI failure summary, do not route to S10 fixer ("nothing to fix").
+            const s9Snap = onlineReviewLanding?.onlineReviewSnapshot;
+            const s9CheckRuns = s9Snap?.checkRuns ?? [];
+            const s9EmptyMeans = s9Snap?.checkRunsEmptyMeans ?? "converged";
+            if (
+              classifyCheckRuns(s9CheckRuns, s9EmptyMeans) === "failed" &&
+              fixKeys.length === 0
+            ) {
+              output = verifyOutput;
+              step = reviewStep;
+              stepSessionId = result.sessionId;
+              lastOutput = verifyOutput;
+              ledger.push({
+                step: "S9",
+                output: verifyOutput,
+                ...(result.sessionId !== undefined
+                  ? { sessionId: result.sessionId }
+                  : {}),
+              });
+              try {
+                await emitLedger(
+                  "S9",
+                  verifyOutput,
+                  promptFile,
+                  undefined,
+                  result.sessionId,
+                );
+              } catch (ledgerErr) {
+                return await errorTermination("S9", ledgerErr, {
+                  recordInMemory: false,
+                  output: verifyOutput,
+                });
+              }
+              // R18 Codex P2: durable marker so re-feed resumes at S9 (re-poll CI),
+              // not route(S9, converged:false) → S10 empty fixer.
+              const ciFailHead =
+                s9Snap?.headOid ??
+                lastOnlineReviewFixCommitSha ??
+                lastShipOutput.prHead ??
+                headAfter;
+              const ciFailMarker = {
+                step: "S9" as const,
+                event: "online_review_ci_failed" as const,
+                prUrl: lastShipOutput.pr,
+                prHead: ciFailHead,
+                onlineReviewRound,
+              };
+              ledger.push(ciFailMarker);
+              if (stateDir !== undefined) {
+                try {
+                  await backend.writeLedger(
+                    {
+                      ...ciFailMarker,
+                      sessionId,
+                      prompt_hash: await hashPrompt(promptFile, "S9", backend),
+                      branchHEAD: headAfter,
+                      ts: new Date().toISOString(),
+                    },
+                    stateDir,
+                  );
+                } catch (err) {
+                  return await errorTermination("S9", err, {
+                    recordInMemory: false,
+                    output: verifyOutput,
+                  });
+                }
+              }
+              return {
+                status: "escalate",
+                stepLedger: ledger,
+                stopSummary: {
+                  reason: "infra_failure",
+                  summary:
+                    "online review bots are clean but CI check-runs failed on the PR head",
+                  repairHint:
+                    "fix the CI failures on the PR head and re-feed — resume re-enters S9 (not S10 fixer)",
+                },
+                deferredFindings,
+              };
+            }
+            if (verifyOutput.converged && stateDir !== undefined) {
+              const markerHead = convergenceHeadToRecord({
+                shipHead: lastShipOutput.prHead,
+                snapshotHead:
+                  onlineReviewLanding?.onlineReviewSnapshot?.headOid,
+                postFixHead: lastOnlineReviewFixCommitSha,
+                branchHeadAfter: headAfter,
+              });
+              const marker = {
+                step: "S9" as const,
+                event: "online_review_converged" as const,
+                prUrl: lastShipOutput.pr!,
+                prHead: markerHead ?? headAfter,
+                onlineReviewRound,
+              };
+              ledger.push(marker);
+              try {
+                await backend.writeLedger(
+                  {
+                    step: "S9",
+                    event: "online_review_converged",
+                    prUrl: marker.prUrl,
+                    prHead: marker.prHead,
+                    onlineReviewRound,
+                    sessionId,
+                    prompt_hash: await hashPrompt(promptFile, "S9", backend),
+                    branchHEAD: headAfter,
+                    ts: new Date().toISOString(),
+                  },
+                  stateDir,
+                );
+              } catch (err) {
+                return await errorTermination(reviewStep, err, { recordInMemory: false });
+              }
+            }
+            output = verifyOutput;
+          } else {
+            output = result.output;
+          }
+          if (
+            reviewStep === "S10" &&
+            isValidFixerResult(result.output) &&
+            fixerProceedsToVerify(result.output)
+          ) {
+            lastOnlineReviewFixCommitSha = fixerEnvelopeFixCommitSha(result.output)!;
+            if (
+              lastShipOutput.pr != null &&
+              isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
+            ) {
+              const nextRound = onlineReviewRound + 1;
+              const fixCommittedMarker = {
+                step: "S10" as const,
+                event: "online_review_fix_committed" as const,
+                fixCommitSha: lastOnlineReviewFixCommitSha!,
+                onlineReviewRound,
+              };
+              ledger.push(fixCommittedMarker);
+              if (stateDir !== undefined) {
+                try {
+                  await backend.writeLedger(
+                    {
+                      ...fixCommittedMarker,
+                      sessionId,
+                      prompt_hash: await hashPrompt(promptFile, "S10", backend),
+                      branchHEAD: lastOnlineReviewFixCommitSha,
+                      ts: new Date().toISOString(),
+                    },
+                    stateDir,
+                  );
+                } catch (err) {
+                  return await errorTermination(reviewStep, err, {
+                    recordInMemory: false,
+                  });
+                }
+              }
+              // fix_committed is already durable. retriggerBotsAndPoll must not
+              // escape to S8(error) — that blocks fix-gap recovery on re-feed
+              // (online R3 Codex P1). Match stage retriggerAfterFix: in-band park
+              // with fix_committed gap left for ensureOnlineReviewRetriggerAfterFixGap.
+              try {
+                const retriggered = retriggerBotsAndPoll(
+                  ghSh,
+                  reviewCtx.repo!,
+                  lastShipOutput.pr,
+                  1,
+                  lastOnlineReviewFixCommitSha ??
+                    lastOnlineReviewRoundTrigger?.headOid ??
+                    lastShipOutput.prHead ??
+                    "offline-review-head",
+                );
+                lastOnlineReviewRoundTrigger = retriggered.roundTrigger;
+                lastOnlineReviewPendingRoundTrigger = undefined;
+                const retriggerMarker = {
+                  step: "S10" as const,
+                  event: "online_review_round_retrigger" as const,
+                  roundTriggerHeadOid: retriggered.roundTrigger.headOid,
+                  roundTriggerAt: retriggered.roundTrigger.triggeredAt,
+                  onlineReviewRound: nextRound,
+                };
+                ledger.push(retriggerMarker);
+                if (stateDir !== undefined) {
+                  try {
+                    await backend.writeLedger(
+                      {
+                        ...retriggerMarker,
+                        sessionId,
+                        prompt_hash: await hashPrompt(promptFile, "S10", backend),
+                        branchHEAD: lastOnlineReviewFixCommitSha,
+                        ts: new Date().toISOString(),
+                      },
+                      stateDir,
+                    );
+                  } catch (err) {
+                    // Codex R12 P2: marker-only write failure after bots already
+                    // re-triggered must park in-band (not S8 error). Unpaired /
+                    // partial gap remains recoverable on re-feed.
+                    const detail =
+                      err instanceof Error ? err.message : String(err);
+                    output = result.output;
+                    step = reviewStep;
+                    stepSessionId = result.sessionId;
+                    lastOutput = output;
+                    onlineReviewRound = nextRound;
+                    ledger.push({
+                      step: "S10",
+                      output: result.output,
+                      ...(result.sessionId !== undefined
+                        ? { sessionId: result.sessionId }
+                        : {}),
+                    });
+                    try {
+                      await emitLedger(
+                        "S10",
+                        result.output,
+                        promptFile,
+                        undefined,
+                        result.sessionId,
+                      );
+                    } catch (ledgerErr) {
+                      return await errorTermination("S10", ledgerErr, {
+                        recordInMemory: false,
+                        output: result.output,
+                      });
+                    }
+                    return {
+                      status: "escalate",
+                      stepLedger: ledger,
+                      stopSummary: {
+                        reason: "infra_failure",
+                        summary: `online review round-retrigger marker write failed after bots re-triggered: ${detail}`,
+                        repairHint:
+                          "re-feed the issue — fix-gap / resume will rebuild round trigger from markers and continue S9 verify",
+                      },
+                      deferredFindings,
+                    };
+                  }
+                }
+              } catch (err) {
+                // Leave unpaired fix_committed as a resumable gap (no S8 error).
+                lastOnlineReviewPendingRoundTrigger = buildRoundTrigger(
+                  lastOnlineReviewFixCommitSha!,
+                  new Date().toISOString(),
+                );
+                output = result.output;
+                step = reviewStep;
+                stepSessionId = result.sessionId;
+                lastOutput = output;
+                onlineReviewRound += 1;
+                // Push S10 success row then park in-band (escalate, not error).
+                ledger.push({
+                  step: "S10",
+                  output: result.output,
+                  ...(result.sessionId !== undefined
+                    ? { sessionId: result.sessionId }
+                    : {}),
+                });
+                try {
+                  await emitLedger(
+                    "S10",
+                    result.output,
+                    promptFile,
+                    undefined,
+                    result.sessionId,
+                  );
+                } catch (ledgerErr) {
+                  return await errorTermination("S10", ledgerErr, {
+                    recordInMemory: false,
+                    output: result.output,
+                  });
+                }
+                const detail =
+                  err instanceof Error ? err.message : String(err);
+                return {
+                  status: "escalate",
+                  stepLedger: ledger,
+                  stopSummary: {
+                    reason: "infra_failure",
+                    summary: `online review bot re-trigger failed after fix committed: ${detail}`,
+                    repairHint:
+                      "re-feed the issue — fix-gap recovery will post the bot re-trigger and continue S9 verify",
+                  },
+                  deferredFindings,
+                };
+              }
+            }
+            onlineReviewRound += 1;
+          }
+          step = reviewStep;
           stepSessionId = result.sessionId;
-          // Mirror the agent-step contract (lines above): route() is called with
-          // `lastOutput`, so each step whose route() case reads its output must
-          // publish it here. The S9–S12 route cases validate ctx.output against
-          // the verify/fixer/cleanup/docRelease schemas — without this assignment
-          // route() would re-validate the stale pre-S7 agent output and fail
-          // closed (#596).
           lastOutput = output;
         } catch (err) {
           return await errorTermination(step, err);
@@ -3036,6 +4119,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const never: never = step;
         throw new Error(`runner: step ${String(never)} not handled`);
       }
+    }
+
+    // Pending CI re-poll: stay on S9 without ledger/route advance (online R2 Codex P2).
+    // Shared delay with family stage (sleepPendingCiPollInterval).
+    if (reenterS9ForPendingCi) {
+      reenterS9ForPendingCi = false;
+      step = "S9";
+      await sleepPendingCiPollInterval();
+      continue;
     }
 
     const stepFindingDispositions =
@@ -3107,9 +4199,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ...(step === "S4"
         ? { pendingBlockingFindings }
         : {}),
+      ...(step === "S7"
+        ? {
+            shipStatus:
+              lastShipOutput?.status ??
+              (family?.noPush ? "pushed" : undefined),
+          }
+        : {}),
+      ...(step === "S9" || step === "S10"
+        ? { onlineReviewRound }
+        : {}),
     });
 
     if (decision.kind === "handoff") {
+      // Online-review decision terminals map to escalationKind:"failure" pending
+      // #604's A/B re-open channel (B-class summary + A-class kind pairing is deliberate).
       const handoffStopSummary: StopSummary =
         decision.status === "success"
           ? successSummaryForCurrentState({ deferredFindings, findingDispositions })
@@ -3119,12 +4223,30 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 reason: buildErrorReason(step, lastOutput),
                 branchHead: worktree?.branch,
               })
-            : stopSummaryForEscalation(
-                escalateOf(lastOutput) ?? {
-                  reason: "run escalated",
-                  diagnosis: `step ${step} routed to an escalate handoff`,
-                },
-              );
+            : decision.onlineReviewTerminal === "decision_gate_raised"
+              ? onlineReviewFixerNothingToFixStopSummary()
+              : decision.onlineReviewTerminal === "round_budget_exhausted"
+                ? {
+                    reason: "decision_gate_park",
+                    summary:
+                      "online review loop exhausted the 3-round budget (round_budget_exhausted) with remaining findings",
+                    repairHint:
+                      "answer the decision gate or defer remaining findings, then rerun",
+                  }
+                : decision.onlineReviewTerminal === "contract_drift"
+                  ? {
+                      reason: "contract_drift",
+                      summary:
+                        "online review verify worker moved HEAD (contract_drift)",
+                      repairHint:
+                        "restore the verify/fixer role boundary so verify leaves HEAD unchanged, then rerun the online review loop",
+                    }
+                  : stopSummaryForEscalation(
+                      escalateOf(lastOutput) ?? {
+                        reason: "run escalated",
+                        diagnosis: `step ${step} routed to an escalate handoff`,
+                      },
+                    );
       ledger.push({ step: "S8", stopSummary: handoffStopSummary });
       // #249: persist the S8 handoff entry too.
       // #6 / integ-cmr base r2 (E): a writeLedger failure on the S8 entry →

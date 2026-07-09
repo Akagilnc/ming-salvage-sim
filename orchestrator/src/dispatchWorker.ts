@@ -33,6 +33,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { offlineReviewLoopDispatchAdmissible } from "./evidenceAdmissibility.js";
 import { modelForSlot, type ResolvedModelRoute } from "./modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
 import type {
@@ -52,6 +53,7 @@ import type {
 
 const FIX_FINDINGS_LANDING_FILE = ".orchestrator-fix-findings.json";
 const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
+const ONLINE_REVIEW_LANDING_FILE = ".orchestrator-online-review.json";
 
 /**
  * The wiki skill each worker kind invokes (ADR 0026):
@@ -124,6 +126,74 @@ function ensureGitExcluded(worktreePath: string, pattern: string): void {
     // Best effort only: the file is still useful to the worker even if this is
     // a non-git fixture path. Real git worktrees get the exclude entry.
   }
+}
+
+function writeOnlineReviewLandingFile(
+  spec: WorkerSpec,
+  ctx: DispatchContext,
+  landing?: WorkerLandingPayload,
+): (FixFindingsLandingFile & { cleanup: boolean }) | undefined {
+  const needsLanding =
+    (spec.kind === "verify" || spec.kind === "fixer") &&
+    landing?.onlineReviewSnapshot !== undefined;
+  if (!needsLanding) {
+    return undefined;
+  }
+  if (ctx.worktree === undefined) {
+    throw new Error(
+      `${spec.kind} worker requires a worktree to mount the online review landing file`,
+    );
+  }
+  if (!existsSync(ctx.worktree.path)) {
+    throw new Error(
+      `${spec.kind} worker online review landing worktree missing: ${ctx.worktree.path}`,
+    );
+  }
+
+  const landingPath =
+    ctx.stateDir !== undefined
+      ? join(ctx.stateDir, "online-review-landing.json")
+      : join(ctx.worktree.path, ONLINE_REVIEW_LANDING_FILE);
+  try {
+    if (ctx.stateDir !== undefined) {
+      mkdirSync(ctx.stateDir, { recursive: true });
+    } else {
+      ensureGitExcluded(ctx.worktree.path, ONLINE_REVIEW_LANDING_FILE);
+    }
+  } catch (err) {
+    throw new Error(
+      `${spec.kind} worker failed to prepare online review landing directory: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+  try {
+    writeFileSync(
+      landingPath,
+      `${JSON.stringify(
+        {
+          onlineReviewSnapshot: landing.onlineReviewSnapshot,
+          shipDelivery: landing.shipDelivery,
+          onlineReviewRound: landing.onlineReviewRound ?? ctx.onlineReviewRound,
+          fixMarkedFindingIdentityKeys: landing.fixMarkedFindingIdentityKeys ?? [],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+  } catch (err) {
+    throw new Error(
+      `${spec.kind} worker failed to write online review landing file: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+  return {
+    path: landingPath,
+    sandboxPath: ONLINE_REVIEW_LANDING_FILE,
+    cleanup: ctx.stateDir === undefined,
+  };
 }
 
 function writeFixFindingsLandingFile(
@@ -374,30 +444,46 @@ export async function legacyDispatchWorker(
     };
   }
 
-  // #596 skeleton: when the backend has no real review-loop implementation, the
-  // legacy path returns deterministic `completed` stubs so the runner can still
-  // exercise S9–S12 end-to-end. Real workers will override via the unified
-  // `dispatchWorker` seam. The shared resolver is the SINGLE source of the stub
-  // verdicts (single-slice + family + spy backends all use it).
-  const skeletonResult = skeletonReviewLoopWorkerResult(spec.kind);
-  if (skeletonResult !== undefined) {
-    return skeletonResult;
+  // S11/S12 remain deterministic stubs until #603 (cleanup.md / docRelease.md +
+  // soul files are #603 deliverables). Never reach runStep / prompt resolution.
+  if (spec.kind === "cleanup" || spec.kind === "docRelease") {
+    const stub = skeletonReviewLoopWorkerResult(spec.kind);
+    if (stub !== undefined) {
+      return stub;
+    }
   }
 
-  // FAIL-CLOSED on the worker kind (online review r1, 3 bots): only the legacy
-  // AGENT workers (coder/reviewer) belong on the `runStep`/`resumeSession` path
-  // below. `cmr`/`merge` are family-only worker kinds with NO legacy backend
-  // method — if such a spec reached this public seam it would be silently
-  // mis-dispatched as a coder/reviewer StepSpec (workerSpecToStepSpec drops
-  // kind/skill, so a cmr review would run as a plain reviewer step). Reject it
-  // explicitly rather than coerce. (`ship` is handled above; review-loop stubs
-  // are handled just above.)
-  if (spec.kind !== "coder" && spec.kind !== "reviewer") {
+  // #596 skeleton: explicit offline/test contexts only when the backend has no
+  // `dispatchWorker` seam (#600 r5 — mirror family legacy gate; live paths must
+  // fail closed instead of synthesizing convergence).
+  const skeletonResult = skeletonReviewLoopWorkerResult(spec.kind);
+  if (skeletonResult !== undefined && backend.dispatchWorker === undefined) {
+    if (offlineReviewLoopDispatchAdmissible(ctx)) {
+      return skeletonResult;
+    }
+    return {
+      kind: "failed",
+      reason:
+        `${spec.kind} worker unavailable: no dispatchWorker seam and ` +
+        `offline skeleton synthesis inadmissible for PR ${ctx.prUrl ?? "(missing)"}`,
+    };
+  }
+
+  // FAIL-CLOSED on the worker kind (online review r1, 3 bots): only agent +
+  // review-loop workers belong on the `runStep`/`resumeSession` path below.
+  const runStepKinds = new Set<WorkerKind>([
+    "coder",
+    "reviewer",
+    "verify",
+    "fixer",
+  ]);
+  if (!runStepKinds.has(spec.kind)) {
     throw new Error(
       `legacyDispatchWorker: worker kind '${spec.kind}' (${spec.id}) has no legacy ` +
-        `dispatch path — only coder/reviewer (agent), ship, and the #596 ` +
-        `review-loop stubs are forwarded. A cmr/merge worker must go through a ` +
-        `backend implementing the unified dispatchWorker seam.`,
+        `dispatch path — only coder/reviewer/verify/fixer (agent), ship, and the ` +
+        `#596 review-loop stubs (cleanup/docRelease until #603) are forwarded. A ` +
+        `cmr/merge worker must go through a backend implementing the unified ` +
+        `dispatchWorker seam.`,
     );
   }
   // coder / reviewer agent worker → runStep | resumeSession (legacy seam).
@@ -409,6 +495,18 @@ export async function legacyDispatchWorker(
   const stepSpec = workerSpecToStepSpec(spec);
   let ret: StepOutput | StepResult;
   const fixFindingsLanding = writeFixFindingsLandingFile(spec, ctx, landing);
+  let onlineReviewLanding;
+  try {
+    onlineReviewLanding = writeOnlineReviewLandingFile(spec, ctx, landing);
+  } catch (err) {
+    if (fixFindingsLanding?.cleanup) {
+      rmSync(fixFindingsLanding.path, { force: true });
+    }
+    return {
+      kind: "failed",
+      reason: err instanceof Error ? err.message : String(err),
+    };
+  }
   const fixFindingsOptions =
     fixFindingsLanding !== undefined
       ? {
@@ -418,11 +516,23 @@ export async function legacyDispatchWorker(
           },
         }
       : undefined;
+  const onlineReviewOptions =
+    onlineReviewLanding !== undefined
+      ? {
+          onlineReviewLanding: {
+            path: onlineReviewLanding.path,
+            sandboxPath: onlineReviewLanding.sandboxPath,
+          },
+        }
+      : undefined;
   const outcomeLanding = writeWorkerOutcomeLandingFile(spec, ctx);
   const runOptions =
-    fixFindingsOptions !== undefined || outcomeLanding !== undefined
+    fixFindingsOptions !== undefined ||
+    onlineReviewOptions !== undefined ||
+    outcomeLanding !== undefined
       ? {
           ...(fixFindingsOptions ?? {}),
+          ...(onlineReviewOptions ?? {}),
           ...(outcomeLanding !== undefined ? { outcomeLanding } : {}),
         }
       : undefined;
@@ -448,6 +558,9 @@ export async function legacyDispatchWorker(
   } finally {
     if (fixFindingsLanding?.cleanup) {
       rmSync(fixFindingsLanding.path, { force: true });
+    }
+    if (onlineReviewLanding?.cleanup) {
+      rmSync(onlineReviewLanding.path, { force: true });
     }
   }
   const { output, sessionId } = normalizeStepReturn(ret);
