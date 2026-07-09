@@ -32,10 +32,18 @@ export const BOT_OVERDUE_POLL_COUNT = 5;
 
 /**
  * Manual re-trigger comment posted for Sourcery / Codex / Gemini after a fix push.
- * Contract: wiki/concepts/pr-review-loop.md (authoritative per ADR 0061).
+ * Wiki contract (ADR 0061): three @mentions. Also post `/gemini review` — current
+ * Gemini Code Assist docs accept the slash form; @-only can miss the leg (Codex R12 P2).
  */
 export const BOT_RETRIGGER_COMMENT =
-  "@sourcery-ai review\n@codex review\n@gemini-code-assist please review";
+  "@sourcery-ai review\n@codex review\n@gemini-code-assist please review\n/gemini review";
+
+/** Core wiki lines that identify a re-trigger (old 3-line + new 4-line bodies). */
+const BOT_RETRIGGER_REQUIRED_LINES = [
+  "@sourcery-ai review",
+  "@codex review",
+  "@gemini-code-assist please review",
+] as const;
 
 /**
  * GitHub reaction `content` values that signal bot completion/ack — not actionable
@@ -861,14 +869,15 @@ export function pollPrReviewState(
 type RetriggerIssueComment = {
   readonly body?: string;
   readonly created_at?: string;
+  readonly updated_at?: string;
 };
 
 /** True when an issue-comment body matches the manual R2/R3 re-trigger contract. */
 export function isBotRetriggerCommentBody(body: string): boolean {
   const trimmed = body.trim();
   if (trimmed === BOT_RETRIGGER_COMMENT.trim()) return true;
-  const requiredLines = BOT_RETRIGGER_COMMENT.split("\n").map((line) => line.trim());
-  return requiredLines.every((line) => trimmed.includes(line));
+  // Accept wiki 3-line bodies and 4-line bodies that add `/gemini review`.
+  return BOT_RETRIGGER_REQUIRED_LINES.every((line) => trimmed.includes(line));
 }
 
 /**
@@ -903,10 +912,13 @@ export function findAdmissibleRetriggerComment(
     sh,
     `repos/${repo}/issues/${prNumber}/comments`,
   ) as RetriggerIssueComment[];
+  // Prefer the chronologically latest admissible re-trigger (Cursor R12 medium) —
+  // API order is not guaranteed newest-first; first-match can pin a stale window.
+  let latest: { readonly headOid: string; readonly timestamp: string } | undefined;
   for (const comment of issueComments) {
     const body = comment.body ?? "";
     if (!isBotRetriggerCommentBody(body)) continue;
-    const timestamp = comment.created_at;
+    const timestamp = artifactTimestamp(comment);
     if (timestamp === undefined || timestamp.length === 0) continue;
     if (
       !evidenceAdmissible(
@@ -921,9 +933,24 @@ export function findAdmissibleRetriggerComment(
     ) {
       continue;
     }
-    return buildRoundTrigger(headProbe.headOid, timestamp);
+    if (latest === undefined) {
+      latest = { headOid: headProbe.headOid, timestamp };
+      continue;
+    }
+    const candMs = Date.parse(timestamp);
+    const latestMs = Date.parse(latest.timestamp);
+    if (
+      Number.isFinite(candMs) &&
+      Number.isFinite(latestMs) &&
+      candMs >= latestMs
+    ) {
+      latest = { headOid: headProbe.headOid, timestamp };
+    } else if (Number.isFinite(candMs) && !Number.isFinite(latestMs)) {
+      latest = { headOid: headProbe.headOid, timestamp };
+    }
   }
-  return undefined;
+  if (latest === undefined) return undefined;
+  return buildRoundTrigger(latest.headOid, latest.timestamp);
 }
 
 /** Post the manual R2/R3 re-trigger comment for Sourcery / Codex / Gemini. */

@@ -1418,19 +1418,35 @@ async function readRequiredFamilyHead(
   }
 }
 
-/** Re-read live family HEAD and key the convergence/abort marker via {@link convergenceHeadToRecord}. */
+/**
+ * Re-read live family HEAD and key the convergence/abort marker via
+ * {@link convergenceHeadToRecord}. Prefer an explicit post-fix SHA (ledger /
+ * loop) when the live head reader is missing or returns the pre-fix ship head
+ * (Cursor R12 medium).
+ */
 async function familyConvergenceMarkerHead(
   familyBackend: FamilyBackend,
   familyBase: string,
   shipHead: string,
+  knownPostFixHead?: string,
 ): Promise<string> {
   const liveHead = await readRequiredFamilyHead(familyBackend, familyBase);
+  const postFixHead =
+    knownPostFixHead !== undefined &&
+    knownPostFixHead.length > 0 &&
+    knownPostFixHead !== shipHead
+      ? knownPostFixHead
+      : liveHead !== undefined && liveHead !== shipHead
+        ? liveHead
+        : undefined;
   return (
     convergenceHeadToRecord({
       shipHead,
-      postFixHead:
-        liveHead !== undefined && liveHead !== shipHead ? liveHead : undefined,
-    }) ?? liveHead ?? shipHead
+      postFixHead,
+    }) ??
+    liveHead ??
+    knownPostFixHead ??
+    shipHead
   );
 }
 
@@ -3071,6 +3087,9 @@ export async function runVerifyCmr(
     },
     resolvedRoute,
   });
+  const familyLedgerForHead = await familyBackend.readFamilyLedger();
+  const knownPostFixHead =
+    lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedgerForHead);
   if (!reviewLoop.ok) {
     const stopSummary = familyOnlineReviewLoopFailureStopSummary(reviewLoop);
     const reason = stopSummary.summary;
@@ -3078,6 +3097,7 @@ export async function runVerifyCmr(
       familyBackend,
       familyBase,
       exactPostShipFamilyHead,
+      knownPostFixHead,
     );
     await familyBackend.recordAborted?.({
       phase,
@@ -3098,6 +3118,7 @@ export async function runVerifyCmr(
     familyBackend,
     familyBase,
     exactPostShipFamilyHead,
+    knownPostFixHead,
   );
   await recordReviewLoopConverged(familyBackend, {
     pr: ship.pr,
