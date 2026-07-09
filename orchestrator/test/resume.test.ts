@@ -2465,6 +2465,96 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(resumeBackend.dispatchSpecs.map((s) => s.id)).toEqual(["S11"]);
     expect(refeed.status).not.toBe("error");
   });
+
+  it("#735 US13: S12 released:false parks resumable (re-feed re-dispatches S12, not sticky S8 error)", async () => {
+    const convergedHead = "deadbeefcommitsha";
+    const prior: PersistentLedgerEntry[] = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+        prHead: convergedHead,
+      }),
+      {
+        ...entry("S9", { kind: "verify", converged: true }),
+        event: "online_review_converged",
+        prUrl: "pr://slice/offline-255",
+        prHead: convergedHead,
+        onlineReviewRound: 1,
+      },
+    ];
+
+    class FailedDocReleaseBackend extends DispatchRecordingResumeBackend {
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "docRelease") {
+          this.dispatchSpecs.push(spec);
+          this.dispatchContexts.push(ctx);
+          this.dispatchLandings.push(landing);
+          return {
+            kind: "completed",
+            output: { kind: "docRelease", released: false },
+          };
+        }
+        return super.dispatchWorker(spec, ctx, landing);
+      }
+    }
+
+    const backend = new FailedDocReleaseBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const parked = await runOrchestrator({ issueNumber: 255, backend });
+    expect(parked.status).toBe("escalate");
+    expect(parked.status).not.toBe("error");
+    expect(backend.dispatchSpecs.map((s) => s.id)).toEqual(["S12"]);
+    expect(
+      parked.stepLedger.some(
+        (e) => e.step === "S8" && (e as { handoffStatus?: string }).handoffStatus === "error",
+      ),
+    ).toBe(false);
+    expect(
+      parked.stepLedger.some(
+        (e) =>
+          e.step === "S12" &&
+          e.output?.kind === "docRelease" &&
+          e.output.released === false,
+      ),
+    ).toBe(true);
+    expect(parked.stopSummary?.repairHint ?? "").toMatch(/S12|doc-?release|文档发布/i);
+
+    // Re-feed from a parked ledger ending at S12 released:false — must re-dispatch
+    // docRelease, not report a sticky terminal S8(error) from route(S12, !released).
+    const parkedPrior: PersistentLedgerEntry[] = [
+      ...prior,
+      entry(
+        "S12",
+        { kind: "docRelease", released: false },
+        "session-prior",
+        convergedHead,
+      ),
+    ];
+    const resumeBackend = new FailedDocReleaseBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: parkedPrior,
+    });
+    const refeed = await runOrchestrator({ issueNumber: 255, backend: resumeBackend });
+    expect(refeed.status).toBe("escalate");
+    expect(refeed.status).not.toBe("error");
+    expect(resumeBackend.dispatchSpecs.map((s) => s.id)).toEqual(["S12"]);
+  });
 });
 
 // ─── C-1 (integ-cmr int-r1): S7 SHIP escalate-resume re-dispatches the ship worker
