@@ -2263,7 +2263,11 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
   });
 });
 
-/** Mirrors S9 production: drift guard runs only after a non-crash return. */
+/**
+ * Mirrors S9 production (online R10 Codex P1): read-only drift guard runs after
+ * every attempt — including throws — so a mutate-then-crash path surfaces as
+ * contract_drift instead of retrying on a dirty worktree.
+ */
 async function dispatchVerifyWithPerAttemptDriftGuard(
   dispatch: () => Promise<WorkerResult>,
   assertContract: () => Promise<void>,
@@ -2280,9 +2284,9 @@ async function dispatchVerifyWithPerAttemptDriftGuard(
       } catch (err) {
         dispatchError = err;
       }
-      if (dispatchError === undefined) {
-        await assertContract();
-      }
+      // Always assert — prefer contract_drift over rethrowing a process throw
+      // that left HEAD/worktree mutated (Codex R10 P1, verified against runner).
+      await assertContract();
       if (dispatchError !== undefined) throw dispatchError;
       return workerResult!;
     },
@@ -2383,7 +2387,7 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
     expect(result.reason).toContain("after 3 dispatch attempts");
   });
 
-  it("pin r37: verify that mutates HEAD then throws retries on current state (not terminal on first throw)", async () => {
+  it("pin r10: verify that mutates HEAD then throws surfaces contract_drift (no retry on dirty tree)", async () => {
     const { VerifyWorkerHeadMovedError } = await import(
       "../src/onlineReviewLoop.js"
     );
@@ -2404,22 +2408,19 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
     const result = await dispatchVerifyWithPerAttemptDriftGuard(
       async () => {
         attempts += 1;
-        if (attempts === 1) {
-          head = "head-after-mutation";
-        }
+        head = "head-after-mutation";
         throw new Error("verify worker threw on startup");
       },
       assertContract,
       (o) =>
         o.kind === "thrown" && o.error instanceof VerifyWorkerHeadMovedError,
     ).catch((err) => err);
-    expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(attempts).toBe(1);
     expect(head).toBe("head-after-mutation");
-    expect(result).toBeInstanceOf(Error);
-    expect((result as Error).message).toContain("verify worker threw on startup");
+    expect(result).toBeInstanceOf(VerifyWorkerHeadMovedError);
   });
 
-  it("pin r37: verify that dirties tracked worktree then throws retries on current state (not terminal on first throw)", async () => {
+  it("pin r10: verify that dirties tracked worktree then throws surfaces contract_drift (no retry on dirty tree)", async () => {
     const { VerifyWorkerWorktreeDirtyError } = await import(
       "../src/onlineReviewLoop.js"
     );
@@ -2439,9 +2440,7 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
     const result = await dispatchVerifyWithPerAttemptDriftGuard(
       async () => {
         attempts += 1;
-        if (attempts === 1) {
-          porcelainAfter = " M orchestrator/src/foo.ts";
-        }
+        porcelainAfter = " M orchestrator/src/foo.ts";
         throw new Error("verify worker threw on startup");
       },
       assertContract,
@@ -2449,10 +2448,9 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
         o.kind === "thrown" &&
         o.error instanceof VerifyWorkerWorktreeDirtyError,
     ).catch((err) => err);
-    expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(attempts).toBe(1);
     expect(porcelainAfter).toBe(" M orchestrator/src/foo.ts");
-    expect(result).toBeInstanceOf(Error);
-    expect((result as Error).message).toContain("verify worker threw on startup");
+    expect(result).toBeInstanceOf(VerifyWorkerWorktreeDirtyError);
   });
 
   it("pin r37: verify that throws transient error without mutation still retries fresh (#598)", async () => {
@@ -2755,6 +2753,33 @@ describe("#600 r4 central evidence admissibility gate", () => {
         triggerZ,
       ),
     ).toBe("stale");
+  });
+
+  it("pin r10: GitHub second-precision bot timestamp in trigger second is fresh", () => {
+    // trigger captured with ms; GH reaction/comment created_at is second-truncated
+    // to the same wall second → must not be stale (Codex R10 P2, verified).
+    const triggerMs = buildRoundTrigger("head-a", "2026-07-08T10:00:00.900Z");
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: "2026-07-08T10:00:00Z" },
+        "head-a",
+        triggerMs,
+      ),
+    ).toBe("fresh_live");
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: "2026-07-08T09:59:59Z" },
+        "head-a",
+        triggerMs,
+      ),
+    ).toBe("stale");
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: "2026-07-08T10:00:01Z" },
+        "head-a",
+        triggerMs,
+      ),
+    ).toBe("fresh_live");
   });
 
   it("pin r15: unparseable timestamp → stale (fail-closed)", () => {
@@ -5089,7 +5114,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("pin r37: family verify that mutates HEAD then throws retries on current state (not terminal on first throw)", async () => {
+  it("pin r10: family verify that mutates HEAD then throws surfaces contract_drift (no retry on dirty tree)", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     try {
@@ -5098,6 +5123,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
       const backend = new ReviewLoopFamilyBackend();
       backend.readFamilyHead = async () => {
         headReadCount += 1;
+        // attempt N: before=read1, after throw assert=read2 → head moved
         return headReadCount === 1 ? "head-before" : "head-after";
       };
       backend.dispatchWorker = async (spec) => {
@@ -5113,11 +5139,15 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         familyBase: "family/r7",
         ship: offlineShip,
       });
-      expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
+      expect(attempts).toBe(1);
       expect(result).toEqual({
         ok: false,
-        terminalState: "decision_gate_raised",
+        terminalState: "contract_drift",
         round: 1,
+        stopSummary: expect.objectContaining({
+          reason: "contract_drift",
+          summary: expect.stringContaining("verify worker moved HEAD"),
+        }),
       });
     } finally {
       if (prev === undefined) {
@@ -5128,7 +5158,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("pin r37: family verify that dirties tracked worktree then throws retries on current state (not terminal on first throw)", async () => {
+  it("pin r10: family verify that dirties tracked worktree then throws surfaces contract_drift (no retry on dirty tree)", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     try {
@@ -5140,9 +5170,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
       backend.dispatchWorker = async (spec) => {
         if (spec.kind === "verify") {
           attempts += 1;
-          if (attempts === 1) {
-            trackedStatus = [" M orchestrator/src/foo.ts"];
-          }
+          trackedStatus = [" M orchestrator/src/foo.ts"];
           throw new Error("verify worker threw on startup");
         }
         const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
@@ -5153,11 +5181,15 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         familyBase: "family/r7",
         ship: offlineShip,
       });
-      expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
+      expect(attempts).toBe(1);
       expect(result).toEqual({
         ok: false,
-        terminalState: "decision_gate_raised",
+        terminalState: "contract_drift",
         round: 1,
+        stopSummary: expect.objectContaining({
+          reason: "contract_drift",
+          summary: expect.stringContaining("tracked worktree changes"),
+        }),
       });
     } finally {
       if (prev === undefined) {
