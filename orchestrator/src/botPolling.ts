@@ -26,9 +26,13 @@ export const ONLINE_REVIEW_BOT_IDS = [
 
 export type OnlineReviewBotId = (typeof ONLINE_REVIEW_BOT_IDS)[number];
 
-/** ~2-minute poll cadence; ~5 polls ≈ 10-minute overdue window before a bot is dropped. */
+/**
+ * ~2-minute poll cadence. Overdue poll count must cover a **≥15 min** Codex body
+ * window (R15 Codex P1 / ops reality: eyes can arrive in seconds, body often
+ * 9–13+ min). 8 × 2 min = 16 min before a quiet leg is dropped.
+ */
 export const BOT_POLL_INTERVAL_MS = 120_000;
-export const BOT_OVERDUE_POLL_COUNT = 5;
+export const BOT_OVERDUE_POLL_COUNT = 8;
 
 /**
  * Manual re-trigger comment posted for Sourcery / Codex / Gemini after a fix push.
