@@ -2202,9 +2202,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       prUrl,
       convergedHeadOid,
       docReleaseCompleted: true,
-      priorConvergenceRecorded:
-        onlineReviewConvergedForHead(ledger, convergedHeadOid) ||
-        sliceDocReleaseCompleted(ledger),
+      priorConvergenceRecorded: onlineReviewConvergedForHead(
+        ledger,
+        convergedHeadOid,
+      ),
       prMergedMarkerPresent: slicePrMergedMarkerPresent(ledger, convergedHeadOid),
       offlineSynthetic: !livePoll,
       poll: async (round) => {
