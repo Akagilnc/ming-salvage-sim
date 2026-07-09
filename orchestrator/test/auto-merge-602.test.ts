@@ -30,6 +30,17 @@ import {
   runFamilyAutoMergeStage,
 } from "../src/family/familyAutoMerge.js";
 import type { FamilyBackend, FamilyLedgerEntry } from "../src/family/types.js";
+import { runOrchestrator } from "../src/runner.js";
+import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
+import type {
+  Backend,
+  PersistentLedgerEntry,
+  ResumeState,
+  StepOutput,
+  StepSpec,
+  WorkerResult,
+  WorkerSpec,
+} from "../src/types.js";
 
 const REPO = "Akagilnc/ming-salvage-sim";
 const PR_URL = "https://github.com/Akagilnc/ming-salvage-sim/pull/602";
@@ -773,5 +784,151 @@ describe("#602 mergeReadinessStopSummary", () => {
     expect(summary.reason).toBe("decision_gate_park");
     expect(summary.summary).toMatch(/ci_pending/);
     expect(summary.summary).toMatch(/threads_unresolved/);
+  });
+});
+
+describe("#602 runOrchestrator slice path — AC8 pr_merged ledger", () => {
+  const CONVERGED_HEAD = "abc1234567890def1234567890abcd1234567890ab";
+  const OFFLINE_PR = "pr://slice/offline-602-ac8";
+  const WORKTREE = {
+    branch: "feat/issue-602-ac8",
+    base: "main",
+    path: "/resident/worktrees/issue-602-ac8",
+  };
+  const STATE_DIR = "/resident/worktrees/.ledger-602-ac8";
+
+  function priorEntry(step: StepSpec["id"], output?: StepOutput): PersistentLedgerEntry {
+    return {
+      step,
+      sessionId: "session-prior",
+      prompt_hash: `hash-${step}`,
+      branchHEAD: CONVERGED_HEAD,
+      ts: "2026-07-09T00:00:00.000Z",
+      ...(output !== undefined ? { output } : {}),
+    };
+  }
+
+  class SliceAutoMergeResumeBackend implements Backend {
+    readonly ledgerWrites: PersistentLedgerEntry[] = [];
+    readonly dispatchSpecs: WorkerSpec[] = [];
+
+    constructor(private readonly resumeState: ResumeState) {}
+
+    async findResumeState(): Promise<ResumeState | undefined> {
+      return this.resumeState;
+    }
+
+    async cleanResidue(): Promise<void> {}
+
+    async fetchIssueMeta(issueNumber: number) {
+      return {
+        number: issueNumber,
+        isReadyForAgent: true,
+        hasSubIssues: false,
+        isClosed: false,
+        openBlockedBy: [],
+      };
+    }
+
+    async fetchIssueSnapshot(issueNumber: number) {
+      return {
+        number: issueNumber,
+        body: "b",
+        comments: [],
+        agentBrief: "",
+      };
+    }
+
+    async prepareWorktree() {
+      return WORKTREE;
+    }
+
+    async writeSnapshot(): Promise<void> {}
+
+    async runStep(): Promise<StepOutput> {
+      throw new Error("runStep should not run on converged-marker resume");
+    }
+
+    async resumeSession(): Promise<StepOutput> {
+      throw new Error("resumeSession should not run on converged-marker resume");
+    }
+
+    async push(): Promise<void> {}
+
+    async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+      this.ledgerWrites.push(entry);
+    }
+
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      this.dispatchSpecs.push(spec);
+      if (spec.kind === "ship") {
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: WORKTREE.branch,
+            status: "pr_opened",
+            pr: OFFLINE_PR,
+            prHead: CONVERGED_HEAD,
+          },
+        };
+      }
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      if (skeleton !== undefined) return skeleton;
+      return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    }
+  }
+
+  it("records pr_merged with prNumber, remoteBranchName, mergedHeadOid after S12 host auto-merge (offline)", async () => {
+    const prior = [
+      priorEntry("S0"),
+      priorEntry("S1"),
+      priorEntry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      priorEntry("S3", { kind: "reviewer", findings: [] }),
+      priorEntry("S4"),
+      priorEntry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: OFFLINE_PR,
+        prHead: CONVERGED_HEAD,
+      }),
+      {
+        ...priorEntry("S9", { kind: "verify", converged: true }),
+        event: "online_review_converged" as const,
+        prUrl: OFFLINE_PR,
+        prHead: CONVERGED_HEAD,
+        onlineReviewRound: 1,
+      },
+    ];
+    const backend = new SliceAutoMergeResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 602, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs.map((s) => s.id)).toEqual(["S11", "S12"]);
+    const marker = result.stepLedger.find((e) => e.event === "pr_merged");
+    expect(marker).toMatchObject({
+      step: "S12",
+      event: "pr_merged",
+      prUrl: OFFLINE_PR,
+      prNumber: 1,
+      remoteBranchName: "offline-branch",
+      mergedHeadOid: CONVERGED_HEAD,
+      prHead: CONVERGED_HEAD,
+    });
+    expect(
+      backend.ledgerWrites.some(
+        (e) =>
+          e.event === "pr_merged" &&
+          e.prNumber === 1 &&
+          e.remoteBranchName === "offline-branch" &&
+          e.mergedHeadOid === CONVERGED_HEAD,
+      ),
+    ).toBe(true);
   });
 });
