@@ -1225,6 +1225,38 @@ export function familyPrMergedForHead(
 }
 
 /**
+ * Terminal+ok `post_merge_cleanup` row for THIS family HEAD (#603).
+ * Resume / already_done success requires this after `pr_merged`.
+ */
+export function familyPostMergeCleanupForHead(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
+):
+  | (FamilyLedgerEntry & {
+      readonly status: "post_merge_cleanup";
+      readonly event: "post_merge_cleanup";
+      readonly familyHeadAfter: string;
+      readonly cleanupOutput: CleanupResult;
+    })
+  | undefined {
+  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) {
+    return undefined;
+  }
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (!isValidPostMergeCleanup(entry)) continue;
+    if (entry.familyHeadAfter !== familyHeadAfter) continue;
+    if (
+      entry.cleanupOutput.terminal === true &&
+      entry.cleanupOutput.ok === true
+    ) {
+      return entry;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Does the ledger contain a legacy terminal shipped marker that predates
  * `familyHeadAfter` binding? It proves a ship/PR already happened, but it cannot
  * prove which HEAD that PR covers, so resume must fail closed instead of either

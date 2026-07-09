@@ -267,6 +267,10 @@ class E2EFamilyBackend extends RealFamilyBackend {
     }
     return super.dispatchWorker(spec, ctx, landing);
   }
+
+  // Keep the dedicated clone for post-run assertions; production reclaim still
+  // runs through RealFamilyBackend.reapFamilyHost after terminal cleanup.
+  override async reapFamilyHost(_familyBase: string): Promise<void> {}
 }
 
 describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {

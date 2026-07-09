@@ -146,6 +146,7 @@ import {
   recordOnlineReviewRoundRetrigger,
   recordReviewLoopConverged,
   recordShipped,
+  familyPostMergeCleanupForHead,
   familyPrMergedForHead,
   mergedSet,
   recordPostMergeCleanup,
@@ -3159,78 +3160,126 @@ export async function runVerifyCmr(
     return INCOMPLETE_GATE;
   }
 
-  const postMergeLedger = await familyBackend.readFamilyLedger();
-  const prMergedRow = familyPrMergedForHead(postMergeLedger, convergedFamilyHead);
-  if (prMergedRow !== undefined) {
-    const familyRepo =
-      process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
-    const coveredIssues = [...mergedSet(postMergeLedger)];
-    const cleanupLanding: WorkerLandingPayload = {
-      cleanupDispatch: buildCleanupLanding({
-        record: {
-          prUrl: prMergedRow.pr,
-          prNumber: prMergedRow.prNumber,
-          remoteBranchName: prMergedRow.remoteBranchName,
-          mergedHeadOid: prMergedRow.mergedHeadOid,
-          convergedHeadOid: convergedFamilyHead,
-        },
-        coveredIssues,
-        ...(familyIssue !== undefined ? { parentIssue: familyIssue } : {}),
-      }),
-    };
-    const cleanupResult = await dispatchFamilyWorker(
-      familyBackend,
-      cleanupWorkerSpec(resolvedRoute),
-      {
-        familyBase,
-        repo: familyRepo,
-        prUrl: shipPr,
+  const cleanupGate = await ensureFamilyPostMergeCleanup({
+    familyBackend,
+    familyBase,
+    familyHeadAfter: convergedFamilyHead,
+    prUrl: shipPr,
+    ...(familyIssue !== undefined ? { familyIssue } : {}),
+    resolvedRoute,
+    phase,
+    recordAbortOnFailure: true,
+  });
+  if (!cleanupGate.ok) return INCOMPLETE_GATE;
+  return { ok: true, ran: true };
+}
+
+/**
+ * #603 — after `pr_merged` for a head, require terminal+ok `post_merge_cleanup`
+ * (or dispatch cleanup → record → optional reclaim). Shared by the fresh final
+ * barrier and family resume already_done exits so remote residue is never
+ * reported as success.
+ */
+export async function ensureFamilyPostMergeCleanup(input: {
+  readonly familyBackend: FamilyBackend;
+  readonly familyBase: string;
+  readonly familyHeadAfter: string;
+  readonly prUrl: string;
+  readonly familyIssue?: number;
+  readonly resolvedRoute?: ResolvedModelRoute;
+  readonly phase?: VerifyCmrPhase;
+  /** When true (final barrier), write durable abort on cleanup failure. */
+  readonly recordAbortOnFailure?: boolean;
+}): Promise<{ readonly ok: boolean; readonly reason?: string }> {
+  const {
+    familyBackend,
+    familyBase,
+    familyHeadAfter,
+    prUrl,
+    familyIssue,
+    phase = "final",
+    recordAbortOnFailure = false,
+  } = input;
+  const resolvedRoute = input.resolvedRoute ?? resolveActiveModelRoute();
+  const ledger = await familyBackend.readFamilyLedger();
+  const priorCleanup = familyPostMergeCleanupForHead(ledger, familyHeadAfter);
+  if (priorCleanup !== undefined) {
+    return { ok: true };
+  }
+  const prMergedRow = familyPrMergedForHead(ledger, familyHeadAfter);
+  if (prMergedRow === undefined) {
+    return { ok: true };
+  }
+  const familyRepo =
+    process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
+  const coveredIssues = [...mergedSet(ledger)];
+  const cleanupLanding: WorkerLandingPayload = {
+    cleanupDispatch: buildCleanupLanding({
+      record: {
+        prUrl: prMergedRow.pr,
+        prNumber: prMergedRow.prNumber,
+        remoteBranchName: prMergedRow.remoteBranchName,
+        mergedHeadOid: prMergedRow.mergedHeadOid,
+        convergedHeadOid: familyHeadAfter,
       },
-      cleanupLanding,
-    );
-    if (
-      cleanupResult.kind !== "completed" ||
-      !isValidCleanupResult(cleanupResult.output) ||
-      !cleanupResult.output.terminal ||
-      !cleanupResult.output.ok
-    ) {
-      const reason =
-        cleanupResult.kind === "completed"
-          ? "family post-merge cleanup did not reach a terminal success outcome"
-          : `family post-merge cleanup worker returned ${cleanupResult.kind}`;
+      coveredIssues,
+      ...(familyIssue !== undefined ? { parentIssue: familyIssue } : {}),
+    }),
+  };
+  const cleanupResult = await dispatchOrAbort(
+    familyBackend,
+    cleanupWorkerSpec(resolvedRoute),
+    {
+      familyBase,
+      repo: familyRepo,
+      prUrl,
+    },
+    cleanupLanding,
+  );
+  if (
+    cleanupResult.kind !== "completed" ||
+    !isValidCleanupResult(cleanupResult.output) ||
+    !cleanupResult.output.terminal ||
+    !cleanupResult.output.ok
+  ) {
+    const reason =
+      cleanupResult.kind === "completed"
+        ? "family post-merge cleanup did not reach a terminal success outcome"
+        : `family post-merge cleanup worker returned ${cleanupResult.kind}`;
+    if (recordAbortOnFailure) {
       await familyBackend.recordAborted?.({
         phase,
         familyBase,
         errorPackage: { reason },
-        familyHeadAfter: convergedFamilyHead,
+        familyHeadAfter,
       });
       await recordDurableAbort(familyBackend, {
         phase,
         reason,
-        familyHeadAfter: convergedFamilyHead,
+        familyHeadAfter,
         stopSummary: infraFailureStopSummary({
           summary: reason,
           repairHint:
             "verify PR is MERGED with matching head, then re-run the family final barrier",
         }),
       });
-      return INCOMPLETE_GATE;
     }
-    await recordPostMergeCleanup(familyBackend, {
-      familyHeadAfter: convergedFamilyHead,
-      cleanupOutput: cleanupResult.output,
-    });
-    const postCleanupLedger = await familyBackend.readFamilyLedger();
-    if (
-      shouldReclaimFamilyHost(postCleanupLedger) &&
-      familyBackend.reapFamilyHost !== undefined
-    ) {
-      try {
-        await familyBackend.reapFamilyHost(familyBase);
-      } catch {
-        // Best-effort terminal GC — must not flip a successful final barrier.
-      }
+    return { ok: false, reason };
+  }
+  await recordPostMergeCleanup(familyBackend, {
+    familyHeadAfter,
+    cleanupOutput: cleanupResult.output,
+  });
+  const postCleanupLedger = await familyBackend.readFamilyLedger();
+  if (
+    shouldReclaimFamilyHost(postCleanupLedger) &&
+    familyBackend.reapFamilyHost !== undefined
+  ) {
+    try {
+      await familyBackend.reapFamilyHost(familyBase);
+    } catch {
+      // Best-effort terminal GC — must not flip a successful cleanup.
     }
   }
-  return { ok: true, ran: true };
+  return { ok: true };
 }
