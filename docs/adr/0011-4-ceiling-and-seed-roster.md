@@ -141,9 +141,9 @@ per_layer_resistance = max( min(cap, α×血债项) , 命门合法性floor , min
 
 ## B 部分：seed 名册数据 spec（dig-7，并入）
 
-> 本部分是**开局数据 spec**（非机制）：characters.json per-人加 `seed_guilt`(crime/severity) + `identity`(int)，供 0011-2 失称度（crime_weight）/ kinship（k_id）与本 ADR ceiling 宗室 / 勋戚 tag 读。名单 dig-7 已「✅ 5 争议拍 + 名单定稿」。
+> 本部分是**开局数据 spec**（非机制）：characters.json per-人加 `seed_guilt`(crime/severity) + `identity`(int)，供 0011-2 失称度（crime_weight）/ kinship（k_id）与本 ADR ceiling 宗室 / 勋戚 tag 读。名单 dig-7 已「✅ 5 争议拍 + 名单定稿」。〔**M12 回标（2026-07-08，ADR 0106）**：名册自 74 人**扩容至 75/76**——补 1–2 勋戚 seed 人物（英国公张惟贤、国丈周奎级）；本节「74 人」口径与下方 15/59 罪稀疏统计按扩容后数据件**重算**（新增勋戚预计无罪/轻，「重＋中 9 人全阉党」结构不变）；扩容数据件随 M12 substrate 切片落地。〕
 
-### 罪稀疏自检（全过）
+### 罪稀疏自检（全过；本节数字＝扩容前 74 人基线快照——扩容后重算口径见上方 M12 回标，数据件未落前不改写）
 
 - **罪稀疏**：74 人中 15 人（20%）带罪、59 人（80%）无罪；**重 + 中 9 人全在阉党**；非阉党仅 2 人轻污点 + 福王 1 轻。
 - **不预坐后事**：降清六将（孔 / 耿 / 尚 / 祖 / 吴三桂 / 洪）+ 郑成功此刻**全无罪**、只以低认同度反映「忠于己 / 形势」。

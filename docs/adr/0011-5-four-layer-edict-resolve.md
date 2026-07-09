@@ -104,7 +104,7 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 **决定**（母 ADR 决定4 阶段二 + 决定8 FF-5 承重功能负片）：旨意过四层颁出后，执行层按承办派 satisfaction/血债 + kinship(identity) 软判执行保真度 `exec_fidelity`——忠实 / 打折扭曲 / 阳奉阴违 / 反噬。后果落 issues 停滞 + factions 离心，**不扩 status enum**。
 
-**⚠️ 与现存密令核议的边界（P2，防平行造第二套）**：`season_simulator.md:79-82` 已实装**密令核议** LLM 软判（可行性 / 能力忠诚 / 目标反制 / 暴露 / 陈词真伪），母 ADR line91 明说密令「复用密令核议」。执行层四态软判（第二刀）**与密令核议是同一套执行软判、吃 resolve 算出的账本约束，不另起平行核议**。**第一刀诚实标 = 分裂裁判态**：edict 走 resolve 确定性（LLM 零算账）、密令仍走 simulator LLM 自判 done/failed（密令结构化裁判 = 第二刀收口）；**第一刀 simulator prompt 不因 edict 改 resolve 而改动密令『核议』章**（隔离两条裁判路径防渗漏）。
+**⚠️ 与现存密令核议的边界（P2，防平行造第二套）**：`season_simulator.md:84-90`「密旨动向」章已实装**密令核议** LLM 软判（核议五项在 :88——可行性 / 能力忠诚 / 目标反制 / 暴露 / 陈词真伪；本行原引 :79-82、后因文件插章漂移，2026-07-08 M12 闸勘正），母 ADR line91 明说密令「复用密令核议」。执行层四态软判（第二刀）**与密令核议是同一套执行软判、吃 resolve 算出的账本约束，不另起平行核议**。**第一刀诚实标 = 分裂裁判态**：edict 走 resolve 确定性（LLM 零算账）、密令仍走 simulator LLM 自判 done/failed（密令结构化裁判 = 第二刀收口）；**第一刀 simulator prompt 不因 edict 改 resolve 而改动密令『核议』章**（隔离两条裁判路径防渗漏）。
 
 **弃案**：执行层第一刀就做四态（超 scope）；执行层另起一套平行于密令核议的软判（违 dont-overbuild）；反咬后果扩 status enum。
 
@@ -114,7 +114,7 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 - **第一刀 = `resolve_core` 确定性骨架，只做阶段一颁布「顺颁 / 打回」两档**，替换 `estimate_resistance`；召对 dry-run 只读；邸报复盘；**打回 → 触发二次决策点**（载体 = HITL `<<DECISION>>` 块，接线见 D5-11）。第一刀中旨：命门题映射「必碰壁打回」+ 落 STIGMA + 血债（D5-6），行政旨照过 + 污名。
 - **⚠️ estimate_resistance 替换面（P2，含 skills.json）**：`estimate_resistance` 是面向大臣的注册工具，`content/skills.json` 三处（`common_skills:8` / `skill_catalog:38` / 描述 `:174`）须同步——召对侦察口径（dry_run resolve）接到玩家暴露的技能名上，或保留技能名内部改派；避免 dangling 注册。列入第一刀写入端 DoD。
-- **defer 第二刀**：中旨闸整套（provisional / edict_overdraw 螺旋 / MIDZHI 真闸量级）；执行层四态细分 + 密令结构化裁判；provisional 生命周期；召对 location 闸（FF-4，决定8）。
+- **defer 第二刀**：中旨闸整套（provisional / edict_overdraw 螺旋 / MIDZHI 真闸量级）；执行层四态细分 + 密令结构化裁判；provisional 生命周期；召对 location 闸（FF-4，决定8）。〔**取代注（2026-07-08 M12 闸回标）**：本行系写作时快照——其中「召对 location 闸（FF-4）」一项已由 **ADR 0096** 兑现、不再是第二刀待办；其余 defer 项不受影响。defer 清单取代注同源。〕
 
 **弃案**：第一刀就铺四层全套 + 中旨闸 + 执行层（过度工程、违硬序）。
 
@@ -130,7 +130,7 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 - **0004**：颁旨链复用 `pre_settle`/`settle_with_delta` 同核；resolve 落库时序须与现有 `add_directive` 即时写对齐（D5-3，**非简单「propose 后落表前」**）。
 - **0008**：`apply_resolve` 落库走 `applier.atomic`；中旨 provisional 转 final（第二刀）对 `before_turn` 幂等（0011-2 D2-8）。`resolve_core` 只读路径**不进 atomic**、live 落库路径才进（D5-3）。
-- **0009 + 码集二分（真源 0011-2 D2-5）**：**依律集 {依律 / 谋逆坐实 / 贪墨坐实}（3 码）= 扩 0009 reason_code enum、走程序坐实 flag**（触发 0011-4 D4-4 翻轴；crime_weight 取被坐实罪真实 gravity、**与依律集正交、不固定 cw=70**，见 D2-4/D2-5；`获罪削籍` = 既存定罪状态码、不在翻轴白名单）；**STIGMA {中旨除授 / 非正途 / 罗织} = 独立常量表、不进 0009 enum**（cw=1）。三 sub-ADR（本 ADR / 0011-2 / 0011-4）**引用 0011-2 D2-5 的二分、不各定各的**（破局动作两端读同一集、曲线算得出，P1-10）。`estimate_resistance` 在 `tools.py:136`（def）；召对 location 闸（FF-4）依赖 0009 `location`（第二刀）。
+- **0009 + 码集二分（真源 0011-2 D2-5）**：**依律集 {依律 / 谋逆坐实 / 贪墨坐实}（3 码）= 扩 0009 reason_code enum、走程序坐实 flag**（触发 0011-4 D4-4 翻轴；crime_weight 取被坐实罪真实 gravity、**与依律集正交、不固定 cw=70**，见 D2-4/D2-5；`获罪削籍` = 既存定罪状态码、不在翻轴白名单）；**STIGMA {中旨除授 / 非正途 / 罗织} = 独立常量表、不进 0009 enum**（cw=1）。三 sub-ADR（本 ADR / 0011-2 / 0011-4）**引用 0011-2 D2-5 的二分、不各定各的**（破局动作两端读同一集、曲线算得出，P1-10）。`estimate_resistance` 在 `tools.py:136`（def）；召对 location 闸（FF-4）依赖 0009 `location`（第二刀）。〔**取代注（2026-07-08 M12 闸回标）**：末句系写作时快照——FF-4 已由 **ADR 0096** 兑现，不再是第二刀待办；defer 清单取代注同源。〕
 
 ### D5-11 resolve ↔ simulator 裁判分界（LLM 吃判决、禁重算）
 
@@ -170,7 +170,7 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 - **中旨闸整套**（provisional 生命周期 / edict_overdraw 螺旋 / MIDZHI 真闸量级）= 第二刀（最低契约在 0011-2 D2-8）。
 - **执行层四态细分 + 密令结构化裁判**（与现存密令核议合一）= 第二刀。
-- **召对 location 闸**（FF-4，决定8）= 单独切片（依赖 0009 location）。
+- **召对 location 闸**（FF-4，决定8）= 单独切片（依赖 0009 location）。〔**取代注（2026-07-08 M12 闸回标）**：本行系写作时快照——FF-4 已由 **ADR 0096**（召对 travel-gating＋候见制）兑现，不再单独立片；母 ADR line125/133 取代注同源。〕
 - **actor 取证引擎 + 认同度叛变（破局回路后半截）= #89 / 单独切片**（D5-5 诚实标）。
 
 ---
@@ -183,7 +183,7 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 ### 落地顺序（硬序铁律）
 
-substrate（0011-2/3/4）**全先落** → `resolve_core` 确定性骨架（第一刀，只颁布关 顺颁 / 打回 + 命门题中旨落 STIGMA+血债）→ 替换 `estimate_resistance`（含 skills.json 三处）→ 召对 dry-run 物理只读 → season_simulator 加吃判决 + HITL 接线 + P4 禁令（D5-11）→ 邸报复盘。第二刀（中旨闸 / 执行层四态 / location 闸 / 密令结构化）后接。
+substrate（0011-2/3/4）**全先落** → `resolve_core` 确定性骨架（第一刀，只颁布关 顺颁 / 打回 + 命门题中旨落 STIGMA+血债）→ 替换 `estimate_resistance`（含 skills.json 三处）→ 召对 dry-run 物理只读 → season_simulator 加吃判决 + HITL 接线 + P4 禁令（D5-11）→ 邸报复盘。第二刀（中旨闸 / 执行层四态 / location 闸 / 密令结构化）后接。〔**取代注（2026-07-08 M12 闸回标）**：第二刀括注系写作时快照——其中「location 闸」已由 **ADR 0096** 兑现、不再后接；其余项仍属第二刀。defer 清单取代注同源。〕
 
 ### 调参 / playtest
 

@@ -4,7 +4,7 @@ Status: Accepted（设计收敛：grill-with-docs 八问 D1–D8 + 两轮 fan-ou
 
 ## 脉络
 
-圣旨/directive 颁布现状是**平的**：`decree.py` → simulator → 落库，颁布前后无任何 actor 阻力。大臣的 `loyalty/ability/integrity/courage`（models.py:Character）只当对话 flavor 喂 minister Agent、不机械影响「圣旨执不执行」；`estimate_resistance`（tools.py:134）是结构化阻力公式但只是大臣可调的估算工具、**不闸任何东西**；只有 `gentry_resistance`（士绅阻力）在财政到账率上有牙（flows.py）。密令核议（season_simulator.md:79-82）已软判「承办人能力忠诚 + 目标实力反制」，是唯一已实装的 actor-属性-驱动判定。
+圣旨/directive 颁布现状是**平的**：`decree.py` → simulator → 落库，颁布前后无任何 actor 阻力。大臣的 `loyalty/ability/integrity/courage`（models.py:Character）只当对话 flavor 喂 minister Agent、不机械影响「圣旨执不执行」；`estimate_resistance`（tools.py:134）是结构化阻力公式但只是大臣可调的估算工具、**不闸任何东西**；只有 `gentry_resistance`（士绅阻力）在财政到账率上有牙（flows.py）。密令核议（season_simulator.md:84-90「密旨动向」章，核议五项在 :88——原引 :79-82 系插章漂移、2026-07-08 M12 闸勘正）已软判「承办人能力忠诚 + 目标实力反制」，是唯一已实装的 actor-属性-驱动判定。
 
 目标：把「**圣旨未必颁得出、颁了未必有效、actor 各有算盘**」做成核心玩法——P社式 actor 博弈。哲学锚（贯穿全 ADR，凡子机制与之冲突以此为准）：
 

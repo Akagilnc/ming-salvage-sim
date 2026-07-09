@@ -94,28 +94,28 @@ function familyHeadMetadata(input: {
   const actualFamilyHead = filled(input.actualFamilyHead);
   const verifiedCmrHead = filled(input.verifiedCmrHead);
   if (
-    reportedFamilyHead === undefined &&
-    actualFamilyHead === undefined &&
-    verifiedCmrHead === undefined
+    reportedFamilyHead == null &&
+    actualFamilyHead == null &&
+    verifiedCmrHead == null
   ) {
     return undefined;
   }
   const sources: Record<string, string> = {};
-  if (reportedFamilyHead !== undefined) {
+  if (reportedFamilyHead != null) {
     sources.reportedFamilyHead = "FamilyRunResult.familyHead";
   }
-  if (actualFamilyHead !== undefined) {
+  if (actualFamilyHead != null) {
     sources.actualFamilyHead =
       input.actualFamilyHeadSource ?? "family runner current head";
   }
-  if (verifiedCmrHead !== undefined) {
+  if (verifiedCmrHead != null) {
     sources.verifiedCmrHead = "latest cmr_passed ledger row";
   }
   return {
     heads: {
-      ...(reportedFamilyHead !== undefined ? { reportedFamilyHead } : {}),
-      ...(actualFamilyHead !== undefined ? { actualFamilyHead } : {}),
-      ...(verifiedCmrHead !== undefined ? { verifiedCmrHead } : {}),
+      ...(reportedFamilyHead != null ? { reportedFamilyHead } : {}),
+      ...(actualFamilyHead != null ? { actualFamilyHead } : {}),
+      ...(verifiedCmrHead != null ? { verifiedCmrHead } : {}),
       sources,
     },
   };
@@ -157,17 +157,17 @@ function familyStopSummary(input: {
     });
   if (input.status === "success") {
     const hasMetadata =
-      metadata?.heads !== undefined ||
+      metadata?.heads != null ||
       (input.admissionSkipped?.length ?? 0) > 0 ||
       (input.alreadyDone?.length ?? 0) > 0;
     return successStopSummary(
       hasMetadata
         ? {
-            ...(metadata?.heads !== undefined ? { heads: metadata.heads } : {}),
-            ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
+            ...(metadata?.heads != null ? { heads: metadata.heads } : {}),
+            ...(input.admissionSkipped != null && input.admissionSkipped.length > 0
               ? { admissionSkipped: input.admissionSkipped }
               : {}),
-            ...(input.alreadyDone !== undefined && input.alreadyDone.length > 0
+            ...(input.alreadyDone != null && input.alreadyDone.length > 0
               ? { alreadyDone: input.alreadyDone }
               : {}),
           }
@@ -175,11 +175,11 @@ function familyStopSummary(input: {
     );
   }
   if (input.status === "verify_failed") {
-    if (input.barrierStopSummary !== undefined) return input.barrierStopSummary;
+    if (input.barrierStopSummary != null) return input.barrierStopSummary;
     return infraFailureStopSummary({
       summary: `family ${input.failedPhase ?? "unknown"} verify/cmr barrier failed`,
       repairHint: "inspect the family ledger aborted entry, repair the failing barrier, and rerun",
-      ...(metadata?.heads !== undefined ? { heads: metadata.heads } : {}),
+      ...(metadata?.heads != null ? { heads: metadata.heads } : {}),
     });
   }
   if (input.status === "incomplete") {
@@ -441,7 +441,7 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
     const entry = ledger[index]!;
     if (entry.status === "shipped") break;
     if (entry.status === "cmr_passed") {
-      if (entry.cmrPass === undefined) break;
+      if (entry.cmrPass == null) break;
       closedPasses.add(entry.cmrPass);
       continue;
     }
@@ -453,11 +453,11 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
       // keys — they are still awaiting ADR 0030 closure. `processedPasses` for any
       // other reason (a real classified abort / cmr_reviewed) still blocks it.
       const blockedByProcessed =
-        pass !== undefined &&
+        pass != null &&
         processedPasses.has(pass) &&
         !emptyAbortProcessedPasses.has(pass);
       if (
-        pass === undefined ||
+        pass == null ||
         closedPasses.has(pass) ||
         blockedByProcessed ||
         keys == null ||
@@ -524,7 +524,7 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
     if (entry.status === "aborted" && entry.blockingFindingIdentityKeys == null) {
       const pass = entry.cmrPass;
       if (
-        pass === undefined ||
+        pass == null ||
         closedPasses.has(pass) ||
         processedPasses.has(pass)
       ) {
@@ -539,7 +539,7 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
       continue;
     }
     if (
-      entry.cmrPass !== undefined &&
+      entry.cmrPass != null &&
       (closedPasses.has(entry.cmrPass) ||
         processedPasses.has(entry.cmrPass) ||
         unclassifiedAbortHeadByPass.has(entry.cmrPass))
@@ -547,7 +547,7 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
       continue;
     }
     const pass = entry.cmrPass;
-    if (pass === undefined) continue;
+    if (pass == null) continue;
     if (passesWithUnclosedFixCommits.has(pass)) {
       continue;
     }
@@ -593,7 +593,7 @@ function latestAbortedStopSummary(
     if (
       entry.status === "aborted" &&
       (phase === undefined || entry.phase === phase) &&
-      entry.stopSummary !== undefined
+      entry.stopSummary != null
     ) {
       return entry.stopSummary;
     }
@@ -620,7 +620,7 @@ function latestSuccessfulFinalCmrStopSummary(
       entry.status === "cmr_passed" &&
       entry.event === "cmr_passed" &&
       entry.phase === "final" &&
-      entry.stopSummary !== undefined &&
+      entry.stopSummary != null &&
       isMaterialCmrStopSummary(entry.stopSummary)
     ) {
       return entry.stopSummary;
@@ -639,7 +639,7 @@ function latestSuccessfulFinalShippedStopSummary(
       entry.status === "shipped" &&
       entry.event === "shipped" &&
       entry.phase === "final" &&
-      entry.stopSummary !== undefined &&
+      entry.stopSummary != null &&
       isMaterialCmrStopSummary(entry.stopSummary)
     ) {
       return entry.stopSummary;
@@ -1679,7 +1679,7 @@ export async function runFamily(
             actualFamilyHead: "current family head",
             reportedFamilyHead: "review_loop_converged ledger row",
             verifiedCmrHead:
-              shippedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead !== undefined
+              shippedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead != null
                 ? "shipped ledger stop summary"
                 : "shipped ledger row",
           },
