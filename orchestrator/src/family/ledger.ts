@@ -121,6 +121,16 @@ export interface ReviewLoopConvergedRecord {
   readonly stopSummary?: StopSummary;
 }
 
+/** The fields a PHASE-LEVEL `pr_merged` terminal event carries (#602). */
+export interface PrMergedRecord {
+  readonly pr: string;
+  readonly prNumber: number;
+  readonly remoteBranchName: string;
+  readonly mergedHeadOid: string;
+  readonly familyHeadAfter: string;
+  readonly stopSummary?: StopSummary;
+}
+
 /** The fields for a green integrated CMR pass audit event (#419). */
 export interface CmrPassedRecord {
   readonly cmrPass: IntegratedCmrPass;
@@ -663,6 +673,32 @@ function isValidReviewLoopConverged(
   );
 }
 
+function isValidPrMerged(
+  entry: FamilyLedgerEntry,
+): entry is FamilyLedgerEntry & {
+  readonly pr: string;
+  readonly prNumber: number;
+  readonly remoteBranchName: string;
+  readonly mergedHeadOid: string;
+  readonly familyHeadAfter: string;
+} {
+  return (
+    entry.status === "pr_merged" &&
+    entry.event === "pr_merged" &&
+    entry.phase === "final" &&
+    typeof entry.pr === "string" &&
+    entry.pr.trim().length > 0 &&
+    Number.isSafeInteger(entry.prNumber) &&
+    entry.prNumber! > 0 &&
+    typeof entry.remoteBranchName === "string" &&
+    entry.remoteBranchName.trim().length > 0 &&
+    typeof entry.mergedHeadOid === "string" &&
+    entry.mergedHeadOid.trim().length > 0 &&
+    typeof entry.familyHeadAfter === "string" &&
+    entry.familyHeadAfter.trim().length > 0
+  );
+}
+
 function familyAnswerPayload(entry: FamilyLedgerEntry): EscalationAnswerPayload {
   return {
     event: "escalation_answered",
@@ -1048,6 +1084,82 @@ export function familyReviewLoopConvergedForHead(
     ...(converged.stopSummary != null
       ? { stopSummary: converged.stopSummary }
       : {}),
+  };
+}
+
+/**
+ * Append the PHASE-LEVEL `pr_merged` terminal marker (#602).
+ */
+export async function recordPrMerged(
+  backend: FamilyBackend,
+  record: PrMergedRecord,
+): Promise<void> {
+  const pr = record.pr.trim();
+  const familyHeadAfter = record.familyHeadAfter.trim();
+  const remoteBranchName = record.remoteBranchName.trim();
+  const mergedHeadOid = record.mergedHeadOid.trim();
+  if (pr.length === 0) {
+    throw new Error("family pr_merged marker must include a non-empty PR URL");
+  }
+  if (familyHeadAfter.length === 0) {
+    throw new Error("family pr_merged marker must include a non-empty familyHeadAfter");
+  }
+  if (remoteBranchName.length === 0) {
+    throw new Error("family pr_merged marker must include a non-empty remoteBranchName");
+  }
+  if (mergedHeadOid.length === 0) {
+    throw new Error("family pr_merged marker must include a non-empty mergedHeadOid");
+  }
+  if (!Number.isSafeInteger(record.prNumber) || record.prNumber <= 0) {
+    throw new Error("family pr_merged marker must include a positive prNumber");
+  }
+  await backend.appendFamilyLedger(
+    compact({
+      status: "pr_merged",
+      event: "pr_merged",
+      phase: "final",
+      pr,
+      prNumber: record.prNumber,
+      remoteBranchName,
+      mergedHeadOid,
+      familyHeadAfter,
+      stopSummary:
+        record.stopSummary ??
+        successStopSummary({
+          heads: {
+            actualFamilyHead: familyHeadAfter,
+            sources: { actualFamilyHead: "pr_merged ledger row" },
+          },
+        }),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+export function familyPrMergedForHead(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
+): PrMergedRecord | undefined {
+  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) {
+    return undefined;
+  }
+  const merged = entries.find(
+    (e) => isValidPrMerged(e) && e.familyHeadAfter === familyHeadAfter,
+  );
+  if (merged === undefined) return undefined;
+  const row = merged as FamilyLedgerEntry & {
+    readonly pr: string;
+    readonly prNumber: number;
+    readonly remoteBranchName: string;
+    readonly mergedHeadOid: string;
+    readonly familyHeadAfter: string;
+  };
+  return {
+    pr: row.pr,
+    prNumber: row.prNumber,
+    remoteBranchName: row.remoteBranchName,
+    mergedHeadOid: row.mergedHeadOid,
+    familyHeadAfter: row.familyHeadAfter,
+    ...(row.stopSummary !== undefined ? { stopSummary: row.stopSummary } : {}),
   };
 }
 

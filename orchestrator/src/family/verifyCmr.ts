@@ -56,7 +56,11 @@ import {
 import type { FamilyModuleContext } from "./moduleDeclaration.js";
 import { execFileSync } from "node:child_process";
 
-import { isLiveGithubReviewPollEnabled } from "../botPolling.js";
+import { isLiveGithubReviewPollEnabled, pollPrReviewState } from "../botPolling.js";
+import {
+  familyAutoMergeIncomplete,
+  runFamilyAutoMergeStage,
+} from "./familyAutoMerge.js";
 import {
   buildRoundTrigger,
   convergenceHeadToRecord,
@@ -3127,5 +3131,38 @@ export async function runVerifyCmr(
       ? { stopSummary: shippedStopSummary }
       : {}),
   });
+
+  const shipPr = ship.pr;
+  if (shipPr === undefined || shipPr.trim().length === 0) {
+    return INCOMPLETE_GATE;
+  }
+  const autoMerge = await runFamilyAutoMergeStage({
+    familyBackend,
+    familyBase,
+    convergedHeadOid: convergedFamilyHead,
+    prUrl: shipPr,
+  });
+  if (familyAutoMergeIncomplete(autoMerge)) {
+    const stopSummary =
+      autoMerge.stopSummary ??
+      decisionGateParkStopSummary({
+        summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
+        repairHint:
+          "resolve merge blockers or answer the decision gate, then re-run the family final barrier",
+      });
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason: stopSummary.summary },
+      familyHeadAfter: convergedFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason: stopSummary.summary,
+      familyHeadAfter: convergedFamilyHead,
+      stopSummary,
+    });
+    return INCOMPLETE_GATE;
+  }
   return { ok: true, ran: true };
 }

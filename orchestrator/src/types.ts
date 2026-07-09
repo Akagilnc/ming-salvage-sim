@@ -370,6 +370,16 @@ export interface OnlineReviewConvergedEvent {
   readonly onlineReviewRound: number;
 }
 
+/** Phase-level marker: PR auto-merged after review loop + doc-release (#602). */
+export interface PrMergedEvent {
+  readonly event: "pr_merged";
+  readonly prUrl: string;
+  readonly prNumber: number;
+  readonly remoteBranchName: string;
+  readonly mergedHeadOid: string;
+  readonly prHead: string;
+}
+
 /** Round ≥2 freshness anchor persisted after S10 re-trigger (#600 r25). */
 export interface OnlineReviewRoundRetriggerEvent {
   readonly event: "online_review_round_retrigger";
@@ -411,6 +421,7 @@ export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
   | OnlineReviewConvergedEvent
+  | PrMergedEvent
   | OnlineReviewRoundRetriggerEvent
   | OnlineReviewFixCommittedEvent
   | OnlineReviewCiFailedEvent

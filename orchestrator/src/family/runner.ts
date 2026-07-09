@@ -44,6 +44,7 @@ import {
   familyEscalationState,
   familyReviewLoopConvergedForHead,
   familyShippedRecordForReviewLoopResume,
+  familyPrMergedForHead,
   hasBoundShippedMarker,
   hasUnboundLegacyShippedMarker,
   isMergedAccountingEntry,
@@ -59,8 +60,14 @@ import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import { convergenceHeadToRecord } from "../evidenceAdmissibility.js";
 import { runFamilyOnlineReviewLoop, runVerifyCmr } from "./verifyCmr.js";
+import {
+  familyAutoMergeIncomplete,
+  isFamilyPrLiveMerged,
+  runFamilyAutoMergeStage,
+} from "./familyAutoMerge.js";
 import { buildFamilyModuleContext } from "./moduleDeclaration.js";
 import {
+  decisionGateParkStopSummary,
   infraFailureStopSummary,
   successStopSummary,
   type StopSummary,
@@ -1439,6 +1446,119 @@ export async function runFamily(
         children,
       };
     }
+
+    const priorPrMerged = familyPrMergedForHead(preFinalLedger, preFinalFamilyHead);
+    if (priorPrMerged !== undefined) {
+      familyHead = preFinalFamilyHead;
+      const convergedVerifiedCmrHead =
+        convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
+        preFinalFamilyHead;
+      const alreadyDoneSummary: StopSummary = {
+        reason: "already_done",
+        summary: "family run already converged for the current family HEAD",
+        metadata: {
+          heads: {
+            actualFamilyHead: preFinalFamilyHead,
+            reportedFamilyHead: convergedRecord.familyHeadAfter,
+            verifiedCmrHead: convergedVerifiedCmrHead,
+            sources: {
+              actualFamilyHead: "current family head",
+              reportedFamilyHead: "review_loop_converged ledger row",
+              verifiedCmrHead:
+                typeof convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ===
+                "string"
+                  ? "review_loop_converged ledger stop summary"
+                  : "review_loop_converged ledger row",
+            },
+          },
+        },
+      };
+      return {
+        status: "success",
+        familyBase,
+        familyHead,
+        stopSummary: alreadyDoneSummary,
+        children,
+        ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
+          ? { admissionSkipped: epic.admissionSkipped }
+          : {}),
+      };
+    }
+
+    if (
+      isFamilyPrLiveMerged(convergedRecord.pr) &&
+      preFinalFamilyHead !== undefined
+    ) {
+      const mergedBackfill = await runFamilyAutoMergeStage({
+        familyBackend,
+        familyBase,
+        convergedHeadOid: preFinalFamilyHead,
+        prUrl: convergedRecord.pr,
+      });
+      if (!familyAutoMergeIncomplete(mergedBackfill)) {
+        familyHead = preFinalFamilyHead;
+        const convergedVerifiedCmrHead =
+          convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
+          preFinalFamilyHead;
+        const alreadyDoneSummary: StopSummary = {
+          reason: "already_done",
+          summary: "family run already converged for the current family HEAD",
+          metadata: {
+            heads: {
+              actualFamilyHead: preFinalFamilyHead,
+              reportedFamilyHead: convergedRecord.familyHeadAfter,
+              verifiedCmrHead: convergedVerifiedCmrHead,
+              sources: {
+                actualFamilyHead: "current family head",
+                reportedFamilyHead: "review_loop_converged ledger row",
+                verifiedCmrHead:
+                  typeof convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ===
+                  "string"
+                    ? "review_loop_converged ledger stop summary"
+                    : "review_loop_converged ledger row",
+              },
+            },
+          },
+        };
+        return {
+          status: "success",
+          familyBase,
+          familyHead,
+          stopSummary: alreadyDoneSummary,
+          children,
+          ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
+            ? { admissionSkipped: epic.admissionSkipped }
+            : {}),
+        };
+      }
+      const stopSummary =
+        mergedBackfill.stopSummary ??
+        decisionGateParkStopSummary({
+          summary: `family auto-merge did not complete (${mergedBackfill.terminalState})`,
+          repairHint:
+            "resolve merge blockers or answer the decision gate, then re-feed the family run",
+        });
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind: "failure",
+        phase: "final",
+        reason: stopSummary.summary,
+        familyHeadAfter: preFinalFamilyHead,
+      });
+      return {
+        status: "escalated",
+        familyBase,
+        familyHead: preFinalFamilyHead,
+        stopSummary: familyStopSummary({
+          status: "escalated",
+          familyBase,
+          familyHead: preFinalFamilyHead,
+          children,
+          escalationReason: stopSummary.summary,
+        }),
+        children,
+      };
+    }
+
     const shippedPr = await familyBackend.verifyFamilyShippedPr({
       pr: convergedRecord.pr,
       familyBase,
@@ -1465,6 +1585,42 @@ export async function runFamily(
         children,
       };
     }
+
+    const autoMerge = await runFamilyAutoMergeStage({
+      familyBackend,
+      familyBase,
+      convergedHeadOid: preFinalFamilyHead!,
+      prUrl: convergedRecord.pr,
+    });
+    if (familyAutoMergeIncomplete(autoMerge)) {
+      const stopSummary =
+        autoMerge.stopSummary ??
+        decisionGateParkStopSummary({
+          summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
+          repairHint:
+            "resolve merge blockers or answer the decision gate, then re-feed the family run",
+        });
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind: "failure",
+        phase: "final",
+        reason: stopSummary.summary,
+        familyHeadAfter: preFinalFamilyHead,
+      });
+      return {
+        status: "escalated",
+        familyBase,
+        familyHead: preFinalFamilyHead,
+        stopSummary: familyStopSummary({
+          status: "escalated",
+          familyBase,
+          familyHead: preFinalFamilyHead,
+          children,
+          escalationReason: stopSummary.summary,
+        }),
+        children,
+      };
+    }
+
     familyHead = preFinalFamilyHead;
     const convergedVerifiedCmrHead =
       convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
@@ -1656,6 +1812,54 @@ export async function runFamily(
         ? { stopSummary: shippedRecord.stopSummary }
         : {}),
     });
+
+    const postConvergedLedger = await familyBackend.readFamilyLedger();
+    const priorPrMerged = familyPrMergedForHead(
+      postConvergedLedger,
+      convergedFamilyHead,
+    );
+    if (priorPrMerged === undefined) {
+      const autoMerge = await runFamilyAutoMergeStage({
+        familyBackend,
+        familyBase,
+        convergedHeadOid: convergedFamilyHead,
+        prUrl: shippedRecord.pr,
+      });
+      if (familyAutoMergeIncomplete(autoMerge)) {
+        const stopSummary =
+          autoMerge.stopSummary ??
+          decisionGateParkStopSummary({
+            summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
+            repairHint:
+              "resolve merge blockers or answer the decision gate, then re-feed the family run",
+          });
+        await recordFamilyEscalated(familyBackend, {
+          escalationKind: "failure",
+          phase: "final",
+          reason: stopSummary.summary,
+          familyHeadAfter: convergedFamilyHead,
+        });
+        const ledgerMergedAfterEscalation = await currentMerged(familyBackend);
+        const childrenAfterEscalation: FamilyChildResult[] = epic.children.map((c) =>
+          ledgerMergedAfterEscalation.has(c.issue)
+            ? { issue: c.issue, status: "already_done" as const }
+            : { issue: c.issue, status: "skipped" as const },
+        );
+        return {
+          status: "escalated",
+          familyBase,
+          familyHead: convergedFamilyHead,
+          stopSummary: familyStopSummary({
+            status: "escalated",
+            familyBase,
+            familyHead: convergedFamilyHead,
+            children: childrenAfterEscalation,
+            escalationReason: stopSummary.summary,
+          }),
+          children: childrenAfterEscalation,
+        };
+      }
+    }
 
     familyHead = postReviewLoopFamilyHead;
     const ledgerMerged = await currentMerged(familyBackend);

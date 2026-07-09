@@ -135,6 +135,9 @@ export interface FamilyLedgerEntry {
    *     Written after the shipped PR has passed the online review/PR-check loop.
    *     The spine's resume guard reads it so only a fully-converged HEAD skips
    *     re-verify / re-cmr / re-ship / re-loop. NOT counted as merged.
+   *   - `"pr_merged"` — the TERMINAL family auto-merge marker (#602). Written
+   *     after live GitHub confirms the PR merged at the converged head. NOT
+   *     counted as merged (no `childIssue`).
   *   - `"cmr_reviewed"` — a PHASE-LEVEL audit event recording one red integrated
  *     CMR review outcome before the runner dispatches coder-fix (#550). NOT
  *     counted as merged.
@@ -165,6 +168,7 @@ export interface FamilyLedgerEntry {
     | "aborted"
     | "shipped"
     | "review_loop_converged"
+    | "pr_merged"
     | "cmr_reviewed"
     | "cmr_fix_committed"
     | "cmr_passed"
@@ -189,6 +193,8 @@ export interface FamilyLedgerEntry {
    *   - `"review_loop_converged"` — paired with `status:"review_loop_converged"`;
    *     the terminal marker written after the online review/PR-check loop converged
    *     (#596).
+   *   - `"pr_merged"` — paired with `status:"pr_merged"`; the terminal marker
+   *     written after live GitHub confirms the PR merged (#602).
    *   - `"cmr_reviewed"` — paired with `status:"cmr_reviewed"`; records a red
    *     reviewer outcome before the runner sends it to coder-fix (#550).
    *   - `"cmr_fix_committed"` — paired with `status:"cmr_fix_committed"`; records
@@ -211,6 +217,7 @@ export interface FamilyLedgerEntry {
     | "aborted"
     | "shipped"
     | "review_loop_converged"
+    | "pr_merged"
     | "cmr_reviewed"
     | "cmr_fix_committed"
     | "cmr_passed"
@@ -294,6 +301,12 @@ export interface FamilyLedgerEntry {
    * guard's "already delivered" decision is locatable from the ledger alone.
    */
   readonly pr?: string;
+  /** PR number on `status:"pr_merged"` terminal entries (#602). */
+  readonly prNumber?: number;
+  /** Remote branch name on `status:"pr_merged"` terminal entries (#602). */
+  readonly remoteBranchName?: string;
+  /** Merged head OID on `status:"pr_merged"` terminal entries (#602). */
+  readonly mergedHeadOid?: string;
   /** Decision pauses can be reopened by an answer row; failure escalations cannot. */
   readonly escalationKind?: "decision" | "failure";
   /**
@@ -572,6 +585,15 @@ export interface FamilyBackend {
   verifyFamilyShippedPr?(
     request: VerifyFamilyShippedPrRequest,
   ): Promise<VerifyFamilyShippedPrResult>;
+  /**
+   * Absolute git working directory for the family base clone (#602 doc-release
+   * fail-closed path reads). Optional — when absent, the LIVE auto-merge path
+   * cannot compute docReleasePaths and fails CLOSED (blocks merge); offline
+   * `pr://` test handles may pass `allowUnverifiedDocReleasePaths: true` via
+   * `offlineAutoMergeAllowUnverifiedDocPaths` — production host wiring must never
+   * set that hatch directly.
+   */
+  resolveFamilyWorkingRepo?(): string | undefined;
   /**
    * #298-OWNED aborted-event seam — #296 only CALLS it. A red verify writes an
    * `aborted` event (携带错误包 + the family base at the time) so a failed wave is
