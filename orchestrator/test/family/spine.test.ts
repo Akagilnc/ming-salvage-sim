@@ -258,6 +258,56 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     ).toHaveLength(1);
   });
 
+  it("#603: family cleanup failed/malformed abort includes worker reason", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
+      {
+        status: "review_loop_converged",
+        event: "review_loop_converged",
+        phase: "final",
+        pr: "pr://family/293-base",
+        familyHeadAfter: "family-base-0",
+      },
+      {
+        status: "pr_merged",
+        event: "pr_merged",
+        phase: "final",
+        pr: "pr://family/293-base",
+        prNumber: 293,
+        remoteBranchName: "family/293-base",
+        mergedHeadOid: "family-base-0",
+        familyHeadAfter: "family-base-0",
+      },
+    );
+    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
+    familyBackend.dispatchWorker = async (spec: any) => {
+      if (spec.kind === "cleanup") {
+        return {
+          kind: "failed",
+          reason: "gh auth expired while closing issues",
+        };
+      }
+      return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("escalated");
+    const reason =
+      result.stopSummary?.summary ??
+      result.stopSummary?.repairHint ??
+      "";
+    expect(reason).toMatch(/gh auth expired while closing issues/);
+    expect(reason).toMatch(/failed/);
+  });
+
   it("#603: pr_merged without terminal cleanup re-enters cleanup before already_done", async () => {
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();

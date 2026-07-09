@@ -294,13 +294,14 @@ export function runPostMergeCleanup(
   }
 
   let parentClosedThisRun = false;
+  let cachedParentState: string | undefined;
   if (input.parentIssue !== undefined) {
     const subIssues =
       input.fetchSubIssues?.(input.parentIssue) ??
       fetchPaginatedSubIssues(input.sh, input.repo, input.parentIssue);
     if (shouldCloseParentIssue(subIssues, input.coveredIssues)) {
-      const parentState = fetchIssueState(input.parentIssue);
-      if (parentState.toUpperCase() !== "CLOSED") {
+      cachedParentState = fetchIssueState(input.parentIssue);
+      if (cachedParentState.toUpperCase() !== "CLOSED") {
         closeIssue(input.parentIssue);
         parentClosedThisRun = true;
       }
@@ -320,7 +321,8 @@ export function runPostMergeCleanup(
     if (parentClosedThisRun) {
       parentIssueClosed = true;
     } else {
-      const parentState = fetchIssueState(input.parentIssue);
+      const parentState =
+        cachedParentState ?? fetchIssueState(input.parentIssue);
       parentIssueClosed = parentState.toUpperCase() === "CLOSED";
     }
   }
@@ -355,8 +357,25 @@ export function runPostMergeCleanup(
       const deleteBranch =
         input.deleteBranch ??
         ((b) => defaultDeleteBranch(input.sh, input.repo, b));
-      deleteBranch(branch);
-      branchOutcome = "deleted";
+      try {
+        deleteBranch(branch);
+        branchOutcome = "deleted";
+      } catch (err) {
+        // Concurrent delete / already-gone race: treat missing ref as idempotent
+        // success; other delete errors remain non-terminal failure.
+        if (isMissingGitRefError(err)) {
+          branchOutcome = "already_gone";
+          break;
+        }
+        const detail = err instanceof Error ? err.message : String(err);
+        return cleanupResultFromActs({
+          allStepsComplete: false,
+          issuesClosed,
+          parentIssueClosed,
+          branchOutcome: "skipped_precondition",
+          skippedReasons: [...skippedReasons, `branch_delete_failed:${detail}`],
+        });
+      }
       break;
     }
     case "already_gone":

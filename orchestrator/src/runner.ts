@@ -1659,8 +1659,16 @@ function planResume(
       ? { onlineReviewRound: onlineReviewRoundForRoute }
       : {}),
   });
+  // #603 P1: S12→S11 must keep S12 + pr_merged bookkeeping. priorLedgerThroughLastShip
+  // truncates after S7 and would drop the durable merge marker S11 requires.
+  const preservePostMergeBookkeeping =
+    decision.kind === "next" &&
+    decision.step === "S11" &&
+    routeFrom === "S12";
   const truncateReviewLoop =
-    isReviewLoopStep(routeFrom) && decision.kind === "next";
+    isReviewLoopStep(routeFrom) &&
+    decision.kind === "next" &&
+    !preservePostMergeBookkeeping;
   const priorForResume = truncateReviewLoop
     ? priorLedgerThroughLastShip(ledger)
     : (ledger as ReadonlyArray<LedgerEntry>);
@@ -1700,6 +1708,28 @@ function planResume(
       resumeStep: "S9",
       lastOutput: undefined,
       priorLedger: priorLedgerThroughLastShip(ledger),
+    };
+  }
+  // #603 P2: parked non-terminal S11 must re-dispatch cleanup on re-feed, not
+  // report route(S11,!terminal)→S8(error) as a hard terminal. Keep full ledger
+  // bookkeeping (pr_merged) — only drop the superseded non-terminal S11 row(s).
+  if (
+    routeFrom === "S11" &&
+    isValidCleanupResult(routeOutput) &&
+    !routeOutput.terminal
+  ) {
+    let reopenIdx = ledger.length - 1;
+    while (reopenIdx >= 0) {
+      const entry = ledger[reopenIdx]!;
+      if (!isBookkeepingEntry(entry) && entry.step === "S11") {
+        break;
+      }
+      reopenIdx--;
+    }
+    return {
+      resumeStep: "S11",
+      lastOutput: undefined,
+      priorLedger: ledger.slice(0, Math.max(0, reopenIdx)) as ReadonlyArray<LedgerEntry>,
     };
   }
   if (decision.kind === "handoff") {
@@ -3951,14 +3981,51 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             isValidCleanupResult(result.output) &&
             !result.output.terminal
           ) {
-            return await errorTermination(
-              reviewStep,
-              new Error(
-                `cleanup worker returned non-terminal outcome: ${
-                  result.output.skippedReasons?.join(", ") ?? "retry"
-                }`,
-              ),
-            );
+            // #603 P2: retryable non-terminal cleanup (live_pr_fetch_failed /
+            // branch_ref_probe_failed / tip_drift residue) must park resumable —
+            // S8(error) would make re-feed report a hard terminal and never
+            // re-dispatch S11. tip_drift stays non-success (no reclaim).
+            const cleanupOutput = result.output;
+            const summary =
+              `cleanup worker returned non-terminal outcome: ${
+                cleanupOutput.skippedReasons?.join(", ") ?? "retry"
+              }`;
+            output = cleanupOutput;
+            step = reviewStep;
+            stepSessionId = result.sessionId;
+            lastOutput = cleanupOutput;
+            ledger.push({
+              step: "S11",
+              output: cleanupOutput,
+              ...(result.sessionId !== undefined
+                ? { sessionId: result.sessionId }
+                : {}),
+            });
+            try {
+              await emitLedger(
+                "S11",
+                cleanupOutput,
+                promptFile,
+                undefined,
+                result.sessionId,
+              );
+            } catch (ledgerErr) {
+              return await errorTermination("S11", ledgerErr, {
+                recordInMemory: false,
+                output: cleanupOutput,
+              });
+            }
+            return {
+              status: "escalate",
+              stepLedger: ledger,
+              stopSummary: {
+                reason: "infra_failure",
+                summary,
+                repairHint:
+                  "re-feed the issue — resume re-enters S11 post-merge cleanup (non-terminal ≠ success; tip_drift leaves branch residue)",
+              },
+              deferredFindings,
+            };
           }
           if (reviewStep === "S9" && isValidVerifyResult(result.output)) {
             let verifyOutput = clampVerifyConvergenceForCheckRuns(

@@ -2298,6 +2298,173 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       "S8",
     ]);
   });
+
+  it("#603 P1: crash after S12+pr_merged resumes S11 with durable marker (not truncated away)", async () => {
+    const convergedHead = "deadbeefcommitsha";
+    const prior: PersistentLedgerEntry[] = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+        prHead: convergedHead,
+      }),
+      {
+        ...entry("S9", { kind: "verify", converged: true }),
+        event: "online_review_converged",
+        prUrl: "pr://slice/offline-255",
+        prHead: convergedHead,
+        onlineReviewRound: 1,
+      },
+      entry("S12", { kind: "docRelease", released: true }, "session-prior", convergedHead),
+      {
+        step: "S12",
+        event: "pr_merged",
+        sessionId: "session-prior",
+        prompt_hash: "hash-pr-merged",
+        branchHEAD: convergedHead,
+        ts: "2026-07-09T00:00:00.000Z",
+        prUrl: "pr://slice/offline-255",
+        prNumber: 255,
+        remoteBranchName: "feat/orchestrator/issue-255",
+        mergedHeadOid: convergedHead,
+        prHead: convergedHead,
+      },
+    ];
+    const backend = new DispatchRecordingResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatchSpecs.map((s) => s.id)).toEqual(["S11"]);
+    const cleanupLanding = backend.dispatchLandings[0]?.cleanupDispatch;
+    expect(cleanupLanding).toMatchObject({
+      prUrl: "pr://slice/offline-255",
+      prNumber: 255,
+      remoteBranchName: "feat/orchestrator/issue-255",
+      mergedHeadOid: convergedHead,
+      convergedHeadOid: convergedHead,
+    });
+    expect(result.errorPackage?.reason ?? "").not.toMatch(
+      /post-merge cleanup requires a durable pr_merged/,
+    );
+  });
+
+  it("#603 P2: non-terminal S11 parks resumable (re-feed re-dispatches S11, not S8 error)", async () => {
+    const convergedHead = "deadbeefcommitsha";
+    const prior: PersistentLedgerEntry[] = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+        prHead: convergedHead,
+      }),
+      {
+        ...entry("S9", { kind: "verify", converged: true }),
+        event: "online_review_converged",
+        prUrl: "pr://slice/offline-255",
+        prHead: convergedHead,
+        onlineReviewRound: 1,
+      },
+      entry("S12", { kind: "docRelease", released: true }, "session-prior", convergedHead),
+      {
+        step: "S12",
+        event: "pr_merged",
+        sessionId: "session-prior",
+        prompt_hash: "hash-pr-merged",
+        branchHEAD: convergedHead,
+        ts: "2026-07-09T00:00:00.000Z",
+        prUrl: "pr://slice/offline-255",
+        prNumber: 255,
+        remoteBranchName: "feat/orchestrator/issue-255",
+        mergedHeadOid: convergedHead,
+        prHead: convergedHead,
+      },
+    ];
+
+    class NonTerminalCleanupBackend extends DispatchRecordingResumeBackend {
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "cleanup") {
+          this.dispatchSpecs.push(spec);
+          this.dispatchContexts.push(ctx);
+          this.dispatchLandings.push(landing);
+          return {
+            kind: "completed",
+            output: {
+              kind: "cleanup",
+              terminal: false,
+              ok: false,
+              skippedReasons: ["live_pr_fetch_failed:gh unavailable"],
+              branchOutcome: "skipped_pr_not_merged",
+            },
+          };
+        }
+        return super.dispatchWorker(spec, ctx, landing);
+      }
+    }
+
+    const backend = new NonTerminalCleanupBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const parked = await runOrchestrator({ issueNumber: 255, backend });
+    expect(parked.status).toBe("escalate");
+    expect(parked.status).not.toBe("error");
+    expect(backend.dispatchSpecs.map((s) => s.id)).toEqual(["S11"]);
+    expect(
+      parked.stepLedger.some(
+        (e) => e.step === "S8" && (e as { handoffStatus?: string }).handoffStatus === "error",
+      ),
+    ).toBe(false);
+
+    // Re-feed from a parked ledger ending at non-terminal S11 — must re-dispatch
+    // cleanup, not report a terminal S8(error) from route(S11, non-terminal).
+    const parkedPrior: PersistentLedgerEntry[] = [
+      ...prior,
+      entry(
+        "S11",
+        {
+          kind: "cleanup",
+          terminal: false,
+          ok: false,
+          skippedReasons: ["live_pr_fetch_failed:gh unavailable"],
+          branchOutcome: "skipped_pr_not_merged",
+        },
+        "session-prior",
+        convergedHead,
+      ),
+    ];
+    const resumeBackend = new NonTerminalCleanupBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: parkedPrior,
+    });
+    const refeed = await runOrchestrator({ issueNumber: 255, backend: resumeBackend });
+    expect(refeed.status).toBe("escalate");
+    expect(resumeBackend.dispatchSpecs.map((s) => s.id)).toEqual(["S11"]);
+    expect(refeed.status).not.toBe("error");
+  });
 });
 
 // ─── C-1 (integ-cmr int-r1): S7 SHIP escalate-resume re-dispatches the ship worker
