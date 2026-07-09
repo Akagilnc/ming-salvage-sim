@@ -230,6 +230,8 @@ describe("#603 runPostMergeCleanup — live verify before act (AC1)", () => {
     expect(result.skippedReasons?.some((r) => r.startsWith("live_pr_fetch_failed"))).toBe(
       true,
     );
+    // live fetch failure is a precondition miss, not "PR not merged"
+    expect(result.branchOutcome).toBe("skipped_precondition");
   });
 
   it("allows offline synthetic MERGED only with explicit ORCHESTRATOR_OFFLINE_REVIEW_POLL=1", () => {

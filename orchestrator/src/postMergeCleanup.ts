@@ -257,7 +257,7 @@ export function runPostMergeCleanup(
       return cleanupResultFromActs({
         allStepsComplete: false,
         skippedReasons: [`live_pr_fetch_failed:${detail}`],
-        branchOutcome: "skipped_pr_not_merged",
+        branchOutcome: "skipped_precondition",
       });
     }
   }

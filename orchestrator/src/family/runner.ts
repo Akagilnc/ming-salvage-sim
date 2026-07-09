@@ -430,6 +430,7 @@ async function requirePostMergeCleanupForAlreadyDone(input: {
   readonly familyHeadAfter: string;
   readonly prUrl: string;
   readonly familyIssue: number;
+  readonly resolvedRoute: ResolvedModelRoute;
   readonly children: ReadonlyArray<FamilyChildResult>;
   readonly admissionSkipped?: ReadonlyArray<{
     readonly issue: number;
@@ -452,6 +453,7 @@ async function requirePostMergeCleanupForAlreadyDone(input: {
     familyHeadAfter: input.familyHeadAfter,
     prUrl: input.prUrl,
     familyIssue: input.familyIssue,
+    resolvedRoute: input.resolvedRoute,
     recordAbortOnFailure: false,
   });
   if (cleanup.ok) return undefined;
@@ -1525,6 +1527,7 @@ export async function runFamily(
         familyHeadAfter: preFinalFamilyHead!,
         prUrl: priorPrMerged.pr,
         familyIssue: epic.issue,
+        resolvedRoute: routePolicy.route,
         children,
         ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
           ? { admissionSkipped: epic.admissionSkipped }
@@ -1584,6 +1587,7 @@ export async function runFamily(
           familyHeadAfter: preFinalFamilyHead,
           prUrl: convergedRecord.pr,
           familyIssue: epic.issue,
+          resolvedRoute: routePolicy.route,
           children,
           ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
             ? { admissionSkipped: epic.admissionSkipped }
@@ -1721,6 +1725,7 @@ export async function runFamily(
       familyHeadAfter: preFinalFamilyHead!,
       prUrl: convergedRecord.pr,
       familyIssue: epic.issue,
+      resolvedRoute: routePolicy.route,
       children,
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
@@ -1979,6 +1984,7 @@ export async function runFamily(
       familyHeadAfter: convergedFamilyHead,
       prUrl: shippedRecord.pr,
       familyIssue: epic.issue,
+      resolvedRoute: routePolicy.route,
       children,
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
