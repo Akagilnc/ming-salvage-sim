@@ -1033,8 +1033,9 @@ export async function sleepPendingCiPollInterval(
 
 /**
  * Poll until bots are quiescent or the poll budget for this wait is exhausted.
- * Enforces ~2-minute cadence between polls; production defaults to the ~5-poll
- * overdue window. Pass `maxPolls: 1` and `clock: immediateBotPollClock` in unit tests.
+ * Enforces ~2-minute cadence between polls; production defaults to
+ * {@link BOT_OVERDUE_POLL_COUNT} (N polls ⇒ N−1 sleeps, ≥15 min wall clock).
+ * Pass `maxPolls: 1` and `clock: immediateBotPollClock` in unit tests.
  */
 export async function waitForBotQuiescence(
   sh: Sh,
