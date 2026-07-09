@@ -67,6 +67,7 @@ import {
 } from "./reviewLoopOutcome.js";
 import {
   BOT_OVERDUE_POLL_COUNT,
+  classifyCheckRuns,
   isLiveGithubReviewPollEnabled,
   pollPrReviewState,
   type PrReviewSnapshot,
@@ -3599,6 +3600,52 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               onlineReviewLanding = {
                 ...onlineReviewLanding,
                 fixMarkedFindingIdentityKeys: fixKeys,
+              };
+            }
+            // Same-type as stage (R8 Gemini): CI red + no bot fix marks → park with
+            // CI failure summary, do not route to S10 fixer ("nothing to fix").
+            const s9CheckRuns =
+              onlineReviewLanding?.onlineReviewSnapshot?.checkRuns ?? [];
+            if (
+              classifyCheckRuns(s9CheckRuns) === "failed" &&
+              fixKeys.length === 0
+            ) {
+              output = verifyOutput;
+              step = reviewStep;
+              stepSessionId = result.sessionId;
+              lastOutput = verifyOutput;
+              ledger.push({
+                step: "S9",
+                output: verifyOutput,
+                ...(result.sessionId !== undefined
+                  ? { sessionId: result.sessionId }
+                  : {}),
+              });
+              try {
+                await emitLedger(
+                  "S9",
+                  verifyOutput,
+                  promptFile,
+                  undefined,
+                  result.sessionId,
+                );
+              } catch (ledgerErr) {
+                return await errorTermination("S9", ledgerErr, {
+                  recordInMemory: false,
+                  output: verifyOutput,
+                });
+              }
+              return {
+                status: "escalate",
+                stepLedger: ledger,
+                stopSummary: {
+                  reason: "infra_failure",
+                  summary:
+                    "online review bots are clean but CI check-runs failed on the PR head",
+                  repairHint:
+                    "fix the CI failures on the PR head and re-run the online review loop",
+                },
+                deferredFindings,
               };
             }
             if (verifyOutput.converged && stateDir !== undefined) {

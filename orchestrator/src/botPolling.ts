@@ -179,7 +179,15 @@ export function paginateGhApi(
       `${path}${sep}per_page=${perPage}&page=${page}`,
     ]);
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) break;
+    // Fail closed on non-array (error objects / rate-limit payloads) — silent
+    // empty would fake "no bots / no comments" and green-path the review loop
+    // (online R8 Gemini high).
+    if (!Array.isArray(parsed)) {
+      throw new Error(
+        `paginateGhApi: expected array from ${path}, got ${typeof parsed}`,
+      );
+    }
+    if (parsed.length === 0) break;
     items.push(...parsed);
     if (parsed.length < perPage) break;
   }
@@ -381,10 +389,21 @@ type BotReaction = {
   created_at?: string;
 };
 
+/**
+ * Freshness timestamp for bot artifacts.
+ * Prefer `updated_at` when present: bots like CodeRabbit auto-update the same
+ * comment after a fix push, leaving `created_at` at the original pre-trigger time
+ * (online R8 Codex P1). Falling back to created_at/submitted_at for artifacts
+ * that never update.
+ */
 function artifactTimestamp(
-  item: { created_at?: string; submitted_at?: string },
+  item: {
+    created_at?: string;
+    submitted_at?: string;
+    updated_at?: string;
+  },
 ): string | undefined {
-  return item.created_at ?? item.submitted_at;
+  return item.updated_at ?? item.created_at ?? item.submitted_at;
 }
 
 function isAdmissibleBotArtifact(
@@ -641,12 +660,20 @@ function paginateCheckRuns(
       `repos/${repo}/commits/${headOid}/check-runs?per_page=${perPage}&page=${page}`,
     ]);
     const parsed: unknown = JSON.parse(raw);
-    const runs =
-      parsed != null &&
-      typeof parsed === "object" &&
-      Array.isArray((parsed as { check_runs?: unknown }).check_runs)
-        ? ((parsed as { check_runs: unknown[] }).check_runs ?? [])
-        : [];
+    // Fail closed: missing check_runs must not become [] → classify "converged"
+    // and let a green verify merge (online R8 Gemini critical).
+    if (parsed == null || typeof parsed !== "object") {
+      throw new Error(
+        `paginateCheckRuns: expected object with check_runs for ${repo}@${headOid}, got ${typeof parsed}`,
+      );
+    }
+    const checkRunsField = (parsed as { check_runs?: unknown }).check_runs;
+    if (!Array.isArray(checkRunsField)) {
+      throw new Error(
+        `paginateCheckRuns: missing check_runs array for ${repo}@${headOid}`,
+      );
+    }
+    const runs = checkRunsField;
     if (runs.length === 0) break;
     for (const run of runs) {
       if (run == null || typeof run !== "object") continue;

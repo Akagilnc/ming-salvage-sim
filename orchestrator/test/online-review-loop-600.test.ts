@@ -3966,6 +3966,38 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     expect(verifyCalls).toBe(1);
   });
 
+  it("pin deep self-check R8: CI failed + no fix marks parks without fixer", async () => {
+    let fixerCalls = 0;
+    const result = await runOnlineReviewLoopStage(stageShip, {
+      poll: async () => ({
+        ...baseSnapshot,
+        checkRuns: [
+          {
+            id: 1,
+            name: "ci",
+            headSha: "head-1",
+            status: "completed",
+            conclusion: "failure",
+          },
+        ],
+      }),
+      dispatchVerify: async () =>
+        ({ kind: "verify", converged: true }) satisfies VerifyResult,
+      dispatchFixer: async () => {
+        fixerCalls += 1;
+        return fixerNotFixed();
+      },
+      dispatchCleanup: async () => true,
+      dispatchDocRelease: async () => true,
+      applySideEffects: (_landing, verify) => verify,
+      retriggerAfterFix: () => {},
+    });
+    expect(fixerCalls).toBe(0);
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate_raised");
+    expect(result.stopSummary?.summary).toMatch(/CI check-runs failed/i);
+  });
+
   it("pin online R2 Codex P2: pending CI re-polls — does not dispatch fixer", async () => {
     let pollCalls = 0;
     let verifyCalls = 0;
@@ -4517,7 +4549,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     expect(recordedSha).toBe("family-landed-sha");
   });
 
-  it("pin r17: worker converged:true clamped when landing checkRuns are red", async () => {
+  it("pin r17: worker converged:true + red CI parks with CI failure (no fixer)", async () => {
     let fixerCalls = 0;
     const snapshotWithRedCi: PrReviewSnapshot = {
       ...baseSnapshot,
@@ -4543,13 +4575,12 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
-    expect(fixerCalls).toBe(1);
-    expect(result).toEqual({
-      ok: false,
-      terminalState: "decision_gate_raised",
-      round: 1,
-      stopSummary: onlineReviewFixerNothingToFixStopSummary(),
-    });
+    // Deep self-check R8: do not dispatch fixer with empty fix marks on CI red
+    // (misleading "nothing to fix while findings remain").
+    expect(fixerCalls).toBe(0);
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate_raised");
+    expect(result.stopSummary?.summary).toMatch(/CI check-runs failed/i);
   });
 });
 
