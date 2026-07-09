@@ -176,7 +176,7 @@ function familyStopSummary(input: {
       hasMetadata
         ? {
             ...(metadata?.heads != null ? { heads: metadata.heads } : {}),
-            ...(input.admissionSkipped != null && input.admissionSkipped.length > 0
+            ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
               ? { admissionSkipped: input.admissionSkipped }
               : {}),
             ...(input.alreadyDone != null && input.alreadyDone.length > 0
@@ -476,7 +476,7 @@ async function requirePostMergeCleanupForAlreadyDone(input: {
       escalationReason: reason,
     }),
     children: [...input.children],
-    ...(input.admissionSkipped != null && input.admissionSkipped.length > 0
+    ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
       ? { admissionSkipped: input.admissionSkipped }
       : {}),
   };
@@ -1722,7 +1722,7 @@ export async function runFamily(
       prUrl: convergedRecord.pr,
       familyIssue: epic.issue,
       children,
-      ...(epic.admissionSkipped != null && epic.admissionSkipped.length > 0
+      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
     });
@@ -1755,7 +1755,7 @@ export async function runFamily(
       familyHead,
       stopSummary: alreadyDoneSummary,
       children,
-      ...(epic.admissionSkipped != null && epic.admissionSkipped.length > 0
+      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
     };
@@ -1980,7 +1980,7 @@ export async function runFamily(
       prUrl: shippedRecord.pr,
       familyIssue: epic.issue,
       children,
-      ...(epic.admissionSkipped != null && epic.admissionSkipped.length > 0
+      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
     });
@@ -2013,7 +2013,7 @@ export async function runFamily(
       familyHead,
       stopSummary: alreadyDoneSummary,
       children,
-      ...(epic.admissionSkipped != null && epic.admissionSkipped.length > 0
+      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
     };

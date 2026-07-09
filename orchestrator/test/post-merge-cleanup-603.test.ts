@@ -445,6 +445,72 @@ describe("#603 defaultBranchExists — missing ref vs API error", () => {
       result.skippedReasons?.some((r) => r.startsWith("branch_ref_probe_failed")),
     ).toBe(true);
   });
+
+  it("may_delete: concurrent delete 404/missing → already_gone terminal success", () => {
+    const gone = Object.assign(new Error("gh api failed: Not Found"), {
+      status: 1,
+      stderr: 'gh: Not Found (HTTP 404)\n{"message":"Not Found"}',
+    });
+    const result = runPostMergeCleanup({
+      sh: fakeSh({
+        "gh pr view": () =>
+          JSON.stringify({
+            number: 603,
+            url: PR_URL,
+            state: "MERGED",
+            headRefName: "feat/issue-603",
+            headRefOid: MERGED_HEAD,
+          }),
+      }),
+      repo: REPO,
+      coveredIssues: [603],
+      prMerged: PR_MERGED,
+      fetchIssueState: () => "CLOSED",
+      branchExists: () => true,
+      fetchBranchTip: () => MERGED_HEAD,
+      deleteBranch: () => {
+        throw gone;
+      },
+    });
+    expect(result.branchOutcome).toBe("already_gone");
+    expect(result.terminal).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+
+  it("may_delete: non-404 delete errors still fail (not already_gone)", () => {
+    const boom = Object.assign(new Error("gh api failed: Forbidden"), {
+      status: 1,
+      stderr: "HTTP 403: Forbidden",
+    });
+    const result = runPostMergeCleanup({
+      sh: fakeSh({
+        "gh pr view": () =>
+          JSON.stringify({
+            number: 603,
+            url: PR_URL,
+            state: "MERGED",
+            headRefName: "feat/issue-603",
+            headRefOid: MERGED_HEAD,
+          }),
+      }),
+      repo: REPO,
+      coveredIssues: [603],
+      prMerged: PR_MERGED,
+      fetchIssueState: () => "CLOSED",
+      branchExists: () => true,
+      fetchBranchTip: () => MERGED_HEAD,
+      deleteBranch: () => {
+        throw boom;
+      },
+    });
+    expect(result.branchOutcome).not.toBe("already_gone");
+    expect(result.branchOutcome).not.toBe("deleted");
+    expect(result.terminal).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(
+      result.skippedReasons?.some((r) => r.startsWith("branch_delete_failed")),
+    ).toBe(true);
+  });
 });
 
 describe("#603 fetchPaginatedSubIssues", () => {

@@ -3245,7 +3245,9 @@ export async function ensureFamilyPostMergeCleanup(input: {
     const reason =
       cleanupResult.kind === "completed"
         ? "family post-merge cleanup did not reach a terminal success outcome"
-        : `family post-merge cleanup worker returned ${cleanupResult.kind}`;
+        : cleanupResult.kind === "failed" || cleanupResult.kind === "malformed"
+          ? `family post-merge cleanup worker returned ${cleanupResult.kind}: ${cleanupResult.reason}`
+          : `family post-merge cleanup worker returned ${cleanupResult.kind}`;
     if (recordAbortOnFailure) {
       await familyBackend.recordAborted?.({
         phase,
