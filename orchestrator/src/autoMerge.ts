@@ -135,7 +135,7 @@ export function docReleasePathsFromCommit(
 
 function parsePrMergeLivePayload(raw: string, prUrl: string): PrMergeLiveState {
   const parsed: unknown = JSON.parse(raw);
-  if (parsed == null || typeof parsed !== "object") {
+  if (parsed === null || parsed === undefined || typeof parsed !== "object") {
     throw new Error(`autoMerge: malformed gh pr view payload for ${prUrl}`);
   }
   const obj = parsed as Record<string, unknown>;
@@ -467,11 +467,13 @@ export async function tryResumePrMergedBackfill(
     AutoMergeStageInput,
     "docReleaseCompleted" | "poll" | "docReleasePaths"
   >,
+  liveState?: PrMergeLiveState,
 ): Promise<AutoMergeStageResult | undefined> {
   if (input.prMergedMarkerPresent) {
     return { ok: true, terminalState: "already_recorded" };
   }
-  const live = fetchPrMergeLiveState(input.sh, input.repo, input.prUrl);
+  const live =
+    liveState ?? fetchPrMergeLiveState(input.sh, input.repo, input.prUrl);
   if (live.state !== "MERGED") return undefined;
   if (!input.priorConvergenceRecorded) {
     return {
@@ -525,7 +527,8 @@ export async function runAutoMergeStage(
     return runOfflineSyntheticAutoMerge(input);
   }
 
-  const backfill = await tryResumePrMergedBackfill(input);
+  let live = fetchPrMergeLiveState(input.sh, input.repo, input.prUrl);
+  const backfill = await tryResumePrMergedBackfill(input, live);
   if (backfill !== undefined) {
     return backfill;
   }
@@ -535,8 +538,6 @@ export async function runAutoMergeStage(
   if (docReleaseGate !== undefined) {
     return docReleaseGate;
   }
-
-  let live = fetchPrMergeLiveState(input.sh, input.repo, input.prUrl);
   if (live.state === "MERGED") {
     if (!input.priorConvergenceRecorded) {
       return {
@@ -609,13 +610,17 @@ export async function runAutoMergeStage(
   const retryDelayMs = input.mergeConfirmRetryDelayMs ?? 2000;
   let record: PrMergedTerminalRecord | undefined;
   for (let attempt = 1; attempt <= 3; attempt++) {
-    record = confirmPrMergedLive(
-      input.sh,
-      input.repo,
-      input.prUrl,
-      live.headOid,
-    );
-    if (record !== undefined) break;
+    try {
+      record = confirmPrMergedLive(
+        input.sh,
+        input.repo,
+        input.prUrl,
+        live.headOid,
+      );
+      if (record !== undefined) break;
+    } catch {
+      // Ignore transient network/API errors and retry.
+    }
     if (attempt < 3 && retryDelayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }

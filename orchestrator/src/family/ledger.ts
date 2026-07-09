@@ -1159,7 +1159,7 @@ export function familyPrMergedForHead(
     remoteBranchName: row.remoteBranchName,
     mergedHeadOid: row.mergedHeadOid,
     familyHeadAfter: row.familyHeadAfter,
-    ...(row.stopSummary != null ? { stopSummary: row.stopSummary } : {}),
+    ...(row.stopSummary !== undefined ? { stopSummary: row.stopSummary } : {}),
   };
 }
 

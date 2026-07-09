@@ -34,34 +34,21 @@ function familyGhSh(): (file: string, args: string[]) => string {
     }).trim();
 }
 
-function resolveFamilyExpectedMergeHeadOid(
-  familyBackend: FamilyBackend,
-): string | undefined {
+function resolveFamilyRepoDetails(familyBackend: FamilyBackend): {
+  readonly headOid?: string;
+  readonly docReleasePaths?: readonly string[];
+} {
   const repoPath = familyBackend.resolveFamilyWorkingRepo?.();
-  if (repoPath === undefined) return undefined;
+  if (repoPath === undefined) return {};
   try {
-    return execFileSync("git", ["-C", repoPath, "rev-parse", "HEAD"], {
+    const headOid = execFileSync("git", ["-C", repoPath, "rev-parse", "HEAD"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
+    const docReleasePaths = docReleasePathsFromCommit(repoPath, headOid);
+    return { headOid, docReleasePaths };
   } catch {
-    return undefined;
-  }
-}
-
-function resolveFamilyDocReleasePaths(
-  familyBackend: FamilyBackend,
-): readonly string[] | undefined {
-  const repoPath = familyBackend.resolveFamilyWorkingRepo?.();
-  if (repoPath === undefined) return undefined;
-  try {
-    const head = execFileSync("git", ["-C", repoPath, "rev-parse", "HEAD"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return docReleasePathsFromCommit(repoPath, head);
-  } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -109,10 +96,10 @@ export async function runFamilyAutoMergeStage(
     familyLedger,
     input.convergedHeadOid,
   );
-  const docReleasePaths = resolveFamilyDocReleasePaths(input.familyBackend);
+  const repoDetails = resolveFamilyRepoDetails(input.familyBackend);
+  const docReleasePaths = repoDetails.docReleasePaths;
   const expectedMergeHeadOid =
-    resolveFamilyExpectedMergeHeadOid(input.familyBackend) ??
-    input.convergedHeadOid;
+    repoDetails.headOid ?? input.convergedHeadOid;
   const ghSh = familyGhSh();
   const autoMerge = await runAutoMergeStage({
     sh: ghSh,
