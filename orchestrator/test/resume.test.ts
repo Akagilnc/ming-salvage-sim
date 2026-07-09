@@ -1602,6 +1602,134 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
   });
 
+  it("pin online R3 Codex P1: retrigger fail after fix_committed parks escalate (not S8 error)", async () => {
+    const livePr = "https://github.com/o/r/pull/255";
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-retrigger-fail-"));
+    writeResumeOnlineReviewSnapshot(stateDir);
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: livePr,
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+    ];
+
+    const pollSpy = vi
+      .spyOn(onlineReviewLoop, "waitForBotQuiescence")
+      .mockImplementation(async (_sh, input) => ({
+        repo: "o/r",
+        prNumber: 255,
+        prUrl: input.prUrl,
+        headOid: input.roundTrigger.headOid,
+        pollCount: 1,
+        bots: {
+          coderabbit: { state: "complete", findingCount: 0 },
+          sourcery: { state: "complete", findingCount: 0 },
+          codex: { state: "complete", findingCount: 0 },
+          gemini: { state: "complete", findingCount: 0 },
+        },
+        threads: [],
+        checkRuns: [],
+        totalFindingCount: 0,
+        quiescent: true,
+      }));
+    const retriggerSpy = vi
+      .spyOn(onlineReviewLoop, "retriggerBotsAndPoll")
+      .mockImplementation(() => {
+        throw new Error("retriggerBotsAndPoll: gh api failed");
+      });
+
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
+    vi.stubEnv("ORCHESTRATOR_REPO", "o/r");
+
+    try {
+      const backend = new ReviewLoopResumeBackend({
+        worktree: WORKTREE,
+        stateDir,
+        ledger: prior,
+      });
+      // First verify stays false so we go to fixer; fixer commits then retrigger throws.
+      backend.verifyDispatchCount = 0;
+      const origDispatch = backend.dispatchWorker.bind(backend);
+      backend.dispatchWorker = async (spec, ctx, landing) => {
+        if (spec.kind === "verify") {
+          backend.verifyDispatchCount += 1;
+          backend.dispatchSpecs.push(spec);
+          backend.dispatchContexts.push(ctx);
+          backend.dispatchLandings.push(landing);
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: false,
+              findingDispositions: [
+                { identityKey: "f:1", threadId: "100", action: "fix" },
+              ],
+            },
+          };
+        }
+        if (spec.kind === "fixer") {
+          backend.dispatchSpecs.push(spec);
+          backend.dispatchContexts.push(ctx);
+          backend.dispatchLandings.push(landing);
+          return {
+            kind: "completed",
+            output: {
+              kind: "fixer",
+              committed: true,
+              fixCommitSha: "fixsha1111111111111111111111111111111111",
+            },
+          };
+        }
+        return origDispatch(spec, ctx, landing);
+      };
+
+      const result = await runOrchestrator({ issueNumber: 255, backend });
+
+      expect(result.status).toBe("escalate");
+      expect(result.status).not.toBe("error");
+      expect(result.stopSummary.summary).toMatch(
+        /re-trigger failed after fix committed/i,
+      );
+      expect(
+        backend.ledgerWrites.some((e) => e.event === "online_review_fix_committed"),
+      ).toBe(true);
+      // No terminal S8 error tag that would block fix-gap recovery
+      expect(
+        backend.ledgerWrites.some(
+          (e) => e.step === "S8" && e.handoffStatus === "error",
+        ),
+      ).toBe(false);
+      // S10 executable row present so re-feed resumes S10→S9 + gap recovery
+      expect(
+        result.stepLedger.some(
+          (e) =>
+            e.step === "S10" &&
+            e.event === undefined &&
+            e.output?.kind === "fixer",
+        ),
+      ).toBe(true);
+      expect(retriggerSpy).toHaveBeenCalled();
+    } finally {
+      retriggerSpy.mockRestore();
+      pollSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("pin r33: fix-gap resume posts retrigger + marker then polls; non-gap unchanged", async () => {
     const livePr = "https://github.com/o/r/pull/255";
     const fixSha = "fixsha1111111111111111111111111111111111";
