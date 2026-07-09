@@ -1732,6 +1732,27 @@ function planResume(
       priorLedger: ledger.slice(0, Math.max(0, reopenIdx)) as ReadonlyArray<LedgerEntry>,
     };
   }
+  // #735 US13: S12 released:false parks resumable — re-feed re-dispatches
+  // docRelease. Without this, route(S12,!released)→S8(error) sticks forever.
+  if (
+    routeFrom === "S12" &&
+    isValidDocReleaseResult(routeOutput) &&
+    !routeOutput.released
+  ) {
+    let reopenIdx = ledger.length - 1;
+    while (reopenIdx >= 0) {
+      const entry = ledger[reopenIdx]!;
+      if (!isBookkeepingEntry(entry) && entry.step === "S12") {
+        break;
+      }
+      reopenIdx--;
+    }
+    return {
+      resumeStep: "S12",
+      lastOutput: undefined,
+      priorLedger: ledger.slice(0, Math.max(0, reopenIdx)) as ReadonlyArray<LedgerEntry>,
+    };
+  }
   if (decision.kind === "handoff") {
     return {
       terminalStatus: decision.status,
@@ -3664,7 +3685,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       case "S11":
       case "S12": {
         // #600 online review loop: bot poll → fresh verify → fixer → fresh verify
-        // (ADR 0061). S11/S12 remain stub workers until #603.
+        // (ADR 0061). S12 real 文档发布 = #735; S11 cleanup = #603.
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
@@ -4023,6 +4044,54 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 summary,
                 repairHint:
                   "re-feed the issue — resume re-enters S11 post-merge cleanup (non-terminal ≠ success; tip_drift leaves branch residue)",
+              },
+              deferredFindings,
+            };
+          }
+          if (
+            reviewStep === "S12" &&
+            isValidDocReleaseResult(result.output) &&
+            !result.output.released
+          ) {
+            // #735 US13: skill/push failure → released:false must park resumable.
+            // S8(error) would make re-feed report a sticky terminal and never
+            // re-dispatch docRelease (mirror S11 non-terminal park).
+            const docOutput = result.output;
+            const summary =
+              "文档发布 worker returned released:false (skill fail / hang / required push fail)";
+            output = docOutput;
+            step = reviewStep;
+            stepSessionId = result.sessionId;
+            lastOutput = docOutput;
+            ledger.push({
+              step: "S12",
+              output: docOutput,
+              ...(result.sessionId !== undefined
+                ? { sessionId: result.sessionId }
+                : {}),
+            });
+            try {
+              await emitLedger(
+                "S12",
+                docOutput,
+                promptFile,
+                undefined,
+                result.sessionId,
+              );
+            } catch (ledgerErr) {
+              return await errorTermination("S12", ledgerErr, {
+                recordInMemory: false,
+                output: docOutput,
+              });
+            }
+            return {
+              status: "escalate",
+              stepLedger: ledger,
+              stopSummary: {
+                reason: "infra_failure",
+                summary,
+                repairHint:
+                  "re-feed the issue — resume re-enters S12 文档发布 (released:false ≠ terminal success; fix skill/push then retry)",
               },
               deferredFindings,
             };
