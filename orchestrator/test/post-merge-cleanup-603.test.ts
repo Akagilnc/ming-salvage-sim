@@ -80,6 +80,11 @@ describe("#603 shouldCloseParentIssue", () => {
       ),
     ).toBe(true);
   });
+
+  it("refuses close when live sub-issue list is empty (fail-closed)", () => {
+    expect(shouldCloseParentIssue([], [603])).toBe(false);
+    expect(shouldCloseParentIssue([], [])).toBe(false);
+  });
 });
 
 describe("#603 assessBranchDeletePrecondition", () => {
@@ -344,6 +349,101 @@ describe("#603 runPostMergeCleanup — parent epic close (AC3)", () => {
     });
     expect(closed.sort((a, b) => a - b)).toEqual([366, 602, 603]);
     expect(result.parentIssueClosed).toBe(true);
+  });
+
+  it("does not close parent when live sub-issues are empty/unobserved", () => {
+    const closed: number[] = [];
+    const result = runPostMergeCleanup({
+      sh: fakeSh({
+        "gh pr view": () =>
+          JSON.stringify({
+            number: 603,
+            url: PR_URL,
+            state: "MERGED",
+            headRefName: "feat/family",
+            headRefOid: MERGED_HEAD,
+          }),
+      }),
+      repo: REPO,
+      coveredIssues: [603],
+      parentIssue: 366,
+      prMerged: { ...PR_MERGED, remoteBranchName: "feat/family" },
+      fetchIssueState: (n) => (n === 603 ? "OPEN" : "OPEN"),
+      fetchSubIssues: () => [],
+      closeIssue: (n) => {
+        closed.push(n);
+      },
+      branchExists: () => false,
+    });
+    expect(closed).toEqual([603]);
+    expect(closed).not.toContain(366);
+    expect(result.parentIssueClosed).not.toBe(true);
+    expect(result.terminal).toBe(true);
+  });
+});
+
+describe("#603 defaultBranchExists — missing ref vs API error", () => {
+  function mergedPrSh(
+    branchApi: () => string,
+  ): ReturnType<typeof fakeSh> {
+    return fakeSh({
+      "gh pr view": () =>
+        JSON.stringify({
+          number: 603,
+          url: PR_URL,
+          state: "MERGED",
+          headRefName: "feat/issue-603",
+          headRefOid: MERGED_HEAD,
+        }),
+      "gh api repos": () => branchApi(),
+    });
+  }
+
+  it("treats genuine missing ref (404) as already_gone terminal success", () => {
+    const missing = Object.assign(new Error("gh api failed: Not Found"), {
+      status: 1,
+      stderr: 'gh: Not Found (HTTP 404)\n{"message":"Not Found"}',
+    });
+    const result = runPostMergeCleanup({
+      sh: mergedPrSh(() => {
+        throw missing;
+      }),
+      repo: REPO,
+      coveredIssues: [603],
+      prMerged: PR_MERGED,
+      fetchIssueState: () => "CLOSED",
+      deleteBranch: () => {
+        throw new Error("must not delete when branch missing");
+      },
+    });
+    expect(result.branchOutcome).toBe("already_gone");
+    expect(result.terminal).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+
+  it("does not map transport/API errors to already_gone (non-terminal)", () => {
+    const transport = Object.assign(new Error("gh api failed: Bad Gateway"), {
+      status: 1,
+      stderr: "HTTP 502: Bad Gateway",
+    });
+    const result = runPostMergeCleanup({
+      sh: mergedPrSh(() => {
+        throw transport;
+      }),
+      repo: REPO,
+      coveredIssues: [603],
+      prMerged: PR_MERGED,
+      fetchIssueState: () => "CLOSED",
+      deleteBranch: () => {
+        throw new Error("must not delete on API error");
+      },
+    });
+    expect(result.branchOutcome).not.toBe("already_gone");
+    expect(result.terminal).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(
+      result.skippedReasons?.some((r) => r.startsWith("branch_ref_probe_failed")),
+    ).toBe(true);
   });
 });
 

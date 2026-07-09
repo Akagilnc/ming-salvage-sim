@@ -77,6 +77,9 @@ export function shouldCloseParentIssue(
   subIssues: readonly LiveSubIssue[],
   coveredIssues: readonly number[],
 ): boolean {
+  // Fail-closed: empty/unobserved live sub-issues must not vacuous-true close
+  // the parent (bad JSON / empty page ≠ "all siblings done").
+  if (subIssues.length === 0) return false;
   const covered = new Set(coveredIssues);
   return subIssues.every(
     (s) =>
@@ -134,6 +137,24 @@ function defaultFetchIssueState(sh: Sh, repo: string, issue: number): string {
   return raw.trim();
 }
 
+/** True when gh/git-ref probe failed because the ref is genuinely absent. */
+export function isMissingGitRefError(err: unknown): boolean {
+  const parts: string[] = [];
+  if (err instanceof Error) parts.push(err.message);
+  else if (err != null) parts.push(String(err));
+  const stderr = (err as { stderr?: unknown } | null)?.stderr;
+  if (typeof stderr === "string") parts.push(stderr);
+  const stdout = (err as { stdout?: unknown } | null)?.stdout;
+  if (typeof stdout === "string") parts.push(stdout);
+  const text = parts.join("\n");
+  return (
+    /HTTP\s*404\b/i.test(text) ||
+    /\bNot Found\b/i.test(text) ||
+    /Reference does not exist/i.test(text) ||
+    /"message"\s*:\s*"Not Found"/i.test(text)
+  );
+}
+
 function defaultBranchExists(
   sh: Sh,
   repo: string,
@@ -147,8 +168,9 @@ function defaultBranchExists(
       ".object.sha",
     ]);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if (isMissingGitRefError(err)) return false;
+    throw err;
   }
 }
 
@@ -166,8 +188,9 @@ function defaultFetchBranchTip(
     ]);
     const tip = raw.trim();
     return tip.length > 0 ? tip : undefined;
-  } catch {
-    return undefined;
+  } catch (err) {
+    if (isMissingGitRefError(err)) return undefined;
+    throw err;
   }
 }
 
@@ -291,17 +314,8 @@ export function runPostMergeCleanup(
   const fetchTipFn =
     input.fetchBranchTip ??
     ((b) => defaultFetchBranchTip(input.sh, input.repo, b));
-  const exists = branchExistsFn(branch);
-  const precondition = assessBranchDeletePrecondition({
-    prState: live.state,
-    branchExists: exists,
-    branchTip: exists ? fetchTipFn(branch) : undefined,
-    mergedHeadOid: input.prMerged.mergedHeadOid,
-  });
 
-  let branchOutcome: CleanupBranchOutcome;
   let parentIssueClosed: boolean | undefined;
-
   if (input.parentIssue !== undefined) {
     if (parentClosedThisRun) {
       parentIssueClosed = true;
@@ -310,6 +324,31 @@ export function runPostMergeCleanup(
       parentIssueClosed = parentState.toUpperCase() === "CLOSED";
     }
   }
+
+  let exists: boolean;
+  let branchTip: string | undefined;
+  try {
+    exists = branchExistsFn(branch);
+    branchTip = exists ? fetchTipFn(branch) : undefined;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return cleanupResultFromActs({
+      allStepsComplete: false,
+      issuesClosed,
+      parentIssueClosed,
+      branchOutcome: "skipped_precondition",
+      skippedReasons: [...skippedReasons, `branch_ref_probe_failed:${detail}`],
+    });
+  }
+
+  const precondition = assessBranchDeletePrecondition({
+    prState: live.state,
+    branchExists: exists,
+    branchTip,
+    mergedHeadOid: input.prMerged.mergedHeadOid,
+  });
+
+  let branchOutcome: CleanupBranchOutcome;
 
   switch (precondition) {
     case "may_delete": {

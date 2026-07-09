@@ -44,6 +44,7 @@ import {
   familyEscalationState,
   familyReviewLoopConvergedForHead,
   familyShippedRecordForReviewLoopResume,
+  familyPostMergeCleanupForHead,
   familyPrMergedForHead,
   hasBoundShippedMarker,
   hasUnboundLegacyShippedMarker,
@@ -59,7 +60,11 @@ import {
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import { convergenceHeadToRecord } from "../evidenceAdmissibility.js";
-import { runFamilyOnlineReviewLoop, runVerifyCmr } from "./verifyCmr.js";
+import {
+  ensureFamilyPostMergeCleanup,
+  runFamilyOnlineReviewLoop,
+  runVerifyCmr,
+} from "./verifyCmr.js";
 import {
   familyAutoMergeIncomplete,
   isFamilyPrLiveMerged,
@@ -411,6 +416,70 @@ async function readCurrentFamilyHead(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * #603 — already_done / resume success is allowed only when the head has a
+ * terminal+ok `post_merge_cleanup` ledger row (or cleanup re-enters successfully).
+ * Returns an escalated FamilyRunResult when cleanup cannot complete; undefined
+ * means the caller may report already_done.
+ */
+async function requirePostMergeCleanupForAlreadyDone(input: {
+  readonly familyBackend: FamilyBackend;
+  readonly familyBase: string;
+  readonly familyHeadAfter: string;
+  readonly prUrl: string;
+  readonly familyIssue: number;
+  readonly children: ReadonlyArray<FamilyChildResult>;
+  readonly admissionSkipped?: ReadonlyArray<{
+    readonly issue: number;
+    readonly reason: string;
+    readonly message: string;
+  }>;
+}): Promise<FamilyRunResult | undefined> {
+  const ledger = await input.familyBackend.readFamilyLedger();
+  if (
+    familyPostMergeCleanupForHead(ledger, input.familyHeadAfter) !== undefined
+  ) {
+    return undefined;
+  }
+  if (familyPrMergedForHead(ledger, input.familyHeadAfter) === undefined) {
+    return undefined;
+  }
+  const cleanup = await ensureFamilyPostMergeCleanup({
+    familyBackend: input.familyBackend,
+    familyBase: input.familyBase,
+    familyHeadAfter: input.familyHeadAfter,
+    prUrl: input.prUrl,
+    familyIssue: input.familyIssue,
+    recordAbortOnFailure: false,
+  });
+  if (cleanup.ok) return undefined;
+  const reason =
+    cleanup.reason ??
+    "family post-merge cleanup did not reach a terminal success outcome";
+  await recordFamilyEscalated(input.familyBackend, {
+    escalationKind: "failure",
+    phase: "final",
+    reason,
+    familyHeadAfter: input.familyHeadAfter,
+  });
+  return {
+    status: "escalated",
+    familyBase: input.familyBase,
+    familyHead: input.familyHeadAfter,
+    stopSummary: familyStopSummary({
+      status: "escalated",
+      familyBase: input.familyBase,
+      familyHead: input.familyHeadAfter,
+      children: input.children,
+      escalationReason: reason,
+    }),
+    children: [...input.children],
+    ...(input.admissionSkipped != null && input.admissionSkipped.length > 0
+      ? { admissionSkipped: input.admissionSkipped }
+      : {}),
+  };
 }
 
 function latestVerifiedCmrHead(
@@ -1450,6 +1519,18 @@ export async function runFamily(
     const priorPrMerged = familyPrMergedForHead(preFinalLedger, preFinalFamilyHead);
     if (priorPrMerged !== undefined) {
       familyHead = preFinalFamilyHead;
+      const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
+        familyBackend,
+        familyBase,
+        familyHeadAfter: preFinalFamilyHead!,
+        prUrl: priorPrMerged.pr,
+        familyIssue: epic.issue,
+        children,
+        ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
+          ? { admissionSkipped: epic.admissionSkipped }
+          : {}),
+      });
+      if (cleanupBlocked !== undefined) return cleanupBlocked;
       const convergedVerifiedCmrHead =
         convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
         preFinalFamilyHead;
@@ -1497,6 +1578,18 @@ export async function runFamily(
       });
       if (!familyAutoMergeIncomplete(mergedBackfill)) {
         familyHead = preFinalFamilyHead;
+        const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
+          familyBackend,
+          familyBase,
+          familyHeadAfter: preFinalFamilyHead,
+          prUrl: convergedRecord.pr,
+          familyIssue: epic.issue,
+          children,
+          ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
+            ? { admissionSkipped: epic.admissionSkipped }
+            : {}),
+        });
+        if (cleanupBlocked !== undefined) return cleanupBlocked;
         const convergedVerifiedCmrHead =
           convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
           preFinalFamilyHead;
@@ -1622,6 +1715,18 @@ export async function runFamily(
     }
 
     familyHead = preFinalFamilyHead;
+    const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
+      familyBackend,
+      familyBase,
+      familyHeadAfter: preFinalFamilyHead!,
+      prUrl: convergedRecord.pr,
+      familyIssue: epic.issue,
+      children,
+      ...(epic.admissionSkipped != null && epic.admissionSkipped.length > 0
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
+    });
+    if (cleanupBlocked !== undefined) return cleanupBlocked;
     const convergedVerifiedCmrHead =
       convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
       preFinalFamilyHead;
@@ -1868,6 +1973,18 @@ export async function runFamily(
         ? { issue: c.issue, status: "already_done" as const }
         : { issue: c.issue, status: "skipped" as const },
     );
+    const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
+      familyBackend,
+      familyBase,
+      familyHeadAfter: convergedFamilyHead,
+      prUrl: shippedRecord.pr,
+      familyIssue: epic.issue,
+      children,
+      ...(epic.admissionSkipped != null && epic.admissionSkipped.length > 0
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
+    });
+    if (cleanupBlocked !== undefined) return cleanupBlocked;
     const shippedVerifiedCmrHead =
       shippedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
       preFinalFamilyHead;
