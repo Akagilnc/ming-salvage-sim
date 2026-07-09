@@ -499,6 +499,9 @@ export async function legacyDispatchWorker(
   try {
     onlineReviewLanding = writeOnlineReviewLandingFile(spec, ctx, landing);
   } catch (err) {
+    if (fixFindingsLanding?.cleanup) {
+      rmSync(fixFindingsLanding.path, { force: true });
+    }
     return {
       kind: "failed",
       reason: err instanceof Error ? err.message : String(err),

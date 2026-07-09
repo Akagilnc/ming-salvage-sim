@@ -1901,8 +1901,8 @@ const coderOutputSchema = z.object({
 // from reviewLoopOutcome.ts (per AC2). .strict() so off-shape (extra keys, wrong types) fails closed.
 const onlineReviewFindingDispositionSchema = z
   .object({
-    identityKey: z.string(),
-    threadId: z.string(),
+    identityKey: z.string().min(1),
+    threadId: z.string().min(1),
     action: z.enum(["fix", "reject", "defer"]),
     reason: z.string().optional(),
   })
@@ -1910,8 +1910,8 @@ const onlineReviewFindingDispositionSchema = z
 
 const onlineReviewThreadReplySchema = z
   .object({
-    threadId: z.string(),
-    body: z.string(),
+    threadId: z.string().min(1),
+    body: z.string().min(1),
   })
   .strict();
 

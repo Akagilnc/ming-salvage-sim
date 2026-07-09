@@ -2023,11 +2023,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         pollCount,
       });
     }
-    const ghSh = (file: string, args: string[]) =>
-      execFileSync(file, args, {
-        stdio: ["ignore", "pipe", "pipe"],
-        encoding: "utf8",
-      }).trim();
     const roundTrigger = resolveOnlineReviewRoundTrigger({
       onlineReviewRound,
       persistedRoundTrigger: lastOnlineReviewRoundTrigger,

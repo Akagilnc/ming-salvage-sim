@@ -101,16 +101,16 @@ export function resolveReviewThread(
   prNumber: number,
   threadId: string,
 ): void {
-  const nodes = paginateReviewThreadNodes(
-    sh,
-    repo,
-    prNumber,
-    "id isResolved comments(first:1){nodes{databaseId}}",
-  );
   let threadNodeId: string | undefined;
   if (threadId.startsWith("PRRT_")) {
     threadNodeId = threadId;
   } else {
+    const nodes = paginateReviewThreadNodes(
+      sh,
+      repo,
+      prNumber,
+      "id isResolved comments(first:1){nodes{databaseId}}",
+    );
     const targetId = Number(threadId);
     for (const obj of nodes) {
       const firstCommentId = obj.comments?.nodes?.[0]?.databaseId;
