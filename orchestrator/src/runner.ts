@@ -2237,6 +2237,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       repo,
       prUrl,
       convergedHeadOid,
+      expectedMergeHeadOid: docReleaseOid ?? convergedHeadOid,
       docReleaseCompleted: true,
       priorConvergenceRecorded: onlineReviewConvergedForHead(
         ledger,

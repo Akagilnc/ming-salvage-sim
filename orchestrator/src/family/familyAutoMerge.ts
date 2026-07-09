@@ -9,6 +9,7 @@ import { execFileSync } from "node:child_process";
 
 import {
   docReleasePathsFromCommit,
+  fetchPrMergeLiveState,
   runAutoMergeStage,
   type AutoMergeStageResult,
 } from "../autoMerge.js";
@@ -31,6 +32,21 @@ function familyGhSh(): (file: string, args: string[]) => string {
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf8",
     }).trim();
+}
+
+function resolveFamilyExpectedMergeHeadOid(
+  familyBackend: FamilyBackend,
+): string | undefined {
+  const repoPath = familyBackend.resolveFamilyWorkingRepo?.();
+  if (repoPath === undefined) return undefined;
+  try {
+    return execFileSync("git", ["-C", repoPath, "rev-parse", "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return undefined;
+  }
 }
 
 function resolveFamilyDocReleasePaths(
@@ -57,6 +73,20 @@ export function familyAutoMergeIncomplete(result: AutoMergeStageResult): boolean
   return true;
 }
 
+/** True when a live GitHub family PR is already MERGED (not offline pr:// stubs). */
+export function isFamilyPrLiveMerged(prUrl: string, repo?: string): boolean {
+  const familyRepo =
+    repo?.trim() ?? process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
+  if (!isLiveGithubReviewPollEnabled(prUrl, familyRepo)) return false;
+  try {
+    const ghSh = familyGhSh();
+    const live = fetchPrMergeLiveState(ghSh, familyRepo, prUrl);
+    return live.state === "MERGED";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Run host-side PR auto-merge for a converged family head and record `pr_merged`
  * when merge is confirmed (or backfilled from live MERGED state).
@@ -80,12 +110,16 @@ export async function runFamilyAutoMergeStage(
     input.convergedHeadOid,
   );
   const docReleasePaths = resolveFamilyDocReleasePaths(input.familyBackend);
+  const expectedMergeHeadOid =
+    resolveFamilyExpectedMergeHeadOid(input.familyBackend) ??
+    input.convergedHeadOid;
   const ghSh = familyGhSh();
   const autoMerge = await runAutoMergeStage({
     sh: ghSh,
     repo: familyRepo,
     prUrl: shipPr,
     convergedHeadOid: input.convergedHeadOid,
+    expectedMergeHeadOid,
     docReleaseCompleted: true,
     priorConvergenceRecorded: true,
     prMergedMarkerPresent: priorPrMerged !== undefined,
