@@ -685,6 +685,26 @@ function gitHead(worktree: WorktreeHandle | undefined): string | undefined {
   return gitOutputLines(worktree, ["rev-parse", "HEAD"])[0];
 }
 
+/**
+ * Paths changed by the most recent commit (S12 doc-release). Used to fail-closed
+ * auto-merge when the doc-release commit is not doc-only (#602).
+ */
+export function docReleasePathsFromHead(
+  worktree: WorktreeHandle | undefined,
+): readonly string[] | undefined {
+  if (worktree === undefined) return undefined;
+  const paths = gitOutputLines(worktree, [
+    "diff-tree",
+    "--no-commit-id",
+    "--name-only",
+    "-r",
+    "HEAD",
+  ])
+    .map((line) => normalizeGitPath(line))
+    .filter((p): p is string => p !== undefined);
+  return paths.length > 0 ? paths : undefined;
+}
+
 function actualRepairMovementPaths(
   worktree: WorktreeHandle | undefined,
   sinceHead?: string,
@@ -2196,6 +2216,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
     const repo = defaultRepo();
     const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
+    const docReleasePaths = docReleasePathsFromHead(worktree);
     const mergeResult = await runAutoMergeStage({
       sh: ghSh,
       repo,
@@ -2208,6 +2229,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ),
       prMergedMarkerPresent: slicePrMergedMarkerPresent(ledger, convergedHeadOid),
       offlineSynthetic: !livePoll,
+      ...(docReleasePaths !== undefined ? { docReleasePaths } : {}),
       poll: async (round) => {
         if (livePoll) {
           return pollOnlineReviewForShip(ship, round);

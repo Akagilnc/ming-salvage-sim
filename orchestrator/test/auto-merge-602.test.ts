@@ -3,6 +3,10 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import type { Sh } from "../src/familyDriver.js";
+import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import {
   assessMergeReadiness,
   confirmPrMergedLive,
@@ -18,6 +22,7 @@ import type { PrReviewSnapshot } from "../src/botPolling.js";
 import { docReleaseWorkerSpec } from "../src/dispatchWorker.js";
 import { RealBackend, SPAWNED_WORKER_ENV } from "../src/realBackend.js";
 import { stepSpecToWorkerSpec } from "../src/dispatchWorker.js";
+import { docReleasePathsFromHead } from "../src/runner.js";
 
 const REPO = "Akagilnc/ming-salvage-sim";
 const PR_URL = "https://github.com/Akagilnc/ming-salvage-sim/pull/602";
@@ -78,6 +83,33 @@ describe("#602 isDocOnlyFileList", () => {
   it("rejects non-doc paths fail-closed", () => {
     expect(isDocOnlyFileList(["orchestrator/src/runner.ts"])).toBe(false);
     expect(isDocOnlyFileList(["VERSION", "ming_sim/db.py"])).toBe(false);
+  });
+});
+
+describe("#602 docReleasePathsFromHead", () => {
+  it("reads paths from the HEAD commit for the non-doc fail-closed gate", () => {
+    const dir = mkdtempSync(join(tmpdir(), "doc-release-paths-"));
+    const git = (args: string[]) =>
+      execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+    git(["init"]);
+    git(["config", "user.email", "t@example.com"]);
+    git(["config", "user.name", "t"]);
+    writeFileSync(join(dir, "VERSION"), "1.0.0\n");
+    mkdirSync(join(dir, "docs"), { recursive: true });
+    writeFileSync(join(dir, "docs", "note.md"), "n\n");
+    git(["add", "."]);
+    git(["commit", "-m", "doc-release"]);
+    writeFileSync(join(dir, "orchestrator-src.ts"), "x\n");
+    git(["add", "."]);
+    git(["commit", "-m", "non-doc sneak"]);
+
+    const paths = docReleasePathsFromHead({
+      branch: "feat/x",
+      base: "main",
+      path: dir,
+    });
+    expect(paths).toEqual(["orchestrator-src.ts"]);
+    expect(isDocOnlyFileList(paths!)).toBe(false);
   });
 });
 
