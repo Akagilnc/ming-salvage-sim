@@ -587,8 +587,10 @@ export interface FamilyBackend {
   ): Promise<VerifyFamilyShippedPrResult>;
   /**
    * Absolute git working directory for the family base clone (#602 doc-release
-   * fail-closed path reads). Optional — when absent, auto-merge skips the
-   * non-doc diff gate (offline/test fakes).
+   * fail-closed path reads). Optional — when absent, the LIVE auto-merge path
+   * cannot compute docReleasePaths and fails CLOSED (blocks merge); only the
+   * offline/test-only `allowUnverifiedDocReleasePaths` hatch skips the gate,
+   * and production host wiring must never set that hatch.
    */
   resolveFamilyWorkingRepo?(): string | undefined;
   /**

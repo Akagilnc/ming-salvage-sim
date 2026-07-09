@@ -467,6 +467,26 @@ describe("#602 runAutoMergeStage", () => {
     expect(merge).not.toHaveBeenCalled();
   });
 
+  it("already_recorded wins over doc-release gate when marker present (R1-C4)", async () => {
+    const merge = vi.fn();
+    const result = await runAutoMergeStage({
+      sh: fakeSh({}),
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "head-1",
+      docReleaseCompleted: false,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: true,
+      poll: async () => readySnapshot(),
+      executeMerge: merge,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      terminalState: "already_recorded",
+    });
+    expect(merge).not.toHaveBeenCalled();
+  });
+
   it("happy path: all gates green → merge commit + terminal record", async () => {
     let merged = false;
     const sh = fakeSh({
@@ -504,6 +524,47 @@ describe("#602 runAutoMergeStage", () => {
         remoteBranchName: "feat/issue-602-auto-merge",
         mergedHeadOid: "merged-head-1",
       },
+    });
+  });
+
+  it("retries live merge confirmation when GitHub API lags (R1-G1)", async () => {
+    let merged = false;
+    let viewCount = 0;
+    const sh = fakeSh({
+      "gh pr view": () => {
+        viewCount++;
+        return JSON.stringify({
+          number: 602,
+          url: PR_URL,
+          state: merged && viewCount >= 2 ? "MERGED" : "OPEN",
+          headRefName: "feat/x",
+          headRefOid: "merged-head-1",
+          mergeStateStatus: merged && viewCount >= 2 ? "UNKNOWN" : "CLEAN",
+        });
+      },
+      "gh pr merge": () => {
+        merged = true;
+        return "";
+      },
+    });
+    const result = await runAutoMergeStage({
+      sh,
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "merged-head-1",
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      offlineSynthetic: false,
+      docReleasePaths: ["VERSION"],
+      mergeConfirmRetryDelayMs: 0,
+      poll: async () => readySnapshot({ headOid: "merged-head-1" }),
+    });
+    expect(viewCount).toBeGreaterThanOrEqual(2);
+    expect(result).toMatchObject({
+      ok: true,
+      terminalState: "merged",
+      record: { mergedHeadOid: "merged-head-1" },
     });
   });
 
@@ -716,6 +777,37 @@ describe("#602 runAutoMergeStage", () => {
     expect(merge).not.toHaveBeenCalled();
   });
 
+  it("same-session live MERGED backfill rejects S9 tip alone when expected is post-doc (R1-C1)", async () => {
+    const merge = vi.fn();
+    const result = await runAutoMergeStage({
+      sh: fakeSh({
+        "gh pr view": () =>
+          JSON.stringify({
+            number: 602,
+            url: PR_URL,
+            state: "MERGED",
+            headRefName: "feat/x",
+            headRefOid: "s9-pre-doc-head",
+            mergeStateStatus: "UNKNOWN",
+          }),
+      }),
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "s9-pre-doc-head",
+      expectedMergeHeadOid: "post-doc-release-head",
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      offlineSynthetic: false,
+      docReleasePaths: ["VERSION"],
+      poll: async () => readySnapshot({ headOid: "s9-pre-doc-head" }),
+      executeMerge: merge,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate");
+    expect(merge).not.toHaveBeenCalled();
+  });
+
   it("same-session live MERGED backfill succeeds when expectedMergeHeadOid is post-doc tip (R5-M1 wiring)", async () => {
     const merge = vi.fn();
     const result = await runAutoMergeStage({
@@ -907,6 +999,20 @@ describe("#602 prMergedRecordFromLive", () => {
       mergedHeadOid: "doc-release-head",
       convergedHeadOid: "s9-head",
     });
+    expect(
+      prMergedRecordFromLive(
+        {
+          prNumber: 602,
+          prUrl: PR_URL,
+          state: "MERGED",
+          headOid: "s9-head",
+          headRefName: "feat/x",
+          mergeStateStatus: "UNKNOWN",
+        },
+        "s9-head",
+        "doc-release-head",
+      ),
+    ).toBeUndefined();
   });
 });
 
@@ -1179,5 +1285,55 @@ describe("#602 runOrchestrator slice path — AC8 pr_merged ledger", () => {
     );
     expect(typeof s12Memory?.branchHEAD).toBe("string");
     expect(s12Memory?.branchHEAD).toBe(s12Persisted?.branchHEAD);
+  });
+
+  it("writeLedger failure on pr_merged marker returns structured escalate (R1-C2)", async () => {
+    class PrMergedWriteFailsBackend extends SliceAutoMergeResumeBackend {
+      override async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+        if (entry.event === "pr_merged") {
+          throw new Error("disk full: cannot persist pr_merged marker");
+        }
+        await super.writeLedger(entry);
+      }
+    }
+    const prior = [
+      priorEntry("S0"),
+      priorEntry("S1"),
+      priorEntry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      priorEntry("S3", { kind: "reviewer", findings: [] }),
+      priorEntry("S4"),
+      priorEntry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: OFFLINE_PR,
+        prHead: CONVERGED_HEAD,
+      }),
+      {
+        ...priorEntry("S9", { kind: "verify", converged: true }),
+        event: "online_review_converged" as const,
+        prUrl: OFFLINE_PR,
+        prHead: CONVERGED_HEAD,
+        onlineReviewRound: 1,
+      },
+    ];
+    const backend = new PrMergedWriteFailsBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 602, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary).toMatchObject({
+      reason: "infra_failure",
+      summary: expect.stringContaining(
+        "writeLedger failed while persisting pr_merged marker",
+      ),
+    });
+    expect(
+      backend.ledgerWrites.some((e) => e.event === "pr_merged"),
+    ).toBe(false);
   });
 });

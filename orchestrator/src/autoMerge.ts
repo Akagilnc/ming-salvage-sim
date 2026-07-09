@@ -223,7 +223,7 @@ export function mergeReadinessStopSummary(
   const pendingOnly =
     blockers.length > 0 && blockers.every((b) => b === "ci_pending");
   return {
-    reason: pendingOnly ? "decision_gate_park" : "decision_gate_park",
+    reason: "decision_gate_park",
     summary: `PR merge readiness blocked: ${blockers.join(", ")}`,
     repairHint: pendingOnly
       ? "wait for post-doc-release CI to finish, then re-feed to resume auto-merge"
@@ -266,11 +266,14 @@ export function prMergedRecordFromLive(
 ): PrMergedTerminalRecord | undefined {
   if (live.state !== "MERGED") return undefined;
   if (live.headOid.length === 0) return undefined;
-  const mergeTip =
-    expectedMergeHeadOid !== undefined && expectedMergeHeadOid.trim().length > 0
-      ? expectedMergeHeadOid
-      : convergedHeadOid;
-  if (live.headOid !== mergeTip && live.headOid !== convergedHeadOid) {
+  const hasExpected =
+    expectedMergeHeadOid !== undefined && expectedMergeHeadOid.trim().length > 0;
+  if (
+    hasExpected &&
+    expectedMergeHeadOid !== convergedHeadOid
+  ) {
+    if (live.headOid !== expectedMergeHeadOid) return undefined;
+  } else if (live.headOid !== convergedHeadOid) {
     return undefined;
   }
   return {
@@ -313,6 +316,8 @@ export interface AutoMergeStageInput {
   readonly poll: (round: number) => Promise<PrReviewSnapshot>;
   readonly docReleasePaths?: readonly string[];
   readonly executeMerge?: (prNumber: number) => void;
+  /** Live merge confirm retry delay (ms); default 2000. Tests may pass 0. */
+  readonly mergeConfirmRetryDelayMs?: number;
   /** Offline/test: skip live gh pr view/merge and synthesize MERGED from poll readiness. */
   readonly offlineSynthetic?: boolean;
   /**
@@ -487,6 +492,9 @@ export async function tryResumePrMergedBackfill(
 export async function runAutoMergeStage(
   input: AutoMergeStageInput,
 ): Promise<AutoMergeStageResult> {
+  if (input.prMergedMarkerPresent) {
+    return { ok: true, terminalState: "already_recorded" };
+  }
   if (!input.docReleaseCompleted) {
     return {
       ok: false,
@@ -497,9 +505,6 @@ export async function runAutoMergeStage(
         repairHint: "complete S12 doc-release before merge",
       },
     };
-  }
-  if (input.prMergedMarkerPresent) {
-    return { ok: true, terminalState: "already_recorded" };
   }
 
   const offlineSynthetic =
@@ -601,12 +606,20 @@ export async function runAutoMergeStage(
     ((prNumber: number) => executePrMergeCommit(input.sh, input.repo, prNumber));
   doMerge(live.prNumber);
 
-  const record = confirmPrMergedLive(
-    input.sh,
-    input.repo,
-    input.prUrl,
-    live.headOid,
-  );
+  const retryDelayMs = input.mergeConfirmRetryDelayMs ?? 2000;
+  let record: PrMergedTerminalRecord | undefined;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    record = confirmPrMergedLive(
+      input.sh,
+      input.repo,
+      input.prUrl,
+      live.headOid,
+    );
+    if (record !== undefined) break;
+    if (attempt < 3 && retryDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
   const confirmTipMismatch =
     record !== undefined
       ? expectedMergeTipMismatch(record.mergedHeadOid, input.expectedMergeHeadOid)
