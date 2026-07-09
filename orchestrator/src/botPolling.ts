@@ -27,12 +27,13 @@ export const ONLINE_REVIEW_BOT_IDS = [
 export type OnlineReviewBotId = (typeof ONLINE_REVIEW_BOT_IDS)[number];
 
 /**
- * ~2-minute poll cadence. Overdue poll count must cover a **≥15 min** Codex body
- * window (R15 Codex P1 / ops reality: eyes can arrive in seconds, body often
- * 9–13+ min). 8 × 2 min = 16 min before a quiet leg is dropped.
+ * ~2-minute poll cadence. Overdue poll **count** must yield **≥15 min wall clock**
+ * of sleeps before drop (R15/R16 Codex P1):
+ * `waitForBotQuiescence` polls 1..N with sleep only when `poll < N`, so N polls
+ * ⇒ N−1 intervals. N=9 ⇒ 8×2 min = 16 min body window.
  */
 export const BOT_POLL_INTERVAL_MS = 120_000;
-export const BOT_OVERDUE_POLL_COUNT = 8;
+export const BOT_OVERDUE_POLL_COUNT = 9;
 
 /**
  * Manual re-trigger comment posted for Sourcery / Codex / Gemini after a fix push.
@@ -658,9 +659,13 @@ function resolveBotStatuses(
     }
     const waited = pending[bot] ?? input.pollCount;
     if (waited >= BOT_OVERDUE_POLL_COUNT) {
+      // Wall-clock sleeps ≈ (polls − 1) intervals (first poll is immediate).
+      const approxMin = Math.round(
+        (Math.max(0, waited - 1) * BOT_POLL_INTERVAL_MS) / 60_000,
+      );
       bots[bot] = {
         state: "dropped",
-        reason: `no review signal after ${waited} polls (~${Math.round((waited * BOT_POLL_INTERVAL_MS) / 60_000)} min)`,
+        reason: `no review signal after ${waited} polls (~${approxMin} min)`,
       };
       continue;
     }

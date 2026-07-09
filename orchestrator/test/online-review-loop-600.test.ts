@@ -2512,7 +2512,7 @@ describe("#600 onlineReviewLoop helpers", () => {
           codex: { state: "complete", findingCount: 0 },
           gemini: {
             state: "dropped",
-            reason: "no review signal after 8 polls",
+            reason: "no review signal after 9 polls",
           },
         },
         threads: [],
@@ -2536,7 +2536,7 @@ describe("#600 onlineReviewLoop helpers", () => {
     expect(landing.onlineReviewSnapshot?.droppedBots).toEqual(["gemini"]);
     expect(landing.onlineReviewSnapshot?.bots?.gemini).toEqual({
       state: "dropped",
-      reason: "no review signal after 8 polls",
+      reason: "no review signal after 9 polls",
     });
     expect(landing.onlineReviewSnapshot?.checkRuns).toEqual([
       {
