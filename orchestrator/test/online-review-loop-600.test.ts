@@ -3621,6 +3621,21 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
         },
       ]),
     ).toBe(false);
+    // R19: later S9 with fix marks must clear park so resume routes to S10.
+    expect(
+      sliceOnlineReviewCiFailedPending([
+        s9Red,
+        ciFailed,
+        {
+          step: "S9",
+          output: {
+            kind: "verify",
+            converged: false,
+            fixMarkedFindingIdentityKeys: ["t:1"],
+          },
+        },
+      ]),
+    ).toBe(false);
   });
 
   it("pin r11: fix-gap picks chronologically latest unpaired fix (not last ledger order)", () => {
