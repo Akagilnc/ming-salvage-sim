@@ -17,13 +17,14 @@ import {
   mergeReadinessStopSummary,
   runAutoMergeStage,
   tryResumePrMergedBackfill,
+  prMergedRecordFromLive,
   docReleasePathsFromCommit,
 } from "../src/autoMerge.js";
 import type { PrReviewSnapshot } from "../src/botPolling.js";
 import { docReleaseWorkerSpec } from "../src/dispatchWorker.js";
 import { RealBackend, SPAWNED_WORKER_ENV } from "../src/realBackend.js";
 import { stepSpecToWorkerSpec } from "../src/dispatchWorker.js";
-import { docReleasePathsFromHead } from "../src/runner.js";
+import { docReleasePathsFromHead, sliceDocReleaseCommitOid } from "../src/runner.js";
 import {
   familyAutoMergeIncomplete,
   runFamilyAutoMergeStage,
@@ -176,6 +177,32 @@ describe("#602 runFamilyAutoMergeStage", () => {
     expect(backend.ledger.filter((e) => e.status === "pr_merged")).toHaveLength(1);
   });
 
+  it("uses family repo HEAD for doc-release paths, not stale convergedHeadOid", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "family-doc-head-"));
+    const git = (args: string[]) =>
+      execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+    git(["init"]);
+    git(["config", "user.email", "t@example.com"]);
+    git(["config", "user.name", "t"]);
+    writeFileSync(join(dir, "orchestrator-src.ts"), "x\n");
+    git(["add", "."]);
+    git(["commit", "-m", "converged"]);
+    const convergedOid = git(["rev-parse", "HEAD"]).trim();
+    writeFileSync(join(dir, "VERSION"), "1.0.0\n");
+    git(["add", "."]);
+    git(["commit", "-m", "doc-release"]);
+
+    const backend = new MinimalFamilyBackend(dir);
+    const result = await runFamilyAutoMergeStage({
+      familyBackend: backend,
+      familyBase: "family/base",
+      convergedHeadOid: convergedOid,
+      prUrl: "pr://family/offline-602",
+    });
+    expect(familyAutoMergeIncomplete(result)).toBe(false);
+    expect(backend.ledger.filter((e) => e.status === "pr_merged")).toHaveLength(1);
+  });
+
   it("fail-closed on non-doc doc-release paths when working repo is available", async () => {
     const dir = mkdtempSync(join(tmpdir(), "family-non-doc-"));
     const git = (args: string[]) =>
@@ -216,17 +243,23 @@ describe("#602 docReleasePathsFromHead", () => {
     writeFileSync(join(dir, "docs", "note.md"), "n\n");
     git(["add", "."]);
     git(["commit", "-m", "doc-release"]);
+    const docReleaseOid = git(["rev-parse", "HEAD"]).trim();
     writeFileSync(join(dir, "orchestrator-src.ts"), "x\n");
     git(["add", "."]);
     git(["commit", "-m", "non-doc sneak"]);
 
-    const paths = docReleasePathsFromHead({
+    const worktree = {
       branch: "feat/x",
       base: "main",
       path: dir,
-    });
+    };
+    const paths = docReleasePathsFromHead(worktree);
     expect(paths).toEqual(["orchestrator-src.ts"]);
     expect(isDocOnlyFileList(paths!)).toBe(false);
+
+    const docPaths = docReleasePathsFromHead(worktree, docReleaseOid);
+    expect(docPaths).toEqual(["VERSION", "docs/note.md"]);
+    expect(isDocOnlyFileList(docPaths!)).toBe(true);
   });
 });
 
@@ -431,6 +464,7 @@ describe("#602 runAutoMergeStage", () => {
       priorConvergenceRecorded: true,
       prMergedMarkerPresent: false,
       offlineSynthetic: false,
+      docReleasePaths: ["VERSION"],
       poll: async () => readySnapshot({ headOid: "merged-head-1" }),
     });
     expect(result).toMatchObject({
@@ -521,6 +555,171 @@ describe("#602 runAutoMergeStage", () => {
     expect(merge).not.toHaveBeenCalled();
     expect(result?.terminalState).toBe("merged");
     expect(result?.record?.mergedHeadOid).toBe("merged-head");
+  });
+
+  it("resume backfill rejects MERGED when live head !== convergedHeadOid (AC9)", async () => {
+    const result = await tryResumePrMergedBackfill({
+      sh: fakeSh({
+        "gh pr view": () =>
+          JSON.stringify({
+            number: 602,
+            url: PR_URL,
+            state: "MERGED",
+            headRefName: "feat/x",
+            headRefOid: "foreign-head",
+            mergeStateStatus: "UNKNOWN",
+          }),
+      }),
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "expected-converged-head",
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("pending post-doc-release CI blocks merge at runAutoMergeStage (AC6)", async () => {
+    const merge = vi.fn();
+    const result = await runAutoMergeStage({
+      sh: fakeSh({
+        "gh pr view": () =>
+          JSON.stringify({
+            number: 602,
+            url: PR_URL,
+            state: "OPEN",
+            headRefName: "feat/x",
+            headRefOid: "head-after-doc",
+            mergeStateStatus: "CLEAN",
+          }),
+      }),
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "head-after-doc",
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      offlineSynthetic: false,
+      docReleasePaths: ["VERSION"],
+      poll: async () =>
+        readySnapshot({
+          headOid: "head-after-doc",
+          checkRuns: [
+            {
+              id: 1,
+              name: "ci",
+              headSha: "head-after-doc",
+              status: "in_progress",
+            },
+          ],
+        }),
+      executeMerge: merge,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("not_ready");
+    expect(result.stopSummary?.summary).toMatch(/ci_pending/);
+    expect(merge).not.toHaveBeenCalled();
+  });
+
+  it("live run fails closed when docReleasePaths cannot be verified", async () => {
+    const merge = vi.fn();
+    const result = await runAutoMergeStage({
+      sh: fakeSh({
+        "gh pr view": () =>
+          JSON.stringify({
+            number: 602,
+            url: PR_URL,
+            state: "OPEN",
+            headRefName: "feat/x",
+            headRefOid: "head-1",
+            mergeStateStatus: "CLEAN",
+          }),
+      }),
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "head-1",
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      offlineSynthetic: false,
+      poll: async () => readySnapshot({ headOid: "head-1" }),
+      executeMerge: merge,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate");
+    expect(result.stopSummary?.summary).toMatch(/doc-release commit paths/i);
+    expect(merge).not.toHaveBeenCalled();
+  });
+
+  it("re-fetches live PR head when poll snapshot head differs post-doc-release", async () => {
+    let viewCalls = 0;
+    let merged = false;
+    const sh = fakeSh({
+      "gh pr view": () => {
+        viewCalls += 1;
+        const headOid = viewCalls === 1 ? "pre-doc-head" : "post-doc-head";
+        return JSON.stringify({
+          number: 602,
+          url: PR_URL,
+          state: merged ? "MERGED" : "OPEN",
+          headRefName: "feat/x",
+          headRefOid: headOid,
+          mergeStateStatus: merged ? "UNKNOWN" : "CLEAN",
+        });
+      },
+      "gh pr merge": () => {
+        merged = true;
+        return "";
+      },
+    });
+    const result = await runAutoMergeStage({
+      sh,
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "post-doc-head",
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      offlineSynthetic: false,
+      docReleasePaths: ["VERSION"],
+      poll: async () => readySnapshot({ headOid: "post-doc-head" }),
+    });
+    expect(viewCalls).toBeGreaterThanOrEqual(2);
+    expect(result.ok).toBe(true);
+    expect(result.record?.mergedHeadOid).toBe("post-doc-head");
+  });
+});
+
+describe("#602 prMergedRecordFromLive", () => {
+  it("requires live headOid to match convergedHeadOid", () => {
+    expect(
+      prMergedRecordFromLive(
+        {
+          prNumber: 602,
+          prUrl: PR_URL,
+          state: "MERGED",
+          headOid: "wrong-head",
+          headRefName: "feat/x",
+          mergeStateStatus: "UNKNOWN",
+        },
+        "expected-head",
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe("#602 sliceDocReleaseCommitOid", () => {
+  it("reads branchHEAD from the last successful S12 ledger row, not worktree HEAD", () => {
+    expect(
+      sliceDocReleaseCommitOid([
+        { step: "S11", branchHEAD: "abc1111", output: { kind: "cleanup", ok: true } },
+        {
+          step: "S12",
+          branchHEAD: "abc1234567890def1234567890abcd1234567890ab",
+          output: { kind: "docRelease", released: true },
+        },
+      ]),
+    ).toBe("abc1234567890def1234567890abcd1234567890ab");
   });
 });
 

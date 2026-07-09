@@ -35,10 +35,18 @@ function familyGhSh(): (file: string, args: string[]) => string {
 
 function resolveFamilyDocReleasePaths(
   familyBackend: FamilyBackend,
-  convergedHeadOid: string,
 ): readonly string[] | undefined {
   const repoPath = familyBackend.resolveFamilyWorkingRepo?.();
-  return docReleasePathsFromCommit(repoPath, convergedHeadOid);
+  if (repoPath === undefined) return undefined;
+  try {
+    const head = execFileSync("git", ["-C", repoPath, "rev-parse", "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return docReleasePathsFromCommit(repoPath, head);
+  } catch {
+    return undefined;
+  }
 }
 
 /** True when auto-merge did not reach a terminal success state. */
@@ -71,10 +79,7 @@ export async function runFamilyAutoMergeStage(
     familyLedger,
     input.convergedHeadOid,
   );
-  const docReleasePaths = resolveFamilyDocReleasePaths(
-    input.familyBackend,
-    input.convergedHeadOid,
-  );
+  const docReleasePaths = resolveFamilyDocReleasePaths(input.familyBackend);
   const ghSh = familyGhSh();
   const autoMerge = await runAutoMergeStage({
     sh: ghSh,

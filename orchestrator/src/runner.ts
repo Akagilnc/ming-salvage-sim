@@ -687,14 +687,15 @@ function gitHead(worktree: WorktreeHandle | undefined): string | undefined {
 }
 
 /**
- * Paths changed by the most recent commit (S12 doc-release). Used to fail-closed
- * auto-merge when the doc-release commit is not doc-only (#602).
+ * Paths changed by the S12 doc-release commit. Prefers the persisted S12
+ * ledger branchHEAD over worktree HEAD so resume cannot read a later commit (#602).
  */
 export function docReleasePathsFromHead(
   worktree: WorktreeHandle | undefined,
+  docReleaseCommitOid?: string,
 ): readonly string[] | undefined {
   if (worktree === undefined) return undefined;
-  const head = gitHead(worktree);
+  const head = docReleaseCommitOid ?? gitHead(worktree);
   return docReleasePathsFromCommit(worktree.path, head);
 }
 
@@ -1008,6 +1009,26 @@ function sliceDocReleaseCompleted(ledger: ReadonlyArray<LedgerEntry>): boolean {
     }
   }
   return false;
+}
+
+/** branchHEAD of the last successful S12 doc-release ledger row (#602). */
+export function sliceDocReleaseCommitOid(
+  ledger: ReadonlyArray<
+    Pick<LedgerEntry, "step" | "output"> & { readonly branchHEAD?: string }
+  >,
+): string | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.step === "S12" &&
+      isValidDocReleaseResult(entry.output) &&
+      entry.output.released &&
+      isLikelyGitSha(entry.branchHEAD)
+    ) {
+      return entry.branchHEAD;
+    }
+  }
+  return undefined;
 }
 
 function sliceAutoMergePending(
@@ -2209,7 +2230,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
     const repo = defaultRepo();
     const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
-    const docReleasePaths = docReleasePathsFromHead(worktree);
+    const docReleaseOid = sliceDocReleaseCommitOid(ledger);
+    const docReleasePaths = docReleasePathsFromHead(worktree, docReleaseOid);
     const mergeResult = await runAutoMergeStage({
       sh: ghSh,
       repo,
