@@ -44,6 +44,7 @@ import {
   lastOnlineReviewFixCommitShaFromLedger,
 } from "../src/onlineReviewLoop.js";
 import * as onlineReviewLoop from "../src/onlineReviewLoop.js";
+import * as autoMerge from "../src/autoMerge.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
@@ -84,6 +85,23 @@ const CLAIMED_FIXED_FINDING: Finding = {
 
 const CLAIMED_FIXED_KEY =
   "correctness|orchestrator/src/runner.ts:1061|do not rely on omitting a finding to mean it is closed.";
+
+function stubAutoMergeMergedForLiveReviewTests(
+  livePr: string,
+  mergedHeadOid: string,
+): ReturnType<typeof vi.spyOn> {
+  return vi.spyOn(autoMerge, "runAutoMergeStage").mockResolvedValue({
+    ok: true,
+    terminalState: "merged",
+    record: {
+      prUrl: livePr,
+      prNumber: 255,
+      remoteBranchName: WORKTREE.branch,
+      mergedHeadOid,
+      convergedHeadOid: mergedHeadOid,
+    },
+  });
+}
 
 /** Build a persisted ledger entry (the resume truth on disk). */
 function entry(
@@ -1446,6 +1464,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       "S11",
       "S12",
       "S8",
+      "S12",
     ]);
     // Prior S9/S10 were skipped on this resume; fresh re-verify at S9 then cleanup/docRelease
     const reviewLoopDispatched = backend.dispatchSpecs
@@ -1791,7 +1810,9 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
     vi.stubEnv("ORCHESTRATOR_REPO", "o/r");
 
+    let autoMergeSpy: ReturnType<typeof stubAutoMergeMergedForLiveReviewTests> | undefined;
     try {
+      autoMergeSpy = stubAutoMergeMergedForLiveReviewTests(livePr, fixSha);
       const fixGapPrior = [
         ...reviewLoopBase,
         {
@@ -1887,6 +1908,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     } finally {
       ensureSpy.mockRestore();
       pollSpy.mockRestore();
+      autoMergeSpy?.mockRestore();
       if (prevOffline === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
       } else {
@@ -1994,7 +2016,9 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
     vi.stubEnv("ORCHESTRATOR_REPO", "o/r");
 
+    let autoMergeSpy: ReturnType<typeof stubAutoMergeMergedForLiveReviewTests> | undefined;
     try {
+      autoMergeSpy = stubAutoMergeMergedForLiveReviewTests(livePr, fixSha);
       const backend = new ReviewLoopResumeBackend({
         worktree: WORKTREE,
         stateDir: STATE_DIR,
@@ -2015,6 +2039,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     } finally {
       ensureSpy.mockRestore();
       pollSpy.mockRestore();
+      autoMergeSpy?.mockRestore();
       if (prevOffline === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
       } else {
@@ -2270,6 +2295,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       "S11",
       "S12",
       "S8",
+      "S12",
     ]);
   });
 });

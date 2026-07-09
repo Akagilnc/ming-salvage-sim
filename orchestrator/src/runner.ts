@@ -75,6 +75,13 @@ import {
 } from "./botPolling.js";
 import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetry.js";
 import {
+  docReleasePathsFromCommit,
+  isPrMergedMarker,
+  offlineAutoMergeAllowUnverifiedDocPaths,
+  runAutoMergeStage,
+  type PrMergedTerminalRecord,
+} from "./autoMerge.js";
+import {
   buildOnlineReviewLanding,
   clampVerifyConvergenceForCheckRuns,
   enforceRunnerOwnedRecheck,
@@ -680,6 +687,19 @@ function gitHead(worktree: WorktreeHandle | undefined): string | undefined {
   return gitOutputLines(worktree, ["rev-parse", "HEAD"])[0];
 }
 
+/**
+ * Paths changed by the S12 doc-release commit. Prefers the persisted S12
+ * ledger branchHEAD over worktree HEAD so resume cannot read a later commit (#602).
+ */
+export function docReleasePathsFromHead(
+  worktree: WorktreeHandle | undefined,
+  docReleaseCommitOid?: string,
+): readonly string[] | undefined {
+  if (worktree === undefined) return undefined;
+  const head = docReleaseCommitOid ?? gitHead(worktree);
+  return docReleasePathsFromCommit(worktree.path, head);
+}
+
 function actualRepairMovementPaths(
   worktree: WorktreeHandle | undefined,
   sinceHead?: string,
@@ -970,6 +990,58 @@ function priorLedgerThroughLastShip(
     return ledger as ReadonlyArray<LedgerEntry>;
   }
   return ledger.slice(0, shipIdx + 1) as ReadonlyArray<LedgerEntry>;
+}
+
+function slicePrMergedMarkerPresent(
+  ledger: ReadonlyArray<LedgerEntry>,
+  convergedHeadOid: string | undefined,
+): boolean {
+  if (convergedHeadOid === undefined || convergedHeadOid.trim().length === 0) {
+    return false;
+  }
+  return ledger.some((entry) => isPrMergedMarker(entry, convergedHeadOid));
+}
+
+function sliceDocReleaseCompleted(ledger: ReadonlyArray<LedgerEntry>): boolean {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.step === "S12" && isValidDocReleaseResult(entry.output)) {
+      return entry.output.released;
+    }
+  }
+  return false;
+}
+
+/** branchHEAD of the last successful S12 doc-release ledger row (#602). */
+export function sliceDocReleaseCommitOid(
+  ledger: ReadonlyArray<
+    Pick<LedgerEntry, "step" | "output"> & { readonly branchHEAD?: string }
+  >,
+): string | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (
+      entry.step === "S12" &&
+      isValidDocReleaseResult(entry.output) &&
+      entry.output.released &&
+      isLikelyGitSha(entry.branchHEAD)
+    ) {
+      return entry.branchHEAD;
+    }
+  }
+  return undefined;
+}
+
+function sliceAutoMergePending(
+  ledger: ReadonlyArray<LedgerEntry>,
+  convergedHeadOid: string | undefined,
+): boolean {
+  if (!sliceDocReleaseCompleted(ledger)) return false;
+  if (convergedHeadOid === undefined || convergedHeadOid.trim().length === 0) {
+    return false;
+  }
+  if (!onlineReviewConvergedForHead(ledger, convergedHeadOid)) return false;
+  return !slicePrMergedMarkerPresent(ledger, convergedHeadOid);
 }
 
 function isLikelyGitSha(value: unknown): value is string {
@@ -2008,12 +2080,30 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
   }
 
+  async function pollMergeReadinessForShip(
+    ship: ShipResult,
+    pollCount: number,
+    mergeHeadOid: string,
+  ): Promise<PrReviewSnapshot> {
+    const prUrl = ship.pr;
+    if (typeof prUrl !== "string" || prUrl.trim().length === 0) {
+      throw new Error("merge readiness poll requires a non-empty PR URL from ship");
+    }
+    const repo = defaultRepo();
+    return pollPrReviewState(ghSh, {
+      repo,
+      prUrl,
+      pollCount,
+      roundTrigger: buildRoundTrigger(mergeHeadOid),
+    });
+  }
+
   async function pollOnlineReviewForShip(
     ship: ShipResult,
     pollCount: number,
   ): Promise<PrReviewSnapshot> {
     const prUrl = ship.pr;
-    if (prUrl == null || prUrl.trim().length === 0) {
+    if (typeof prUrl !== "string" || prUrl.trim().length === 0) {
       throw new Error("online review poll requires a non-empty PR URL from ship");
     }
     const repo = defaultRepo();
@@ -2112,6 +2202,122 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // Persist the trigger actually used for evidence (may re-anchor on head drift).
     lastOnlineReviewRoundTrigger = snapshot.roundTriggerUsed;
     return snapshot;
+  }
+
+  async function persistPrMergedMarker(
+    record: PrMergedTerminalRecord,
+    convergedHeadOid: string,
+  ): Promise<void> {
+    const marker = {
+      step: "S12" as const,
+      event: "pr_merged" as const,
+      prUrl: record.prUrl,
+      prNumber: record.prNumber,
+      remoteBranchName: record.remoteBranchName,
+      mergedHeadOid: record.mergedHeadOid,
+      prHead: convergedHeadOid,
+    };
+    ledger.push(marker);
+    if (stateDir !== undefined) {
+      await backend.writeLedger({
+        ...marker,
+        sessionId,
+        prompt_hash: await hashPrompt(undefined, "S12", backend),
+        branchHEAD: record.mergedHeadOid,
+        ts: new Date().toISOString(),
+      }, stateDir);
+    }
+  }
+
+  async function runSliceAutoMergeHost(
+    ship: ShipResult,
+    convergedHeadOid: string,
+  ): Promise<
+    | { readonly kind: "ok"; readonly record: PrMergedTerminalRecord }
+    | { readonly kind: "escalate"; readonly stopSummary: StopSummary }
+  > {
+    const prUrl = ship.pr;
+    if (typeof prUrl !== "string" || prUrl.trim().length === 0) {
+      return {
+        kind: "escalate",
+        stopSummary: {
+          reason: "infra_failure",
+          summary: "auto-merge requires a ship PR URL",
+          repairHint: "re-run from a pr_opened ship output",
+        },
+      };
+    }
+    const repo = defaultRepo();
+    const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
+    const docReleaseOid = sliceDocReleaseCommitOid(ledger);
+    const docReleasePaths = docReleasePathsFromHead(worktree, docReleaseOid);
+    const expectedMergeHeadOid =
+      docReleaseOid ?? gitHead(worktree) ?? convergedHeadOid;
+    const offlineSynthetic = !livePoll;
+    const allowUnverifiedDocPaths = offlineAutoMergeAllowUnverifiedDocPaths(
+      prUrl,
+      repo,
+      offlineSynthetic,
+      docReleasePaths,
+    );
+    const mergeResult = await runAutoMergeStage({
+      sh: ghSh,
+      repo,
+      prUrl,
+      convergedHeadOid,
+      expectedMergeHeadOid,
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: onlineReviewConvergedForHead(
+        ledger,
+        convergedHeadOid,
+      ),
+      prMergedMarkerPresent: slicePrMergedMarkerPresent(ledger, convergedHeadOid),
+      offlineSynthetic,
+      ...(docReleasePaths !== undefined ? { docReleasePaths } : {}),
+      ...(allowUnverifiedDocPaths ? { allowUnverifiedDocReleasePaths: true } : {}),
+      poll: async (round) => {
+        if (livePoll) {
+          return pollMergeReadinessForShip(ship, round, expectedMergeHeadOid);
+        }
+        // Post-doc-release merge readiness in offline/test: use the same
+        // converged synthetic snapshot as family auto-merge — not the S9 verify
+        // hook (which may carry intentional unresolved threads for landing tests).
+        return offlinePrReviewSnapshot({
+          repo,
+          prUrl,
+          headOid: convergedHeadOid,
+          pollCount: round,
+        });
+      },
+    });
+    if (!mergeResult.ok || mergeResult.record === undefined) {
+      return {
+        kind: "escalate",
+        stopSummary:
+          mergeResult.stopSummary ?? {
+            reason: "decision_gate_park",
+            summary: `auto-merge did not complete (${mergeResult.terminalState})`,
+            repairHint: "resolve merge blockers or answer the decision gate, then re-feed",
+          },
+      };
+    }
+    if (mergeResult.terminalState !== "already_recorded") {
+      try {
+        await persistPrMergedMarker(mergeResult.record, convergedHeadOid);
+      } catch (err) {
+        const cause = err instanceof Error ? err.message : String(err);
+        return {
+          kind: "escalate",
+          stopSummary: {
+            reason: "infra_failure",
+            summary: `writeLedger failed while persisting pr_merged marker: ${cause}`,
+            repairHint:
+              "fix ledger persistence and re-feed to resume auto-merge",
+          },
+        };
+      }
+    }
+    return { kind: "ok", record: mergeResult.record };
   }
 
   function seedClassificationFromReviewerOutput(
@@ -2286,10 +2492,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       stopSummary,
     });
 
-    const mirrorInMemoryLedgerTs = (step: StepId, ts: string): void => {
+    const mirrorInMemoryLedgerPersistedFields = (
+      step: StepId,
+      fields: Pick<PersistentLedgerEntry, "ts" | "branchHEAD">,
+    ): void => {
       for (let i = ledger.length - 1; i >= 0; i--) {
         if (ledger[i]!.step === step) {
-          ledger[i] = { ...ledger[i]!, ts };
+          ledger[i] = { ...ledger[i]!, ...fields };
           break;
         }
       }
@@ -2308,10 +2517,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       const buffered = pendingEntries[0]!;
       await backend.writeLedger(buffered, stateDir);
       pendingEntries.shift();
-      mirrorInMemoryLedgerTs(buffered.step, buffered.ts);
+      mirrorInMemoryLedgerPersistedFields(buffered.step, {
+        ts: buffered.ts,
+        branchHEAD: buffered.branchHEAD,
+      });
     }
     await backend.writeLedger(entry, stateDir);
-    mirrorInMemoryLedgerTs(s, entry.ts);
+    mirrorInMemoryLedgerPersistedFields(s, {
+      ts: entry.ts,
+      branchHEAD: entry.branchHEAD,
+    });
   }
 
   /**
@@ -2752,6 +2967,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
 
     if (plan.terminalStatus !== undefined) {
+      const resumeConvergedHead =
+        onlineReviewResumeHeadKeyFromLedger(ledger) ?? lastShipOutput?.prHead;
+      const resumeAutoMergePending =
+        plan.terminalStatus === "success" &&
+        typeof lastShipOutput?.pr === "string" &&
+        sliceAutoMergePending(ledger, resumeConvergedHead);
+      if (!resumeAutoMergePending) {
       // The prior run already reached a terminal handoff that is NOT being
       // re-opened. Re-feeding is a pure status report — no worktree mutation,
       // so cleanResidue is intentionally NOT run here (a residue-clean failure
@@ -2794,6 +3016,31 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         stopSummary,
         deferredFindings,
       };
+      }
+      if (resumeConvergedHead !== undefined && lastShipOutput !== undefined) {
+        const autoMerge = await runSliceAutoMergeHost(
+          lastShipOutput,
+          resumeConvergedHead,
+        );
+        if (autoMerge.kind === "escalate") {
+          return {
+            status: "escalate",
+            stepLedger: ledger,
+            stopSummary: autoMerge.stopSummary,
+            deferredFindings,
+          };
+        }
+        return {
+          status: "success",
+          branch: worktree.branch,
+          stepLedger: ledger,
+          stopSummary: successSummaryForCurrentState({
+            deferredFindings,
+            findingDispositions,
+          }),
+          deferredFindings,
+        };
+      }
     }
 
     // Continuing from a breakpoint: clean uncommitted residue before reuse
@@ -4327,6 +4574,53 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           stopSummary: handoffStopSummary,
           deferredFindings,
         };
+      }
+
+      if (
+        decision.status === "success" &&
+        step === "S12" &&
+        typeof lastShipOutput?.pr === "string"
+      ) {
+        const convergedHead =
+          onlineReviewResumeHeadKeyFromLedger(ledger) ??
+          convergenceHeadToRecord({
+            shipHead: lastShipOutput.prHead,
+            snapshotHead: onlineReviewLanding?.onlineReviewSnapshot?.headOid,
+            postFixHead: lastOnlineReviewFixCommitSha,
+          }) ??
+          lastShipOutput.prHead;
+        if (
+          convergedHead !== undefined &&
+          sliceAutoMergePending(ledger, convergedHead)
+        ) {
+          const autoMerge = await runSliceAutoMergeHost(
+            lastShipOutput,
+            convergedHead,
+          );
+          if (autoMerge.kind === "escalate") {
+            ledger.push({ step: "S8", stopSummary: autoMerge.stopSummary });
+            try {
+              await emitLedger(
+                "S8",
+                undefined,
+                undefined,
+                "escalate",
+                undefined,
+                undefined,
+                "decision",
+                autoMerge.stopSummary,
+              );
+            } catch (err) {
+              return await errorTermination("S8", err, { recordInMemory: false });
+            }
+            return {
+              status: "escalate",
+              stepLedger: ledger,
+              stopSummary: autoMerge.stopSummary,
+              deferredFindings,
+            };
+          }
+        }
       }
 
       return {

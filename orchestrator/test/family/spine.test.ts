@@ -12,6 +12,10 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { runFamily } from "../../src/family/runner.js";
 import type {
   Backend,
@@ -32,6 +36,19 @@ import { resolveActiveModelRoute } from "../../src/modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
+
+function makeFamilyDocReleaseRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), "family-spine-doc-"));
+  const git = (args: string[]) =>
+    execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  git(["init"]);
+  git(["config", "user.email", "t@example.com"]);
+  git(["config", "user.name", "t"]);
+  writeFileSync(join(dir, "VERSION"), "1.0.0\n");
+  git(["add", "."]);
+  git(["commit", "-m", "doc-release"]);
+  return dir;
+}
 
 /** A single-slice Backend that drives every child to S8(success). */
 class ChildBackend implements Backend {
@@ -75,7 +92,11 @@ class ChildBackend implements Backend {
 class FakeFamilyBackend implements FamilyBackend {
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
+  readonly workingRepo: string;
   head = "family-base-0";
+  constructor(workingRepo?: string) {
+    this.workingRepo = workingRepo ?? makeFamilyDocReleaseRepo();
+  }
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
     this.merges.push(child);
     this.head = `+${child.childIssue}`;
@@ -92,6 +113,9 @@ class FakeFamilyBackend implements FamilyBackend {
   }
   async readFamilyHead(_familyBase: string): Promise<string> {
     return this.head;
+  }
+  resolveFamilyWorkingRepo(): string | undefined {
+    return this.workingRepo;
   }
 
   // #596 r2 support for full final barrier in spine tests (runVerifyCmr fresh path)
@@ -173,6 +197,50 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       },
     });
     expect(singleSliceBackend.prepareBases).toEqual([]);
+    const prMerged = familyBackend.ledger.filter((e) => e.status === "pr_merged");
+    expect(prMerged).toHaveLength(1);
+    expect(prMerged[0]).toMatchObject({
+      event: "pr_merged",
+      pr: "pr://family/293-base",
+      familyHeadAfter: "family-base-0",
+    });
+  });
+
+  it("review_loop_converged + pr_merged resume stays already_done without re-merge", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
+      {
+        status: "review_loop_converged",
+        event: "review_loop_converged",
+        phase: "final",
+        pr: "pr://family/293-base",
+        familyHeadAfter: "family-base-0",
+      },
+      {
+        status: "pr_merged",
+        event: "pr_merged",
+        phase: "final",
+        pr: "pr://family/293-base",
+        prNumber: 293,
+        remoteBranchName: "family/293-base",
+        mergedHeadOid: "family-base-0",
+        familyHeadAfter: "family-base-0",
+      },
+    );
+    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.stopSummary?.reason).toBe("already_done");
+    expect(familyBackend.ledger.filter((e) => e.status === "pr_merged")).toHaveLength(1);
   });
 
   it("shipped-only (bound to current head, no review_loop_converged) continues into review-loop: writes converged marker, reports already_done, no re-ship (F2)", async () => {
@@ -220,8 +288,56 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       pr: "pr://family/293-base",
       familyHeadAfter: "family-base-0",
     });
+    const prMerged = familyBackend.ledger.filter((e) => e.status === "pr_merged");
+    expect(prMerged).toHaveLength(1);
+    expect(prMerged[0]).toMatchObject({
+      event: "pr_merged",
+      pr: "pr://family/293-base",
+      familyHeadAfter: "family-base-0",
+    });
     // No child re-work (shipped resume short-circuits before verifyCmr barrier)
     expect(singleSliceBackend.prepareBases).toEqual([]);
+  });
+
+  it("review_loop_converged + pr_merged resume skips OPEN verify (B3)", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
+      {
+        status: "review_loop_converged",
+        event: "review_loop_converged",
+        phase: "final",
+        pr: "pr://family/293-base",
+        familyHeadAfter: "family-base-0",
+      },
+      {
+        status: "pr_merged",
+        event: "pr_merged",
+        phase: "final",
+        pr: "pr://family/293-base",
+        prNumber: 293,
+        remoteBranchName: "family/293-base",
+        mergedHeadOid: "family-base-0",
+        familyHeadAfter: "family-base-0",
+      },
+    );
+    let verifyCalled = false;
+    familyBackend.verifyFamilyShippedPr = async () => {
+      verifyCalled = true;
+      return { ok: false, reason: "PR is MERGED but must be OPEN" };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("success");
+    expect(verifyCalled).toBe(false);
+    expect(familyBackend.ledger.filter((e) => e.status === "pr_merged")).toHaveLength(1);
   });
 
   it("pin r28: shipped resume re-enters review loop when fixer advanced HEAD with only markers", async () => {
