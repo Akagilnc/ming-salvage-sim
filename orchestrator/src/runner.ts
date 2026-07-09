@@ -133,6 +133,7 @@ import {
 } from "./validate.js";
 import {
   contractDriftStopSummary,
+  decisionGateParkStopSummary,
   infraFailureStopSummary,
   stopSummaryFromFindingDispositionEvidence,
   successStopSummary,
@@ -3452,6 +3453,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             throw err;
           }
           if (result.kind !== "completed") {
+            // Self-check twin of family verify/fixer (Cursor R11): preserve
+            // escalated payload as decision_gate_park, not a bare process error.
+            if (result.kind === "escalated") {
+              const summary = `${reviewStep} worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
+              return await errorTermination(reviewStep, new Error(summary), {
+                stopSummary: decisionGateParkStopSummary({
+                  summary,
+                  repairHint:
+                    "answer the decision gate / unstick the worker, then resume the online review loop",
+                }),
+              });
+            }
             return await errorTermination(
               reviewStep,
               new Error(

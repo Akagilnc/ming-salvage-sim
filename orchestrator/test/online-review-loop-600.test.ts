@@ -3544,6 +3544,74 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     });
   });
 
+  it("pin r11: fix-gap picks chronologically latest unpaired fix (not last ledger order)", () => {
+    const olderSha = "oldfixaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const newerSha = "newfixbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const olderTs = "2026-07-08T12:00:00.000Z";
+    const newerTs = "2026-07-08T13:00:00.000Z";
+    // Ledger order puts the older fix AFTER the newer one — timestamp must win.
+    const familyGap = familyPendingRoundTriggerFromFixGap([
+      {
+        status: "online_review_fix_committed",
+        event: "online_review_fix_committed",
+        familyHeadAfter: newerSha,
+        ts: newerTs,
+      },
+      {
+        status: "online_review_fix_committed",
+        event: "online_review_fix_committed",
+        familyHeadAfter: olderSha,
+        ts: olderTs,
+      },
+    ]);
+    expect(familyGap).toEqual(buildRoundTrigger(newerSha, newerTs));
+    const sliceGap = slicePendingRoundTriggerFromFixGap([
+      {
+        event: "online_review_fix_committed",
+        fixCommitSha: newerSha,
+        ts: newerTs,
+      },
+      {
+        event: "online_review_fix_committed",
+        fixCommitSha: olderSha,
+        ts: olderTs,
+      },
+    ]);
+    expect(sliceGap).toEqual(buildRoundTrigger(newerSha, newerTs));
+  });
+
+  it("pin r11: buildOnlineReviewLanding omits prHead when convergence head missing", () => {
+    const landing = buildOnlineReviewLanding(
+      {
+        repo: "o/r",
+        prNumber: 1,
+        prUrl: "https://github.com/o/r/pull/1",
+        headOid: "",
+        pollCount: 1,
+        bots: {
+          coderabbit: { state: "complete", findingCount: 0 },
+          sourcery: { state: "complete", findingCount: 0 },
+          codex: { state: "complete", findingCount: 0 },
+          gemini: { state: "complete", findingCount: 0 },
+        },
+        threads: [],
+        checkRuns: [],
+        totalFindingCount: 0,
+        quiescent: true,
+      },
+      {
+        kind: "ship",
+        branch: "feat/x",
+        status: "pr_opened",
+        pr: "https://github.com/o/r/pull/1",
+        // no prHead
+      },
+      1,
+    );
+    expect(landing.shipDelivery?.prHead).toBeUndefined();
+    expect(landing.shipDelivery?.pr).toBe("https://github.com/o/r/pull/1");
+  });
+
   it("pin r27: round ≥2 crash gap reconstructs pending trigger from fix-committed", () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const fixTs = "2026-07-08T12:30:00.000Z";
@@ -5236,6 +5304,114 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
+  it("pin r11: family verify escalated parks with decision_gate_park + escalate text", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      const backend = new ReviewLoopFamilyBackend();
+      backend.dispatchWorker = async (spec) => {
+        if (spec.kind === "verify") {
+          return {
+            kind: "escalated",
+            escalation: {
+              reason: "stuck on ambiguous finding",
+              diagnosis: "need human disposition on thread T1",
+              options: ["accept", "defer"],
+            },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        return skeleton ?? { kind: "failed", reason: "unexpected" };
+      };
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+      expect(result).toEqual({
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round: 1,
+        stopSummary: expect.objectContaining({
+          reason: "decision_gate_park",
+          summary: expect.stringContaining("stuck on ambiguous finding"),
+        }),
+      });
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("pin r11: family fixer escalated parks with decision_gate_park + escalate text", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      const backend = new ReviewLoopFamilyBackend();
+      backend.dispatchWorker = async (spec) => {
+        if (spec.kind === "verify") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: false,
+              findings: [
+                {
+                  identityKey: "f1",
+                  severity: "P2",
+                  claim_quote: "need a fix",
+                  path: "x.ts",
+                },
+              ],
+              dispositions: [
+                {
+                  identityKey: "f1",
+                  action: "fix",
+                  reason: "real",
+                },
+              ],
+            },
+          };
+        }
+        if (spec.kind === "fixer") {
+          return {
+            kind: "escalated",
+            escalation: {
+              reason: "cannot apply fix safely",
+              diagnosis: "conflicting prior commit",
+              options: ["manual fix", "abort"],
+            },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        return skeleton ?? { kind: "failed", reason: "unexpected" };
+      };
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+      expect(result).toEqual({
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round: 1,
+        stopSummary: expect.objectContaining({
+          reason: "decision_gate_park",
+          summary: expect.stringContaining("cannot apply fix safely"),
+        }),
+      });
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
   it("verify dispatch failure returns decision_gate_raised in-band (no throw)", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
@@ -5257,6 +5433,10 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         ok: false,
         terminalState: "decision_gate_raised",
         round: 1,
+        stopSummary: expect.objectContaining({
+          reason: "infra_failure",
+          summary: expect.stringContaining("verify worker unavailable"),
+        }),
       });
     } finally {
       if (prev === undefined) {
