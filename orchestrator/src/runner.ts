@@ -66,6 +66,8 @@ import {
   isValidVerifyResult,
 } from "./reviewLoopOutcome.js";
 import {
+  BOT_OVERDUE_POLL_COUNT,
+  BOT_POLL_INTERVAL_MS,
   isLiveGithubReviewPollEnabled,
   pollPrReviewState,
   type PrReviewSnapshot,
@@ -1944,6 +1946,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastOnlineReviewPendingRoundTrigger: RoundTrigger | undefined;
   /** S9 worker green but CI still queued/in_progress — re-poll S9, do not fixer/merge. */
   let reenterS9ForPendingCi = false;
+  /** Consecutive pending-CI S9 re-entries (online R4 Codex P1 — must be bounded). */
+  let pendingCiS9Polls = 0;
 
   function ghSh(file: string, args: string[]): string {
     return execFileSync(file, args, {
@@ -3472,12 +3476,34 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             verifyOutput = recheckOutcome;
             // Pending CI only: re-poll S9 — do not fixer, do not merge, do not
             // apply "all clear" side effects (online R2 Codex P2).
+            // Bound re-entry: bots may already be quiescent so poll returns
+            // immediately — without a counter/sleep this hot-loops S9 forever
+            // while CI runs (online R4 Codex P1).
             if (
               verifyBlockedOnlyOnPendingCheckRuns(
                 verifyOutput,
                 onlineReviewLanding?.onlineReviewSnapshot,
               )
             ) {
+              pendingCiS9Polls += 1;
+              if (pendingCiS9Polls > BOT_OVERDUE_POLL_COUNT) {
+                return await errorTermination(
+                  reviewStep,
+                  new Error(
+                    "online review verify is green but CI check-runs stayed non-terminal past the overdue poll window",
+                  ),
+                  {
+                    output: verifyOutput,
+                    stopSummary: {
+                      reason: "infra_failure",
+                      summary:
+                        "online review verify is green but CI check-runs stayed non-terminal past the overdue poll window",
+                      repairHint:
+                        "wait for CI to complete (or fail) on the PR head, then re-run online review",
+                    },
+                  },
+                );
+              }
               reenterS9ForPendingCi = true;
               output = verifyOutput;
               step = reviewStep;
@@ -3485,6 +3511,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               lastOutput = verifyOutput;
               break;
             }
+            pendingCiS9Polls = 0;
             try {
               await assertVerifyReadOnlyContract();
             } catch (err) {
@@ -3741,9 +3768,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
 
     // Pending CI re-poll: stay on S9 without ledger/route advance (online R2 Codex P2).
+    // Sleep one poll interval so we do not hot-loop verify while CI is still running
+    // (online R4 Codex P1) — same cadence as waitForBotQuiescence. Vitest uses the
+    // immediate clock so unit tests do not wall-clock sleep 2 minutes per re-entry.
     if (reenterS9ForPendingCi) {
       reenterS9ForPendingCi = false;
       step = "S9";
+      const clock =
+        process.env.VITEST !== undefined
+          ? immediateBotPollClock
+          : realBotPollClock;
+      await clock.sleep(BOT_POLL_INTERVAL_MS);
       continue;
     }
 

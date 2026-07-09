@@ -752,8 +752,11 @@ export function pollPrReviewState(
   }
 
   const allComments = [...issueComments, ...reviewComments];
+  // Use re-anchored roundTrigger for bot evidence (online R4 Codex P1): if head
+  // drifted, input.roundTrigger still has the old head+timestamp and would admit
+  // timestamp-only artifacts from the previous head.
   const bots = resolveBotStatuses(
-    input,
+    { ...input, roundTrigger },
     allComments,
     reviews,
     reactions,

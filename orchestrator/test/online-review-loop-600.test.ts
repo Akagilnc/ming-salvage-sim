@@ -503,43 +503,85 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
     expect(calls.some((c) => c.includes("per_page=100"))).toBe(true);
   });
 
-  it("pin online R2 Codex P2: mid-round head drift re-anchors trigger with fresh timestamp", () => {
-    const sh = ghFixture({ calls: [] });
-    const oldTrigger = buildRoundTrigger("old-head-sha", "2026-07-01T00:00:00.000Z");
-    const nowIso = "2026-07-09T12:00:00.000Z";
-    // Fixture PR head is headsha1 — differs from old-head-sha
+  it("pin online R2/R4 Codex: mid-round head drift re-anchors trigger for bot evidence", () => {
+    // PR head is NEW; bot comments have no commit_id and timestamp after OLD
+    // trigger but before re-anchor nowIso → must NOT mark bots complete.
+    const OLD_TS = "2026-07-01T00:00:00.000Z";
+    const BETWEEN_TS = "2026-07-01T12:00:00.000Z";
+    const NOW_TS = "2026-07-09T12:00:00.000Z";
+    const NEW_HEAD = "newheadsha11111111111111111111111111111";
+    const sh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      if (
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews")
+      ) {
+        return JSON.stringify({
+          head: { sha: NEW_HEAD },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") || cmd.includes("pulls/42/comments")) {
+        return JSON.stringify([
+          {
+            user: { login: "coderabbitai[bot]" },
+            body: "Summary: review complete",
+            created_at: BETWEEN_TS,
+          },
+          {
+            user: { login: "sourcery-ai[bot]" },
+            body: "Sourcery review complete",
+            created_at: BETWEEN_TS,
+          },
+          {
+            user: { login: "gemini-code-assist[bot]" },
+            body: "Gemini review complete",
+            created_at: BETWEEN_TS,
+          },
+        ]);
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return JSON.stringify([
+          {
+            user: { login: "chatgpt-codex-connector[bot]" },
+            state: "COMMENTED",
+            submitted_at: BETWEEN_TS,
+            body: "Codex review complete",
+          },
+        ]);
+      }
+      if (cmd.includes("check-runs")) {
+        return JSON.stringify({ check_runs: [] });
+      }
+      if (cmd.includes("reactions")) return "[]";
+      if (cmd.includes("graphql")) {
+        return JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            },
+          },
+        });
+      }
+      return "[]";
+    };
     const snap = pollPrReviewState(sh, {
       repo: "o/r",
       prUrl: "https://github.com/o/r/pull/42",
       pollCount: 1,
-      roundTrigger: oldTrigger,
-      nowIso,
+      roundTrigger: buildRoundTrigger("old-head-sha", OLD_TS),
+      nowIso: NOW_TS,
     });
-    expect(snap.headOid).toBe("headsha1");
-    // Evidence for bots uses the re-anchored trigger; artifacts before nowIso
-    // must not satisfy the new head via the old timestamp alone.
-    // Observable: a comment after old trigger but before nowIso is not enough
-    // when head changed — pin the re-anchor by checking classify with nowIso.
-    // Direct unit pin: same-head keeps old timestamp; drift uses nowIso.
-    const sameHead = pollPrReviewState(sh, {
-      repo: "o/r",
-      prUrl: "https://github.com/o/r/pull/42",
-      pollCount: 1,
-      roundTrigger: buildRoundTrigger("headsha1", "2026-07-01T00:00:00.000Z"),
-      nowIso,
-    });
-    expect(sameHead.headOid).toBe("headsha1");
-    // When head matches, triggeredAt is preserved (no re-anchor).
-    // When head drifts, buildRoundTrigger(newHead, nowIso) is used internally —
-    // verify via isThreadEvidenceFresh / count behavior is heavy; pin via
-    // exporting nothing — instead re-call buildRoundTrigger semantics:
-    expect(
-      buildRoundTrigger("headsha1", nowIso).triggeredAt,
-    ).toBe(nowIso);
-    expect(oldTrigger.triggeredAt).not.toBe(nowIso);
-    // Drift path used nowIso (not oldTrigger.triggeredAt) — covered by
-    // buildRoundTrigger(headOid, input.nowIso ?? …) in pollPrReviewState.
-    void snap;
+    expect(snap.headOid).toBe(NEW_HEAD);
+    for (const bot of ONLINE_REVIEW_BOT_IDS) {
+      expect(snap.bots[bot].state).not.toBe("complete");
+    }
   });
 
   it("drops a bot after the overdue poll window", () => {
