@@ -559,7 +559,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
                   fixCommitSha: "fixsha1111111111111111111111111111111111",
                 }
                 : spec.kind === "cleanup"
-                  ? { kind: "cleanup", ok: true }
+                  ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
                   : { kind: "docRelease", released: true },
         };
       }

@@ -79,8 +79,11 @@ import {
   isPrMergedMarker,
   offlineAutoMergeAllowUnverifiedDocPaths,
   runAutoMergeStage,
+  slicePrMergedRecordFromLedger,
   type PrMergedTerminalRecord,
 } from "./autoMerge.js";
+import { shouldReclaimSliceHost } from "./hostReclaim.js";
+import { buildCleanupLanding } from "./postMergeCleanup.js";
 import {
   buildOnlineReviewLanding,
   clampVerifyConvergenceForCheckRuns,
@@ -1685,12 +1688,12 @@ function planResume(
       priorLedger: priorForResume,
     };
   }
-  // R20 Codex P2: last executable S9 converged:true routes to S11 and would skip
+  // R20 Codex P2: last executable S9 converged:true routes to S12 and would skip
   // the live CI recheck on the S9 entry path. Force resume at S9 so check-runs
-  // are re-polled before cleanup/doc-release.
+  // are re-polled before doc-release / post-merge cleanup.
   if (
     decision.kind === "next" &&
-    decision.step === "S11" &&
+    decision.step === "S12" &&
     routeFrom === "S9"
   ) {
     return {
@@ -3691,7 +3694,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             }
           }
           if (ciStillAllowsSkip) {
-            reviewStep = "S11";
+            reviewStep = "S12";
           }
         }
         const reviewLoopSpec =
@@ -3793,6 +3796,76 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     onlineReviewLanding.fixMarkedFindingIdentityKeys ?? [],
                 }
               : onlineReviewLanding;
+          const convergedHeadForCleanup =
+            onlineReviewResumeHeadKeyFromLedger(ledger) ??
+            convergenceHeadToRecord({
+              shipHead: lastShipOutput.prHead,
+              snapshotHead:
+                onlineReviewLanding?.onlineReviewSnapshot?.headOid,
+              postFixHead: lastOnlineReviewFixCommitSha,
+            }) ??
+            lastShipOutput.prHead;
+          let cleanupLanding: WorkerLandingPayload | undefined;
+          if (reviewStep === "S11") {
+            if (
+              convergedHeadForCleanup !== undefined &&
+              sliceAutoMergePending(ledger, convergedHeadForCleanup)
+            ) {
+              const autoMerge = await runSliceAutoMergeHost(
+                lastShipOutput,
+                convergedHeadForCleanup,
+              );
+              if (autoMerge.kind === "escalate") {
+                ledger.push({ step: "S8", stopSummary: autoMerge.stopSummary });
+                try {
+                  await emitLedger(
+                    "S8",
+                    undefined,
+                    undefined,
+                    "escalate",
+                    undefined,
+                    undefined,
+                    "decision",
+                    autoMerge.stopSummary,
+                  );
+                } catch (err) {
+                  return await errorTermination("S8", err, { recordInMemory: false });
+                }
+                return {
+                  status: "escalate",
+                  stepLedger: ledger,
+                  stopSummary: autoMerge.stopSummary,
+                  deferredFindings,
+                };
+              }
+            }
+            const prMergedRecord =
+              convergedHeadForCleanup !== undefined
+                ? slicePrMergedRecordFromLedger(ledger, convergedHeadForCleanup)
+                : undefined;
+            if (prMergedRecord === undefined) {
+              return await errorTermination(
+                "S11",
+                new Error(
+                  "post-merge cleanup requires a durable pr_merged ledger marker",
+                ),
+              );
+            }
+            cleanupLanding = {
+              ...(onlineReviewLanding ?? {}),
+              cleanupDispatch: buildCleanupLanding({
+                record: prMergedRecord,
+                coveredIssues: [issueNumber],
+                ...(family?.parentIssue !== undefined
+                  ? { parentIssue: family.parentIssue }
+                  : {}),
+              }),
+            };
+          }
+          const reviewLanding =
+            reviewStep === "S9" || reviewStep === "S10"
+              ? fixerLanding
+              : cleanupLanding;
           let result: Awaited<ReturnType<typeof withMechanicalRetry>>;
           try {
             result = await withMechanicalRetry(
@@ -3806,9 +3879,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     backend,
                     s,
                     c,
-                    reviewStep === "S9" || reviewStep === "S10"
-                      ? fixerLanding
-                      : undefined,
+                    reviewLanding,
                   );
                 } catch (err) {
                   dispatchError = err;
@@ -3872,6 +3943,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               reviewStep,
               new Error(
                 `${reviewStep} worker returned non-${reviewStep} output kind '${String(badKind)}'`,
+              ),
+            );
+          }
+          if (
+            reviewStep === "S11" &&
+            isValidCleanupResult(result.output) &&
+            !result.output.terminal
+          ) {
+            return await errorTermination(
+              reviewStep,
+              new Error(
+                `cleanup worker returned non-terminal outcome: ${
+                  result.output.skippedReasons?.join(", ") ?? "retry"
+                }`,
               ),
             );
           }
@@ -4578,48 +4663,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
       if (
         decision.status === "success" &&
-        step === "S12" &&
-        typeof lastShipOutput?.pr === "string"
+        step === "S11" &&
+        worktree !== undefined &&
+        shouldReclaimSliceHost(ledger, "success") &&
+        backend.reapResidentWorktree !== undefined
       ) {
-        const convergedHead =
-          onlineReviewResumeHeadKeyFromLedger(ledger) ??
-          convergenceHeadToRecord({
-            shipHead: lastShipOutput.prHead,
-            snapshotHead: onlineReviewLanding?.onlineReviewSnapshot?.headOid,
-            postFixHead: lastOnlineReviewFixCommitSha,
-          }) ??
-          lastShipOutput.prHead;
-        if (
-          convergedHead !== undefined &&
-          sliceAutoMergePending(ledger, convergedHead)
-        ) {
-          const autoMerge = await runSliceAutoMergeHost(
-            lastShipOutput,
-            convergedHead,
-          );
-          if (autoMerge.kind === "escalate") {
-            ledger.push({ step: "S8", stopSummary: autoMerge.stopSummary });
-            try {
-              await emitLedger(
-                "S8",
-                undefined,
-                undefined,
-                "escalate",
-                undefined,
-                undefined,
-                "decision",
-                autoMerge.stopSummary,
-              );
-            } catch (err) {
-              return await errorTermination("S8", err, { recordInMemory: false });
-            }
-            return {
-              status: "escalate",
-              stepLedger: ledger,
-              stopSummary: autoMerge.stopSummary,
-              deferredFindings,
-            };
-          }
+        try {
+          await backend.reapResidentWorktree(worktree);
+        } catch {
+          // Best-effort terminal GC — must not flip a successful handoff.
         }
       }
 

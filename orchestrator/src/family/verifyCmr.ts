@@ -61,6 +61,7 @@ import {
   familyAutoMergeIncomplete,
   runFamilyAutoMergeStage,
 } from "./familyAutoMerge.js";
+import { buildCleanupLanding } from "../postMergeCleanup.js";
 import {
   buildRoundTrigger,
   convergenceHeadToRecord,
@@ -142,6 +143,8 @@ import {
   recordOnlineReviewRoundRetrigger,
   recordReviewLoopConverged,
   recordShipped,
+  familyPrMergedForHead,
+  mergedSet,
 } from "./ledger.js";
 import { isFilledString } from "../shipOutcome.js";
 import { isCompleteRepairEvidence } from "../validate.js";
@@ -1773,19 +1776,6 @@ export async function runFamilyOnlineReviewLoop(input: {
       }
       return result.output;
     },
-    dispatchCleanup: async (landing: WorkerLandingPayload) => {
-      const result = await dispatchFamilyReviewWorker(
-        input.familyBackend,
-        cleanupWorkerSpec(input.resolvedRoute),
-        baseCtx,
-        landing,
-      );
-      return (
-        result.kind === "completed" &&
-        isValidCleanupResult(result.output) &&
-        result.output.ok
-      );
-    },
     dispatchDocRelease: async (landing: WorkerLandingPayload) => {
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
@@ -3163,6 +3153,65 @@ export async function runVerifyCmr(
       stopSummary,
     });
     return INCOMPLETE_GATE;
+  }
+
+  const postMergeLedger = await familyBackend.readFamilyLedger();
+  const prMergedRow = familyPrMergedForHead(postMergeLedger, convergedFamilyHead);
+  if (prMergedRow !== undefined) {
+    const familyRepo =
+      process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
+    const coveredIssues = [...mergedSet(postMergeLedger)];
+    const cleanupLanding: WorkerLandingPayload = {
+      cleanupDispatch: buildCleanupLanding({
+        record: {
+          prUrl: prMergedRow.pr,
+          prNumber: prMergedRow.prNumber,
+          remoteBranchName: prMergedRow.remoteBranchName,
+          mergedHeadOid: prMergedRow.mergedHeadOid,
+          convergedHeadOid: convergedFamilyHead,
+        },
+        coveredIssues,
+        ...(familyIssue !== undefined ? { parentIssue: familyIssue } : {}),
+      }),
+    };
+    const cleanupResult = await dispatchFamilyWorker(
+      familyBackend,
+      cleanupWorkerSpec(resolvedRoute),
+      {
+        familyBase,
+        repo: familyRepo,
+        prUrl: shipPr,
+      },
+      cleanupLanding,
+    );
+    if (
+      cleanupResult.kind !== "completed" ||
+      !isValidCleanupResult(cleanupResult.output) ||
+      !cleanupResult.output.terminal ||
+      !cleanupResult.output.ok
+    ) {
+      const reason =
+        cleanupResult.kind === "completed"
+          ? "family post-merge cleanup did not reach a terminal success outcome"
+          : `family post-merge cleanup worker returned ${cleanupResult.kind}`;
+      await familyBackend.recordAborted?.({
+        phase,
+        familyBase,
+        errorPackage: { reason },
+        familyHeadAfter: convergedFamilyHead,
+      });
+      await recordDurableAbort(familyBackend, {
+        phase,
+        reason,
+        familyHeadAfter: convergedFamilyHead,
+        stopSummary: infraFailureStopSummary({
+          summary: reason,
+          repairHint:
+            "verify PR is MERGED with matching head, then re-run the family final barrier",
+        }),
+      });
+      return INCOMPLETE_GATE;
+    }
   }
   return { ok: true, ran: true };
 }

@@ -1385,7 +1385,7 @@ class CmrFindingBackend implements FamilyBackend {
                 fixCommitSha: "fixsha1111111111111111111111111111111111",
               }
               : spec.kind === "cleanup"
-                ? { kind: "cleanup", ok: true }
+                ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
                 : { kind: "docRelease", released: true },
       };
     }
@@ -1440,7 +1440,7 @@ class SequencedCmrBackend extends CmrFindingBackend {
                 fixCommitSha: "fixsha1111111111111111111111111111111111",
               }
               : spec.kind === "cleanup"
-                ? { kind: "cleanup", ok: true }
+                ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
                 : { kind: "docRelease", released: true },
       };
     }
@@ -1802,8 +1802,8 @@ module_scope:
       "cmr",
       "ship",
       "verify",
-      "cleanup",
       "docRelease",
+      "cleanup",
     ]);
     expect(backend.ledger[0]).toMatchObject({
       status: "cmr_passed",
