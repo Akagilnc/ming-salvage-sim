@@ -2,8 +2,9 @@
  * Central evidence admissibility gate (#600 round-4).
  *
  * Evidence counts toward convergence ONLY when (a) it is fresh for the current
- * head/round — head SHA match when the artifact carries one, else timestamp after
- * the round trigger — and (b) its producer completed alive. Failure, fallback,
+ * head/round — head SHA match when the artifact carries one, else timestamp on
+ * or after the round trigger's UTC second (GitHub comment/reaction times are
+ * second-precision) — and (b) its producer completed alive. Failure, fallback,
  * staleness, silence, and synthesis are terminal/escalate states, never green.
  */
 
@@ -159,7 +160,13 @@ export function classifyEvidenceFreshness(
     if (artifactMs === undefined || triggerMs === undefined) {
       return "stale";
     }
-    return artifactMs > triggerMs ? "fresh_live" : "stale";
+    // GitHub REST returns second-precision timestamps; round triggers often
+    // carry millisecond precision. Floor both to UTC seconds so a post-trigger
+    // ACK truncated to the same wall second is not falsely stale (Codex R10 P2).
+    // Earlier seconds remain stale — does not admit prior-round evidence.
+    const artifactSec = Math.floor(artifactMs / 1000);
+    const triggerSec = Math.floor(triggerMs / 1000);
+    return artifactSec >= triggerSec ? "fresh_live" : "stale";
   }
   return "stale";
 }

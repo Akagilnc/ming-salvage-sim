@@ -1835,9 +1835,9 @@ async function dispatchOrAbort(
         } catch (err) {
           dispatchError = err;
         }
-        if (dispatchError === undefined) {
-          await opts?.afterEachAttempt?.();
-        }
+        // Always assert (online R10 Codex P1 / parity with single-slice S9):
+        // mutate-then-throw → contract_drift, not retry on dirty worktree.
+        await opts?.afterEachAttempt?.();
         if (dispatchError !== undefined) throw dispatchError;
         return workerResult!;
       },

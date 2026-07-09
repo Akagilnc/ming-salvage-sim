@@ -3424,9 +3424,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 } catch (err) {
                   dispatchError = err;
                 }
-                if (dispatchError === undefined) {
-                  await assertVerifyReadOnlyContract();
-                }
+                // Always assert (online R10 Codex P1): mutate-then-throw must
+                // surface contract_drift, not mechanical-retry on a dirty tree.
+                await assertVerifyReadOnlyContract();
                 if (dispatchError !== undefined) throw dispatchError;
                 return workerResult!;
               },
