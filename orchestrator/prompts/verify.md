@@ -37,4 +37,6 @@ or, when findings remain:
 `findingFamilies` is optional. Malformed families are dropped by the host —
 they never block your verdict.
 
-On a post-fixer fresh re-check include `isRecheck: true`.
+On a post-fixer fresh re-check include `isRecheck: true` and echo every
+`fixMarkedFindingIdentityKeys` value from the landing file before returning
+`converged:true`; otherwise return `converged:false`.

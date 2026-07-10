@@ -100,9 +100,11 @@ import {
   onlineReviewResumeHeadKeyFromLedger,
   onlineReviewRoundFromLedger,
   onlineReviewRoundTriggerFromLedger,
+  recheckConvergenceConfirmsFixMarkedKeys,
   resolveOnlineReviewRoundTrigger,
   realBotPollClock,
   reconstructOnlineReviewLandingForResume,
+  fixMarkedFindingAuthorizationForResume,
   ensureOnlineReviewRetriggerAfterFixGap,
   retriggerBotsAndPoll,
   shipLedgerTriggeredAtFromSliceLedger,
@@ -128,6 +130,7 @@ import {
 } from "./evidenceAdmissibility.js";
 import {
   applyVerifySideEffects,
+  fixMarkedFindingThreadsFromVerify,
   fixMarkedKeysFromVerify,
 } from "./onlineReviewSideEffects.js";
 import {
@@ -3165,7 +3168,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     lastCoderActualRepairPaths = latestRepair.repairMovementPaths;
 
     if (
-      plan.resumeStep === "S10" &&
+      (plan.resumeStep === "S9" || plan.resumeStep === "S10") &&
       lastShipOutput !== undefined &&
       onlineReviewLanding === undefined
     ) {
@@ -3992,6 +3995,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         promptFile = reviewLoopSpec.promptFile;
         try {
           if (reviewStep === "S9") {
+            let recheckFixMarkedFindingIdentityKeys =
+              onlineReviewLanding?.fixMarkedFindingIdentityKeys;
+            let recheckFixMarkedFindingThreads =
+              onlineReviewLanding?.fixMarkedFindingThreads;
+            // Resume without a snapshot still owes the recheck its durable
+            // authorization — rebuild from fix_committed / last S9 (#743 R6).
+            if (
+              onlineReviewRound > 1 &&
+              (recheckFixMarkedFindingIdentityKeys === undefined ||
+                recheckFixMarkedFindingIdentityKeys.length === 0)
+            ) {
+              const auth = fixMarkedFindingAuthorizationForResume(
+                mergeResumeLedgerHistory(resumeHistoryLedger, ledger),
+              );
+              recheckFixMarkedFindingIdentityKeys =
+                auth.fixMarkedFindingIdentityKeys;
+              recheckFixMarkedFindingThreads = auth.fixMarkedFindingThreads;
+            }
             const snapshot = await pollOnlineReviewForShip(
               lastShipOutput,
               onlineReviewRound,
@@ -4011,6 +4032,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ),
               ...(priorRoundFindings.length > 0
                 ? { priorRoundFindings }
+                : {}),
+              ...(onlineReviewRound > 1
+                ? {
+                    fixMarkedFindingIdentityKeys:
+                      recheckFixMarkedFindingIdentityKeys ?? [],
+                    fixMarkedFindingThreads:
+                      recheckFixMarkedFindingThreads ?? [],
+                  }
                 : {}),
             };
           }
@@ -4093,6 +4122,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ...onlineReviewLanding,
                   fixMarkedFindingIdentityKeys:
                     onlineReviewLanding.fixMarkedFindingIdentityKeys ?? [],
+                  fixMarkedFindingThreads:
+                    onlineReviewLanding.fixMarkedFindingThreads ?? [],
                   ...(onlineReviewLanding.findingFamilies !== undefined
                     ? { findingFamilies: onlineReviewLanding.findingFamilies }
                     : {}),
@@ -4402,6 +4433,30 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               );
             }
             verifyOutput = recheckOutcome;
+            if (
+              onlineReviewRound > 1 &&
+              onlineReviewLanding !== undefined &&
+              !recheckConvergenceConfirmsFixMarkedKeys(
+                verifyOutput,
+                onlineReviewLanding,
+              )
+            ) {
+              return await errorTermination(
+                reviewStep,
+                new Error(
+                  "post-fixer verify converged without confirming every fix-marked finding identity key",
+                ),
+                {
+                  output: verifyOutput,
+                  stopSummary: contractDriftStopSummary({
+                    summary:
+                      "post-fixer verify converged without confirming every fix-marked finding identity key",
+                    repairHint:
+                      "echo the landing fixMarkedFindingIdentityKeys exactly on a converged post-fixer recheck, or report unresolved findings",
+                  }),
+                },
+              );
+            }
             // Pending CI only: re-poll S9 — do not fixer, do not merge, do not
             // apply "all clear" side effects (online R2 Codex P2).
             // Bound re-entry: bots may already be quiescent so poll returns
@@ -4533,6 +4588,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                           : undefined,
                       landingThreads:
                         onlineReviewLanding?.onlineReviewSnapshot?.threads,
+                      approvedFixMarkedFindingThreads:
+                        onlineReviewLanding?.fixMarkedFindingThreads,
                     })
                   : {
                       deferredIssueUrls: [],
@@ -4552,10 +4609,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 : {}),
             };
             const fixKeys = fixMarkedKeysFromVerify(verifyOutput);
+            const fixMarkedFindingThreads =
+              fixMarkedFindingThreadsFromVerify(verifyOutput);
             if (onlineReviewLanding !== undefined) {
               onlineReviewLanding = {
                 ...onlineReviewLanding,
                 fixMarkedFindingIdentityKeys: fixKeys,
+                fixMarkedFindingThreads,
                 ...(verifyOutput.findingFamilies !== undefined
                   ? { findingFamilies: verifyOutput.findingFamilies }
                   : {}),
@@ -4693,11 +4753,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
             ) {
               const nextRound = onlineReviewRound + 1;
+              const fixAuthKeys = (
+                onlineReviewLanding?.fixMarkedFindingIdentityKeys ?? []
+              ).filter((key) => typeof key === "string" && key.trim().length > 0);
+              const fixAuthThreads = (
+                onlineReviewLanding?.fixMarkedFindingThreads ?? []
+              ).flatMap((binding) =>
+                typeof binding.identityKey === "string" &&
+                binding.identityKey.trim().length > 0 &&
+                typeof binding.threadId === "string" &&
+                binding.threadId.trim().length > 0
+                  ? [
+                      {
+                        identityKey: binding.identityKey,
+                        threadId: binding.threadId,
+                      },
+                    ]
+                  : [],
+              );
               const fixCommittedMarker = {
                 step: "S10" as const,
                 event: "online_review_fix_committed" as const,
                 fixCommitSha: lastOnlineReviewFixCommitSha!,
                 onlineReviewRound,
+                ...(fixAuthKeys.length > 0
+                  ? { fixMarkedFindingIdentityKeys: fixAuthKeys }
+                  : {}),
+                ...(fixAuthThreads.length > 0
+                  ? { fixMarkedFindingThreads: fixAuthThreads }
+                  : {}),
               };
               ledger.push(fixCommittedMarker);
               if (stateDir !== undefined) {

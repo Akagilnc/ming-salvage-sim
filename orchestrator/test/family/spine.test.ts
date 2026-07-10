@@ -491,6 +491,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     const shipHead = "family-base-0";
     const postFixHead = "family-base-postfix";
     const pr = "pr://family/293-base";
+    const authKey = "spine:r28";
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();
     familyBackend.head = postFixHead;
@@ -518,17 +519,26 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         phase: "final",
         familyHeadAfter: postFixHead,
         pr,
+        fixMarkedFindingIdentityKeys: [authKey],
+        fixMarkedFindingThreads: [{ identityKey: authKey, threadId: "100" }],
       },
     );
     familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
 
     const verifyRounds: number[] = [];
-    familyBackend.dispatchWorker = async (spec, ctx) => {
+    familyBackend.dispatchWorker = async (spec, ctx, landing) => {
       if (spec.kind === "verify") {
         verifyRounds.push(ctx?.onlineReviewRound ?? 0);
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: {
+            kind: "verify",
+            converged: true,
+            isRecheck: true,
+            fixMarkedFindingIdentityKeys: [
+              ...(landing?.fixMarkedFindingIdentityKeys ?? [authKey]),
+            ],
+          },
         };
       }
       const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
@@ -555,6 +565,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
   it("shipped-only resume records post-fix family head when in-loop fixer advanced HEAD (cmr r7)", async () => {
     const shipHead = "family-base-0";
     const postFixHead = "family-base-postfix";
+    const authKey = "spine:r7";
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();
     familyBackend.head = shipHead;
@@ -574,9 +585,26 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     familyBackend.dispatchWorker = async (spec) => {
       if (spec.kind === "verify") {
         verifyPass += 1;
+        if (verifyPass >= 2) {
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: true,
+              isRecheck: true,
+              fixMarkedFindingIdentityKeys: [authKey],
+            },
+          };
+        }
         return {
           kind: "completed",
-          output: { kind: "verify", converged: verifyPass >= 2 },
+          output: {
+            kind: "verify",
+            converged: false,
+            findingDispositions: [
+              { identityKey: authKey, threadId: "100", action: "fix" },
+            ],
+          },
         };
       }
       if (spec.kind === "fixer") {
@@ -698,7 +726,11 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
           kind: "completed",
           output:
             spec.kind === "verify"
-              ? { kind: "verify", converged: true }
+              ? {
+                  kind: "verify",
+                  converged: true,
+                  fixMarkedFindingIdentityKeys: [],
+                }
               : spec.kind === "fixer"
                 ? {
                   kind: "fixer",
