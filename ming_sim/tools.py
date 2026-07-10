@@ -61,6 +61,14 @@ def _compact_json_text(raw: object) -> str:
         return text
 
 
+def _progress_band(value: object) -> str:
+    try:
+        n = int(value or 0)
+    except (TypeError, ValueError):
+        n = 0
+    return "未见起色" if n < 20 else "略有起色" if n < 40 else "进展过半" if n < 60 else "进展顺利" if n < 80 else "近于收束"
+
+
 def _commitment_tool_fields(db, state, row) -> str:
     keys = row.keys() if hasattr(row, "keys") else []
     commitment_kind = str(row["commitment_kind"] if "commitment_kind" in keys else "").strip()
@@ -113,7 +121,11 @@ def build_minister_tools(character: Character, context: CourtContext,
 
     def query_army_roster(names: List[str] = []) -> str:
         """查全军名册。names 为空返回军名+欠饷+状态索引；传军名列表返回指定军队完整信息。"""
-        return context.db.army_roster(filter_names=names if names else None, index_only=not names)
+        return context.db.army_roster(
+            filter_names=names if names else None,
+            index_only=not names,
+            qualitative_equipment=True,
+        )
 
     def list_memorials() -> str:
         """查看当前在办的所有事项（issue）。"""
@@ -127,7 +139,8 @@ def build_minister_tools(character: Character, context: CourtContext,
             commitment_suffix = f"，{commitment_fields}" if commitment_fields else ""
             lines.append(
                 f"{idx}. #{row['id']}[{kind_tag}]{row['title']}"
-                f"（bar {int(row['bar_value'])}/{row['bar_good_meaning']}，{row['stage_text']}{commitment_suffix}）"
+                f"（进展{_progress_band(row['bar_value'])}；向好端：{row['bar_good_meaning']}；"
+                f"{row['stage_text']}{commitment_suffix}）"
             )
         return "\n".join(lines)
 
@@ -144,7 +157,8 @@ def build_minister_tools(character: Character, context: CourtContext,
         commitment_fields = _commitment_tool_fields(context.db, context.state, row)
         commitment_text = f"承诺字段：{commitment_fields}。" if commitment_fields else ""
         return (
-            f"#{row['id']} {row['title']}（bar {int(row['bar_value'])}，{row['bar_bad_meaning']}↔{row['bar_good_meaning']}）。"
+            f"#{row['id']} {row['title']}（进展{_progress_band(row['bar_value'])}，"
+            f"{row['bar_bad_meaning']}↔{row['bar_good_meaning']}）。"
             f"阶段：{row['stage_text']}。牵涉：{row['faction_hint'] or '—'}。"
             f"结案条件：{row['resolve_condition'] or '（未填）'}。失败条件：{row['fail_condition'] or '（未填）'}。"
             f"{commitment_text}"
@@ -157,7 +171,7 @@ def build_minister_tools(character: Character, context: CourtContext,
     def inspect_region(region_name: str) -> str:
         """查看某一地区人口、民心、动乱、天灾、人祸、田亩和税收。"""
         try:
-            return context.db.region_detail(region_name)
+            return context.db.region_detail(region_name, qualitative=True)
         except ValueError as e:
             return f"未找到地区 '{region_name}'。可先调 list_regions 看地区 id/名称列表。错误：{e}"
 
