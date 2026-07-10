@@ -1075,11 +1075,8 @@ class GameSession:
         except Exception:
             # A corrupt legacy save must not prevent ordinary audience chat.
             pass
-        # 本回合已核定草案随大臣议事滚动累加，agent system 在月初冻结拿不到——
-        # 每次 chat 前置实时 draft_line 到 user message 头，确保大臣看得到兄弟大臣最新动作。
-        draft_line = self.registry.build_draft_line() if self.registry is not None else ""
-        if draft_line and draft_line != "无":
-            augmented = f"【本{TURN_UNIT}已核定草案】{draft_line}\n\n{augmented}"
+        # 未明发草案不属于公开层；参与者/知情圈须通过持久见闻事件投影进入提示。
+        # 这里不能直接读取 registry 的全局草案列表，否则未参与大臣会越过排除边界获知密事。
         return augmented
 
     def apply_cli_conversation_actions(
