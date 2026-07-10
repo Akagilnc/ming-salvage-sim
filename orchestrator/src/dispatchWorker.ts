@@ -95,7 +95,7 @@ const pendingTelemetryEnvironmentStamps = new Set<string>();
 function scheduleTelemetryEnvironmentStamp(
   ledgerDir: string | undefined,
   ctx: DispatchContext,
-  install: (() => void) | undefined,
+  backend: Pick<Backend, "installTelemetryRunEnvironment">,
 ): void {
   if (
     ledgerDir === undefined ||
@@ -109,7 +109,10 @@ function scheduleTelemetryEnvironmentStamp(
   queueMicrotask(() => {
     try {
       if (!hasEnvironmentStamp(ledgerDir)) {
-        install?.();
+        // Invoke through the backend receiver. Production implementations are
+        // class methods that read `this.opts`; extracting and bare-calling the
+        // method loses that receiver and skips the environment stamp entirely.
+        backend.installTelemetryRunEnvironment?.();
         ensureEnvironmentStamp(ledgerDir, ctx);
       }
     } catch (err) {
@@ -892,7 +895,7 @@ export async function dispatchWorkerWithMonitor(
   scheduleTelemetryEnvironmentStamp(
     ledgerDir,
     ctx,
-    backend.installTelemetryRunEnvironment,
+    backend,
   );
 
   const stampCollect = (

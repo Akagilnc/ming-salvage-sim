@@ -65,8 +65,9 @@ const TELEMETRY_DEFAULT_IMAGE_TAG = "ming-orchestrator-coder:latest";
 
 /**
  * Once-per-process run environment for telemetry (image / fast / content hashes).
- * Set from RealBackend / RealFamilyBackend construction so stamps read the real
- * imageName + codexFast, not only env vars that launchers often leave unset.
+ * Set lazily by RealBackend / RealFamilyBackend immediately before an absent
+ * environment stamp, so stamps read the real imageName + codexFast without
+ * making backend construction block on fingerprint collection.
  */
 export interface TelemetryRunEnvironment {
   readonly imageTag?: string | null;
@@ -98,8 +99,9 @@ export function getTelemetryRunEnvironment(): TelemetryRunEnvironment {
 }
 
 /**
- * Wire worker-image config into telemetry (call from RealBackend /
- * RealFamilyBackend constructors). Best-effort: missing docker / dirs → null fields.
+ * Wire worker-image config into telemetry (called by RealBackend /
+ * RealFamilyBackend immediately before an absent environment stamp). Best-effort:
+ * missing docker / dirs → null fields.
  */
 export function configureTelemetryFromWorkerImage(opts: {
   readonly imageName: string;

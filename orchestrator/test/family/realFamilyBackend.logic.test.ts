@@ -33,7 +33,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as sc from "@ai-hero/sandcastle";
 import {
@@ -59,6 +59,7 @@ import type {
 } from "../../src/family/types.js";
 import { DEFAULT_IMAGE_TAG, resolveImageTag } from "../../src/familyDriver.js";
 import type { WorkerSpec } from "../../src/types.js";
+import * as telemetry from "../../src/telemetry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
@@ -163,6 +164,19 @@ function opts(workingRepo: string, over: Partial<RealFamilyBackendOptions> = {})
     ...over,
   };
 }
+
+describe("RealFamilyBackend telemetry construction", () => {
+  it("does not calculate telemetry fingerprints during construction", () => {
+    const configure = vi.spyOn(
+      telemetry,
+      "configureTelemetryFromWorkerImage",
+    );
+
+    new RealFamilyBackend(opts(trackRepo()));
+
+    expect(configure).not.toHaveBeenCalled();
+  });
+});
 
 // ═══════════════════════════════ 1. family ledger ═══════════════════════════
 

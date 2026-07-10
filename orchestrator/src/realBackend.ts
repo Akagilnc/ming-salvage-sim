@@ -2166,15 +2166,12 @@ export class RealBackend implements Backend {
     this.validateSoulsDir();
     this.workingRepo = this.buildOrReuseClone();
     this.assertIndependentClone();
-    // #786 — seed process-level run env from imageName/codexFast/souls/prompts.
-    // Dispatch reinstalls via {@link installTelemetryRunEnvironment} so a later
-    // RealFamilyBackend construction cannot leave child legs on family hashes.
-    this.installTelemetryRunEnvironment();
   }
 
   /**
-   * #786: reinstall this backend's fingerprints before environment stamp.
-   * Safe to call repeatedly; used by {@link dispatchWorkerWithMonitor}.
+   * #786: install this backend's fingerprints immediately before an absent
+   * environment stamp is written. Deliberately not called from the constructor:
+   * image inspection and directory hashing must never block backend creation.
    */
   installTelemetryRunEnvironment(): void {
     configureTelemetryFromWorkerImage({
