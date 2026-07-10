@@ -24,6 +24,16 @@ def test_safe_historical_text_rejects_adjacent_abstract_values():
         assert "已略去" in rendered, injected
 
 
+def test_safe_historical_text_rejects_common_labeled_value_forms():
+    for injected in (
+        "忠诚值为88",
+        "能力评分为98",
+        "民心数值达73",
+        "进度指标至41/100",
+    ):
+        assert "已略去" in safe_historical_text(injected), injected
+
+
 def test_qualitative_band_preserves_zero_and_uses_default_only_for_missing_or_invalid():
     words = ("low", "middle", "high", "very high", "max")
 

@@ -51,6 +51,8 @@ def test_region_brief_characterizes_abstract_scores_and_rejects_injected_values(
     assert "动乱87" not in rendered
     assert any(label in rendered for label in ("民心低", "民心堪忧", "民心尚可", "民心稳固"))
     assert any(label in rendered for label in ("动乱高", "动乱已炽", "动乱中等", "动乱低"))
+    assert not re.search(r"粮食\d+万石", rendered)
+    assert "粮情" in rendered
 
 
 def test_building_brief_has_content(game):
@@ -268,6 +270,8 @@ def test_minister_context_is_characterized_without_abstract_numbers(game):
     assert str(minister.integrity) not in rendered
     assert str(minister.courage) not in rendered
     assert str(minister.identity) not in rendered
+    assert "阴谋" in rendered
+    assert "立场深浅未著" in rendered or "阴谋能力未详" in rendered
 
 
 def test_character_and_faction_zero_scores_use_lowest_qualitative_bucket():
