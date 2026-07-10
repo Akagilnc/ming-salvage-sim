@@ -610,7 +610,7 @@ export function classifyWorkerTerminal(
  * unrelated number such as a GitHub issue, path segment, or item identifier.
  */
 export function mentionsHttp429(reasonLower: string): boolean {
-  return /\b(?:http(?:\/\d+(?:\.\d+)?)?(?:\s+status(?:\s+code)?)?|status(?:\s+code)?|response\s+status)\s*(?:code\s*)?(?:is\s*)?(?:=|:)?\s*429\b/.test(
+  return /\b(?:http(?:\/\d+(?:\.\d+)?)?(?:\s+(?:code|error|response\s+code|status(?:\s+code)?))?|status(?:\s+code)?|response\s+(?:status(?:\s+code)?|code))\s*(?:is|was)?\s*(?:=|:)?\s*429\b/.test(
     reasonLower,
   );
 }
