@@ -123,18 +123,21 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             seed_guilt=json.dumps(seed_guilt, ensure_ascii=False) if seed_guilt else "",
         )
 
-    aliases_by_faction: Dict[str, Set[str]] = {}
+    names_and_aliases_by_faction: Dict[str, Set[str]] = {}
     for character in characters.values():
-        for alias in character.aliases:
-            aliases_by_faction.setdefault(alias, set()).add(character.faction)
-    cross_faction_aliases = sorted(
-        alias for alias, factions_for_alias in aliases_by_faction.items()
-        if len(factions_for_alias) > 1
+        for name_or_alias in (character.name, *character.aliases):
+            names_and_aliases_by_faction.setdefault(name_or_alias, set()).add(
+                character.faction
+            )
+    cross_faction_names_or_aliases = sorted(
+        name_or_alias
+        for name_or_alias, factions_for_name_or_alias in names_and_aliases_by_faction.items()
+        if len(factions_for_name_or_alias) > 1
     )
-    if cross_faction_aliases:
+    if cross_faction_names_or_aliases:
         raise SystemExit(
-            "characters.json 不得存在跨派别人物别名："
-            + "、".join(cross_faction_aliases)
+            "characters.json 不得存在跨派别人物名或别名："
+            + "、".join(cross_faction_names_or_aliases)
         )
 
     if not factions or not characters:

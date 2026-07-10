@@ -16,14 +16,17 @@ def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
     ).fetchone()
     assert row["faction"] == "皇党"
     assert row["identity"] == 95
-    assert row["seed_guilt"] == ""
+    assert json.loads(row["seed_guilt"]) == {"crime": "无", "severity": "无"}
 
     温 = db.conn.execute(
         "SELECT faction, identity, seed_guilt FROM characters WHERE name=?", ("温体仁",)
     ).fetchone()
     assert 温["faction"] == "皇党"
     assert 温["identity"] == 18
-    assert 温["seed_guilt"] == ""
+    assert json.loads(温["seed_guilt"]) == {
+        "crime": "无(品性污点:工心计、枚卜案讦钱谦益以自进、柄国专务逢迎不引正人——《明史》列奸臣传,属品性污点非可坐之现行罪;integ30仅线索)",
+        "severity": "无",
+    }
 
 
 def test_identity_and_seed_guilt_survive_restore(game):
@@ -80,6 +83,14 @@ def test_roster_has_no_cross_faction_aliases():
         for alias in character.aliases:
             by_alias.setdefault(alias, set()).add(character.faction)
     assert all(len(factions) == 1 for factions in by_alias.values())
+
+
+def test_roster_rejects_alias_colliding_with_other_faction_name(monkeypatch):
+    data = load_json_asset("characters.json")
+    data["characters"][0]["aliases"].append("温体仁")
+    monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
+    with pytest.raises(SystemExit, match="温体仁"):
+        load_character_content()
 
 
 @pytest.mark.parametrize(
