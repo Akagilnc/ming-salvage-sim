@@ -209,3 +209,19 @@ export type {
   MergeWorkerResult,
   WorkerMonitorHandle,
 } from "./types.js";
+
+// ── design-time Coder-Rec roster (#767) ─────────────────────────────────────
+export {
+  CODER_REC_FALLBACK_AFTER_ROUNDS,
+  CODER_ROSTER,
+  CODER_ROSTER_VERSION,
+  DEFAULT_CODER_REC_ORDER,
+  lookupCoderRosterEntry,
+  parseCoderRec,
+  poolSeparationViolation,
+  resolveCoderRecOrder,
+  reviewerSlugsFromRoute,
+  selectCoderRecEntry,
+} from "./coderRoster.js";
+export type { CoderPoolId, CoderRosterEntry, SelectCoderRecOptions } from "./coderRoster.js";
+export { applyCoderRecToRoute, withCoderSlot } from "./modelRoutes.js";
