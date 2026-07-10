@@ -230,6 +230,101 @@ describe("#745 Close Guard arm — success draft with open checkboxes", () => {
     }
   });
 
+  it("rejects numbered open checklist items (1. [ ] / 1) [ ])", () => {
+    const run = runGuard(
+      baseSuccessDraft({
+        findings: [
+          {
+            severity: "low",
+            category: "clarity",
+            claim_quote: "numbered open items",
+            location: "docs/handoff.md",
+            suggested_fix: ["1. [ ] finish landing", "1) [ ] verify the guard"].join("\n"),
+            action: "wont_fix",
+            disposition: {
+              kind: "accepted_suppressed",
+              source: "issue #745",
+              scope: "this slice only",
+              reason: "numbered checklist items count as open work",
+              boundedReopen: "reopen if a numbered item remains unchecked",
+            },
+          },
+        ],
+      }),
+    );
+
+    try {
+      expect(run.status).toBe(1);
+      expect(run.stdout).not.toContain("CMR_STEP_COMPLETE");
+      expect(run.sidecar).toBe("sentinel\n");
+    } finally {
+      rmSync(run.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps checklist-looking source quotes out of the close-guard scan", () => {
+    const draft = baseSuccessDraft({
+      findings: [
+        {
+          severity: "low",
+          category: "clarity",
+          claim_quote: ["source example:", "- [ ] this is quoted source text"].join("\n"),
+          location: "docs/handoff.md",
+          suggested_fix: "quote only; no remaining work",
+          action: "wont_fix",
+          disposition: {
+            kind: "accepted_suppressed",
+            source: "issue #745",
+            scope: "this slice only",
+            reason: "source quote is not a draft checklist",
+            boundedReopen: "reopen if the finding becomes actionable work",
+          },
+        },
+      ],
+    });
+    const run = runGuard(draft);
+
+    try {
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain("CMR_STEP_COMPLETE");
+      expect(JSON.parse(run.sidecar)).toEqual(draft);
+    } finally {
+      rmSync(run.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a line continuation out of the rejected checklist preview", () => {
+    const run = runGuard(
+      baseSuccessDraft({
+        findings: [
+          {
+            severity: "low",
+            category: "clarity",
+            claim_quote: "open item with continuation",
+            location: "docs/handoff.md",
+            suggested_fix: ["- [ ]", "continuation text"].join("\n"),
+            action: "wont_fix",
+            disposition: {
+              kind: "accepted_suppressed",
+              source: "issue #745",
+              scope: "this slice only",
+              reason: "open item remains",
+              boundedReopen: "reopen if the item is not completed",
+            },
+          },
+        ],
+      }),
+    );
+
+    try {
+      expect(run.status).toBe(1);
+      expect(run.stderr).toMatch(/- \[ \]/);
+      expect(run.stderr).not.toContain("continuation text");
+    } finally {
+      rmSync(run.dir, { recursive: true, force: true });
+    }
+  });
+
   it("accepts a success draft whose checklist items are all closed ([x] / [~])", () => {
     const draft = baseSuccessDraft({
       findings: [
