@@ -3326,13 +3326,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // (including the S6-count advance position from the restored ledger) before
     // the first dispatch / top-of-loop smoke. Without this, applyCoderRecToRoute
     // sees undefined body → skippedForMissingMarking → silent preset revert.
+    // Coder-Rec is OPTIONAL: re-fetch failures must degrade safely (try meta,
+    // then snapshot) — never errorTerminate / poison the resume terminal state.
     try {
       const meta = await backend.fetchIssueMeta(issueNumber);
       if (typeof meta.body === "string" && meta.body.length > 0) {
         coderRecIssueBody = meta.body;
       }
-    } catch (err) {
-      return await errorTermination(plan.resumeStep, err);
+    } catch {
+      // fall through to snapshot
     }
     if (
       (coderRecIssueBody === undefined || coderRecIssueBody.length === 0)
@@ -3342,9 +3344,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         if (snapshot.body.length > 0) {
           coderRecIssueBody = snapshot.body;
         }
-      } catch (err) {
-        return await errorTermination(plan.resumeStep, err);
+      } catch {
+        // fall through — continue with route preset
       }
+    }
+    if (coderRecIssueBody === undefined || coderRecIssueBody.length === 0) {
+      console.info(
+        "[orchestrator] Coder-Rec resume re-fetch failed; continuing with route preset",
+      );
     }
     applyCoderRecSelection(coderRecRoundsFromLedger(ledger));
   }
