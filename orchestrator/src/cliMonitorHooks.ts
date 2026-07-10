@@ -213,3 +213,19 @@ export function workerResultFromMonitorSidecar(
       `without a WorkerResult sidecar (pool=${handle.poolId})`,
   };
 }
+
+/**
+ * True when {@link workerResultFromMonitorSidecar} (or an equivalent mapper)
+ * produced the empty-sidecar fallback — i.e. there was no usable result
+ * sidecar. Used by the signal-kill path: honor a real sidecar outcome even
+ * after SIGTERM; only synthesize `killed by signal` when the mapper found
+ * nothing durable.
+ */
+export function isMissingMonitorSidecarResult(result: WorkerResult): boolean {
+  if (result.kind !== "failed" && result.kind !== "malformed") return false;
+  const reason = result.reason;
+  return (
+    reason.includes("without a WorkerResult sidecar") ||
+    reason.includes("wrote no usable WorkerResult sidecar")
+  );
+}

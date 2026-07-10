@@ -61,6 +61,7 @@ import {
   readDispatchLogSlice,
   tryAppendTelemetryRecord,
 } from "./telemetry.js";
+import { isMissingMonitorSidecarResult } from "./cliMonitorHooks.js";
 import {
   dispatchMonitoredCliWorker,
   isWorkerIdle,
@@ -849,6 +850,19 @@ export async function dispatchWorkerWithMonitor(
     modelFamily = null;
   }
 
+  // Re-install this backend's image/prompt fingerprints before the once-per-
+  // ledger environment stamp. familyDriver constructs RealBackend then
+  // RealFamilyBackend in one process; without reinstall the later constructor
+  // would leave child legs stamping the family promptHash/sandboxFingerprint.
+  try {
+    backend.installTelemetryRunEnvironment?.();
+  } catch (err) {
+    console.warn(
+      `[orchestrator] telemetry env install failed (fail-open): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
   try {
     ensureEnvironmentStamp(ledgerDir, ctx);
   } catch (err) {
@@ -1107,36 +1121,48 @@ export async function dispatchWorkerWithMonitor(
       // One-shot re-read so first_output_at is not left null when bytes exist.
       // Stamp time ≈ process exit (poll-granularity semantics, not true TTFB).
       reconcileFirstOutputAt(handle, firstOutputBaseline, monitorDeps);
-      // Signal-killed legs must land a `killed` collect row — do not silently
-      // feed null exitCode into awaitMonitoredCliWorker and drop the terminal.
-      // Hang dispositions reject monitorPromise (above) before kill settles, so
-      // they never reach this branch. Late post-exit handler throws stay swallowed.
-      if (race.kind === "killed") {
-        const result: WorkerResult = {
-          kind: "failed",
-          reason: `CLI worker ${spec.id} killed by signal ${race.signal}`,
-        };
-        stampCollect({ kind: "result", result });
-        return { result, monitorHandle: handle };
-      }
-      const exitCode = race.exitCode;
+      // Always consult the result-sidecar mapper — even on signal exit. A worker
+      // may have written a valid completed sidecar in the narrow window before
+      // SIGTERM; skipping the mapper would fabricate failed and change dispatch
+      // semantics (telemetry must not). Hang dispositions reject monitorPromise
+      // (above) before kill settles, so they never reach this branch. Late
+      // post-exit handler throws stay swallowed.
+      const exitCode = race.kind === "exit" ? race.exitCode : null;
+      const killSignal = race.kind === "killed" ? race.signal : null;
       if (backend.awaitMonitoredCliWorker === undefined) {
-        const result: WorkerResult = {
-          kind: "failed",
-          reason:
-            `CLI worker ${spec.id} finished (exit ${exitCode}) but backend has ` +
-            `no awaitMonitoredCliWorker to map the process into a WorkerResult`,
-        };
+        const result: WorkerResult =
+          killSignal !== null
+            ? {
+                kind: "failed",
+                reason: `CLI worker ${spec.id} killed by signal ${killSignal}`,
+              }
+            : {
+                kind: "failed",
+                reason:
+                  `CLI worker ${spec.id} finished (exit ${exitCode}) but backend has ` +
+                  `no awaitMonitoredCliWorker to map the process into a WorkerResult`,
+              };
         stampCollect({ kind: "result", result });
         return { result, monitorHandle: handle };
       }
-      const result = await backend.awaitMonitoredCliWorker(
+      let result = await backend.awaitMonitoredCliWorker(
         handle,
         exitCode,
         spec,
         ctx,
         landing,
       );
+      // No usable sidecar after a signal kill → stamp killed (telemetry cluster);
+      // a real sidecar outcome (completed / escalated / structured failed) wins.
+      if (
+        killSignal !== null &&
+        isMissingMonitorSidecarResult(result)
+      ) {
+        result = {
+          kind: "failed",
+          reason: `CLI worker ${spec.id} killed by signal ${killSignal}`,
+        };
+      }
       // #686: self-reported blocked / phase_complete in the worker log → resource
       // relay (preserve drift). Malformed/absent tags are ignored here.
       // #786: token extract uses the same log slice (GC happens later at terminal).

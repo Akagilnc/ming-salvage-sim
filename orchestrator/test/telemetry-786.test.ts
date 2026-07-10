@@ -269,6 +269,57 @@ describe("#786 telemetry pure helpers", () => {
     expect(classified.errorMessage).toBe(realMaxIter);
   });
 
+  it("escalated missing-completion-signal is honest-incomplete (not category null)", () => {
+    // shipOutcome.ts: unsignaled ship → escalate (not failed). Clustering must
+    // still see honest-incomplete — force-null on all escalated was a R6 bug.
+    const shipReason = "ship worker did not fire its completion signal";
+    const classified = classifyWorkerTerminal({
+      kind: "result",
+      result: {
+        kind: "escalated",
+        escalation: {
+          reason: shipReason,
+          diagnosis:
+            'expected "<ship_done>", got none (no signal fired before the iteration limit)',
+        },
+      },
+    });
+    expect(classified.terminal).toBe("escalated");
+    expect(classified.errorCategory).toBe("honest-incomplete");
+    expect(classified.errorMessage).toBe(shipReason);
+
+    // Pure decision escalate (no known failure signature) stays category-null.
+    const decision = classifyWorkerTerminal({
+      kind: "result",
+      result: {
+        kind: "escalated",
+        escalation: {
+          reason: "human must choose between two valid approaches",
+          diagnosis: "both options preserve invariants",
+        },
+      },
+    });
+    expect(decision.terminal).toBe("escalated");
+    expect(decision.errorCategory).toBeNull();
+  });
+
+  it("categoryFromReason does not treat issue #429 or path /429/ as quota", () => {
+    expect(categoryFromReason("see issue #429 for details")).toBe(
+      "unclassified",
+    );
+    expect(
+      categoryFromReason("failed reading /tmp/runs/429/ledger.json"),
+    ).toBe("unclassified");
+    // Real quota shapes still match.
+    expect(categoryFromReason("rate limit 429 from provider")).toBe(
+      "429-quota",
+    );
+    expect(categoryFromReason("quota wait for reset at 02:00")).toBe(
+      "429-quota",
+    );
+    expect(categoryFromReason("provider returned HTTP 429")).toBe("429-quota");
+  });
+
   it("categoryFromReason returns unclassified (not null) for unknown failures and keeps message", () => {
     expect(categoryFromReason("totally novel backend boom XYZ")).toBe(
       "unclassified",
@@ -705,11 +756,13 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     expect((collect as TelemetryCollectRecord).errorCategory).toBe("hang-idle");
   });
 
-  it("signal-killed CLI leg stamps killed collect row (not silent drop)", async () => {
+  it("signal-killed CLI leg without sidecar stamps killed; with sidecar honors real result", async () => {
     const dir = tempDir("orch-786-kill-");
     const ledgerDir = join(dir, ".ledger-786");
+    let mapperCalls = 0;
 
-    const backend = {
+    // ── no usable sidecar: mapper empty-fallback → killed-by-signal ────────
+    const backendNoSidecar = {
       resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
         command: process.execPath,
         // Sleep forever until external signal; we SIGTERM after spawn.
@@ -720,17 +773,20 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
         stepId: "S2",
         readInstanceId: () => "test-instance-kill",
       }),
-      // If the kill path wrongly falls through, await would fabricate success —
-      // fail the test loudly in that case.
+      // Correct semantics: mapper ALWAYS runs on signal exit. Empty-sidecar
+      // fallback is rewritten to killed-by-signal for telemetry clustering.
       awaitMonitoredCliWorker: async (): Promise<WorkerResult> => {
-        throw new Error(
-          "awaitMonitoredCliWorker must not run on signal-killed legs",
-        );
+        mapperCalls += 1;
+        return {
+          kind: "failed",
+          reason:
+            "monitored CLI worker S2 exited null without a WorkerResult sidecar (pool=codex-5h)",
+        };
       },
     } as unknown as Backend;
 
     const outcome = await dispatchWorkerWithMonitor(
-      backend,
+      backendNoSidecar,
       workerSpec(),
       { stateDir: ledgerDir },
       undefined,
@@ -748,6 +804,7 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       },
     );
 
+    expect(mapperCalls).toBe(1);
     expect(outcome.result.kind).toBe("failed");
     if (outcome.result.kind === "failed") {
       expect(outcome.result.reason).toMatch(/killed by signal/i);
@@ -765,6 +822,110 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     const dispatch = records.find((r) => r.phase === "dispatch");
     expect(dispatch).toBeDefined();
     expect((dispatch as TelemetryDispatchRecord).legId).toBe(collect?.legId);
+
+    // ── valid completed sidecar after SIGTERM: honor real result ───────────
+    const dir2 = tempDir("orch-786-kill-sidecar-");
+    const ledgerDir2 = join(dir2, ".ledger-786");
+    let mapperCalls2 = 0;
+    const backendWithSidecar = {
+      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => {}, 60_000)"],
+        logDir: dir2,
+        poolId: "codex-5h",
+        completionSignal: "<coder>",
+        stepId: "S2",
+        readInstanceId: () => "test-instance-kill-sc",
+      }),
+      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => {
+        mapperCalls2 += 1;
+        // Worker wrote a completed sidecar before the narrow-window SIGTERM.
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      },
+    } as unknown as Backend;
+
+    const outcome2 = await dispatchWorkerWithMonitor(
+      backendWithSidecar,
+      workerSpec(),
+      { stateDir: ledgerDir2 },
+      undefined,
+      {
+        idleThresholdMs: 60_000,
+        pollIntervalMs: 20,
+        monitorDeps: {
+          readInstanceId: () => "test-instance-kill-sc",
+          sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),
+        },
+        onMonitorHandleSpawned: async (handle) => {
+          process.kill(handle.pid, "SIGTERM");
+        },
+      },
+    );
+    expect(mapperCalls2).toBe(1);
+    expect(outcome2.result.kind).toBe("completed");
+    const collect2 = readTelemetryRecords(ledgerDir2).find(
+      (r) => r.phase === "collect",
+    ) as TelemetryCollectRecord | undefined;
+    expect(collect2?.terminal).toBe("completed");
+    expect(collect2?.errorCategory).toBeNull();
+  });
+
+  it("installTelemetryRunEnvironment reinstalls child fingerprints after family overwrite", async () => {
+    const childPrompts = tempDir("orch-786-child-prompts-");
+    const familyPrompts = tempDir("orch-786-family-prompts-");
+    writeFileSync(join(childPrompts, "a.md"), "child-prompt\n", "utf8");
+    writeFileSync(join(familyPrompts, "a.md"), "family-prompt\n", "utf8");
+    const childHash = hashDirectoryContents(childPrompts);
+    const familyHash = hashDirectoryContents(familyPrompts);
+    expect(childHash).not.toBe(familyHash);
+
+    // Simulate familyDriver construction order: RealBackend then RealFamilyBackend.
+    configureTelemetryFromWorkerImage({
+      imageName: "ming-orchestrator-coder:test",
+      promptsDir: childPrompts,
+    });
+    configureTelemetryFromWorkerImage({
+      imageName: "ming-orchestrator-coder:test",
+      promptsDir: familyPrompts,
+    });
+    // Without reinstall, stamp would carry family promptHash.
+    expect(buildEnvironmentStamp({ ctx: {} }).promptHash).toBe(familyHash);
+
+    const ledgerDir = join(tempDir("orch-786-env-reinstall-"), ".ledger");
+    const backend = {
+      installTelemetryRunEnvironment: () => {
+        configureTelemetryFromWorkerImage({
+          imageName: "ming-orchestrator-coder:test",
+          promptsDir: childPrompts,
+        });
+      },
+      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
+        command: process.execPath,
+        args: ["-e", "process.exit(0)"],
+        logDir: dirname(ledgerDir),
+        poolId: "codex-5h",
+        completionSignal: "<coder>",
+        stepId: "S2",
+        readInstanceId: () => "test-instance-env",
+      }),
+      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      }),
+    } as unknown as Backend;
+
+    await dispatchWorkerWithMonitor(backend, workerSpec(), {
+      stateDir: ledgerDir,
+    });
+
+    const env = readTelemetryRecords(ledgerDir).find(
+      (r) => r.phase === "environment",
+    ) as TelemetryEnvironmentRecord | undefined;
+    expect(env).toBeDefined();
+    expect(env?.promptHash).toBe(childHash);
   });
 
   it("dispatch half-row uses handle.dispatchedAt (post-spawn), not a pre-parse guess", async () => {

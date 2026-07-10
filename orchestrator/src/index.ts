@@ -53,6 +53,7 @@ export {
   configureTelemetryFromWorkerImage,
   configureTelemetryRunEnvironment,
   ensureEnvironmentStamp,
+  mentionsHttp429,
   extractClaudeTokens,
   extractCodexTokens,
   extractTokensFromLog,
@@ -115,6 +116,7 @@ export {
   isCliMonitorChildProcess,
   isMonitoredWorkerKind,
   resolveMonitorLogDir,
+  isMissingMonitorSidecarResult,
   workerResultFromMonitorSidecar,
 } from "./cliMonitorHooks.js";
 
