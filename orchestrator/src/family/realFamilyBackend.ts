@@ -114,6 +114,7 @@ import { ONLINE_REVIEW_LANDING_FILE } from "../onlineReviewLoop.js";
 import {
   provisionNodeModules,
   resolveTemplateProjectDir,
+  runProvisionCommand,
 } from "../provisionNodeModules.js";
 import {
   WORKER_OUTCOME_REPO_FILE,
@@ -973,7 +974,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // be GREEN end-to-end before the integrated cmr / PR either way).
     this.sh("git", ["checkout", request.familyBase], repo);
     try {
-      this.runVerifyCommands(request);
+      await this.runVerifyCommands(request);
     } catch (err) {
       return {
         ok: false,
@@ -988,7 +989,7 @@ export class RealFamilyBackend implements FamilyBackend {
    * clone. `protected` so a unit test drives the green/red branch without a real
    * `npx tsc` / `npx vitest` run. A non-zero exit throws (the caller packages it).
    */
-  protected runVerifyCommands(_request: FamilyVerifyRequest): void {
+  protected async runVerifyCommands(_request: FamilyVerifyRequest): Promise<void> {
     // Run where the Node project lives, NOT the clone root — else npx finds no
     // package.json/config (online R2 Codex P1). Precedence (#4): explicit verifyCwd
     // > the lazy diff-inferred cwd (the dominant changed subproject) > the clone root.
@@ -1029,7 +1030,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // package.json/package-lock.json; the launcher unconditional rebuild only
     // covers the *orchestrator* dist/image, not the family clone's project deps.
     // Therefore verify path must unconditionally ensure the cwd's deps.
-    this.installDeps(cwd);
+    await this.installDeps(cwd);
     // #5 (dogfood): run the PROJECT'S OWN package.json scripts, NOT a hardcoded
     // `npx tsc`/`npx vitest`. web/'s test script is `vitest run --environment jsdom`
     // — a bare `npx vitest run` DROPS `--environment jsdom`, so every jsdom render
@@ -1045,12 +1046,12 @@ export class RealFamilyBackend implements FamilyBackend {
     // long as Vitest passed. Precedence: dedicated `typecheck` > `build` (the project's
     // real type-checking build) > nothing. So types are NEVER silently skipped.
     if (scripts.includes("typecheck")) {
-      this.sh("npm", ["run", "typecheck"], cwd);
+      await this.sh("npm", ["run", "typecheck"], cwd);
     } else if (scripts.includes("build")) {
-      this.sh("npm", ["run", "build"], cwd);
+      await this.sh("npm", ["run", "build"], cwd);
     }
     if (scripts.includes("test")) {
-      this.sh("npm", ["test"], cwd);
+      await this.sh("npm", ["test"], cwd);
     }
   }
 
@@ -1092,15 +1093,29 @@ export class RealFamilyBackend implements FamilyBackend {
    * #372 sense: we always re-ensure deps; the fast path is clonefile, not a
    * presence/mtime skip. `protected` for test seam (used by verify tests).
    */
-  protected installDeps(cwd: string): void {
+  protected async installDeps(cwd: string): Promise<void> {
     const templateProjectDir = resolveTemplateProjectDir(cwd, {
       templateRoot: this.opts.depsTemplateRoot,
       targetRoot: this.opts.workingRepo,
     });
-    provisionNodeModules(cwd, {
+    await provisionNodeModules(cwd, {
       templateProjectDir,
-      sh: (file, args, c) => this.sh(file, args, c),
+      sh: (file, args, c) => this.provisionCommand(file, args, c),
     });
+  }
+
+  /** Provision-only async shell seam; ordinary git/gh commands remain synchronous. */
+  protected provisionCommand(
+    file: string,
+    args: string[],
+    cwd?: string,
+  ): string | Promise<string> {
+    // Test doubles override the synchronous general shell seam; preserve that
+    // seam for observability while the production implementation uses async I/O.
+    if (this.sh !== RealFamilyBackend.prototype.sh) {
+      return this.sh(file, args, cwd);
+    }
+    return runProvisionCommand(file, args, cwd);
   }
 
   // ─────────────────────── unified worker dispatch (#335) ───────────────────────

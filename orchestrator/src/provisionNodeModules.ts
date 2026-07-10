@@ -49,7 +49,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import {
   existsSync,
   readdirSync,
@@ -58,9 +58,14 @@ import {
   statSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { promisify } from "node:util";
 
 /** Same host-command seam shape as RealBackend / RealFamilyBackend `sh`. */
-export type Sh = (file: string, args: string[], cwd?: string) => string;
+export type Sh = (
+  file: string,
+  args: string[],
+  cwd?: string,
+) => string | Promise<string>;
 
 export type ProvisionMethod = "clonefile" | "npm-ci" | "npm-install";
 
@@ -72,17 +77,21 @@ export interface ProvisionResult {
 export interface ProvisionNodeModulesOptions {
   /** Project dir whose node_modules is the clone source (same package as target). */
   readonly templateProjectDir?: string;
-  /** Host command runner; defaults to execFileSync. */
+  /** Host command runner; defaults to async execFile. */
   readonly sh?: Sh;
 }
 
-function defaultSh(file: string, args: string[], cwd?: string): string {
-  return execFileSync(file, args, {
+async function defaultSh(file: string, args: string[], cwd?: string): Promise<string> {
+  const { stdout } = await promisify(execFile)(file, args, {
     cwd,
-    stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf8",
-  }).trim();
+  });
+  return stdout.trim();
 }
+
+/** Async host command runner used by production backends for provisioning. */
+export const runProvisionCommand: Sh = (file, args, cwd) =>
+  defaultSh(file, args, cwd);
 
 /**
  * SHA-256 of `package-lock.json` contents, or `undefined` when the lock is absent.
@@ -182,10 +191,10 @@ export function canClonefileNodeModules(
  * 2. Else → `npm ci` (lock present) or `npm install` (no lock).
  * 3. Clonefile failure → fall through to npm (non-APFS / permission / missing cp -c).
  */
-export function provisionNodeModules(
+export async function provisionNodeModules(
   targetProjectDir: string,
   options: ProvisionNodeModulesOptions = {},
-): ProvisionResult {
+): Promise<ProvisionResult> {
   const sh = options.sh ?? defaultSh;
   const started = Date.now();
   const hasLock = existsSync(join(targetProjectDir, "package-lock.json"));
@@ -199,7 +208,7 @@ export function provisionNodeModules(
         rmSync(dest, { recursive: true, force: true });
       }
       // macOS BSD cp: -c = clonefile(2), -R = recursive. Order `-cR` matches man examples.
-      sh("cp", ["-cR", src, dest]);
+      await sh("cp", ["-cR", src, dest]);
       return { method: "clonefile", elapsedMs: Date.now() - started };
     } catch {
       // A failed recursive clone may have left a corrupt partial target behind.
@@ -210,7 +219,7 @@ export function provisionNodeModules(
   }
 
   const npmArgs = hasLock ? (["ci"] as const) : (["install"] as const);
-  sh("npm", [...npmArgs], targetProjectDir);
+  await sh("npm", [...npmArgs], targetProjectDir);
   return {
     method: hasLock ? "npm-ci" : "npm-install",
     elapsedMs: Date.now() - started,
@@ -222,13 +231,13 @@ export function provisionNodeModules(
  * relative path under `templateRoot` (typically the source monorepo with warm
  * node_modules). Best-effort: missing template roots simply npm-install per project.
  */
-export function provisionRepoNodeModules(
+export async function provisionRepoNodeModules(
   repoRoot: string,
   options: {
     readonly templateRoot?: string;
     readonly sh?: Sh;
   } = {},
-): readonly ProvisionResult[] {
+): Promise<readonly ProvisionResult[]> {
   const projects = listNodeProjectDirs(repoRoot);
   const results: ProvisionResult[] = [];
   for (const project of projects) {
@@ -237,7 +246,7 @@ export function provisionRepoNodeModules(
       targetRoot: repoRoot,
     });
     results.push(
-      provisionNodeModules(project, {
+      await provisionNodeModules(project, {
         templateProjectDir,
         sh: options.sh,
       }),

@@ -73,7 +73,11 @@ import {
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
 import { findingIdentityKey } from "./findings.js";
-import { provisionRepoNodeModules } from "./provisionNodeModules.js";
+import {
+  provisionRepoNodeModules,
+  runProvisionCommand,
+  type Sh as ProvisionSh,
+} from "./provisionNodeModules.js";
 import {
   sourceAuthFailureStopSummary,
   type StopSummary,
@@ -2396,11 +2400,25 @@ export class RealBackend implements Backend {
    */
   protected provisionWorktreeNodeModules(
     worktreePath: string,
-  ): void | Promise<void> {
-    provisionRepoNodeModules(worktreePath, {
+  ): Promise<void> {
+    return provisionRepoNodeModules(worktreePath, {
       templateRoot: this.opts.sourceRepo,
-      sh: (file, args, cwd) => this.sh(file, args, cwd ?? worktreePath),
-    });
+      sh: (file, args, cwd) => this.provisionCommand(file, args, cwd ?? worktreePath),
+    }).then(() => undefined);
+  }
+
+  /** Provision-only async shell seam; ordinary git/gh commands remain synchronous. */
+  protected provisionCommand(
+    file: string,
+    args: string[],
+    cwd?: string,
+  ): string | Promise<string> {
+    // Test doubles override the synchronous general shell seam; preserve that
+    // seam for observability while the production implementation uses async I/O.
+    if (this.sh !== RealBackend.prototype.sh) {
+      return this.sh(file, args, cwd);
+    }
+    return (runProvisionCommand as ProvisionSh)(file, args, cwd);
   }
 
   /**
