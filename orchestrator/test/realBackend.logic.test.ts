@@ -14,7 +14,7 @@
  */
 
 import { dirname, join } from "node:path";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -59,6 +59,8 @@ import {
   soulForStep,
   REFERENCED_PROMPT_FILES,
   RealBackend,
+  routeSmokeCacheKey,
+  routeSmokeToolCallIsEchoOk,
   SANDBOX_CODEX_DIR,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
@@ -69,9 +71,44 @@ import {
 } from "../src/realBackend.js";
 import type { RepairEvidence, StepSpec } from "../src/types.js";
 import type * as sc from "@ai-hero/sandcastle";
+import { resolveRouteModels } from "../src/modelRoutes.js";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
 // brief); S1's `extractAgentBrief` is the surviving brief reader.
 import { StructuredOutputError } from "@ai-hero/sandcastle";
+
+describe("#685 route smoke hardening", () => {
+  it("accepts the quoted echo form emitted by a shell tool call", () => {
+    expect(
+      routeSmokeToolCallIsEchoOk({
+        type: "toolCall",
+        name: "bash",
+        formattedArgs: 'echo "OK"',
+      }),
+    ).toBe(true);
+  });
+
+  it("changes the cache key when the sandbox fingerprint changes", () => {
+    const route = resolveRouteModels("normal", {});
+    expect(routeSmokeCacheKey(route, "image-a")).not.toBe(
+      routeSmokeCacheKey(route, "image-b"),
+    );
+  });
+
+  it("turns a missing host CLI into an unknown version instead of throwing", () => {
+    const backend = {
+      sh: () => {
+        throw new Error("host CLI missing");
+      },
+    };
+    const cliVersionForSlug = (
+      RealBackend.prototype as unknown as {
+        cliVersionForSlug(this: typeof backend, slug: string): string;
+      }
+    ).cliVersionForSlug;
+
+    expect(cliVersionForSlug.call(backend, "sonnet")).toBe("unknown");
+  });
+});
 
 // ─── gh JSON → IssueMeta / IssueSnapshot ─────────────────────────────────────
 
@@ -882,7 +919,7 @@ describe("realBackend promptsDirError (F4)", () => {
     expect(promptsDirError(abs, true, true, [])).toBeUndefined();
   });
 
-  it("REFERENCED_PROMPT_FILES covers every dispatched worker prompt incl. ship.md (integ-cmr int-r1 C-3)", () => {
+  it("REFERENCED_PROMPT_FILES covers every dispatched worker prompt incl. ship.md + review-loop (integ-cmr int-r1 C-3 / #739)", () => {
     const files = [...REFERENCED_PROMPT_FILES];
     expect(new Set(files)).toEqual(
       new Set([
@@ -890,12 +927,17 @@ describe("realBackend promptsDirError (F4)", () => {
         "coder_fix.md",
         "reviewer_review.md",
         "ship.md",
+        "verify.md",
+        "fixer.md",
+        "docRelease.md",
         "integrated_cmr_completeness.md",
         "integrated_cmr_correctness.md",
       ]),
     );
     // No duplicates.
     expect(new Set(files).size).toBe(files.length);
+    // #739: S12 real worker must fail-fast at construction if prompt missing.
+    expect(REFERENCED_PROMPT_FILES).toContain("docRelease.md");
   });
 
   it("prompt inventory is route-independent and does not call shipWorkerSpec during module setup", () => {
@@ -943,15 +985,34 @@ describe("realBackend soulsDirError (#372)", () => {
     expect(err).not.toMatch(/promptFile/); // distinct from prompts error
   });
 
-  it("accepts an absolute existing dir with zero missing (all 8 present)", () => {
+  it("accepts an absolute existing dir with zero missing (full souls set present)", () => {
     expect(soulsDirError(abs, true, true, [])).toBeUndefined();
   });
 
-  it("REQUIRED_SOUL_FILES lists exactly the 8 under image/souls", () => {
-    expect(new Set(REQUIRED_SOUL_FILES).size).toBe(8);
-    expect(REQUIRED_SOUL_FILES).toContain("output_protocol.md");
-    expect(REQUIRED_SOUL_FILES).toContain("coder.md");
-    expect(REQUIRED_SOUL_FILES).toContain("ship.md");
+  it("REQUIRED_SOUL_FILES lists every file under image/souls incl. docRelease (#739)", () => {
+    // Source of truth = orchestrator/image/souls/ directory listing via readdirSync.
+    // Spot-checks + hard-coded count (e.g. size===11) still pass when a new soul
+    // lands on disk but is missing from REQUIRED_SOUL_FILES — that is the #739
+    // fail-late regression. Exact set equality catches both directions:
+    // constant missing a dir file, or constant listing a file that is gone.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const realSoulsDir = join(here, "..", "image", "souls");
+    const onDisk = readdirSync(realSoulsDir)
+      .filter((name) => !name.startsWith("."))
+      .sort();
+    const required = [...REQUIRED_SOUL_FILES].sort();
+    expect(required).toEqual(onDisk);
+    expect(onDisk).toContain("docRelease.md");
+    expect(REQUIRED_SOUL_FILES).toContain("docRelease.md");
+    // No duplicates in the constant (sort hides them in the equality above).
+    expect(new Set(REQUIRED_SOUL_FILES).size).toBe(REQUIRED_SOUL_FILES.length);
+  });
+
+  it("soulsDirError reports missing docRelease.md by name (#739 fail-fast)", () => {
+    const err = soulsDirError(abs, true, true, ["docRelease.md"]);
+    expect(err).toMatch(/missing required soul file\(s\)/);
+    expect(err).toMatch(/docRelease\.md/);
+    expect(err).toMatch(/All of \[/);
   });
 });
 

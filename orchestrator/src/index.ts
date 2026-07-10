@@ -90,6 +90,7 @@ export {
   parseSubIssueAdmission,
   parseSubIssueNumbers,
   cutFamilyBase,
+  resolveCodexFast,
 } from "./familyDriver.js";
 export type { FamilyDriverOptions, Sh, SubIssueAdmission } from "./familyDriver.js";
 export { selectWave } from "./family/commander.js";

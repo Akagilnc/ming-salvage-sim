@@ -219,6 +219,10 @@ function escalationAnswer(
  *   the tests can assert reuse-vs-recut and resume-vs-fresh-session.
  */
 class ResumeBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly calls: string[] = [];
   readonly runStepIds: string[] = [];
   readonly ledgerWrites: PersistentLedgerEntry[] = [];
@@ -2553,7 +2557,10 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(resumeBackend.dispatchSpecs.map((s) => s.id)).toEqual(["S12"]);
   });
 
-  it("#735 Codex P2: S12 process-failure retry resets worktree residue before re-dispatch", async () => {
+  it("#740: S12 process-failure retry continues on current worktree (no cleanResidue)", async () => {
+    // User override 2026-07-10 (#740, same philosophy as #600 / 21906adf):
+    // single-slice S12 crash retry must NOT scoped-reset; continue AS-IS like
+    // family docRelease. Resume still cleans once at breakpoint entry.
     const convergedHead = "deadbeefcommitsha";
     const prior: PersistentLedgerEntry[] = [
       entry("S0"),
@@ -2579,6 +2586,14 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
 
     class FlakyDocReleaseBackend extends DispatchRecordingResumeBackend {
       docReleaseAttempts = 0;
+      /** cleanResidue calls observed after the first docRelease dispatch. */
+      cleanResidueDuringDocReleaseRetry = 0;
+      override async cleanResidue(worktree: WorktreeHandle): Promise<void> {
+        if (this.docReleaseAttempts >= 1) {
+          this.cleanResidueDuringDocReleaseRetry += 1;
+        }
+        return super.cleanResidue(worktree);
+      }
       override async dispatchWorker(
         spec: WorkerSpec,
         ctx: DispatchContext,
@@ -2612,8 +2627,9 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     const result = await runOrchestrator({ issueNumber: 255, backend });
     expect(result.status).toBe("success");
     expect(backend.docReleaseAttempts).toBe(2);
-    // resume residue clean (1) + S12 retry reset (1) — proves resetBeforeRetry wired
-    expect(backend.cleanResidueCount).toBeGreaterThanOrEqual(2);
+    // Resume breakpoint clean only — S12 mechanical retry must not call cleanResidue
+    expect(backend.cleanResidueCount).toBe(1);
+    expect(backend.cleanResidueDuringDocReleaseRetry).toBe(0);
   });
 
   it("#735 Codex P1: post-doc CI pending parks without sticky S8; re-feed retries auto-merge", async () => {

@@ -55,6 +55,10 @@ const SURFACED_SESSION_ID = "child-11-S2-session-abc123";
  * — the seam a real provider uses). Every other child completes cleanly.
  */
 class SessionSurfacingChildBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly childLedgers = new Map<number, PersistentLedgerEntry[]>();
   constructor(private readonly escalateIssue: number) {}
 
