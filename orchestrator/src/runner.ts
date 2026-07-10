@@ -2068,19 +2068,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       deferredFindings: [],
     };
   }
-  if (typeof backend.smokeModelRoute !== "function") {
-    const reason = "route smoke executor is required before dispatch; backend did not provide smokeModelRoute";
-    return {
-      status: "error",
-      errorPackage: { failedStep: "S0", reason },
-      stepLedger: [],
-      stopSummary: infraFailureStopSummary({
-        summary: reason,
-        repairHint: "provide a real model×pipe smoke executor before dispatching workers",
-      }),
-      deferredFindings: [],
-    };
-  }
   const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
     interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
     warn: (message) => console.warn(`[orchestrator] ${message}`),
@@ -2095,43 +2082,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       },
       stepLedger: [{ step: "S8", stopSummary }],
       stopSummary,
-      deferredFindings: [],
-    };
-  }
-  let currentCliVersions: Readonly<Record<string, string | undefined>>;
-  try {
-    currentCliVersions = backend.currentCliVersions
-      ? await backend.currentCliVersions(modelRoute)
-      : {};
-    modelRoute = await backend.smokeModelRoute(modelRoute, currentCliVersions);
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    return {
-      status: "error",
-      errorPackage: { failedStep: "S0", reason: `route smoke failed: ${reason}` },
-      stepLedger: [],
-      stopSummary: infraFailureStopSummary({
-        summary: `route smoke failed: ${reason}`,
-        repairHint: "repair the selected model×pipe tool smoke before dispatching workers",
-      }),
-      deferredFindings: [],
-    };
-  }
-  const smokeFailure = routeSmokeFailure(
-    modelRoute,
-    Date.now(),
-    undefined,
-    currentCliVersions,
-  );
-  if (smokeFailure !== undefined) {
-    return {
-      status: "error",
-      errorPackage: { failedStep: "S0", reason: smokeFailure },
-      stepLedger: [],
-      stopSummary: infraFailureStopSummary({
-        summary: smokeFailure,
-        repairHint: "rerun the route smoke or repair the selected model×pipe",
-      }),
       deferredFindings: [],
     };
   }
@@ -2924,6 +2874,64 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // its original memory-bearing session). Cleared after the step is dispatched once.
   let resumeFor: { step: StepId; sessionId: string } | undefined;
   let resumedEscalationAnswer: EscalationAnswerEvent | undefined;
+  let routeSmokeChecked = false;
+
+  const ensureRouteSmoke = async (): Promise<RunResult | undefined> => {
+    if (typeof backend.smokeModelRoute !== "function") {
+      const reason =
+        "route smoke executor is required before dispatch; backend did not provide smokeModelRoute";
+      return {
+        status: "error",
+        errorPackage: { failedStep: "S0", reason },
+        stepLedger: [],
+        stopSummary: infraFailureStopSummary({
+          summary: reason,
+          repairHint: "provide a real model×pipe smoke executor before dispatching workers",
+        }),
+        deferredFindings: [],
+      };
+    }
+
+    let currentCliVersions: Readonly<Record<string, string | undefined>>;
+    try {
+      currentCliVersions = backend.currentCliVersions
+        ? await backend.currentCliVersions(modelRoute)
+        : {};
+      modelRoute = await backend.smokeModelRoute(modelRoute, currentCliVersions);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      return {
+        status: "error",
+        errorPackage: { failedStep: "S0", reason: `route smoke failed: ${reason}` },
+        stepLedger: [],
+        stopSummary: infraFailureStopSummary({
+          summary: `route smoke failed: ${reason}`,
+          repairHint: "repair the selected model×pipe tool smoke before dispatching workers",
+        }),
+        deferredFindings: [],
+      };
+    }
+    const smokeFailure = routeSmokeFailure(
+      modelRoute,
+      Date.now(),
+      undefined,
+      currentCliVersions,
+    );
+    if (smokeFailure !== undefined) {
+      return {
+        status: "error",
+        errorPackage: { failedStep: "S0", reason: smokeFailure },
+        stepLedger: [],
+        stopSummary: infraFailureStopSummary({
+          summary: smokeFailure,
+          repairHint: "rerun the route smoke or repair the selected model×pipe",
+        }),
+        deferredFindings: [],
+      };
+    }
+    routeSmokeChecked = true;
+    return undefined;
+  };
 
   if (resumeState !== undefined && resumeState.ledger.length > 0) {
     // Reuse the resident worktree (NO re-cut) and fix the sibling stateDir.
@@ -3197,6 +3205,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // loop visible in S3/S4/S5/S6, but still rejects a blind round cap; a `for (;;)`
   // keeps the absence of any "数到 N 就停" cap explicit (US#18).
   for (;;) {
+    if (!routeSmokeChecked && step !== "S0") {
+      const smokeResult = await ensureRouteSmoke();
+      if (smokeResult !== undefined) return smokeResult;
+    }
     let output: StepOutput | undefined;
     // promptFile for the current step (agent steps only; undefined for runner actions).
     let promptFile: string | undefined;
@@ -3282,6 +3294,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               `Merge the upstream changes before running.`,
           ));
         }
+
+        const smokeResult = await ensureRouteSmoke();
+        if (smokeResult !== undefined) return smokeResult;
 
         break;
       }

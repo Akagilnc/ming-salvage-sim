@@ -9,6 +9,8 @@ import type {
   Backend,
   IssueMeta,
   IssueSnapshot,
+  PersistentLedgerEntry,
+  ResumeState,
   StepOutput,
   StepSpec,
   WorktreeHandle,
@@ -44,6 +46,32 @@ class RoutePolicyOrderingBackend extends MissingSmokeBackend {
   override async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
     this.calls.push("smokeModelRoute");
     return route;
+  }
+}
+
+class TerminalResumeSmokeBackend extends MissingSmokeBackend {
+  readonly calls: string[] = [];
+
+  override async findResumeState(): Promise<ResumeState> {
+    this.calls.push("findResumeState");
+    const terminal: PersistentLedgerEntry = {
+      step: "S8",
+      sessionId: "prior-session",
+      prompt_hash: "prior-prompt",
+      branchHEAD: "prior-head",
+      ts: "2026-07-10T00:00:00.000Z",
+      handoffStatus: "success",
+    };
+    return {
+      worktree: { branch: "feat/685", base: "main", path: "/tmp/685" },
+      stateDir: "/tmp/.ledger-685",
+      ledger: [terminal],
+    };
+  }
+
+  override async smokeModelRoute(): Promise<never> {
+    this.calls.push("smokeModelRoute");
+    throw new Error("smoke must not run for a terminal resume");
   }
 }
 
@@ -116,5 +144,15 @@ describe("#685 route tool smoke", () => {
     expect(result.status).toBe("escalate");
     expect(result.errorPackage?.reason).toMatch(/tight route violation/i);
     expect(backend.calls).toEqual([]);
+  });
+
+  it("reports a terminal resume before starting route smoke", async () => {
+    const backend = new TerminalResumeSmokeBackend();
+
+    const result = await runOrchestrator({ issueNumber: 685, backend });
+
+    expect(result.status).toBe("success");
+    expect(result.stopSummary.reason).toBe("already_done");
+    expect(backend.calls).toEqual(["findResumeState"]);
   });
 });
