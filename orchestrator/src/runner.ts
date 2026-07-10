@@ -4321,6 +4321,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                           : undefined,
                       landingThreads:
                         onlineReviewLanding?.onlineReviewSnapshot?.threads,
+                      approvedFixMarkedFindingIdentityKeys:
+                        onlineReviewLanding?.fixMarkedFindingIdentityKeys,
                     })
                   : {
                       deferredIssueUrls: [],
