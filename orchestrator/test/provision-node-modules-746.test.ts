@@ -46,6 +46,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "prompts");
 const realSoulsDir = join(here, "..", "image", "souls");
 
+function runCpCompat(args: string[]): void {
+  const compatibleArgs =
+    process.platform === "darwin"
+      ? args
+      : args.map((arg) => (arg === "-cR" || arg === "-Rc" ? "-R" : arg));
+  execFileSync("cp", compatibleArgs, { encoding: "utf8" });
+}
+
 const cleanups: string[] = [];
 afterEach(() => {
   _resetGitMutex();
@@ -182,7 +190,7 @@ describe("provisionNodeModules", () => {
         calls.push({ file, args, cwd });
         if (file === "cp") {
           // Real clone/copy so the marker lands (tests run on APFS host).
-          execFileSync(file, args, { encoding: "utf8" });
+          runCpCompat(args);
           return "";
         }
         throw new Error(`unexpected ${file}`);
@@ -201,6 +209,29 @@ describe("provisionNodeModules", () => {
     const tpl = mkDir("prov-mis-p-");
     writeProject(target, { lock: LOCK_B });
     writeProject(tpl, { lock: LOCK_A, withModules: true });
+
+    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    const result = await provisionNodeModules(target, {
+      templateProjectDir: tpl,
+      sh: (file, args, cwd) => {
+        calls.push({ file, args, cwd });
+        return "";
+      },
+    });
+
+    expect(result.method).toBe("npm-ci");
+    expect(calls).toEqual([{ file: "npm", args: ["ci"], cwd: target }]);
+  });
+
+  it("keeps npm ci when package.json diverges but the lockfile still matches", async () => {
+    const target = mkDir("prov-pkg-drift-t-");
+    const tpl = mkDir("prov-pkg-drift-p-");
+    writeProject(target, { lock: LOCK_A });
+    writeProject(tpl, { lock: LOCK_A, withModules: true });
+    writeFileSync(
+      join(target, "package.json"),
+      JSON.stringify({ name: "proj", version: "0.0.0", dependencies: { fresh: "1.0.0" } }),
+    );
 
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
     const result = await provisionNodeModules(target, {
@@ -352,6 +383,33 @@ describe("provisionNodeModules", () => {
     expect(calls).toHaveLength(2);
     expect(maxActive).toBe(2);
   });
+
+  it("waits for every project before reporting aggregate provisioning failures", async () => {
+    const repo = mkDir("prov-repo-fail-async-");
+    const template = mkDir("prov-repo-fail-async-tpl-");
+    writeProject(join(repo, "orchestrator"), { lock: LOCK_A });
+    writeProject(join(repo, "web"), { lock: LOCK_A });
+    writeProject(join(template, "orchestrator"), { lock: LOCK_A, withModules: true });
+    writeProject(join(template, "web"), { lock: LOCK_A, withModules: true });
+
+    const completed: string[] = [];
+    await expect(
+      provisionRepoNodeModules(repo, {
+        templateRoot: template,
+        sh: async (file, _args, cwd) => {
+          const project = cwd?.endsWith("orchestrator") ? "orchestrator" : "web";
+          await new Promise((resolve) =>
+            setTimeout(resolve, project === "orchestrator" ? 5 : 30),
+          );
+          if (file === "npm") {
+            completed.push(project);
+          }
+          throw new Error(`${project} ${file} failed`);
+        },
+      }),
+    ).rejects.toThrow(/2.*provisioning.*failed|orchestrator failed.*web failed/s);
+    expect(completed).toEqual(["orchestrator", "web"]);
+  });
 });
 
 describe("RealFamilyBackend.installDeps uses clonefile when depsTemplateRoot matches", () => {
@@ -382,7 +440,7 @@ describe("RealFamilyBackend.installDeps uses clonefile when depsTemplateRoot mat
       protected override sh(file: string, args: string[], cwd?: string): string {
         calls.push({ file, args, cwd });
         if (file === "cp") {
-          execFileSync(file, args, { encoding: "utf8" });
+          runCpCompat(args);
           return "";
         }
         return "";
@@ -498,7 +556,7 @@ describe("RealBackend.prepareWorktreeLocked provisions node_modules (#746)", () 
           return `${clone}/.git`;
         }
         if (file === "cp") {
-          execFileSync(file, args, { encoding: "utf8" });
+          runCpCompat(args);
           return "";
         }
         // worktree list empty → FRESH cut; fetch/other git → success
@@ -574,7 +632,7 @@ describe("RealBackend.prepareWorktreeLocked provisions node_modules (#746)", () 
           ].join("\n");
         }
         if (file === "cp") {
-          execFileSync(file, args, { encoding: "utf8" });
+          runCpCompat(args);
           return "";
         }
         // reset --hard / clean -fd stubbed (must not touch real FS)

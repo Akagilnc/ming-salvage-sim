@@ -60,16 +60,44 @@ WORKTREE="${WORKTREE:-$PARENT/${BASE_NAME}-${ISSUE}}"
 BRANCH="${BRANCH:-feat/issue-${ISSUE}}"
 BASE="${BASE_ARG:-${BASE:-main}}"
 
+canonical_path() {
+  local path="$1"
+  if [[ -d "$path" ]]; then
+    (cd "$path" && pwd -P)
+  else
+    local parent name
+    parent="$(cd "$(dirname "$path")" && pwd -P)"
+    name="$(basename "$path")"
+    printf '%s/%s\n' "$parent" "$name"
+  fi
+}
+
+MAIN_REPO="$(canonical_path "$MAIN_REPO")"
+WORKTREE="$(canonical_path "$WORKTREE")"
+if [[ "$MAIN_REPO" == "$WORKTREE" ]]; then
+  echo "[provision] error: MAIN_REPO and WORKTREE resolve to the same directory ($MAIN_REPO)" >&2
+  exit 1
+fi
+
 lock_hash() {
   local f="$1"
+  local digest
   if [[ ! -f "$f" ]]; then
     echo ""
     return
   fi
   if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$f" | awk '{print $1}'
+    if digest="$(shasum -a 256 "$f" | awk '{print $1}')"; then
+      printf '%s\n' "$digest"
+    else
+      echo ""
+    fi
   elif command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$f" | awk '{print $1}'
+    if digest="$(sha256sum "$f" | awk '{print $1}')"; then
+      printf '%s\n' "$digest"
+    else
+      echo ""
+    fi
   else
     # No hash utility: return empty so provision_project takes the npm path.
     echo ""
@@ -147,10 +175,12 @@ fi
 if [[ -f "$WORKTREE/package.json" ]]; then
   provision_project "$WORKTREE" "$MAIN_REPO" "root"
 fi
-for name in orchestrator web; do
-  if [[ -f "$WORKTREE/$name/package.json" ]]; then
-    provision_project "$WORKTREE/$name" "$MAIN_REPO/$name" "$name"
-  fi
+for project_dir in "$WORKTREE"/*; do
+  [[ -d "$project_dir" ]] || continue
+  name="$(basename "$project_dir")"
+  [[ "$name" != "node_modules" && "$name" != .* ]] || continue
+  [[ -f "$project_dir/package.json" ]] || continue
+  provision_project "$project_dir" "$MAIN_REPO/$name" "$name"
 done
 
 echo "[provision] done → $WORKTREE"
