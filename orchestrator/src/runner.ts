@@ -862,6 +862,101 @@ function latestCoderRepair(ledger: ReadonlyArray<LedgerEntry>): LatestCoderRepai
   return { repairMovementPaths: [] };
 }
 
+/**
+ * #677: rebuild S5→S6 reverify locals from the persisted S5 ledger row.
+ *
+ * `preexistingAssertionTouchedForReverify` and
+ * `refusedFindingIdentityKeysForReverify` are process-local; a crash between
+ * S5 completing and S6 running would otherwise drop both. Prefer rebuild over
+ * new durable fields: refuse keys already live on the S5 coder output, and the
+ * assertion signal is recomputed from ledger branchHEADs + worktree git
+ * (same shape as #743 authorization rebuild / S4 adjudication replay).
+ */
+interface S5ReverifySignals {
+  readonly preexistingAssertionTouched: boolean;
+  readonly refusedFindingIdentityKeys: readonly string[];
+}
+
+function ledgerEntryBranchHead(entry: LedgerEntry): string | undefined {
+  const head = (entry as PersistentLedgerEntry).branchHEAD;
+  return isLikelyGitSha(head) ? head : undefined;
+}
+
+function refusedKeysFromCoderOutput(
+  output: Extract<StepOutput, { kind: "coder" }>,
+): readonly string[] {
+  const records = output.refuseRecords ?? [];
+  if (records.length > 0) {
+    return reviewFixDecisionGate({ records })?.refusedFindingIdentityKeys ?? [];
+  }
+  return output.refusedFindingIdentityKeys ?? [];
+}
+
+export function rebuildS5ReverifySignalsFromLedger(
+  ledger: ReadonlyArray<LedgerEntry>,
+  worktree: WorktreeHandle | undefined,
+): S5ReverifySignals {
+  let s5Index = -1;
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (isBookkeepingEntry(entry)) continue;
+    if (entry.step === "S5" && entry.output?.kind === "coder") {
+      s5Index = i;
+      break;
+    }
+  }
+  if (s5Index < 0) {
+    return {
+      preexistingAssertionTouched: false,
+      refusedFindingIdentityKeys: [],
+    };
+  }
+
+  const s5 = ledger[s5Index]!;
+  const output = s5.output as Extract<StepOutput, { kind: "coder" }>;
+  const refusedFindingIdentityKeys = refusedKeysFromCoderOutput(output);
+
+  let preexistingAssertionTouched = false;
+  if (worktree !== undefined) {
+    const afterFix = ledgerEntryBranchHead(s5);
+    let beforeFix: string | undefined;
+    for (let j = s5Index - 1; j >= 0; j--) {
+      const prev = ledger[j]!;
+      if (isBookkeepingEntry(prev)) continue;
+      const head = ledgerEntryBranchHead(prev);
+      if (head !== undefined) {
+        beforeFix = head;
+        break;
+      }
+    }
+    if (
+      afterFix !== undefined &&
+      beforeFix !== undefined &&
+      beforeFix !== afterFix
+    ) {
+      try {
+        preexistingAssertionTouched = reviewFixAssertionSignal({
+          worktreePath: worktree.path,
+          sliceBase: worktree.base,
+          beforeFix,
+          afterFix,
+        });
+      } catch {
+        // Live S5 remains fail-closed. Resume rebuild must not abort an
+        // otherwise-recoverable plan when HEADs are not locally resolvable
+        // (protocol-failure recovery fixtures / missing worktree). Refuse
+        // keys still restore from the S5 coder output below.
+        preexistingAssertionTouched = false;
+      }
+    }
+  }
+
+  return {
+    preexistingAssertionTouched,
+    refusedFindingIdentityKeys,
+  };
+}
+
 interface ContinueFixingRepair {
   readonly event: ContinueFixingEvent | EscalationAnswerEvent;
   readonly matchingIdentityKeys: ReadonlyArray<string>;
@@ -3169,6 +3264,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const latestRepair = latestCoderRepair(plan.priorLedger);
     lastCoderRepairEvidence = latestRepair.repairEvidence;
     lastCoderActualRepairPaths = latestRepair.repairMovementPaths;
+
+    // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
+    // the assertion-touch signal live only in process memory during a live run;
+    // resume recomputes them from the persisted S5 coder row + ledger HEADs.
+    const rebuilt = rebuildS5ReverifySignalsFromLedger(
+      plan.priorLedger,
+      worktree,
+    );
+    preexistingAssertionTouchedForReverify =
+      rebuilt.preexistingAssertionTouched;
+    refusedFindingIdentityKeysForReverify =
+      rebuilt.refusedFindingIdentityKeys;
 
     if (
       plan.resumeStep === "S10" &&
