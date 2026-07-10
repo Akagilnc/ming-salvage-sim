@@ -42,9 +42,14 @@ export function DecisionModal({
     ].join(",");
     const focusables = () => Array.from(page.querySelectorAll<HTMLElement>(focusableSelector));
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    (focusables()[0] || page).focus();
 
     const keepFocusInPage = (event: KeyboardEvent) => {
+      if (event.ctrlKey && (event.key === "~" || event.key === "`")) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        (focusables()[0] || page).focus();
+        return;
+      }
       if (event.key !== "Tab") return;
       const elements = focusables();
       if (!elements.length) {
@@ -66,12 +71,30 @@ export function DecisionModal({
       }
     };
 
+    const keepFocusInPageOnFocus = (event: FocusEvent) => {
+      if (event.target instanceof Node && page.contains(event.target)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      (focusables()[0] || page).focus();
+    };
+
     document.addEventListener("keydown", keepFocusInPage, true);
+    document.addEventListener("focusin", keepFocusInPageOnFocus, true);
     return () => {
       document.removeEventListener("keydown", keepFocusInPage, true);
+      document.removeEventListener("focusin", keepFocusInPageOnFocus, true);
       if (previousFocus?.isConnected) previousFocus.focus();
     };
   }, [decisions.length]);
+
+  React.useEffect(() => {
+    const page = pageRef.current;
+    if (!page) return;
+    const firstFocusable = page.querySelector<HTMLElement>(
+      "button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])",
+    );
+    (firstFocusable || page).focus();
+  }, [cursor, decisions.length]);
 
   if (decisions.length === 0) return null;
 
@@ -86,7 +109,7 @@ export function DecisionModal({
     >
       <article className="decision-document">
         <div className="decision-head">
-          <span className="decision-kicker">月末批红 · 第 {cursor + 1} / {decisions.length} 疏</span>
+          <span className="decision-kicker" aria-live="polite">月末批红 · 第 {cursor + 1} / {decisions.length} 疏</span>
           <h2 id="decision-page-title" className="decision-title">奏疏批红</h2>
         </div>
         {failures.length ? <div className="decision-failure-list" role="alert">
