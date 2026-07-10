@@ -325,6 +325,13 @@ describe("#786 telemetry pure helpers", () => {
     expect(categoryFromReason("provider returned HTTP 429")).toBe("429-quota");
   });
 
+  it("categoryFromReason classifies common HTTP/status 429 wording as quota", () => {
+    expect(categoryFromReason("HTTP Error 429")).toBe("429-quota");
+    expect(categoryFromReason("HTTP response code 429")).toBe("429-quota");
+    expect(categoryFromReason("response code 429")).toBe("429-quota");
+    expect(categoryFromReason("status was 429")).toBe("429-quota");
+  });
+
   it("categoryFromReason returns unclassified (not null) for unknown failures and keeps message", () => {
     expect(categoryFromReason("totally novel backend boom XYZ")).toBe(
       "unclassified",
