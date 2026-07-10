@@ -3851,11 +3851,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 }
               : reviewStep === "S12" && worktree !== undefined
                 ? {
-                    // Capture non-undefined for the async closure (TS control-flow).
-                    resetBeforeRetry: (() => {
-                      const wt = worktree;
-                      return () => backend.cleanResidue(wt);
-                    })(),
+                    resetBeforeRetry: () => backend.cleanResidue(worktree!),
                   }
                 : {};
           if (

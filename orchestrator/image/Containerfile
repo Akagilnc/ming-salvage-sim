@@ -39,6 +39,8 @@
 #   ak-cmr-correctness             → ak-cross-m-review        (ship-pre Step 6 lens entry)
 #   gstack-ship                    → ~/.claude/skills/gstack/{bin,scripts,ship,
 #                                       review,...} helper closure (baked subtree)
+#   gstack-document-release        → top-level invoke for S12 (#735); nested
+#                                    gstack/document-release remains for ship Step 18
 #   `review`                       = BUILTIN Claude Code command, NOT a disk skill
 #                                    → nothing to bake; route stays active.
 # The 2a chain `diagnosing-bugs → improve-codebase-architecture` was DANGLING in

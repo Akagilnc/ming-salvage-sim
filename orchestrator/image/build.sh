@@ -189,6 +189,24 @@ fi
 if [ -d "$GSTACK_SRC/document-release" ]; then
   cp -RL "$GSTACK_SRC/document-release" "$STAGE/skills/gstack/document-release"
 fi
+# #735 S12 文档发布: live workers invoke top-level `/gstack-document-release`
+# (dispatchWorker skill name). Nested gstack/document-release alone is not
+# enough — Claude registers slash skills from top-level skills/*/SKILL.md.
+# Mirror gstack-ship: real SKILL.md (+ sections) under skills/gstack-document-release/.
+if [ ! -d "$GSTACK_SRC/document-release" ]; then
+  echo "[build] ERROR: document-release not found at $GSTACK_SRC/document-release (#735 S12)" >&2
+  exit 1
+fi
+echo "[build]   baking skill: gstack-document-release (top-level invoke name for S12)"
+mkdir -p "$STAGE/skills/gstack-document-release"
+cp -L "$GSTACK_SRC/document-release/SKILL.md" "$STAGE/skills/gstack-document-release/SKILL.md"
+if [ -d "$GSTACK_SRC/document-release/sections" ]; then
+  cp -RL "$GSTACK_SRC/document-release/sections" "$STAGE/skills/gstack-document-release/sections"
+fi
+if [ ! -f "$STAGE/skills/gstack-document-release/SKILL.md" ]; then
+  echo "[build] ERROR: gstack-document-release has no SKILL.md after copy" >&2
+  exit 1
+fi
 # gstack-ship's review-army (Step 9, ship/sections/review-army.md) reads the
 # review checklists by the LITERAL path `.claude/skills/review/checklist.md`
 # (also design-checklist.md / greptile-triage.md / TODOS-format.md) — i.e. a
@@ -279,5 +297,5 @@ docker build \
   "$STAGE"
 
 echo "[build] done: $IMAGE_TAG"
-echo "[build] baked dev skills:" "${SKILL_CLOSURE[@]}" "gstack-ship"
+echo "[build] baked dev skills:" "${SKILL_CLOSURE[@]}" "gstack-ship" "gstack-document-release"
 echo "[build] souls mounted live (not baked) per #372"
