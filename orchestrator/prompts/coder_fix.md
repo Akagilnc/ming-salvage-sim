@@ -29,6 +29,10 @@ same escalation unless the answer leaves a concrete blocker unresolved.
 
 Do not use `.orchestrator-snapshot.json` as execution input.
 
+If `.relay-focus.md` is present at the worktree root, read that baton handoff
+brief from a prior resource-relay (#686) before continuing. Continue from that
+scene — do not reset or discard uncommitted prior-baton work.
+
 ## Required output
 
 When you are done (or are escalating), write the single JSON object to

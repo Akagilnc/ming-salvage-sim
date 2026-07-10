@@ -45,6 +45,11 @@ import {
   routeSmokeFailure,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
+import {
+  HangWithLivePoolError,
+  SelfReportedRelayError,
+  tryParseActionableRelayTag,
+} from "./relayDispatch.js";
 import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
 import {
   dispatchMonitoredCliWorker,
@@ -633,12 +638,20 @@ export async function legacyDispatchWorker(
     fixFindingsOptions !== undefined ||
     fixFocusOptions !== undefined ||
     onlineReviewOptions !== undefined ||
-    outcomeLanding !== undefined
+    outcomeLanding !== undefined ||
+    ctx.billingPool !== undefined ||
+    ctx.relayFocusPath !== undefined
       ? {
           ...(fixFindingsOptions ?? {}),
           ...(fixFocusOptions ?? {}),
           ...(onlineReviewOptions ?? {}),
           ...(outcomeLanding !== undefined ? { outcomeLanding } : {}),
+          ...(ctx.billingPool !== undefined
+            ? { billingPool: ctx.billingPool }
+            : {}),
+          ...(ctx.relayFocusPath !== undefined
+            ? { relayFocusPath: ctx.relayFocusPath }
+            : {}),
         }
       : undefined;
   try {
@@ -855,8 +868,17 @@ export async function dispatchWorkerWithMonitor(
               "raising the backend's quota park error",
           );
         }
+        // Only a positive probe result may classify this as a live-pool hang.
+        // Unknown/error/no-probe cases retain the ordinary fail-safe hang path.
         await killWorkerTree(handle, monitorDeps);
-        return { kind: "killed" };
+        if (disposition === "hang_with_live_pool") {
+          throw new HangWithLivePoolError({
+            workerPid: handle.pid,
+            poolId: handle.poolId,
+            step: spec.id,
+          });
+        }
+        throw new Error(`monitored worker idle hang: ${spec.id}`);
       }
       return await exitPromise.then((exitCode) => ({ kind: "exit", exitCode }));
     })();
@@ -900,6 +922,22 @@ export async function dispatchWorkerWithMonitor(
       ctx,
       landing,
     );
+    // #686: self-reported blocked / phase_complete in the worker log → resource
+    // relay (preserve drift). Malformed/absent tags are ignored here.
+    try {
+      if (existsSync(handle.logPath)) {
+        const log = readFileSync(handle.logPath)
+          .subarray(handle.logStartOffset ?? 0)
+          .toString("utf8");
+        const tag = tryParseActionableRelayTag(log);
+        if (tag !== undefined) {
+          throw new SelfReportedRelayError(tag, spec.id);
+        }
+      }
+    } catch (err) {
+      if (err instanceof SelfReportedRelayError) throw err;
+      // Log read failures are non-fatal — fall through with the worker result.
+    }
     return { result, monitorHandle: handle };
   }
   return { result: await dispatchWorker(backend, spec, ctx, landing) };

@@ -180,7 +180,7 @@ describe("resolveExistingWorktreeFromPorcelain (#593)", () => {
 // ─── prepareWorktree / findResumeState wiring (#593) ────────────────────────
 
 describe("RealBackend prepareWorktree old-branch fallback (#593)", () => {
-  it("reuses a worktree on the old branch name in place with fail-closed residue clean", async () => {
+  it("reuses a worktree on the old branch name in place without destroying residue", async () => {
     const backend = newBackend(porcelainForBranch(OLD_BRANCH));
     const wt = await backend.prepareWorktree(ISSUE, "main");
 
@@ -190,8 +190,8 @@ describe("RealBackend prepareWorktree old-branch fallback (#593)", () => {
 
     const ran = backend.gitCalls.map((c) => c.args.join(" "));
     expect(ran).toContain("worktree list --porcelain");
-    expect(ran).toContain("reset --hard HEAD");
-    expect(ran).toContain("clean -fd");
+    expect(ran).not.toContain("reset --hard HEAD");
+    expect(ran).not.toContain("clean -fd");
     expect(ran.some((r) => r.includes("branch -m"))).toBe(false);
     expect(ran.some((r) => r.includes("worktree move"))).toBe(false);
     expect(ran.some((r) => r.startsWith("fetch "))).toBe(false);

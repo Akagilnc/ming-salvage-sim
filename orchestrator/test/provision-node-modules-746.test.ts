@@ -652,13 +652,13 @@ describe("RealBackend.prepareWorktreeLocked provisions node_modules (#746)", () 
     expect(wt.branch).toBe(BRANCH);
 
     const ran = calls.map((c) => `${c.file} ${c.args.join(" ")}`);
-    // Fail-closed residue clean still precedes provision (ADR 0024 / 0017).
+    // #661 preserves residue; provisioning may proceed without a destructive clean.
     const resetIdx = ran.findIndex((r) => r === "git reset --hard HEAD");
     const cleanIdx = ran.findIndex((r) => r === "git clean -fd");
     const cpIdx = ran.findIndex((r) => r.startsWith("cp "));
-    expect(resetIdx).toBeGreaterThanOrEqual(0);
-    expect(cleanIdx).toBeGreaterThanOrEqual(0);
-    expect(cpIdx).toBeGreaterThan(Math.max(resetIdx, cleanIdx));
+    expect(resetIdx).toBe(-1);
+    expect(cleanIdx).toBe(-1);
+    expect(cpIdx).toBeGreaterThanOrEqual(0);
 
     expect(calls.some((c) => c.file === "cp" && /^-cR$|^-Rc$/.test(c.args[0] ?? ""))).toBe(
       true,

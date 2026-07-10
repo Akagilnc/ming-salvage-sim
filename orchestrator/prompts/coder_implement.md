@@ -20,6 +20,11 @@ retry, escalate instead of guessing from stale local context.
 
 Do not use `.orchestrator-snapshot.json` as execution input.
 
+If `.relay-focus.md` is present at the worktree root, read that baton handoff
+brief (`state_summary` / remaining) from a prior resource-relay (#686) before
+continuing. Continue from that scene — do not reset or discard uncommitted work
+that the previous baton left.
+
 If `ORCHESTRATOR_FIX_FINDINGS_PATH` is set, read that runner-owned JSON file
 before acting. On a resumed decision escalation it may contain
 `escalationAnswer`; apply that human answer and do not repeat the same escalation

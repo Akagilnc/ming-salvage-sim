@@ -181,6 +181,7 @@ export type {
   LedgerEntry,
   LedgerBookkeepingEvent,
   QuotaWaitForResetEvent,
+  RelayBatonHandoffEvent,
   PersistentLedgerEntry,
   ReviewerOutput,
   RunInput,
@@ -225,3 +226,63 @@ export {
 } from "./coderRoster.js";
 export type { CoderPoolId, CoderRosterEntry, SelectCoderRecOptions } from "./coderRoster.js";
 export { applyCoderRecToRoute, withCoderSlot } from "./modelRoutes.js";
+
+// ── relay dispatch (#686 / ADR 0124–0126) ───────────────────────────────────
+export {
+  DEFAULT_PARK_THRESHOLD_MS,
+  DEFAULT_POOL_MODELS,
+  billingPoolFromQuotaPool,
+  buildDefaultBillingPools,
+  decideParkOrRelay,
+  hasLiveRelayBaton,
+  selectNextRelayBaton,
+} from "./quotaPoolTable.js";
+export type {
+  BillingPoolEntry,
+  BillingPoolId,
+  BillingPoolStatus,
+  NextRelayBaton,
+  ParkOrRelayDecision,
+  PoolTable,
+  SelectNextRelayBatonInput,
+} from "./quotaPoolTable.js";
+export {
+  RELAY_FOCUS_FILENAME,
+  MAX_RELAY_HANDOFFS,
+  applyResourceFailureHandoff,
+  buildRelayFocusFile,
+  buildRelayHandoffLedgerEntry,
+  canRelayHandoff,
+  classifyFailureForRetryOrRelay,
+  countRelayHandoffsInLedger,
+  decideRelayAfterIdle,
+  forkQuotaWallAt683Point,
+  isHangWithLivePoolError,
+  isRelayCandidateExhaustion,
+  isRelayChainReadyForReviewGate,
+  isSelfReportedRelayError,
+  parseRelayTag,
+  resumeRelayFromLedger,
+  tryBuildRelayFocusFile,
+  tryParseActionableRelayTag,
+  HangWithLivePoolError,
+  SelfReportedRelayError,
+} from "./relayDispatch.js";
+export type {
+  ApplyResourceFailureHandoffInput,
+  DecideRelayAfterIdleInput,
+  FailureClassKind,
+  RelayDispositionResult,
+  RelayHandoffLedgerEvent,
+  RelayHandoffTrigger,
+  RelayTagOutcome,
+  RetryOrRelayClass,
+} from "./relayDispatch.js";
+export {
+  POOL_DISPATCH_BINDINGS,
+  isBillingPoolDispatchId,
+  resolveModelSlugForPool,
+  agentForSlug,
+  resolveModelSlug,
+} from "./modelRegistry.js";
+export type { BillingPoolDispatchId } from "./modelRegistry.js";

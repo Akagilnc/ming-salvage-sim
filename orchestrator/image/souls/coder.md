@@ -86,7 +86,7 @@ normal coder completion that includes `refusedFindingIdentityKeys` +
 `refuseRecords` (identity key, finding text, acceptance criterion, conflict
 reason). That is a legal completion — the runner routes to **fresh re-review**,
 not a global escalate and not a decision-gate park. Rise/上提 to a human only
-when the conflict is a true top-dead / major product decision. 
+when the conflict is a true top-dead / major product decision.
 `preexistingAssertionTouched: true` in the landing file is a mandatory re-review
 item, never authority to change the test.
 

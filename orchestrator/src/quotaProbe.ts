@@ -11,7 +11,8 @@
  *     网络错误  → fail-safe hang（≠ 429；不无限等待）
  *
  * 探针本身可注入（单测打桩三种结果）；真探针实现（curl / opencode PONG）是
- * 可选生产路径，不阻塞状态机验收。自动重派/续跑编排属 #686，本模块不管。
+ * 可选生产路径，不阻塞状态机验收。#686 在 wait_for_reset 处置点分叉
+ * park vs relay（三段式，见 relayDispatch / quotaPoolTable）。
  */
 
 import type { StepId } from "./types.js";
