@@ -14,7 +14,7 @@ _ABSTRACT_VALUE_RE = re.compile(
     r"进度|进展|bar(?:_value)?|public_support|unrest|loyalty|ability|"
     r"integrity|courage|satisfaction|leverage|military_strength|morale|"
     r"training|equipment|firearm_equipment|progress)"
-    r"\s*(?:[:：=]\s*|(?:由|为|达|至|是|从)\s*|\s+)[-+]?\d+(?:\.\d+)?"
+    r"\s*(?:[:：=]\s*|(?:由|为|达|至|是|从)\s*|(?=[-+]?\d))[-+]?\d+(?:\.\d+)?"
     r"(?:\s*/\s*100|\s*%)?",
     re.IGNORECASE,
 )

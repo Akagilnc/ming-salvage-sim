@@ -4,7 +4,15 @@ from ming_sim.qualitative import (
     building_qualitative_fields,
     qualitative_band,
     qualitative_bucket,
+    safe_historical_text,
 )
+
+
+def test_safe_historical_text_rejects_adjacent_abstract_values():
+    """历史文本的 P4 护栏也要咬住无分隔的裸值变异。"""
+    for injected in ("忠诚88", "能力98分", "民心73/100", "进度73/100"):
+        rendered = safe_historical_text(injected)
+        assert "已略去" in rendered, injected
 
 
 def test_qualitative_band_preserves_zero_and_uses_default_only_for_missing_or_invalid():

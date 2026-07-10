@@ -414,12 +414,42 @@ def test_historical_context_rejects_injected_abstract_values_across_all_history_
     memory = build_memory_brief(minister, _ctx(game))
     tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
     history = tools["read_past_report"](year=state.year, month=state.period)
+    memories = tools["search_memories"](keywords="旧事")
 
-    for rendered in (gazette, memory, history):
+    for rendered in (gazette, memory, history, memories):
         assert "民心=73" not in rendered
         assert "忠诚：88" not in rendered
         assert "动乱 19" not in rendered
         assert "已略去" in rendered or "未见正式邸报记录" in rendered
+
+
+def test_historical_context_rejects_adjacent_abstract_values_at_every_history_seam(game):
+    """邸报、章节记忆、read_past_report、search_memories 都拒绝邻接裸值。"""
+    db, state, content = game
+    injected = "忠诚88；能力98分；民心73/100；进度73/100；欠饷约三月。"
+    state.turn = max(2, int(state.turn))
+    db.get_turn_report = lambda _turn: injected
+    db.list_chapter_memories = lambda **_kwargs: [
+        {"turn": 1, "year": 1628, "period": 1, "title": "旧事", "body": injected}
+    ]
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    db.conn.execute(
+        "INSERT OR REPLACE INTO turn_reports(turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (state.turn - 2, state.year, state.period, injected),
+    )
+    db.conn.commit()
+    ctx = _ctx(game)
+    tools = {f.__name__: f for f in build_minister_tools(minister, ctx)}
+
+    rendered = (
+        build_last_gazette_brief(ctx),
+        build_memory_brief(minister, ctx),
+        tools["read_past_report"](year=state.year, month=state.period),
+        tools["search_memories"](keywords="旧事"),
+    )
+    for text in rendered:
+        assert "已略去" in text or "未见正式邸报记录" in text
+        assert not re.search(r"(?:忠诚88|能力98分|民心73/100|进度73/100)", text)
 
 
 def test_final_minister_context_keeps_secret_order_tools_without_length_caps(game, monkeypatch):
