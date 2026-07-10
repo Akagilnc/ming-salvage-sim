@@ -573,3 +573,111 @@ export class QuotaWaitForResetError extends Error {
     this.pool = result.pool;
   }
 }
+
+/** Sidecar reason prefix so a #684 bridge child can re-surface a quota park. */
+export const QUOTA_WAIT_BRIDGE_REASON_PREFIX = "QUOTA_WAIT_FOR_RESET_V1:";
+
+interface QuotaWaitBridgePayload {
+  readonly pool: QuotaPoolId;
+  readonly reason: string;
+  readonly resetAt?: string;
+  readonly step?: StepId;
+  readonly workerPid?: number;
+  readonly ts?: string;
+  readonly probeDetail?: string;
+}
+
+/**
+ * Serialize a {@link QuotaWaitForResetError} into a WorkerResult.failed reason
+ * the parent monitor can reconstruct (bridge child cannot throw across process).
+ */
+export function serializeQuotaWaitForResetBridge(
+  err: QuotaWaitForResetError,
+): string {
+  const payload: QuotaWaitBridgePayload = {
+    pool: err.pool,
+    reason: err.disposition.reason,
+    ...(err.disposition.resetAt !== undefined
+      ? { resetAt: err.disposition.resetAt.toISOString() }
+      : {}),
+    ...(err.applied.ledgerEntry?.step !== undefined
+      ? { step: err.applied.ledgerEntry.step }
+      : {}),
+    ...(err.applied.ledgerEntry?.workerPid !== undefined
+      ? { workerPid: err.applied.ledgerEntry.workerPid }
+      : {}),
+    ...(err.applied.ledgerEntry?.ts !== undefined
+      ? { ts: err.applied.ledgerEntry.ts }
+      : {}),
+  };
+  return `${QUOTA_WAIT_BRIDGE_REASON_PREFIX}${JSON.stringify(payload)}`;
+}
+
+/**
+ * Reconstruct a {@link QuotaWaitForResetError} from a bridge sidecar reason, or
+ * return undefined when the reason is not a quota-wait payload.
+ */
+export function tryParseQuotaWaitForResetBridge(
+  reason: string,
+): QuotaWaitForResetError | undefined {
+  if (!reason.startsWith(QUOTA_WAIT_BRIDGE_REASON_PREFIX)) return undefined;
+  const raw = reason.slice(QUOTA_WAIT_BRIDGE_REASON_PREFIX.length);
+  let payload: QuotaWaitBridgePayload;
+  try {
+    payload = JSON.parse(raw) as QuotaWaitBridgePayload;
+  } catch {
+    return undefined;
+  }
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    typeof payload.pool !== "string" ||
+    typeof payload.reason !== "string"
+  ) {
+    return undefined;
+  }
+  const resetAt =
+    typeof payload.resetAt === "string" && payload.resetAt.length > 0
+      ? new Date(payload.resetAt)
+      : undefined;
+  const disposition: Extract<IdleDisposition, { kind: "wait_for_reset" }> = {
+    kind: "wait_for_reset",
+    pool: payload.pool,
+    reason: payload.reason,
+    ...(resetAt !== undefined && !Number.isNaN(resetAt.getTime())
+      ? { resetAt }
+      : {}),
+  };
+  const ledgerEntry = buildQuotaWaitForResetLedgerEntry({
+    pool: payload.pool,
+    resetAt: disposition.resetAt,
+    reason: payload.reason,
+    step: payload.step,
+    workerPid: payload.workerPid,
+    now:
+      typeof payload.ts === "string" && payload.ts.length > 0
+        ? new Date(payload.ts)
+        : new Date(),
+  });
+  return new QuotaWaitForResetError({
+    disposition,
+    applied: { killed: false, ledgerEntry },
+    pool: payload.pool,
+    probe: {
+      kind: "quota_limited",
+      ...(disposition.resetAt !== undefined
+        ? { resetAt: disposition.resetAt }
+        : {}),
+      detail: payload.probeDetail ?? payload.reason,
+    },
+  });
+}
+
+export function isQuotaWaitForResetError(err: unknown): err is QuotaWaitForResetError {
+  return (
+    err instanceof QuotaWaitForResetError ||
+    (err !== null &&
+      typeof err === "object" &&
+      (err as { readonly name?: unknown }).name === "QuotaWaitForResetError")
+  );
+}

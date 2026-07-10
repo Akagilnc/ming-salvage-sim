@@ -147,6 +147,9 @@ export {
   probeConfigForPool,
   QuotaWaitForResetError,
   runPoolProbe,
+  serializeQuotaWaitForResetBridge,
+  tryParseQuotaWaitForResetBridge,
+  isQuotaWaitForResetError,
 } from "./quotaProbe.js";
 export type {
   ApplyIdleDispositionResult,

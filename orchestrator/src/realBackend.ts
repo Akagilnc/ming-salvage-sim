@@ -3531,9 +3531,9 @@ export class RealBackend implements Backend {
    * Production agent-sandbox entry (#683). Runs Sandcastle, and on idle timeout
    * probes the worker's quota pool BEFORE hang disposition:
    *   - 429/limit → {@link QuotaWaitForResetError} (park step for quota reset;
-   *     ledger row recorded; do NOT mark the step failed)
-   *   - probe ok / network error → fail-safe hang (kill only this pid tree) then
-   *     rethrow the idle error
+   *     ledger row via applied.ledgerEntry for runner park; do NOT mark failed)
+   *   - probe ok / network error → fail-safe rethrow the idle error (kill is a
+   *     no-op here; live hang kill is owned by the #684 monitor handle path)
    */
   protected async runAgentSandbox(
     options: AgentSandboxRunOptions,
@@ -3581,7 +3581,10 @@ export class RealBackend implements Backend {
         // The live monitor owns verified pid-tree kill. This action is only a
         // no-op for the post-Sandcastle internal-timeout fallback.
         killPidTree: () => undefined,
-        recordLedger: (entry) => this.recordQuotaWaitLedger(entry, ctx),
+        // Durable park marker is written once by runner.parkQuotaWaitForReset
+        // with real sessionId/prompt_hash/branchHEAD. Do not double-write here
+        // with placeholder audit fields (#683 integration R1).
+        recordLedger: async () => undefined,
         now: () => this.idleNow(),
       },
       probe: (pool) => this.runQuotaProbe(pool),
@@ -3603,7 +3606,11 @@ export class RealBackend implements Backend {
 
   /**
    * Persist a `quota_wait_for_reset` ledger row to the sibling state dir when
-   * known. Tests override to capture without touching disk.
+   * known. Tests may override to capture without touching disk.
+   *
+   * Production monitor / Sandcastle-fallback paths no longer call this for the
+   * durable write (#683 R1): runner.parkQuotaWaitForReset owns the single
+   * append-only row with real audit fields. Kept for test overrides / tooling.
    */
   protected async recordQuotaWaitLedger(
     entry: QuotaWaitForResetLedgerEvent,
@@ -3760,26 +3767,16 @@ export class RealBackend implements Backend {
   async handleMonitoredWorkerIdle(
     handle: WorkerMonitorHandle,
     spec: WorkerSpec,
-    ctx: DispatchContext,
+    _ctx: DispatchContext,
   ): Promise<"hang" | "wait_for_reset"> {
-    const worktree = ctx.worktree;
     const result = await handleIdleThreshold({
       modelRef: spec.model,
       worker: { pid: handle.pid, step: spec.id },
       actions: {
         killPidTree: () => undefined,
-        recordLedger: (entry) =>
-          this.recordQuotaWaitLedger(entry, {
-            modelRef: spec.model,
-            step: spec.id,
-            workerPid: handle.pid,
-            ...(worktree !== undefined
-              ? {
-                  worktreePath: worktree.path,
-                  issueNumber: this.issueOf(worktree),
-                }
-              : {}),
-          }),
+        // Runner parkQuotaWaitForReset writes the single durable marker with
+        // real audit fields — avoid a second placeholder write here.
+        recordLedger: async () => undefined,
       },
       probe: (pool) => this.runQuotaProbe(pool),
     });

@@ -29,23 +29,68 @@ import {
   poolForModelRef,
   probeConfigForPool,
   QuotaWaitForResetError,
+  serializeQuotaWaitForResetBridge,
+  tryParseQuotaWaitForResetBridge,
   type IdleDisposition,
   type QuotaPoolId,
   type QuotaProbeResult,
   type QuotaWaitForResetLedgerEvent,
 } from "../src/quotaProbe.js";
 import { runOrchestrator } from "../src/runner.js";
+import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
+  ResumeState,
   StepOutput,
   StepSpec,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
 } from "../src/types.js";
+
+describe("#683 bridge-child quota wall serialization", () => {
+  it("round-trips QuotaWaitForResetError through failed.reason for parent rethrow", () => {
+    const resetAt = new Date("2026-07-10T16:10:00.000Z");
+    const err = new QuotaWaitForResetError({
+      disposition: {
+        kind: "wait_for_reset",
+        pool: "zai",
+        resetAt,
+        reason: "quota limited (429); wait for reset",
+      },
+      applied: {
+        killed: false,
+        ledgerEntry: {
+          event: "quota_wait_for_reset",
+          pool: "zai",
+          resetAt: resetAt.toISOString(),
+          reason: "quota limited (429); wait for reset",
+          step: "S2",
+          workerPid: 4242,
+          ts: "2026-07-10T12:00:00.000Z",
+        },
+      },
+      pool: "zai",
+      probe: { kind: "quota_limited", resetAt, detail: "429" },
+    });
+    const reason = serializeQuotaWaitForResetBridge(err);
+    const restored = tryParseQuotaWaitForResetBridge(reason);
+    expect(restored).toBeInstanceOf(QuotaWaitForResetError);
+    expect(restored?.pool).toBe("zai");
+    expect(restored?.disposition.resetAt?.toISOString()).toBe(
+      resetAt.toISOString(),
+    );
+    expect(restored?.applied.ledgerEntry).toMatchObject({
+      event: "quota_wait_for_reset",
+      step: "S2",
+      workerPid: 4242,
+    });
+    expect(tryParseQuotaWaitForResetBridge("hostCliWorkerRunner: worker threw")).toBeUndefined();
+  });
+});
 
 describe("#683 decideIdleAfterProbe (probe → disposition)", () => {
   it("probe ok (额度通) → hang：走既有 hang 处置", () => {
@@ -293,11 +338,12 @@ describe("#683 isAgentIdleTimeoutError", () => {
   });
 });
 
-describe("#683 RealBackend REAL dispatch path (no hand-filled pids)", () => {
+describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor path)", () => {
   /**
-   * Bites through production dispatch: runStep → runFreshAgentStep →
-   * runAgentSandbox → idle probe. workerPid is captured from the sandbox
-   * handle during invoke (not hand-stuffed into quotaProbe options).
+   * Fallback coverage only: runStep → runFreshAgentStep → runAgentSandbox →
+   * post-sc.run AgentIdleTimeoutError + probe. Live production idle disposition
+   * is dispatchWorkerWithMonitor + handleMonitoredWorkerIdle (see integration).
+   * workerPid is captured from the sandbox handle during invoke (not hand-stuffed).
    */
   const here = dirname(fileURLToPath(import.meta.url));
   const realPromptsDir = join(here, "..", "prompts");
@@ -405,7 +451,7 @@ describe("#683 RealBackend REAL dispatch path (no hand-filled pids)", () => {
     });
   }
 
-  it("429 via runStep → QuotaWaitForResetError + ledger; pid tree NOT killed", async () => {
+  it("429 via runStep → QuotaWaitForResetError + applied ledger; pid tree NOT killed", async () => {
     const backend = makeBackend();
     const resetAt = new Date("2026-07-08T16:10:00.000Z");
     backend.probeResult = {
@@ -415,13 +461,19 @@ describe("#683 RealBackend REAL dispatch path (no hand-filled pids)", () => {
     };
     backend.sandboxHandlePid = 1001;
 
-    await expect(backend.runStep(coderSpec, WORKTREE)).rejects.toBeInstanceOf(
-      QuotaWaitForResetError,
-    );
+    let thrown: unknown;
+    try {
+      await backend.runStep(coderSpec, WORKTREE);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(QuotaWaitForResetError);
+    const qw = thrown as QuotaWaitForResetError;
     expect(backend.sandcastleReached).toBe(true);
     expect(backend.killed).toEqual([]);
-    expect(backend.ledger).toHaveLength(1);
-    expect(backend.ledger[0]).toMatchObject({
+    // Durable write is owned by runner park — backend only fills applied.
+    expect(backend.ledger).toEqual([]);
+    expect(qw.applied.ledgerEntry).toMatchObject({
       event: "quota_wait_for_reset",
       resetAt: "2026-07-08T16:10:00.000Z",
       workerPid: 1001,
@@ -651,5 +703,244 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
     expect(result.stepLedger.some((e) => e.step === "S3" && e.event === undefined)).toBe(
       false,
     );
+  });
+});
+
+describe("#683 S9 online-review leg: 429 parks + re-feed re-fires verify (not empty fixer)", () => {
+  /**
+   * P1 regression: QuotaWaitForResetError on S9–S12 must call parkQuotaWaitForReset
+   * (same family as S2/S7), not fall into errorTermination. Re-feed after reset
+   * must re-enter the parked verify leg — not route into an empty S10 fixer.
+   */
+  const WORKTREE: WorktreeHandle = {
+    branch: "feat/orchestrator/issue-683-s9",
+    base: "main",
+    path: "/tmp/worktree/issue-683-s9",
+  };
+  const STATE_DIR = "/tmp/worktree/.ledger-683-s9";
+  const PR_URL = "pr://slice/offline-683";
+
+  function priorThroughShip(): PersistentLedgerEntry[] {
+    const ts = "2026-07-10T00:00:00.000Z";
+    const base = (step: PersistentLedgerEntry["step"], output?: StepOutput) => ({
+      step,
+      sessionId: "session-prior",
+      prompt_hash: `hash-${step}`,
+      branchHEAD: "deadbeefcommitsha",
+      ts,
+      ...(output !== undefined ? { output } : {}),
+    });
+    return [
+      base("S0"),
+      base("S1"),
+      base("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      base("S3", { kind: "reviewer", findings: [] }),
+      base("S4"),
+      base("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: PR_URL,
+        prHead: "deadbeefcommitsha",
+      }),
+    ];
+  }
+
+  function quotaWaitError(step: "S9" | "S10" | "S11" | "S12"): QuotaWaitForResetError {
+    const resetAt = new Date("2026-07-10T16:10:00.000Z");
+    return new QuotaWaitForResetError({
+      disposition: {
+        kind: "wait_for_reset",
+        pool: "zai",
+        resetAt,
+        reason: "quota limited (429); wait for reset",
+      },
+      applied: {
+        killed: false,
+        ledgerEntry: {
+          event: "quota_wait_for_reset",
+          pool: "zai",
+          resetAt: resetAt.toISOString(),
+          reason: "quota limited (429); wait for reset",
+          step,
+          workerPid: 9001,
+          ts: "2026-07-10T12:00:00.000Z",
+        },
+      },
+      pool: "zai",
+      probe: { kind: "quota_limited", resetAt, detail: "429" },
+    });
+  }
+
+  class S9QuotaParkBackend implements Backend {
+    public ledgerWrites: PersistentLedgerEntry[] = [];
+    public verifyDispatches = 0;
+    public fixerDispatches = 0;
+    /** First S9 verify throws quota wall; subsequent verifies complete. */
+    public throwQuotaOnVerify = true;
+    private readonly resumeState: ResumeState;
+
+    constructor(ledger: PersistentLedgerEntry[]) {
+      this.resumeState = {
+        worktree: WORKTREE,
+        stateDir: STATE_DIR,
+        ledger,
+      };
+    }
+
+    async smokeModelRoute(route: any): Promise<any> {
+      const { smokeRouteModels } = await import("../src/modelRoutes.js");
+      return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+    }
+    async findResumeState(): Promise<ResumeState> {
+      return this.resumeState;
+    }
+    async cleanResidue(): Promise<void> {}
+    async resumeSession(): Promise<StepOutput> {
+      return { kind: "coder", committed: true, commitsAdded: 1 };
+    }
+    async fetchIssueMeta(n: number): Promise<IssueMeta> {
+      return {
+        number: n,
+        isReadyForAgent: true,
+        hasSubIssues: false,
+        isClosed: false,
+        openBlockedBy: [],
+      };
+    }
+    async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+      return { number: n, body: "body", comments: [], agentBrief: "" };
+    }
+    async prepareWorktree(): Promise<WorktreeHandle> {
+      return WORKTREE;
+    }
+    async writeSnapshot(): Promise<void> {}
+    async runStep(): Promise<StepOutput> {
+      return { kind: "coder", committed: true, commitsAdded: 1 };
+    }
+    async push(): Promise<void> {}
+    async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+      this.ledgerWrites.push(entry);
+    }
+    async pollOnlineReviewState(input: {
+      repo: string;
+      prUrl: string;
+      pollCount: number;
+    }) {
+      void input;
+      return {
+        prUrl: PR_URL,
+        headOid: "deadbeefcommitsha",
+        totalFindingCount: 0,
+        quiescent: true,
+        bots: {
+          coderabbit: { state: "complete", findingCount: 0 },
+          sourcery: { state: "complete", findingCount: 0 },
+          codex: { state: "complete", findingCount: 0 },
+          gemini: { state: "complete", findingCount: 0 },
+        },
+        droppedBots: [],
+        threads: [],
+        checkRuns: [],
+      };
+    }
+
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      if (spec.kind === "verify") {
+        this.verifyDispatches += 1;
+        if (this.throwQuotaOnVerify) {
+          this.throwQuotaOnVerify = false;
+          throw quotaWaitError("S9");
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "verify",
+            converged: true,
+            findings: [],
+            isRecheck: false,
+          } as StepOutput,
+        };
+      }
+      if (spec.kind === "fixer") {
+        this.fixerDispatches += 1;
+        return {
+          kind: "completed",
+          output: {
+            kind: "fixer",
+            committed: false,
+          } as StepOutput,
+        };
+      }
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      if (skeleton !== undefined) return skeleton;
+      if (spec.kind === "ship") {
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: WORKTREE.branch,
+            status: "pr_opened",
+            pr: PR_URL,
+            prHead: "deadbeefcommitsha",
+          },
+        };
+      }
+      return {
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      };
+    }
+  }
+
+  it("S9 429 → escalate park with quota_wait_for_reset (not errorTermination)", async () => {
+    const backend = new S9QuotaParkBackend(priorThroughShip());
+    const result = await runOrchestrator({ issueNumber: 683, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(result.status).not.toBe("error");
+    expect(backend.verifyDispatches).toBe(1);
+    expect(backend.fixerDispatches).toBe(0);
+    const marker = result.stepLedger.find((e) => e.event === "quota_wait_for_reset");
+    expect(marker).toMatchObject({
+      event: "quota_wait_for_reset",
+      pool: "zai",
+      step: "S9",
+      resetAt: "2026-07-10T16:10:00.000Z",
+    });
+    expect(result.stopSummary?.summary).toMatch(/quota|reset/i);
+    // Must not have written S8(error) — park is resumable.
+    expect(result.stepLedger.some((e) => e.step === "S8")).toBe(false);
+  });
+
+  it("re-feed after S9 quota park re-fires S9 verify, not empty S10 fixer", async () => {
+    const parkedLedger: PersistentLedgerEntry[] = [
+      ...priorThroughShip(),
+      {
+        step: "S9",
+        event: "quota_wait_for_reset",
+        pool: "zai",
+        resetAt: "2026-07-10T16:10:00.000Z",
+        reason: "quota limited (429); wait for reset",
+        workerPid: 9001,
+        sessionId: "session-prior",
+        prompt_hash: "hash-quota",
+        branchHEAD: "deadbeefcommitsha",
+        ts: "2026-07-10T12:00:00.000Z",
+      },
+    ];
+    const backend = new S9QuotaParkBackend(parkedLedger);
+    backend.throwQuotaOnVerify = false; // reset already happened
+
+    const result = await runOrchestrator({ issueNumber: 683, backend });
+
+    // Core resume contract: parked S9 re-fires verify, does not steal into empty fixer.
+    expect(backend.verifyDispatches).toBeGreaterThanOrEqual(1);
+    expect(backend.fixerDispatches).toBe(0);
+    const verifyRows = result.stepLedger.filter(
+      (e) => e.step === "S9" && e.event === undefined && e.output?.kind === "verify",
+    );
+    expect(verifyRows.length).toBeGreaterThanOrEqual(1);
+    expect(result.status).not.toBe("error");
   });
 });

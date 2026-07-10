@@ -15,6 +15,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
+import { tryParseQuotaWaitForResetBridge } from "./quotaProbe.js";
 import { poolIdForWorker } from "./workerMonitor.js";
 import type {
   CliMonitorSpawnSpec,
@@ -171,9 +172,26 @@ export function workerResultFromMonitorSidecar(
         "kind" in parsed &&
         typeof (parsed as { kind: unknown }).kind === "string"
       ) {
+        // #683: bridge child serializes QuotaWaitForResetError into failed.reason
+        // — re-throw so runner park machinery receives the real park error.
+        if (
+          parsed.kind === "failed" &&
+          typeof parsed.reason === "string"
+        ) {
+          const quotaErr = tryParseQuotaWaitForResetBridge(parsed.reason);
+          if (quotaErr !== undefined) throw quotaErr;
+        }
         return parsed;
       }
-    } catch {
+    } catch (err) {
+      // Re-throw reconstructed quota park; other parse failures fall through.
+      if (
+        err !== null &&
+        typeof err === "object" &&
+        (err as { readonly name?: unknown }).name === "QuotaWaitForResetError"
+      ) {
+        throw err;
+      }
       // fall through to exit-code mapping
     }
   }
