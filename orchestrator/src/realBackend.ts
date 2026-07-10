@@ -2255,6 +2255,9 @@ export class RealBackend implements Backend {
         return hydrated;
       }
     }
+    const idleTimeoutSeconds = resolveRouteSmokeIdleTimeoutSeconds(
+      process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
+    );
     const smoked = await smokeRouteModels(route, async (entry) => {
       let sawBash = false;
       const logDir = mkdtempSync(join(this.opts.home ?? homedir(), "route-smoke-"));
@@ -2265,12 +2268,7 @@ export class RealBackend implements Backend {
           cwd: this.workingRepo,
           promptFile: join(this.opts.promptsDir, "route-smoke.md"),
           maxIterations: 1,
-          // Resolved per smokeModelRoute call (NOT cached at module load) so an
-          // in-process ORCHESTRATOR_SMOKE_IDLE_SECONDS change takes effect
-          // without a module reload.
-          idleTimeoutSeconds: resolveRouteSmokeIdleTimeoutSeconds(
-            process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
-          ),
+          idleTimeoutSeconds,
           completionSignal: "ROUTE_SMOKE_COMPLETE",
           logging: {
             type: "file",
