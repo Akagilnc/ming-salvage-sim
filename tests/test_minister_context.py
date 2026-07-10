@@ -426,7 +426,7 @@ def test_historical_context_rejects_injected_abstract_values_across_all_history_
 def test_historical_context_rejects_adjacent_abstract_values_at_every_history_seam(game):
     """邸报、章节记忆、read_past_report、search_memories 都拒绝邻接裸值。"""
     db, state, content = game
-    injected = "忠诚88；能力98分；民心73/100；进度73/100；欠饷约三月。"
+    injected = "忠诚值88；能力评分98；民心值73；进度评分73/100；欠饷约三月。"
     state.turn = max(2, int(state.turn))
     db.get_turn_report = lambda _turn: injected
     db.list_chapter_memories = lambda **_kwargs: [
@@ -449,7 +449,7 @@ def test_historical_context_rejects_adjacent_abstract_values_at_every_history_se
     )
     for text in rendered:
         assert "已略去" in text or "未见正式邸报记录" in text
-        assert not re.search(r"(?:忠诚88|能力98分|民心73/100|进度73/100)", text)
+        assert not re.search(r"(?:忠诚值88|能力评分98|民心值73|进度评分73/100)", text)
 
 
 def test_final_minister_context_keeps_secret_order_tools_without_length_caps(game, monkeypatch):
@@ -478,11 +478,23 @@ def test_final_minister_context_keeps_secret_order_tools_without_length_caps(gam
     rendered = "\n".join(captured["instructions"])
     assert "report_secret_order_progress" in rendered
     assert "submit_secret_order_for_review" in rendered
-    assert "100字内" not in rendered
-    assert "200字内" not in rendered
+    assert not re.search(r"\d+字内", rendered)
     skill = Path(".agno_skills/secret-order/SKILL.md").read_text()
-    assert "100字内" not in skill
-    assert "200字内" not in skill
+    assert not re.search(r"\d+字内", skill)
+    tools_source = Path("ming_sim/tools.py").read_text()
+    assert not re.search(r"\d+字内", tools_source)
+
+
+def test_secret_order_tool_preserves_long_title_without_formal_cap(game):
+    db, _state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
+    title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
+
+    result = tools["secret_order"](action="issue", title=title, content="查明事实并回奏。")
+
+    assert result.startswith("__secret_order__")
+    assert json.loads(result.removeprefix("__secret_order__"))["title"] == title
 
 
 def test_minister_tools_characterize_region_army_and_issue_progress(game):

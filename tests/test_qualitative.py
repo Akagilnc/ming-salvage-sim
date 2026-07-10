@@ -10,7 +10,16 @@ from ming_sim.qualitative import (
 
 def test_safe_historical_text_rejects_adjacent_abstract_values():
     """历史文本的 P4 护栏也要咬住无分隔的裸值变异。"""
-    for injected in ("忠诚88", "能力98分", "民心73/100", "进度73/100"):
+    for injected in (
+        "忠诚88",
+        "能力98分",
+        "民心73/100",
+        "进度73/100",
+        "忠诚值88",
+        "能力评分98",
+        "民心值73",
+        "进度评分73/100",
+    ):
         rendered = safe_historical_text(injected)
         assert "已略去" in rendered, injected
 
