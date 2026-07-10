@@ -1386,6 +1386,11 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       name: string;
       verify: VerifyResult;
       fixingCommitSha?: string;
+      /** #743 fail-closed: fixed/recheck resolves require approved identity↔thread bindings. */
+      approvedFixMarkedFindingThreads?: ReadonlyArray<{
+        readonly identityKey: string;
+        readonly threadId: string;
+      }>;
       expectedBody: string;
     }> = [
       {
@@ -1414,9 +1419,15 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
           kind: "verify",
           converged: true,
           isRecheck: true,
+          findingDispositions: [
+            { identityKey: "t:3", threadId: "3", action: "fix" },
+          ],
           threadsToResolve: ["3"],
         },
         fixingCommitSha: "abc123def456",
+        approvedFixMarkedFindingThreads: [
+          { identityKey: "t:3", threadId: "3" },
+        ],
         expectedBody: "fixed: https://github.com/o/r/commit/abc123def456",
       },
     ];
@@ -1465,6 +1476,12 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
         prUrl: "https://github.com/o/r/pull/42",
         verify: testCase.verify,
         ...(testCase.fixingCommitSha === undefined ? {} : { fixingCommitSha: testCase.fixingCommitSha }),
+        ...(testCase.approvedFixMarkedFindingThreads === undefined
+          ? {}
+          : {
+              approvedFixMarkedFindingThreads:
+                testCase.approvedFixMarkedFindingThreads,
+            }),
       };
 
       applyVerifySideEffects(input);
