@@ -77,12 +77,34 @@ import {
   type GhBlockedBy,
   type GhIssueJson,
 } from "../src/realBackend.js";
-import type { RepairEvidence, StepSpec } from "../src/types.js";
+import type { RepairEvidence, StepOutput, StepSpec } from "../src/types.js";
 import type * as sc from "@ai-hero/sandcastle";
 import { resolveRouteModels } from "../src/modelRoutes.js";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
 // brief); S1's `extractAgentBrief` is the surviving brief reader.
 import { StructuredOutputError } from "@ai-hero/sandcastle";
+
+type AgentRunResult = Awaited<ReturnType<typeof sc.run>>;
+
+function agentRunResult({
+  completionSignal,
+  stdout,
+  commits = [],
+  sessionId,
+}: {
+  readonly completionSignal: string;
+  readonly stdout: string;
+  readonly commits?: ReadonlyArray<{ sha: string }>;
+  readonly sessionId: string;
+}): AgentRunResult {
+  return {
+    branch: "test-agent-branch",
+    completionSignal,
+    stdout,
+    commits: [...commits],
+    iterations: [{ sessionId }],
+  };
+}
 
 /** #748: per-test $HOME so RealBackend never reads/writes real ~/.sc-orchestrator. */
 const tempHomes: string[] = [];
@@ -1704,12 +1726,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
   it("continues to the agent sandbox when all declared tools exist", async () => {
     const backend = makeBackend();
-    backend.agentResult = {
+    backend.agentResult = agentRunResult({
       completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
-      iterations: [{ sessionId: "sess-286" }],
-    } as unknown as Awaited<ReturnType<typeof sc.run>>;
+      sessionId: "sess-286",
+    });
 
     const result = await backend.runStep(coderSpec, {
       branch: "feat/issue-286",
@@ -1733,12 +1755,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       JSON.stringify({ committed: true, commitsAdded: 1 }) + "\n",
       "utf8",
     );
-    backend.agentResult = {
+    backend.agentResult = agentRunResult({
       completionSignal: "CODER_STEP_COMPLETE",
       stdout: "<coder>not json</coder>\nCODER_STEP_COMPLETE",
       commits: [{ sha: "abc123" }],
-      iterations: [{ sessionId: "sess-496" }],
-    } as unknown as Awaited<ReturnType<typeof sc.run>>;
+      sessionId: "sess-496",
+    });
 
     const result = await backend.runStep(
       coderSpec,
@@ -1766,12 +1788,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const dir = mkdtempSync(join(tmpdir(), "worker-outcome-empty-dir-"));
     const outcomePath = join(dir, "outcome.json");
     mkdirSync(outcomePath);
-    backend.agentResult = {
+    backend.agentResult = agentRunResult({
       completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed": true, "commitsAdded": 1}</coder>\nCODER_STEP_COMPLETE',
       commits: [{ sha: "abc123" }],
-      iterations: [{ sessionId: "sess-dir-sidecar" }],
-    } as unknown as Awaited<ReturnType<typeof sc.run>>;
+      sessionId: "sess-dir-sidecar",
+    });
 
     const result = await backend.runStep(
       coderSpec,
@@ -1803,12 +1825,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       JSON.stringify({ findings: [] }) + "\n",
       "utf8",
     );
-    backend.agentResult = {
+    backend.agentResult = agentRunResult({
       completionSignal: "REVIEWER_STEP_COMPLETE",
       stdout: "no review tag here\nREVIEWER_STEP_COMPLETE",
       commits: [],
-      iterations: [{ sessionId: "sess-review-sidecar" }],
-    } as unknown as Awaited<ReturnType<typeof sc.run>>;
+      sessionId: "sess-review-sidecar",
+    });
 
     const result = await backend.runStep(
       reviewerSpec,
@@ -1842,12 +1864,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       JSON.stringify({ findings: [] }) + "\n",
       "utf8",
     );
-    backend.agentResult = {
+    backend.agentResult = agentRunResult({
       completionSignal: "REVIEWER_STEP_COMPLETE",
       stdout: "not json in any review tag\nREVIEWER_STEP_COMPLETE",
       commits: [],
-      iterations: [{ sessionId: "sess-review-resume-sidecar" }],
-    } as unknown as Awaited<ReturnType<typeof sc.run>>;
+      sessionId: "sess-review-resume-sidecar",
+    });
 
     const result = await backend.resumeSession(
       reviewerSpec,
@@ -1879,12 +1901,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const dir = mkdtempSync(join(tmpdir(), "worker-outcome-bad-"));
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
-    backend.agentResult = {
+    backend.agentResult = agentRunResult({
       completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
-      iterations: [{ sessionId: "sess-bad-sidecar" }],
-    } as unknown as Awaited<ReturnType<typeof sc.run>>;
+      sessionId: "sess-bad-sidecar",
+    });
 
     await expect(
       backend.runStep(
@@ -1909,12 +1931,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const dir = mkdtempSync(join(tmpdir(), "worker-review-outcome-bad-"));
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
-    backend.agentResult = {
+    backend.agentResult = agentRunResult({
       completionSignal: "REVIEWER_STEP_COMPLETE",
       stdout: '<review>{"findings": []}</review>',
       commits: [],
-      iterations: [{ sessionId: "sess-review-bad-sidecar" }],
-    } as unknown as Awaited<ReturnType<typeof sc.run>>;
+      sessionId: "sess-review-bad-sidecar",
+    });
 
     await expect(
       backend.runStep(
@@ -1944,12 +1966,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       preflightCalls.push(tool);
       await new Promise((resolve) => setTimeout(resolve, 1));
     };
-    backend.agentResult = {
+    backend.agentResult = agentRunResult({
       completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
-      iterations: [{ sessionId: "sess-286" }],
-    } as unknown as Awaited<ReturnType<typeof sc.run>>;
+      sessionId: "sess-286",
+    });
     const worktree = {
       branch: "feat/issue-286",
       base: "main",
@@ -2390,17 +2412,21 @@ describe("realBackend resume coder commit truth", () => {
   const head = "b".repeat(40);
 
   it("finds the ledger baseline before the coder step being resumed", () => {
+    const ledger: Array<{
+      readonly sessionId?: string;
+      readonly branchHEAD?: string;
+      readonly output?: StepOutput;
+    }> = [
+      { branchHEAD: base },
+      {
+        sessionId: "sess-coder",
+        branchHEAD: head,
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      },
+      { branchHEAD: head },
+    ];
     const basis = resumeCoderCommitBasis(
-      [
-        { step: "S1", branchHEAD: base },
-        {
-          step: "S2",
-          sessionId: "sess-coder",
-          branchHEAD: head,
-          output: { kind: "coder", committed: true, commitsAdded: 1 },
-        },
-        { step: "S8", branchHEAD: head, handoffStatus: "escalate" },
-      ] as never,
+      ledger,
       "sess-coder",
     );
     expect(basis).toEqual({
