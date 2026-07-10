@@ -888,16 +888,6 @@ export async function dispatchWorkerWithMonitor(
     modelFamily = null;
   }
 
-  // Re-install this backend's image/prompt fingerprints only when the ledger
-  // lacks an environment stamp, and after this dispatch call stack yields. The
-  // install performs synchronous docker inspect and directory hashing, so it
-  // must never delay worker spawn or repeat for an already-stamped ledger.
-  scheduleTelemetryEnvironmentStamp(
-    ledgerDir,
-    ctx,
-    backend,
-  );
-
   const stampCollect = (
     outcome:
       | { readonly kind: "result"; readonly result: WorkerResult }
@@ -1042,6 +1032,11 @@ export async function dispatchWorkerWithMonitor(
           throw error;
         }
       }
+      // The first environment fingerprint can synchronously inspect Docker and
+      // hash prompt trees. Queue it only after the CLI monitor handle has been
+      // persisted, so quick-exit first-output observation cannot be delayed by
+      // that first calculation.
+      scheduleTelemetryEnvironmentStamp(ledgerDir, ctx, backend);
       const monitorDeps = opts?.monitorDeps;
       const idleThresholdMs =
         opts?.idleThresholdMs ?? DEFAULT_MONITOR_IDLE_THRESHOLD_MS;
@@ -1217,6 +1212,7 @@ export async function dispatchWorkerWithMonitor(
       new Date().toISOString(),
       ctx.billingPool !== undefined ? ctx.billingPool : undefined,
     );
+    scheduleTelemetryEnvironmentStamp(ledgerDir, ctx, backend);
     const result = await dispatchWorker(backend, spec, ctx, landing);
     stampCollect({ kind: "result", result });
     return { result };
