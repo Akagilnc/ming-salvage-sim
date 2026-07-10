@@ -147,12 +147,22 @@ import {
   workerResultFromMonitorSidecar,
 } from "./cliMonitorHooks.js";
 import {
-   DOCRELEASE_PROMPT_FILE,
-   FIXER_PROMPT_FILE,
-   legacyDispatchWorker,
-   SHIP_PROMPT_FILE,
-   VERIFY_PROMPT_FILE,
- } from "./dispatchWorker.js";
+  DOCRELEASE_PROMPT_FILE,
+  FIXER_PROMPT_FILE,
+  legacyDispatchWorker,
+  SHIP_PROMPT_FILE,
+  VERIFY_PROMPT_FILE,
+} from "./dispatchWorker.js";
+import {
+  handleIdleThreshold,
+  isAgentIdleTimeoutError,
+  QuotaWaitForResetError,
+  runPoolProbe,
+  type HandleIdleThresholdResult,
+  type QuotaPoolId,
+  type QuotaProbeResult,
+  type QuotaWaitForResetLedgerEvent,
+} from "./quotaProbe.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
   shipOutcomeFromResult,
@@ -705,8 +715,46 @@ export const SANDBOX_GH_TOKEN_ENV = "GH_TOKEN";
  * IMMEDIATELY instead of waiting (gemini #384 R2: a 1-year value = 31_536_000_000
  * ms OVERFLOWED int32 → the idle timer fired at once, the opposite of "never
  * fires"). 604_800 * 1000 = 604_800_000 ms ≪ 2**31-1, no overflow.
+ *
+ * #683: when this timer DOES fire (or an external monitor hits idle first),
+ * {@link RealBackend.runAgentSandbox} routes through {@link handleIdleThreshold}
+ * — probe the worker's pool before hang kill (429 → wait-for-reset, not hang).
  */
 export const WORKER_IDLE_TIMEOUT_SECONDS = 604_800;
+
+/**
+ * #683 context threaded beside Sandcastle run options for the internal-timeout
+ * fallback. The live CLI monitor owns the normal idle disposition.
+ * (Sandcastle does not know this field).
+ *
+ * `workerPid` is optional at the call site — production dispatch paths leave it
+ * unset and {@link RealBackend.runAgentSandbox} fills it from the live sandbox
+ * handle via {@link RealBackend.noteActiveSandboxWorkerPid}. Callers must not
+ * hand-stuff a fake pid; hang kill no-ops on `pid <= 0`.
+ *
+ * 429 fallback semantic: by the time Sandcastle surfaces
+ * `AgentIdleTimeoutError`, `withSandbox` has already released the sandbox. The
+ * fallback may park a quota wall, but never owns hang-kill; live worker kills
+ * belong exclusively to the #684 monitor handle.
+ */
+export interface QuotaProbeRunContext {
+  /** Model/route slug → {@link import("./quotaProbe.js").poolForModelRef}. */
+  readonly modelRef: string;
+  readonly step?: StepId;
+  /**
+   * OS pid of the worker process when known. Prefer leaving unset — production
+   * captures it from the sandbox handle mid-run (#684 monitor handle companion).
+   */
+  readonly workerPid?: number;
+  /** Resident worktree path — used to derive sibling `.ledger-<n>` for wait rows. */
+  readonly worktreePath?: string;
+  readonly issueNumber?: number;
+}
+
+/** Sandcastle run options + optional #683 idle quota-probe context. */
+export type AgentSandboxRunOptions = Parameters<typeof sc.run>[0] & {
+  readonly quotaProbe?: QuotaProbeRunContext;
+};
 
 /**
  * Marks the container as an orchestrator-spawned, non-interactive session.
@@ -3312,6 +3360,14 @@ export class RealBackend implements Backend {
       // would throw on a bad/missing compatibility tag before the backend can
       // read the sidecar machine protocol.
       ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
+      // #683 fallback context for Sandcastle's own internal timeout only. The
+      // normal live-worker path is dispatched through the #684 monitor.
+      quotaProbe: {
+        modelRef: spec.model,
+        step: spec.id,
+        worktreePath: worktree.path,
+        issueNumber,
+      },
     });
     // #244 step-advance gate: the step only advances if the agent fired its
     // declared completionSignal. A complete-but-unsignaled run (e.g. maxIter hit
@@ -3368,6 +3424,13 @@ export class RealBackend implements Backend {
         // pre-parsing the compatibility tag before rawOutputFor can read the
         // runner-owned file.
         ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
+        // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
+        quotaProbe: {
+          modelRef: spec.model,
+          step: spec.id,
+          worktreePath: worktree.path,
+          issueNumber,
+        },
       });
       // #244 step-advance gate (resume path): a resumed step still only advances
       // on its declared completionSignal — an unsignaled resume throws → S8(error).
@@ -3417,10 +3480,161 @@ export class RealBackend implements Backend {
     }
   }
 
-  protected async runAgentSandbox(
+  /**
+   * Live sandbox-handle worker pid captured during the current
+   * {@link runAgentSandbox} call. Cleared on entry/exit. Tests (and future
+   * #684 monitor wiring) call {@link noteActiveSandboxWorkerPid} while the
+   * sandbox handle is still live — before Sandcastle release.
+   */
+  private activeSandboxWorkerPid: number | undefined;
+
+  /**
+   * Record the OS pid from the live sandbox handle so hang kill after idle
+   * probe has a real target. No-op for non-positive / non-integer values.
+   */
+  protected noteActiveSandboxWorkerPid(pid: number): void {
+    if (Number.isInteger(pid) && pid > 0) {
+      this.activeSandboxWorkerPid = pid;
+    }
+  }
+
+  /** Resolve worker pid: explicit context → live sandbox handle → 0. */
+  protected resolveWorkerPid(ctx: QuotaProbeRunContext): number {
+    if (ctx.workerPid !== undefined && ctx.workerPid > 0) return ctx.workerPid;
+    if (
+      this.activeSandboxWorkerPid !== undefined &&
+      this.activeSandboxWorkerPid > 0
+    ) {
+      return this.activeSandboxWorkerPid;
+    }
+    return 0;
+  }
+
+  /**
+   * Thin Sandcastle `sc.run` seam. Unit tests that need a fake container result
+   * override THIS method (or {@link runAgentSandbox}). Production idle/quota
+   * disposition lives in {@link runAgentSandbox} so a full override of that
+   * method intentionally bypasses #683 only when the test owns the whole path.
+   *
+   * Implementations that own a live sandbox handle MUST call
+   * {@link noteActiveSandboxWorkerPid} with the handle's agent/container pid
+   * while the handle is still alive (before teardown) so hang kill has a real
+   * target. Public Sandcastle types do not expose handle.pid — capture is the
+   * invoker's responsibility (#684 monitor handle is the durable companion).
+   */
+  protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     return await sc.run(options);
+  }
+
+  /**
+   * Production agent-sandbox entry (#683). Runs Sandcastle, and on idle timeout
+   * probes the worker's quota pool BEFORE hang disposition:
+   *   - 429/limit → {@link QuotaWaitForResetError} (park step for quota reset;
+   *     ledger row via applied.ledgerEntry for runner park; do NOT mark failed)
+   *   - probe ok / network error → fail-safe rethrow the idle error (kill is a
+   *     no-op here; live hang kill is owned by the #684 monitor handle path)
+   */
+  protected async runAgentSandbox(
+    options: AgentSandboxRunOptions,
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    const { quotaProbe, ...scOptions } = options;
+    this.activeSandboxWorkerPid = undefined;
+    try {
+      return await this.invokeSandcastleRun(scOptions);
+    } catch (err) {
+      if (!isAgentIdleTimeoutError(err) || quotaProbe === undefined) {
+        throw err;
+      }
+      const result = await this.resolveIdleAfterQuotaProbe({
+        ...quotaProbe,
+      });
+      if (result.disposition.kind === "wait_for_reset") {
+        // 429: park for quota reset. Sandbox already released by Sandcastle;
+        // runner consumes this error via existing park machinery (not S8 error).
+        throw new QuotaWaitForResetError(result);
+      }
+      // Internal Sandcastle timeout fallback: the sandbox already owns its
+      // teardown. Do not kill via the old backend-local pid path.
+      throw err;
+    } finally {
+      this.activeSandboxWorkerPid = undefined;
+    }
+  }
+
+  /**
+   * #683 production idle disposition entry. Callable from runAgentSandbox (on
+   * Sandcastle idle timeout) and from any external monitor that owns the idle
+   * threshold. Overridable only for host I/O seams (probe / kill / ledger).
+   */
+  protected async resolveIdleAfterQuotaProbe(
+    ctx: QuotaProbeRunContext,
+  ): Promise<HandleIdleThresholdResult> {
+    const pid = this.resolveWorkerPid(ctx);
+    return handleIdleThreshold({
+      modelRef: ctx.modelRef,
+      worker: {
+        pid,
+        ...(ctx.step !== undefined ? { step: ctx.step } : {}),
+      },
+      actions: {
+        // The live monitor owns verified pid-tree kill. This action is only a
+        // no-op for the post-Sandcastle internal-timeout fallback.
+        killPidTree: () => undefined,
+        // Durable park marker is written once by runner.parkQuotaWaitForReset
+        // with real sessionId/prompt_hash/branchHEAD. Do not double-write here
+        // with placeholder audit fields (#683 integration R1).
+        recordLedger: async () => undefined,
+        now: () => this.idleNow(),
+      },
+      probe: (pool) => this.runQuotaProbe(pool),
+    });
+  }
+
+  /** Clock for wait-for-reset ledger `ts` (injectable via override in tests). */
+  protected idleNow(): Date {
+    return new Date();
+  }
+
+  /**
+   * Pool probe used after idle threshold (#683). Default = real
+   * {@link runPoolProbe}; tests stub three outcomes.
+   */
+  protected async runQuotaProbe(pool: QuotaPoolId): Promise<QuotaProbeResult> {
+    return runPoolProbe(pool);
+  }
+
+  /**
+   * Persist a `quota_wait_for_reset` ledger row to the sibling state dir when
+   * known. Tests may override to capture without touching disk.
+   *
+   * Production monitor / Sandcastle-fallback paths no longer call this for the
+   * durable write (#683 R1): runner.parkQuotaWaitForReset owns the single
+   * append-only row with real audit fields. Kept for test overrides / tooling.
+   */
+  protected async recordQuotaWaitLedger(
+    entry: QuotaWaitForResetLedgerEvent,
+    ctx: QuotaProbeRunContext,
+  ): Promise<void> {
+    if (ctx.worktreePath === undefined || ctx.issueNumber === undefined) {
+      // No durable landing spot — still surface via QuotaWaitForResetError.applied
+      return;
+    }
+    const stateDir = this.stateDirFor(ctx.worktreePath, ctx.issueNumber);
+    const persistent: PersistentLedgerEntry = {
+      step: entry.step ?? ctx.step ?? "S2",
+      event: "quota_wait_for_reset",
+      pool: entry.pool,
+      ...(entry.resetAt !== undefined ? { resetAt: entry.resetAt } : {}),
+      reason: entry.reason,
+      ...(entry.workerPid !== undefined ? { workerPid: entry.workerPid } : {}),
+      ts: entry.ts,
+      sessionId: "quota-wait-for-reset",
+      prompt_hash: "quota-wait-for-reset",
+      branchHEAD: "quota-wait-for-reset",
+    };
+    await this.writeLedger(persistent, stateDir);
   }
 
   // ── S7: ship WORKER (invoke gstack-ship) ────────────────────────────────────
@@ -3547,6 +3761,33 @@ export class RealBackend implements Backend {
   }
 
   /**
+   * #683: probe at the live #684 monitor threshold. The monitor owns the
+   * verified pid-tree kill; this backend only applies the quota state machine
+   * and records a wait row when the pool returns 429.
+   */
+  async handleMonitoredWorkerIdle(
+    handle: WorkerMonitorHandle,
+    spec: WorkerSpec,
+    _ctx: DispatchContext,
+  ): Promise<"hang" | "wait_for_reset"> {
+    const result = await handleIdleThreshold({
+      modelRef: spec.model,
+      worker: { pid: handle.pid, step: spec.id },
+      actions: {
+        killPidTree: () => undefined,
+        // Runner parkQuotaWaitForReset writes the single durable marker with
+        // real audit fields — avoid a second placeholder write here.
+        recordLedger: async () => undefined,
+      },
+      probe: (pool) => this.runQuotaProbe(pool),
+    });
+    if (result.disposition.kind === "wait_for_reset") {
+      throw new QuotaWaitForResetError(result);
+    }
+    return "hang";
+  }
+
+  /**
    * Run the ship WORKER: ONE `sc.run` of the 2b container's route-selected agent
    * invoking `gstack-ship` over the resident slice worktree (#336). `protected` so
    * a unit test fixtures the outcome without a real container (the real container
@@ -3630,6 +3871,13 @@ export class RealBackend implements Backend {
           // Commit the VERSION/CHANGELOG bump + push on the resident branch in place.
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
+          // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
+          quotaProbe: {
+            modelRef: spec.model,
+            step: spec.id,
+            worktreePath: worktree.path,
+            issueNumber: this.issueOf(worktree),
+          },
         });
         return shipOutcomeFromResult({
           ...result,

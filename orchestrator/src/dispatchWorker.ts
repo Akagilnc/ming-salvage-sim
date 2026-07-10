@@ -48,8 +48,11 @@ import {
 import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
 import {
   dispatchMonitoredCliWorker,
+  isWorkerIdle,
   killWorkerTree,
+  readLogActivity,
   type MonitoredCliDispatchInput,
+  type WorkerMonitorDeps,
 } from "./workerMonitor.js";
 import type {
   Backend,
@@ -61,6 +64,7 @@ import type {
   WorkerContextRetention,
   WorkerKind,
   WorkerLandingPayload,
+  MonitoredWorkerIdleDisposition,
   WorkerMonitorHandle,
   WorkerResult,
   WorkerSessionMode,
@@ -710,7 +714,20 @@ export interface DispatchWorkerWithMonitorOptions {
   readonly onMonitorHandleSpawned?: (
     handle: WorkerMonitorHandle,
   ) => void | Promise<void>;
+  /** Idle threshold used by the host-side monitor; production keeps this explicit. */
+  readonly idleThresholdMs?: number;
+  /** Poll cadence for the host-side idle clock. */
+  readonly pollIntervalMs?: number;
+  /** Injectable monitor I/O for tests; production uses verified OS helpers. */
+  readonly monitorDeps?: WorkerMonitorDeps;
 }
+
+type MonitorRace =
+  | { readonly kind: "exit"; readonly exitCode: number | null }
+  | { readonly kind: "killed" };
+
+const DEFAULT_MONITOR_IDLE_THRESHOLD_MS = 10 * 60 * 1000;
+const DEFAULT_MONITOR_POLL_INTERVAL_MS = 250;
 
 function waitForChildExit(child: ChildProcess): Promise<number | null> {
   if (child.exitCode !== null || child.signalCode !== null) {
@@ -788,7 +805,76 @@ export async function dispatchWorkerWithMonitor(
         throw error;
       }
     }
-    const exitCode = await exitPromise;
+    const monitorDeps = opts?.monitorDeps;
+    const idleThresholdMs =
+      opts?.idleThresholdMs ?? DEFAULT_MONITOR_IDLE_THRESHOLD_MS;
+    const pollIntervalMs =
+      opts?.pollIntervalMs ?? DEFAULT_MONITOR_POLL_INTERVAL_MS;
+    const initialActivity = readLogActivity(handle, monitorDeps);
+    // Cancellation seam: when exit wins the race, stop further idle polls /
+    // handleMonitoredWorkerIdle calls. A throw already in-flight is observed
+    // below so it cannot become an unhandledRejection.
+    let monitorCancelled = false;
+    const monitorPromise: Promise<MonitorRace> = (async () => {
+      if (initialActivity === undefined) {
+        return await exitPromise.then((exitCode) => ({ kind: "exit", exitCode }));
+      }
+      let previous = initialActivity;
+      while (
+        !monitorCancelled &&
+        child.exitCode === null &&
+        child.signalCode === null
+      ) {
+        await (monitorDeps?.sleepMs ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(
+          pollIntervalMs,
+        );
+        if (monitorCancelled) break;
+        if (child.exitCode !== null || child.signalCode !== null) break;
+        if (!isWorkerIdle(handle, idleThresholdMs, previous, monitorDeps)) {
+          const current = readLogActivity(handle, monitorDeps);
+          if (current !== undefined) previous = current;
+          continue;
+        }
+        if (monitorCancelled) break;
+        const disposition: MonitoredWorkerIdleDisposition =
+          backend.handleMonitoredWorkerIdle !== undefined
+            ? await backend.handleMonitoredWorkerIdle(handle, spec, ctx)
+            : "hang";
+        if (disposition === "wait_for_reset") {
+          // Backends normally throw QuotaWaitForResetError here so runner park
+          // machinery receives the reset timestamp and ledger event.
+          throw new Error(
+            "monitored worker idle disposition returned wait_for_reset without " +
+              "raising the backend's quota park error",
+          );
+        }
+        await killWorkerTree(handle, monitorDeps);
+        return { kind: "killed" };
+      }
+      return await exitPromise.then((exitCode) => ({ kind: "exit", exitCode }));
+    })();
+    const race = await Promise.race([
+      exitPromise.then((exitCode): MonitorRace => ({ kind: "exit", exitCode })),
+      monitorPromise,
+    ]);
+    // Observe the race loser. If exit won while handleMonitoredWorkerIdle was
+    // still in flight, a late QuotaWaitForResetError (or other throw) must be
+    // swallowed-with-log — never an unhandledRejection that can crash Node.
+    if (race.kind === "exit") {
+      monitorCancelled = true;
+      void monitorPromise.then(
+        () => undefined,
+        (err: unknown) => {
+          console.warn(
+            `[orchestrator] monitored idle handler settled after child exit: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        },
+      );
+    }
+    const exitCode =
+      race.kind === "exit" ? race.exitCode : await exitPromise;
     if (backend.awaitMonitoredCliWorker === undefined) {
       return {
         result: {

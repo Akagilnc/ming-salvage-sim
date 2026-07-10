@@ -426,6 +426,24 @@ export interface OnlineReviewCiPendingEvent {
 }
 
 /**
+ * #683 — idle-threshold quota probe hit a 429/limit wall. Step is parked for
+ * quota reset (runner status escalate, not S8(error)); auto re-dispatch after
+ * reset is #686 (out of scope). Same park family as `online_review_ci_pending`.
+ * Shape mirrors {@link import("./quotaProbe.js").QuotaWaitForResetLedgerEvent}.
+ */
+export interface QuotaWaitForResetEvent {
+  readonly event: "quota_wait_for_reset";
+  /** Provider pool that returned 429 (`zai` / `opencode-go` / `grok` / `unknown`). */
+  readonly pool: string;
+  /** ISO-8601 reset instant when the 429 body carried one. */
+  readonly resetAt?: string;
+  readonly reason: string;
+  readonly step?: StepId;
+  readonly workerPid?: number;
+  readonly ts: string;
+}
+
+/**
  * #684 R2: spawn-time monitor handle bookkeeping — persisted AT SPAWN so hang
  * judge/kill/resume can rebuild the handle before the step completes.
  */
@@ -442,6 +460,7 @@ export type LedgerBookkeepingEvent =
   | OnlineReviewFixCommittedEvent
   | OnlineReviewCiFailedEvent
   | OnlineReviewCiPendingEvent
+  | QuotaWaitForResetEvent
   | WorkerMonitorSpawnedEvent;
 
 /**
@@ -1203,8 +1222,18 @@ export interface LedgerEntry {
    * provider actually surfaced one.
    */
   readonly sessionId?: string;
-  /** Append-only event marker for non-step ledger facts (#439 / #446). */
+  /** Append-only event marker for non-step ledger facts (#439 / #446 / #683). */
   readonly event?: LedgerBookkeepingEvent["event"];
+  /**
+   * #683 — quota pool id on `quota_wait_for_reset` rows (ledger-visible).
+   * Typed as string so JSONL round-trips stay schema-light; see
+   * {@link QuotaWaitForResetEvent.pool}.
+   */
+  readonly pool?: string;
+  /** #683 — ISO reset instant on `quota_wait_for_reset` when known. */
+  readonly resetAt?: string;
+  /** #683 — worker pid preserved while waiting for quota reset. */
+  readonly workerPid?: number;
   /** Step this answer reopens when `event === "escalation_answered"` (#439). */
   readonly forStep?: StepId;
   /** Human answer payload when `event === "escalation_answered"` (#439). */
@@ -1315,6 +1344,9 @@ export interface CliMonitorSpawnSpec {
   /** Injectable process identity reader for restricted/test environments. */
   readonly readInstanceId?: (pid: number) => string | undefined;
 }
+
+/** #683: the monitor asks the backend to probe before it owns hang-kill. */
+export type MonitoredWorkerIdleDisposition = "hang" | "wait_for_reset";
 
 /**
  * Full persisted ledger entry (#249). Extends {@link LedgerEntry} with the
@@ -1574,6 +1606,16 @@ export interface Backend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
+  /**
+   * #683: called while the monitored worker is still alive at the idle threshold.
+   * A backend may throw its quota-park error; returning `hang` leaves verified
+   * pid-tree kill exclusively to the monitor.
+   */
+  handleMonitoredWorkerIdle?(
+    handle: WorkerMonitorHandle,
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<MonitoredWorkerIdleDisposition>;
   /** S7: push the resident slice branch (no PR, no merge). */
   push(worktree: WorktreeHandle): Promise<void>;
   /**
