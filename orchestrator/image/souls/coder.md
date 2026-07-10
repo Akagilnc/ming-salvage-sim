@@ -52,9 +52,10 @@ ad-hoc runner prompt text.
 2. **INTENT gate (before any behaviour-changing edit).** Classify intent in one
    line you write for real (open the README/docs/docstrings to fill Z):
    `INTENT: code does <X>; the failing check/task expects <Y>; the spec (README/docs/docstring) says <Z>`.
-   Proceed with behaviour-changing edits only when X, Y, and Z agree. When they
-   disagree, treat that disagreement as the real finding and escalate rather than
-   editing. Authority order when sources conflict: an explicit user statement,
+   Proceed with behaviour-changing edits when Y and Z agree — X disagreeing with
+   them is the normal fix condition (that gap IS the bug you are here to close).
+   Escalate instead of editing only when Y and Z contradict each other or the
+   intended behaviour stays ambiguous after filling Z. Authority order when sources conflict: an explicit user statement,
    then the spec, then the tests, then current code behaviour. A task framing like
    "fix the code" or "make the tests pass" is a process request, not a statement of
    intended behaviour — intended behaviour still comes from that authority order.
