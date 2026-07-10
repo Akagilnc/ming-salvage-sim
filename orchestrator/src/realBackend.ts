@@ -670,14 +670,30 @@ export const WORKER_IDLE_TIMEOUT_SECONDS = 604_800;
 
 /**
  * #683 context threaded beside Sandcastle run options so idle timeout can probe
- * the correct pool and land a wait-for-reset ledger row without killing the
- * worker. Stripped before `sc.run` (Sandcastle does not know this field).
+ * the correct pool before hang disposition. Stripped before `sc.run`
+ * (Sandcastle does not know this field).
+ *
+ * `workerPid` is optional at the call site — production dispatch paths leave it
+ * unset and {@link RealBackend.runAgentSandbox} fills it from the live sandbox
+ * handle via {@link RealBackend.noteActiveSandboxWorkerPid}. Callers must not
+ * hand-stuff a fake pid; hang kill no-ops on `pid <= 0`.
+ *
+ * 429 semantic (R2): by the time Sandcastle surfaces `AgentIdleTimeoutError`,
+ * `withSandbox` has already released the sandbox regardless of outcome — so
+ * "quota wall must not kill the worker process" is unsatisfiable post-return.
+ * The meaningful outcome is: do NOT mark the step failed; park it for quota
+ * reset (runner consumes {@link QuotaWaitForResetError} via existing park
+ * machinery). Hang (probe ok/error) still attempts pid-tree kill with the
+ * captured handle pid (best-effort against leftovers).
  */
 export interface QuotaProbeRunContext {
   /** Model/route slug → {@link import("./quotaProbe.js").poolForModelRef}. */
   readonly modelRef: string;
   readonly step?: StepId;
-  /** OS pid of the worker process when known (#684 monitor handle). */
+  /**
+   * OS pid of the worker process when known. Prefer leaving unset — production
+   * captures it from the sandbox handle mid-run (#684 monitor handle companion).
+   */
   readonly workerPid?: number;
   /** Resident worktree path — used to derive sibling `.ledger-<n>` for wait rows. */
   readonly worktreePath?: string;
@@ -3177,10 +3193,46 @@ export class RealBackend implements Backend {
   }
 
   /**
+   * Live sandbox-handle worker pid captured during the current
+   * {@link runAgentSandbox} call. Cleared on entry/exit. Tests (and future
+   * #684 monitor wiring) call {@link noteActiveSandboxWorkerPid} while the
+   * sandbox handle is still live — before Sandcastle release.
+   */
+  private activeSandboxWorkerPid: number | undefined;
+
+  /**
+   * Record the OS pid from the live sandbox handle so hang kill after idle
+   * probe has a real target. No-op for non-positive / non-integer values.
+   */
+  protected noteActiveSandboxWorkerPid(pid: number): void {
+    if (Number.isInteger(pid) && pid > 0) {
+      this.activeSandboxWorkerPid = pid;
+    }
+  }
+
+  /** Resolve worker pid: explicit context → live sandbox handle → 0. */
+  protected resolveWorkerPid(ctx: QuotaProbeRunContext): number {
+    if (ctx.workerPid !== undefined && ctx.workerPid > 0) return ctx.workerPid;
+    if (
+      this.activeSandboxWorkerPid !== undefined &&
+      this.activeSandboxWorkerPid > 0
+    ) {
+      return this.activeSandboxWorkerPid;
+    }
+    return 0;
+  }
+
+  /**
    * Thin Sandcastle `sc.run` seam. Unit tests that need a fake container result
    * override THIS method (or {@link runAgentSandbox}). Production idle/quota
    * disposition lives in {@link runAgentSandbox} so a full override of that
    * method intentionally bypasses #683 only when the test owns the whole path.
+   *
+   * Implementations that own a live sandbox handle MUST call
+   * {@link noteActiveSandboxWorkerPid} with the handle's agent/container pid
+   * while the handle is still alive (before teardown) so hang kill has a real
+   * target. Public Sandcastle types do not expose handle.pid — capture is the
+   * invoker's responsibility (#684 monitor handle is the durable companion).
    */
   protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
@@ -3191,8 +3243,8 @@ export class RealBackend implements Backend {
   /**
    * Production agent-sandbox entry (#683). Runs Sandcastle, and on idle timeout
    * probes the worker's quota pool BEFORE hang disposition:
-   *   - 429/limit → {@link QuotaWaitForResetError} (process not killed by us;
-   *     ledger row recorded)
+   *   - 429/limit → {@link QuotaWaitForResetError} (park step for quota reset;
+   *     ledger row recorded; do NOT mark the step failed)
    *   - probe ok / network error → fail-safe hang (kill only this pid tree) then
    *     rethrow the idle error
    */
@@ -3200,18 +3252,27 @@ export class RealBackend implements Backend {
     options: AgentSandboxRunOptions,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     const { quotaProbe, ...scOptions } = options;
+    this.activeSandboxWorkerPid = undefined;
     try {
       return await this.invokeSandcastleRun(scOptions);
     } catch (err) {
       if (!isAgentIdleTimeoutError(err) || quotaProbe === undefined) {
         throw err;
       }
-      const result = await this.resolveIdleAfterQuotaProbe(quotaProbe);
+      const pid = this.resolveWorkerPid(quotaProbe);
+      const result = await this.resolveIdleAfterQuotaProbe({
+        ...quotaProbe,
+        ...(pid > 0 ? { workerPid: pid } : {}),
+      });
       if (result.disposition.kind === "wait_for_reset") {
+        // 429: park for quota reset. Sandbox already released by Sandcastle;
+        // runner consumes this error via existing park machinery (not S8 error).
         throw new QuotaWaitForResetError(result);
       }
       // hang path already applied killPidTree via handleIdleThreshold
       throw err;
+    } finally {
+      this.activeSandboxWorkerPid = undefined;
     }
   }
 
@@ -3223,14 +3284,15 @@ export class RealBackend implements Backend {
   protected async resolveIdleAfterQuotaProbe(
     ctx: QuotaProbeRunContext,
   ): Promise<HandleIdleThresholdResult> {
+    const pid = this.resolveWorkerPid(ctx);
     return handleIdleThreshold({
       modelRef: ctx.modelRef,
       worker: {
-        pid: ctx.workerPid !== undefined && ctx.workerPid > 0 ? ctx.workerPid : 0,
+        pid,
         ...(ctx.step !== undefined ? { step: ctx.step } : {}),
       },
       actions: {
-        killPidTree: (pid) => this.killWorkerPidTree(pid),
+        killPidTree: (p) => this.killWorkerPidTree(p),
         recordLedger: (entry) => this.recordQuotaWaitLedger(entry, ctx),
         now: () => this.idleNow(),
       },

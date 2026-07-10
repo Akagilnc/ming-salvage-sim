@@ -540,8 +540,15 @@ export function isAgentIdleTimeoutError(err: unknown): boolean {
 }
 
 /**
- * Raised when idle → quota probe returned 429/limit: worker is parked, not
- * hung. Callers must NOT treat this as a hang kill outcome.
+ * Raised when idle → quota probe returned 429/limit: step must be parked for
+ * quota reset, not failed/hung.
+ *
+ * Semantics (R2): Sandcastle's withSandbox has typically already released the
+ * sandbox by the time this surfaces, so "do not kill the worker process" is
+ * often already true by construction. The load-bearing contract is that the
+ * **runner** must NOT treat this as S8(error) / run abort — consume it via the
+ * existing park machinery (ledger `quota_wait_for_reset` + status escalate),
+ * same family as CI-pending parks. Auto re-dispatch after reset is #686.
  */
 export class QuotaWaitForResetError extends Error {
   readonly disposition: Extract<IdleDisposition, { kind: "wait_for_reset" }>;
