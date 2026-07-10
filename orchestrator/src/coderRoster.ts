@@ -160,7 +160,7 @@ export function resolveCoderRecOrder(
 
 export interface SelectCoderRecOptions {
   /** Active reviewer / CMR leg slugs — used for pool-separation filtering. */
-  readonly reviewerSlugs?: ReadonlyArray<string>;
+  readonly reviewerSlugs?: ReadonlyArray<string> | ReadonlySet<string>;
   /** Override the default fallback threshold (tests). */
   readonly fallbackAfterRounds?: number;
 }
@@ -184,11 +184,15 @@ function indexForRounds(
  */
 export function poolSeparationViolation(
   coder: CoderRosterEntry,
-  reviewerSlugs: ReadonlyArray<string>,
+  reviewerSlugs: ReadonlyArray<string> | ReadonlySet<string>,
 ): string | undefined {
-  const reviewer = new Set(
-    reviewerSlugs.map((s) => s.trim()).filter((s) => s.length > 0),
-  );
+  const reviewer: ReadonlySet<string> = reviewerSlugs instanceof Set
+    ? reviewerSlugs
+    : new Set(
+        (reviewerSlugs as ReadonlyArray<string>)
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0),
+      );
   if (!reviewer.has(coder.slug)) return undefined;
   return (
     `coder roster entry "${coder.id}" (slug=${coder.slug}) must not double as ` +
@@ -215,7 +219,11 @@ export function selectCoderRecEntry(
   const threshold =
     opts.fallbackAfterRounds ?? CODER_REC_FALLBACK_AFTER_ROUNDS;
   const start = indexForRounds(nonConvergingRounds, order.length, threshold);
-  const reviewerSlugs = opts.reviewerSlugs ?? [];
+  const reviewerSlugs = new Set(
+    [...(opts.reviewerSlugs ?? [])]
+      .map((slug) => slug.trim())
+      .filter((slug) => slug.length > 0),
+  );
 
   for (let i = start; i < order.length; i++) {
     const candidate = order[i]!;
