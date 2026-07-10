@@ -904,7 +904,10 @@ export async function dispatchWorkerWithMonitor(
   ): void => {
     if (legId === null) return;
     try {
-      tryAppendTelemetryRecord(
+      // Only mark stamped when the half-row actually landed. A failed append
+      // must leave dispatchStamped=false so stampCollect cannot write an
+      // unjoinable orphan collect if the ledger becomes writable later.
+      dispatchStamped = tryAppendTelemetryRecord(
         ledgerDir,
         buildDispatchStamp({
           legId,
@@ -914,8 +917,8 @@ export async function dispatchWorkerWithMonitor(
           poolId,
         }),
       );
-      dispatchStamped = true;
     } catch (err) {
+      dispatchStamped = false;
       console.warn(
         `[orchestrator] telemetry dispatch stamp failed (fail-open): ${
           err instanceof Error ? err.message : String(err)

@@ -21,11 +21,15 @@
  * `orchestrator/README.md` § first_output_at.
  */
 
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
+  statSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -52,6 +56,182 @@ import type {
   WorkerSpec,
 } from "./types.js";
 import { poolIdForWorker } from "./workerMonitor.js";
+
+/**
+ * Same default as {@link DEFAULT_IMAGE_TAG} in familyDriver — kept local so
+ * telemetry stays free of the heavy driver/backend import graph.
+ */
+const TELEMETRY_DEFAULT_IMAGE_TAG = "ming-orchestrator-coder:latest";
+
+/**
+ * Once-per-process run environment for telemetry (image / fast / content hashes).
+ * Set from RealBackend / RealFamilyBackend construction so stamps read the real
+ * imageName + codexFast, not only env vars that launchers often leave unset.
+ */
+export interface TelemetryRunEnvironment {
+  readonly imageTag?: string | null;
+  readonly imageDigest?: string | null;
+  readonly sandboxFingerprint?: string | null;
+  readonly soulsHash?: string | null;
+  readonly promptHash?: string | null;
+  /** Effective Codex fast switch for this run (explicit option or resolved env). */
+  readonly codexFast?: boolean | null;
+}
+
+let telemetryRunEnvironment: TelemetryRunEnvironment = {};
+
+/** Install / merge the process-level run environment used by stamp builders. */
+export function configureTelemetryRunEnvironment(
+  env: TelemetryRunEnvironment,
+): void {
+  telemetryRunEnvironment = { ...telemetryRunEnvironment, ...env };
+}
+
+/** Clear process-level run environment (tests). */
+export function clearTelemetryRunEnvironment(): void {
+  telemetryRunEnvironment = {};
+}
+
+/** Read the current process-level run environment (tests / diagnostics). */
+export function getTelemetryRunEnvironment(): TelemetryRunEnvironment {
+  return telemetryRunEnvironment;
+}
+
+/**
+ * Wire worker-image config into telemetry (call from RealBackend /
+ * RealFamilyBackend constructors). Best-effort: missing docker / dirs → null fields.
+ */
+export function configureTelemetryFromWorkerImage(opts: {
+  readonly imageName: string;
+  readonly codexFast?: boolean;
+  readonly soulsDir?: string;
+  readonly promptsDir?: string;
+}): void {
+  const imageTag =
+    opts.imageName.trim().length > 0 ? opts.imageName.trim() : null;
+  const imageDigest =
+    imageTag !== null ? resolveDockerImageDigest(imageTag) : null;
+  const soulsHash =
+    opts.soulsDir !== undefined ? hashDirectoryContents(opts.soulsDir) : null;
+  const promptHash =
+    opts.promptsDir !== undefined
+      ? hashDirectoryContents(opts.promptsDir)
+      : null;
+  const sandboxFingerprint =
+    imageTag !== null
+      ? computeSandboxFingerprint({
+          imageTag,
+          imageDigest,
+          soulsDir: opts.soulsDir,
+          promptsDir: opts.promptsDir,
+        })
+      : null;
+  const codexFast =
+    opts.codexFast !== undefined
+      ? opts.codexFast
+      : process.env.ORCHESTRATOR_CODEX_FAST === "1";
+  configureTelemetryRunEnvironment({
+    imageTag,
+    imageDigest,
+    sandboxFingerprint,
+    soulsHash,
+    promptHash,
+    codexFast,
+  });
+}
+
+/** Best-effort docker image Id for an image tag; null when docker/image absent. */
+export function resolveDockerImageDigest(imageTag: string): string | null {
+  if (imageTag.trim().length === 0) return null;
+  try {
+    const out = execFileSync(
+      "docker",
+      ["image", "inspect", "--format", "{{.Id}}", imageTag],
+      { encoding: "utf8", timeout: 5_000, stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
+    return out.length > 0 ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Stable SHA-256 over files under `dir` (sorted relative paths).
+ * Returns null when dir is missing or unreadable.
+ */
+export function hashDirectoryContents(dir: string): string | null {
+  if (dir.trim().length === 0 || !existsSync(dir)) return null;
+  try {
+    if (!statSync(dir).isDirectory()) return null;
+    const hash = createHash("sha256");
+    const files = listFilesRecursive(dir).sort();
+    if (files.length === 0) {
+      hash.update("empty-dir\n");
+    }
+    for (const rel of files) {
+      hash.update(`file:${rel}\0`);
+      try {
+        hash.update(readFileSync(join(dir, rel)));
+      } catch {
+        hash.update("unreadable");
+      }
+      hash.update("\n");
+    }
+    return hash.digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+/** Lightweight sandbox fingerprint: image + souls + prompts content (no auth). */
+export function computeSandboxFingerprint(input: {
+  readonly imageTag: string;
+  readonly imageDigest?: string | null;
+  readonly soulsDir?: string;
+  readonly promptsDir?: string;
+}): string {
+  const hash = createHash("sha256");
+  hash.update(`image:${input.imageTag}\n`);
+  hash.update(`image-id:${input.imageDigest ?? "unknown"}\n`);
+  if (input.soulsDir !== undefined) {
+    hash.update(`souls:${hashDirectoryContents(input.soulsDir) ?? "missing"}\n`);
+  } else {
+    hash.update("souls:unset\n");
+  }
+  if (input.promptsDir !== undefined) {
+    hash.update(
+      `prompts:${hashDirectoryContents(input.promptsDir) ?? "missing"}\n`,
+    );
+  } else {
+    hash.update("prompts:unset\n");
+  }
+  return hash.digest("hex");
+}
+
+function listFilesRecursive(root: string, base = ""): string[] {
+  const out: string[] = [];
+  let entries: string[];
+  try {
+    entries = readdirSync(join(root, base));
+  } catch {
+    return out;
+  }
+  for (const name of entries) {
+    const rel = base.length > 0 ? `${base}/${name}` : name;
+    const abs = join(root, rel);
+    try {
+      const st = statSync(abs);
+      if (st.isDirectory()) {
+        out.push(...listFilesRecursive(root, rel));
+      } else if (st.isFile()) {
+        out.push(rel);
+      }
+    } catch {
+      // skip unreadable entries
+    }
+  }
+  return out;
+}
 
 /** Sidecar filename under the ledger/state directory. */
 export const TELEMETRY_FILENAME = "telemetry.jsonl";
@@ -122,7 +302,22 @@ interface TelemetryRecordBase {
 export interface TelemetryEnvironmentRecord extends TelemetryRecordBase {
   readonly phase: "environment";
   readonly runId: string | null;
+  /**
+   * Worker image tag (imageName / IMAGE_TAG / default). Null only when no
+   * configured image and no default path applies.
+   */
   readonly imageTag: string | null;
+  /** Docker image Id/digest when inspect succeeds; else null. */
+  readonly imageDigest: string | null;
+  /**
+   * Lightweight sandbox fingerprint (image + souls + prompts content).
+   * Null when not computable from available config.
+   */
+  readonly sandboxFingerprint: string | null;
+  /** Content hash of live-mounted souls dir; null when dir unknown/missing. */
+  readonly soulsHash: string | null;
+  /** Content hash of versioned prompt files dir; null when dir unknown/missing. */
+  readonly promptHash: string | null;
   readonly routeName: string | null;
   /** Slot → model slug lineup from the resolved route. */
   readonly routeSlots: Readonly<Record<string, string>> | null;
@@ -615,6 +810,10 @@ export function buildCollectStamp(
 export interface BuildEnvironmentStampInput {
   readonly ctx: DispatchContext;
   readonly imageTag?: string | null;
+  readonly imageDigest?: string | null;
+  readonly sandboxFingerprint?: string | null;
+  readonly soulsHash?: string | null;
+  readonly promptHash?: string | null;
   readonly runId?: string | null;
   readonly now?: () => string;
 }
@@ -625,18 +824,54 @@ export function buildEnvironmentStamp(
 ): TelemetryEnvironmentRecord {
   const now = input.now?.() ?? new Date().toISOString();
   const route = input.ctx.modelRoute;
-  const imageTag =
+  const runEnv = telemetryRunEnvironment;
+  // Prefer explicit input → process run config (imageName) → env → default image.
+  const rawTag =
     input.imageTag !== undefined
       ? input.imageTag
-      : process.env.IMAGE_TAG?.trim() ||
-        process.env.ORCHESTRATOR_IMAGE_TAG?.trim() ||
-        null;
+      : runEnv.imageTag !== undefined
+        ? runEnv.imageTag
+        : process.env.IMAGE_TAG?.trim() ||
+          process.env.ORCHESTRATOR_IMAGE_TAG?.trim() ||
+          TELEMETRY_DEFAULT_IMAGE_TAG;
+  const imageTag =
+    rawTag !== null && rawTag !== undefined && rawTag.length > 0
+      ? rawTag
+      : null;
+  const imageDigest =
+    input.imageDigest !== undefined
+      ? input.imageDigest
+      : runEnv.imageDigest !== undefined
+        ? runEnv.imageDigest
+        : null;
+  const sandboxFingerprint =
+    input.sandboxFingerprint !== undefined
+      ? input.sandboxFingerprint
+      : runEnv.sandboxFingerprint !== undefined
+        ? runEnv.sandboxFingerprint
+        : null;
+  const soulsHash =
+    input.soulsHash !== undefined
+      ? input.soulsHash
+      : runEnv.soulsHash !== undefined
+        ? runEnv.soulsHash
+        : null;
+  const promptHash =
+    input.promptHash !== undefined
+      ? input.promptHash
+      : runEnv.promptHash !== undefined
+        ? runEnv.promptHash
+        : null;
   return {
     v: TELEMETRY_SCHEMA_VERSION,
     phase: "environment",
     stamped_at: now,
     runId: input.runId ?? runIdFromContext(input.ctx),
-    imageTag: imageTag && imageTag.length > 0 ? imageTag : null,
+    imageTag,
+    imageDigest,
+    sandboxFingerprint,
+    soulsHash,
+    promptHash,
     routeName: route?.routeName ?? null,
     routeSlots: route !== undefined ? { ...route.slots } : null,
     routeCmrReviewLegs:
@@ -670,15 +905,21 @@ function modelStampFor(spec: WorkerSpec): TelemetryModelStamp {
   } catch {
     // unknown slug — leave effort null
   }
+  // Prefer process run config (explicit codexFast option) over env alone.
   const fastEnv = process.env.ORCHESTRATOR_CODEX_FAST;
-  const fast =
-    family === "codex"
-      ? fastEnv === "1" || fastEnv === "true"
-        ? true
-        : fastEnv === "0" || fastEnv === "false"
-          ? false
-          : null
-      : null;
+  const configuredFast = telemetryRunEnvironment.codexFast;
+  let fast: boolean | null = null;
+  if (family === "codex") {
+    if (typeof configuredFast === "boolean") {
+      fast = configuredFast;
+    } else if (fastEnv === "1" || fastEnv === "true") {
+      fast = true;
+    } else if (fastEnv === "0" || fastEnv === "false") {
+      fast = false;
+    } else {
+      fast = null;
+    }
+  }
   return {
     slug: spec.model,
     family,
@@ -847,7 +1088,14 @@ export function tryAppendTelemetryRecord(
 export function ensureEnvironmentStamp(
   ledgerDir: string | undefined,
   ctx: DispatchContext,
-  opts?: { readonly imageTag?: string | null; readonly runId?: string | null },
+  opts?: {
+    readonly imageTag?: string | null;
+    readonly imageDigest?: string | null;
+    readonly sandboxFingerprint?: string | null;
+    readonly soulsHash?: string | null;
+    readonly promptHash?: string | null;
+    readonly runId?: string | null;
+  },
 ): boolean {
   if (ledgerDir === undefined || ledgerDir.length === 0) return false;
   try {
@@ -862,6 +1110,10 @@ export function ensureEnvironmentStamp(
       buildEnvironmentStamp({
         ctx,
         imageTag: opts?.imageTag,
+        imageDigest: opts?.imageDigest,
+        sandboxFingerprint: opts?.sandboxFingerprint,
+        soulsHash: opts?.soulsHash,
+        promptHash: opts?.promptHash,
         runId: opts?.runId,
       }),
     );

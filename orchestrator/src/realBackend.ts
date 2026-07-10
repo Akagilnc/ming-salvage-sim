@@ -205,6 +205,7 @@ import {
   isValidFixerResult,
   isValidVerifyResult,
 } from "./reviewLoopOutcome.js";
+import { configureTelemetryFromWorkerImage } from "./telemetry.js";
 import type {
   CleanupResult,
   DocReleaseResult,
@@ -2165,6 +2166,14 @@ export class RealBackend implements Backend {
     this.validateSoulsDir();
     this.workingRepo = this.buildOrReuseClone();
     this.assertIndependentClone();
+    // #786 — environment stamp reads imageName/codexFast/souls/prompts here,
+    // not only IMAGE_TAG / ORCHESTRATOR_CODEX_FAST env (often unset at launch).
+    configureTelemetryFromWorkerImage({
+      imageName: opts.imageName,
+      codexFast: opts.codexFast,
+      soulsDir: opts.soulsDir,
+      promptsDir: opts.promptsDir,
+    });
   }
 
   /**
