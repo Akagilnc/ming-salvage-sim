@@ -9485,6 +9485,18 @@ class GameDB:
         excluded_offices = list(dict.fromkeys(
             str(office).strip() for office in (excluded_offices or []) if str(office).strip()
         ))
+        # Institution-level secrecy is resolved at issuance.  The current
+        # office/type is only a lookup key; retaining the matched people makes
+        # the blacklist stable when someone is transferred or the order later
+        # becomes public.  Keep the original institution targets as provenance.
+        if excluded_offices and self.content is not None:
+            for character in self.content.characters.values():
+                if (
+                    character.office_type in excluded_offices
+                    or character.office in excluded_offices
+                ):
+                    excluded_names.append(character.name)
+            excluded_names = list(dict.fromkeys(excluded_names))
         tags_json = json.dumps(tags, ensure_ascii=False)
         deadline = max(0, min(int(deadline_months or 0), 36))
         due_turn = int(state.turn) + deadline if deadline else 0
