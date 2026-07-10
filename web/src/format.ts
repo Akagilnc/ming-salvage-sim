@@ -324,53 +324,106 @@ export function labelClass(key: string): string {
   if (at < 0) return key;
   return `${key.slice(0, at)}（${labelRegion(key.slice(at + 1))}）`;
 }
-const markdown = new MarkdownIt();
+const markdown = new MarkdownIt({ html: false, linkify: false, typographer: false });
 
-const inlineText = (tokens: Token[]): string => tokens.map((token) => {
-  switch (token.type) {
-    case "text":
-    case "code_inline":
-    case "html_inline":
-      return token.content;
-    case "softbreak":
-    case "hardbreak":
-      return "\n";
-    default:
-      return "";
+const rawCodeContents = (source: string): string[] => {
+  const contents: string[] = [];
+  for (let start = 0; start < source.length; start += 1) {
+    let precedingBackslashes = 0;
+    for (let index = start - 1; index >= 0 && source[index] === "\\"; index -= 1) precedingBackslashes += 1;
+    if (source[start] !== "`" || precedingBackslashes % 2 === 1) continue;
+    let delimiterEnd = start;
+    while (source[delimiterEnd] === "`") delimiterEnd += 1;
+    const delimiter = source.slice(start, delimiterEnd);
+    let end = delimiterEnd;
+    while (end < source.length) {
+      end = source.indexOf("`", end);
+      if (end === -1) break;
+      let closingDelimiterEnd = end;
+      while (source[closingDelimiterEnd] === "`") closingDelimiterEnd += 1;
+      if (closingDelimiterEnd - end === delimiter.length) break;
+      end = closingDelimiterEnd;
+    }
+    if (end === -1) {
+      start = delimiterEnd - 1;
+      continue;
+    }
+    contents.push(source.slice(delimiterEnd, end));
+    start = end + delimiter.length - 1;
   }
-}).join("");
-
-const sourceSeparator = (source: string, previousEndLine: number, nextStartLine: number): string => {
-  const lineStarts = [0];
-  for (let index = 0; index < source.length; index += 1) {
-    if (source[index] === "\n") lineStarts.push(index + 1);
-  }
-  const previousLineEnd = lineStarts[previousEndLine] === undefined
-    ? source.length
-    : lineStarts[previousEndLine] - 1;
-  return source.slice(previousLineEnd, lineStarts[nextStartLine]);
+  return contents;
 };
 
-const blockText = (token: Token): string => {
-  if (token.type === "inline") return inlineText(token.children || []);
-  if (token.type === "fence" || token.type === "code_block" || token.type === "html_block") return token.content;
-  return "";
+const inlineText = (tokens: Token[], codeContents: string[]): string => {
+  let codeIndex = 0;
+  const render = (token: Token): string => {
+    switch (token.type) {
+      case "text":
+      case "html_inline":
+        return token.content;
+      case "code_inline":
+        return codeContents[codeIndex++] ?? token.content;
+      case "image":
+        return (token.children || []).map(render).join("");
+      case "softbreak":
+      case "hardbreak":
+        return "\n";
+      default:
+        return "";
+    }
+  };
+  return tokens.map(render).join("");
 };
 
+const appendBlockSeparator = (result: string, previousEndLine: number | undefined, startLine: number | undefined): string => {
+  if (previousEndLine === undefined || startLine === undefined) return result;
+  return result + "\n".repeat(Math.max(1, startLine - previousEndLine + 1));
+};
+
+// Streaming may briefly display unfinished markdown; that transient state is acceptable as
+// long as the completed message is clean (ADR 0045's display-text contract).
 export const stripOrganicMarkdown = (text: string): string => {
-  const blocks = markdown.parse(text, {}).filter((token) => (
-    token.type === "inline" || token.type === "fence" || token.type === "code_block" || token.type === "html_block"
-  ));
+  const tokens = markdown.parse(text, {});
   let result = "";
   let previousEndLine: number | undefined;
+  let tableEndLine: number | undefined;
 
-  for (const block of blocks) {
-    const [startLine, endLine] = block.map || [];
-    if (previousEndLine !== undefined && startLine !== undefined) {
-      result += sourceSeparator(text, previousEndLine, startLine);
+  for (const token of tokens) {
+    const [startLine, endLine] = token.map || [];
+    switch (token.type) {
+      case "inline":
+        result = appendBlockSeparator(result, previousEndLine, startLine);
+        result += inlineText(token.children || [], rawCodeContents(token.content));
+        if (endLine !== undefined) previousEndLine = endLine;
+        break;
+      case "fence":
+      case "code_block":
+      case "html_block":
+        result = appendBlockSeparator(result, previousEndLine, startLine) + token.content;
+        if (endLine !== undefined) previousEndLine = endLine;
+        break;
+      case "hr":
+        if (endLine !== undefined) previousEndLine = endLine;
+        break;
+      case "table_open":
+        result = appendBlockSeparator(result, previousEndLine, startLine);
+        tableEndLine = endLine;
+        break;
+      case "td_close":
+      case "th_close":
+        result += "\t";
+        break;
+      case "tr_close":
+        result = result.replace(/\t$/, "") + "\n";
+        break;
+      case "table_close":
+        result = result.replace(/\n$/, "");
+        previousEndLine = tableEndLine;
+        tableEndLine = undefined;
+        break;
+      default:
+        break;
     }
-    result += blockText(block);
-    previousEndLine = endLine;
   }
 
   return result;
