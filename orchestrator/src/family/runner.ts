@@ -1846,6 +1846,7 @@ export async function runFamily(
     const reviewLoop = await runFamilyOnlineReviewLoop({
       familyBackend,
       familyBase,
+      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
       ship: {
         kind: "ship",
         branch: familyBase,
