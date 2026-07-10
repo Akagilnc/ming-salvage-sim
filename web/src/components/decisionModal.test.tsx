@@ -90,15 +90,12 @@ describe("DecisionModal", () => {
     cleanup();
   });
 
-  it("renders only settlement PendingDecisions from a mixed App event stream", () => {
+  it("rejects the whole batch when any item is not a valid PendingDecision (reject-whole-batch guard)", () => {
     const mixedEventStream = [
       decisions[0],
       { id: 17, text: "着户部核拨军饷", status: "approved", source: "proactive" },
     ];
-    const cleanup = render(<DecisionModal decisions={pendingDecisionsFrom(mixedEventStream)} onResolve={vi.fn()} />);
-    expect(document.querySelector(".decision-kicker")?.textContent).toContain("第 1 / 1 疏");
-    expect(document.querySelector(".decision-document h3")?.textContent).toBe("关宁军饷");
-    expect(document.body.textContent).not.toContain("着户部核拨军饷");
-    cleanup();
+    const result = pendingDecisionsFrom(mixedEventStream);
+    expect(result).toEqual([]);
   });
 });
