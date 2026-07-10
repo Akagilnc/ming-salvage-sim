@@ -1241,6 +1241,8 @@ export interface CliMonitorSpawnSpec {
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly logBasename?: string;
+  /** Injectable process identity reader for restricted/test environments. */
+  readonly readInstanceId?: (pid: number) => string | undefined;
 }
 
 /**

@@ -688,6 +688,9 @@ export async function dispatchWorkerWithMonitor(
       ...(cliSpec.logBasename !== undefined
         ? { logBasename: cliSpec.logBasename }
         : {}),
+      ...(cliSpec.readInstanceId !== undefined
+        ? { readInstanceId: cliSpec.readInstanceId }
+        : {}),
     };
     const { handle, child } = await dispatchMonitoredCliWorker(input);
     // SPAWN-TIME persist seam: handle is available before waitForChildExit so a

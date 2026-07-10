@@ -52,6 +52,8 @@ export interface MonitoredCliDispatchResult {
 export interface KillWorkerTreeResult {
   readonly killedPids: readonly number[];
   readonly residualPids: readonly number[];
+  /** PIDs left alive without sufficient per-member identity evidence. */
+  readonly unverifiedPids: readonly number[];
   /**
    * True when the handle PID is alive but its process start identity no longer
    * matches — the PID was reused by an unrelated process and kill was refused.
@@ -376,7 +378,7 @@ export function pidSafeToSignal(
 
   // Parentage re-verify: the live parent must still be in the trusted tree
   // (or be the handle root that still matches). Re-parent-to-init fails this
-  // check — those orphans are targeted via process-group kill instead.
+  // check — those orphans are reported as an unverified boundary instead.
   // A caller that injects only the identity seam (the restricted-sandbox test
   // case) still gets the required per-pid identity guard. Production defaults
   // include parentage verification for re-parented children.
@@ -399,12 +401,9 @@ export function pidSafeToSignal(
  *
  * Re-parent to init / PID 1: children that re-parent to init (or another
  * unrelated process) after their parent dies cannot be discovered via PPID walk
- * from the original root. Mitigations (#684 R2 / REVIEW-ISSUE acceptance):
- *   (a) spawn with a dedicated process group (`detached:true`) and signal the
- *       group (`kill(-pgid)`) so group members are hit even after re-parent;
- *   (b) signal bottom-up (children before parents) so descendants receive
- *       SIGTERM/SIGKILL before re-parenting when still under the root.
- * Orphans that escape both windows are outside the PPID residual check by design.
+ * from the original root. They remain a documented `unverifiedPids` boundary;
+ * group membership is not identity evidence, so no process-group signal is
+ * used to reach them.
  *
  * PID-reuse guard: if the handle PID is alive but its instance identity no
  * longer matches, refuse to signal any process and report `skippedDueToPidReuse`.
@@ -421,6 +420,7 @@ export async function killWorkerTree(
     return {
       killedPids: [],
       residualPids: [],
+      unverifiedPids: [],
       skippedDueToPidReuse: true,
     };
   }
@@ -449,23 +449,6 @@ export async function killWorkerTree(
         // Process may have already exited between the alive check and kill.
       }
     }
-    // Process-group kill: spawn used detached:true so handle.pid is the pgid.
-    // Negative pid signals the whole group, covering re-parented group members
-    // that a PPID walk from the root can no longer see (#684 R2 / P2).
-    if (instanceMatchesHandle(handle, deps) || !d.isPidAlive(handle.pid)) {
-      try {
-        // Only attempt group kill when the root instance still matches (or is
-        // already dead — group members may still be alive under a new parent).
-        if (
-          !d.isPidAlive(handle.pid) ||
-          instanceMatchesHandle(handle, deps)
-        ) {
-          d.killPid(-handle.pid, signal);
-        }
-      } catch {
-        // Group may already be gone; non-fatal.
-      }
-    }
   };
 
   trySignal("SIGTERM");
@@ -473,19 +456,33 @@ export async function killWorkerTree(
   trySignal("SIGKILL");
 
   const residual = new Set<number>();
+  const unverified = new Set<number>();
   for (const pid of tree) {
-    if (d.isPidAlive(pid)) residual.add(pid);
+    if (!d.isPidAlive(pid)) continue;
+    if (pidSafeToSignal(pid, handle, trustedTree, instanceAtCollect, deps)) {
+      residual.add(pid);
+    } else {
+      // No evidence, no kill: report the boundary instead of widening the
+      // signal target beyond individually verified members.
+      unverified.add(pid);
+    }
   }
   // Re-collect while the original root instance is still alive — catches children
   // that appeared during the kill window (dynamic spawn / late re-parent under root).
   if (instanceMatchesHandle(handle, deps)) {
     for (const pid of collectPidTree(handle.pid, deps)) {
-      if (d.isPidAlive(pid)) residual.add(pid);
+      if (!d.isPidAlive(pid)) continue;
+      if (pidSafeToSignal(pid, handle, trustedTree, instanceAtCollect, deps)) {
+        residual.add(pid);
+      } else {
+        unverified.add(pid);
+      }
     }
   }
 
   return {
     killedPids: [...killed],
     residualPids: [...residual],
+    unverifiedPids: [...unverified],
   };
 }
