@@ -3,7 +3,7 @@ import { Check, Crown, Edit3, Landmark, Loader2, Lock, MessageSquare, RotateCcw,
 import { api } from "../api";
 import { ExtractionView } from "./extraction";
 import { FullscreenModal, MinisterPortrait, cacheBust } from "./hud";
-import { formatClosedEffect } from "../format";
+import { formatClosedEffect, stripOrganicMarkdown } from "../format";
 import type { ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, PendingActionFailure, SecretOrder, Suggestion } from "../types";
 
 export function ReportModal({
@@ -17,7 +17,7 @@ export function ReportModal({
 }) {
   const [page, setPage] = React.useState<"narrative" | "account">("narrative");
   const accountText = accountReport.trim() || "本月暂无实账明细。";
-  const activeText = page === "narrative" ? report : accountText;
+  const activeText = stripOrganicMarkdown(page === "narrative" ? report : accountText);
   return (
     <FullscreenModal title="月末邸报" subtitle={page === "narrative" ? "第一页：本月故事" : "第二页：DB 实账"} bgClass="modal-bg-state" onClose={onClose}>
       <article className="state-document modal-scroll">
@@ -689,7 +689,7 @@ export function ChatModal({
           {displayMessages.map((message, index) => (
             <div className={`chat-message ${message.role} ${message.pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}>
               <span>{message.role === "user" ? "朕" : minister.name}</span>
-              <p>{message.content}</p>
+              <p>{message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content}</p>
             </div>
           ))}
           {busy && !streamingMinisterMessage && (
