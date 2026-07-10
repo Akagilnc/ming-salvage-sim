@@ -92,10 +92,18 @@ describe("#767 Coder-Rec roster — table + resolve order", () => {
   it("ships a versioned roster covering the ratified coder pool", () => {
     expect(CODER_ROSTER_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}/);
     expect(CODER_ROSTER.map((e) => e.id)).toEqual(
-      expect.arrayContaining(["grok-4.5", "terra@med", "luna@med", "sonnet-5"]),
+      expect.arrayContaining([
+        "grok-4.5",
+        "terra@med",
+        "luna@med",
+        "sonnet-5",
+        "haiku-4.5",
+      ]),
     );
     expect(lookupCoderRosterEntry("terra@med+fast")?.id).toBe("terra@med");
     expect(lookupCoderRosterEntry("Sonnet 5")?.slug).toBe("sonnet");
+    expect(lookupCoderRosterEntry("Haiku 4.5")?.slug).toBe("haiku");
+    expect(lookupCoderRosterEntry("haiku")?.id).toBe("haiku-4.5");
   });
 
   it("keeps only roster-valid entries from a Coder-Rec line", () => {
@@ -225,6 +233,133 @@ describe("#767 Coder-Rec roster — pool separation", () => {
     // so pool separation skips it after the explicit Grok collision.
     expect(applied.entry?.id).toBe("luna@med");
     expect(applied.route.slots.coder).toBe("gpt-5.6-luna");
+  });
+
+  /**
+   * #789 — Claude coder backups (sonnet / haiku) use different runnable slugs
+   * from the cmrReview Claude leg (opus). Pool separation is slug-equality,
+   * not family-equality: same Claude pool is fine as long as slugs differ.
+   */
+  it("#789 Claude coder slugs do not collide with the cmrReview opus leg", () => {
+    const sonnet = lookupCoderRosterEntry("sonnet-5");
+    const haiku = lookupCoderRosterEntry("haiku-4.5");
+    expect(sonnet).toBeDefined();
+    expect(haiku).toBeDefined();
+    expect(sonnet!.slug).toBe("sonnet");
+    expect(haiku!.slug).toBe("haiku");
+    expect(sonnet!.slug).not.toBe("opus");
+    expect(haiku!.slug).not.toBe("opus");
+
+    const normal = resolveRouteModels("normal", {});
+    const cmrClaudeSlugs = normal.legCollections.cmrReview
+      .filter((leg) => leg.family === "claude")
+      .map((leg) => leg.slug);
+    expect(cmrClaudeSlugs).toEqual(["opus"]);
+
+    const reviewerSlugs = reviewerSlugsFromRoute(normal);
+    expect(reviewerSlugs).toContain("opus");
+    expect(poolSeparationViolation(sonnet!, reviewerSlugs)).toBeUndefined();
+    expect(poolSeparationViolation(haiku!, reviewerSlugs)).toBeUndefined();
+  });
+
+  it("#789 selectCoderRecEntry keeps sonnet/haiku when only opus is on CMR", () => {
+    const order = resolveCoderRecOrder(
+      "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
+    );
+    const normal = resolveRouteModels("normal", {});
+    const reviewerSlugs = reviewerSlugsFromRoute(normal);
+
+    // First entry free; after threshold advance to sonnet (not skipped for opus).
+    expect(selectCoderRecEntry(order, 0, { reviewerSlugs }).id).toBe("grok-4.5");
+    expect(
+      selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS, {
+        reviewerSlugs,
+      }).id,
+    ).toBe("sonnet-5");
+    expect(
+      selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS * 2, {
+        reviewerSlugs,
+      }).id,
+    ).toBe("haiku-4.5");
+  });
+});
+
+describe("#789 Coder-Rec — Claude backup tokens + fallback chain", () => {
+  it("parses and resolves Coder-Rec lines that include sonnet-5 / haiku-4.5", () => {
+    const body =
+      "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5\n";
+    expect(parseCoderRec(body)).toEqual([
+      "grok-4.5",
+      "sonnet-5",
+      "haiku-4.5",
+    ]);
+    expect(resolveCoderRecOrder(body).map((e) => e.id)).toEqual([
+      "grok-4.5",
+      "sonnet-5",
+      "haiku-4.5",
+    ]);
+  });
+
+  it("accepts haiku aliases and maps them to the haiku-4.5 roster entry", () => {
+    expect(lookupCoderRosterEntry("haiku-4.5")?.id).toBe("haiku-4.5");
+    expect(lookupCoderRosterEntry("haiku")?.id).toBe("haiku-4.5");
+    expect(lookupCoderRosterEntry("Haiku 4.5")?.slug).toBe("haiku");
+    const order = resolveCoderRecOrder(
+      "Coder-Rec: grok-4.5 → Haiku 4.5 → sonnet",
+    );
+    expect(order.map((e) => e.id)).toEqual([
+      "grok-4.5",
+      "haiku-4.5",
+      "sonnet-5",
+    ]);
+  });
+
+  it("advances the Claude backup chain after non-converging rounds", () => {
+    const order = resolveCoderRecOrder(
+      "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
+    );
+    expect(selectCoderRecEntry(order, 0).id).toBe("grok-4.5");
+    expect(selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS).id).toBe(
+      "sonnet-5",
+    );
+    expect(
+      selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS * 2).id,
+    ).toBe("haiku-4.5");
+    expect(
+      selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS * 99).id,
+    ).toBe("haiku-4.5");
+  });
+
+  it("applyCoderRecToRoute wires Claude backup slugs onto coder + coderFix", () => {
+    const base = resolveRouteModels("normal", {});
+    const first = applyCoderRecToRoute(
+      base,
+      "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
+      0,
+      {},
+    );
+    expect(first.entry?.id).toBe("grok-4.5");
+    expect(first.route.slots.coder).toBe("grok-4.5");
+
+    const advanced = applyCoderRecToRoute(
+      base,
+      "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
+      CODER_REC_FALLBACK_AFTER_ROUNDS,
+      {},
+    );
+    expect(advanced.entry?.id).toBe("sonnet-5");
+    expect(advanced.route.slots.coder).toBe("sonnet");
+    expect(advanced.route.slots.coderFix).toBe("sonnet");
+
+    const last = applyCoderRecToRoute(
+      base,
+      "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
+      CODER_REC_FALLBACK_AFTER_ROUNDS * 2,
+      {},
+    );
+    expect(last.entry?.id).toBe("haiku-4.5");
+    expect(last.route.slots.coder).toBe("haiku");
+    expect(last.route.slots.coderFix).toBe("haiku");
   });
 });
 

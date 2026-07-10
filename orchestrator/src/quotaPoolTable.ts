@@ -2,9 +2,13 @@
  * #686 / ADR 0124 — route pool table: pool = quota/billing boundary,
  * orthogonal to the #767 Coder-Rec model roster.
  *
- * Pools (grok-build / cursor / zai / codex-5h) track额度 + resetAt +
+ * Pools (grok-build / cursor / zai / codex-5h / claude) track额度 + resetAt +
  * configurable park threshold T. Models are products that may live in
  * multiple pools (实证: grok-4.5 on grok-build then Cursor).
+ *
+ * #789 — `claude` is the Anthropic / Claude Code billing boundary that serves
+ * roster backups sonnet-5 / haiku-4.5 (same family as the cmrReview opus leg,
+ * different runnable slugs → pool-separation stays clear).
  *
  * ADR 0125 three-tier park-vs-relay also lives here as a pure decision
  * over pool state + "has live baton" (baton selection is {@link
@@ -18,7 +22,12 @@ import {
 } from "./coderRoster.js";
 
 /** Quota / billing boundary ids (ADR 0124). */
-export type BillingPoolId = "grok-build" | "cursor" | "zai" | "codex-5h";
+export type BillingPoolId =
+  | "grok-build"
+  | "cursor"
+  | "zai"
+  | "codex-5h"
+  | "claude";
 
 /** Default park-vs-relay threshold T = 30 minutes (ADR 0125). */
 export const DEFAULT_PARK_THRESHOLD_MS = 30 * 60 * 1000;
@@ -92,6 +101,10 @@ export function billingPoolFromQuotaPool(pool: string): BillingPoolId {
     case "codex":
     case "codex-5h":
       return "codex-5h";
+    case "claude":
+    case "anthropic":
+      // Claude Code OAuth / Anthropic subscription — same boundary as cmr Claude leg.
+      return "claude";
     case "opencode-go":
       // Go-pool GLM/kimi share the zai-adjacent free/lite billing boundary for
       // relay lookup until a dedicated billing row exists.
@@ -109,6 +122,8 @@ export const DEFAULT_POOL_MODELS: Readonly<
   cursor: ["grok-4.5"],
   zai: ["grok-4.5"],
   "codex-5h": ["terra@med", "luna@med", "gpt-5.6-terra", "gpt-5.6-luna"],
+  // #789 — roster ids + runnable slugs (mirrors codex-5h dual keys).
+  claude: ["sonnet-5", "haiku-4.5", "sonnet", "haiku"],
 };
 
 /**
@@ -124,7 +139,13 @@ export function buildDefaultBillingPools(input: {
   readonly parkThresholdMs?: number;
 }): BillingPoolEntry[] {
   const t = input.parkThresholdMs ?? DEFAULT_PARK_THRESHOLD_MS;
-  const ids: BillingPoolId[] = ["grok-build", "cursor", "zai", "codex-5h"];
+  const ids: BillingPoolId[] = [
+    "grok-build",
+    "cursor",
+    "zai",
+    "codex-5h",
+    "claude",
+  ];
   return ids.map((id) => {
     if (id === input.limitedPool) {
       return {
