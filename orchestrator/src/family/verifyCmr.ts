@@ -1769,15 +1769,23 @@ export async function runFamilyOnlineReviewLoop(input: {
         landing,
       );
       if (result.kind === "escalated") {
+        const escalationSummary = `family fixer worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
         throw new OnlineReviewLoopTerminal({
           ok: false,
           terminalState: "decision_gate_raised",
           round,
-          stopSummary: decisionGateParkStopSummary({
-            summary: `family fixer worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`,
-            repairHint:
-              "answer the decision gate / unstick the fixer worker, then re-feed the family online review loop",
-          }),
+          stopSummary:
+            result.escalation.synthesizedFailure === true
+              ? infraFailureStopSummary({
+                  summary: escalationSummary,
+                  repairHint:
+                    "repair the family fixer worker startup/authentication failure, then re-feed the family online review loop",
+                })
+              : decisionGateParkStopSummary({
+                  summary: escalationSummary,
+                  repairHint:
+                    "answer the decision gate / unstick the fixer worker, then re-feed the family online review loop",
+                }),
         });
       }
       if (result.kind !== "completed" || !isValidFixerResult(result.output)) {
