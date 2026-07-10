@@ -51,6 +51,8 @@ import {
   type RelayHandoffLedgerEvent,
 } from "../src/relayDispatch.js";
 import { decideIdleAfterProbe, QuotaWaitForResetError } from "../src/quotaProbe.js";
+import { buildCliMonitorSpawnSpec } from "../src/cliMonitorHooks.js";
+import { legacyDispatchWorker } from "../src/dispatchWorker.js";
 import { runOrchestrator } from "../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
@@ -947,6 +949,61 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     );
   });
 
+  it("S9 hang with a live pool → relay on the same scene (not S8)", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "relay-686-s9-hang-"));
+    const worktree: WorktreeHandle = {
+      branch: "feat/686-relay-s9-hang",
+      base: "main",
+      path: tmp,
+    };
+    class S9HangBackend extends S9RelayBackend {
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "verify") {
+          this.verifyDispatches += 1;
+          this.verifyModels.push(spec.model);
+          if (this.verifyDispatches === 1) {
+            throw new HangWithLivePoolError({
+              workerPid: 99,
+              poolId: "grok-build",
+              step: "S9",
+            });
+          }
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: true,
+              findings: [],
+              isRecheck: false,
+            } as StepOutput,
+          };
+        }
+        return super.dispatchWorker(spec);
+      }
+    }
+    const backend = new S9HangBackend(worktree, priorThroughShip(worktree));
+    const prevCoder = process.env.ORCHESTRATOR_CODER_MODEL;
+    process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
+    try {
+      const result = await runOrchestrator({
+        issueNumber: 686,
+        backend,
+        relayPools: livePools("grok-build", new Date(NOW.getTime() + 45 * 60 * 1000)),
+        now: () => NOW,
+      });
+      expect(result.status).not.toBe("error");
+      expect(result.stepLedger).toContainEqual(expect.objectContaining({
+        event: "relay_baton_handoff",
+        trigger: "hang_with_live_pool",
+        step: "S9",
+      }));
+      expect(backend.verifyDispatches).toBeGreaterThanOrEqual(2);
+    } finally {
+      if (prevCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
+      else process.env.ORCHESTRATOR_CODER_MODEL = prevCoder;
+    }
+  });
+
   it("S9 429 with no live baton → parks as before (quota_wait_for_reset)", async () => {
     tmp = mkdtempSync(join(tmpdir(), "relay-686-park-"));
     const worktree: WorktreeHandle = {
@@ -1323,6 +1380,72 @@ describe("#686 R2 production seams", () => {
     );
     // Default registry alone is cursor — pool override is what makes 换马甲 real.
     expect(resolveModelSlugForPool("grok-4.5").provider).toBe("cursor");
+  });
+
+  it("P1: monitor attribution follows the active billing pool after a relay", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "relay-686-monitor-pool-"));
+    try {
+      const spawn = buildCliMonitorSpawnSpec({
+        backendKind: "real",
+        backendOpts: {},
+        spec: {
+          id: "S2",
+          kind: "coder",
+          session: "fresh",
+          contextRetention: "retain",
+          promptFile: "coder.md",
+          completionSignal: "STEP_COMPLETE",
+          maxIter: 1,
+          model: "grok-4.5",
+          soul: "coder",
+          toolchain: [],
+        },
+        ctx: { stateDir, billingPool: "cursor" },
+        runnerPath: "/tmp/runner.js",
+      });
+      expect(spawn?.poolId).toBe("cursor");
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("P2: legacy dispatch forwards relayFocusPath as a run option", async () => {
+    let received: { readonly relayFocusPath?: string } | undefined;
+    const worktree: WorktreeHandle = {
+      branch: "feat/686-focus-forward",
+      base: "main",
+      path: mkdtempSync(join(tmpdir(), "relay-686-focus-forward-")),
+    };
+    try {
+      const backend = {
+        async runStep(
+          _spec: unknown,
+          _worktree: unknown,
+          options: { readonly relayFocusPath?: string },
+        ): Promise<StepOutput> {
+          received = options;
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        },
+      } as unknown as Backend;
+      await legacyDispatchWorker(backend, {
+        id: "S2",
+        kind: "coder",
+        session: "fresh",
+        contextRetention: "retain",
+        promptFile: "coder.md",
+        completionSignal: "STEP_COMPLETE",
+        maxIter: 1,
+        model: "grok-4.5",
+        soul: "coder",
+        toolchain: [],
+      }, {
+        worktree,
+        relayFocusPath: join(worktree.path, RELAY_FOCUS_FILENAME),
+      });
+      expect(received?.relayFocusPath).toBe(join(worktree.path, RELAY_FOCUS_FILENAME));
+    } finally {
+      rmSync(worktree.path, { recursive: true, force: true });
+    }
   });
 
   it("P2: buildDefaultBillingPools does not fabricate live alternate pools", () => {

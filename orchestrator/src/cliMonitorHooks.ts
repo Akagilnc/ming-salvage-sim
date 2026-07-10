@@ -139,7 +139,10 @@ export function buildCliMonitorSpawnSpec(input: {
     command: process.execPath,
     args: [runnerPath, jobPath],
     logDir,
-    poolId: poolIdForWorker(input.spec),
+    // A relay can retain the same model while switching its billing/provider
+    // pool. Monitoring must attribute the child to that active pool, not infer
+    // it again from the model name.
+    poolId: input.ctx.billingPool ?? poolIdForWorker(input.spec),
     completionSignal: input.spec.completionSignal,
     stepId: input.spec.id,
     ...(input.ctx.worktree?.path !== undefined
