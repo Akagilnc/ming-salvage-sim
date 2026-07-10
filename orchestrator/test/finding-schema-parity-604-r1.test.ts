@@ -78,7 +78,7 @@ function runGuardOnFindings(findings: unknown[]): ReturnType<typeof spawnSync> {
       JSON.stringify({
         converged: false,
         reason: "blocking findings remain",
-        successfulLegs: ["gpt-5.5"],
+        successfulLegs: ["gpt-5.6-sol"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         findings,

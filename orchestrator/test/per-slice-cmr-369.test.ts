@@ -3125,7 +3125,7 @@ describe("#369 legacy S5 landing file", () => {
       promptFile: "coder_fix.md",
       completionSignal: "CODER_STEP_COMPLETE",
       maxIter: 5,
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       soul: "coder",
       toolchain: [],
     };
@@ -3219,7 +3219,7 @@ describe("#369 legacy S5 landing file", () => {
       promptFile: "coder_fix.md",
       completionSignal: "CODER_STEP_COMPLETE",
       maxIter: 5,
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       soul: "coder",
       toolchain: [],
     };
@@ -3307,7 +3307,7 @@ describe("#369 legacy S5 landing file", () => {
       promptFile: "reviewer_review.md",
       completionSignal: "REVIEWER_STEP_COMPLETE",
       maxIter: 1,
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       soul: "READ-ONLY",
       toolchain: [],
     };

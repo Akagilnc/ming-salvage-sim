@@ -32,14 +32,14 @@ shape in the legacy tag/signal output.
 Converged:
 
 ```text
-<cmr>{"converged": true, "successfulLegs": ["opus", "gpt-5.5"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
+<cmr>{"converged": true, "successfulLegs": ["opus", "gpt-5.6-sol"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
 CMR_STEP_COMPLETE
 ```
 
 Not converged:
 
 ```text
-<cmr>{"converged": false, "reason": "<short>", "successfulLegs": ["opus", "gpt-5.5"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "findings": [{"severity": "medium", "category": "correctness", "claim_quote": "<stable claim>", "location": "<file-or-scope>", "suggested_fix": "<next step>", "action": "fix_now"}], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
+<cmr>{"converged": false, "reason": "<short>", "successfulLegs": ["opus", "gpt-5.6-sol"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "findings": [{"severity": "medium", "category": "correctness", "claim_quote": "<stable claim>", "location": "<file-or-scope>", "suggested_fix": "<next step>", "action": "fix_now"}], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
 CMR_STEP_COMPLETE
 ```
 
@@ -55,7 +55,7 @@ Rules:
 - The JSON must match one of the shapes above exactly.
 - On any converged verdict, `successfulLegs` is REQUIRED and must list the CMR
   leg slugs that actually produced usable reviews in this pass. Use `opus` for
-  the Claude/Opus reviewer leg, `gpt-5.5` for the codex leg, and `agy` for the
+  the Claude/Opus reviewer leg, `gpt-5.6-sol` for the codex leg, and `agy` for the
   Gemini/agy leg.
 - If a declared leg was unavailable at runtime, omit it from `successfulLegs` and
   include it in `skippedLegs` with a short visible flag reason. Omit

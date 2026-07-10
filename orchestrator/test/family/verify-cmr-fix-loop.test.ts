@@ -121,7 +121,7 @@ class SchedulerFamilyBackend implements FamilyBackend {
           output: {
             kind: "cmr",
             converged: true,
-            successfulLegs: ["opus", "gpt-5.5", "agy"],
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             ...CMR_EVIDENCE,
           },
         }
@@ -270,7 +270,7 @@ class ReviewFixRereviewBackend implements FamilyBackend {
             kind: "cmr",
             converged: false,
             reason: "blocking family CMR finding requires coder-fix",
-            successfulLegs: ["opus", "gpt-5.5", "agy"],
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             claimedFixedFindingIdentityKeys: [],
             priorFindingDispositions: [],
             ...CMR_EVIDENCE,
@@ -283,7 +283,7 @@ class ReviewFixRereviewBackend implements FamilyBackend {
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys:
             ctx.cmrPass === "completeness" ? [BLOCKING_FAMILY_CMR_KEY] : [],
           priorFindingDispositions:
@@ -400,7 +400,7 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
             converged: false,
             reason:
               "reviewer content-labels the blocker as owning-issue-still-red",
-            successfulLegs: ["opus", "gpt-5.5", "agy"],
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             claimedFixedFindingIdentityKeys: [],
             priorFindingDispositions: [],
             ...CMR_EVIDENCE,
@@ -413,7 +413,7 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys:
             ctx.cmrPass === "completeness" ? [this.blockingKey] : [],
           priorFindingDispositions:
@@ -525,7 +525,7 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
             kind: "cmr",
             converged: false,
             reason: "correctness pass found a fixable family CMR finding",
-            successfulLegs: ["opus", "gpt-5.5", "agy"],
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             claimedFixedFindingIdentityKeys: [],
             priorFindingDispositions: [],
             ...CMR_EVIDENCE,
@@ -538,7 +538,7 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys:
             ctx.cmrPass === "correctness" ? [BLOCKING_FAMILY_CMR_KEY] : [],
           priorFindingDispositions:
@@ -642,7 +642,7 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
               kind: "cmr",
               converged: false,
               reason: "first blocking family CMR finding requires coder-fix",
-              successfulLegs: ["opus", "gpt-5.5", "agy"],
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               claimedFixedFindingIdentityKeys: [],
               priorFindingDispositions: [],
               ...CMR_EVIDENCE,
@@ -658,7 +658,7 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
               converged: false,
               reason:
                 "fresh full-diff re-review found a new same-module blocker",
-              successfulLegs: ["opus", "gpt-5.5", "agy"],
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               claimedFixedFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
               priorFindingDispositions: [
                 {
@@ -677,7 +677,7 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
           output: {
             kind: "cmr",
             converged: true,
-            successfulLegs: ["opus", "gpt-5.5", "agy"],
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             claimedFixedFindingIdentityKeys: [
               BLOCKING_FAMILY_CMR_KEY,
               SECOND_BLOCKING_FAMILY_CMR_KEY,
@@ -703,7 +703,7 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
       };
@@ -807,7 +807,7 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
               kind: "cmr",
               converged: false,
               reason: `fresh full-diff re-review found blocker ${reviewRound + 1}`,
-              successfulLegs: ["opus", "gpt-5.5", "agy"],
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               claimedFixedFindingIdentityKeys: closedPriorKeys,
               priorFindingDispositions: closedPriorKeys.map((identityKey) => ({
                 identityKey,
@@ -825,7 +825,7 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           // #597: the converged response is pass-aware — completeness closes its
           // OWN accumulated keys; correctness starts with an empty protected prior
           // set and must claim NO keys fixed (a correctness reviewer that claimed
@@ -961,7 +961,7 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
               kind: "cmr",
               converged: false,
               reason: `dogfood #272 fresh re-review still has blocker round ${reviewRound + 1}`,
-              successfulLegs: ["opus", "gpt-5.5", "agy"],
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               claimedFixedFindingIdentityKeys: closedPriorKeys,
               priorFindingDispositions: closedPriorKeys.map((identityKey) => ({
                 identityKey,
@@ -979,7 +979,7 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys:
             ctx.cmrPass === "completeness" ? DOGFOOD_272_KEYS : [],
           priorFindingDispositions:
@@ -1110,7 +1110,7 @@ class EscalateOnNonConvergenceBackend implements FamilyBackend {
               kind: "cmr",
               converged: false,
               reason: `non-converging blocker round ${reviewRound + 1}`,
-              successfulLegs: ["opus", "gpt-5.5", "agy"],
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               claimedFixedFindingIdentityKeys: closedPriorKeys,
               priorFindingDispositions: closedPriorKeys.map((identityKey) => ({
                 identityKey,
@@ -1140,7 +1140,7 @@ class EscalateOnNonConvergenceBackend implements FamilyBackend {
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
       };
@@ -1453,7 +1453,7 @@ class ReviewerChecksOutOtherHeadBackend implements FamilyBackend {
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
       };
@@ -1549,7 +1549,7 @@ class MalformedReviewerWrongHeadBeforeRewriteBackend extends ReviewFixRereviewBa
       output: {
         kind: "cmr",
         converged: true,
-        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         ...CMR_EVIDENCE,
       },
     };
@@ -2228,7 +2228,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
       }),
@@ -2280,7 +2280,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
           kind: "cmr",
           converged: false,
           reason: "cross-slice contract drift left unresolved",
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
       }),
@@ -2308,7 +2308,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|fake closure"],
           ...CMR_EVIDENCE,
         },
@@ -2343,7 +2343,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: ["correctness|stale.ts:1|not supplied by runner"],
           priorFindingDispositions: [
             {
@@ -2379,7 +2379,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: ["correctness|stale.ts:1|not supplied by runner"],
           priorFindingDispositions: [
             {
@@ -2416,7 +2416,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [
             {
@@ -2452,7 +2452,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|real closure"],
           priorFindingDispositions: [
             {
@@ -2514,7 +2514,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
           kind: "cmr",
           converged: false,
           reason: "has blocking findings",
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           ...CMR_EVIDENCE,
@@ -2611,7 +2611,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [priorKey],
           priorFindingDispositions: [
             {
@@ -2662,7 +2662,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [priorKey],
           priorFindingDispositions: [
             {
@@ -2727,7 +2727,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
           kind: "cmr",
           converged: false,
           reason: "same finding reappeared",
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           ...CMR_EVIDENCE,
@@ -2826,7 +2826,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
       }),
