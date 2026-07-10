@@ -68,6 +68,43 @@ def _unrest_description(value: object) -> str:
     )
 
 
+def _building_level_description(value: object) -> str:
+    try:
+        level = int(value or 0)
+    except (TypeError, ValueError):
+        level = 0
+    return "初设" if level <= 1 else "成形" if level == 2 else "完备" if level == 3 else "宏整" if level == 4 else "巨构"
+
+
+def _building_condition_description(value: object) -> str:
+    try:
+        condition = int(value or 0)
+    except (TypeError, ValueError):
+        condition = 0
+    return "残损" if condition < 20 else "失修" if condition < 40 else "尚可" if condition < 60 else "完好" if condition < 80 else "坚固"
+
+
+def _building_risk_description(value: object) -> str:
+    try:
+        risk = int(value or 0)
+    except (TypeError, ValueError):
+        risk = 0
+    return "低" if risk < 20 else "中" if risk < 50 else "偏高" if risk < 80 else "极高"
+
+
+def _building_output_effect(metric: str, amount: object, prefix: str = "") -> str:
+    if not metric:
+        return ""
+    if metric in ("民心", "皇威"):
+        try:
+            output = int(amount or 0)
+        except (TypeError, ValueError):
+            output = 0
+        effect = "略有裨益" if output < 10 else "颇有裨益" if output < 30 else "有显著裨益"
+        return f"{prefix}对{metric}{effect}"
+    return f"{prefix}产出{metric}{amount}"
+
+
 class ProvinceFiscalTickOutcome(NamedTuple):
     region_id: str
     result: Any
@@ -6179,20 +6216,15 @@ class GameDB:
         for r in rows:
             metric = str(r["output_metric"])
             if metric in ("民心", "皇威") and qualitative:
-                amount = int(r["output_amount"] or 0)
-                effect = "略有裨益" if amount < 10 else "颇有裨益" if amount < 30 else "有显著裨益"
-                out = f"对{metric}{effect}"
+                out = _building_output_effect(metric, r["output_amount"])
             elif metric:
                 out = f"产出{metric}{r['output_amount']}"
             else:
                 out = "无结算产出"
             if qualitative:
-                level = ("初设" if int(r["level"]) <= 1 else "成形" if int(r["level"]) == 2 else
-                         "完备" if int(r["level"]) == 3 else "宏整" if int(r["level"]) == 4 else "巨构")
-                condition = ("残损" if int(r["condition"]) < 20 else "失修" if int(r["condition"]) < 40 else
-                             "尚可" if int(r["condition"]) < 60 else "完好" if int(r["condition"]) < 80 else "坚固")
-                risk = ("低" if int(r["risk"]) < 20 else "中" if int(r["risk"]) < 50 else
-                        "偏高" if int(r["risk"]) < 80 else "极高")
+                level = _building_level_description(r["level"])
+                condition = _building_condition_description(r["condition"])
+                risk = _building_risk_description(r["risk"])
                 lines.append(
                     f"{r['name']}（{r['category']}·{r['region_id']}）规模{level}，"
                     f"{condition}，维护{r['maintenance']}{MONEY_UNIT}/{TURN_UNIT}，风险{risk}，{out}。{r['status']}"
@@ -6246,18 +6278,13 @@ class GameDB:
             raise ValueError(f"未找到建筑 '{name_or_id}'")
         metric = str(row["output_metric"])
         if metric in ("民心", "皇威") and qualitative:
-            amount = int(row["output_amount"] or 0)
-            effect = "略有裨益" if amount < 10 else "颇有裨益" if amount < 30 else "有显著裨益"
-            out = f"对{metric}{effect}"
+            out = _building_output_effect(metric, row["output_amount"])
         else:
             out = f"产出{metric}{row['output_amount']}/{TURN_UNIT}" if metric else "无结算产出"
         if qualitative:
-            level = ("初设" if int(row["level"]) <= 1 else "成形" if int(row["level"]) == 2 else
-                     "完备" if int(row["level"]) == 3 else "宏整" if int(row["level"]) == 4 else "巨构")
-            condition = ("残损" if int(row["condition"]) < 20 else "失修" if int(row["condition"]) < 40 else
-                         "尚可" if int(row["condition"]) < 60 else "完好" if int(row["condition"]) < 80 else "坚固")
-            risk = ("低" if int(row["risk"]) < 20 else "中" if int(row["risk"]) < 50 else
-                    "偏高" if int(row["risk"]) < 80 else "极高")
+            level = _building_level_description(row["level"])
+            condition = _building_condition_description(row["condition"])
+            risk = _building_risk_description(row["risk"])
             return (
                 f"{row['name']}（{row['category']}，{row['region_id']}，{row['origin']}）："
                 f"规模{level}，{condition}，维护{row['maintenance']}{MONEY_UNIT}/{TURN_UNIT}，风险{risk}，{out}。\n"

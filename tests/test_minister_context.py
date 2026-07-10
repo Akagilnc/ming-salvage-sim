@@ -113,6 +113,42 @@ def test_minister_memorial_tools_show_commitment_fields_and_progress(game):
         assert "progress=已履行0月" in text
 
 
+def test_minister_memorial_tools_characterize_all_abstract_stop_conditions(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="抽象停止条件测试事项",
+        origin_kind="decree",
+        origin_ref="test:qualitative-stop-conditions",
+        bar_value=0,
+        inertia=0,
+        stage_text="正在推进",
+        ongoing_effects={"metrics": {"皇威": 1}},
+        stop_condition=json.dumps({
+        "character.杨嗣昌.ability": ">=80",
+        "faction.东林.leverage": ">=60",
+        "faction.东林.satisfaction": ">=70",
+        "region.陕西.public_support": ">=50",
+        "army.关宁军.morale": ">=60",
+        "treasury": "<=1000",
+        }, ensure_ascii=False),
+        end_turn=state.turn + 3,
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
+    rendered = tools["list_memorials"]()
+
+    assert ">=" not in rendered
+    assert "杨嗣昌能力" in rendered
+    assert "东林朝势" in rendered and "东林态度" in rendered
+    assert "陕西民心" in rendered and "关宁军士气" in rendered
+    assert "treasury<=1000" in rendered
+
+
 def test_minister_context_is_characterized_without_abstract_numbers(game):
     db, _state, content = game
     minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
@@ -167,6 +203,12 @@ def test_identity_bucket_selects_objective_faction_dossier(game):
     assert "对政局态度" not in middle
     assert "守住漕运与军饷" not in low
     assert "行为" not in low
+
+
+def test_court_brief_does_not_bypass_character_identity_scope(game):
+    rendered = build_court_brief(_ctx(game))
+
+    assert "朝堂派系档料" not in rendered
 
 
 def test_final_minister_context_rejects_injected_abstract_values(game):
