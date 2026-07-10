@@ -107,6 +107,34 @@ describe("#685 route tool smoke", () => {
     );
   });
 
+  it("accepts a passed smoke from a clock that is slightly ahead", async () => {
+    const route = resolveRouteModels("normal", {});
+    const smoked = await smokeRouteModels(
+      route,
+      async () => ({ cliVersion: "cli-1" }),
+      new Date("2026-07-10T00:00:00.000Z"),
+    );
+
+    expect(
+      routeSmokeFailure(smoked, Date.parse("2026-07-09T23:59:59.000Z")),
+    ).toBeUndefined();
+  });
+
+  it("runs each unique model smoke concurrently", async () => {
+    const route = resolveRouteModels("normal", {});
+    let active = 0;
+    let peak = 0;
+    await smokeRouteModels(route, async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      active -= 1;
+      return { cliVersion: "cli-1" };
+    });
+
+    expect(peak).toBeGreaterThan(1);
+  });
+
   it("rejects a passed smoke when the selected CLI version changes", async () => {
     const route = resolveRouteModels("normal", {});
     const smoked = await smokeRouteModels(route, async () => ({ cliVersion: "cli-1" }));

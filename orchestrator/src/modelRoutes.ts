@@ -402,7 +402,7 @@ export function routeSmokeFailure(
       return `route smoke failed for ${entry.key}: ${status.error}`;
     }
     const at = Date.parse(status.at);
-    if (!Number.isFinite(at) || now - at > maxAgeMs || now < at) {
+    if (!Number.isFinite(at) || now - at > maxAgeMs) {
       return `route smoke expired for ${entry.key}; last passed at ${status.at}`;
     }
     const currentCliVersion = currentCliVersions[entry.slug];
@@ -421,26 +421,33 @@ export async function smokeRouteModels(
   const smoke: Record<string, RouteSmokeStatus> = { ...route.smoke };
   const entries = routeSmokeEntries(route);
   const uniqueEntries = [...new Map(entries.map((entry) => [entry.slug, entry])).values()];
-  for (const entry of uniqueEntries) {
-    try {
-      const result = await executor({ ...entry, command: "echo OK" });
-      const status: RouteSmokeStatus = {
-        state: "passed",
-        at: now.toISOString(),
-        cliVersion: result.cliVersion,
-      };
-      for (const target of entries.filter((candidate) => candidate.slug === entry.slug)) {
-        smoke[target.key] = status;
+  const results = await Promise.all(
+    uniqueEntries.map(async (entry) => {
+      try {
+        const result = await executor({ ...entry, command: "echo OK" });
+        return {
+          entry,
+          status: {
+            state: "passed",
+            at: now.toISOString(),
+            cliVersion: result.cliVersion,
+          } satisfies RouteSmokeStatus,
+        };
+      } catch (error) {
+        return {
+          entry,
+          status: {
+            state: "failed",
+            at: now.toISOString(),
+            error: error instanceof Error ? error.message : String(error),
+          } satisfies RouteSmokeStatus,
+        };
       }
-    } catch (error) {
-      const status: RouteSmokeStatus = {
-        state: "failed",
-        at: now.toISOString(),
-        error: error instanceof Error ? error.message : String(error),
-      };
-      for (const target of entries.filter((candidate) => candidate.slug === entry.slug)) {
-        smoke[target.key] = status;
-      }
+    }),
+  );
+  for (const { entry, status } of results) {
+    for (const target of entries.filter((candidate) => candidate.slug === entry.slug)) {
+      smoke[target.key] = status;
     }
   }
   return { ...route, smoke };

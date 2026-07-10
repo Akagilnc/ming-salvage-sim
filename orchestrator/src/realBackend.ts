@@ -54,6 +54,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  renameSync,
   readFileSync,
   rmSync,
   statSync,
@@ -98,6 +99,27 @@ import {
   type ResolvedModelRoute,
   type RouteSmokeStatus,
 } from "./modelRoutes.js";
+
+export function routeSmokeCacheKey(
+  route: ResolvedModelRoute,
+  sandboxFingerprint: string,
+): string {
+  return `${modelRouteFingerprint(route)}\0${sandboxFingerprint}`;
+}
+
+export function routeSmokeToolCallIsEchoOk(event: {
+  readonly type?: unknown;
+  readonly name?: unknown;
+  readonly formattedArgs?: unknown;
+}): boolean {
+  return (
+    event.type === "toolCall" &&
+    typeof event.name === "string" &&
+    /^(bash|shell)$/i.test(event.name) &&
+    typeof event.formattedArgs === "string" &&
+    /echo\s+(?:"OK"|'OK'|OK)/i.test(event.formattedArgs)
+  );
+}
 export {
   agentForSlug,
   CODER_CODEX_SLUG,
@@ -2081,7 +2103,8 @@ export class RealBackend implements Backend {
     route: ResolvedModelRoute,
     currentCliVersions: Readonly<Record<string, string | undefined>> = {},
   ): Promise<ResolvedModelRoute> {
-    const persisted = this.readRouteSmokeState(route);
+    const sandboxFingerprint = this.routeSmokeSandboxFingerprint();
+    const persisted = this.readRouteSmokeState(route, sandboxFingerprint);
     if (persisted !== undefined) {
       const hydrated = withRouteSmoke(route, persisted);
       if (routeSmokeFailure(hydrated, Date.now(), undefined, currentCliVersions) === undefined) {
@@ -2105,9 +2128,7 @@ export class RealBackend implements Backend {
             path: join(logDir, "run.log"),
             onAgentStreamEvent: (event) => {
               if (
-                event.type === "toolCall" &&
-                /^(bash|shell)$/i.test(event.name) &&
-                /echo\s+OK/.test(event.formattedArgs ?? "")
+                routeSmokeToolCallIsEchoOk(event)
               ) {
                 sawBash = true;
               }
@@ -2124,7 +2145,7 @@ export class RealBackend implements Backend {
         rmSync(logDir, { recursive: true, force: true });
       }
     });
-    this.writeRouteSmokeState(smoked);
+    this.writeRouteSmokeState(smoked, sandboxFingerprint);
     return smoked;
   }
 
@@ -2134,11 +2155,12 @@ export class RealBackend implements Backend {
 
   private readRouteSmokeState(
     route: ResolvedModelRoute,
+    sandboxFingerprint: string,
   ): Readonly<Record<string, RouteSmokeStatus>> | undefined {
     try {
       const raw = JSON.parse(readFileSync(this.routeSmokeStatePath(), "utf8")) as unknown;
       if (raw === null || typeof raw !== "object") return undefined;
-      const state = (raw as Record<string, unknown>)[modelRouteFingerprint(route)];
+      const state = (raw as Record<string, unknown>)[routeSmokeCacheKey(route, sandboxFingerprint)];
       if (state === null || typeof state !== "object") return undefined;
       return state as Readonly<Record<string, RouteSmokeStatus>>;
     } catch {
@@ -2146,7 +2168,7 @@ export class RealBackend implements Backend {
     }
   }
 
-  private writeRouteSmokeState(route: ResolvedModelRoute): void {
+  private writeRouteSmokeState(route: ResolvedModelRoute, sandboxFingerprint: string): void {
     const path = this.routeSmokeStatePath();
     let all: Record<string, unknown> = {};
     try {
@@ -2156,15 +2178,57 @@ export class RealBackend implements Backend {
       // Missing or malformed state is treated as empty; the fresh smoke result
       // below becomes the new durable source of truth.
     }
-    all[modelRouteFingerprint(route)] = route.smoke;
+    all[routeSmokeCacheKey(route, sandboxFingerprint)] = route.smoke;
     mkdirSync(join(this.opts.home ?? homedir(), ".sc-orchestrator"), { recursive: true });
-    writeFileSync(path, JSON.stringify(all, null, 2) + "\n", "utf8");
+    const tempPath = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+    try {
+      writeFileSync(tempPath, JSON.stringify(all, null, 2) + "\n", "utf8");
+      renameSync(tempPath, path);
+    } finally {
+      if (existsSync(tempPath)) rmSync(tempPath, { force: true });
+    }
   }
 
   private cliVersionForSlug(slug: string): string {
     const provider = resolveModelSlug(slug).provider;
     const command = provider === "claudeCode" ? "claude" : provider;
-    return this.sh(command, ["--version"]).trim() || "unknown";
+    try {
+      return this.sh(command, ["--version"]).trim() || "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+
+  private routeSmokeSandboxFingerprint(): string {
+    const hash = createHash("sha256");
+    hash.update(`image:${this.opts.imageName}\n`);
+    try {
+      hash.update(`image-id:${this.sh("docker", ["image", "inspect", "--format", "{{.Id}}", this.opts.imageName]).trim()}\n`);
+    } catch {
+      hash.update("image-id:unknown\n");
+    }
+    const auth = buildAuthPaths(this.opts.runKey, this.opts.home);
+    const files = [
+      join(this.opts.promptsDir, "route-smoke.md"),
+      ...REQUIRED_SOUL_FILES.map((file) => join(this.opts.soulsDir, file)),
+      auth.srcCodexAuth,
+      auth.srcCodexConfig,
+      auth.claudeTokenFile,
+    ];
+    for (const file of files) {
+      hash.update(`file:${file}\0`);
+      try {
+        hash.update(readFileSync(file));
+      } catch {
+        hash.update("missing");
+      }
+    }
+    try {
+      hash.update(`gh:${this.sh("gh", ["auth", "token"]).trim()}\n`);
+    } catch {
+      hash.update("gh:missing\n");
+    }
+    return hash.digest("hex");
   }
 
   /** Route smoke must exercise the same image, auth, and soul mounts as workers. */
