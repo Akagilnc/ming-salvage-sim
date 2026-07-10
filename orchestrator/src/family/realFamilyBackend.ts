@@ -153,6 +153,7 @@ import {
   shipOutcomeFromResult,
   type ShipWorkerOutcome,
 } from "../shipOutcome.js";
+import { configureTelemetryFromWorkerImage } from "../telemetry.js";
 
 import type {
   CleanupResult,
@@ -391,6 +392,13 @@ export class RealFamilyBackend implements FamilyBackend {
     this.opts = opts;
     this.validateFamilyPromptsDir();
     this.validateSoulsDir();
+    // #786 — same run-env wiring as RealBackend (imageName / codexFast / hashes).
+    configureTelemetryFromWorkerImage({
+      imageName: opts.imageName,
+      codexFast: opts.codexFast,
+      soulsDir: opts.soulsDir,
+      promptsDir: opts.promptsDir,
+    });
   }
 
   /**

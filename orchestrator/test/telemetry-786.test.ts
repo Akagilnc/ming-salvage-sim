@@ -4,12 +4,14 @@
 
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -22,10 +24,14 @@ import {
   buildEnvironmentStamp,
   categoryFromReason,
   classifyWorkerTerminal,
+  clearTelemetryRunEnvironment,
+  configureTelemetryFromWorkerImage,
+  configureTelemetryRunEnvironment,
   ensureEnvironmentStamp,
   extractClaudeTokens,
   extractCodexTokens,
   extractTokensFromLog,
+  hashDirectoryContents,
   newLegId,
   readTelemetryRecords,
   TELEMETRY_FILENAME,
@@ -45,10 +51,33 @@ import type {
 const tempDirs: string[] = [];
 
 afterEach(() => {
+  clearTelemetryRunEnvironment();
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/** Minimal environment half-row for I/O tests (nulls for optional fingerprints). */
+function envRecordStub(
+  overrides: Partial<TelemetryEnvironmentRecord> = {},
+): TelemetryEnvironmentRecord {
+  return {
+    v: 1,
+    phase: "environment",
+    stamped_at: "t",
+    runId: null,
+    imageTag: null,
+    imageDigest: null,
+    sandboxFingerprint: null,
+    soulsHash: null,
+    promptHash: null,
+    routeName: null,
+    routeSlots: null,
+    routeCmrReviewLegs: null,
+    cliVersions: null,
+    ...overrides,
+  };
+}
 
 function tempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -321,40 +350,21 @@ describe("#786 telemetry pure helpers", () => {
   });
 
   it("tryAppendTelemetryRecord returns false when ledgerDir is missing", () => {
-    expect(
-      tryAppendTelemetryRecord(undefined, {
-        v: 1,
-        phase: "environment",
-        stamped_at: "t",
-        runId: null,
-        imageTag: null,
-        routeName: null,
-        routeSlots: null,
-        routeCmrReviewLegs: null,
-        cliVersions: null,
-      }),
-    ).toBe(false);
+    expect(tryAppendTelemetryRecord(undefined, envRecordStub())).toBe(false);
   });
 
   it("tryAppendTelemetryRecord silently skips when ledger parent path does not exist (fake stateDir)", () => {
-    // Unit fixtures use opaque paths like /resident/worktrees/.ledger-N that
-    // must not be mkdir'd. Recursive create either spam-warns ENOENT or pollutes /.
+    // Construct a missing *ancestor* under a temp root — never hardcode host paths
+    // like /resident/worktrees (pollutes hosts that already have it; breaks asserts).
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const fake = "/resident/worktrees/.ledger-600-telemetry-r5";
-    const envRecord: TelemetryEnvironmentRecord = {
-      v: 1,
-      phase: "environment",
-      stamped_at: "t",
-      runId: null,
-      imageTag: null,
-      routeName: null,
-      routeSlots: null,
-      routeCmrReviewLegs: null,
-      cliVersions: null,
-    };
-    expect(tryAppendTelemetryRecord(fake, envRecord)).toBe(false);
+    const root = tempDir("orch-786-missing-anc-");
+    const fake = join(root, "no-such-parent", ".ledger-600-telemetry-r6");
+    const missingParent = dirname(fake);
+    expect(existsSync(missingParent)).toBe(false);
+    expect(tryAppendTelemetryRecord(fake, envRecordStub())).toBe(false);
     expect(ensureEnvironmentStamp(fake, {})).toBe(false);
-    expect(existsSync("/resident")).toBe(false);
+    expect(existsSync(missingParent)).toBe(false);
+    expect(existsSync(fake)).toBe(false);
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
@@ -363,22 +373,81 @@ describe("#786 telemetry pure helpers", () => {
     const parent = tempDir("orch-786-parent-");
     const ledgerDir = join(parent, ".ledger-leaf");
     expect(
-      tryAppendTelemetryRecord(ledgerDir, {
-        v: 1,
-        phase: "environment",
-        stamped_at: "t",
-        runId: null,
-        imageTag: "img:leaf",
-        routeName: null,
-        routeSlots: null,
-        routeCmrReviewLegs: null,
-        cliVersions: null,
-      }),
+      tryAppendTelemetryRecord(
+        ledgerDir,
+        envRecordStub({ imageTag: "img:leaf" }),
+      ),
     ).toBe(true);
     expect(existsSync(join(ledgerDir, TELEMETRY_FILENAME))).toBe(true);
     const records = readTelemetryRecords(ledgerDir);
     expect(records).toHaveLength(1);
     expect((records[0] as TelemetryEnvironmentRecord).imageTag).toBe("img:leaf");
+  });
+
+  it("buildEnvironmentStamp uses configured imageName and always exposes digest/sandbox/souls/prompt fields", () => {
+    const soulsDir = tempDir("orch-786-souls-");
+    const promptsDir = tempDir("orch-786-prompts-");
+    writeFileSync(join(soulsDir, "coder.md"), "soul-body\n", "utf8");
+    writeFileSync(join(promptsDir, "coder.md"), "prompt-body\n", "utf8");
+    configureTelemetryFromWorkerImage({
+      imageName: "ming-orchestrator-coder:from-imageName",
+      codexFast: true,
+      soulsDir,
+      promptsDir,
+    });
+    const stamp = buildEnvironmentStamp({
+      ctx: {},
+      now: () => "2026-07-11T00:00:00.000Z",
+    });
+    expect(stamp.imageTag).toBe("ming-orchestrator-coder:from-imageName");
+    // Fields always present (null only when truly unobtainable — digest often null without docker).
+    expect("imageDigest" in stamp).toBe(true);
+    expect("sandboxFingerprint" in stamp).toBe(true);
+    expect("soulsHash" in stamp).toBe(true);
+    expect("promptHash" in stamp).toBe(true);
+    expect(stamp.soulsHash).toBe(hashDirectoryContents(soulsDir));
+    expect(stamp.promptHash).toBe(hashDirectoryContents(promptsDir));
+    expect(stamp.sandboxFingerprint).not.toBeNull();
+    expect(typeof stamp.sandboxFingerprint).toBe("string");
+    // Without IMAGE_TAG env, default path still stamps a tag (not null).
+    clearTelemetryRunEnvironment();
+    const defaultStamp = buildEnvironmentStamp({ ctx: {} });
+    expect(defaultStamp.imageTag).toBe("ming-orchestrator-coder:latest");
+    expect(defaultStamp.imageDigest).toBeNull();
+    expect(defaultStamp.sandboxFingerprint).toBeNull();
+    expect(defaultStamp.soulsHash).toBeNull();
+    expect(defaultStamp.promptHash).toBeNull();
+  });
+
+  it("buildDispatchStamp model.fast follows configured codexFast, not only env", () => {
+    const prev = process.env.ORCHESTRATOR_CODEX_FAST;
+    delete process.env.ORCHESTRATOR_CODEX_FAST;
+    try {
+      configureTelemetryRunEnvironment({ codexFast: true });
+      const stamp = buildDispatchStamp({
+        legId: "leg-fast",
+        spec: baseSpec({ model: "gpt-5.6-terra" }),
+        ctx: {},
+        dispatchedAt: "2026-07-11T00:00:00.000Z",
+        now: () => "2026-07-11T00:00:00.000Z",
+      });
+      expect(stamp.model.family).toBe("codex");
+      expect(stamp.model.fast).toBe(true);
+
+      clearTelemetryRunEnvironment();
+      configureTelemetryRunEnvironment({ codexFast: false });
+      const off = buildDispatchStamp({
+        legId: "leg-fast-off",
+        spec: baseSpec({ model: "gpt-5.6-terra" }),
+        ctx: {},
+        dispatchedAt: "2026-07-11T00:00:00.000Z",
+        now: () => "2026-07-11T00:00:00.000Z",
+      });
+      expect(off.model.fast).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.ORCHESTRATOR_CODEX_FAST;
+      else process.env.ORCHESTRATOR_CODEX_FAST = prev;
+    }
   });
 
   it("buildDispatchStamp records Coder-Rec order from issue body when present", () => {
@@ -864,5 +933,63 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     const records = readTelemetryRecords(ledgerDir);
     expect(records.filter((r) => r.phase === "dispatch")).toHaveLength(0);
     expect(records.filter((r) => r.phase === "collect")).toHaveLength(0);
+  });
+
+  it("no orphan collect when dispatch append fails then ledger becomes writable mid-flight", async () => {
+    // stampDispatch runs right after spawn (parent still missing → append false).
+    // Recover the ledger parent only in onMonitorHandleSpawned (after dispatch
+    // stamp). A buggy unconditional dispatchStamped=true would then let collect
+    // write an unjoinable orphan half-row (review RED: expected [] received [collect]).
+    const root = tempDir("orch-786-orphan-recover-");
+    const mid = join(root, "recover-parent");
+    const ledgerDir = join(mid, ".ledger-786");
+    expect(existsSync(mid)).toBe(false);
+
+    const backend = {
+      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
+        command: process.execPath,
+        args: ["-e", "process.exit(0)"],
+        logDir: root,
+        poolId: "codex-5h",
+        completionSignal: "<coder>",
+        stepId: "S2",
+        readInstanceId: () => "test-instance-orphan-recover",
+      }),
+      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+        sessionId: "sess-orphan-recover",
+      }),
+    } as unknown as Backend;
+
+    const outcome = await dispatchWorkerWithMonitor(
+      backend,
+      workerSpec(),
+      { stateDir: ledgerDir },
+      undefined,
+      {
+        idleThresholdMs: 60_000,
+        pollIntervalMs: 20,
+        monitorDeps: {
+          readInstanceId: () => "test-instance-orphan-recover",
+          sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),
+        },
+        onMonitorHandleSpawned: async () => {
+          // Recover AFTER stampDispatch — collect path becomes writable.
+          mkdirSync(ledgerDir, { recursive: true });
+        },
+      },
+    );
+
+    expect(outcome.result.kind).toBe("completed");
+    const records = existsSync(join(ledgerDir, TELEMETRY_FILENAME))
+      ? readTelemetryRecords(ledgerDir)
+      : [];
+    expect(records.filter((r) => r.phase === "dispatch").map((r) => r.phase)).toEqual(
+      [],
+    );
+    expect(records.filter((r) => r.phase === "collect").map((r) => r.phase)).toEqual(
+      [],
+    );
   });
 });
