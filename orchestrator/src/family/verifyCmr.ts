@@ -1722,15 +1722,24 @@ export async function runFamilyOnlineReviewLoop(input: {
       // Cursor R11 medium + self-check: escalated must park with decision_gate_park
       // + escalate payload text — not a bare decision_gate_raised that drops reason.
       if (result.kind === "escalated") {
+        const escalationSummary = `family verify worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
+        const stopSummary =
+          result.escalation.synthesizedFailure === true
+            ? infraFailureStopSummary({
+                summary: escalationSummary,
+                repairHint:
+                  "repair the family verify worker startup/authentication failure, then re-feed the family online review loop",
+              })
+            : decisionGateParkStopSummary({
+                summary: escalationSummary,
+                repairHint:
+                  "answer the decision gate / unstick the verify worker, then re-feed the family online review loop",
+              });
         throw new OnlineReviewLoopTerminal({
           ok: false,
           terminalState: "decision_gate_raised",
           round,
-          stopSummary: decisionGateParkStopSummary({
-            summary: `family verify worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`,
-            repairHint:
-              "answer the decision gate / unstick the verify worker, then re-feed the family online review loop",
-          }),
+          stopSummary,
         });
       }
       if (result.kind !== "completed" || !isValidVerifyResult(result.output)) {

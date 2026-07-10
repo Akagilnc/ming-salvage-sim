@@ -366,4 +366,36 @@ describe("#744 family decision_gate parks for human (production seam)", () => {
     // Review loop must NOT have been re-entered after the answer.
     expect(verifyPass).toBe(1);
   });
+
+  it("verify worker startup/auth escalation stays failure, not an answerable park", async () => {
+    const familyBackend = new FakeFamilyBackend();
+    seedShippedOnly(familyBackend);
+    familyBackend.dispatchWorker = async (spec) => {
+      if (spec.kind === "verify") {
+        return {
+          kind: "escalated",
+          escalation: {
+            reason: "no Claude worker auth — the family verify worker cannot start",
+            diagnosis: "CLAUDE_CODE_OAUTH_TOKEN is missing",
+            synthesizedFailure: true,
+          },
+        };
+      }
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic,
+      familyBackend,
+      singleSliceBackend: new UnusedChildBackend(),
+      familyBase: FAMILY_BASE,
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(result.stopSummary?.reason).toBe("infra_failure");
+    expect(
+      familyBackend.ledger.find((e) => e.event === "escalated")?.escalationKind,
+    ).toBe("failure");
+  });
 });
