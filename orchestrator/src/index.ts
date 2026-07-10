@@ -38,6 +38,36 @@ export type {
   DispatchWorkerWithMonitorOptions,
   DispatchWorkerWithMonitorOutcome,
 } from "./dispatchWorker.js";
+// ── #786 telemetry sidecar (append-only JSONL; stats deferred) ──────────────
+export {
+  TELEMETRY_FILENAME,
+  TELEMETRY_SCHEMA_VERSION,
+  appendTelemetryRecord,
+  buildCollectStamp,
+  buildDispatchStamp,
+  buildEnvironmentStamp,
+  classifyWorkerTerminal,
+  ensureEnvironmentStamp,
+  extractClaudeTokens,
+  extractCodexTokens,
+  extractTokensFromLog,
+  newLegId,
+  readDispatchLogSlice,
+  readTelemetryRecords,
+  telemetryPath,
+  tryAppendTelemetryRecord,
+} from "./telemetry.js";
+export type {
+  TelemetryCollectRecord,
+  TelemetryCoderRecProvenance,
+  TelemetryDispatchRecord,
+  TelemetryEnvironmentRecord,
+  TelemetryErrorCategory,
+  TelemetryModelStamp,
+  TelemetryRecord,
+  TelemetryTerminal,
+  TelemetryTokenUsage,
+} from "./telemetry.js";
 export {
   collectPidTree,
   dispatchMonitoredCliWorker,
