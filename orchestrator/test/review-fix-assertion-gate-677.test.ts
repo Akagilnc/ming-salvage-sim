@@ -107,6 +107,31 @@ describe("#677 review-fix AC overturn gate — mechanical signal", () => {
     ).toBe(true);
   });
 
+  it("does not treat +++ / --- headers as pin lines when the path matches isPinLine", () => {
+    // Path contains `\bxit\b` so header text after stripping +/- would match
+    // isPinLine if +++ / --- file headers were counted as added/removed lines.
+    const path = "orchestrator/test/xit-something.test.ts";
+    expect(
+      preexistingAssertionTouched({
+        baseToBefore: [
+          `diff --git a/${path} b/${path}`,
+          `--- a/${path}`,
+          `+++ b/${path}`,
+          "@@ -0,0 +1 @@",
+          "+const touched = true;",
+        ].join("\n"),
+        beforeToFix: [
+          `diff --git a/${path} b/${path}`,
+          `--- a/${path}`,
+          `+++ b/${path}`,
+          "@@ -1 +1 @@",
+          "-const touched = true;",
+          "+const touched = false;",
+        ].join("\n"),
+      }),
+    ).toBe(false);
+  });
+
   it("fail-closes when git diff cannot run", () => {
     expect(() =>
       reviewFixAssertionSignal({
@@ -187,6 +212,45 @@ describe("#677 legal refuse one finding, fix the others", () => {
         ],
       }),
     ).toBe(true);
+  });
+
+  it("rejects null/undefined refuseRecords elements (strict null guards)", () => {
+    expect(
+      isValidCoderOutput({
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+        refusedFindingIdentityKeys: [refuseKey],
+        refuseRecords: [null as unknown as never],
+      }),
+    ).toBe(false);
+    expect(
+      isValidCoderOutput({
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+        refusedFindingIdentityKeys: [refuseKey],
+        refuseRecords: [undefined as unknown as never],
+      }),
+    ).toBe(false);
+  });
+
+  it("#677 refuse validators use strict null/undefined checks (not == null)", () => {
+    const src = readFileSync(
+      resolve(import.meta.dirname, "../src/validate.ts"),
+      "utf8",
+    );
+    const refuseBlock = src.slice(
+      src.indexOf("function isValidRefuseRecord"),
+      src.indexOf("/**\n * A reviewer step output is valid"),
+    );
+    expect(refuseBlock).toMatch(
+      /r === null \|\| r === undefined/,
+    );
+    // Loose `== null` only (must not match the `=== null` we require above).
+    expect(refuseBlock).not.toMatch(/(?<![!=])== null/);
+    // Sibling #677 validator must not reintroduce loose null checks either.
+    expect(refuseBlock).toContain("function isValidLegalRefuseFields");
   });
 
   it("S5 legal refuse with commit routes to S6 fresh re-review (not escalate/error)", () => {

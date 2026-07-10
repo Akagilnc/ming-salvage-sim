@@ -61,8 +61,16 @@ function pinLines(diff: string, prefix: "+" | "-"): DiffLine[] {
   for (const line of diff.split(/\r?\n/)) {
     if (line.startsWith("diff --git a/") && line.includes(" b/")) {
       path = line.slice(line.lastIndexOf(" b/") + 3);
+      continue;
     }
-    if (line.startsWith("+++ b/")) path = line.slice(6);
+    if (line.startsWith("+++ b/")) {
+      path = line.slice(6);
+      continue;
+    }
+    // Unified-diff file headers start with +++ / ---; do not treat them as
+    // added/removed code (path text can match isPinLine, e.g. xit-*.test.ts).
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("@@ ") || line.startsWith("index ")) continue;
     if (!isTestPath(path) || !line.startsWith(prefix)) continue;
     const text = line.slice(1).trim();
     if (isPinLine(text)) {
