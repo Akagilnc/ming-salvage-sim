@@ -99,7 +99,7 @@
 | 李之藻 | `debut_month` | 0（null/不限月） | 中国哲学书电子化计划及李之藻资料支持 1629 年起复修历，但未给可靠月份，故不填 1。 |
 | 李之藻 | `office` / `office_type` | 历局修历起复 / 礼部 | 故宫博物院人物页明确记载：崇祯元年徐光启督领修历，李之藻经推荐奉旨到历局参与编译历书；“历局”无独立 office_type，按礼部系统取 `礼部`，避免把旧 `工部` 粗类带入：[故宫博物院·李之藻](https://www.dpm.org.cn/court/figure/104041.html)。 |
 | 李之藻 | `status` / `debut_year` / `location` | offstage / 1629 / beizhili | 1623 去职、1629 起复修历；起复地点按北京历局取合法 `beizhili`。 |
-| 徐应秋 | `office` / `office_type` / `status` / `debut_year` / `debut_month` / `location` | 礼部仪制司主事 / 礼部 / active / 1627 / 0 / 空 | 万历四十四年丙辰进士履历载：天启二年升礼部主事，天启六年削籍，崇祯元年起仪制司主事；崇祯二年再升祠祭司员外郎。故开局年已在任，不能沿用“工部右侍郎”或 `offstage/1628`。出处：[徐应秋](https://zh.wikipedia.org/wiki/徐應秋_%28萬曆進士%29)、[万历四十四年进士题名碑录](https://www.shidianguji.com/mid-page/7464335073724284947)。具体月份、任所未核，分别以 0 / 空表示待 owner 拍。 |
+| 徐应秋 | `office` / `office_type` / `status` / `debut_year` / `debut_month` / `location` | 礼部仪制司主事 / 礼部 / active / 1627 / 0 / 空 | 万历四十四年丙辰进士履历载：天启二年升礼部主事，天启六年削籍，丁卯（天启七年，1627）起仪制司主事；崇祯二年再升祠祭司员外郎。`1627.10` 开局为 `active` 属推断——待 owner 拍；具体起用月份无出处，故 `debut_month=0`，任所仍为空。不能沿用“工部右侍郎”或 `offstage/1628`。出处：[徐应秋](https://zh.wikipedia.org/wiki/徐應秋)、[万历四十四年进士题名碑录](https://www.shidianguji.com/mid-page/7464335073724284947)（该链接仅支持进士题名，不支撑完整仕历）。 |
 | 徐应秋 | `loyalty` / `ability` / `integrity` / `courage` / `style` / `faction` | 50 / 64 / 58 / 46 / 博学持论 / 中立 | 画像与派系均为推断值——待 owner 拍；史料只支持进士、礼部仕历、削籍与著述/藏书经历，不把这些事实硬映射成数值或固定党籍。 |
 | 徐应秋 | 生卒 | 0 / 0 / 0 | 现有可核资料未给可靠生卒年月，按 schema 的未知值 0 入册。 |
 
@@ -108,7 +108,7 @@
 - `docs/adr/0011-4-ceiling-and-seed-roster.md`：seed guilt 的 `severity` 罪谱采用 `无/轻/中/重`，并以重/中/轻分层。
 - `content/offices.json`：`allowed_types` 与职名词干分类；`知县` 属 `地方`，历局修历暂无专门类型，保守落礼部系统。
 - `content/regions.json`：陕西=`shaanxi`，京畿/京师=`beizhili`。
-- 徐应秋的礼部仕历：万历四十四年进士题名碑录与其履历支持天启、崇祯年间的礼部线；未核到开局所需的具体月份和任所，故不填。
+- 徐应秋的礼部仕历：徐应秋履历支持丁卯（天启七年，1627）至崇祯年间的礼部线；进士题名碑录仅支持进士题名，不支撑完整仕历。未核到开局所需的具体月份和任所，故不填；`1627.10` 开局为 `active` 的判断推断——待 owner 拍。
 
 ## 待核标记
 
