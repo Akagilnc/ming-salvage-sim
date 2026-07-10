@@ -43,6 +43,13 @@ _OFFICE_VISIBLE_DOMAINS = {
     "布衣": {"regional"}, "流寇": {"military", "regional"}, "待铨": {"personnel"},
 }
 
+# A persisted character can temporarily carry a newly introduced or malformed
+# office type while an old save is being upgraded.  Such a role still needs a
+# useful current-state rail; falling back to ``public`` would recreate a
+# one-world view for precisely the characters this projection is meant to
+# differentiate.
+_DEFAULT_VISIBLE_DOMAINS = {"personnel"}
+
 
 def _qualitative(text: object) -> str:
     """Render an engine report for a minister without exposing machine values."""
@@ -55,7 +62,7 @@ def _qualitative(text: object) -> str:
 def _world(
     db: Any, state: Any, office_type: str,
 ) -> Dict[str, str]:
-    bucket = _OFFICE_BUCKETS.get(office_type, "public")
+    bucket = _OFFICE_BUCKETS.get(office_type, "personnel")
     reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
     def fact(text: object) -> str:
         return _qualitative(text)
@@ -72,7 +79,9 @@ def _world(
         "security": db.power_report(exclude_self=True),
         "court": "\n".join((db.faction_report(), db.power_report(exclude_self=True))),
     }
-    visible_domains = _OFFICE_VISIBLE_DOMAINS.get(office_type, {bucket})
+    visible_domains = _OFFICE_VISIBLE_DOMAINS.get(
+        office_type, _DEFAULT_VISIBLE_DOMAINS
+    )
     for domain in visible_domains:
         if domain == "public":
             # The public layer is already built from the turn reports above;
