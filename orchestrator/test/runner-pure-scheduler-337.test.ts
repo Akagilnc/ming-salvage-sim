@@ -33,6 +33,7 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
+  OnlineReviewLandingSnapshot,
   IssueSnapshot,
   StepOutput,
   WorkerResult,
@@ -118,7 +119,13 @@ class SeamOnlyBackend implements Backend {
     throw new Error("push called directly — runner is not a pure scheduler");
   }
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
-    return { number: issueNumber, isReadyForAgent: true, hasSubIssues: false, openBlockedBy: [] };
+    return {
+      number: issueNumber,
+      isReadyForAgent: true,
+      hasSubIssues: false,
+      isClosed: false,
+      openBlockedBy: [],
+    };
   }
   async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
     return { number: issueNumber, body: "b", comments: [], agentBrief: "" };
@@ -132,7 +139,7 @@ class SeamOnlyBackend implements Backend {
     repo: string;
     prUrl: string;
     pollCount: number;
-  }) {
+  }): Promise<OnlineReviewLandingSnapshot> {
     void input;
     return {
       prUrl: "pr://slice/offline-337",

@@ -923,6 +923,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         return {
           completionSignal: "CMR_STEP_COMPLETE",
           stdout: "",
+          branch: "test/rewritten",
           iterations: [{ sessionId: "cmr-session-rewritten" }],
           commits: [],
         } as Awaited<ReturnType<typeof sc.run>>;
@@ -1021,6 +1022,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         return {
           completionSignal: "CMR_STEP_COMPLETE",
           stdout: "",
+          branch: "test/rewritten",
           iterations: [{ sessionId: "cmr-session-rewritten" }],
           commits: [],
         } as Awaited<ReturnType<typeof sc.run>>;
@@ -1116,6 +1118,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         return {
           completionSignal: "CMR_STEP_COMPLETE",
           stdout: "",
+          branch: "test/rewritten",
           iterations: [{ sessionId: "cmr-session-rewritten" }],
           commits: [],
         } as Awaited<ReturnType<typeof sc.run>>;
@@ -1209,6 +1212,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         return {
           completionSignal: "CMR_STEP_COMPLETE",
           stdout: "",
+          branch: "test/rewritten",
           iterations: [{ sessionId: "cmr-session-rewritten" }],
           commits: [],
         } as Awaited<ReturnType<typeof sc.run>>;
@@ -1293,6 +1297,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         return {
           completionSignal: "CMR_STEP_COMPLETE",
           stdout: "",
+          branch: "test/rewritten",
           iterations: [{ sessionId: "cmr-session-rewritten" }],
           commits: [],
         } as Awaited<ReturnType<typeof sc.run>>;

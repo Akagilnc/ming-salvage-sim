@@ -54,6 +54,7 @@ import type {
   PersistentLedgerEntry,
   ResumeState,
   DispatchContext,
+  OnlineReviewLandingSnapshot,
   StepId,
   StepOutput,
   StepSpec,
@@ -298,7 +299,10 @@ class ResumeBackend implements Backend {
     this.calls.push(`writeSnapshot(${worktree.branch}, #${snapshot.number})`);
   }
 
-  async runStep(spec: StepSpec): Promise<StepOutput> {
+  async runStep(
+    spec: StepSpec,
+    _worktree: WorktreeHandle,
+  ): Promise<StepOutput> {
     this.calls.push(`runStep(${spec.id})`);
     this.runStepIds.push(spec.id);
     if (spec.role === "reviewer") {
@@ -332,7 +336,7 @@ class ResumeBackend implements Backend {
     repo: string;
     prUrl: string;
     pollCount: number;
-  }) {
+  }): Promise<OnlineReviewLandingSnapshot> {
     void input;
     return {
       prUrl: "pr://slice/offline-255",
@@ -448,13 +452,16 @@ class ReviewLoopResumeBackend extends DispatchRecordingResumeBackend {
 }
 
 class MissingCoderTagBackend extends ResumeBackend {
-  override async runStep(spec: StepSpec): Promise<StepOutput> {
+  override async runStep(
+    spec: StepSpec,
+    worktree: WorktreeHandle,
+  ): Promise<StepOutput> {
     if (spec.id === "S2") {
       throw new Error(
         "realBackend: coder step stdout carried no <coder>…</coder> tag — the coder must emit its structured result in a <coder> tag.",
       );
     }
-    return super.runStep(spec);
+    return super.runStep(spec, worktree);
   }
 }
 
@@ -1435,7 +1442,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
   });
 
   it("AC2: crash inside review-loop (ledger truncated at S10) resumes at S9 re-verify — prior S9/S10 skipped, run completes verify→S12→S11→S8 (F3)", async () => {
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -1496,7 +1503,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
   it("AC2 r7: crash after S9(converged:false) resumes S10 with reconstructed landing (#600 F1)", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "resume-snapshot-"));
     writeResumeOnlineReviewSnapshot(stateDir);
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -1542,7 +1549,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
   it("pin r29: crash after retrigger-only marker resumes S9 with round (no fix SHA)", async () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const retriggerTs = "2026-07-08T13:00:00.000Z";
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -1595,7 +1602,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
   it("pin r30: crash after fix_committed only (before retrigger) resumes S9 not fixer", async () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const fixTs = "2026-07-08T12:30:00.000Z";
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -1648,7 +1655,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     const fixSha = "fixsha1111111111111111111111111111111111";
     const stateDir = mkdtempSync(join(tmpdir(), "resume-r5-key-only-"));
     writeResumeOnlineReviewSnapshot(stateDir);
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -1698,7 +1705,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     const fixSha = "fixsha4444444444444444444444444444444444";
     const stateDir = mkdtempSync(join(tmpdir(), "resume-r6-empty-auth-"));
     writeResumeOnlineReviewSnapshot(stateDir);
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -1744,7 +1751,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     const fixSha = "fixsha5555555555555555555555555555555555";
     const stateDir = mkdtempSync(join(tmpdir(), "resume-r6-marker-auth-"));
     writeResumeOnlineReviewSnapshot(stateDir);
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -1799,7 +1806,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     const livePr = "https://github.com/o/r/pull/255";
     const stateDir = mkdtempSync(join(tmpdir(), "resume-r6-persist-auth-"));
     writeResumeOnlineReviewSnapshot(stateDir);
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -1827,6 +1834,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         prNumber: 255,
         prUrl: input.prUrl,
         headOid: input.roundTrigger.headOid,
+        roundTriggerUsed: input.roundTrigger,
         pollCount: 1,
         bots: {
           coderabbit: { state: "complete", findingCount: 0 },
@@ -1836,6 +1844,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         },
         threads: [],
         checkRuns: [],
+        checkRunsEmptyMeans: "converged",
         totalFindingCount: 0,
         quiescent: true,
       }));
@@ -1893,7 +1902,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     const livePr = "https://github.com/o/r/pull/255";
     const stateDir = mkdtempSync(join(tmpdir(), "resume-retrigger-fail-"));
     writeResumeOnlineReviewSnapshot(stateDir);
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -1921,6 +1930,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         prNumber: 255,
         prUrl: input.prUrl,
         headOid: input.roundTrigger.headOid,
+        roundTriggerUsed: input.roundTrigger,
         pollCount: 1,
         bots: {
           coderabbit: { state: "complete", findingCount: 0 },
@@ -1930,6 +1940,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         },
         threads: [],
         checkRuns: [],
+        checkRunsEmptyMeans: "converged",
         totalFindingCount: 0,
         quiescent: true,
       }));
@@ -2054,6 +2065,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         prNumber: 255,
         prUrl: input.prUrl,
         headOid: input.roundTrigger.headOid,
+        roundTriggerUsed: input.roundTrigger,
         pollCount: 1,
         bots: {
           coderabbit: { state: "complete", findingCount: 0 },
@@ -2063,6 +2075,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         },
         threads: [],
         checkRuns: [],
+        checkRunsEmptyMeans: "converged",
         totalFindingCount: 0,
         quiescent: true,
       }));
@@ -2081,7 +2094,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     let autoMergeSpy: ReturnType<typeof stubAutoMergeMergedForLiveReviewTests> | undefined;
     try {
       autoMergeSpy = stubAutoMergeMergedForLiveReviewTests(livePr, fixSha);
-      const fixGapPrior = [
+      const fixGapPrior: PersistentLedgerEntry[] = [
         ...reviewLoopBase,
         {
           step: "S10",
@@ -2134,7 +2147,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       ).toBe(2);
       expect(fixGapBackend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
 
-      const retriggerPrior = [
+      const retriggerPrior: PersistentLedgerEntry[] = [
         ...reviewLoopBase,
         {
           step: "S10",
@@ -2217,7 +2230,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         ],
       }),
     ];
-    const happyPrior = [
+    const happyPrior: PersistentLedgerEntry[] = [
       ...reviewLoopBase,
       {
         step: "S10",
@@ -2262,6 +2275,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         prNumber: 255,
         prUrl: input.prUrl,
         headOid: input.roundTrigger.headOid,
+        roundTriggerUsed: input.roundTrigger,
         pollCount: 1,
         bots: {
           coderabbit: { state: "complete", findingCount: 0 },
@@ -2271,6 +2285,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         },
         threads: [],
         checkRuns: [],
+        checkRunsEmptyMeans: "converged",
         totalFindingCount: 0,
         quiescent: true,
       }));
@@ -2327,7 +2342,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     const fixTs = "2026-07-08T12:30:00.000Z";
     const stateDir = mkdtempSync(join(tmpdir(), "resume-codex-p2-"));
     writeResumeOnlineReviewSnapshot(stateDir);
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -2410,7 +2425,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     const fixSha = "fixsha1111111111111111111111111111111111";
     const retriggerTs = "2026-07-08T13:00:00.000Z";
     const fixTs = "2026-07-08T12:30:00.000Z";
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -2472,7 +2487,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
 
   it("AC2 r7: crash after S10 resumes S9 with round+fix SHA from full ledger (#600 F1)", async () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -2521,7 +2536,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
   });
 
   it("pin r26: crash after converged marker resumes into S12 (skips re-verify)", async () => {
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),

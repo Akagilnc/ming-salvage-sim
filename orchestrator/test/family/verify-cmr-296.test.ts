@@ -72,7 +72,7 @@ class CapableFamilyBackend implements FamilyBackend {
     } = {},
   ) {
     if (script.worker !== undefined) {
-      this.dispatchWorker = script.worker;
+      this.dispatchWorker = async (spec, ctx) => script.worker!(spec, ctx);
     }
   }
 
@@ -467,10 +467,10 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         super({ verify: () => ({ ok: true }) });
       }
 
-      async dispatchWorker(
+      dispatchWorker = async (
         spec: WorkerSpec,
         ctx: DispatchContext,
-      ): Promise<WorkerResult> {
+      ): Promise<WorkerResult> => {
         if (spec.kind === "cmr") {
           return {
             kind: "malformed",
@@ -483,7 +483,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
           };
         }
         throw new Error(`unexpected worker after route-accounting failure: ${spec.kind}`);
-      }
+      };
 
       async rewriteWorkerOutcome(
         spec: WorkerSpec,

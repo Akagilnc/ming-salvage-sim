@@ -39,10 +39,10 @@ import type {
 } from "../../src/family/types.js";
 import type {
   DispatchContext,
+  CmrResult,
   Finding,
   WorkerResult,
   WorkerSpec,
-  CmrWorkerOutput,
 } from "../../src/types.js";
 
 const CMR_EVIDENCE = {
@@ -80,7 +80,7 @@ class ScriptedCmrBackend implements FamilyBackend {
   readonly dispatchedNonCmrKinds: WorkerSpec["kind"][] = [];
   currentFamilyHead = "head-1";
 
-  constructor(private readonly cmrOutput: CmrWorkerOutput) {}
+  constructor(private readonly cmrOutput: CmrResult) {}
 
   async mergeChildIntoFamilyBase(
     _child: MergeRequest,

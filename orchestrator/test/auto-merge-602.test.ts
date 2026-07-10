@@ -1253,7 +1253,11 @@ describe("#602 sliceDocReleaseCommitOid", () => {
   it("reads branchHEAD from the last successful S12 ledger row, not worktree HEAD", () => {
     expect(
       sliceDocReleaseCommitOid([
-        { step: "S11", branchHEAD: "abc1111", output: { kind: "cleanup", ok: true } },
+        {
+          step: "S11",
+          branchHEAD: "abc1111",
+          output: { kind: "cleanup", ok: true, terminal: true },
+        },
         {
           step: "S12",
           branchHEAD: "abc1234567890def1234567890abcd1234567890ab",
@@ -1363,6 +1367,7 @@ describe("#602 docRelease non-interactive dispatch env", () => {
       remote: "https://github.com/Akagilnc/ming-salvage-sim.git",
       runKey: 602,
       repo: REPO,
+      imageName: "test-image-602",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
       // #748: construction resolves paths under home; keep off real $HOME.

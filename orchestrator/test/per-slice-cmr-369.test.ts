@@ -287,7 +287,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     ]);
     const s3 = result.stepLedger.find((entry) => entry.step === "S3");
     expect(s3?.output?.kind).toBe("reviewer");
-    expect(s3?.output?.escalate?.reason).toMatch(/bounded reruns/i);
+    expect(result.stopSummary?.summary).toMatch(/bounded reruns/i);
   });
 
   // #604 correctness r1 (P1-a ①): a RUNNER-synthesized escalate from exhausted
@@ -306,7 +306,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     expect(result.status).toBe("escalate");
     // The synthesized escalate carries the protocol-failure marker.
     const s3 = result.stepLedger.find((entry) => entry.step === "S3");
-    expect(s3?.output?.escalate?.synthesizedFailure).toBe(true);
+    expect(result.stopSummary?.reason).toBe("infra_failure");
     // The persisted S8 handoff entry is tagged FAILURE, not decision.
     const s8Escalate = backend.ledgerWrites.find(
       (entry) => entry.step === "S8" && entry.handoffStatus === "escalate",
@@ -895,7 +895,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           },
           repairMovementPaths: ["src/runner.ts"],
         },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend(
       [
@@ -1169,7 +1169,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S4" },
         { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
         continueFixingEvent,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend(
       [
@@ -1245,7 +1245,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
         { step: "S4" },
         { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend(
       [
@@ -1327,7 +1327,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           findingScope: { identityKeys: [blockingKey] },
           ts: "2026-07-01T00:00:02.000Z",
         } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend([], resumeState);
 
@@ -1381,7 +1381,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           source: "coordinator",
           ts: "2026-07-01T00:00:02.000Z",
         } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend([], resumeState);
 
@@ -1447,7 +1447,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       const backend = new RetryReviewBackend([], {
         worktree: WORKTREE,
         stateDir: "/resident/worktrees/.ledger-446",
-        ledger: [...baseLedger, event] as ReadonlyArray<PersistentLedgerEntry>,
+        ledger: [...baseLedger, event] as unknown as ReadonlyArray<PersistentLedgerEntry>,
       });
 
       const result = await runOrchestrator({ issueNumber: 446, backend });
@@ -1499,7 +1499,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           answer: "继续修",
           source: "human",
         } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend([], resumeState);
 
@@ -1526,7 +1526,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
             repairHint: "repair the coder contract and rerun",
           },
         },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend([], resumeState);
 
@@ -1730,7 +1730,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           source: "resume_input",
           ts: "2026-07-01T00:00:03.000Z",
         } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend([], resumeState);
 
@@ -1801,7 +1801,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           source: "resume_input",
           ts: "2026-07-01T00:00:04.000Z",
         } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend(
       [
@@ -1887,7 +1887,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           source: "resume_input",
           ts: "2026-07-01T00:00:04.000Z",
         } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend(
       [
@@ -1973,7 +1973,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           source: "resume_input",
           ts: "2026-07-01T00:00:04.000Z",
         } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend(
       [
@@ -2017,7 +2017,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         { step: "S3", output: { kind: "reviewer", findings: [finding] } },
         { step: "S4" },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend(
       [
@@ -2089,7 +2089,7 @@ describe("#369 runner resume/retry review fixes", () => {
           answer: "continue after human answer",
           source: "human",
         },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend(
       [
@@ -2143,7 +2143,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         { step: "S6", output: { kind: "reviewer", findings: [] } },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend([], resumeState);
 
@@ -2186,7 +2186,7 @@ describe("#369 runner resume/retry review fixes", () => {
           },
         },
         { step: "S4" },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend(
       [
@@ -2268,7 +2268,7 @@ describe("#369 runner resume/retry review fixes", () => {
           output: { kind: "reviewer", findings: [blocking, acceptedRisk] },
         },
         { step: "S4", findingDispositions: [acceptedRiskDisposition] },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend(
       [
@@ -2350,7 +2350,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S4" },
         { step: "S7" },
         { step: "S8", handoffStatus: "success" },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ] as unknown as ReadonlyArray<PersistentLedgerEntry>,
     };
     const backend = new RetryReviewBackend([], resumeState);
 
@@ -3087,6 +3087,7 @@ describe("#369 legacy S5 landing file", () => {
       "utf8",
     );
     const backend: Backend = {
+      async smokeModelRoute(route) { return route; },
       async findResumeState() { return undefined; },
       async cleanResidue() {},
       async resumeSession() {
@@ -3186,6 +3187,7 @@ describe("#369 legacy S5 landing file", () => {
       | { readonly path: string; readonly sandboxPath: string }
       | undefined;
     const backend: Backend = {
+      async smokeModelRoute(route) { return route; },
       async findResumeState() { return undefined; },
       async cleanResidue() {},
       async resumeSession() {
@@ -3262,6 +3264,7 @@ describe("#369 legacy S5 landing file", () => {
       | { readonly path: string; readonly sandboxPath: string }
       | undefined;
     const backend: Backend = {
+      async smokeModelRoute(route) { return route; },
       async findResumeState() { return undefined; },
       async cleanResidue() {},
       async resumeSession() {
