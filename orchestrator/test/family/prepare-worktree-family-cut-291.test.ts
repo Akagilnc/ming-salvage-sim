@@ -65,7 +65,23 @@ class RecordingBackend extends RealBackend {
     baseBranch: string,
   ): Promise<Worktree> {
     RecordingBackend.cutBaseBranch = baseBranch;
-    return { worktreePath: `/clone/.worktrees/${branch}` } as unknown as Worktree;
+    return {
+      branch,
+      worktreePath: `/clone/.worktrees/${branch}`,
+      async run() {
+        throw new Error("test worktree must not run an agent");
+      },
+      async interactive() {
+        throw new Error("test worktree must not start an interactive session");
+      },
+      async createSandbox() {
+        throw new Error("test worktree must not create a sandbox");
+      },
+      async close() {
+        return {};
+      },
+      async [Symbol.asyncDispose]() {},
+    };
   }
 }
 

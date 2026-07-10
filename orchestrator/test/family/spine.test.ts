@@ -19,11 +19,15 @@ import { execFileSync } from "node:child_process";
 import { runFamily } from "../../src/family/runner.js";
 import type {
   Backend,
+  DispatchContext,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
+  WorkerLandingPayload,
+  WorkerResult,
+  WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
 import type {
@@ -126,8 +130,12 @@ class FakeFamilyBackend implements FamilyBackend {
   }
 
   // #596 r2 support for full final barrier in spine tests (runVerifyCmr fresh path)
-  runFamilyVerify?: (req: any) => Promise<any>;
-  dispatchWorker?: (spec: any, ctx?: any, landing?: any) => Promise<any>;
+  runFamilyVerify?: FamilyBackend["runFamilyVerify"];
+  dispatchWorker?: (
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ) => Promise<WorkerResult>;
   verifyFamilyShippedPr?: (
     _req: VerifyFamilyShippedPrRequest,
   ) => Promise<VerifyFamilyShippedPrResult>;
@@ -531,7 +539,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
 
     const verifyRounds: number[] = [];
-    familyBackend.dispatchWorker = async (spec: any, ctx?: any, landing?: any) => {
+    familyBackend.dispatchWorker = async (spec, ctx, landing) => {
       if (spec.kind === "verify") {
         verifyRounds.push(ctx?.onlineReviewRound ?? 0);
         return {
@@ -544,7 +552,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
               ...(landing?.fixMarkedFindingIdentityKeys ?? [authKey]),
             ],
           },
-        };
+        } satisfies WorkerResult;
       }
       const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
       return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };

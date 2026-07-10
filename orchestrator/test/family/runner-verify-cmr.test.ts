@@ -47,6 +47,7 @@ import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type { VerifyCmrInput, VerifyCmrResult } from "../../src/family/verifyCmr.js";
 import type { FindingDisposition } from "../../src/types.js";
+import type { StopSummary } from "../../src/stopSummary.js";
 
 /** A single-slice Backend that drives every child to S8(success). */
 class ChildBackend implements Backend {
@@ -1491,7 +1492,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             familyHeadAfter: "head-before-coder-fix",
             blockingFindingIdentityKeys: [blockerKey],
             cmrDispositions: [],
-          } as unknown as FamilyLedgerEntry,
+          } satisfies FamilyLedgerEntry,
           {
             status: "aborted",
             event: "aborted",
@@ -1505,7 +1506,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
               summary: "integrated CMR correctness coder-fix failed",
               repairHint: "repair the family CMR coder-fix worker contract",
             },
-          } as unknown as FamilyLedgerEntry,
+          } satisfies FamilyLedgerEntry,
         ],
         "head-after-bad-coder-fix",
       );
@@ -1529,7 +1530,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             familyHeadAfter: "head-before-coder-fix",
             blockingFindingIdentityKeys: [blockerKey],
             cmrDispositions: [],
-          } as unknown as FamilyLedgerEntry,
+          } satisfies FamilyLedgerEntry,
           {
             status: "cmr_fix_committed",
             event: "cmr_fix_committed",
@@ -1538,7 +1539,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             familyHeadBefore: "head-before-coder-fix",
             familyHeadAfter: "head-after-coder-fix",
             blockingFindingIdentityKeys: [blockerKey],
-          } as unknown as FamilyLedgerEntry,
+          } satisfies FamilyLedgerEntry,
           {
             // not_converged sentinel: a CLASSIFIED abort carrying an EMPTY envelope.
             status: "aborted",
@@ -1548,11 +1549,12 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             familyHeadAfter: "head-after-coder-fix",
             blockingFindingIdentityKeys: [],
             reason: "integrated cmr correctness did not converge",
+            // Deliberately malformed persisted stop reason exercises legacy-ledger recovery.
             stopSummary: {
               reason: "not_converged",
               summary: "integrated CMR correctness did not converge after coder-fix",
-            },
-          } as unknown as FamilyLedgerEntry,
+            } as unknown as StopSummary,
+          } satisfies FamilyLedgerEntry,
         ],
         "head-after-coder-fix",
       );
