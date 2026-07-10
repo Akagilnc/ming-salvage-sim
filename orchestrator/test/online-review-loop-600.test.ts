@@ -61,6 +61,7 @@ import {
   isBotQuiescent,
   isThreadEvidenceFresh,
   ONLINE_REVIEW_BOT_IDS,
+  ONLINE_REVIEW_BOT_LOGINS,
   paginateReviewThreadNodes,
   parsePrRef,
   findAdmissibleRetriggerComment,
@@ -306,6 +307,14 @@ const GITHUB_RESOLVE_MUTATION_SHAPE = {
 };
 
 describe("#600 botPolling — parsePrRef + paginated gh api", () => {
+  it("keeps every exact-match bot login lowercase", () => {
+    for (const logins of Object.values(ONLINE_REVIEW_BOT_LOGINS)) {
+      for (const login of logins) {
+        expect(login).toBe(login.toLowerCase());
+      }
+    }
+  });
+
   it("parses a full GitHub PR URL", () => {
     expect(
       parsePrRef("https://github.com/o/r/pull/42", "fallback/r"),
