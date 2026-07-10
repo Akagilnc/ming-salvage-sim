@@ -127,6 +127,30 @@ def test_participation_record_adapter_covers_assignment_shape(game):
     assert any(item["source_id"] == "assignment:1" for item in view["events"])
 
 
+def test_issue_write_path_projects_participants_across_restore(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="清丈差事",
+        origin_kind="decree",
+        origin_ref="decree:1",
+        participants=[minister.name],
+        stage_text="奉命督办",
+    )
+
+    row = db.conn.execute("SELECT participants FROM issues WHERE id=?", (issue_id,)).fetchone()
+    assert row["participants"] == f'["{minister.name}"]'
+    before = db.get_character_knowledge(state, minister.name)
+
+    restored = db.load_state()
+    after = db.get_character_knowledge(restored, minister.name)
+
+    assert any(item["source_id"] == f"issue:{issue_id}" for item in before["events"])
+    assert before["events"] == after["events"]
+
+
 def test_knowledge_world_is_qualitative_not_numeric(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "户部")
