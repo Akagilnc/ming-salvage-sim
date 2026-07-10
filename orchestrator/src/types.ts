@@ -393,6 +393,13 @@ export interface OnlineReviewFixCommittedEvent {
   readonly event: "online_review_fix_committed";
   readonly fixCommitSha: string;
   readonly onlineReviewRound: number;
+  /** Fix-marked identity keys from the verify that drove this fix (#743). */
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /** Original thread binding for each fix-marked identity (#743 resume authority). */
+  readonly fixMarkedFindingThreads?: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
 }
 
 /**
@@ -1231,6 +1238,21 @@ export interface LedgerEntry {
   readonly roundTriggerHeadOid?: string;
   /** Online review round re-trigger marker (#600 r25): ISO instant the round began. */
   readonly roundTriggerAt?: string;
+  /** Online review fix_committed marker (#600 r27): fixing commit SHA. */
+  readonly fixCommitSha?: string;
+  /**
+   * Online review fix_committed marker (#743): fix-marked identity keys from the
+   * verify that drove this fix — durable resume authority (family-parity).
+   */
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /**
+   * Online review fix_committed marker (#743): original thread binding for each
+   * fix-marked identity — resume must not depend on last-S9 shape alone.
+   */
+  readonly fixMarkedFindingThreads?: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
 }
 
 /**

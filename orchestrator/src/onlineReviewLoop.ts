@@ -691,10 +691,97 @@ export function lastOnlineReviewFixCommitShaFromFamilyLedger(
 }
 
 /**
+ * Rebuild the last fixer authorization from a single-slice ledger's
+ * `online_review_fix_committed` marker (#743). Prefer this over last-S9 shape
+ * when the marker carries keys — resume must not depend on a key-only recheck row.
+ */
+export function lastFixMarkedFindingAuthorizationFromLedger(
+  entries: ReadonlyArray<{
+    readonly event?: string;
+    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+    readonly fixMarkedFindingThreads?: ReadonlyArray<{
+      readonly identityKey?: string;
+      readonly threadId?: string;
+    }>;
+  }>,
+): {
+  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
+  readonly fixMarkedFindingThreads: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
+} {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (entry.event !== "online_review_fix_committed") continue;
+    return {
+      fixMarkedFindingIdentityKeys: (entry.fixMarkedFindingIdentityKeys ?? []).filter(
+        (key) => typeof key === "string" && key.trim().length > 0,
+      ),
+      fixMarkedFindingThreads: (entry.fixMarkedFindingThreads ?? []).flatMap(
+        (binding) =>
+          typeof binding.identityKey === "string" &&
+          binding.identityKey.trim().length > 0 &&
+          typeof binding.threadId === "string" &&
+          binding.threadId.trim().length > 0
+            ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
+            : [],
+      ),
+    };
+  }
+  return {
+    fixMarkedFindingIdentityKeys: [],
+    fixMarkedFindingThreads: [],
+  };
+}
+
+/**
+ * Durable fixer authorization for a resumed post-fixer recheck (#743).
+ * Marker keys win when present; otherwise fall back to last S9 dispositions
+ * (legacy markers / crash before fix_committed persistence).
+ */
+export function fixMarkedFindingAuthorizationForResume(
+  fullLedger: ReadonlyArray<{
+    readonly step?: string;
+    readonly event?: string;
+    readonly output?: StepOutput;
+    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+    readonly fixMarkedFindingThreads?: ReadonlyArray<{
+      readonly identityKey?: string;
+      readonly threadId?: string;
+    }>;
+  }>,
+): {
+  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
+  readonly fixMarkedFindingThreads: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
+} {
+  const fromMarker = lastFixMarkedFindingAuthorizationFromLedger(fullLedger);
+  if (fromMarker.fixMarkedFindingIdentityKeys.length > 0) {
+    return fromMarker;
+  }
+  const lastVerify = lastS9VerifyOutputFromLedger(
+    fullLedger as ReadonlyArray<{ readonly step: string; readonly output?: StepOutput }>,
+  );
+  if (lastVerify === undefined) {
+    return {
+      fixMarkedFindingIdentityKeys: [],
+      fixMarkedFindingThreads: [],
+    };
+  }
+  return {
+    fixMarkedFindingIdentityKeys: fixMarkedKeysFromVerify(lastVerify),
+    fixMarkedFindingThreads: fixMarkedFindingThreadsFromVerify(lastVerify),
+  };
+}
+
+/**
  * Rebuild the last fixer authorization from the durable family ledger. A
  * resumed recheck must retain both the identity contract and its original
- * thread binding; missing fields remain empty so the caller fails closed for
- * a non-empty key contract.
+ * thread binding; missing fields remain empty so the caller fails closed
+ * (including an all-empty rebuild on post-fixer recheck).
  */
 export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
   entries: ReadonlyArray<{
@@ -849,6 +936,10 @@ export function enforceRunnerOwnedRecheck(
  * and that set has a complete one-to-one original-thread authorization.
  * This makes a bare `converged:true` fail closed instead of silently closing
  * findings the fixer merely claimed to have repaired.
+ *
+ * An empty rebuilt authorization set also fails closed on a post-fixer recheck
+ * (resume with an all-empty marker / missing snapshot must not admit bare
+ * converge). Round-1 non-recheck bare converge stays legal via the early return.
  */
 export function recheckConvergenceConfirmsFixMarkedKeys(
   verify: VerifyResult,
@@ -858,7 +949,9 @@ export function recheckConvergenceConfirmsFixMarkedKeys(
   const expected = landing.fixMarkedFindingIdentityKeys ?? [];
   const expectedThreads = landing.fixMarkedFindingThreads ?? [];
   const confirmed = verify.fixMarkedFindingIdentityKeys;
-  if (expected.length === 0) return expectedThreads.length === 0;
+  // Post-fixer recheck with no authorized identities is not a valid converge —
+  // empty rebuilds (legacy empty marker / missing S9) must not soft-admit.
+  if (expected.length === 0) return false;
   if (confirmed === undefined) return false;
   if (expected.length !== confirmed.length) return false;
   const expectedKeys = new Set(expected);
@@ -971,15 +1064,12 @@ export function reconstructOnlineReviewLandingForResume(input: {
       ? readOnlineReviewSnapshotFile(input.stateDir)
       : undefined;
   if (snapshot === undefined) return undefined;
+  const auth = fixMarkedFindingAuthorizationForResume(input.fullLedger);
   const lastVerify = lastS9VerifyOutputFromLedger(input.fullLedger);
-  const fixKeys =
-    lastVerify !== undefined ? fixMarkedKeysFromVerify(lastVerify) : [];
-  const fixMarkedFindingThreads =
-    lastVerify !== undefined ? fixMarkedFindingThreadsFromVerify(lastVerify) : [];
   return {
     ...buildOnlineReviewLanding(snapshot, input.ship, input.round),
-    fixMarkedFindingIdentityKeys: fixKeys,
-    fixMarkedFindingThreads,
+    fixMarkedFindingIdentityKeys: auth.fixMarkedFindingIdentityKeys,
+    fixMarkedFindingThreads: auth.fixMarkedFindingThreads,
     ...(lastVerify?.findingFamilies !== undefined
       ? { findingFamilies: lastVerify.findingFamilies }
       : {}),
