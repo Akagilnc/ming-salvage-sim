@@ -81,6 +81,7 @@ import {
 import {
   immediateBotPollClock,
   OnlineReviewLoopTerminal,
+  lastFixMarkedFindingAuthorizationFromFamilyLedger,
   lastOnlineReviewFixCommitShaFromFamilyLedger,
   offlinePrReviewSnapshot,
   onlineReviewRoundFromFamilyLedger,
@@ -1582,6 +1583,8 @@ export async function runFamilyOnlineReviewLoop(input: {
     round: onlineReviewRoundFromFamilyLedger(familyLedger),
     lastFixSha: lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedger),
   };
+  const resumedFixAuthorization =
+    lastFixMarkedFindingAuthorizationFromFamilyLedger(familyLedger);
   const pendingGapRetrigger = familyPendingRoundTriggerFromFixGap(familyLedger);
   let lastRoundTrigger: RoundTrigger;
   try {
@@ -1635,6 +1638,10 @@ export async function runFamilyOnlineReviewLoop(input: {
   let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
   /** #711: last fixer landing's fix-marked keys for durable family ledger prior rounds. */
   let lastFixMarkedFindingIdentityKeys: ReadonlyArray<string> = [];
+  let lastFixMarkedFindingThreads: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }> = [];
   let lastFixerOnlineReviewRound = loopState.round;
 
   try {
@@ -1764,6 +1771,7 @@ export async function runFamilyOnlineReviewLoop(input: {
       const round = landing.onlineReviewRound ?? baseCtx.onlineReviewRound ?? 1;
       lastFixMarkedFindingIdentityKeys =
         landing.fixMarkedFindingIdentityKeys ?? [];
+      lastFixMarkedFindingThreads = landing.fixMarkedFindingThreads ?? [];
       lastFixerOnlineReviewRound = round;
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
@@ -1875,6 +1883,9 @@ export async function runFamilyOnlineReviewLoop(input: {
         ...(lastFixMarkedFindingIdentityKeys.length > 0
           ? { fixMarkedFindingIdentityKeys: lastFixMarkedFindingIdentityKeys }
           : {}),
+        ...(lastFixMarkedFindingThreads.length > 0
+          ? { fixMarkedFindingThreads: lastFixMarkedFindingThreads }
+          : {}),
       });
       return sha;
     },
@@ -1882,6 +1893,10 @@ export async function runFamilyOnlineReviewLoop(input: {
       {
         initialRound: loopState.round,
         initialFixCommitSha: loopState.lastFixSha,
+        initialFixMarkedFindingIdentityKeys:
+          resumedFixAuthorization.fixMarkedFindingIdentityKeys,
+        initialFixMarkedFindingThreads:
+          resumedFixAuthorization.fixMarkedFindingThreads,
         enrichVerifyLanding: async (landing, round) => {
           // Merge ledger history with in-process accumulation — never either/or.
           // After mid-loop resume, in-process only has post-resume rounds; a
