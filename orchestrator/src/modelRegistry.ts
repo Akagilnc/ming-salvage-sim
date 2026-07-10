@@ -102,13 +102,6 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     options: { effort: "medium" },
     family: "codex",
   },
-  "gpt-5.6-sol": {
-    provider: "codex",
-    model: "gpt-5.6-sol",
-    options: { effort: "medium" },
-    family: "codex",
-    strongLeg: true,
-  },
   // #767 Coder-Rec roster: SuperGrok pool primary coder.
   "grok-4.5": {
     provider: "cursor",
