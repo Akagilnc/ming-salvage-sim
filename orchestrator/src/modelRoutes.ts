@@ -4,7 +4,6 @@ import {
   CODER_CODEX_SLUG,
   REVIEWER_CODEX_SLUG,
   VERIFY_CODEX_SLUG,
-  modelFamilyForCmrReviewLeg,
   modelFamilyForSlug,
   resolveModelSlug,
   type ModelFamily,

@@ -90,11 +90,11 @@ import {
 import {
   agentForSlug,
   CODER_CODEX_SLUG,
+  effortForLiveOfficer,
   modelFamilyForSlug,
   modelIdForSlug,
   modelIsStrongLeg,
   resolveModelSlug,
-  VERIFY_CODEX_SLUG,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
   type ModelFamily,
   type ModelProviderFactory,
@@ -109,19 +109,6 @@ import {
   type ResolvedModelRoute,
   type RouteSmokeStatus,
 } from "./modelRoutes.js";
-
-function effortForLiveOfficer(
-  slug: string,
-  context: { readonly role?: string; readonly soul?: string; readonly smokeKey?: string },
-): "xhigh" | undefined {
-  if (
-    slug === VERIFY_CODEX_SLUG &&
-    (context.role === "verify" || context.soul === "cmr" || /^(verify|cmr)/.test(context.smokeKey ?? ""))
-  ) {
-    return "xhigh";
-  }
-  return undefined;
-}
 
 export function routeSmokeCacheKey(
   route: ResolvedModelRoute,

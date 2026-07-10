@@ -71,6 +71,7 @@ import {
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
 import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
+import { effortForLiveOfficer } from "../modelRegistry.js";
 import {
   agentForSlug,
   assertCompletionSignal,
@@ -547,18 +548,7 @@ export class RealFamilyBackend implements FamilyBackend {
    * without spinning a real `sc.run`.
    */
   protected agentForSpec(spec: WorkerSpec): sc.AgentProvider {
-    return agentForSlug(spec.model, this.effortForLiveOfficer(spec));
-  }
-
-  /** Match the single-slice live-officer policy for family verify/CMR workers. */
-  private effortForLiveOfficer(spec: WorkerSpec): "xhigh" | undefined {
-    if (
-      spec.model === "gpt-5.6-terra" &&
-      (spec.role === "verify" || spec.soul === "cmr")
-    ) {
-      return "xhigh";
-    }
-    return undefined;
+    return agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec));
   }
 
   // ─────────────────────────── family ledger ───────────────────────────
