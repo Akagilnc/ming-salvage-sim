@@ -77,6 +77,10 @@ NON_DRAFT_TEXT_KEYS = frozenset(
         "successfulLegs",
         "skippedLegs",
         "claimedFixedFindingIdentityKeys",
+        "disposition_reason",
+        "reason",
+        "boundedReopen",
+        "findingIdentity",
     }
 )
 
@@ -102,9 +106,10 @@ def draft_claims_success(draft: dict) -> bool:
 
 
 def collect_strings(value: object, key: str = "") -> Iterator[str]:
+    if key in NON_DRAFT_TEXT_KEYS:
+        return
     if isinstance(value, str):
-        if key not in NON_DRAFT_TEXT_KEYS:
-            yield value
+        yield value
     elif isinstance(value, list):
         for item in value:
             yield from collect_strings(item, key)
