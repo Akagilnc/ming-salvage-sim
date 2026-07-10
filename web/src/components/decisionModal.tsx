@@ -3,6 +3,10 @@ import type { PendingActionFailure, PendingDecision } from "../types";
 
 type Choice = { label?: string; hint?: string; note?: string };
 
+function isCheatConsoleTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(".cheat-console") !== null;
+}
+
 export function DecisionModal({
   decisions,
   failures = [],
@@ -44,6 +48,7 @@ export function DecisionModal({
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
     const keepFocusInPage = (event: KeyboardEvent) => {
+      if (isCheatConsoleTarget(event.target)) return;
       if (event.ctrlKey && (event.key === "~" || event.key === "`")) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -73,6 +78,7 @@ export function DecisionModal({
 
     const keepFocusInPageOnFocus = (event: FocusEvent) => {
       if (event.target instanceof Node && page.contains(event.target)) return;
+      if (isCheatConsoleTarget(event.target)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       (focusables()[0] || page).focus();
@@ -93,6 +99,7 @@ export function DecisionModal({
     const firstFocusable = page.querySelector<HTMLElement>(
       "button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])",
     );
+    if (isCheatConsoleTarget(document.activeElement)) return;
     (firstFocusable || page).focus();
   }, [cursor, decisions.length]);
 
