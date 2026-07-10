@@ -61,6 +61,7 @@ def test_r4_named_characters_debut_in_historical_order(game):
         assert character.debut_year == debut_year
         assert character.location == location
         assert db.get_character_status(name)[0] == "offstage"
+    assert content.characters["汤若望"].debut_month == 0
 
     assert db.apply_historical_debuts(state) == []
 
@@ -105,3 +106,54 @@ def test_r4_loader_rejects_seed_guilt_list(monkeypatch):
 
     with pytest.raises(SystemExit, match="seed_guilt 必须是 JSON 对象"):
         content_module.load_character_content()
+
+
+def _minimal_character_with_seed_guilt(seed_guilt, *, identity=50):
+    return {
+        "name": "测试人物",
+        "office": "知县",
+        "office_type": "地方",
+        "faction": "测试派",
+        "loyalty": 50,
+        "ability": 50,
+        "integrity": 50,
+        "courage": 50,
+        "style": "测试",
+        "power_id": "ming",
+        "personal_skills": [],
+        "seed_guilt": seed_guilt,
+        "identity": identity,
+    }
+
+
+def _patch_single_character(monkeypatch, character):
+    monkeypatch.setattr(
+        content_module,
+        "load_json_asset",
+        lambda _name: {
+            "factions": [{"name": "测试派", "satisfaction": 50, "leverage": 50, "agenda": "测试"}],
+            "characters": [character],
+        },
+    )
+
+
+def test_r5_loader_rejects_nested_seed_guilt_crime_list(monkeypatch):
+    _patch_single_character(monkeypatch, _minimal_character_with_seed_guilt({"crime": [], "severity": "无"}))
+
+    with pytest.raises(SystemExit, match="设定字段应为字符串"):
+        content_module.load_character_content()
+
+
+def test_r5_loader_rejects_nested_seed_guilt_severity_object(monkeypatch):
+    _patch_single_character(monkeypatch, _minimal_character_with_seed_guilt({"crime": "", "severity": {}}))
+
+    with pytest.raises(SystemExit, match="设定字段应为非空字符串"):
+        content_module.load_character_content()
+
+
+def test_r5_loader_preserves_zero_identity(monkeypatch):
+    _patch_single_character(monkeypatch, _minimal_character_with_seed_guilt({"crime": "", "severity": "无"}, identity=0))
+
+    _factions, characters = content_module.load_character_content()
+
+    assert characters["测试人物"].identity == 0
