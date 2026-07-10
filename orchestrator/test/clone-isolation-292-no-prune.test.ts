@@ -1,11 +1,8 @@
 /**
  * #292 — prune is handed back to Sandcastle (ADR 0024 decision 2).
  *
- * cleanResidueAt KEEPS the per-worktree residue clean (`reset --hard HEAD` +
- * `clean -fd`) but MUST NOT run the repo-level `git worktree prune` — that was
- * both a duplicate of Sandcastle's own pruneStale AND the dangerous cross-session
- * reaper the dedicated clone (decision 1) makes unnecessary. With an independent
- * clone, a prune is Sandcastle's job and can't reach across sessions anyway.
+ * #661: reuse preserves every scene AS-IS. No reset, clean, or worktree prune
+ * may be reachable from preparation or compatibility cleanup seams.
  *
  * Drives the REAL RealBackend via the same `sh`/clone seam subclass as the build
  * test (zero git / Docker), exercising the reuse path of prepareWorktree which
@@ -13,6 +10,7 @@
  */
 
 import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -37,8 +35,7 @@ const EXISTING_WT = `${CLONE}/.sandcastle/worktrees/issue-256`;
 
 /**
  * Reports the clone as built (so construction's guard passes), reports the
- * resident worktree as already present (so prepareWorktree takes the REUSE →
- * cleanResidueAt branch), and records every git call.
+ * resident worktree as already present and records every git call.
  */
 class RecordingBackend extends RealBackend {
   static gitCalls: Array<{ file: string; args: string[]; cwd?: string }> = [];
@@ -88,37 +85,41 @@ function newBackend(override?: Partial<RealBackendOptions>): RecordingBackend {
   });
 }
 
-describe("#292 cleanResidueAt — prune is gone, in-worktree clean stays", () => {
-  it("on reuse, runs reset --hard + clean -fd but NOT worktree prune", async () => {
+describe("#661 resident scene preservation", () => {
+  it("has no reset/clean helper reachable from prepare, retry, resume, or relay source", () => {
+    const backendSource = readFileSync(join(here, "..", "src", "realBackend.ts"), "utf8");
+    const runnerSource = readFileSync(join(here, "..", "src", "runner.ts"), "utf8");
+    expect(backendSource).not.toMatch(/cleanResidueAt|\["reset",\s*\["--hard"|\["clean",\s*\["-fd"/);
+    expect(runnerSource).not.toMatch(/\.cleanResidue\(/);
+  });
+
+  it("on reuse, never resets, cleans, or prunes the scene", async () => {
     const b = newBackend();
     RecordingBackend.gitCalls = []; // ignore construction-time git
     await b.prepareWorktree(ISSUE, "main");
 
     const ran = b.gitCalls.map((c) => c.args.join(" "));
-    expect(ran).toContain("reset --hard HEAD");
-    expect(ran).toContain("clean -fd");
+    expect(ran).not.toContain("reset --hard HEAD");
+    expect(ran).not.toContain("clean -fd");
     expect(ran.some((r) => r.includes("worktree prune"))).toBe(false);
   });
 
-  it("the kept reset/clean run IN the reused worktree (not the clone root)", async () => {
+  it("has no destructive git invocation in the reused worktree", async () => {
     const b = newBackend();
     RecordingBackend.gitCalls = [];
     await b.prepareWorktree(ISSUE, "main");
 
-    const reset = b.gitCalls.find((c) => c.args.join(" ") === "reset --hard HEAD");
-    const clean = b.gitCalls.find((c) => c.args.join(" ") === "clean -fd");
-    expect(reset?.cwd).toBe(EXISTING_WT);
-    expect(clean?.cwd).toBe(EXISTING_WT);
+    expect(b.gitCalls.some((c) => c.cwd === EXISTING_WT && /^(reset --hard|clean -fd)/.test(c.args.join(" ")))).toBe(false);
   });
 
-  it("the public cleanResidue() path also runs no prune", async () => {
+  it("the compatibility cleanResidue() seam is a no-op", async () => {
     const b = newBackend();
     RecordingBackend.gitCalls = [];
     await b.cleanResidue({ branch: BRANCH, base: "main", path: EXISTING_WT });
 
     const ran = b.gitCalls.map((c) => c.args.join(" "));
-    expect(ran).toContain("reset --hard HEAD");
-    expect(ran).toContain("clean -fd");
+    expect(ran).not.toContain("reset --hard HEAD");
+    expect(ran).not.toContain("clean -fd");
     expect(ran.some((r) => r.includes("worktree prune"))).toBe(false);
   });
 });

@@ -1727,6 +1727,8 @@ export interface AgentStepRunOptions {
    * provider/CLI channel when the same model lives on multiple pools.
    */
   readonly billingPool?: string;
+  /** Durable relay brief for any baton role (coder, ship, or review). */
+  readonly relayFocusPath?: string;
 }
 
 // ──────────────────────────── run result ────────────────────────────
