@@ -50,7 +50,25 @@ function sleepWorker(
     completionSignal: signal,
     stepId,
     logBasename: `${stepId}.log`,
+    readInstanceId: () => `test-instance-${stepId}`,
   });
+}
+
+function injectedDeps(handle: WorkerMonitorHandle): WorkerMonitorDeps {
+  return {
+    isPidAlive: (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    listChildPids: () => [],
+    readInstanceId: () => handle.instanceId,
+    killPid: (pid, signal) => process.kill(pid, signal),
+    sleepMs: async (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  };
 }
 
 function baseHandle(
@@ -82,8 +100,8 @@ describe("#684 worker monitor handles", () => {
       expect(typeof handle.instanceId).toBe("string");
       expect(handle.instanceId.length).toBeGreaterThan(0);
       expect(validateMonitorHandle(handle)).toBe(true);
-      expect(isWorkerAlive(handle)).toBe(true);
-      await killWorkerTree(handle);
+      expect(isWorkerAlive(handle, injectedDeps(handle))).toBe(true);
+      await killWorkerTree(handle, injectedDeps(handle));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -153,18 +171,18 @@ describe("#684 worker monitor handles", () => {
       const b = await sleepWorker(dir, "zai/glm-5.2", "B_DONE", "worker-b");
 
       expect(a.handle.pid).not.toBe(b.handle.pid);
-      expect(isWorkerAlive(a.handle)).toBe(true);
-      expect(isWorkerAlive(b.handle)).toBe(true);
+      expect(isWorkerAlive(a.handle, injectedDeps(a.handle))).toBe(true);
+      expect(isWorkerAlive(b.handle, injectedDeps(b.handle))).toBe(true);
 
-      const killed = await killWorkerTree(a.handle);
+      const killed = await killWorkerTree(a.handle, injectedDeps(a.handle));
       expect(killed.killedPids).toContain(a.handle.pid);
       expect(killed.residualPids).toEqual([]);
 
-      expect(isWorkerAlive(a.handle)).toBe(false);
-      expect(isWorkerAlive(b.handle)).toBe(true);
+      expect(isWorkerAlive(a.handle, { ...injectedDeps(a.handle), isPidAlive: () => false })).toBe(false);
+      expect(isWorkerAlive(b.handle, injectedDeps(b.handle))).toBe(true);
 
-      await killWorkerTree(b.handle);
-      expect(isWorkerAlive(b.handle)).toBe(false);
+      await killWorkerTree(b.handle, injectedDeps(b.handle));
+      expect(isWorkerAlive(b.handle, { ...injectedDeps(b.handle), isPidAlive: () => false })).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -218,6 +236,31 @@ describe("#684 worker monitor handles", () => {
 
     expect(killPid.mock.calls.some(([pid]) => pid === 101)).toBe(false);
     expect(killPid.mock.calls.some(([pid]) => pid === 100)).toBe(true);
+    expect(killPid.mock.calls.some(([pid]) => typeof pid === "number" && pid < 0)).toBe(false);
+  });
+
+  it("reports re-parented children as an unverified boundary without signalling them", async () => {
+    const killPid = vi.fn();
+    const alive = new Set([100, 101]);
+    const deps: WorkerMonitorDeps = {
+      isPidAlive: (pid) => alive.has(pid),
+      listChildPids: (pid) => (pid === 100 ? [101] : []),
+      readParentPid: (pid) => (pid === 101 ? 1 : undefined),
+      readInstanceId: () => "same-instance",
+      killPid,
+      sleepMs: async () => {},
+    };
+    const handle = baseHandle({
+      pid: 100,
+      logPath: "/tmp/unused.log",
+      instanceId: "same-instance",
+    });
+
+    const result = await killWorkerTree(handle, deps);
+
+    expect(killPid.mock.calls.some(([pid]) => pid === 101)).toBe(false);
+    expect(killPid.mock.calls.some(([pid]) => typeof pid === "number" && pid < 0)).toBe(false);
+    expect(result.unverifiedPids).toEqual([101]);
   });
 
   it("accepts an injected instance reader for restricted dispatch tests", async () => {
@@ -259,12 +302,15 @@ describe("#684 worker monitor handles", () => {
         poolId: "grok/build",
         completionSignal: "TREE_DONE",
         stepId: "tree-worker",
+        readInstanceId: () => "tree-worker-instance",
       });
       await new Promise((resolve) => setTimeout(resolve, 150));
-      const tree = collectPidTree(handle.pid);
+      const tree = collectPidTree(handle.pid, {
+        listChildPids: () => [],
+      });
       expect(tree).toContain(handle.pid);
       expect(tree.length).toBeGreaterThanOrEqual(1);
-      await killWorkerTree(handle);
+      await killWorkerTree(handle, injectedDeps(handle));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -314,7 +360,7 @@ describe("#684 worker monitor handles", () => {
     });
     const result = await killWorkerTree(handle, deps);
     expect(result.residualPids).toContain(100);
-    expect(result.residualPids).toContain(102);
+    expect(result.unverifiedPids).toContain(102);
     expect(result.residualPids).not.toContain(101);
     // Pre-kill collect + post-kill re-collect ⇒ more than one list wave.
     expect(listWaves).toBeGreaterThan(1);
@@ -386,6 +432,7 @@ describe("#684 worker monitor handles", () => {
           completionSignal: spec.completionSignal,
           stepId: spec.id,
           cwd: ctx.worktree?.path,
+          readInstanceId: () => "injected-production-instance",
         }),
         awaitMonitoredCliWorker: async () => completed,
       } as unknown as Backend;
@@ -419,6 +466,7 @@ describe("#684 worker monitor handles", () => {
       expect(validateMonitorHandle(outcome.monitorHandle)).toBe(true);
       expect(outcome.monitorHandle!.poolId).toBe("claude/sonnet");
       expect(outcome.monitorHandle!.completionSignal).toBe("CODER_STEP_COMPLETE");
+      expect(outcome.monitorHandle!.instanceId).toBe("injected-production-instance");
       expect(existsSync(outcome.monitorHandle!.logPath)).toBe(true);
       // Handle must be rebuildable from a ledger entry (resume path).
       const entry: PersistentLedgerEntry = {
@@ -463,6 +511,7 @@ describe("#684 worker monitor handles", () => {
           poolId: poolIdForWorker(spec),
           completionSignal: spec.completionSignal,
           stepId: spec.id,
+          readInstanceId: () => "injected-production-instance",
         }),
         awaitMonitoredCliWorker: async () => {
           events.push("awaited");
