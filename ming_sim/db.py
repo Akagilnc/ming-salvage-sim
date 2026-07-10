@@ -1274,6 +1274,10 @@ class GameDB:
         # 密令期限：0=无硬期限；到 due_turn 时自动转入待核议，由推演当月判 done/failed。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("secret_orders", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
+        # #489：character_knowledge_events 在早期存档中已存在但没有黑名单列；
+        # ensure_column 必须覆盖「表已存在」的迁移路径，不能只依赖 CREATE TABLE。
+        self.ensure_column(
+            "character_knowledge_events", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
         # BUG 3：directive 暂存 commit 成 turn_directives draft 时回填该 draft 行 id，
         # 使 undo_chat_turn 能精确删本轮自产的那条 draft（旧实现按 (turn,actor) 删，
         # 会连带删掉同 actor 同回合的无关 draft）。0=未 commit / 非 directive。
@@ -7432,6 +7436,38 @@ class GameDB:
             for r in rows
         ]
 
+    def list_issued_directives(self) -> List[Dict[str, object]]:
+        """读出所有已颁明发旨意，供跨回合公开见闻投影使用。"""
+        rows = self.conn.execute(
+            """
+            SELECT d.id, d.turn, d.year, d.period, d.event_id, d.actor,
+                   d.skill_id, d.text, d.source, d.status, d.notes,
+                   d.created_at, d.updated_at,
+                   e.title AS event_title
+            FROM turn_directives d
+            LEFT JOIN events e ON e.id = d.event_id
+            WHERE d.status = 'issued'
+            ORDER BY d.turn, d.id
+            """
+        ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "turn": int(r["turn"]),
+                "year": int(r["year"]),
+                "period": int(r["period"]),
+                "event_id": r["event_id"] or "",
+                "event_title": r["event_title"] or "",
+                "actor": r["actor"] or "",
+                "skill_id": r["skill_id"] or "",
+                "text": r["text"] or "",
+                "source": r["source"] or "",
+                "status": r["status"] or "",
+                "notes": r["notes"] or "",
+            }
+            for r in rows
+        ]
+
     def save_turn_extraction(
         self,
         state: GameState,
@@ -9058,10 +9094,14 @@ class GameDB:
 
     def record_character_participation(self, state: GameState, participants: Iterable[str], kind: str, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None) -> None:
         source_id = source_id or f"{kind}:{state.turn}:{title}"
+        excluded_json = json.dumps(
+            list(dict.fromkeys(str(p).strip() for p in (excluded_names or []) if str(p).strip())),
+            ensure_ascii=False,
+        )
         for name in dict.fromkeys(str(p).strip() for p in participants if str(p).strip()):
             self.conn.execute(
-                "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id) VALUES (?,?,?,?,?,?,?,?)",
-                (state.turn, state.year, state.period, name, kind, title[:80], body[:400], source_id),
+                "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
+                (state.turn, state.year, state.period, name, kind, title[:80], body[:400], source_id, excluded_json),
             )
         self.conn.commit()
 
@@ -9114,6 +9154,9 @@ class GameDB:
         ).fetchone()[0]
         if active_count >= 20:
             raise ValueError(f"进行中密令已达上限（20条），请先结案部分密令再下新令。当前：{active_count} 条。")
+        excluded_names = list(dict.fromkeys(
+            str(name).strip() for name in (excluded_names or []) if str(name).strip()
+        ))
         tags_json = json.dumps(tags, ensure_ascii=False)
         deadline = max(0, min(int(deadline_months or 0), 36))
         due_turn = int(state.turn) + deadline if deadline else 0
@@ -9127,7 +9170,10 @@ class GameDB:
              json.dumps(list(excluded_names or []), ensure_ascii=False)),
         )
         self.conn.commit()
-        self.record_character_participation(state, [minister_name], "secret_order", title, content, f"secret_order:{cur.lastrowid}")
+        self.record_character_participation(
+            state, [minister_name], "secret_order", title, content,
+            f"secret_order:{cur.lastrowid}", excluded_names=excluded_names,
+        )
         tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
         return cur.lastrowid  # type: ignore[return-value]
 
