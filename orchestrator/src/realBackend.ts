@@ -3784,10 +3784,12 @@ export class RealBackend implements Backend {
   async handleMonitoredWorkerIdle(
     handle: WorkerMonitorHandle,
     spec: WorkerSpec,
-    _ctx: DispatchContext,
+    ctx: DispatchContext,
   ): Promise<"hang" | "wait_for_reset"> {
     const result = await handleIdleThreshold({
-      modelRef: spec.model,
+      // #686: a same-model relay may have changed provider/billing pool. Probe
+      // the active dispatch pool carried by the runner whenever it is present.
+      modelRef: ctx.billingPool ?? spec.model,
       worker: { pid: handle.pid, step: spec.id },
       actions: {
         killPidTree: () => undefined,

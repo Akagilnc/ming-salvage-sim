@@ -631,7 +631,8 @@ export async function legacyDispatchWorker(
     fixFocusOptions !== undefined ||
     onlineReviewOptions !== undefined ||
     outcomeLanding !== undefined ||
-    ctx.billingPool !== undefined
+    ctx.billingPool !== undefined ||
+    ctx.relayFocusPath !== undefined
       ? {
           ...(fixFindingsOptions ?? {}),
           ...(fixFocusOptions ?? {}),
@@ -639,6 +640,9 @@ export async function legacyDispatchWorker(
           ...(outcomeLanding !== undefined ? { outcomeLanding } : {}),
           ...(ctx.billingPool !== undefined
             ? { billingPool: ctx.billingPool }
+            : {}),
+          ...(ctx.relayFocusPath !== undefined
+            ? { relayFocusPath: ctx.relayFocusPath }
             : {}),
         }
       : undefined;
