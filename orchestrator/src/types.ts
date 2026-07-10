@@ -418,8 +418,9 @@ export interface OnlineReviewCiPendingEvent {
 }
 
 /**
- * #683 — idle-threshold quota probe hit a 429/limit wall. Worker process is
- * preserved (not killed); auto re-dispatch after reset is #686 (out of scope).
+ * #683 — idle-threshold quota probe hit a 429/limit wall. Step is parked for
+ * quota reset (runner status escalate, not S8(error)); auto re-dispatch after
+ * reset is #686 (out of scope). Same park family as `online_review_ci_pending`.
  * Shape mirrors {@link import("./quotaProbe.js").QuotaWaitForResetLedgerEvent}.
  */
 export interface QuotaWaitForResetEvent {
