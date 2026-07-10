@@ -57,6 +57,10 @@ const WORKTREE: WorktreeHandle = {
  * so tests can assert the persisted ledger (not just the in-memory one).
  */
 class SpyBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly ledgerCalls: Array<{
     entry: PersistentLedgerEntry;
     stateDir: string;

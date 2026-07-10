@@ -86,6 +86,10 @@ describe("#337 runner is a pure scheduler — no inline productive work (STATIC)
  * throw and abort to S8(error)).
  */
 class SeamOnlyBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly dispatched: string[] = [];
   readonly specs: WorkerSpec[] = [];
   readonly ctxs: DispatchContext[] = [];

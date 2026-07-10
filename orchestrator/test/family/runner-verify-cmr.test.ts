@@ -50,6 +50,10 @@ import type { FindingDisposition } from "../../src/types.js";
 
 /** A single-slice Backend that drives every child to S8(success). */
 class ChildBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   async findResumeState(): Promise<undefined> {
     return undefined;
   }

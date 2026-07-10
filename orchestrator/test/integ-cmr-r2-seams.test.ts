@@ -76,6 +76,10 @@ const WORKTREE: WorktreeHandle = {
  * the in-memory ledger.
  */
 class SpyBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly ledgerCalls: Array<{
     entry: PersistentLedgerEntry;
     stateDir: string;

@@ -54,6 +54,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  renameSync,
   readFileSync,
   rmSync,
   statSync,
@@ -93,6 +94,36 @@ import {
   type ModelProviderFactory,
   type ModelSlugRegistryEntry,
 } from "./modelRegistry.js";
+import {
+  modelRouteFingerprint,
+  routeSmokeEntries,
+  routeSmokeFailure,
+  smokeRouteModels,
+  withRouteSmoke,
+  type ResolvedModelRoute,
+  type RouteSmokeStatus,
+} from "./modelRoutes.js";
+
+export function routeSmokeCacheKey(
+  route: ResolvedModelRoute,
+  sandboxFingerprint: string,
+): string {
+  return `${modelRouteFingerprint(route)}\0${sandboxFingerprint}`;
+}
+
+export function routeSmokeToolCallIsEchoOk(event: {
+  readonly type?: unknown;
+  readonly name?: unknown;
+  readonly formattedArgs?: unknown;
+}): boolean {
+  return (
+    event.type === "toolCall" &&
+    typeof event.name === "string" &&
+    /^(bash|shell)$/i.test(event.name) &&
+    typeof event.formattedArgs === "string" &&
+    /echo\s+(?:"OK"|'OK'|OK)/i.test(event.formattedArgs)
+  );
+}
 export {
   agentForSlug,
   CODER_CODEX_SLUG,
@@ -2083,6 +2114,166 @@ export class RealBackend implements Backend {
   }
 
   /**
+   * #685: prove every selected model×pipe can actually invoke bash before the
+   * runner spends a productive dispatch on it. This deliberately uses the
+   * selected Sandcastle provider, not a generic shell or a silent fallback.
+   */
+  async currentCliVersions(
+    route: ResolvedModelRoute,
+  ): Promise<Readonly<Record<string, string | undefined>>> {
+    const versions: Record<string, string | undefined> = {};
+    for (const entry of routeSmokeEntries(route)) {
+      if (versions[entry.slug] === undefined) {
+        versions[entry.slug] = this.cliVersionForSlug(entry.slug);
+      }
+    }
+    return versions;
+  }
+
+  async smokeModelRoute(
+    route: ResolvedModelRoute,
+    currentCliVersions: Readonly<Record<string, string | undefined>> = {},
+  ): Promise<ResolvedModelRoute> {
+    const sandboxFingerprint = this.routeSmokeSandboxFingerprint();
+    const persisted = this.readRouteSmokeState(route, sandboxFingerprint);
+    if (persisted !== undefined) {
+      const hydrated = withRouteSmoke(route, persisted);
+      if (routeSmokeFailure(hydrated, Date.now(), undefined, currentCliVersions) === undefined) {
+        return hydrated;
+      }
+    }
+    const smoked = await smokeRouteModels(route, async (entry) => {
+      let sawBash = false;
+      const logDir = mkdtempSync(join(this.opts.home ?? homedir(), "route-smoke-"));
+      try {
+        const result = await sc.run({
+          agent: agentForSlug(entry.slug),
+          sandbox: this.routeSmokeSandbox(),
+          cwd: this.workingRepo,
+          promptFile: join(this.opts.promptsDir, "route-smoke.md"),
+          maxIterations: 1,
+          idleTimeoutSeconds: 10,
+          completionSignal: "ROUTE_SMOKE_COMPLETE",
+          logging: {
+            type: "file",
+            path: join(logDir, "run.log"),
+            onAgentStreamEvent: (event) => {
+              if (
+                routeSmokeToolCallIsEchoOk(event)
+              ) {
+                sawBash = true;
+              }
+            },
+          },
+        });
+        if (result.completionSignal !== "ROUTE_SMOKE_COMPLETE" || !sawBash) {
+          throw new Error(
+            `model did not complete an observable bash smoke for ${entry.slug}`,
+          );
+        }
+        return { cliVersion: this.cliVersionForSlug(entry.slug) };
+      } finally {
+        rmSync(logDir, { recursive: true, force: true });
+      }
+    });
+    this.writeRouteSmokeState(smoked, sandboxFingerprint);
+    return smoked;
+  }
+
+  private routeSmokeStatePath(): string {
+    return join(this.opts.home ?? homedir(), ".sc-orchestrator", "route-smoke-state.json");
+  }
+
+  private readRouteSmokeState(
+    route: ResolvedModelRoute,
+    sandboxFingerprint: string,
+  ): Readonly<Record<string, RouteSmokeStatus>> | undefined {
+    try {
+      const raw = JSON.parse(readFileSync(this.routeSmokeStatePath(), "utf8")) as unknown;
+      if (raw === null || typeof raw !== "object") return undefined;
+      const state = (raw as Record<string, unknown>)[routeSmokeCacheKey(route, sandboxFingerprint)];
+      if (state === null || typeof state !== "object") return undefined;
+      return state as Readonly<Record<string, RouteSmokeStatus>>;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private writeRouteSmokeState(route: ResolvedModelRoute, sandboxFingerprint: string): void {
+    const path = this.routeSmokeStatePath();
+    let all: Record<string, unknown> = {};
+    try {
+      const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+      if (raw !== null && typeof raw === "object") all = raw as Record<string, unknown>;
+    } catch {
+      // Missing or malformed state is treated as empty; the fresh smoke result
+      // below becomes the new durable source of truth.
+    }
+    all[routeSmokeCacheKey(route, sandboxFingerprint)] = route.smoke;
+    mkdirSync(join(this.opts.home ?? homedir(), ".sc-orchestrator"), { recursive: true });
+    const tempPath = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+    try {
+      writeFileSync(tempPath, JSON.stringify(all, null, 2) + "\n", "utf8");
+      renameSync(tempPath, path);
+    } finally {
+      if (existsSync(tempPath)) rmSync(tempPath, { force: true });
+    }
+  }
+
+  private cliVersionForSlug(slug: string): string {
+    const provider = resolveModelSlug(slug).provider;
+    const command = provider === "claudeCode" ? "claude" : provider;
+    try {
+      return this.sh(command, ["--version"]).trim() || "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+
+  private routeSmokeSandboxFingerprint(): string {
+    const hash = createHash("sha256");
+    hash.update(`image:${this.opts.imageName}\n`);
+    try {
+      hash.update(`image-id:${this.sh("docker", ["image", "inspect", "--format", "{{.Id}}", this.opts.imageName]).trim()}\n`);
+    } catch {
+      hash.update("image-id:unknown\n");
+    }
+    const auth = buildAuthPaths(this.opts.runKey, this.opts.home);
+    const files = [
+      join(this.opts.promptsDir, "route-smoke.md"),
+      ...REQUIRED_SOUL_FILES.map((file) => join(this.opts.soulsDir, file)),
+      auth.srcCodexAuth,
+      auth.srcCodexConfig,
+      auth.claudeTokenFile,
+    ];
+    for (const file of files) {
+      hash.update(`file:${file}\0`);
+      try {
+        hash.update(readFileSync(file));
+      } catch {
+        hash.update("missing");
+      }
+    }
+    try {
+      hash.update(`gh:${this.sh("gh", ["auth", "token"]).trim()}\n`);
+    } catch {
+      hash.update("gh:missing\n");
+    }
+    return hash.digest("hex");
+  }
+
+  /** Route smoke must exercise the same image, auth, and soul mounts as workers. */
+  private routeSmokeSandbox(): sc.SandboxProvider {
+    const auth = this.mountAuth(this.opts.runKey);
+    return docker(
+      this.boxConfig(
+        { ...auth, ghToken: this.readGhToken() },
+        { role: "reviewer", soul: "READ-ONLY" },
+      ),
+    );
+  }
+
+  /**
    * Build (or reuse) the dedicated clone for this invocation (ADR 0024 dec. 1).
    *
    * Path = `<home>/.sc-orchestrator/<repo-slug>-iso-<runKey>`, addressed by the
@@ -2559,7 +2750,7 @@ export class RealBackend implements Backend {
 
   private box(
     issueNumber: number,
-    spec: StepSpec,
+    spec: Pick<StepSpec, "role" | "soul">,
     options?: AgentStepRunOptions,
   ): sc.SandboxProvider {
     const auth = this.mountAuth(issueNumber);
@@ -2650,7 +2841,7 @@ export class RealBackend implements Backend {
    */
   protected boxConfig(
     auth: { authDir: string; claudeToken?: string; ghToken?: string },
-    spec: StepSpec,
+    spec: Pick<StepSpec, "role" | "soul">,
     issueNumber?: number,
     options?: AgentStepRunOptions,
   ): {
