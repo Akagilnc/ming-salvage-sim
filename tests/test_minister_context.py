@@ -149,6 +149,47 @@ def test_minister_memorial_tools_characterize_all_abstract_stop_conditions(game)
     assert "treasury<=1000" in rendered
 
 
+def test_minister_memorial_tools_hide_unlisted_abstract_stop_thresholds(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="未列抽象停止条件测试事项",
+        origin_kind="decree",
+        origin_ref="test:qualitative-stop-unknown",
+        bar_value=0,
+        inertia=0,
+        stage_text="正在推进",
+        stop_condition=json.dumps({"power.houjin.military_strength": ">=70"}, ensure_ascii=False),
+        end_turn=state.turn + 3,
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
+    rendered = tools["list_memorials"]()
+
+    assert ">=70" not in rendered
+    assert "power.houjin.military_strength条件已存档" in rendered
+
+
+def test_character_context_never_exposes_other_faction_dossiers(game):
+    db, _state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    other = db.conn.execute(
+        "SELECT name FROM factions WHERE name != ? LIMIT 1", (minister.faction,)
+    ).fetchone()
+    if other is None:
+        return
+    db.conn.execute("UPDATE factions SET agenda='不可知的他派密议' WHERE name=?", (other["name"],))
+    db.conn.commit()
+
+    rendered = character_context_with_db(minister, db)
+
+    assert "不可知的他派密议" not in rendered
+
+
 def test_minister_context_is_characterized_without_abstract_numbers(game):
     db, _state, content = game
     minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
@@ -209,6 +250,23 @@ def test_court_brief_does_not_bypass_character_identity_scope(game):
     rendered = build_court_brief(_ctx(game))
 
     assert "朝堂派系档料" not in rendered
+
+
+def test_characterized_court_brief_scopes_faction_dossier_to_current_identity(game):
+    db, _state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    other = db.conn.execute(
+        "SELECT name FROM factions WHERE name != ? LIMIT 1", (minister.faction,)
+    ).fetchone()
+    if other is None:
+        return
+    db.conn.execute("UPDATE factions SET agenda='不可知的全局派系密议' WHERE name=?", (other["name"],))
+    db.conn.commit()
+
+    rendered = build_court_brief(_ctx(game), minister)
+
+    assert "不可知的全局派系密议" not in rendered
+    assert f"【党派认同】" in rendered
 
 
 def test_final_minister_context_rejects_injected_abstract_values(game):
