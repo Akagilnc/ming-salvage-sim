@@ -207,6 +207,10 @@ export async function dispatchMonitoredCliWorker(
   mkdirSync(input.logDir, { recursive: true });
   const logBasename = input.logBasename ?? `${input.stepId}.log`;
   const logPath = join(input.logDir, logBasename);
+  // Step logs are deliberately append-only across dispatches. Capture the
+  // boundary before this child inherits the append fd so later consumers can
+  // inspect only this worker's output.
+  const logStartOffset = existsSync(logPath) ? statSync(logPath).size : 0;
   const logFd = openSync(logPath, "a");
   const dispatchedAt = new Date().toISOString();
 
@@ -254,6 +258,7 @@ export async function dispatchMonitoredCliWorker(
   const handle: WorkerMonitorHandle = {
     pid,
     logPath,
+    logStartOffset,
     poolId: input.poolId,
     completionSignal: input.completionSignal,
     stepId: input.stepId,

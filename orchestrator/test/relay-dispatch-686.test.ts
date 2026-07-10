@@ -11,6 +11,7 @@
  *   7. next baton = #767 roster + pool-orthogonal lookup (换马甲 then 顺位)
  *   8. R1: REAL runner park sites (S9/S2) wire the fork — not a parallel dead seam
  */
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -563,6 +564,28 @@ describe("#686 state_summary ledger + next-baton parameter file", () => {
     expect(body).toContain("142 tests pending, apply half-done");
     expect(body).toContain("terra@med");
     expect(body).toContain("clear reds then 收口");
+  });
+
+  it("excludes promoted .relay-focus.md from git status", () => {
+    tmp = mkdtempSync(join(tmpdir(), "relay-686-exclude-focus-"));
+    execFileSync("git", ["init"], { cwd: tmp, stdio: "ignore" });
+    const entry = buildRelayHandoffLedgerEntry({
+      trigger: "quota_wall",
+      state_summary: "relay focus",
+      remaining: "continue",
+      fromModelId: "grok-4.5",
+      fromPool: "grok-build",
+      toModelId: "terra@med",
+      toPool: "codex-5h",
+      step: "S2",
+      now: new Date("2026-07-10T12:00:00.000Z"),
+    });
+
+    buildRelayFocusFile(tmp, entry);
+
+    expect(
+      execFileSync("git", ["status", "--porcelain"], { cwd: tmp, encoding: "utf8" }),
+    ).toBe("");
   });
 
   it("keeps durable baton A's focus consumable when baton B's ledger write fails", () => {

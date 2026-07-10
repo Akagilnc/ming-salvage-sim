@@ -1323,6 +1323,8 @@ export interface LedgerEntry {
 export interface WorkerMonitorHandle {
   readonly pid: number;
   readonly logPath: string;
+  /** Byte offset where this dispatch began appending to the shared step log. */
+  readonly logStartOffset?: number;
   /** Pool / route identity (e.g. `grok/composer`, `zai/glm-5.2`). */
   readonly poolId: string;
   readonly completionSignal: string;
@@ -1361,7 +1363,10 @@ export interface CliMonitorSpawnSpec {
 }
 
 /** #683: the monitor asks the backend to probe before it owns hang-kill. */
-export type MonitoredWorkerIdleDisposition = "hang" | "wait_for_reset";
+export type MonitoredWorkerIdleDisposition =
+  | "hang"
+  | "hang_with_live_pool"
+  | "wait_for_reset";
 
 /**
  * Full persisted ledger entry (#249). Extends {@link LedgerEntry} with the
