@@ -2465,6 +2465,252 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(resumeBackend.dispatchSpecs.map((s) => s.id)).toEqual(["S11"]);
     expect(refeed.status).not.toBe("error");
   });
+
+  it("#735 US13: S12 released:false parks resumable (re-feed re-dispatches S12, not sticky S8 error)", async () => {
+    const convergedHead = "deadbeefcommitsha";
+    const prior: PersistentLedgerEntry[] = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+        prHead: convergedHead,
+      }),
+      {
+        ...entry("S9", { kind: "verify", converged: true }),
+        event: "online_review_converged",
+        prUrl: "pr://slice/offline-255",
+        prHead: convergedHead,
+        onlineReviewRound: 1,
+      },
+    ];
+
+    class FailedDocReleaseBackend extends DispatchRecordingResumeBackend {
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "docRelease") {
+          this.dispatchSpecs.push(spec);
+          this.dispatchContexts.push(ctx);
+          this.dispatchLandings.push(landing);
+          return {
+            kind: "completed",
+            output: { kind: "docRelease", released: false },
+          };
+        }
+        return super.dispatchWorker(spec, ctx, landing);
+      }
+    }
+
+    const backend = new FailedDocReleaseBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+
+    const parked = await runOrchestrator({ issueNumber: 255, backend });
+    expect(parked.status).toBe("escalate");
+    expect(parked.status).not.toBe("error");
+    expect(backend.dispatchSpecs.map((s) => s.id)).toEqual(["S12"]);
+    // CodeRabbit R3: in-memory S8 rows may omit handoffStatus — assert no S8 at all.
+    expect(parked.stepLedger.some((e) => e.step === "S8")).toBe(false);
+    expect(
+      parked.stepLedger.some(
+        (e) =>
+          e.step === "S12" &&
+          e.output?.kind === "docRelease" &&
+          e.output.released === false,
+      ),
+    ).toBe(true);
+    expect(parked.stopSummary?.repairHint ?? "").toMatch(/S12|doc-?release|文档发布/i);
+
+    // Re-feed from a parked ledger ending at S12 released:false — must re-dispatch
+    // docRelease, not report a sticky terminal S8(error) from route(S12, !released).
+    const parkedPrior: PersistentLedgerEntry[] = [
+      ...prior,
+      entry(
+        "S12",
+        { kind: "docRelease", released: false },
+        "session-prior",
+        convergedHead,
+      ),
+    ];
+    const resumeBackend = new FailedDocReleaseBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: parkedPrior,
+    });
+    const refeed = await runOrchestrator({ issueNumber: 255, backend: resumeBackend });
+    expect(refeed.status).toBe("escalate");
+    expect(refeed.status).not.toBe("error");
+    expect(resumeBackend.dispatchSpecs.map((s) => s.id)).toEqual(["S12"]);
+  });
+
+  it("#735 Codex P2: S12 process-failure retry resets worktree residue before re-dispatch", async () => {
+    const convergedHead = "deadbeefcommitsha";
+    const prior: PersistentLedgerEntry[] = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+        prHead: convergedHead,
+      }),
+      {
+        ...entry("S9", { kind: "verify", converged: true }),
+        event: "online_review_converged",
+        prUrl: "pr://slice/offline-255",
+        prHead: convergedHead,
+        onlineReviewRound: 1,
+      },
+    ];
+
+    class FlakyDocReleaseBackend extends DispatchRecordingResumeBackend {
+      docReleaseAttempts = 0;
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "docRelease") {
+          this.dispatchSpecs.push(spec);
+          this.dispatchContexts.push(ctx);
+          this.dispatchLandings.push(landing);
+          this.docReleaseAttempts += 1;
+          if (this.docReleaseAttempts === 1) {
+            return {
+              kind: "failed",
+              reason: "docRelease sandbox crash mid skill (no tag yet)",
+            };
+          }
+          return {
+            kind: "completed",
+            output: { kind: "docRelease", released: true },
+          };
+        }
+        return super.dispatchWorker(spec, ctx, landing);
+      }
+    }
+
+    const backend = new FlakyDocReleaseBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: prior,
+    });
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+    expect(result.status).toBe("success");
+    expect(backend.docReleaseAttempts).toBe(2);
+    // resume residue clean (1) + S12 retry reset (1) — proves resetBeforeRetry wired
+    expect(backend.cleanResidueCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("#735 Codex P1: post-doc CI pending parks without sticky S8; re-feed retries auto-merge", async () => {
+    const convergedHead = "deadbeefcommitsha";
+    const livePr = "https://github.com/Akagilnc/ming-salvage-sim/pull/255";
+    const prior: PersistentLedgerEntry[] = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: livePr,
+        prHead: convergedHead,
+      }),
+      {
+        ...entry("S9", { kind: "verify", converged: true }),
+        event: "online_review_converged",
+        prUrl: livePr,
+        prHead: convergedHead,
+        onlineReviewRound: 1,
+      },
+    ];
+
+    let mergeAttempts = 0;
+    const mergeSpy = vi.spyOn(autoMerge, "runAutoMergeStage").mockImplementation(async () => {
+      mergeAttempts += 1;
+      if (mergeAttempts === 1) {
+        return {
+          ok: false,
+          terminalState: "not_ready",
+          stopSummary: {
+            reason: "decision_gate_park",
+            summary: "PR merge readiness blocked: ci_pending",
+            repairHint:
+              "wait for post-doc-release CI to finish, then re-feed to resume auto-merge",
+          },
+        };
+      }
+      return {
+        ok: true,
+        terminalState: "merged",
+        record: {
+          prUrl: livePr,
+          prNumber: 255,
+          remoteBranchName: WORKTREE.branch,
+          mergedHeadOid: convergedHead,
+          convergedHeadOid: convergedHead,
+        },
+      };
+    });
+
+    try {
+      const backend = new DispatchRecordingResumeBackend({
+        worktree: WORKTREE,
+        stateDir: STATE_DIR,
+        ledger: prior,
+      });
+      const parked = await runOrchestrator({ issueNumber: 255, backend });
+      expect(parked.status).toBe("escalate");
+      expect(parked.stopSummary?.summary ?? "").toMatch(/ci_pending/);
+      // CodeRabbit R3: park must leave no S8 row (not just no tagged escalate).
+      expect(parked.stepLedger.some((e) => e.step === "S8")).toBe(false);
+      expect(
+        parked.stepLedger.some(
+          (e) =>
+            e.step === "S12" &&
+            e.output?.kind === "docRelease" &&
+            e.output.released === true,
+        ),
+      ).toBe(true);
+
+      // Re-feed from ledger ending at S12 released:true (no sticky S8) → S11 → merge
+      const parkedPrior: PersistentLedgerEntry[] = [
+        ...prior,
+        entry(
+          "S12",
+          { kind: "docRelease", released: true },
+          "session-prior",
+          convergedHead,
+        ),
+      ];
+      const resumeBackend = new DispatchRecordingResumeBackend({
+        worktree: WORKTREE,
+        stateDir: STATE_DIR,
+        ledger: parkedPrior,
+      });
+      const refeed = await runOrchestrator({ issueNumber: 255, backend: resumeBackend });
+      expect(refeed.status).toBe("success");
+      expect(mergeAttempts).toBeGreaterThanOrEqual(2);
+    } finally {
+      mergeSpy.mockRestore();
+    }
+  });
 });
 
 // ─── C-1 (integ-cmr int-r1): S7 SHIP escalate-resume re-dispatches the ship worker

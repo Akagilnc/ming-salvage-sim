@@ -233,7 +233,7 @@ describe("#602 runFamilyAutoMergeStage", () => {
     expect(backend.ledger.filter((e) => e.status === "pr_merged")).toHaveLength(1);
   });
 
-  it("fail-closed on non-doc doc-release paths when working repo is available", async () => {
+  it("ADR 0123 / #735: non-doc paths no longer veto family auto-merge when released+ready", async () => {
     const dir = mkdtempSync(join(tmpdir(), "family-non-doc-"));
     const git = (args: string[]) =>
       execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
@@ -253,10 +253,11 @@ describe("#602 runFamilyAutoMergeStage", () => {
       convergedHeadOid: headOid,
       prUrl: "pr://family/offline-602",
     });
-    expect(result.ok).toBe(false);
-    expect(result.terminalState).toBe("decision_gate");
-    expect(result.stopSummary?.summary).toMatch(/non-doc/i);
-    expect(backend.ledger.filter((e) => e.status === "pr_merged")).toHaveLength(0);
+    // Path allowlist is not a merge gate (ADR 0123). Offline synthetic still merges
+    // when docReleaseCompleted + readiness hold.
+    expect(result.ok).toBe(true);
+    expect(familyAutoMergeIncomplete(result)).toBe(false);
+    expect(backend.ledger.filter((e) => e.status === "pr_merged")).toHaveLength(1);
   });
 });
 
@@ -680,17 +681,18 @@ describe("#602 runAutoMergeStage", () => {
     });
   });
 
-  it("non-doc doc-release diff fails closed to decision gate", async () => {
+  it("ADR 0123 / #735: non-doc paths (e.g. source + VERSION) no longer veto merge", async () => {
+    let merged = false;
     const result = await runAutoMergeStage({
       sh: fakeSh({
         "gh pr view": () =>
           JSON.stringify({
             number: 602,
             url: PR_URL,
-            state: "OPEN",
+            state: merged ? "MERGED" : "OPEN",
             headRefName: "feat/x",
             headRefOid: "head-1",
-            mergeStateStatus: "CLEAN",
+            mergeStateStatus: merged ? "UNKNOWN" : "CLEAN",
           }),
       }),
       repo: REPO,
@@ -699,12 +701,16 @@ describe("#602 runAutoMergeStage", () => {
       docReleaseCompleted: true,
       priorConvergenceRecorded: true,
       prMergedMarkerPresent: false,
+      offlineSynthetic: false,
       docReleasePaths: ["VERSION", "orchestrator/src/runner.ts"],
-      poll: async () => readySnapshot(),
+      poll: async () => readySnapshot({ headOid: "head-1" }),
+      executeMerge: () => {
+        merged = true;
+      },
+      mergeConfirmRetryDelayMs: 0,
     });
-    expect(result.ok).toBe(false);
-    expect(result.terminalState).toBe("decision_gate");
-    expect(result.stopSummary?.summary).toMatch(/non-doc/i);
+    expect(result.ok).toBe(true);
+    expect(result.terminalState).toBe("merged");
   });
 
   it("MERGED PR without convergence record → externally merged never converged", async () => {
@@ -957,18 +963,21 @@ describe("#602 runAutoMergeStage", () => {
     });
   });
 
-  it("live run fails closed when docReleasePaths cannot be verified", async () => {
-    const merge = vi.fn();
+  it("ADR 0123 / #735: missing docReleasePaths no longer blocks live merge", async () => {
+    let merged = false;
+    const merge = vi.fn(() => {
+      merged = true;
+    });
     const result = await runAutoMergeStage({
       sh: fakeSh({
         "gh pr view": () =>
           JSON.stringify({
             number: 602,
             url: PR_URL,
-            state: "OPEN",
+            state: merged ? "MERGED" : "OPEN",
             headRefName: "feat/x",
             headRefOid: "head-1",
-            mergeStateStatus: "CLEAN",
+            mergeStateStatus: merged ? "UNKNOWN" : "CLEAN",
           }),
       }),
       repo: REPO,
@@ -980,11 +989,12 @@ describe("#602 runAutoMergeStage", () => {
       offlineSynthetic: false,
       poll: async () => readySnapshot({ headOid: "head-1" }),
       executeMerge: merge,
+      mergeConfirmRetryDelayMs: 0,
     });
-    expect(result.ok).toBe(false);
-    expect(result.terminalState).toBe("decision_gate");
-    expect(result.stopSummary?.summary).toMatch(/doc-release commit paths/i);
-    expect(merge).not.toHaveBeenCalled();
+    // Empty-run / unverified paths are not a veto — live readiness is.
+    expect(result.ok).toBe(true);
+    expect(result.terminalState).toBe("merged");
+    expect(merge).toHaveBeenCalled();
   });
 
   it("re-fetches live PR head when poll snapshot head differs post-doc-release", async () => {
@@ -1025,7 +1035,9 @@ describe("#602 runAutoMergeStage", () => {
     expect(result.record?.mergedHeadOid).toBe("post-doc-head");
   });
 
-  it("ignores ORCHESTRATOR_AUTO_MERGE_ALLOW_UNVERIFIED_DOC_PATHS env (R3-G-SEC)", async () => {
+  it("ADR 0123 / #735: offline synthetic merge does not require docReleasePaths", async () => {
+    // Env hatch for unverified paths is obsolete as a merge veto; missing paths
+    // no longer fail closed. Keep pin that offline synthetic still merges on readiness.
     vi.stubEnv("ORCHESTRATOR_AUTO_MERGE_ALLOW_UNVERIFIED_DOC_PATHS", "1");
     const merge = vi.fn();
     const result = await runAutoMergeStage({
@@ -1040,12 +1052,12 @@ describe("#602 runAutoMergeStage", () => {
       poll: async () => readySnapshot(),
       executeMerge: merge,
     });
-    expect(result.ok).toBe(false);
-    expect(result.terminalState).toBe("decision_gate");
-    expect(merge).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.terminalState).toBe("merged");
+    expect(merge).toHaveBeenCalled();
   });
 
-  it("offlineAutoMergeAllowUnverifiedDocPaths admits pr:// test handles only", async () => {
+  it("offlineAutoMergeAllowUnverifiedDocPaths admits pr:// test handles only (compat helper)", async () => {
     const { offlineAutoMergeAllowUnverifiedDocPaths } = await import(
       "../src/autoMerge.js"
     );
@@ -1070,7 +1082,7 @@ describe("#602 runAutoMergeStage", () => {
     ).toBe(false);
   });
 
-  it("allowUnverifiedDocReleasePaths: true permits offline synthetic without paths", async () => {
+  it("allowUnverifiedDocReleasePaths field is a no-op under ADR 0123 (merge still needs readiness)", async () => {
     const merge = vi.fn();
     const result = await runAutoMergeStage({
       sh: fakeSh({}),
@@ -1089,7 +1101,7 @@ describe("#602 runAutoMergeStage", () => {
     expect(merge).toHaveBeenCalled();
   });
 
-  it("offline synthetic fails closed when docReleasePaths is missing", async () => {
+  it("ADR 0123 / #735: offline synthetic without paths merges when readiness green", async () => {
     const merge = vi.fn();
     const result = await runAutoMergeStage({
       sh: fakeSh({}),
@@ -1104,10 +1116,9 @@ describe("#602 runAutoMergeStage", () => {
       poll: async () => readySnapshot(),
       executeMerge: merge,
     });
-    expect(result.ok).toBe(false);
-    expect(result.terminalState).toBe("decision_gate");
-    expect(result.stopSummary?.summary).toMatch(/doc-release commit paths/i);
-    expect(merge).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.terminalState).toBe("merged");
+    expect(merge).toHaveBeenCalled();
   });
 
   it("fails closed when live head still mismatches snapshot after re-fetch", async () => {

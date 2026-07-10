@@ -1726,10 +1726,43 @@ function planResume(
       }
       reopenIdx--;
     }
+    // Gemini R2 high: reopenIdx < 0 must not slice(0,0) and wipe the ledger.
+    if (reopenIdx < 0) {
+      throw new Error(
+        "planResume: expected non-terminal S11 ledger row but none found",
+      );
+    }
     return {
       resumeStep: "S11",
       lastOutput: undefined,
-      priorLedger: ledger.slice(0, Math.max(0, reopenIdx)) as ReadonlyArray<LedgerEntry>,
+      priorLedger: ledger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
+    };
+  }
+  // #735 US13: S12 released:false parks resumable — re-feed re-dispatches
+  // docRelease. Without this, route(S12,!released)→S8(error) sticks forever.
+  if (
+    routeFrom === "S12" &&
+    isValidDocReleaseResult(routeOutput) &&
+    !routeOutput.released
+  ) {
+    let reopenIdx = ledger.length - 1;
+    while (reopenIdx >= 0) {
+      const entry = ledger[reopenIdx]!;
+      if (!isBookkeepingEntry(entry) && entry.step === "S12") {
+        break;
+      }
+      reopenIdx--;
+    }
+    // Gemini R2 high: reopenIdx < 0 must not slice(0,0) and wipe the ledger.
+    if (reopenIdx < 0) {
+      throw new Error(
+        "planResume: expected released:false S12 ledger row but none found",
+      );
+    }
+    return {
+      resumeStep: "S12",
+      lastOutput: undefined,
+      priorLedger: ledger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
     };
   }
   if (decision.kind === "handoff") {
@@ -2267,6 +2300,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     convergedHeadOid: string,
   ): Promise<
     | { readonly kind: "ok"; readonly record: PrMergedTerminalRecord }
+    /** Transient post-doc CI pending — no sticky S8; re-feed re-enters auto-merge. */
+    | { readonly kind: "park_not_ready"; readonly stopSummary: StopSummary }
     | { readonly kind: "escalate"; readonly stopSummary: StopSummary }
   > {
     const prUrl = ship.pr;
@@ -2324,15 +2359,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       },
     });
     if (!mergeResult.ok || mergeResult.record === undefined) {
-      return {
-        kind: "escalate",
-        stopSummary:
-          mergeResult.stopSummary ?? {
-            reason: "decision_gate_park",
-            summary: `auto-merge did not complete (${mergeResult.terminalState})`,
-            repairHint: "resolve merge blockers or answer the decision gate, then re-feed",
-          },
-      };
+      const stopSummary =
+        mergeResult.stopSummary ?? {
+          reason: "decision_gate_park" as const,
+          summary: `auto-merge did not complete (${mergeResult.terminalState})`,
+          repairHint: "resolve merge blockers or answer the decision gate, then re-feed",
+        };
+      // #735 Codex P1: ci_pending/not_ready must not sticky-S8(escalate).
+      // Leave ledger at successful S12 so re-feed routes S12→S11 and re-polls.
+      if (mergeResult.terminalState === "not_ready") {
+        return { kind: "park_not_ready", stopSummary };
+      }
+      return { kind: "escalate", stopSummary };
     }
     if (mergeResult.terminalState !== "already_recorded") {
       try {
@@ -3055,7 +3093,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           lastShipOutput,
           resumeConvergedHead,
         );
-        if (autoMerge.kind === "escalate") {
+        if (
+          autoMerge.kind === "escalate" ||
+          autoMerge.kind === "park_not_ready"
+        ) {
           return {
             status: "escalate",
             stepLedger: ledger,
@@ -3664,7 +3705,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       case "S11":
       case "S12": {
         // #600 online review loop: bot poll → fresh verify → fixer → fresh verify
-        // (ADR 0061). S11/S12 remain stub workers until #603.
+        // (ADR 0061). S12 real 文档发布 = #735; S11 cleanup = #603.
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
@@ -3793,6 +3834,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               );
             }
           };
+          // S9: read-only contract drift is caller-owned (no cleanResidue on
+          // retry — verify must not rewrite the tree). S12 文档发布 is a write
+          // worker (#735 Codex P2): uncommitted residue from a crashed skill
+          // attempt must be reset before mechanical retry, same as coder/ship.
+          // (Committed partial HEAD stays — cleanResidue contract / ADR 0024.)
           const reviewResetOpt: MechanicalRetryOptions =
             reviewStep === "S9"
               ? {
@@ -3803,7 +3849,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       o.error instanceof VerifyWorkerWorktreeDirtyError),
                   rethrowOnExhaustion: true,
                 }
-              : {};
+              : reviewStep === "S12" && worktree !== undefined
+                ? {
+                    resetBeforeRetry: () => backend.cleanResidue(worktree!),
+                  }
+                : {};
           if (
             reviewStep === "S10" &&
             (onlineReviewLanding === undefined ||
@@ -3845,6 +3895,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 lastShipOutput,
                 convergedHeadForCleanup,
               );
+              // #735 Codex P1: post-doc CI pending → park without sticky S8 so
+              // re-feed routes from last S12(released) → S11 and re-polls merge.
+              if (autoMerge.kind === "park_not_ready") {
+                return {
+                  status: "escalate",
+                  stepLedger: ledger,
+                  stopSummary: autoMerge.stopSummary,
+                  deferredFindings,
+                };
+              }
               if (autoMerge.kind === "escalate") {
                 ledger.push({ step: "S8", stopSummary: autoMerge.stopSummary });
                 try {
@@ -4023,6 +4083,54 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 summary,
                 repairHint:
                   "re-feed the issue — resume re-enters S11 post-merge cleanup (non-terminal ≠ success; tip_drift leaves branch residue)",
+              },
+              deferredFindings,
+            };
+          }
+          if (
+            reviewStep === "S12" &&
+            isValidDocReleaseResult(result.output) &&
+            !result.output.released
+          ) {
+            // #735 US13: skill/push failure → released:false must park resumable.
+            // S8(error) would make re-feed report a sticky terminal and never
+            // re-dispatch docRelease (mirror S11 non-terminal park).
+            const docOutput = result.output;
+            const summary =
+              "文档发布 worker returned released:false (skill fail / hang / required push fail)";
+            output = docOutput;
+            step = reviewStep;
+            stepSessionId = result.sessionId;
+            lastOutput = docOutput;
+            ledger.push({
+              step: "S12",
+              output: docOutput,
+              ...(result.sessionId !== undefined
+                ? { sessionId: result.sessionId }
+                : {}),
+            });
+            try {
+              await emitLedger(
+                "S12",
+                docOutput,
+                promptFile,
+                undefined,
+                result.sessionId,
+              );
+            } catch (ledgerErr) {
+              return await errorTermination("S12", ledgerErr, {
+                recordInMemory: false,
+                output: docOutput,
+              });
+            }
+            return {
+              status: "escalate",
+              stepLedger: ledger,
+              stopSummary: {
+                reason: "infra_failure",
+                summary,
+                repairHint:
+                  "re-feed the issue — resume re-enters S12 文档发布 (released:false ≠ terminal success; fix skill/push then retry)",
               },
               deferredFindings,
             };

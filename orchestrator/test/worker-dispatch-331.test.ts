@@ -183,7 +183,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
       "S3:reviewer:reviewer:fresh:clean:/code-review",
       "S7:ship:coder:fresh:clean:gstack-ship",
       "S9:verify:verify:fresh:clean:/verify",
-      "S12:docRelease:docRelease:fresh:clean:/doc-release",
+      "S12:docRelease:docRelease:fresh:clean:/gstack-document-release",
       "S11:cleanup:cleanup:fresh:clean:/cleanup",
     ]);
   });

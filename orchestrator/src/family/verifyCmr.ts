@@ -1443,13 +1443,17 @@ async function familyConvergenceMarkerHead(
   knownPostFixHead?: string,
 ): Promise<string> {
   const liveHead = await readRequiredFamilyHead(familyBackend, familyBase);
+  // Prefer live tip when it advanced (post-doc S12 push or post-fix HEAD).
+  // Preferring knownPostFixHead over liveHead left review_loop_converged keyed
+  // to a pre-doc tip while the PR head moved — re-feed then missed the marker
+  // and re-ran the full final barrier (#735 Codex R3 P2).
   const postFixHead =
-    knownPostFixHead !== undefined &&
-    knownPostFixHead.length > 0 &&
-    knownPostFixHead !== shipHead
-      ? knownPostFixHead
-      : liveHead !== undefined && liveHead !== shipHead
-        ? liveHead
+    liveHead !== undefined && liveHead !== shipHead
+      ? liveHead
+      : knownPostFixHead !== undefined &&
+          knownPostFixHead.length > 0 &&
+          knownPostFixHead !== shipHead
+        ? knownPostFixHead
         : undefined;
   return (
     convergenceHeadToRecord({
