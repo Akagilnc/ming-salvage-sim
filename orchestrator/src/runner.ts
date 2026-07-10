@@ -286,6 +286,8 @@ function buildPersistentEntry(opts: {
   repairMovementPaths?: ReadonlyArray<string>;
   /** Terminal stop reason summary (#450). */
   stopSummary?: StopSummary;
+  /** S9 verify rows are keyed by their logical online-review round. */
+  onlineReviewRound?: number;
 }): PersistentLedgerEntry {
   let entry: PersistentLedgerEntry = {
     step: opts.step,
@@ -314,6 +316,9 @@ function buildPersistentEntry(opts: {
   }
   if (opts.stopSummary !== undefined) {
     entry = { ...entry, stopSummary: opts.stopSummary };
+  }
+  if (opts.onlineReviewRound !== undefined) {
+    entry = { ...entry, onlineReviewRound: opts.onlineReviewRound };
   }
   return entry;
 }
@@ -2115,6 +2120,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const noProgressByFindingIdentityKey = new Map<string, number>();
   let lastShipOutput: ShipResult | undefined;
   let onlineReviewRound = 1;
+  // Resume planning keeps a display-seeded ledger trimmed at S7. Preserve a
+  // separate full ledger for S9's cross-round history extraction.
+  let resumeHistoryLedger: ReadonlyArray<LedgerEntry> = [];
   let onlineReviewLanding: WorkerLandingPayload | undefined;
   let lastOnlineReviewFixCommitSha: string | undefined;
   let lastOnlineReviewRoundTrigger: RoundTrigger | undefined;
@@ -2562,6 +2570,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       findingDispositions,
       repairMovementPaths,
       stopSummary,
+      ...(s === "S9" ? { onlineReviewRound } : {}),
     });
 
     const mirrorInMemoryLedgerPersistedFields = (
@@ -2913,6 +2922,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         worktree,
         backend,
       )) ?? planResume(resumeLedger);
+    resumeHistoryLedger = resumeLedger;
 
     // Seed the in-memory ledger with prior progress so committed work is
     // preserved and the prior steps are NOT re-run.
@@ -3788,7 +3798,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               writeOnlineReviewSnapshotFile(stateDir, snapshot);
             }
             const priorRoundFindings = priorOnlineReviewFindingsFromLedger(
-              ledger,
+              [...resumeHistoryLedger, ...ledger],
               onlineReviewRound,
             );
             onlineReviewLanding = {
@@ -4198,6 +4208,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ledger.push({
                   step: "S9",
                   output: verifyOutput,
+                  onlineReviewRound,
                   ...(result.sessionId !== undefined
                     ? { sessionId: result.sessionId }
                     : {}),
@@ -4350,6 +4361,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ledger.push({
                 step: "S9",
                 output: verifyOutput,
+                onlineReviewRound,
                 ...(result.sessionId !== undefined
                   ? { sessionId: result.sessionId }
                   : {}),
@@ -4663,6 +4675,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     ledger.push({
       step,
       ...(output !== undefined ? { output } : {}),
+      ...(step === "S9" ? { onlineReviewRound } : {}),
       // #604 correctness r5 (E2): carry the surfaced per-step session id on the
       // in-memory entry too. The persisted ledger (emitLedger below) already records
       // it, but RunResult.stepLedger (the in-memory ledger) previously dropped it —
