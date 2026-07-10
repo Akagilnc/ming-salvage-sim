@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { dispatchWorkerWithMonitor } from "../src/dispatchWorker.js";
 import { resolveRouteModels, routeSmokeEntries } from "../src/modelRoutes.js";
@@ -168,6 +168,28 @@ describe("#786 telemetry pure helpers", () => {
       classifyWorkerTerminal({
         kind: "thrown",
         error: new Error("monitored worker idle hang: S2"),
+      }).errorCategory,
+    ).toBe("hang-idle");
+
+    // Real Sandcastle / realBackend idle rethrow (exact production shape).
+    const realIdle =
+      "Agent idle for 600 seconds — no output received. Consider increasing " +
+      "the idle timeout with --idle-timeout.";
+    expect(categoryFromReason(realIdle)).toBe("hang-idle");
+    expect(
+      classifyWorkerTerminal({
+        kind: "thrown",
+        error: Object.assign(new Error(realIdle), {
+          name: "AgentIdleTimeoutError",
+          _tag: "AgentIdleTimeoutError",
+        }),
+      }).errorCategory,
+    ).toBe("hang-idle");
+    // Message-only path (no tag) must still classify — categoryFromReason.
+    expect(
+      classifyWorkerTerminal({
+        kind: "thrown",
+        error: new Error(realIdle),
       }).errorCategory,
     ).toBe("hang-idle");
 
@@ -445,10 +467,50 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     expect(c.completed_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     // tokens used line must be captured before any GC
     expect(c.tokens?.total).toBe(1234);
+    // #786 core dimension: first-byte latency must not be null on quick-exit
+    // when the worker already wrote log bytes (baseline-before-poll bug).
+    expect(c.first_output_at).not.toBeNull();
+    expect(c.first_output_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(Date.parse(c.first_output_at!)).toBeGreaterThanOrEqual(
+      Date.parse(d.dispatched_at) - 5_000,
+    );
 
     const e = env as TelemetryEnvironmentRecord;
     expect(e.routeName).toBe("normal");
     expect(e.cliVersions).not.toBeNull();
+  });
+
+  it("quick-exit with log output stamps non-null first_output_at (no poll growth)", async () => {
+    // Child writes and exits in the same tick — exit can win the race before the
+    // idle poll loop observes size growth. first_output_at must still be set.
+    const dir = tempDir("orch-786-quick-first-out-");
+    const ledgerDir = join(dir, ".ledger-786");
+    const payload =
+      "first token from model\ntokens used\n99\n";
+
+    const outcome = await dispatchWorkerWithMonitor(
+      quickExitBackend(payload),
+      workerSpec(),
+      { stateDir: ledgerDir },
+      undefined,
+      {
+        idleThresholdMs: 60_000,
+        // Long poll would miss growth if we only watched post-baseline deltas.
+        pollIntervalMs: 5_000,
+        monitorDeps: {
+          readInstanceId: () => "test-instance-786-quick",
+          sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
+        },
+      },
+    );
+
+    expect(outcome.result.kind).toBe("completed");
+    const collect = readTelemetryRecords(ledgerDir).find(
+      (r) => r.phase === "collect",
+    ) as TelemetryCollectRecord | undefined;
+    expect(collect).toBeDefined();
+    expect(collect?.first_output_at).not.toBeNull();
+    expect(collect?.tokens?.total).toBe(99);
   });
 
   it("collect stamps hang-idle category when idle monitor kills the worker", async () => {
@@ -646,5 +708,94 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     expect(collect?.terminal).toBe("completed");
     expect(collect?.sessionId).toBe("legacy-sess");
     expect(collect?.tokens).toBeNull();
+  });
+
+  it("fail-open: newLegId/telemetry init throw does not abort backend dispatch", async () => {
+    const dir = tempDir("orch-786-failopen-");
+    const ledgerDir = join(dir, ".ledger-786");
+    const spy = vi
+      .spyOn(globalThis.crypto, "randomUUID")
+      .mockImplementation(() => {
+        throw new Error("crypto.randomUUID unavailable");
+      });
+
+    try {
+      const outcome = await dispatchWorkerWithMonitor(
+        quickExitBackend("tokens used\n1\n"),
+        workerSpec(),
+        { stateDir: ledgerDir },
+        undefined,
+        {
+          idleThresholdMs: 60_000,
+          pollIntervalMs: 20,
+          monitorDeps: {
+            readInstanceId: () => "test-instance-failopen",
+            sleepMs: (ms) =>
+              new Promise((r) => setTimeout(r, Math.min(ms, 20))),
+          },
+        },
+      );
+      // Dispatch semantics unchanged — worker still completes.
+      expect(outcome.result.kind).toBe("completed");
+      const records = readTelemetryRecords(ledgerDir);
+      // No paired dispatch/collect when legId never allocated.
+      expect(records.filter((r) => r.phase === "dispatch")).toHaveLength(0);
+      expect(records.filter((r) => r.phase === "collect")).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("no orphan collect when resolveCliMonitorDispatch throws before spawn", async () => {
+    const dir = tempDir("orch-786-orphan-resolve-");
+    const ledgerDir = join(dir, ".ledger-786");
+
+    const backend = {
+      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => {
+        throw new Error("resolve boom before spawn");
+      },
+    } as unknown as Backend;
+
+    await expect(
+      dispatchWorkerWithMonitor(backend, workerSpec(), {
+        stateDir: ledgerDir,
+      }),
+    ).rejects.toThrow(/resolve boom before spawn/);
+
+    const records = readTelemetryRecords(ledgerDir);
+    expect(records.filter((r) => r.phase === "dispatch")).toHaveLength(0);
+    expect(records.filter((r) => r.phase === "collect")).toHaveLength(0);
+  });
+
+  it("no orphan collect when spawn fails after resolve", async () => {
+    const dir = tempDir("orch-786-orphan-spawn-");
+    const ledgerDir = join(dir, ".ledger-786");
+
+    const backend = {
+      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
+        // Empty command → spawn fails (no durable dispatch half-row).
+        command: "",
+        args: [],
+        logDir: dir,
+        poolId: "codex-5h",
+        completionSignal: "<coder>",
+        stepId: "S2",
+        readInstanceId: () => "test-instance-spawn-fail",
+      }),
+      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      }),
+    } as unknown as Backend;
+
+    await expect(
+      dispatchWorkerWithMonitor(backend, workerSpec(), {
+        stateDir: ledgerDir,
+      }),
+    ).rejects.toThrow();
+
+    const records = readTelemetryRecords(ledgerDir);
+    expect(records.filter((r) => r.phase === "dispatch")).toHaveLength(0);
+    expect(records.filter((r) => r.phase === "collect")).toHaveLength(0);
   });
 });

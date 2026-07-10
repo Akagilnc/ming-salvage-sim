@@ -33,7 +33,10 @@ import {
   resolveModelSlug,
 } from "./modelRegistry.js";
 import type { ResolvedModelRoute } from "./modelRoutes.js";
-import { isQuotaWaitForResetError } from "./quotaProbe.js";
+import {
+  isAgentIdleTimeoutError,
+  isQuotaWaitForResetError,
+} from "./quotaProbe.js";
 import {
   isHangWithLivePoolError,
   isSelfReportedRelayError,
@@ -358,6 +361,17 @@ export function classifyWorkerTerminal(
       sessionId: null,
     };
   }
+  // Sandcastle AgentIdleTimeoutError — rethrown by realBackend.runAgentSandbox
+  // with the fixed text "Agent idle for N seconds…". Match by tag/name/message
+  // (same detector as #683) so real idle does not fall through to unclassified.
+  if (isAgentIdleTimeoutError(err)) {
+    return {
+      terminal: "thrown",
+      errorCategory: "hang-idle",
+      errorMessage: msg,
+      sessionId: null,
+    };
+  }
   return {
     terminal: "thrown",
     errorCategory: categoryFromReason(msg),
@@ -406,13 +420,17 @@ export function categoryFromReason(reason: string): TelemetryErrorCategory {
     return "429-quota";
   }
 
-  // ── hang-idle (HangWithLivePoolError + monitored idle hang throw) ────────
+  // ── hang-idle (HangWithLivePoolError + monitored idle hang + Sandcastle idle) ─
+  // realBackend rethrows AgentIdleTimeoutError as:
+  //   "Agent idle for 600 seconds — no output received. …"
+  // (#683 / quotaProbe isAgentIdleTimeoutError message shape).
   if (
     lower.includes("idle hang") ||
     lower.includes("hang-idle") ||
     lower.includes("worker idle") ||
     lower.includes("monitored worker idle hang") ||
-    lower.includes("hang with live pool")
+    lower.includes("hang with live pool") ||
+    /agent idle for \d+/.test(lower)
   ) {
     return "hang-idle";
   }
