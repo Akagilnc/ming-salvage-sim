@@ -221,8 +221,10 @@ describe("#767 Coder-Rec roster — pool separation", () => {
       0,
       {},
     );
-    expect(applied.entry?.id).toBe("terra@med");
-    expect(applied.route.slots.coder).toBe("gpt-5.6-terra");
+    // Terra is also the active completeness/verify gate on the live route,
+    // so pool separation skips it after the explicit Grok collision.
+    expect(applied.entry?.id).toBe("luna@med");
+    expect(applied.route.slots.coder).toBe("gpt-5.6-luna");
   });
 });
 
@@ -255,8 +257,8 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
       CODER_REC_FALLBACK_AFTER_ROUNDS,
       {},
     );
-    expect(applied.entry?.id).toBe("terra@med");
-    expect(applied.route.slots.coder).toBe("gpt-5.6-terra");
+    expect(applied.entry?.id).toBe("luna@med");
+    expect(applied.route.slots.coder).toBe("gpt-5.6-luna");
   });
 
   it("leaves the route coder untouched when the issue has no Coder-Rec line", () => {
@@ -358,7 +360,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
       path: "/resident/worktrees/issue-767",
     };
 
-    async findResumeState(): Promise<undefined> {
+    async findResumeState(): Promise<ResumeState | undefined> {
       return undefined;
     }
     async cleanResidue(): Promise<void> {}
@@ -582,10 +584,9 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     const backend = new CoderRecResumeAfterS5Backend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
-    // 2 completed S6 rounds on the restored ledger → advance to terra@med,
-    // not the route preset (sonnet) and not the first Coder-Rec entry.
-    expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
-    expect(backend.coderModels).not.toContain("sonnet");
+    // 2 completed S6 rounds on the restored ledger → Terra is skipped because
+    // it is an active gate, so advance to Luna rather than the first entry.
+    expect(backend.coderModels[0]).toBe("gpt-5.6-luna");
   });
 
   it("resume: fetchIssueMeta throw falls back to snapshot for Coder-Rec", async () => {
@@ -608,9 +609,9 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     const backend = new MetaThrowSnapshotOkBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
-    // Snapshot body supplies Coder-Rec; 2 S6 rounds → terra@med, not preset.
-    expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
-    expect(backend.coderModels).not.toContain("sonnet");
+    // Snapshot body supplies Coder-Rec; 2 S6 rounds → Luna after Terra's
+    // active-gate collision.
+    expect(backend.coderModels[0]).toBe("gpt-5.6-luna");
   });
 
   it("resume: both re-fetch throws degrade to route preset without error termination", async () => {
@@ -631,7 +632,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
       const result = await runOrchestrator({ issueNumber: 767, backend });
       expect(result.status).toBe("success");
       // Coder-Rec is optional: continue with the route preset coder.
-      expect(backend.coderModels[0]).toBe("sonnet");
+      expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
       expect(info).toHaveBeenCalledWith(
         expect.stringMatching(
           /Coder-Rec.*(?:re-?fetch|resume).*(?:fail|degrad|unavailable|preset)/i,
@@ -647,11 +648,11 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     const backend = new CoderRecAdvanceBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
-    const terraSmokeAt = backend.events.indexOf("smoke:gpt-5.6-terra");
-    const terraDispatchAt = backend.events.indexOf("dispatch:gpt-5.6-terra");
-    expect(terraSmokeAt).toBeGreaterThanOrEqual(0);
-    expect(terraDispatchAt).toBeGreaterThanOrEqual(0);
-    expect(terraSmokeAt).toBeLessThan(terraDispatchAt);
+    const lunaSmokeAt = backend.events.indexOf("smoke:gpt-5.6-luna");
+    const lunaDispatchAt = backend.events.indexOf("dispatch:gpt-5.6-luna");
+    expect(lunaSmokeAt).toBeGreaterThanOrEqual(0);
+    expect(lunaDispatchAt).toBeGreaterThanOrEqual(0);
+    expect(lunaSmokeAt).toBeLessThan(lunaDispatchAt);
   });
 
   it("advances the DISPATCHED coder after 2 completed S6 rounds via ledger wiring", async () => {
@@ -663,13 +664,14 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     const s6Count = backend.ledgerWrites.filter((e) => e.step === "S6").length;
     expect(s6Count).toBeGreaterThanOrEqual(CODER_REC_FALLBACK_AFTER_ROUNDS);
 
-    // S2 + S5×2 stay on grok; the S5 after 2 S6 rounds advances to terra.
+    // S2 + S5×2 stay on Grok; the S5 after 2 S6 rounds skips the active-gate
+    // Terra entry and advances to Luna.
     expect(backend.coderModels[0]).toBe("grok-4.5");
     expect(
       backend.coderModels.filter((m) => m === "grok-4.5").length,
     ).toBeGreaterThanOrEqual(1 + CODER_REC_FALLBACK_AFTER_ROUNDS);
-    expect(backend.coderModels).toContain("gpt-5.6-terra");
-    const firstTerra = backend.coderModels.indexOf("gpt-5.6-terra");
-    expect(firstTerra).toBe(1 + CODER_REC_FALLBACK_AFTER_ROUNDS);
+    expect(backend.coderModels).toContain("gpt-5.6-luna");
+    const firstLuna = backend.coderModels.indexOf("gpt-5.6-luna");
+    expect(firstLuna).toBe(1 + CODER_REC_FALLBACK_AFTER_ROUNDS);
   });
 });
