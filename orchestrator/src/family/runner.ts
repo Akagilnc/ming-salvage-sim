@@ -1873,13 +1873,15 @@ export async function runFamily(
           : reviewLoop.terminalState === "contract_drift"
             ? "family online review verify worker moved HEAD during resume"
             : "family online review loop did not converge during resume");
-      // #744: decision_gate_raised is a human park (answerable + re-feedable), not
-      // an A-class infra dead-end. familyEscalationState only reopens
-      // escalationKind:"decision"; hard-writing "failure" made re-feed impossible.
-      // Reuse the existing decisionGatePark / familyStopSummary park semantics —
-      // do not invent a new state machine. True infra terminals stay "failure".
+      // #744: a true human park is answerable + re-feedable (escalationKind
+      // "decision"); hard-writing "failure" made re-feed impossible.
+      // R1: terminalState "decision_gate_raised" is overloaded — onlineReviewLoop
+      // returns it for both B-class parks (stopSummary.reason decision_gate_park)
+      // and A-class infra failures (stopSummary.reason infra_failure). Key
+      // escalationKind off verifiable park semantics (StopSummary reason), not
+      // terminalState alone. decision_gate_raised + infra_failure stays failure.
       const isDecisionGatePark =
-        reviewLoop.terminalState === "decision_gate_raised";
+        reviewLoop.stopSummary?.reason === "decision_gate_park";
       const ledgerMerged = await currentMerged(familyBackend);
       const children: FamilyChildResult[] = epic.children.map((c) =>
         ledgerMerged.has(c.issue)

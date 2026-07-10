@@ -286,4 +286,64 @@ describe("#744 family decision_gate parks for human (production seam)", () => {
     expect(reentry.status).toBe("escalated");
     expect(reentry.escalation?.diagnosis).toMatch(/classified as failure/i);
   });
+
+  // R1 per-slice P1: terminalState "decision_gate_raised" is overloaded.
+  // onlineReviewLoop / verifyCmr return it for real infra failures with
+  // stopSummary.reason === "infra_failure". Ledger escalationKind must follow
+  // StopSummary park semantics, not terminalState alone — else a true infra
+  // failure is misrecorded as an answerable park and wrongly reopened.
+  it("decision_gate_raised + infra_failure StopSummary stays failure (not a decision park, not reopenable)", async () => {
+    const familyBackend = new FakeFamilyBackend();
+    seedShippedOnly(familyBackend);
+    let verifyPass = 0;
+    familyBackend.dispatchWorker = async (spec) => {
+      if (spec.kind === "verify") {
+        verifyPass += 1;
+        // Family verify worker failed/malformed → OnlineReviewLoopTerminal with
+        // terminalState decision_gate_raised + stopSummary.reason infra_failure
+        // (see verifyCmr.ts family verify path).
+        return {
+          kind: "failed",
+          reason: "verify worker envelope protocol failure (infra)",
+        };
+      }
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic,
+      familyBackend,
+      singleSliceBackend: new UnusedChildBackend(),
+      familyBase: FAMILY_BASE,
+    });
+
+    expect(result.status).toBe("escalated");
+    // Verifiable park semantics: StopSummary says infra_failure, not a park.
+    expect(result.stopSummary?.reason).toBe("infra_failure");
+    expect(result.stopSummary?.reason).not.toBe("decision_gate_park");
+
+    const escalated = familyBackend.ledger.filter((e) => e.event === "escalated");
+    expect(escalated).toHaveLength(1);
+    // Must NOT be misrecorded as answerable decision park.
+    expect(escalated[0]?.escalationKind).toBe("failure");
+    expect(escalated[0]?.escalationKind).not.toBe("decision");
+    expect(escalated[0]?.stopSummary?.reason).toBe("infra_failure");
+
+    // An answer must NOT reopen an infra-failure escalation.
+    await recordFamilyEscalationAnswered(familyBackend, {
+      answer: "this answer must not reopen a true infra failure",
+      source: "human",
+    });
+    const reentry = await runFamily({
+      epic,
+      familyBackend,
+      singleSliceBackend: new UnusedChildBackend(),
+      familyBase: FAMILY_BASE,
+    });
+    expect(reentry.status).toBe("escalated");
+    expect(reentry.escalation?.diagnosis).toMatch(/classified as failure/i);
+    // Review loop must NOT have been re-entered after the answer.
+    expect(verifyPass).toBe(1);
+  });
 });
