@@ -21,6 +21,7 @@ import {
   lookupCoderRosterEntry,
   resolveCoderRecOrder,
 } from "../src/coderRoster.js";
+import { modelIdForSlug } from "../src/modelRegistry.js";
 import {
   DEFAULT_PARK_THRESHOLD_MS,
   DEFAULT_POOL_MODELS,
@@ -379,6 +380,44 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
       slug: "haiku",
       pool: "claude",
     });
+  });
+
+  /**
+   * #789 / review P2: haiku-first order alone is not enough coverage — the
+   * common "full face" Coder-Rec line puts sonnet-5 ahead of haiku-4.5 and must
+   * actually select the Sonnet baton after grok parks past T.
+   */
+  it("#789 grok exhaustion relay selects Sonnet baton when ordered before haiku", () => {
+    const order = resolveCoderRecOrder(
+      "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
+    );
+    expect(order.map((e) => e.id)).toEqual([
+      "grok-4.5",
+      "sonnet-5",
+      "haiku-4.5",
+    ]);
+
+    const next = selectNextRelayBaton({
+      currentModelId: "grok-4.5",
+      currentPool: "grok-build",
+      rosterOrder: order,
+      pools: [
+        deadPool("grok-build", DEFAULT_POOL_MODELS["grok-build"]),
+        deadPool("cursor", DEFAULT_POOL_MODELS.cursor),
+        deadPool("zai", DEFAULT_POOL_MODELS.zai),
+        deadPool("codex-5h", DEFAULT_POOL_MODELS["codex-5h"]),
+        livePool("claude", DEFAULT_POOL_MODELS.claude),
+      ],
+      // normal CMR Claude leg is opus — distinct slug from sonnet/haiku.
+      reviewerSlugs: ["opus", "gpt-5.6-sol", "agy"],
+    });
+    expect(next).toEqual({
+      modelId: "sonnet-5",
+      slug: "sonnet",
+      pool: "claude",
+    });
+    // Runtime model id for slug `sonnet` must match roster Sonnet 5 promise.
+    expect(modelIdForSlug(next!.slug)).toBe("claude-sonnet-5");
   });
 
   it("#789 default pool table includes claude row without fabricating live status", () => {
