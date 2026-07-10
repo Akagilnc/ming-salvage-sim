@@ -52,6 +52,10 @@ function makeFamilyDocReleaseRepo(): string {
 
 /** A single-slice Backend that drives every child to S8(success). */
 class ChildBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly prepareBases: string[] = [];
   pushCount = 0;
   async findResumeState(): Promise<undefined> {

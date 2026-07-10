@@ -38,6 +38,7 @@ import type {
   OnlineReviewLandingSnapshot,
   OnlineReviewTerminalState,
   PersistentLedgerEntry,
+  PriorRoundFindingSnapshot,
   ShipResult,
   StepOutput,
   VerifyResult,
@@ -876,6 +877,9 @@ export function reconstructOnlineReviewLandingForResume(input: {
   return {
     ...buildOnlineReviewLanding(snapshot, input.ship, input.round),
     fixMarkedFindingIdentityKeys: fixKeys,
+    ...(lastVerify?.findingFamilies !== undefined
+      ? { findingFamilies: lastVerify.findingFamilies }
+      : {}),
   };
 }
 
@@ -1330,12 +1334,23 @@ export async function runOnlineReviewLoopStage(
   opts?: {
     readonly initialRound?: number;
     readonly initialFixCommitSha?: string;
+    /** Optional runner-owned landing enrichment (#711 prior-round data). */
+    readonly enrichVerifyLanding?: (
+      landing: WorkerLandingPayload,
+      round: number,
+    ) => WorkerLandingPayload | Promise<WorkerLandingPayload>;
   },
 ): Promise<OnlineReviewLoopStageResult> {
   let round = opts?.initialRound ?? 1;
   let lastFixCommitSha = opts?.initialFixCommitSha;
   /** Consecutive poll cycles blocked only on pending CI (not fixer rounds). */
   let pendingCiPolls = 0;
+  /**
+   * In-loop prior-round findings (#711). Family ledgers only persist
+   * fix/retrigger markers — not S9 verify outputs — so the continuous multi-round
+   * path accumulates snapshots here after each successful fix cycle.
+   */
+  const priorRoundFindingsAccum: PriorRoundFindingSnapshot[] = [];
 
   while (round <= MAX_ONLINE_REVIEW_ROUNDS + 1) {
     let snapshot: PrReviewSnapshot;
@@ -1348,6 +1363,15 @@ export async function runOnlineReviewLoopStage(
       return decisionGateFromDispatchInfra(round, "poll", err);
     }
     let landing = buildOnlineReviewLanding(snapshot, ship, round);
+    if (priorRoundFindingsAccum.length > 0) {
+      landing = {
+        ...landing,
+        priorRoundFindings: priorRoundFindingsAccum.map((s) => ({ ...s })),
+      };
+    }
+    if (opts?.enrichVerifyLanding !== undefined) {
+      landing = await opts.enrichVerifyLanding(landing, round);
+    }
 
     let verify: VerifyResult;
     try {
@@ -1424,7 +1448,13 @@ export async function runOnlineReviewLoopStage(
       };
     }
     const fixKeys = fixMarkedKeysFromVerify(verify);
-    landing = { ...landing, fixMarkedFindingIdentityKeys: fixKeys };
+    landing = {
+      ...landing,
+      fixMarkedFindingIdentityKeys: fixKeys,
+      ...(verify.findingFamilies !== undefined
+        ? { findingFamilies: verify.findingFamilies }
+        : {}),
+    };
 
     const reviewSnap = landing.onlineReviewSnapshot;
     const checkRuns = reviewSnap?.checkRuns ?? [];
@@ -1530,6 +1560,14 @@ export async function runOnlineReviewLoopStage(
         stopSummary: verifySideEffectFailureStopSummary(err),
       };
     }
+    // #711: record this round's fix-marked keys for the next verify's priorRoundFindings.
+    priorRoundFindingsAccum.push({
+      round,
+      fixMarkedFindingIdentityKeys: fixKeys,
+      ...(verify.findingDispositions !== undefined
+        ? { findingDispositions: verify.findingDispositions }
+        : {}),
+    });
     round += 1;
   }
 

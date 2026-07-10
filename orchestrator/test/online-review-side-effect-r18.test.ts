@@ -127,6 +127,10 @@ describe("#600 r18 single-slice verify side-effect in-band", () => {
   };
 
   class SideEffectFailBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
     private verifyCalls = 0;
 
     async findResumeState(): Promise<undefined> {
