@@ -4,8 +4,10 @@ import * as sc from "@ai-hero/sandcastle";
  * The codex coder slug + its effort. The model id is the bare CLI model string
  * the sandcastle codex provider expects.
  */
-export const CODER_CODEX_SLUG = "gpt-5.5";
-const CODER_CODEX_EFFORT: NonNullable<sc.CodexOptions["effort"]> = "high";
+export const CODER_CODEX_SLUG = "gpt-5.6-terra";
+const CODER_CODEX_EFFORT: NonNullable<sc.CodexOptions["effort"]> = "low";
+export const REVIEWER_CODEX_SLUG = "gpt-5.6-sol";
+export const VERIFY_CODEX_SLUG = "gpt-5.6-terra";
 
 export type ModelFamily = "claude" | "codex" | "agy" | "opencode" | "other";
 
@@ -63,6 +65,22 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     provider: "codex",
     model: CODER_CODEX_SLUG,
     options: { effort: CODER_CODEX_EFFORT },
+    family: "codex",
+    strongLeg: true,
+  },
+  [REVIEWER_CODEX_SLUG]: {
+    provider: "codex",
+    model: REVIEWER_CODEX_SLUG,
+    options: { effort: "medium" },
+    family: "codex",
+    strongLeg: true,
+  },
+  // Pinned historical ledgers still name the retired 5.5 Codex leg. Keep it
+  // resolvable for replay only; no live route selects it.
+  "gpt-5.5": {
+    provider: "codex",
+    model: "gpt-5.5",
+    options: { effort: "high" },
     family: "codex",
     strongLeg: true,
   },
@@ -164,7 +182,14 @@ export function modelIdForSlug(slug: string): string {
   return resolveModelSlug(slug).model;
 }
 
-export function agentForSlug(slug: string): sc.AgentProvider {
+export function agentForSlug(
+  slug: string,
+  codexEffort?: NonNullable<sc.CodexOptions["effort"]>,
+): sc.AgentProvider {
   const entry = resolveModelSlug(slug);
-  return MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, entry.options);
+  const options =
+    entry.provider === "codex" && codexEffort !== undefined
+      ? { ...(entry.options ?? {}), effort: codexEffort }
+      : entry.options;
+  return MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, options);
 }

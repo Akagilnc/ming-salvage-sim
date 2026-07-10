@@ -47,16 +47,16 @@ import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
 import type { DispatchContext, WorkerSpec } from "../../src/types.js";
 
 /**
- * Read the model id `sc.claudeCode(...)` was built with off an agent — the agent's
- * `--model '<id>'` print flag is the only externally-observable proof of the model
+ * Read the model id an agent was built with off an agent — its CLI model flag is
+ * the only externally-observable proof of the model
  * (the agent object exposes no scalar model field).
  */
 function modelOfAgent(agent: unknown): string {
   const build = (agent as { buildPrintCommand?: (p: string) => { command: string } })
     .buildPrintCommand;
   if (typeof build !== "function") throw new Error("agent has no buildPrintCommand");
-  const m = /--model '([^']+)'/.exec(build("x").command);
-  if (m === null) throw new Error(`no --model in: ${build("x").command}`);
+  const m = /(?:--model|-m) '([^']+)'/.exec(build("x").command);
+  if (m === null) throw new Error(`no model flag in: ${build("x").command}`);
   return m[1]!;
 }
 
@@ -690,13 +690,13 @@ describe("#336 family workers — model id is spec-derived via modelIdForSlug (c
   // Symmetry: the family CMR worker (the OTHER family WorkerSpec-driven sc.run in this
   // class) must likewise derive its model from the spec via the same seam — not a
   // standalone constant that could drift from `cmrWorkerSpec().model`.
-  it("the family CMR worker resolves to claude-opus-4-8 (the 'opus' slug) via the same seam", () => {
+  it("the family CMR worker resolves to gpt-5.6-terra via the same seam", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const spec = cmrWorkerSpec();
-    expect(spec.model).toBe("opus");
+    expect(spec.model).toBe("gpt-5.6-terra");
     const model = modelOfAgent(seam().agent(spec));
-    expect(model).toBe(modelIdForSlug("opus"));
-    expect(model).toBe("claude-opus-4-8");
+    expect(model).toBe(modelIdForSlug("gpt-5.6-terra"));
+    expect(model).toBe("gpt-5.6-terra");
   });
 });
 

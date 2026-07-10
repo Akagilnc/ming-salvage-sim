@@ -12,8 +12,8 @@ describe("coderModel() — switchable coder backend (ORCHESTRATOR_CODER_MODEL)",
     vi.unstubAllEnvs();
   });
 
-  it("defaults to the normal-route sonnet coder when the env is unset", () => {
-    expect(coderModel()).toBe("sonnet");
+  it("defaults to the normal-route terra coder when the env is unset", () => {
+    expect(coderModel()).toBe("gpt-5.6-terra");
   });
 
   it("returns the env slug when set (e.g. switch to a Codex coder)", () => {
@@ -23,6 +23,6 @@ describe("coderModel() — switchable coder backend (ORCHESTRATOR_CODER_MODEL)",
 
   it("trims and falls back to the default on a blank/whitespace env value", () => {
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "   ");
-    expect(coderModel()).toBe("sonnet");
+    expect(coderModel()).toBe("gpt-5.6-terra");
   });
 });

@@ -72,13 +72,13 @@ import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
 const realSoulsDir = join(here, "..", "..", "image", "souls");
-const DEFAULT_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
+const DEFAULT_CMR_LEGS = ["opus", "gpt-5.6-sol", "agy"] as const;
 const FROZEN_NORMAL_CMR_REVIEW_LEGS = [
-  { family: "codex", slug: "gpt-5.5" },
+  { family: "codex", slug: "gpt-5.6-sol" },
   { family: "claude", slug: "opus" },
   { family: "agy", slug: "agy" },
 ] as const;
-const STRONG_LEGS = ["opus", "gpt-5.5"] as const;
+const STRONG_LEGS = ["opus", "gpt-5.6-sol"] as const;
 const EMPTY_CMR_CLOSURE = {
   claimedFixedFindingIdentityKeys: [],
   priorFindingDispositions: [],
@@ -1483,7 +1483,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
 
     expect(legs).toEqual([
-      { family: "codex", slug: "gpt-5.5" },
+      { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
       { family: "agy", slug: "agy" },
     ]);
@@ -1497,7 +1497,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
 
     expect(legs).toEqual([
-      { family: "codex", slug: "gpt-5.5" },
+      { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
       { family: "agy", slug: "agy" },
     ]);
@@ -1822,7 +1822,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     expect(route).toEqual({
       pass: "correctness",
       reviewLegs: [
-        { family: "codex", slug: "gpt-5.5" },
+        { family: "codex", slug: "gpt-5.6-sol" },
         { family: "claude", slug: "opus" },
         { family: "agy", slug: "agy" },
       ],
@@ -1854,7 +1854,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       reviewLegs: unknown;
     };
     expect(route.reviewLegs).toEqual([
-      { family: "codex", slug: "gpt-5.5" },
+      { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
       { family: "agy", slug: "agy" },
     ]);
@@ -2013,7 +2013,7 @@ describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
-    const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb" });
+    const outcome = await be.run(legacyClaudeCmrSpec(), { familyBase: "fb" });
     expect(outcome.kind).toBe("escalate");
     if (outcome.kind === "escalate") {
       expect(outcome.reason).toMatch(/claude|token|auth/i);
@@ -2035,7 +2035,7 @@ describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
-    const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
+    const res = await be.dispatchWorker(legacyClaudeCmrSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("escalated");
   });
 });
@@ -2044,6 +2044,12 @@ function realRepo335(): string {
   const repo = mkDir("cmr-guard-repo-");
   execFileSync("git", ["init", "-q"], { cwd: repo });
   return repo;
+}
+
+// The live CMR worker is now Codex. Keep this direct legacy spec only to cover
+// the conditional Claude-auth guard for replayed historical worker records.
+function legacyClaudeCmrSpec(): ReturnType<typeof cmrWorkerSpec> {
+  return { ...cmrWorkerSpec(), model: "opus" };
 }
 
 // ═══════ 4f. runCmrWorker reclaims its per-run temp auth dirs (online review r1) ═══════
@@ -2091,7 +2097,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       { codexAuthDir: codexDir, agyDir }, // no claudeToken ⇒ early escalate
     );
 
-    const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb" });
+    const outcome = await be.run(legacyClaudeCmrSpec(), { familyBase: "fb" });
     expect(outcome.kind).toBe("escalate");
     // The finally reclaimed BOTH per-run dirs even though sc.run never ran.
     expect(existsSync(codexDir)).toBe(false);

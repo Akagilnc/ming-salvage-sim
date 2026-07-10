@@ -107,6 +107,8 @@ const BASE_FINDING: Finding = {
   action: "fix_now",
 };
 
+// Replay fixtures preserve their recorded 5.5 CMR leg; modelRoutes normalizes
+// it only when comparing the fixture against a current live route.
 const DEFAULT_SUCCESSFUL_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
 
 function scenario(input: {
