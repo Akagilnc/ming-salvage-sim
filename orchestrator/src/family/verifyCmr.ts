@@ -1832,8 +1832,7 @@ export async function runFamilyOnlineReviewLoop(input: {
         verify,
         fixingCommitSha,
         landingThreads: landing.onlineReviewSnapshot?.threads,
-        approvedFixMarkedFindingIdentityKeys:
-          landing.fixMarkedFindingIdentityKeys,
+        approvedFixMarkedFindingThreads: landing.fixMarkedFindingThreads,
       });
       return {
         ...verify,

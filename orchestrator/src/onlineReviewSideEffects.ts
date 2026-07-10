@@ -20,14 +20,20 @@ export type LandingThreadRef = {
   readonly threadNodeId?: string;
 };
 
+/** Fixer authority is the finding identity and the thread where it was marked. */
+export type FixMarkedFindingThread = {
+  readonly identityKey: string;
+  readonly threadId: string;
+};
+
 export interface ApplyVerifySideEffectsInput {
   readonly sh: Sh;
   readonly repo: string;
   readonly prUrl: string;
   readonly verify: VerifyResult;
   readonly fixingCommitSha?: string;
-  /** Runner-approved fixer identities. Missing or empty means resolve nothing. */
-  readonly approvedFixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /** Runner-approved identity/thread bindings. Missing or empty means resolve nothing. */
+  readonly approvedFixMarkedFindingThreads?: ReadonlyArray<FixMarkedFindingThread>;
   /** Poll snapshot threads — required for live side effects to translate worker-echoed ids. */
   readonly landingThreads?: ReadonlyArray<LandingThreadRef>;
 }
@@ -368,9 +374,8 @@ export function planVerifySideEffects(
     repo,
     verify,
     landingThreads,
-    approvedFixMarkedFindingIdentityKeys = [],
+    approvedFixMarkedFindingThreads = [],
   } = input;
-  const approvedIdentityKeys = new Set(approvedFixMarkedFindingIdentityKeys);
   const existingReplies = replyByThreadId(verify);
   const defers = deferDispositions(verify);
 
@@ -464,7 +469,20 @@ export function planVerifySideEffects(
     const isApprovedFixThread = (verify.findingDispositions ?? []).some(
       (disposition) =>
         disposition.action === "fix" &&
-        approvedIdentityKeys.has(disposition.identityKey) &&
+        approvedFixMarkedFindingThreads.some(
+          (approved) =>
+            approved.identityKey === disposition.identityKey &&
+            threadIdsReferToSameLandingThread(
+              approved.threadId,
+              disposition.threadId,
+              landingThreads,
+            ) &&
+            threadIdsReferToSameLandingThread(
+              approved.threadId,
+              threadId,
+              landingThreads,
+            ),
+        ) &&
         threadIdsReferToSameLandingThread(
           disposition.threadId,
           threadId,
@@ -585,4 +603,16 @@ export function fixMarkedKeysFromVerify(verify: VerifyResult): string[] {
   return (verify.findingDispositions ?? [])
     .filter((d) => d.action === "fix")
     .map((d) => d.identityKey);
+}
+
+/** Preserve the thread that a fix-marked identity was judged against. */
+export function fixMarkedFindingThreadsFromVerify(
+  verify: VerifyResult,
+): FixMarkedFindingThread[] {
+  const keys = new Set(fixMarkedKeysFromVerify(verify));
+  return (verify.findingDispositions ?? []).flatMap((disposition) =>
+    disposition.action === "fix" && keys.has(disposition.identityKey)
+      ? [{ identityKey: disposition.identityKey, threadId: disposition.threadId }]
+      : [],
+  );
 }

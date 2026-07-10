@@ -52,6 +52,7 @@ import {
 } from "./reviewLoopOutcome.js";
 import {
   applyVerifySideEffects,
+  fixMarkedFindingThreadsFromVerify,
   fixMarkedKeysFromVerify,
 } from "./onlineReviewSideEffects.js";
 import type { StopSummary } from "./stopSummary.js";
@@ -803,7 +804,9 @@ export function recheckConvergenceConfirmsFixMarkedKeys(
   if (verify.isRecheck !== true || verify.converged !== true) return true;
   const expected = landing.fixMarkedFindingIdentityKeys;
   const confirmed = verify.fixMarkedFindingIdentityKeys;
-  if (expected === undefined || confirmed === undefined) return false;
+  if (expected === undefined) return false;
+  if (expected.length === 0) return true;
+  if (confirmed === undefined) return false;
   if (expected.length !== confirmed.length) return false;
   const expectedKeys = new Set(expected);
   const confirmedKeys = new Set(confirmed);
@@ -901,9 +904,12 @@ export function reconstructOnlineReviewLandingForResume(input: {
   const lastVerify = lastS9VerifyOutputFromLedger(input.fullLedger);
   const fixKeys =
     lastVerify !== undefined ? fixMarkedKeysFromVerify(lastVerify) : [];
+  const fixMarkedFindingThreads =
+    lastVerify !== undefined ? fixMarkedFindingThreadsFromVerify(lastVerify) : [];
   return {
     ...buildOnlineReviewLanding(snapshot, input.ship, input.round),
     fixMarkedFindingIdentityKeys: fixKeys,
+    fixMarkedFindingThreads,
     ...(lastVerify?.findingFamilies !== undefined
       ? { findingFamilies: lastVerify.findingFamilies }
       : {}),
@@ -1374,6 +1380,9 @@ export async function runOnlineReviewLoopStage(
   let pendingCiPolls = 0;
   /** The previous fixer assignment, required as the next verify's recheck contract. */
   let recheckFixMarkedFindingIdentityKeys: ReadonlyArray<string> | undefined;
+  let recheckFixMarkedFindingThreads:
+    | ReadonlyArray<{ readonly identityKey: string; readonly threadId: string }>
+    | undefined;
   /**
    * In-loop prior-round findings (#711). Family ledgers only persist
    * fix/retrigger markers — not S9 verify outputs — so the continuous multi-round
@@ -1403,6 +1412,7 @@ export async function runOnlineReviewLoopStage(
         ...landing,
         fixMarkedFindingIdentityKeys:
           recheckFixMarkedFindingIdentityKeys ?? [],
+        fixMarkedFindingThreads: recheckFixMarkedFindingThreads ?? [],
       };
     }
     if (opts?.enrichVerifyLanding !== undefined) {
@@ -1497,9 +1507,11 @@ export async function runOnlineReviewLoopStage(
       };
     }
     const fixKeys = fixMarkedKeysFromVerify(verify);
+    const fixMarkedFindingThreads = fixMarkedFindingThreadsFromVerify(verify);
     landing = {
       ...landing,
       fixMarkedFindingIdentityKeys: fixKeys,
+      fixMarkedFindingThreads,
       ...(verify.findingFamilies !== undefined
         ? { findingFamilies: verify.findingFamilies }
         : {}),
@@ -1555,6 +1567,7 @@ export async function runOnlineReviewLoopStage(
     }
 
     recheckFixMarkedFindingIdentityKeys = fixKeys;
+    recheckFixMarkedFindingThreads = fixMarkedFindingThreads;
 
     let fixerOutput: FixerResult;
     try {
