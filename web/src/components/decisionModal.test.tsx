@@ -88,6 +88,42 @@ describe("DecisionModal", () => {
     expect(document.activeElement).toBe(background);
   });
 
+  it("blocks background focus and shortcuts while the red-seal page is open", () => {
+    const background = document.createElement("button");
+    background.textContent = "底层 HUD 控件";
+    document.body.appendChild(background);
+    const shortcut = vi.fn();
+    window.addEventListener("keydown", shortcut);
+
+    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
+    const option = document.querySelector<HTMLButtonElement>(".decision-option");
+    const event = new KeyboardEvent("keydown", { key: "`", ctrlKey: true, bubbles: true, cancelable: true });
+
+    act(() => background.focus());
+    expect(document.activeElement).toBe(option);
+
+    act(() => document.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+    expect(shortcut).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(option);
+
+    window.removeEventListener("keydown", shortcut);
+    cleanup();
+  });
+
+  it("moves focus to the next memorial when continuing to the next decision", () => {
+    const cleanup = render(<DecisionModal decisions={decisions} onResolve={vi.fn()} />);
+    const options = document.querySelectorAll<HTMLButtonElement>(".decision-option");
+    const confirm = document.querySelector<HTMLButtonElement>(".decision-confirm");
+
+    act(() => options[0].click());
+    act(() => confirm!.click());
+
+    expect(document.querySelector(".decision-document-section h3")?.textContent).toBe("河工修治");
+    expect(document.activeElement).toBe(document.querySelector<HTMLButtonElement>(".decision-option"));
+    cleanup();
+  });
+
   it("assembles each decision as ordered sections of one red-seal document", () => {
     const cleanup = render(<DecisionModal decisions={decisions} onResolve={vi.fn()} />);
     const documentPage = document.querySelector<HTMLElement>(".decision-document");
