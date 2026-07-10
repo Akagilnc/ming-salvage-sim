@@ -467,7 +467,7 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
     rows = db.conn.execute(
         """
         SELECT name, office, office_type, faction, aliases, personal_skills,
-               loyalty, ability, integrity, courage, style,
+               loyalty, ability, integrity, courage, style, identity, seed_guilt,
                birth_year, historical_death_year, historical_death_month,
                debut_year, debut_month, status, status_reason, reason_code,
                portrait_id, power_id, location, transit_to, summary
@@ -524,6 +524,8 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             transit_to=row["transit_to"] or "",
             portrait_id=row["portrait_id"],
             summary=row["summary"],
+            identity=int(row["identity"]),
+            seed_guilt=row["seed_guilt"] or "",
         )
     content.characters = characters
 

@@ -7,6 +7,7 @@ GameContent.load() 显式调用——模块导入本身不读盘、无副作用�
 from __future__ import annotations
 
 import copy
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Tuple
@@ -98,6 +99,24 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             reason_code=str(item.get("reason_code") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
+            identity=int(item.get("identity") if item.get("identity") is not None else 50),
+            seed_guilt=json.dumps(item.get("seed_guilt"), ensure_ascii=False)
+            if item.get("seed_guilt")
+            else "",
+        )
+
+    aliases_by_faction: Dict[str, Set[str]] = {}
+    for character in characters.values():
+        for alias in character.aliases:
+            aliases_by_faction.setdefault(alias, set()).add(character.faction)
+    cross_faction_aliases = sorted(
+        alias for alias, factions_for_alias in aliases_by_faction.items()
+        if len(factions_for_alias) > 1
+    )
+    if cross_faction_aliases:
+        raise SystemExit(
+            "characters.json 不得存在跨派别人物别名："
+            + "、".join(cross_faction_aliases)
         )
 
     if not factions or not characters:
