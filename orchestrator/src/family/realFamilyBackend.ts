@@ -2652,7 +2652,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // Derive the model from the spec via the SAME validated mapping the
       // single-slice ship path uses (realBackend.ts:2122) — NOT a hardcoded id.
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
-      // id (claude-sonnet-4-5) than the verified `sonnet → claude-sonnet-4-6`
+      // id (claude-sonnet-4-5) than the verified `sonnet → claude-sonnet-5`
       // mapping `familyShipWorkerSpec().model` resolves to (cmr S336 r7 P1).
       agent: this.agentForSpec(spec),
       maxIterations: spec.maxIter,

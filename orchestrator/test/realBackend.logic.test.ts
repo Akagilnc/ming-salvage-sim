@@ -715,7 +715,7 @@ describe("realBackend modelIdForSlug", () => {
   it("maps supported slugs to baked CLI model ids through the registry", () => {
     expect(modelIdForSlug("gpt-5.6-terra")).toBe("gpt-5.6-terra");
     expect(modelIdForSlug("gpt-5.6-sol")).toBe("gpt-5.6-sol");
-    expect(modelIdForSlug("sonnet")).toBe("claude-sonnet-4-6");
+    expect(modelIdForSlug("sonnet")).toBe("claude-sonnet-5");
     expect(modelIdForSlug("opus")).toBe("claude-opus-4-8");
   });
 
@@ -751,7 +751,7 @@ describe("realBackend resolveModelSlug", () => {
     });
     expect(resolveModelSlug("sonnet")).toEqual({
       provider: "claudeCode",
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
     });
     expect(resolveModelSlug("opus")).toEqual({
       provider: "claudeCode",
