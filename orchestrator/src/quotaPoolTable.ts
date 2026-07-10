@@ -113,9 +113,10 @@ export const DEFAULT_POOL_MODELS: Readonly<
 
 /**
  * Build a route pool table for a quota-wall disposition: the wall-hit pool is
- * `limited` (with resetAt); every other billing pool starts `live` with the
- * default model memberships. Tests that need "no live baton" pass an explicit
- * `relayPools` override with only the limited row (or all-dead alternates).
+ * `limited` (with resetAt). Every other billing pool defaults to **not-live**
+ * (`dead`) unless the caller supplies a probed/override table via
+ * `RunInput.relayPools` — unknown pool state must not fabricate live batons
+ * (#686 R2 / iron rule: park when unprobed).
  */
 export function buildDefaultBillingPools(input: {
   readonly limitedPool: BillingPoolId;
@@ -136,7 +137,7 @@ export function buildDefaultBillingPools(input: {
     }
     return {
       id,
-      status: "live" as const,
+      status: "dead" as const,
       parkThresholdMs: t,
       models: DEFAULT_POOL_MODELS[id],
     };

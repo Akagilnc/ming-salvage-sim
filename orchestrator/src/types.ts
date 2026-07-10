@@ -899,6 +899,17 @@ export interface DispatchContext {
    * Runner-owned data — not used for routing decisions.
    */
   readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
+  /**
+   * #686 — billing pool for this dispatch (ADR 0124). Selects the real
+   * provider/CLI channel when the same model lives on multiple pools.
+   */
+  readonly billingPool?: string;
+  /**
+   * #686 — absolute path to `.relay-focus.md` when a baton handoff is in force.
+   * Mirrors `.cmr-focus.md` / `.ship-focus.md`: runner writes the parameter file;
+   * the worker prompt reads it when present.
+   */
+  readonly relayFocusPath?: string;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */
@@ -1711,6 +1722,11 @@ export interface AgentStepRunOptions {
   readonly onlineReviewLanding?: FixFindingsLandingFile;
   readonly fixFocusLanding?: FixFindingsLandingFile;
   readonly outcomeLanding?: WorkerOutcomeLandingFile;
+  /**
+   * #686 / ADR 0124 — billing pool for this dispatch. Selects the real
+   * provider/CLI channel when the same model lives on multiple pools.
+   */
+  readonly billingPool?: string;
 }
 
 // ──────────────────────────── run result ────────────────────────────
@@ -1773,9 +1789,10 @@ export interface RunInput {
   readonly family?: FamilyContext;
   /**
    * #686 — optional route pool table override for park-vs-relay at the #683
-   * disposition point. When absent, the runner builds a default table (wall-hit
-   * pool limited; other billing pools live). Tests that need #683 park-only
-   * behaviour pass a table with no live alternate baton.
+   * disposition point. When absent, the runner builds a default table where the
+   * wall-hit pool is `limited` and every other pool is **not-live** until probed
+   * (unknown state must not fabricate live batons). Tests that need a live
+   * alternate baton pass an explicit probed table via this field.
    */
   readonly relayPools?: ReadonlyArray<{
     readonly id: string;

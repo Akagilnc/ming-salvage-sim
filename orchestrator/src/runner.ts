@@ -150,6 +150,7 @@ import {
   resolveCoderRecOrder,
   reviewerSlugsFromRoute,
   lookupCoderRosterEntry,
+  CODER_REC_FALLBACK_AFTER_ROUNDS,
 } from "./coderRoster.js";
 import {
   DEFAULT_PARK_THRESHOLD_MS,
@@ -160,13 +161,19 @@ import {
   type NextRelayBaton,
 } from "./quotaPoolTable.js";
 import {
-  buildRelayFocusFile,
+  canRelayHandoff,
   forkQuotaWallAt683Point,
   isRelayCandidateExhaustion,
   applyResourceFailureHandoff,
   resumeRelayFromLedger,
+  tryBuildRelayFocusFile,
+  isHangWithLivePoolError,
+  isSelfReportedRelayError,
+  RELAY_FOCUS_FILENAME,
   type RelayHandoffLedgerEvent,
 } from "./relayDispatch.js";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { isFilledString } from "./shipOutcome.js";
 // Shared seam guards — single source of truth, also used by route(), so the
 // coder-output / commitsAdded rules can never drift.
@@ -624,7 +631,7 @@ async function parkOrRelayQuotaWall(opts: {
       toPool: entry.toPool,
       ts: entry.ts,
     };
-    ledger.push(marker);
+    // Fail-closed durable writes: ledger + focus must both land, else park.
     if (stateDir !== undefined) {
       try {
         await backend.writeLedger(
@@ -638,22 +645,45 @@ async function parkOrRelayQuotaWall(opts: {
           stateDir,
         );
       } catch {
-        // Best-effort durable handoff — in-memory ledger still holds it.
+        return {
+          kind: "park",
+          result: await parkQuotaWaitForResetLegacy({
+            step,
+            err,
+            ledger,
+            stateDir,
+            sessionId,
+            backend,
+            deferredFindings,
+            resolveBranchHEAD: opts.resolveBranchHEAD,
+            hashPrompt: opts.hashPrompt,
+          }),
+        };
       }
     }
-    let focusPath: string | undefined;
-    if (opts.worktreePath !== undefined) {
-      try {
-        focusPath = buildRelayFocusFile(opts.worktreePath, entry);
-      } catch {
-        focusPath = undefined;
-      }
+    const focus = tryBuildRelayFocusFile(opts.worktreePath, entry);
+    if (!focus.ok) {
+      return {
+        kind: "park",
+        result: await parkQuotaWaitForResetLegacy({
+          step,
+          err,
+          ledger,
+          stateDir,
+          sessionId,
+          backend,
+          deferredFindings,
+          resolveBranchHEAD: opts.resolveBranchHEAD,
+          hashPrompt: opts.hashPrompt,
+        }),
+      };
     }
+    ledger.push(marker);
     return {
       kind: "relay",
       nextBaton: forked.nextBaton,
       ledgerEntry: entry,
-      focusPath,
+      focusPath: focus.path,
     };
   }
 
@@ -744,7 +774,7 @@ async function parkQuotaWaitForResetLegacy(opts: {
       reason: "provider_degraded",
       summary: `quota wait for reset on pool ${ledgerEntry.pool}${resetHint}`,
       repairHint:
-        "wait for the provider quota to reset, then re-feed — resume re-enters the parked step; when a live baton exists beyond T, #686 relays instead of parking",
+        "wait for the provider quota to reset, then re-feed — resume re-enters the parked step (auto re-dispatch is #686)",
     },
     deferredFindings,
   };
@@ -2435,12 +2465,33 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let routeSmokeChecked = false;
   /** #686 — last applied relay baton's billing pool (drives next exhaustion lookup). */
   let currentBillingPool: BillingPoolId | undefined;
-  /** #686 — bound in-process relay handoffs so a failing successor cannot loop forever. */
-  let relayHandoffsThisRun = 0;
-  const MAX_RELAY_HANDOFFS = 8;
+  /**
+   * #686 — sticky resource-relay baton slug. Scopes stickiness to resource
+   * handoffs only: blocks Coder-Rec snap-back while nonConvergingRounds === 0,
+   * but clears so #767 quality advance (S6 rounds) still runs.
+   */
+  let stickyRelayCoderSlug: string | undefined;
+  /** #686 — last written relay focus path (forwarded on next dispatch). */
+  let activeRelayFocusPath: string | undefined;
 
   const applyCoderRecSelection = (nonConvergingRounds: number): void => {
     if (coderRecEnvSkipped) return;
+    // Resource-relay stickiness: hold the baton until #767 quality advance
+    // would actually move (S6 rounds ≥ FALLBACK). Do NOT set coderRecEnvSkipped.
+    if (
+      stickyRelayCoderSlug !== undefined &&
+      nonConvergingRounds < CODER_REC_FALLBACK_AFTER_ROUNDS
+    ) {
+      if (modelRoute.slots.coder !== stickyRelayCoderSlug) {
+        modelRoute = withCoderSlot(modelRoute, stickyRelayCoderSlug);
+        stepSpecs = stepSpecsForRoute(modelRoute);
+        routeSmokeChecked = false;
+      }
+      return;
+    }
+    if (stickyRelayCoderSlug !== undefined) {
+      stickyRelayCoderSlug = undefined;
+    }
     const applied = applyCoderRecToRoute(
       modelRoute,
       coderRecIssueBody,
@@ -2465,51 +2516,62 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
   };
 
-  /** #686 — apply a relay baton onto the mutable route (coder + wall-hit slots). */
+  /** #686 — apply a relay baton onto the wall-hit role slot (role-aware). */
   const applyRelayBaton = (baton: NextRelayBaton, wallStep?: StepId): void => {
-    modelRoute = withCoderSlot(modelRoute, baton.slug);
     currentBillingPool = baton.pool;
-    relayHandoffsThisRun += 1;
-    // When the wall hit a non-coder leg (S7 ship / S9 verify / …), also point
-    // that slot at the next baton so the re-dispatch is observable.
-    if (wallStep === "S7") {
-      modelRoute = {
-        ...modelRoute,
-        slots: { ...modelRoute.slots, ship: baton.slug },
-      };
+    const slots = { ...modelRoute.slots };
+    if (wallStep === "S3" || wallStep === "S6") {
+      slots.reviewer = baton.slug;
+    } else if (wallStep === "S7") {
+      slots.ship = baton.slug;
     } else if (wallStep === "S9") {
-      modelRoute = {
-        ...modelRoute,
-        slots: { ...modelRoute.slots, verify: baton.slug },
-      };
+      slots.verify = baton.slug;
     } else if (wallStep === "S10") {
-      modelRoute = {
-        ...modelRoute,
-        slots: { ...modelRoute.slots, fixer: baton.slug },
-      };
+      slots.fixer = baton.slug;
     } else if (wallStep === "S11") {
-      modelRoute = {
-        ...modelRoute,
-        slots: { ...modelRoute.slots, cleanup: baton.slug },
-      };
+      slots.cleanup = baton.slug;
     } else if (wallStep === "S12") {
-      modelRoute = {
-        ...modelRoute,
-        slots: { ...modelRoute.slots, docRelease: baton.slug },
-      };
+      slots.docRelease = baton.slug;
+    } else {
+      // S2/S5/default — coder (+ coderFix) slot; sticky for resource relay only.
+      modelRoute = withCoderSlot(modelRoute, baton.slug);
+      stickyRelayCoderSlug = baton.slug;
+      stepSpecs = stepSpecsForRoute(modelRoute);
+      routeSmokeChecked = false;
+      console.info(
+        `[orchestrator] #686 relay baton → ${baton.modelId} (${baton.slug}) @ ${baton.pool}`,
+      );
+      return;
     }
+    modelRoute = { ...modelRoute, slots };
     stepSpecs = stepSpecsForRoute(modelRoute);
     routeSmokeChecked = false;
-    // Sticky: do not let Coder-Rec snap back to the wall-hit baton on the
-    // next S2/S5 entry — the relay decision already chose the successor.
-    coderRecEnvSkipped = true;
     console.info(
-      `[orchestrator] #686 relay baton → ${baton.modelId} (${baton.slug}) @ ${baton.pool}`,
+      `[orchestrator] #686 relay baton → ${baton.modelId} (${baton.slug}) @ ${baton.pool}` +
+        (wallStep !== undefined ? ` (slot for ${wallStep})` : ""),
     );
   };
 
-  const canRelayInProcess = (): boolean =>
-    relayHandoffsThisRun < MAX_RELAY_HANDOFFS;
+  const canRelayInProcess = (): boolean => canRelayHandoff(ledger);
+
+  const modelIdForWallStep = (wallStep: StepId): string => {
+    const slots = modelRoute.slots;
+    const slug =
+      wallStep === "S3" || wallStep === "S6"
+        ? slots.reviewer
+        : wallStep === "S7"
+          ? slots.ship
+          : wallStep === "S9"
+            ? slots.verify
+            : wallStep === "S10"
+              ? slots.fixer
+              : wallStep === "S11"
+                ? slots.cleanup
+                : wallStep === "S12"
+                  ? slots.docRelease
+                  : slots.coder;
+    return lookupCoderRosterEntry(slug)?.id ?? slug;
+  };
 
   const resolveRelayPools = (
     limitedPool: BillingPoolId,
@@ -2530,6 +2592,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const currentCoderModelId = (): string => {
     const slug = modelRoute.slots.coder;
     return lookupCoderRosterEntry(slug)?.id ?? slug;
+  };
+
+  const relayFocusForDispatch = (): string | undefined => {
+    if (activeRelayFocusPath !== undefined) return activeRelayFocusPath;
+    if (worktree?.path !== undefined) {
+      const p = join(worktree.path, RELAY_FOCUS_FILENAME);
+      if (existsSync(p)) return p;
+    }
+    return undefined;
   };
 
   const coderRecRoundsFromLedger = (
@@ -3691,10 +3762,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // `clean -fd` cannot touch the resume truth. A cleanResidue failure is a
     // backend throw → S8(error) (consistent with #252), via errorTermination
     // (base integ-cmr: records + best-effort persists the failing step + S8).
-    try {
-      await backend.cleanResidue(worktree);
-    } catch (err) {
-      return await errorTermination(plan.resumeStep, err);
+    //
+    // #686 P0: when a relay_baton_handoff is pending, SKIP cleanResidue —
+    // uncommitted baton work and `.relay-focus.md` ARE the payload (iron rule #10).
+    const relayResume = resumeRelayFromLedger(
+      ledger.filter(
+        (e): e is LedgerEntry & RelayHandoffLedgerEvent =>
+          e.event === "relay_baton_handoff",
+      ) as RelayHandoffLedgerEvent[],
+    );
+    if (relayResume === undefined) {
+      try {
+        await backend.cleanResidue(worktree);
+      } catch (err) {
+        return await errorTermination(plan.resumeStep, err);
+      }
     }
 
     // ADR 0030: resume continues from the recorded runner-visible boundary. If
@@ -3710,12 +3792,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // #686 — resume from relay_baton_handoff: apply the recorded next baton
     // before re-entering the interrupted step.
-    const relayResume = resumeRelayFromLedger(
-      ledger.filter(
-        (e): e is LedgerEntry & RelayHandoffLedgerEvent =>
-          e.event === "relay_baton_handoff",
-      ) as RelayHandoffLedgerEvent[],
-    );
     if (relayResume !== undefined) {
       const batonEntry = lookupCoderRosterEntry(relayResume.toModelId);
       applyRelayBaton(
@@ -3726,6 +3802,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         },
         plan.resumeStep,
       );
+      if (worktree.path !== undefined) {
+        const focus = join(worktree.path, RELAY_FOCUS_FILENAME);
+        if (existsSync(focus)) activeRelayFocusPath = focus;
+      }
     }
   }
 
@@ -3948,6 +4028,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 stepSpecs[step],
                 typeof resumeSessionId === "string" ? "resume" : "fresh",
               );
+              const focusPath = relayFocusForDispatch();
               const dispatchCtx = {
                 worktree,
                 stateDir,
@@ -3956,6 +4037,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ...(escalationAnswerForStep != null
                   ? { escalationAnswer: escalationAnswerForStep }
                   : {}),
+                ...(currentBillingPool !== undefined
+                  ? { billingPool: currentBillingPool }
+                  : {}),
+                ...(focusPath !== undefined ? { relayFocusPath: focusPath } : {}),
                 // 信封宪法 (ADR 0062): the dispatch structure carries only the
                 // identity keys + count; the rich finding content travels in the
                 // separate landing payload below.
@@ -4181,7 +4266,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     toPool: entry.toPool,
                     ts: entry.ts,
                   };
-                  ledger.push(marker);
                   if (stateDir !== undefined) {
                     try {
                       await backend.writeLedger(
@@ -4199,16 +4283,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         stateDir,
                       );
                     } catch {
-                      // best-effort
+                      return await errorTermination(
+                        step,
+                        new Error(
+                          `relay handoff ledger write failed after mechanical retry exhaustion`,
+                        ),
+                      );
                     }
                   }
-                  if (worktree?.path !== undefined) {
-                    try {
-                      buildRelayFocusFile(worktree.path, entry);
-                    } catch {
-                      // best-effort
-                    }
+                  const focus = tryBuildRelayFocusFile(worktree?.path, entry);
+                  if (!focus.ok) {
+                    return await errorTermination(
+                      step,
+                      new Error(focus.reason),
+                    );
                   }
+                  ledger.push(marker);
+                  activeRelayFocusPath = focus.path;
                   applyRelayBaton(handoff.nextBaton, step);
                   continue orchestratorStepLoop;
                 }
@@ -4259,7 +4350,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               resolveBranchHEAD,
               hashPrompt: (promptFile, s) => hashPrompt(promptFile, s, backend),
               worktreePath: worktree?.path,
-              currentModelId: currentCoderModelId(),
+              currentModelId: modelIdForWallStep(step),
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools: resolveRelayPools(currentPool, err.disposition.resetAt),
@@ -4267,8 +4358,98 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               now: relayNow(),
             });
             if (outcome.kind === "park") return outcome.result;
+            if (outcome.focusPath !== undefined) {
+              activeRelayFocusPath = outcome.focusPath;
+            }
             applyRelayBaton(outcome.nextBaton, step);
             continue orchestratorStepLoop;
+          }
+          // #686: hang-with-live-pool / self-reported blocked → resource relay
+          // (never mechanical-retry / never reset).
+          if (
+            (isHangWithLivePoolError(err) || isSelfReportedRelayError(err)) &&
+            canRelayInProcess()
+          ) {
+            const currentPool =
+              currentBillingPool ??
+              billingPoolFromQuotaPool(
+                isHangWithLivePoolError(err)
+                  ? err.poolId
+                  : poolForModelRef(modelRoute.slots.coder),
+              );
+            const pools = resolveRelayPools(currentPool, undefined).map((p) =>
+              p.id === currentPool ? { ...p, status: "dead" as const } : p,
+            );
+            const trigger = isHangWithLivePoolError(err)
+              ? ("hang_with_live_pool" as const)
+              : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
+                ? ("self_reported_blocked" as const)
+                : ("phase_complete" as const);
+            const stateSummary = isSelfReportedRelayError(err)
+              ? err.tag.state_summary
+              : "worker hang with live pool; pid tree killed; drift preserved";
+            const remaining =
+              isSelfReportedRelayError(err) && "remaining" in err.tag
+                ? err.tag.remaining
+                : undefined;
+            const handoff = await applyResourceFailureHandoff({
+              trigger,
+              state_summary: stateSummary,
+              ...(remaining !== undefined ? { remaining } : {}),
+              reason: err instanceof Error ? err.message : String(err),
+              currentModelId: modelIdForWallStep(step),
+              currentPool,
+              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+              pools,
+              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+              now: relayNow(),
+              step,
+            });
+            if (handoff.kind === "relay" && handoff.ledgerEntry) {
+              const entry = handoff.ledgerEntry;
+              const marker: LedgerEntry = {
+                step: entry.step ?? step,
+                event: "relay_baton_handoff",
+                trigger: entry.trigger,
+                state_summary: entry.state_summary,
+                ...(entry.remaining !== undefined
+                  ? { remaining: entry.remaining }
+                  : {}),
+                ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+                fromModelId: entry.fromModelId,
+                fromPool: entry.fromPool,
+                toModelId: entry.toModelId,
+                toPool: entry.toPool,
+                ts: entry.ts,
+              };
+              if (stateDir !== undefined) {
+                try {
+                  await backend.writeLedger(
+                    {
+                      ...marker,
+                      sessionId,
+                      prompt_hash: await hashPrompt(undefined, step, backend),
+                      branchHEAD: await resolveBranchHEAD(),
+                      ts: entry.ts,
+                    },
+                    stateDir,
+                  );
+                } catch {
+                  return await errorTermination(step, err);
+                }
+              }
+              const focus = tryBuildRelayFocusFile(worktree?.path, entry);
+              if (!focus.ok) {
+                return await errorTermination(
+                  step,
+                  new Error(focus.reason),
+                );
+              }
+              ledger.push(marker);
+              activeRelayFocusPath = focus.path;
+              applyRelayBaton(handoff.nextBaton, step);
+              continue orchestratorStepLoop;
+            }
           }
           return await errorTermination(step, err);
         }
@@ -4525,7 +4706,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               resolveBranchHEAD,
               hashPrompt: (promptFile, s) => hashPrompt(promptFile, s, backend),
               worktreePath: worktree?.path,
-              currentModelId: currentCoderModelId(),
+              currentModelId: modelIdForWallStep("S7"),
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools: resolveRelayPools(currentPool, err.disposition.resetAt),
@@ -4533,6 +4714,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               now: relayNow(),
             });
             if (outcome.kind === "park") return outcome.result;
+            if (outcome.focusPath !== undefined) {
+              activeRelayFocusPath = outcome.focusPath;
+            }
             applyRelayBaton(outcome.nextBaton, "S7");
             continue orchestratorStepLoop;
           }
@@ -5515,7 +5699,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               resolveBranchHEAD,
               hashPrompt: (pf, s) => hashPrompt(pf, s, backend),
               worktreePath: worktree?.path,
-              currentModelId: currentCoderModelId(),
+              currentModelId: modelIdForWallStep(reviewStep),
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools: resolveRelayPools(currentPool, err.disposition.resetAt),
@@ -5523,6 +5707,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               now: relayNow(),
             });
             if (outcome.kind === "park") return outcome.result;
+            if (outcome.focusPath !== undefined) {
+              activeRelayFocusPath = outcome.focusPath;
+            }
             applyRelayBaton(outcome.nextBaton, reviewStep);
             step = reviewStep;
             continue orchestratorStepLoop;

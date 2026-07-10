@@ -10,6 +10,7 @@ import {
   QuotaWaitForResetError,
   type QuotaProbeResult,
 } from "../src/quotaProbe.js";
+import { HangWithLivePoolError } from "../src/relayDispatch.js";
 import type {
   Backend,
   CliMonitorSpawnSpec,
@@ -136,23 +137,25 @@ describe("#683 integration at the real monitored dispatch path", () => {
     ]);
   });
 
-  it("probe pass uses the monitor's verified pid-tree kill disposition", async () => {
+  it("probe pass uses the monitor's verified pid-tree kill then surfaces HangWithLivePoolError (#686)", async () => {
     const ledger: unknown[] = [];
     const out = await runMonitored({ kind: "ok" }, ledger);
 
-    expect(out.error).toBeUndefined();
+    // #686: hang-with-live-pool kills the pid tree then throws a resource
+    // failure so the runner relays (never mechanical-retry / never reset).
+    expect(out.error).toBeInstanceOf(HangWithLivePoolError);
     expect(out.killed.some((pid) => pid > 0)).toBe(true);
     expect(ledger).toEqual([]);
   });
 
-  it("probe network error fails safe through the same hang disposition", async () => {
+  it("probe network error fails safe through the same hang→resource-error path", async () => {
     const ledger: unknown[] = [];
     const out = await runMonitored(
       { kind: "error", cause: "network unavailable" },
       ledger,
     );
 
-    expect(out.error).toBeUndefined();
+    expect(out.error).toBeInstanceOf(HangWithLivePoolError);
     expect(out.killed.some((pid) => pid > 0)).toBe(true);
     expect(ledger).toEqual([]);
   });
