@@ -900,6 +900,9 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
         def register(self, _character):
             return None
 
+        def refresh(self, _character):
+            return None
+
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
