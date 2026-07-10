@@ -1,5 +1,7 @@
 """#489 角色见闻：职位裁切、公开事件与参与留痕。"""
 
+import json
+
 from ming_sim.models import Character
 from ming_sim.knowledge import _OFFICE_BUCKETS
 
@@ -46,6 +48,27 @@ def test_generic_offices_receive_distinct_current_world_slices(game):
         assert views[office_type]["public"]
     assert views["礼部"] != views["刑部"]
     assert views["刑部"] != views["都察院"]
+
+
+def test_every_distinct_office_type_gets_a_distinct_current_world_slice(game):
+    db, state, content = game
+    characters_by_type = {
+        character.office_type: character
+        for character in content.characters.values()
+        if character.office_type in _OFFICE_BUCKETS
+    }
+
+    views = {
+        office_type: db.get_character_knowledge(state, character.name)["world"]
+        for office_type, character in characters_by_type.items()
+    }
+
+    office_types = sorted(views)
+    for index, office_type in enumerate(office_types):
+        for other_type in office_types[index + 1:]:
+            assert views[office_type] != views[other_type], (
+                f"{office_type} 与 {other_type} 不应共享完全相同的见闻切片"
+            )
 
 
 def test_turn_zero_knowledge_is_role_specific_and_restores(game):
@@ -220,6 +243,34 @@ def test_secret_office_exclusion_does_not_hide_unrelated_world_bucket(game):
     assert view["world"]["public"] == "登基伊始，朝廷暂无前回合奏报。"
     assert view["world"].get("treasury")
     assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
+
+
+def test_secret_office_snapshot_keeps_explicit_people_target_separate(game):
+    db, state, content = game
+    office_member = next(c for c in content.characters.values() if c.office_type == "户部")
+    explicit_person = next(c for c in content.characters.values() if c.name != office_member.name)
+
+    order = db.create_secret_order(
+        state,
+        "毕自严",
+        "暗查亏空",
+        "查户部旧账",
+        [],
+        excluded_names=[explicit_person.name],
+        excluded_offices=["户部"],
+    )
+
+    row = db.conn.execute(
+        "SELECT excluded_names, excluded_targets FROM secret_orders WHERE id=?", (order,)
+    ).fetchone()
+    assert set(json.loads(row["excluded_names"])) >= {
+        explicit_person.name,
+        office_member.name,
+    }
+    assert json.loads(row["excluded_targets"]) == {
+        "people": [explicit_person.name],
+        "offices": ["户部"],
+    }
 
 
 def test_secret_office_exclusion_snapshots_people_before_transfer_and_publication(game):

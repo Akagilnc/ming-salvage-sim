@@ -79,7 +79,11 @@ def _world(
             # generic offices must not treat it as a deterministic report
             # source (there is no ``facts["public"]`` entry).
             continue
-        result[domain] = fact(facts[domain])
+        # Keep the domain key stable for prompt consumers, while retaining the
+        # office context in the slice.  Without it, offices that share a
+        # domain (for example 礼部 and 翰林院) receive byte-for-byte identical
+        # world views and lose the distinction required by the read model.
+        result[domain] = fact(f"{office_type}本职所涉：{facts[domain]}")
     return result
 
 
