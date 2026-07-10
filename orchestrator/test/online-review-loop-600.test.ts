@@ -991,21 +991,32 @@ describe("#600 stale head + artifact bot freshness (#600 AC3)", () => {
 describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
   it("createDeferredTrackingIssue uses gh api repos/{repo}/issues", () => {
     const calls: string[] = [];
+    let created = false;
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
       const cmd = args.join(" ");
       if (cmd.includes("state=open")) {
-        return "[]";
+        return created
+          ? JSON.stringify([
+              {
+                title: "defer finding",
+                html_url: "https://github.com/o/r/issues/99",
+                number: 99,
+                created_at: "2026-01-01T00:00:00.000Z",
+              },
+            ])
+          : "[]";
       }
       if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
+        created = true;
         return "https://github.com/o/r/issues/99";
       }
       return "[]";
     };
     const url = createDeferredTrackingIssue(sh, "o/r", "defer finding", "reason text");
     expect(url).toBe("https://github.com/o/r/issues/99");
-    // #742 R1: list (pre) + re-query immediately before POST + create + post-create converge list
-    expect(calls.filter((c) => c.includes("state=open"))).toHaveLength(3);
+    // #742 R1: list (pre) + create + post-create converge list
+    expect(calls.filter((c) => c.includes("state=open"))).toHaveLength(2);
     expect(
       calls.some((c) =>
         c.includes("gh api repos/o/r/issues -f title=defer finding -f body=reason text --jq .html_url"),
@@ -1028,6 +1039,17 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     expect(() =>
       createDeferredTrackingIssue(junkCreate, "o/r", "t", "b"),
     ).toThrow(/invalid issue URL/);
+  });
+
+  it("#742 R1 fails closed when post-create listing has not converged", () => {
+    const sh: Sh = (_file, args) =>
+      args.join(" ").includes("state=open")
+        ? "[]"
+        : "https://github.com/o/r/issues/99";
+
+    expect(() =>
+      createDeferredTrackingIssue(sh, "o/r", "defer finding", "reason text"),
+    ).toThrow(/did not converge to a canonical issue/);
   });
 
   it("#742 R1 hostSideDeferredIdentityKey uses GitHub thread/comment id, not worker text", () => {
@@ -1444,7 +1466,7 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     let nextNumber = 200;
     // list calls that still return empty even after a create — models the
     // both-queried-before-either-created window across two overlapping runs.
-    let emptyListBudget = 5; // runA: pre+requery+post; runB: pre+requery
+    let emptyListBudget = 3; // runA: pre+post; runB: pre+post
     const sh: Sh = (_file, args) => {
       const cmd = args.join(" ");
       if (cmd.includes("repos/o/r/issues?") && cmd.includes("state=open")) {
@@ -1479,7 +1501,9 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       }
       return "[]";
     };
-    const first = createDeferredTrackingIssue(sh, "o/r", title, "body-a");
+    expect(() =>
+      createDeferredTrackingIssue(sh, "o/r", title, "body-a"),
+    ).toThrow(/did not converge to a canonical issue/);
     const second = createDeferredTrackingIssue(sh, "o/r", title, "body-b");
     // Both created (race). Post-create / later list adopts oldest.
     expect(openIssues.map((i) => i.number).sort((a, b) => a - b)).toEqual([
@@ -1490,22 +1514,33 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       201,
     ]);
     expect(closed).toContain(202);
-    expect(first === "https://github.com/o/r/issues/201" || first === "https://github.com/o/r/issues/202").toBe(
-      true,
-    );
-    // Second call's post-create converge (or pre-list after budget) returns oldest.
+    // A retry after the first runner's post-create visibility gap returns oldest.
     expect(second).toBe("https://github.com/o/r/issues/201");
   });
 
   it("applyVerifySideEffects appends tracked issue URL to pre-supplied defer reply", () => {
     const calls: string[] = [];
+    let createdIssue: { title: string; url: string } | undefined;
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
       const cmd = args.join(" ");
       if (cmd.includes("state=open")) {
-        return "[]";
+        return createdIssue === undefined
+          ? "[]"
+          : JSON.stringify([
+              {
+                title: createdIssue.title,
+                html_url: createdIssue.url,
+                number: 88,
+                created_at: "2026-01-01T00:00:00.000Z",
+              },
+            ]);
       }
       if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
+        createdIssue = {
+          title: args.find((arg) => arg.startsWith("title="))!.slice("title=".length),
+          url: "https://github.com/o/r/issues/88",
+        };
         return "https://github.com/o/r/issues/88";
       }
       if (
@@ -1604,13 +1639,27 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
 
   it("applyVerifySideEffects posts evidence replies and creates defer issues", () => {
     const calls: string[] = [];
+    let createdIssue: { title: string; url: string } | undefined;
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
       const cmd = args.join(" ");
       if (cmd.includes("state=open")) {
-        return "[]";
+        return createdIssue === undefined
+          ? "[]"
+          : JSON.stringify([
+              {
+                title: createdIssue.title,
+                html_url: createdIssue.url,
+                number: 77,
+                created_at: "2026-01-01T00:00:00.000Z",
+              },
+            ]);
       }
       if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
+        createdIssue = {
+          title: args.find((arg) => arg.startsWith("title="))!.slice("title=".length),
+          url: "https://github.com/o/r/issues/77",
+        };
         return "https://github.com/o/r/issues/77";
       }
       if (
@@ -1864,13 +1913,27 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
 
   it("pin r24: defer disposition node id + reply comment id for same thread → deduped", () => {
     const calls: string[] = [];
+    let createdIssue: { title: string; url: string } | undefined;
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
       const cmd = args.join(" ");
       if (cmd.includes("state=open")) {
-        return "[]";
+        return createdIssue === undefined
+          ? "[]"
+          : JSON.stringify([
+              {
+                title: createdIssue.title,
+                html_url: createdIssue.url,
+                number: 55,
+                created_at: "2026-01-01T00:00:00.000Z",
+              },
+            ]);
       }
       if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
+        createdIssue = {
+          title: args.find((arg) => arg.startsWith("title="))!.slice("title=".length),
+          url: "https://github.com/o/r/issues/55",
+        };
         return "https://github.com/o/r/issues/55";
       }
       if (
