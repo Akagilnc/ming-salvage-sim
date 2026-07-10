@@ -96,7 +96,6 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     family: "codex",
     strongLeg: true,
   },
-  // #767 Coder-Rec roster: Luna (codex pool, medium effort).
   "gpt-5.6-luna": {
     provider: "codex",
     model: "gpt-5.6-luna",
@@ -181,55 +180,6 @@ export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
   }
 }
 
-/**
- * #686 / ADR 0124 — billing pool → execution-channel binding.
- * Same model id can live on multiple pools; the pool selects the real spawn
- * provider/CLI (换马甲 must change the channel, not a bookkeeping string).
- */
-export type BillingPoolDispatchId =
-  | "grok-build"
-  | "cursor"
-  | "zai"
-  | "codex-5h";
-
-export const POOL_DISPATCH_BINDINGS: Readonly<
-  Record<BillingPoolDispatchId, ModelProviderFactory>
-> = {
-  "grok-build": "pi",
-  cursor: "cursor",
-  zai: "opencode",
-  "codex-5h": "codex",
-};
-
-export function isBillingPoolDispatchId(
-  value: string | undefined,
-): value is BillingPoolDispatchId {
-  return (
-    value === "grok-build" ||
-    value === "cursor" ||
-    value === "zai" ||
-    value === "codex-5h"
-  );
-}
-
-/**
- * Resolve the executable provider for a slug under a billing pool.
- * When `pool` is set, the pool binding overrides the registry's default
- * provider while keeping the model id (ADR 0124 same-model 换马甲).
- */
-export function resolveModelSlugForPool(
-  slug: string,
-  pool?: BillingPoolDispatchId,
-): ModelSlugRegistryEntry {
-  const base = resolveModelSlug(slug);
-  if (pool === undefined) return base;
-  const provider = POOL_DISPATCH_BINDINGS[pool];
-  if (provider === base.provider) return base;
-  // Pool channel override — drop provider-specific options that do not apply
-  // to the new factory (e.g. codex effort on a cursor/pi spawn).
-  return { provider, model: base.model } as ModelSlugRegistryEntry;
-}
-
 export function modelFamilyForSlug(slug: string): ModelFamily {
   const entry = MODEL_SLUG_REGISTRY[slug];
   if (entry !== undefined) {
@@ -268,14 +218,11 @@ export function modelIdForSlug(slug: string): string {
 export function agentForSlug(
   slug: string,
   codexEffort?: NonNullable<sc.CodexOptions["effort"]>,
-  pool?: BillingPoolDispatchId,
 ): sc.AgentProvider {
-  const entry = resolveModelSlugForPool(slug, pool);
+  const entry = resolveModelSlug(slug);
   const options =
     entry.provider === "codex" && codexEffort !== undefined
       ? { ...(entry.options ?? {}), effort: codexEffort }
-      : entry.provider === "codex"
-        ? entry.options
-        : entry.options;
+      : entry.options;
   return MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, options);
 }

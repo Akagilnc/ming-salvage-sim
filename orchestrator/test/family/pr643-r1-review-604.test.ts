@@ -143,7 +143,6 @@ describe("PR#643 R1 (Codex P2) — a wave-loop decision park reports prior-merge
     const familyBackend = new FakeFamilyBackend();
     familyBackend.ledger.push({
       status: "merged",
-      event: "merged",
       childIssue: 10,
     } as FamilyLedgerEntry);
 

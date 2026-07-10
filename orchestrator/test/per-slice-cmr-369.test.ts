@@ -33,6 +33,28 @@ import type {
   WorktreeHandle,
 } from "../src/types.js";
 
+type PersistentLedgerFixture = Omit<
+  PersistentLedgerEntry,
+  "sessionId" | "prompt_hash" | "branchHEAD" | "ts"
+> & Partial<Pick<PersistentLedgerEntry, "sessionId" | "prompt_hash" | "branchHEAD" | "ts">>;
+
+type ResumeStateFixture = Omit<ResumeState, "ledger"> & {
+  readonly ledger: ReadonlyArray<PersistentLedgerFixture>;
+};
+
+function materializeResumeState(fixture: ResumeStateFixture): ResumeState {
+  return {
+    ...fixture,
+    ledger: fixture.ledger.map((entry) => ({
+      ...entry,
+      sessionId: "fixture-session",
+      prompt_hash: "fixture-prompt",
+      branchHEAD: "fixture-head",
+      ts: "2026-07-01T00:00:00.000Z",
+    })),
+  };
+}
+
 const WORKTREE: WorktreeHandle = {
   branch: "feat/orchestrator/issue-369",
   base: "main",
@@ -82,7 +104,7 @@ class RetryReviewBackend implements Backend {
 
   constructor(
     private readonly reviewerResults: ReadonlyArray<WorkerResult>,
-    private readonly resumeState?: ResumeState,
+    private readonly resumeState?: ResumeStateFixture,
     private readonly coderOutputs: ReadonlyArray<StepOutput> = [],
     private readonly worktree: WorktreeHandle = WORKTREE,
     private readonly onCoderDispatch?: (
@@ -92,7 +114,7 @@ class RetryReviewBackend implements Backend {
   ) {}
 
   async findResumeState(): Promise<ResumeState | undefined> {
-    return this.resumeState;
+    return this.resumeState && materializeResumeState(this.resumeState);
   }
   async cleanResidue(): Promise<void> {}
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
@@ -287,7 +309,10 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     ]);
     const s3 = result.stepLedger.find((entry) => entry.step === "S3");
     expect(s3?.output?.kind).toBe("reviewer");
-    expect(s3?.output?.escalate?.reason).toMatch(/bounded reruns/i);
+    expect(s3?.output).toMatchObject({
+      kind: "reviewer",
+      escalate: { reason: expect.stringMatching(/bounded reruns/i) },
+    });
   });
 
   // #604 correctness r1 (P1-a ①): a RUNNER-synthesized escalate from exhausted
@@ -306,7 +331,10 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     expect(result.status).toBe("escalate");
     // The synthesized escalate carries the protocol-failure marker.
     const s3 = result.stepLedger.find((entry) => entry.step === "S3");
-    expect(s3?.output?.escalate?.synthesizedFailure).toBe(true);
+    expect(s3?.output).toMatchObject({
+      kind: "reviewer",
+      escalate: { synthesizedFailure: true },
+    });
     // The persisted S8 handoff entry is tagged FAILURE, not decision.
     const s8Escalate = backend.ledgerWrites.find(
       (entry) => entry.step === "S8" && entry.handoffStatus === "escalate",
@@ -857,7 +885,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
   });
 
   it("restores resume repair movement paths before judging still-active no-progress", async () => {
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-427",
       ledger: [
@@ -895,7 +923,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           },
           repairMovementPaths: ["src/runner.ts"],
         },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ],
     };
     const backend = new RetryReviewBackend(
       [
@@ -1130,11 +1158,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       source: "resume_input",
       ts: "2026-07-01T00:00:00.000Z",
       reason: "human explicitly instructed the runner to keep fixing this active finding",
-    } as unknown as PersistentLedgerEntry;
+    } satisfies PersistentLedgerFixture;
     expect(continueFixingEvent).not.toHaveProperty("output");
     expect(continueFixingEvent).not.toHaveProperty("verdict");
 
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-446",
       ledger: [
@@ -1169,7 +1197,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S4" },
         { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
         continueFixingEvent,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ],
     };
     const backend = new RetryReviewBackend(
       [
@@ -1211,7 +1239,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
   });
 
   it("uses current run continue-fixing input even when no durable continue event exists", async () => {
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-446",
       ledger: [
@@ -1245,7 +1273,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
         { step: "S4" },
         { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ],
     };
     const backend = new RetryReviewBackend(
       [
@@ -1285,7 +1313,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
   });
 
   it("does not treat source-less continue-fixing bookkeeping as an executable human resume", async () => {
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-446",
       ledger: [
@@ -1326,8 +1354,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           findingIdentityKey: blockingKey,
           findingScope: { identityKeys: [blockingKey] },
           ts: "2026-07-01T00:00:02.000Z",
-        } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+        },
+      ],
     };
     const backend = new RetryReviewBackend([], resumeState);
 
@@ -1338,7 +1366,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
   });
 
   it("does not reopen an S4 decision escalation for stale or scope-mismatched continue-fixing bookkeeping", async () => {
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-446",
       ledger: [
@@ -1380,8 +1408,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           findingScope: { identityKeys: [blockingKey] },
           source: "coordinator",
           ts: "2026-07-01T00:00:02.000Z",
-        } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+        },
+      ],
     };
     const backend = new RetryReviewBackend([], resumeState);
 
@@ -1424,22 +1452,15 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       { step: "S4" },
       { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
     ] as const;
-    const malformedEvents = [
+    const malformedEvents: PersistentLedgerFixture[] = [
       {
         step: "S4",
         event: "runner_bookkeeping",
         intent: "continue_fixing",
-        findingScope: { identityKeys: "not-an-array" },
+        // Deliberately omit the required scope key for the parser boundary.
+        findingScope: {},
         source: "resume_input",
         ts: "2026-07-01T00:00:03.000Z",
-      },
-      {
-        step: "S4",
-        event: "escalation_answered",
-        forStep: "S4",
-        answer: "继续修",
-        source: "human",
-        findingScope: { locations: [7] },
       },
     ];
 
@@ -1447,7 +1468,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       const backend = new RetryReviewBackend([], {
         worktree: WORKTREE,
         stateDir: "/resident/worktrees/.ledger-446",
-        ledger: [...baseLedger, event] as ReadonlyArray<PersistentLedgerEntry>,
+        ledger: [...baseLedger, event],
       });
 
       const result = await runOrchestrator({ issueNumber: 446, backend });
@@ -1458,7 +1479,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
   });
 
   it("does not map unscoped escalation answers to continue-fixing repair intent", async () => {
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-446",
       ledger: [
@@ -1498,8 +1519,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           forStep: "S4",
           answer: "继续修",
           source: "human",
-        } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+        },
+      ],
     };
     const backend = new RetryReviewBackend([], resumeState);
 
@@ -1510,7 +1531,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
   });
 
   it("preserves a persisted terminal error stop summary on already-done re-feed", async () => {
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-446-error",
       ledger: [
@@ -1526,7 +1547,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
             repairHint: "repair the coder contract and rerun",
           },
         },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ],
     };
     const backend = new RetryReviewBackend([], resumeState);
 
@@ -1542,7 +1563,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
   it("maps scoped human or resume-input escalation answers to the matching active S4 finding only", async () => {
     for (const source of ["human", "resume_input"] as const) {
-      const resumeState: ResumeState = {
+      const resumeState: ResumeStateFixture = {
         worktree: WORKTREE,
         stateDir: `/resident/worktrees/.ledger-446-${source}`,
         ledger: [
@@ -1583,8 +1604,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
             answer: "继续修",
             source,
             findingScope: { identityKeys: [blockingKey] },
-          } as unknown as PersistentLedgerEntry,
-        ] as ReadonlyArray<PersistentLedgerEntry>,
+          },
+        ],
       };
       const backend = new RetryReviewBackend(
         [
@@ -1611,7 +1632,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
   it("does not treat scoped coordinator or peripheral escalation answers as executable continue-fixing input", async () => {
     for (const source of ["coordinator", "peripheral"] as const) {
-      const resumeState: ResumeState = {
+      const resumeState: ResumeStateFixture = {
         worktree: WORKTREE,
         stateDir: `/resident/worktrees/.ledger-446-${source}`,
         ledger: [
@@ -1640,8 +1661,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
             answer: "继续修",
             source,
             findingScope: { identityKeys: [blockingKey] },
-          } as unknown as PersistentLedgerEntry,
-        ] as ReadonlyArray<PersistentLedgerEntry>,
+          },
+        ],
       };
       const backend = new RetryReviewBackend([], resumeState);
 
@@ -1674,7 +1695,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const siblingFindingKey =
       "correctness|orchestrator/src/runner.ts:421|matchingidentitykeys: replay.blockingidentitykeys";
 
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-446",
       ledger: [
@@ -1729,8 +1750,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           findingScope: { locations: ["orchestrator/src/runner.ts"] },
           source: "resume_input",
           ts: "2026-07-01T00:00:03.000Z",
-        } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+        },
+      ],
     };
     const backend = new RetryReviewBackend([], resumeState);
 
@@ -1750,7 +1771,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       action: "fix_now",
     };
     const fileScopedFindingKey = findingIdentityKey(fileScopedFinding);
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-446",
       ledger: [
@@ -1800,8 +1821,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           findingScope: { locations: ["orchestrator/src/runner.ts"] },
           source: "resume_input",
           ts: "2026-07-01T00:00:04.000Z",
-        } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+        },
+      ],
     };
     const backend = new RetryReviewBackend(
       [
@@ -1836,7 +1857,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     };
     const fileScopedFindingKey =
       "correctness|orchestrator/src/runner.ts:380|locations.has(normalisescopepart(finding.location))";
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-446",
       ledger: [
@@ -1886,8 +1907,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           findingScope: { locations: ["orchestrator/src/runner.ts"] },
           source: "resume_input",
           ts: "2026-07-01T00:00:04.000Z",
-        } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+        },
+      ],
     };
     const backend = new RetryReviewBackend(
       [
@@ -1922,7 +1943,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     };
     const fileScopedFindingKey =
       "correctness|orchestrator/src/runner.ts:380|locations.has(normalisescopepart(finding.location))";
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-446",
       ledger: [
@@ -1972,8 +1993,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           findingScope: { locations: ["src"] },
           source: "resume_input",
           ts: "2026-07-01T00:00:04.000Z",
-        } as unknown as PersistentLedgerEntry,
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+        },
+      ],
     };
     const backend = new RetryReviewBackend(
       [
@@ -2008,7 +2029,7 @@ describe("#369 runner resume/retry review fixes", () => {
       suggested_fix: "reclassify the last reviewer output before S5",
       action: "fix_now",
     };
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-369",
       ledger: [
@@ -2017,7 +2038,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         { step: "S3", output: { kind: "reviewer", findings: [finding] } },
         { step: "S4" },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ],
     };
     const backend = new RetryReviewBackend(
       [
@@ -2059,7 +2080,7 @@ describe("#369 runner resume/retry review fixes", () => {
       suggested_fix: "reclassify the prior reviewer entry",
       action: "fix_now",
     };
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-369",
       ledger: [
@@ -2089,7 +2110,7 @@ describe("#369 runner resume/retry review fixes", () => {
           answer: "continue after human answer",
           source: "human",
         },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ],
     };
     const backend = new RetryReviewBackend(
       [
@@ -2132,7 +2153,7 @@ describe("#369 runner resume/retry review fixes", () => {
       suggested_fix: "remember that the last reviewer step was S6",
       action: "fix_now",
     };
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-369",
       ledger: [
@@ -2143,7 +2164,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         { step: "S6", output: { kind: "reviewer", findings: [] } },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ],
     };
     const backend = new RetryReviewBackend([], resumeState);
 
@@ -2165,7 +2186,7 @@ describe("#369 runner resume/retry review fixes", () => {
       action: "fix_now",
     };
     const key = "correctness|src/runner.ts:960|persisted s4 still has the prior blocker";
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-369",
       ledger: [
@@ -2186,7 +2207,7 @@ describe("#369 runner resume/retry review fixes", () => {
           },
         },
         { step: "S4" },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ],
     };
     const backend = new RetryReviewBackend(
       [
@@ -2256,7 +2277,7 @@ describe("#369 runner resume/retry review fixes", () => {
       scope: "accepted risk survives resume",
       boundedReopen: "reopen on material severity upgrade",
     };
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-369",
       ledger: [
@@ -2268,7 +2289,7 @@ describe("#369 runner resume/retry review fixes", () => {
           output: { kind: "reviewer", findings: [blocking, acceptedRisk] },
         },
         { step: "S4", findingDispositions: [acceptedRiskDisposition] },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ],
     };
     const backend = new RetryReviewBackend(
       [
@@ -2339,7 +2360,7 @@ describe("#369 runner resume/retry review fixes", () => {
       suggested_fix: "surface the follow-up finding",
       action: "fix_now",
     };
-    const resumeState: ResumeState = {
+    const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-369",
       ledger: [
@@ -2350,7 +2371,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S4" },
         { step: "S7" },
         { step: "S8", handoffStatus: "success" },
-      ] as ReadonlyArray<PersistentLedgerEntry>,
+      ],
     };
     const backend = new RetryReviewBackend([], resumeState);
 
@@ -3087,6 +3108,7 @@ describe("#369 legacy S5 landing file", () => {
       "utf8",
     );
     const backend: Backend = {
+      async smokeModelRoute(route) { return route; },
       async findResumeState() { return undefined; },
       async cleanResidue() {},
       async resumeSession() {
@@ -3186,6 +3208,7 @@ describe("#369 legacy S5 landing file", () => {
       | { readonly path: string; readonly sandboxPath: string }
       | undefined;
     const backend: Backend = {
+      async smokeModelRoute(route) { return route; },
       async findResumeState() { return undefined; },
       async cleanResidue() {},
       async resumeSession() {
@@ -3262,6 +3285,7 @@ describe("#369 legacy S5 landing file", () => {
       | { readonly path: string; readonly sandboxPath: string }
       | undefined;
     const backend: Backend = {
+      async smokeModelRoute(route) { return route; },
       async findResumeState() { return undefined; },
       async cleanResidue() {},
       async resumeSession() {

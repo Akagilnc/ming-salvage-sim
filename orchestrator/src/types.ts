@@ -245,6 +245,19 @@ export interface PriorFindingDisposition {
 }
 
 /** Output of a coder step (S2/S5). 0 commits ⇒ committed:false (not a miss). */
+/**
+ * One finding the coder-fix worker legally refused (#677).
+ * Prefer another repair; when a finding cannot be fixed without overturning a
+ * ratified AC/assertion, refuse that identity, fix the others, commit, and
+ * continue to fresh re-review — never a global escalate / decision-gate park.
+ */
+export interface ReviewFixRefuseRecord {
+  readonly identityKey: string;
+  readonly finding: string;
+  readonly acceptanceCriterion: string;
+  readonly conflictReason: string;
+}
+
 export interface CoderOutput {
   readonly kind: "coder";
   readonly committed: boolean;
@@ -254,6 +267,14 @@ export interface CoderOutput {
    * fixtures for an active finding. Generic "I tried" is not progress.
    */
   readonly repairEvidence?: RepairEvidence;
+  /**
+   * #677 legal refuse: identity keys the coder-fix worker declined to adopt
+   * (AC/assertion conflict). Valid with a commit that fixes the other findings;
+   * runner threads these to S6 fresh re-review — not escalate/park.
+   */
+  readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
+  /** #677 refuse detail records paired with {@link refusedFindingIdentityKeys}. */
+  readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
 }
@@ -394,6 +415,13 @@ export interface OnlineReviewFixCommittedEvent {
   readonly event: "online_review_fix_committed";
   readonly fixCommitSha: string;
   readonly onlineReviewRound: number;
+  /** Fix-marked identity keys from the verify that drove this fix (#743). */
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /** Original thread binding for each fix-marked identity (#743 resume authority). */
+  readonly fixMarkedFindingThreads?: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
 }
 
 /**
@@ -754,6 +782,13 @@ export interface WorkerLandingPayload {
    * them to the landing file; the runner does not read them.
    */
   readonly blockingFindings?: ReadonlyArray<Finding>;
+  /** #677 mechanical signal; reviewer must trace the assertion to authority. */
+  readonly preexistingAssertionTouched?: boolean;
+  /**
+   * #677 legal refuse keys from the prior S5 coder-fix commit — still-active
+   * findings the fixer declined; fresh re-review must adjudicate them.
+   */
+  readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
   /** S9/S10 online review workers: paginated bot/thread snapshot (#600). */
   readonly onlineReviewSnapshot?: OnlineReviewLandingSnapshot;
   /** S9/S10: ship delivery metadata threaded from S7 (pr URL/head). */
@@ -767,6 +802,15 @@ export interface WorkerLandingPayload {
   readonly onlineReviewRound?: number;
   /** S10 fixer only: fix-marked finding identity keys from verify worker. */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /**
+   * S9/S10: the original review thread bound to each fixer-approved identity.
+   * A key alone is not authority to close another thread that happens to claim
+   * the same identity.
+   */
+  readonly fixMarkedFindingThreads?: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
   /** S9 verify: prior online-review rounds from ledger (#711). */
   readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
   /** S10 fixer / S5 coder-fix: pattern briefs from prior judge worker (#711). */
@@ -840,6 +884,13 @@ export interface DispatchContext {
    * separate {@link WorkerLandingPayload}, never on this dispatch structure.
    */
   readonly blockingFindingCount?: number;
+  /** #677 runner fact only, never a content verdict. */
+  readonly preexistingAssertionTouched?: boolean;
+  /**
+   * #677 legal refuse keys from S5 — thin identity list for S6 re-review
+   * (runner does not park; fresh reviewer adjudicates still-active refuses).
+   */
+  readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
   /**
    * FAMILY CMR coder-fix retry only: runner-observed repair-evidence gate failures
    * from earlier attempts for the SAME blocking finding set. Fresh retry workers
@@ -1011,7 +1062,11 @@ export interface VerifyResult {
   readonly converged: boolean;
   /** Per-finding dispositions judged by the verify worker. */
   readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
-  /** Identity keys the fixer may act on (fix-marked only). */
+  /**
+   * Identity keys the fixer may act on (fix-marked only). On a post-fixer
+   * recheck, this is the verifier's explicit confirmation set and must echo the
+   * keys supplied by the runner before convergence is accepted (#743).
+   */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
   /** Evidence-bearing replies for reject/defer/fixed outcomes (#600 AC6). */
   readonly threadReplies?: ReadonlyArray<OnlineReviewThreadReply>;
@@ -1309,6 +1364,21 @@ export interface LedgerEntry {
   readonly roundTriggerHeadOid?: string;
   /** Online review round re-trigger marker (#600 r25): ISO instant the round began. */
   readonly roundTriggerAt?: string;
+  /** Online review fix_committed marker (#600 r27): fixing commit SHA. */
+  readonly fixCommitSha?: string;
+  /**
+   * Online review fix_committed marker (#743): fix-marked identity keys from the
+   * verify that drove this fix — durable resume authority (family-parity).
+   */
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /**
+   * Online review fix_committed marker (#743): original thread binding for each
+   * fix-marked identity — resume must not depend on last-S9 shape alone.
+   */
+  readonly fixMarkedFindingThreads?: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
   /**
    * Monitor handle for an in-flight external CLI worker (#684). Persisted so a
    * resumed run can rebuild alive/idle/kill judgment without global pgrep.

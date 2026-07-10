@@ -12,6 +12,7 @@
  * Probes are STUBBED — no real network/CLI in unit tests.
  */
 
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -29,6 +30,7 @@ import {
   poolForModelRef,
   probeConfigForPool,
   QuotaWaitForResetError,
+  runPoolProbe,
   serializeQuotaWaitForResetBridge,
   tryParseQuotaWaitForResetBridge,
   type IdleDisposition,
@@ -276,6 +278,23 @@ describe("#683 buildQuotaWaitForResetLedgerEntry (ledger 外显)", () => {
   });
 });
 
+describe("#683 opencode probe stream error listeners", () => {
+  it("default runCommand registers error listeners on stdout and stderr", () => {
+    // Readable stream 'error' without a listener becomes an uncaught exception
+    // and can crash the process; the default spawn path must log-and-continue.
+    const src = readFileSync(
+      new URL("../src/quotaProbe.ts", import.meta.url),
+      "utf8",
+    );
+    const spawnBlock = src.slice(
+      src.indexOf("async function runOpencodePongProbe"),
+      src.indexOf("function isQuotaLimitBody"),
+    );
+    expect(spawnBlock).toMatch(/child\.stdout\?\.on\(\s*["']error["']/);
+    expect(spawnBlock).toMatch(/child\.stderr\?\.on\(\s*["']error["']/);
+  });
+});
+
 describe("#683 per-pool probe config (配置随 route / model)", () => {
   it("zai pool → minimal chat probe", () => {
     const cfg = probeConfigForPool("zai");
@@ -311,6 +330,15 @@ describe("#683 per-pool probe config (配置随 route / model)", () => {
       expect(poolForModelRef(ref), ref).toBe(pool);
     }
   });
+
+  it("guards non-string / empty modelRef before trim → unknown", () => {
+    expect(poolForModelRef("")).toBe("unknown");
+    expect(poolForModelRef("   ")).toBe("unknown");
+    // Untyped / unexpected callers may pass non-strings at runtime.
+    expect(poolForModelRef(null as unknown as string)).toBe("unknown");
+    expect(poolForModelRef(undefined as unknown as string)).toBe("unknown");
+    expect(poolForModelRef(42 as unknown as string)).toBe("unknown");
+  });
 });
 
 describe("#683 parseZaiResetAt (北京时间 → ISO UTC)", () => {
@@ -325,6 +353,30 @@ describe("#683 parseZaiResetAt (北京时间 → ISO UTC)", () => {
   it("returns undefined when body has no reset clock", () => {
     expect(parseZaiResetAt("rate limited")).toBeUndefined();
     expect(parseZaiResetAt("")).toBeUndefined();
+  });
+
+  it("rejects out-of-range calendar components (no Date.UTC rollover)", () => {
+    // Regex matches, but month/day/hour/min/sec are not real calendar values.
+    // Without range guards, Date.UTC rolls these into a plausible-looking Date.
+    expect(parseZaiResetAt("reset at 9999-99-99 99:99:99")).toBeUndefined();
+    expect(parseZaiResetAt("2026-13-01 00:00:00")).toBeUndefined();
+    expect(parseZaiResetAt("2026-07-32 00:00:00")).toBeUndefined();
+    expect(parseZaiResetAt("2026-07-09 24:00:00")).toBeUndefined();
+    expect(parseZaiResetAt("2026-07-09 00:60:00")).toBeUndefined();
+    expect(parseZaiResetAt("2026-07-09 00:00:60")).toBeUndefined();
+  });
+});
+
+describe("#683 isQuotaLimitBody variants (via runPoolProbe)", () => {
+  it("treats rate-limit and too many requests bodies as quota_limited", async () => {
+    for (const body of ["rate-limit exceeded", "Too Many Requests"]) {
+      const result = await runPoolProbe("zai", {
+        zaiApiKey: "test-key",
+        fetch: async () =>
+          new Response(body, { status: 200, statusText: "OK" }),
+      });
+      expect(result.kind, body).toBe("quota_limited");
+    }
   });
 });
 
@@ -884,10 +936,10 @@ describe("#683 S9 online-review leg: 429 parks + re-feed re-fires verify (not em
         totalFindingCount: 0,
         quiescent: true,
         bots: {
-          coderabbit: { state: "complete", findingCount: 0 },
-          sourcery: { state: "complete", findingCount: 0 },
-          codex: { state: "complete", findingCount: 0 },
-          gemini: { state: "complete", findingCount: 0 },
+          coderabbit: { state: "complete" as const, findingCount: 0 },
+          sourcery: { state: "complete" as const, findingCount: 0 },
+          codex: { state: "complete" as const, findingCount: 0 },
+          gemini: { state: "complete" as const, findingCount: 0 },
         },
         droppedBots: [],
         threads: [],

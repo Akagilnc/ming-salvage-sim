@@ -37,6 +37,10 @@
 import { execFileSync } from "node:child_process";
 
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
+import {
+  reviewFixAssertionSignal,
+  reviewFixDecisionGate,
+} from "./reviewFixAssertionGate.js";
 import { route } from "./route.js";
 import {
   adjudicatePriorClaimedFixedFindings,
@@ -106,9 +110,11 @@ import {
   onlineReviewResumeHeadKeyFromLedger,
   onlineReviewRoundFromLedger,
   onlineReviewRoundTriggerFromLedger,
+  recheckConvergenceConfirmsFixMarkedKeys,
   resolveOnlineReviewRoundTrigger,
   realBotPollClock,
   reconstructOnlineReviewLandingForResume,
+  fixMarkedFindingAuthorizationForResume,
   ensureOnlineReviewRetriggerAfterFixGap,
   retriggerBotsAndPoll,
   shipLedgerTriggeredAtFromSliceLedger,
@@ -134,6 +140,7 @@ import {
 } from "./evidenceAdmissibility.js";
 import {
   applyVerifySideEffects,
+  fixMarkedFindingThreadsFromVerify,
   fixMarkedKeysFromVerify,
 } from "./onlineReviewSideEffects.js";
 import {
@@ -1205,6 +1212,101 @@ function latestCoderRepair(ledger: ReadonlyArray<LedgerEntry>): LatestCoderRepai
     }
   }
   return { repairMovementPaths: [] };
+}
+
+/**
+ * #677: rebuild S5→S6 reverify locals from the persisted S5 ledger row.
+ *
+ * `preexistingAssertionTouchedForReverify` and
+ * `refusedFindingIdentityKeysForReverify` are process-local; a crash between
+ * S5 completing and S6 running would otherwise drop both. Prefer rebuild over
+ * new durable fields: refuse keys already live on the S5 coder output, and the
+ * assertion signal is recomputed from ledger branchHEADs + worktree git
+ * (same shape as #743 authorization rebuild / S4 adjudication replay).
+ */
+interface S5ReverifySignals {
+  readonly preexistingAssertionTouched: boolean;
+  readonly refusedFindingIdentityKeys: readonly string[];
+}
+
+function ledgerEntryBranchHead(entry: LedgerEntry): string | undefined {
+  const head = (entry as PersistentLedgerEntry).branchHEAD;
+  return isLikelyGitSha(head) ? head : undefined;
+}
+
+function refusedKeysFromCoderOutput(
+  output: Extract<StepOutput, { kind: "coder" }>,
+): readonly string[] {
+  const records = output.refuseRecords ?? [];
+  if (records.length > 0) {
+    return reviewFixDecisionGate({ records })?.refusedFindingIdentityKeys ?? [];
+  }
+  return output.refusedFindingIdentityKeys ?? [];
+}
+
+export function rebuildS5ReverifySignalsFromLedger(
+  ledger: ReadonlyArray<LedgerEntry>,
+  worktree: WorktreeHandle | undefined,
+): S5ReverifySignals {
+  let s5Index = -1;
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (isBookkeepingEntry(entry)) continue;
+    if (entry.step === "S5" && entry.output?.kind === "coder") {
+      s5Index = i;
+      break;
+    }
+  }
+  if (s5Index < 0) {
+    return {
+      preexistingAssertionTouched: false,
+      refusedFindingIdentityKeys: [],
+    };
+  }
+
+  const s5 = ledger[s5Index]!;
+  const output = s5.output as Extract<StepOutput, { kind: "coder" }>;
+  const refusedFindingIdentityKeys = refusedKeysFromCoderOutput(output);
+
+  let preexistingAssertionTouched = false;
+  if (worktree !== undefined) {
+    const afterFix = ledgerEntryBranchHead(s5);
+    let beforeFix: string | undefined;
+    for (let j = s5Index - 1; j >= 0; j--) {
+      const prev = ledger[j]!;
+      if (isBookkeepingEntry(prev)) continue;
+      const head = ledgerEntryBranchHead(prev);
+      if (head !== undefined) {
+        beforeFix = head;
+        break;
+      }
+    }
+    if (
+      afterFix !== undefined &&
+      beforeFix !== undefined &&
+      beforeFix !== afterFix
+    ) {
+      try {
+        preexistingAssertionTouched = reviewFixAssertionSignal({
+          worktreePath: worktree.path,
+          sliceBase: worktree.base,
+          beforeFix,
+          afterFix,
+        });
+      } catch {
+        // Live S5 remains fail-closed. Resume rebuild must not abort an
+        // otherwise-recoverable plan when HEADs are not locally resolvable
+        // (protocol-failure recovery fixtures / missing worktree). Refuse
+        // keys still restore from the S5 coder output below.
+        preexistingAssertionTouched = false;
+      }
+    }
+  }
+
+  return {
+    preexistingAssertionTouched,
+    refusedFindingIdentityKeys,
+  };
 }
 
 interface ContinueFixingRepair {
@@ -2490,8 +2592,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   /** The only step allowed to consume the current relay pool and focus baton. */
   let activeRelayStep: StepId | undefined;
 
-  const applyCoderRecSelection = (nonConvergingRounds: number): void => {
-    if (coderRecEnvSkipped) return;
+  const applyCoderRecSelection = async (
+    nonConvergingRounds: number,
+  ): Promise<ReturnType<typeof applyRuntimeTightRoutePolicy> | undefined> => {
+    if (coderRecEnvSkipped) return undefined;
     // Resource-relay stickiness: hold the baton until #767 quality advance
     // would actually move (S6 rounds ≥ FALLBACK). Do NOT set coderRecEnvSkipped.
     if (
@@ -2503,7 +2607,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         stepSpecs = stepSpecsForRoute(modelRoute);
         routeSmokeChecked = false;
       }
-      return;
+      return undefined;
     }
     if (stickyRelayCoderSlug !== undefined) {
       stickyRelayCoderSlug = undefined;
@@ -2515,9 +2619,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     );
     if (applied.skippedForEnvOverride) {
       coderRecEnvSkipped = true;
-      return;
+      return undefined;
     }
-    if (applied.route === modelRoute) return;
+    if (applied.route === modelRoute) return undefined;
     modelRoute = applied.route;
     // #686 P1: quality advance must not inherit the prior resource-relay pool —
     // reselect from the new model's dispatch binding.
@@ -2525,7 +2629,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       poolForModelRef(modelRoute.slots.coder),
     );
     stepSpecs = stepSpecsForRoute(modelRoute);
-    // New coder slug may lack a smoke record — re-check before the next worker.
+    // Clear so the caller re-runs ensureRouteSmoke for the new coder slug
+    // before its first dispatch (top-of-loop OR the S2/S5 advance path).
     routeSmokeChecked = false;
     if (applied.entry !== undefined) {
       console.info(
@@ -2535,6 +2640,27 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             : ""),
       );
     }
+    return applyRuntimeTightRoutePolicy(modelRoute, {
+      interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+      warn: (message) => console.warn(`[orchestrator] ${message}`),
+    });
+  };
+
+  const stopForCoderRecTightRoutePolicy = (escalation: {
+    readonly reason: string;
+    readonly diagnosis: string;
+  }): RunResult => {
+    const stopSummary = stopSummaryForStartupRouteFailure(escalation);
+    return {
+      status: "escalate",
+      errorPackage: {
+        failedStep: "S0",
+        reason: `${escalation.reason}: ${escalation.diagnosis}`,
+      },
+      stepLedger: [{ step: "S8", stopSummary }],
+      stopSummary,
+      deferredFindings: [],
+    };
   };
 
   /** #686 — apply a relay baton onto the wall-hit role slot (role-aware). */
@@ -2663,6 +2789,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastReviewerStepId: StepId | undefined;
   let lastCoderRepairEvidence: RepairEvidence | undefined;
   let lastCoderActualRepairPaths: ReadonlyArray<string> = [];
+  let preexistingAssertionTouchedForReverify = false;
+  let refusedFindingIdentityKeysForReverify: readonly string[] = [];
   const noProgressByFindingIdentityKey = new Map<string, number>();
   let lastShipOutput: ShipResult | undefined;
   let onlineReviewRound = 1;
@@ -3694,8 +3822,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     lastCoderRepairEvidence = latestRepair.repairEvidence;
     lastCoderActualRepairPaths = latestRepair.repairMovementPaths;
 
+    // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
+    // the assertion-touch signal live only in process memory during a live run;
+    // resume recomputes them from the persisted S5 coder row + ledger HEADs.
+    const rebuilt = rebuildS5ReverifySignalsFromLedger(
+      plan.priorLedger,
+      worktree,
+    );
+    preexistingAssertionTouchedForReverify =
+      rebuilt.preexistingAssertionTouched;
+    refusedFindingIdentityKeysForReverify =
+      rebuilt.refusedFindingIdentityKeys;
+
     if (
-      plan.resumeStep === "S10" &&
+      (plan.resumeStep === "S9" || plan.resumeStep === "S10") &&
       lastShipOutput !== undefined &&
       onlineReviewLanding === undefined
     ) {
@@ -3806,10 +3946,47 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
     resumedEscalationAnswer = plan.escalationAnswer;
 
+    // #767: resume skips S0/S1, so re-fetch the issue body and apply Coder-Rec
+    // (including the S6-count advance position from the restored ledger) before
+    // the first dispatch / top-of-loop smoke. Without this, applyCoderRecToRoute
+    // sees undefined body → skippedForMissingMarking → silent preset revert.
+    // Coder-Rec is OPTIONAL: re-fetch failures must degrade safely (try meta,
+    // then snapshot) — never errorTerminate / poison the resume terminal state.
+    try {
+      const meta = await backend.fetchIssueMeta(issueNumber);
+      if (typeof meta.body === "string" && meta.body.length > 0) {
+        coderRecIssueBody = meta.body;
+      }
+    } catch {
+      // fall through to snapshot
+    }
+    if (
+      (coderRecIssueBody === undefined || coderRecIssueBody.length === 0)
+    ) {
+      try {
+        const snapshot = await backend.fetchIssueSnapshot(issueNumber);
+        if (snapshot.body.length > 0) {
+          coderRecIssueBody = snapshot.body;
+        }
+      } catch {
+        // fall through — continue with route preset
+      }
+    }
+    if (coderRecIssueBody === undefined || coderRecIssueBody.length === 0) {
+      console.info(
+        "[orchestrator] Coder-Rec resume re-fetch failed; continuing with route preset",
+      );
+    }
+    const coderRecPolicy = await applyCoderRecSelection(
+      coderRecRoundsFromLedger(ledger),
+    );
+    if (coderRecPolicy?.kind === "stop") {
+      return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+    }
     const relayResume = resumeRelayFromLedger(resumeLedger, plan.resumeStep);
 
-    // #686 — resume from relay_baton_handoff: apply the recorded next baton
-    // before re-entering the interrupted step.
+    // #686 — after #767 has rebuilt the base Coder-Rec route, resume from a
+    // recorded baton before re-entering the interrupted step.
     if (relayResume !== undefined) {
       const batonEntry = lookupCoderRosterEntry(relayResume.toModelId);
       applyRelayBaton(
@@ -3933,13 +4110,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           ));
         }
 
+        // #767: apply Coder-Rec BEFORE the S0 smoke so we smoke the final
+        // route once (not the preset, then a full re-smoke after mutation).
+        // Mid-loop advance still re-smokes via the S2/S5 path below.
+        coderRecIssueBody = meta.body;
+        const coderRecPolicy = await applyCoderRecSelection(0);
+        if (coderRecPolicy?.kind === "stop") {
+          return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+        }
+
         const smokeResult = await ensureRouteSmoke();
         if (smokeResult !== undefined) return smokeResult;
-
-        // #767: parse Coder-Rec from the issue body (S0 now fetches body) and
-        // override the coder slot before the first worker dispatch.
-        coderRecIssueBody = meta.body;
-        applyCoderRecSelection(0);
 
         break;
       }
@@ -3992,7 +4173,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           snapshot.body.length > 0
         ) {
           coderRecIssueBody = snapshot.body;
-          applyCoderRecSelection(coderRecRoundsFromLedger(ledger));
+          const coderRecPolicy = await applyCoderRecSelection(
+            coderRecRoundsFromLedger(ledger),
+          );
+          if (coderRecPolicy?.kind === "stop") {
+            return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+          }
         }
         break;
       }
@@ -4012,8 +4198,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
         // #767: before each coder dispatch, re-select from Coder-Rec using the
         // number of completed S6 fix rounds as the non-convergence counter.
+        // Mid-loop advance clears routeSmokeChecked — re-smoke here because the
+        // top-of-loop check already ran for this iteration.
         if (step === "S2" || step === "S5") {
-          applyCoderRecSelection(coderRecRoundsFromLedger(ledger));
+          const coderRecPolicy = await applyCoderRecSelection(
+            coderRecRoundsFromLedger(ledger),
+          );
+          if (coderRecPolicy?.kind === "stop") {
+            return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+          }
+          if (!routeSmokeChecked) {
+            const smokeResult = await ensureRouteSmoke();
+            if (smokeResult !== undefined) return smokeResult;
+          }
         }
         promptFile = stepSpecs[step].promptFile;
         const expectedKind = stepSpecs[step].role as "coder" | "reviewer";
@@ -4067,12 +4264,34 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       blockingFindingIdentityKeys:
                         pendingBlockingFindingIdentityKeys,
                       blockingFindingCount: pendingBlockingFindings.length,
+                      ...(step === "S6" && preexistingAssertionTouchedForReverify
+                        ? { preexistingAssertionTouched: true }
+                        : {}),
+                      ...(step === "S6" &&
+                      refusedFindingIdentityKeysForReverify.length > 0
+                        ? {
+                            refusedFindingIdentityKeys:
+                              refusedFindingIdentityKeysForReverify,
+                          }
+                        : {}),
                     }
                   : {}),
               };
               const landingPayload =
                 step === "S5" || step === "S6"
-                  ? { blockingFindings: pendingBlockingFindings }
+                  ? {
+                      blockingFindings: pendingBlockingFindings,
+                      ...(step === "S6" && preexistingAssertionTouchedForReverify
+                        ? { preexistingAssertionTouched: true }
+                        : {}),
+                      ...(step === "S6" &&
+                      refusedFindingIdentityKeysForReverify.length > 0
+                        ? {
+                            refusedFindingIdentityKeys:
+                              refusedFindingIdentityKeysForReverify,
+                          }
+                        : {}),
+                    }
                   : undefined;
               // #598: the generic mechanical retry re-dispatches a process-level
               // crash (failed/malformed/outcome_protocol_failure/throw) with a fresh
@@ -4486,6 +4705,37 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             worktree,
             coderHeadBeforeStep,
           );
+          if (step === "S5" && coderHeadBeforeStep !== undefined) {
+            try {
+              const afterFix = gitHead(worktree);
+              if (afterFix === undefined) {
+                throw new Error(
+                  "reviewFixAssertionSignal: unable to read HEAD after S5 (fail-closed)",
+                );
+              }
+              preexistingAssertionTouchedForReverify = reviewFixAssertionSignal({
+                worktreePath: worktree.path,
+                sliceBase: worktree.base,
+                beforeFix: coderHeadBeforeStep,
+                afterFix,
+              });
+            } catch (err) {
+              return await errorTermination(step, err);
+            }
+          }
+          // #677: legal refuse — wire decision gate on the real S5 path.
+          // Refused keys stay in the fix→fresh-re-review loop (never escalate/park).
+          if (step === "S5") {
+            const records = output.refuseRecords ?? [];
+            if (records.length > 0) {
+              const legal = reviewFixDecisionGate({ records });
+              refusedFindingIdentityKeysForReverify =
+                legal?.refusedFindingIdentityKeys ?? [];
+            } else {
+              refusedFindingIdentityKeysForReverify =
+                output.refusedFindingIdentityKeys ?? [];
+            }
+          }
         }
         if (step === "S3" || step === "S6") lastReviewerStepId = step;
         break;
@@ -4896,6 +5146,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         promptFile = reviewLoopSpec.promptFile;
         try {
           if (reviewStep === "S9") {
+            let recheckFixMarkedFindingIdentityKeys =
+              onlineReviewLanding?.fixMarkedFindingIdentityKeys;
+            let recheckFixMarkedFindingThreads =
+              onlineReviewLanding?.fixMarkedFindingThreads;
+            // Resume without a snapshot still owes the recheck its durable
+            // authorization — rebuild from fix_committed / last S9 (#743 R6).
+            if (
+              onlineReviewRound > 1 &&
+              (recheckFixMarkedFindingIdentityKeys === undefined ||
+                recheckFixMarkedFindingIdentityKeys.length === 0)
+            ) {
+              const auth = fixMarkedFindingAuthorizationForResume(
+                mergeResumeLedgerHistory(resumeHistoryLedger, ledger),
+              );
+              recheckFixMarkedFindingIdentityKeys =
+                auth.fixMarkedFindingIdentityKeys;
+              recheckFixMarkedFindingThreads = auth.fixMarkedFindingThreads;
+            }
             const snapshot = await pollOnlineReviewForShip(
               lastShipOutput,
               onlineReviewRound,
@@ -4915,6 +5183,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ),
               ...(priorRoundFindings.length > 0
                 ? { priorRoundFindings }
+                : {}),
+              ...(onlineReviewRound > 1
+                ? {
+                    fixMarkedFindingIdentityKeys:
+                      recheckFixMarkedFindingIdentityKeys ?? [],
+                    fixMarkedFindingThreads:
+                      recheckFixMarkedFindingThreads ?? [],
+                  }
                 : {}),
             };
           }
@@ -5003,6 +5279,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ...onlineReviewLanding,
                   fixMarkedFindingIdentityKeys:
                     onlineReviewLanding.fixMarkedFindingIdentityKeys ?? [],
+                  fixMarkedFindingThreads:
+                    onlineReviewLanding.fixMarkedFindingThreads ?? [],
                   ...(onlineReviewLanding.findingFamilies !== undefined
                     ? { findingFamilies: onlineReviewLanding.findingFamilies }
                     : {}),
@@ -5312,6 +5590,30 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               );
             }
             verifyOutput = recheckOutcome;
+            if (
+              onlineReviewRound > 1 &&
+              onlineReviewLanding !== undefined &&
+              !recheckConvergenceConfirmsFixMarkedKeys(
+                verifyOutput,
+                onlineReviewLanding,
+              )
+            ) {
+              return await errorTermination(
+                reviewStep,
+                new Error(
+                  "post-fixer verify converged without confirming every fix-marked finding identity key",
+                ),
+                {
+                  output: verifyOutput,
+                  stopSummary: contractDriftStopSummary({
+                    summary:
+                      "post-fixer verify converged without confirming every fix-marked finding identity key",
+                    repairHint:
+                      "echo the landing fixMarkedFindingIdentityKeys exactly on a converged post-fixer recheck, or report unresolved findings",
+                  }),
+                },
+              );
+            }
             // Pending CI only: re-poll S9 — do not fixer, do not merge, do not
             // apply "all clear" side effects (online R2 Codex P2).
             // Bound re-entry: bots may already be quiescent so poll returns
@@ -5443,6 +5745,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                           : undefined,
                       landingThreads:
                         onlineReviewLanding?.onlineReviewSnapshot?.threads,
+                      approvedFixMarkedFindingThreads:
+                        onlineReviewLanding?.fixMarkedFindingThreads,
                     })
                   : {
                       deferredIssueUrls: [],
@@ -5462,10 +5766,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 : {}),
             };
             const fixKeys = fixMarkedKeysFromVerify(verifyOutput);
+            const fixMarkedFindingThreads =
+              fixMarkedFindingThreadsFromVerify(verifyOutput);
             if (onlineReviewLanding !== undefined) {
               onlineReviewLanding = {
                 ...onlineReviewLanding,
                 fixMarkedFindingIdentityKeys: fixKeys,
+                fixMarkedFindingThreads,
                 ...(verifyOutput.findingFamilies !== undefined
                   ? { findingFamilies: verifyOutput.findingFamilies }
                   : {}),
@@ -5603,11 +5910,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
             ) {
               const nextRound = onlineReviewRound + 1;
+              const fixAuthKeys = (
+                onlineReviewLanding?.fixMarkedFindingIdentityKeys ?? []
+              ).filter((key) => typeof key === "string" && key.trim().length > 0);
+              const fixAuthThreads = (
+                onlineReviewLanding?.fixMarkedFindingThreads ?? []
+              ).flatMap((binding) =>
+                typeof binding.identityKey === "string" &&
+                binding.identityKey.trim().length > 0 &&
+                typeof binding.threadId === "string" &&
+                binding.threadId.trim().length > 0
+                  ? [
+                      {
+                        identityKey: binding.identityKey,
+                        threadId: binding.threadId,
+                      },
+                    ]
+                  : [],
+              );
               const fixCommittedMarker = {
                 step: "S10" as const,
                 event: "online_review_fix_committed" as const,
                 fixCommitSha: lastOnlineReviewFixCommitSha!,
                 onlineReviewRound,
+                ...(fixAuthKeys.length > 0
+                  ? { fixMarkedFindingIdentityKeys: fixAuthKeys }
+                  : {}),
+                ...(fixAuthThreads.length > 0
+                  ? { fixMarkedFindingThreads: fixAuthThreads }
+                  : {}),
               };
               ledger.push(fixCommittedMarker);
               if (stateDir !== undefined) {

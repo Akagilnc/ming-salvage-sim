@@ -8,6 +8,7 @@ import {
   type CoderRosterEntry,
 } from "./coderRoster.js";
 import {
+  modelFamilyForCmrReviewLeg,
   CODER_CODEX_SLUG,
   REVIEWER_CODEX_SLUG,
   VERIFY_CODEX_SLUG,
@@ -407,7 +408,8 @@ export function withRouteSmoke(
 }
 
 /**
- * Override the coder (+ coderFix) slot for design-time Coder-Rec (#767).
+ * Override the coder slot (and coderFix unless explicitly env-overridden) for
+ * design-time Coder-Rec (#767).
  * Preserves prior smoke status for the new slug when the same slug was already
  * smoked under another key; otherwise marks the new keys unverified so the
  * runner's route-smoke gate can (re)verify before dispatch.
@@ -415,13 +417,14 @@ export function withRouteSmoke(
 export function withCoderSlot(
   route: ResolvedModelRoute,
   coderSlug: string,
+  opts: { readonly preserveCoderFix?: boolean } = {},
 ): ResolvedModelRoute {
   const trimmed = coderSlug.trim();
   assertKnownWorkerSlug(trimmed);
   const slots: ModelSlotMap = {
     ...route.slots,
     coder: trimmed,
-    coderFix: trimmed,
+    ...(opts.preserveCoderFix ? {} : { coderFix: trimmed }),
   };
   const next: Pick<ResolvedModelRoute, "slots" | "legCollections"> = {
     slots,
@@ -439,6 +442,11 @@ export function withCoderSlot(
   return {
     ...route,
     slots,
+    tightFamilyViolations: tightFamilyViolations(
+      slots,
+      route.legCollections,
+      ROUTE_PRESETS[route.routeName]?.tightFamilies ?? [],
+    ),
     smoke,
   };
 }
@@ -660,7 +668,9 @@ async function askContinue(message: string): Promise<boolean> {
 /**
  * Apply design-time Coder-Rec selection onto a resolved route (#767).
  *
- * Ops env `ORCHESTRATOR_CODER_MODEL` still wins (explicit override). Otherwise,
+ * Ops env `ORCHESTRATOR_CODER_MODEL` still wins (explicit override). An explicit
+ * `ORCHESTRATOR_CODER_FIX_MODEL` remains authoritative for just coderFix.
+ * Otherwise,
  * only an explicit `Coder-Rec:` marking in the issue body overrides the active
  * route's coder slot — unmarked issues keep the route preset. A present but
  * all-invalid marking falls through to {@link DEFAULT_CODER_REC_ORDER}.
@@ -678,8 +688,8 @@ export function applyCoderRecToRoute(
   /** True when no Coder-Rec line was present — route coder left untouched. */
   readonly skippedForMissingMarking: boolean;
 } {
-  const envOverride = env.ORCHESTRATOR_CODER_MODEL?.trim();
-  if (envOverride !== undefined && envOverride !== "") {
+  const coderEnvOverride = env.ORCHESTRATOR_CODER_MODEL?.trim();
+  if (coderEnvOverride !== undefined && coderEnvOverride !== "") {
     return {
       route,
       entry: undefined,
@@ -687,6 +697,9 @@ export function applyCoderRecToRoute(
       skippedForMissingMarking: false,
     };
   }
+  const preserveCoderFix =
+    env.ORCHESTRATOR_CODER_FIX_MODEL?.trim() !== undefined &&
+    env.ORCHESTRATOR_CODER_FIX_MODEL?.trim() !== "";
   const parsed =
     issueBody !== undefined && issueBody.length > 0
       ? parseCoderRec(issueBody)
@@ -703,7 +716,10 @@ export function applyCoderRecToRoute(
   const entry = selectCoderRecEntry(order, nonConvergingRounds, {
     reviewerSlugs: reviewerSlugsFromRoute(route),
   });
-  if (route.slots.coder === entry.slug && route.slots.coderFix === entry.slug) {
+  if (
+    route.slots.coder === entry.slug &&
+    (preserveCoderFix || route.slots.coderFix === entry.slug)
+  ) {
     return {
       route,
       entry,
@@ -712,7 +728,7 @@ export function applyCoderRecToRoute(
     };
   }
   return {
-    route: withCoderSlot(route, entry.slug),
+    route: withCoderSlot(route, entry.slug, { preserveCoderFix }),
     entry,
     skippedForEnvOverride: false,
     skippedForMissingMarking: false,

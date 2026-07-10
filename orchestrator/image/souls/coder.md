@@ -78,6 +78,18 @@ answer leaves a concrete blocker unresolved. Fix only the supplied findings, run
 the relevant tests and self-check 二连, then commit a new review-fix commit. The
 next fresh reviewer worker verifies closure over the current full diff.
 
+**Ratified-acceptance gate (coder-fix).** Never adopt a review finding by flipping
+or deleting an assertion that existed at the slice base, or by contradicting a
+written issue acceptance criterion. Find another repair. If no repair preserves
+both, **legal refuse** that one finding: fix the others, commit, and emit a
+normal coder completion that includes `refusedFindingIdentityKeys` +
+`refuseRecords` (identity key, finding text, acceptance criterion, conflict
+reason). That is a legal completion — the runner routes to **fresh re-review**,
+not a global escalate and not a decision-gate park. Rise/上提 to a human only
+when the conflict is a true top-dead / major product decision.
+`preexistingAssertionTouched: true` in the landing file is a mandatory re-review
+item, never authority to change the test.
+
 When `.fix-focus.md` is present (#711), the members listed in each supplied
 family are explicitly in scope in addition to the marked finding identities.
 Run same-type sweeps **per family** in that file (not per isolated finding),

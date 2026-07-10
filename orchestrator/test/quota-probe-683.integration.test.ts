@@ -225,4 +225,79 @@ describe("#683 integration at the real monitored dispatch path", () => {
       result: { kind: "completed" },
     });
   });
+
+  it("observes a late idle-handler throw after child exit", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "quota-probe-683-race-"));
+    tempDirs.push(dir);
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+    let releaseThrow: (() => void) | undefined;
+    const throwGate = new Promise<void>((resolve) => {
+      releaseThrow = resolve;
+    });
+    const backend = {
+      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => {}, 30_000)"],
+        logDir: dir,
+        poolId: "zai",
+        completionSignal: "<coder>",
+        stepId: "S2",
+        readInstanceId: () => "test-instance",
+      }),
+      handleMonitoredWorkerIdle: async (handle: WorkerMonitorHandle): Promise<"hang" | "wait_for_reset"> => {
+        try {
+          process.kill(handle.pid, "SIGTERM");
+        } catch {
+          // Child may already be gone.
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 30));
+        await throwGate;
+        throw new QuotaWaitForResetError({
+          disposition: {
+            kind: "wait_for_reset",
+            pool: "zai",
+            resetAt: new Date("2026-07-10T02:00:00.000Z"),
+            reason: "quota limited (429); wait for reset",
+          },
+          applied: { killed: false, ledgerEntry: { event: "quota_wait_for_reset", pool: "zai", resetAt: "2026-07-10T02:00:00.000Z", reason: "quota limited (429); wait for reset", step: "S2", workerPid: handle.pid, ts: "2026-07-10T12:00:00.000Z" } },
+          pool: "zai",
+          probe: { kind: "quota_limited", resetAt: new Date("2026-07-10T02:00:00.000Z"), detail: "429" },
+        });
+      },
+      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      }),
+    } as unknown as Backend;
+
+    try {
+      const outcomePromise = dispatchWorkerWithMonitor(backend, workerSpec(), {}, undefined, {
+        idleThresholdMs: 0,
+        pollIntervalMs: 1,
+        monitorDeps: {
+          readInstanceId: () => "test-instance",
+          listChildPids: () => [],
+          readParentPid: () => undefined,
+          sleepMs: async () => {},
+        },
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 80));
+      releaseThrow?.();
+      const outcome = await outcomePromise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+      expect(outcome.result.kind).toBe("completed");
+      expect(unhandled).toEqual([]);
+      expect(warnings.some((w) => w.includes("monitored idle handler settled after child exit"))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
 });

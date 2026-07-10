@@ -1025,7 +1025,7 @@ describe("#331 legacyDispatchFamilyWorker — wraps legacy returns as WorkerResu
   it("dispatchFamilyWorker prefers familyBackend.dispatchWorker when present", async () => {
     let used = false;
     const be = new CapableFamilyBackend() as FamilyBackend & {
-      dispatchWorker: (s: WorkerSpec, c: DispatchContext) => Promise<WorkerResult>;
+      dispatchWorker?: FamilyBackend["dispatchWorker"];
     };
     be.dispatchWorker = async (): Promise<WorkerResult> => {
       used = true;
@@ -1043,7 +1043,7 @@ describe("#331 legacyDispatchFamilyWorker — wraps legacy returns as WorkerResu
       resolveActiveModelRoute(),
       async () => ({ cliVersion: "test" }),
     );
-    await dispatchFamilyWorker(be, cmrWorkerSpec(route), {
+    await dispatchFamilyWorker(be, cmrWorkerSpec("fresh", "correctness", route), {
       familyBase: "fb",
       modelRoute: route,
     });

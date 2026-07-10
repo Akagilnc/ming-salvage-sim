@@ -102,11 +102,10 @@ function fixtured(): FixturedShipBackend {
   return new FixturedShipBackend({
     sourceRepo: mkDir("ship-src-"),
     repo: "Akagilnc/ming-salvage-sim",
-    base: "main",
     promptsDir: realPromptsDir,
     soulsDir: realSoulsDir,
     imageName: "ming-orchestrator-coder:latest",
-    runKey: "k336",
+    runKey: 336,
     // #748: coder dispatch may reach mountAuth; keep it off real ~/.sc-orchestrator.
     home: mkDir("ship-home-"),
   });
@@ -240,11 +239,10 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     return new ConfigBackend({
       sourceRepo: mkDir("ship-src-"),
       repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
-      runKey: "k336cfg",
+      runKey: 336,
       home: mkDir("ship-home-cfg-"),
     });
   }
@@ -350,11 +348,10 @@ describe("#336 single-slice runShipWorker — fail-closed when the top-level Cla
     return new NoClaudeAuthBackend({
       sourceRepo: mkDir("ship-noauth-src-"),
       repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
-      runKey: "k336noauth",
+      runKey: 336,
       home: mkDir("ship-home-noauth-"),
     });
   }
@@ -422,11 +419,10 @@ describe("#336 single-slice runShipWorker — fail-closed when gh auth is missin
     return new NoGhAuthBackend({
       sourceRepo: mkDir("ship-noghauth-src-"),
       repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
-      runKey: "k336nogh",
+      runKey: 336,
       home: mkDir("ship-home-nogh-"),
     });
   }
@@ -464,11 +460,10 @@ describe("#336 single-slice runShipWorker — fail-closed when gh auth is missin
     const be = new GhPresentBackend({
       sourceRepo: mkDir("ship-ghok-src-"),
       repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
-      runKey: "k336ghok",
+      runKey: 336,
       home: mkDir("ship-home-ghok-"),
     });
     await expect(be.run(shipWorkerSpec(), { worktree })).rejects.toThrow(
@@ -531,11 +526,10 @@ describe("#336 single-slice runShipWorker — outcome sidecar cleanup", () => {
     const be = new OutcomeCleanupBackend({
       sourceRepo: mkDir("ship-outcome-src-"),
       repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
-      runKey: "k336outcome",
+      runKey: 336,
       home: mkDir("ship-home-outcome-"),
     });
 
@@ -586,11 +580,10 @@ describe("#439 single-slice ship worker resume answer focus", () => {
     const be = new ShipAnswerFocusBackend({
       sourceRepo: mkDir("ship-answer-focus-src-"),
       repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
-      runKey: "k439shipanswer",
+      runKey: 439,
       home: mkDir("ship-home-answer-"),
     });
 
@@ -654,11 +647,10 @@ describe("#378 RealBackend auth mounts — write a minimal danger-full-access co
     return new AuthBackend({
       sourceRepo: mkDir("rb-src-"),
       repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
-      runKey: "k378",
+      runKey: 378,
       home,
     });
   }

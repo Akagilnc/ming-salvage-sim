@@ -137,11 +137,15 @@ describe("#600 r18 single-slice verify side-effect in-band", () => {
       return undefined;
     }
     async cleanResidue(): Promise<void> {}
+    async resumeSession(): Promise<StepOutput> {
+      throw new Error("resumeSession should not be called");
+    }
     async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
       return {
         number: issueNumber,
         isReadyForAgent: true,
         hasSubIssues: false,
+        isClosed: false,
         openBlockedBy: [],
       };
     }

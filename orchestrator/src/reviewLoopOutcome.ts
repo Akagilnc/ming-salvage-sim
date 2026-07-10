@@ -55,6 +55,7 @@ function isThreadReplyArray(
 function verifyResultSemanticallyConsistent(obj: Record<string, unknown>): boolean {
   const fixKeys = obj.fixMarkedFindingIdentityKeys;
   const dispositions = obj.findingDispositions;
+  const isRecheck = obj.isRecheck === true;
   const hasExplicitFixKeys = fixKeys !== undefined;
   const hasDispositions =
     Array.isArray(dispositions) && dispositions.length > 0;
@@ -64,7 +65,7 @@ function verifyResultSemanticallyConsistent(obj: Record<string, unknown>): boole
   // must be the same set — both directions, including empty ([] ↔ no fix
   // dispositions). Omitted fixMarked keys derive from dispositions only after
   // validation passes (host-side fixMarkedKeysFromVerify).
-  if (hasExplicitFixKeys) {
+  if (hasExplicitFixKeys && !isRecheck) {
     if (!isStringArray(fixKeys)) {
       return false;
     }
@@ -88,10 +89,16 @@ function verifyResultSemanticallyConsistent(obj: Record<string, unknown>): boole
   }
 
   if (obj.converged !== true) return true;
-  if (hasExplicitFixKeys && isStringArray(fixKeys) && fixKeys.length > 0) {
+  if (
+    !isRecheck &&
+    hasExplicitFixKeys &&
+    isStringArray(fixKeys) &&
+    fixKeys.length > 0
+  ) {
     return false;
   }
   if (
+    !isRecheck &&
     Array.isArray(dispositions) &&
     dispositions.some(
       (item) =>

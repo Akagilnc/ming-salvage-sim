@@ -26,11 +26,12 @@ import { isValidVerifyResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
   FindingFamily,
-  PrReviewSnapshot,
+  LedgerEntry,
   StepOutput,
   VerifyResult,
   WorkerLandingPayload,
 } from "../src/types.js";
+import type { PrReviewSnapshot } from "../src/botPolling.js";
 import { fixerWorkerSpec } from "../src/dispatchWorker.js";
 
 const GUARD = resolve(process.cwd(), "image/bin/orchestrator-outcome-guard");
@@ -395,7 +396,7 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
   });
 
   it("priorOnlineReviewFindingsFromLedger collects rounds before the current one", () => {
-    const ledger = [
+    const ledger: LedgerEntry[] = [
       {
         step: "S9",
         output: {
@@ -425,7 +426,7 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
     // incrementing onlineReviewRound — so a later real re-verify shares the
     // same round. Position-based slice(0, priorCount) would keep the stale
     // pending row and drop the real fix-marked findings.
-    const ledger = [
+    const ledger: LedgerEntry[] = [
       {
         step: "S9",
         output: {
@@ -464,7 +465,7 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
   });
 
   it("does not let a resume-seeded ledger prefix double-count inferred rounds", () => {
-    const s9Round1 = {
+    const s9Round1: LedgerEntry = {
       step: "S9",
       output: {
         kind: "verify",
@@ -472,11 +473,11 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
         fixMarkedFindingIdentityKeys: ["t:r1"],
       } satisfies VerifyResult,
     };
-    const s10Round1 = {
+    const s10Round1: LedgerEntry = {
       step: "S10",
       output: { kind: "fixer", committed: true, fixCommitSha: "fix-1" },
     };
-    const s9Round2 = {
+    const s9Round2: LedgerEntry = {
       step: "S9",
       output: {
         kind: "verify",
@@ -503,7 +504,7 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
   });
 
   it("prefers non-empty fix-marked keys when a later pending row would overwrite", () => {
-    const ledger = [
+    const ledger: LedgerEntry[] = [
       {
         step: "S9",
         output: {
@@ -746,15 +747,17 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
     threads: [
       {
         id: "thread-silence",
-        bot: "coderabbit",
+        authorLogin: "coderabbit",
+        threadNodeId: "thread-silence-node",
         path: "src/a.ts",
         line: 1,
         body: "silence treated as green",
         isResolved: false,
-        comments: [],
       },
     ],
     checkRuns: [],
+    roundTriggerUsed: { headOid: "head-1", triggeredAt: "2026-07-10T00:00:00.000Z" },
+    checkRunsEmptyMeans: "converged",
     totalFindingCount: 1,
     quiescent: true,
   };
@@ -818,7 +821,13 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
       dispatchVerify: async (landing, round) => {
         verifyLandings.push(landing);
         if (round >= 4) {
-          return { kind: "verify", converged: true, isRecheck: true } satisfies VerifyResult;
+          return {
+            kind: "verify",
+            converged: true,
+            isRecheck: true,
+            fixMarkedFindingIdentityKeys:
+              landing.fixMarkedFindingIdentityKeys ?? [],
+          } satisfies VerifyResult;
         }
         const key = `silence:r${round}`;
         const priorRounds = (landing.priorRoundFindings ?? []).map((p) => p.round);
@@ -951,6 +960,8 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
               kind: "verify",
               converged: true,
               isRecheck: true,
+              fixMarkedFindingIdentityKeys:
+                landing.fixMarkedFindingIdentityKeys ?? [],
             } satisfies VerifyResult;
           }
           const key = `silence:r${round}`;
@@ -1034,10 +1045,16 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
 
     const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
-      dispatchVerify: async (_landing, round) => {
+      dispatchVerify: async (landing, round) => {
         verifyCalls += 1;
         if (round >= 2) {
-          return { kind: "verify", converged: true, isRecheck: true } satisfies VerifyResult;
+          return {
+            kind: "verify",
+            converged: true,
+            isRecheck: true,
+            fixMarkedFindingIdentityKeys:
+              landing.fixMarkedFindingIdentityKeys ?? [],
+          } satisfies VerifyResult;
         }
         return {
           kind: "verify",

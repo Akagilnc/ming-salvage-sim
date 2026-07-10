@@ -152,6 +152,11 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 - **`Blocked by` = 散文约定**：写子 issue body 里，靠抓 issue 的人读了、看 blocker 关没关、没关就先不开。**GitHub 不强制**（本项目补 native blocked_by，见下）。
 - **AFK / HITL**：AFK 可甩多 session 真并行；HITL（要人在环）串行在你的注意力上。
 - **context hygiene**：grill → to-prd → to-issues 留在同一上下文窗口；每个子 issue **开新 session** 走 implement（内联 `/tdd` + 单评；手动流可用 `/code-review`，编排器由 runner 派 `/code-review` reviewer；互相独立才能真并行），别拿上一个 issue 的脏 context 接下一个。
+- **Coder-Rec（设计时标注推荐 coder）**：每个切片 issue body 加一行推荐 + 补位顺序；编排器 S0/resume 只读查表（见 [CODER_ROSTER.md](CODER_ROSTER.md) / [#767](https://github.com/Akagilnc/ming-salvage-sim/issues/767)）。缺省不改 route 预设。复制模板：
+
+```text
+Coder-Rec: grok-4.5 → terra@med → luna@med
+```
 
 ### to-issues 后的原生补救（Matt skill 还没跟上 GitHub 新功能，必做）
 

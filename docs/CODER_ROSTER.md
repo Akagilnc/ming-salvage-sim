@@ -17,17 +17,29 @@ Version: **2026-07-10**（随 [#424](https://github.com/Akagilnc/ming-salvage-si
 
 ## 设计时标注
 
-在切片 issue body 加一行：
+在切片 issue body 加一行（推荐 + 补位顺序）。设计者在 `to-issues` / 写切片时人肉贴上；编排器只读、不推断。
+
+### 复制模板
 
 ```text
 Coder-Rec: grok-4.5 → terra@med → luna@med
 ```
 
+把 `X → Y → Z` 换成花名册里的 coder id（见上表）。常见写法：
+
+| 场景 | 模板 |
+|---|---|
+| 默认推荐（池异源） | `Coder-Rec: grok-4.5 → terra@med → luna@med` |
+| 只要两档 | `Coder-Rec: grok-4.5 → terra@med` |
+| 用户点名 Claude | `Coder-Rec: sonnet-5 → grok-4.5 → terra@med` |
+
+规则：
+
 - 箭头（`→` / `->`）或逗号分隔均可。
 - 只保留花名册内合法项；非法 token 丢弃。
 - 缺省（无此行）→ **不改** 当前 route 预设的 coder 槽（运维 `ORCHESTRATOR_ROUTE` / slot override 仍生效）。
 - 有此行但 token 全非法 → 回退花名册默认序：`grok-4.5 → terra@med → luna@med`。
-- 设计切片时请显式写 Coder-Rec 行（`to-issues` / 花名册默认序作推荐模板）。
+- 设计切片时请显式写 Coder-Rec 行（`to-issues` / 花名册默认序作推荐模板）。host skill（`~/.claude/skills/to-issues`）接线另票授权，当前靠本页 + [DEV_WORKFLOW.md](DEV_WORKFLOW.md) 切片节。
 
 ## 编排器只读行为
 

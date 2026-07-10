@@ -19,6 +19,7 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Worktree } from "@ai-hero/sandcastle";
 import { describe, expect, it } from "vitest";
 import {
   RealBackend,
@@ -62,9 +63,25 @@ class RecordingBackend extends RealBackend {
   protected override async createResidentWorktree(
     branch: string,
     baseBranch: string,
-  ): Promise<{ worktreePath: string } & Record<string, unknown>> {
+  ): Promise<Worktree> {
     RecordingBackend.cutBaseBranch = baseBranch;
-    return { worktreePath: `/clone/.worktrees/${branch}` } as never;
+    return {
+      branch,
+      worktreePath: `/clone/.worktrees/${branch}`,
+      async run() {
+        throw new Error("test worktree must not run an agent");
+      },
+      async interactive() {
+        throw new Error("test worktree must not start an interactive session");
+      },
+      async createSandbox() {
+        throw new Error("test worktree must not create a sandbox");
+      },
+      async close() {
+        return {};
+      },
+      async [Symbol.asyncDispose]() {},
+    };
   }
 }
 
