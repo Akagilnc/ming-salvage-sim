@@ -6,21 +6,33 @@
  *   2. applyIdleDisposition — hang 只杀句柄 pid 树；429 不杀、写 ledger
  *   3. buildQuotaWaitForResetLedgerEntry — ledger 外显含 pool + resetAt
  *   4. pool probe config (per-pool, keyed off model/route slug)
+ *   5. RealBackend.runAgentSandbox idle path — production seam (must NOT be
+ *      hand-composed helpers only; bites if runner forgets to wire the probe)
  *
  * Probes are STUBBED — no real network/CLI in unit tests.
  */
 
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import {
+  RealBackend,
+  type AgentSandboxRunOptions,
+} from "../src/realBackend.js";
 import {
   applyIdleDisposition,
   buildQuotaWaitForResetLedgerEntry,
   decideIdleAfterProbe,
+  handleIdleThreshold,
+  isAgentIdleTimeoutError,
   parseZaiResetAt,
   poolForModelRef,
   probeConfigForPool,
+  QuotaWaitForResetError,
   type IdleDisposition,
   type QuotaPoolId,
   type QuotaProbeResult,
+  type QuotaWaitForResetLedgerEvent,
 } from "../src/quotaProbe.js";
 
 describe("#683 decideIdleAfterProbe (probe → disposition)", () => {
@@ -224,44 +236,166 @@ describe("#683 parseZaiResetAt (北京时间 → ISO UTC)", () => {
   });
 });
 
-describe("#683 end-to-end idle gate with stubbed probe", () => {
-  /**
-   * The public gate: on idle threshold, run the (injected) probe then apply
-   * disposition. Three stubbed probe outcomes assert state machine + ledger
-   * external behaviour in one place (issue AC test bullet).
-   */
-  async function idleGate(
-    pool: QuotaPoolId,
-    probe: QuotaProbeResult,
-    worker: { pid: number; step: "S2" },
-  ) {
+describe("#683 handleIdleThreshold (production composition)", () => {
+  it("composes pool map → probe → decide → apply (429 preserves pid)", async () => {
     const killed: number[] = [];
     const ledger: unknown[] = [];
-    const disposition = decideIdleAfterProbe(pool, probe);
-    const applied = await applyIdleDisposition(disposition, worker, {
-      killPidTree: async (pid) => {
-        killed.push(pid);
-      },
-      recordLedger: async (entry) => {
-        ledger.push(entry);
-      },
-      now: () => new Date("2026-07-08T12:00:00.000Z"),
-    });
-    return { disposition, applied, killed, ledger };
-  }
-
-  it("429 → wait-for-reset + ledger with reset moment; process not killed", async () => {
     const resetAt = new Date("2026-07-08T16:10:00.000Z");
-    const out = await idleGate(
-      "zai",
-      { kind: "quota_limited", resetAt, detail: "429" },
-      { pid: 1001, step: "S2" },
-    );
+    const out = await handleIdleThreshold({
+      modelRef: "zai/glm-5.2",
+      worker: { pid: 1001, step: "S2" },
+      actions: {
+        killPidTree: (pid) => {
+          killed.push(pid);
+        },
+        recordLedger: (entry) => {
+          ledger.push(entry);
+        },
+        now: () => new Date("2026-07-08T12:00:00.000Z"),
+      },
+      probe: async () => ({
+        kind: "quota_limited",
+        resetAt,
+        detail: "429",
+      }),
+    });
+    expect(out.pool).toBe("zai");
     expect(out.disposition.kind).toBe("wait_for_reset");
     expect(out.applied.killed).toBe(false);
-    expect(out.killed).toEqual([]);
-    expect(out.ledger).toHaveLength(1);
-    expect(out.ledger[0]).toMatchObject({
+    expect(killed).toEqual([]);
+    expect(ledger).toHaveLength(1);
+  });
+});
+
+describe("#683 isAgentIdleTimeoutError", () => {
+  it("matches Sandcastle idle tag/name/message shapes", () => {
+    expect(
+      isAgentIdleTimeoutError(
+        Object.assign(new Error("Agent idle for 600 seconds — no output received."), {
+          name: "AgentIdleTimeoutError",
+          _tag: "AgentIdleTimeoutError",
+        }),
+      ),
+    ).toBe(true);
+    expect(isAgentIdleTimeoutError(new Error("ECONNREFUSED"))).toBe(false);
+  });
+});
+
+describe("#683 RealBackend.runAgentSandbox idle path (production seam)", () => {
+  /**
+   * Bites through the REAL runner seam: Sandcastle idle error →
+   * RealBackend.runAgentSandbox → handleIdleThreshold → kill/ledger.
+   * Hand-composing decide+apply here would miss a wiring regression.
+   */
+  const here = dirname(fileURLToPath(import.meta.url));
+  const realPromptsDir = join(here, "..", "prompts");
+  const realSoulsDir = join(here, "..", "image", "souls");
+
+  class IdleProbeBackend extends RealBackend {
+    public killed: number[] = [];
+    public ledger: QuotaWaitForResetLedgerEvent[] = [];
+    public probeResult: QuotaProbeResult = { kind: "ok" };
+    public lastQuotaProbeModelRef: string | undefined;
+    public sandcastleReached = false;
+
+    protected override cloneDirExists(): boolean {
+      return true;
+    }
+
+    protected override sh(file: string, args: string[]): string {
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+        return ".git";
+      }
+      return "";
+    }
+
+    protected override idleNow(): Date {
+      return new Date("2026-07-08T12:00:00.000Z");
+    }
+
+    protected override async runQuotaProbe(
+      _pool: QuotaPoolId,
+    ): Promise<QuotaProbeResult> {
+      return this.probeResult;
+    }
+
+    protected override killWorkerPidTree(pid: number): void {
+      this.killed.push(pid);
+    }
+
+    protected override async recordQuotaWaitLedger(
+      entry: QuotaWaitForResetLedgerEvent,
+    ): Promise<void> {
+      this.ledger.push(entry);
+    }
+
+    /** Simulate Sandcastle firing AgentIdleTimeoutError (no container). */
+    protected override async invokeSandcastleRun(): Promise<never> {
+      this.sandcastleReached = true;
+      throw Object.assign(
+        new Error(
+          "Agent idle for 600 seconds — no output received. Consider increasing the idle timeout with --idle-timeout.",
+        ),
+        { name: "AgentIdleTimeoutError", _tag: "AgentIdleTimeoutError" },
+      );
+    }
+
+    /** Public test entry — exercises the real protected runAgentSandbox path. */
+    async exerciseIdleSandbox(options: AgentSandboxRunOptions) {
+      this.lastQuotaProbeModelRef = options.quotaProbe?.modelRef;
+      return this.runAgentSandbox(options);
+    }
+  }
+
+  function makeBackend(): IdleProbeBackend {
+    return new IdleProbeBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 683,
+      repo: "owner/name",
+      imageName: "ming-worker:test",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+    });
+  }
+
+  const idleOpts = (modelRef: string, workerPid: number): AgentSandboxRunOptions =>
+    ({
+      name: "S2-coder",
+      idleTimeoutSeconds: 600,
+      cwd: "/tmp/worktree/issue-683",
+      // Sandcastle options are unused — invokeSandcastleRun throws first.
+      sandbox: {} as AgentSandboxRunOptions["sandbox"],
+      agent: {} as AgentSandboxRunOptions["agent"],
+      maxIterations: 1,
+      completionSignal: "CODER_STEP_COMPLETE",
+      branchStrategy: { type: "head" },
+      promptFile: join(realPromptsDir, "coder_implement.md"),
+      quotaProbe: {
+        modelRef,
+        step: "S2",
+        workerPid,
+        worktreePath: "/tmp/worktree/issue-683",
+        issueNumber: 683,
+      },
+    }) as AgentSandboxRunOptions;
+
+  it("429 → QuotaWaitForResetError + ledger; pid tree NOT killed", async () => {
+    const backend = makeBackend();
+    const resetAt = new Date("2026-07-08T16:10:00.000Z");
+    backend.probeResult = {
+      kind: "quota_limited",
+      resetAt,
+      detail: "429 wall",
+    };
+
+    await expect(backend.exerciseIdleSandbox(idleOpts("zai/glm-5.2", 1001))).rejects.toBeInstanceOf(
+      QuotaWaitForResetError,
+    );
+    expect(backend.sandcastleReached).toBe(true);
+    expect(backend.killed).toEqual([]);
+    expect(backend.ledger).toHaveLength(1);
+    expect(backend.ledger[0]).toMatchObject({
       event: "quota_wait_for_reset",
       pool: "zai",
       resetAt: "2026-07-08T16:10:00.000Z",
@@ -270,23 +404,42 @@ describe("#683 end-to-end idle gate with stubbed probe", () => {
     });
   });
 
-  it("probe pass → hang disposition + kill pid tree", async () => {
-    const out = await idleGate("opencode-go", { kind: "ok" }, { pid: 1002, step: "S2" });
-    expect(out.disposition.kind).toBe("hang");
-    expect(out.applied.killed).toBe(true);
-    expect(out.killed).toEqual([1002]);
-    expect(out.ledger).toEqual([]);
+  it("probe pass → hang: kill only that pid tree; no wait ledger", async () => {
+    const backend = makeBackend();
+    backend.probeResult = { kind: "ok" };
+
+    await expect(backend.exerciseIdleSandbox(idleOpts("opencode-go/glm-5.2", 1002))).rejects.toThrow(
+      /Agent idle for 600/,
+    );
+    expect(backend.killed).toEqual([1002]);
+    expect(backend.ledger).toEqual([]);
   });
 
   it("network error → fail-safe hang + kill (never infinite wait)", async () => {
-    const out = await idleGate(
-      "grok",
-      { kind: "error", cause: "ETIMEDOUT" },
-      { pid: 1003, step: "S2" },
+    const backend = makeBackend();
+    backend.probeResult = { kind: "error", cause: "ETIMEDOUT" };
+
+    await expect(backend.exerciseIdleSandbox(idleOpts("grok-build", 1003))).rejects.toThrow(
+      /Agent idle for 600/,
     );
-    expect(out.disposition.kind).toBe("hang");
-    expect(out.applied.killed).toBe(true);
-    expect(out.killed).toEqual([1003]);
-    expect(out.ledger).toEqual([]);
+    expect(backend.killed).toEqual([1003]);
+    expect(backend.ledger).toEqual([]);
+  });
+
+  it("without quotaProbe context, idle error rethrows with no probe side effects", async () => {
+    const backend = makeBackend();
+    backend.probeResult = {
+      kind: "quota_limited",
+      resetAt: new Date("2026-07-08T16:10:00.000Z"),
+    };
+
+    await expect(
+      backend.exerciseIdleSandbox({
+        ...idleOpts("zai/glm-5.2", 1001),
+        quotaProbe: undefined,
+      }),
+    ).rejects.toThrow(/Agent idle for 600/);
+    expect(backend.killed).toEqual([]);
+    expect(backend.ledger).toEqual([]);
   });
 });

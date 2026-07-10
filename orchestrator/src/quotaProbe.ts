@@ -475,3 +475,94 @@ function isQuotaLimitBody(body: string): boolean {
     body.includes("配额")
   );
 }
+
+// ── production idle gate (the seam RealBackend must call) ───────────────────
+
+export interface HandleIdleThresholdInput {
+  /** Route/model slug — mapped to a quota pool via {@link poolForModelRef}. */
+  readonly modelRef: string;
+  readonly worker: IdleWorkerHandle;
+  readonly actions: IdleHangActions;
+  /**
+   * Injected probe (unit tests). Production defaults to
+   * {@link runPoolProbe}(pool, probeDeps).
+   */
+  readonly probe?: (pool: QuotaPoolId) => Promise<QuotaProbeResult>;
+  readonly probeDeps?: PoolProbeDeps;
+}
+
+export interface HandleIdleThresholdResult {
+  readonly disposition: IdleDisposition;
+  readonly applied: ApplyIdleDispositionResult;
+  readonly pool: QuotaPoolId;
+  readonly probe: QuotaProbeResult;
+}
+
+/**
+ * Production idle gate (#683): idle threshold already fired → probe the worker's
+ * pool → hang (kill pid tree) | wait_for_reset (preserve + ledger).
+ *
+ * This is the single composition RealBackend must invoke on Sandcastle
+ * `AgentIdleTimeoutError` (and that any external monitor should call). Pure
+ * helpers alone are not enough — the runner path must go through here.
+ */
+export async function handleIdleThreshold(
+  input: HandleIdleThresholdInput,
+): Promise<HandleIdleThresholdResult> {
+  const pool = poolForModelRef(input.modelRef);
+  const probe =
+    input.probe !== undefined
+      ? await input.probe(pool)
+      : await runPoolProbe(pool, input.probeDeps);
+  const disposition = decideIdleAfterProbe(pool, probe);
+  const applied = await applyIdleDisposition(
+    disposition,
+    input.worker,
+    input.actions,
+  );
+  return { disposition, applied, pool, probe };
+}
+
+/**
+ * Detect Sandcastle's idle-timeout failure. `AgentIdleTimeoutError` is not on
+ * the package's public export surface, so we match by tagged name / message.
+ */
+export function isAgentIdleTimeoutError(err: unknown): boolean {
+  if (err === null || typeof err !== "object") return false;
+  const e = err as { readonly _tag?: unknown; readonly name?: unknown; readonly message?: unknown };
+  if (e._tag === "AgentIdleTimeoutError" || e.name === "AgentIdleTimeoutError") {
+    return true;
+  }
+  if (typeof e.message === "string" && /agent idle for \d+/i.test(e.message)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Raised when idle → quota probe returned 429/limit: worker is parked, not
+ * hung. Callers must NOT treat this as a hang kill outcome.
+ */
+export class QuotaWaitForResetError extends Error {
+  readonly disposition: Extract<IdleDisposition, { kind: "wait_for_reset" }>;
+  readonly applied: ApplyIdleDispositionResult;
+  readonly pool: QuotaPoolId;
+
+  constructor(result: HandleIdleThresholdResult) {
+    if (result.disposition.kind !== "wait_for_reset") {
+      throw new Error(
+        "QuotaWaitForResetError requires a wait_for_reset disposition",
+      );
+    }
+    super(
+      `quota wait for reset on pool ${result.pool}` +
+        (result.disposition.resetAt !== undefined
+          ? ` until ${result.disposition.resetAt.toISOString()}`
+          : ""),
+    );
+    this.name = "QuotaWaitForResetError";
+    this.disposition = result.disposition;
+    this.applied = result.applied;
+    this.pool = result.pool;
+  }
+}
