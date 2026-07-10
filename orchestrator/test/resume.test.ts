@@ -219,6 +219,10 @@ function escalationAnswer(
  *   the tests can assert reuse-vs-recut and resume-vs-fresh-session.
  */
 class ResumeBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly calls: string[] = [];
   readonly runStepIds: string[] = [];
   readonly ledgerWrites: PersistentLedgerEntry[] = [];

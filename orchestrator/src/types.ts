@@ -1309,7 +1309,11 @@ export interface ResumeState {
  */
 export interface Backend {
   /** Run the real model×pipe bash smoke and return the route with fresh records. */
-  smokeModelRoute?(route: ResolvedModelRoute): Promise<ResolvedModelRoute>;
+  smokeModelRoute(
+    route: ResolvedModelRoute,
+    currentCliVersions?: Readonly<Record<string, string | undefined>>,
+  ): Promise<ResolvedModelRoute>;
+  currentCliVersions?(route: ResolvedModelRoute): Promise<Readonly<Record<string, string | undefined>>>;
   /**
    * #255: detect resume residue for this issue at the very start of a run.
    *

@@ -1,9 +1,37 @@
 import { describe, expect, it } from "vitest";
+import { runOrchestrator } from "../src/runner.js";
 import {
   resolveRouteModels,
   routeSmokeFailure,
   smokeRouteModels,
 } from "../src/modelRoutes.js";
+import type {
+  Backend,
+  IssueMeta,
+  IssueSnapshot,
+  StepOutput,
+  StepSpec,
+  WorktreeHandle,
+} from "../src/types.js";
+
+class MissingSmokeBackend implements Backend {
+  async findResumeState() { return undefined; }
+  async cleanResidue() {}
+  async resumeSession(_spec: StepSpec): Promise<StepOutput> { return { kind: "coder", committed: true, commitsAdded: 1 }; }
+  async fetchIssueMeta(_issueNumber: number): Promise<IssueMeta> {
+    return { number: 685, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
+  }
+  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
+    return { number: issueNumber, body: "", comments: [], agentBrief: "" };
+  }
+  async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
+    return { branch: `feat/${issueNumber}`, base, path: `/tmp/${issueNumber}` };
+  }
+  async writeSnapshot() {}
+  async runStep(_spec: StepSpec): Promise<StepOutput> { return { kind: "coder", committed: true, commitsAdded: 1 }; }
+  async push() {}
+  async writeLedger() {}
+}
 
 describe("#685 route tool smoke", () => {
   it("rejects a route before its model×pipe entries have been smoked", () => {
@@ -54,5 +82,13 @@ describe("#685 route tool smoke", () => {
     });
 
     expect(routeSmokeFailure(smoked)).toMatch(/route smoke failed.*sonnet/i);
+  });
+
+  it("refuses through runOrchestrator when the backend has no smoke executor", async () => {
+    const result = await runOrchestrator({ issueNumber: 685, backend: new MissingSmokeBackend() });
+
+    expect(result.status).toBe("error");
+    expect(result.errorPackage?.failedStep).toBe("S0");
+    expect(result.errorPackage?.reason).toMatch(/smoke/i);
   });
 });

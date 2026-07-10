@@ -62,6 +62,10 @@ const ROLE_WORKTREE: WorktreeHandle = {
  * so these tests assert against the SAME shared seam, not a re-implementation.
  */
 abstract class RoleRetryBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   async findResumeState(): Promise<undefined> {
     return undefined;
   }

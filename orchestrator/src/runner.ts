@@ -2068,25 +2068,45 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       deferredFindings: [],
     };
   }
-  if (backend.smokeModelRoute !== undefined) {
-    try {
-      modelRoute = await backend.smokeModelRoute(modelRoute);
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      return {
-        status: "error",
-        errorPackage: { failedStep: "S0", reason: `route smoke failed: ${reason}` },
-        stepLedger: [],
-        stopSummary: infraFailureStopSummary({
-          summary: `route smoke failed: ${reason}`,
-          repairHint: "repair the selected model×pipe tool smoke before dispatching workers",
-        }),
-        deferredFindings: [],
-      };
-    }
+  if (typeof backend.smokeModelRoute !== "function") {
+    const reason = "route smoke executor is required before dispatch; backend did not provide smokeModelRoute";
+    return {
+      status: "error",
+      errorPackage: { failedStep: "S0", reason },
+      stepLedger: [],
+      stopSummary: infraFailureStopSummary({
+        summary: reason,
+        repairHint: "provide a real model×pipe smoke executor before dispatching workers",
+      }),
+      deferredFindings: [],
+    };
   }
-  const smokeFailure = routeSmokeFailure(modelRoute);
-  if (smokeFailure !== undefined && backend.smokeModelRoute !== undefined) {
+  let currentCliVersions: Readonly<Record<string, string | undefined>>;
+  try {
+    currentCliVersions = backend.currentCliVersions
+      ? await backend.currentCliVersions(modelRoute)
+      : {};
+    modelRoute = await backend.smokeModelRoute(modelRoute, currentCliVersions);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return {
+      status: "error",
+      errorPackage: { failedStep: "S0", reason: `route smoke failed: ${reason}` },
+      stepLedger: [],
+      stopSummary: infraFailureStopSummary({
+        summary: `route smoke failed: ${reason}`,
+        repairHint: "repair the selected model×pipe tool smoke before dispatching workers",
+      }),
+      deferredFindings: [],
+    };
+  }
+  const smokeFailure = routeSmokeFailure(
+    modelRoute,
+    Date.now(),
+    undefined,
+    currentCliVersions,
+  );
+  if (smokeFailure !== undefined) {
     return {
       status: "error",
       errorPackage: { failedStep: "S0", reason: smokeFailure },
@@ -3355,7 +3375,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const dispatchCtx = {
                 worktree,
                 stateDir,
-                ...(backend.smokeModelRoute !== undefined ? { modelRoute } : {}),
+                modelRoute,
                 ...(typeof resumeSessionId === "string" ? { resumeSessionId } : {}),
                 ...(escalationAnswerForStep != null
                   ? { escalationAnswer: escalationAnswerForStep }
@@ -3613,7 +3633,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           const shipCtx = {
             worktree,
             stateDir,
-            ...(backend.smokeModelRoute !== undefined ? { modelRoute } : {}),
+            modelRoute,
             ...(escalationAnswerForStep != null
               ? { escalationAnswer: escalationAnswerForStep }
               : {}),
@@ -3828,7 +3848,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           const reviewCtx = {
             worktree,
             stateDir,
-            ...(backend.smokeModelRoute !== undefined ? { modelRoute } : {}),
+            modelRoute,
             repo: defaultRepo(),
             prUrl: lastShipOutput.pr,
             prHead:

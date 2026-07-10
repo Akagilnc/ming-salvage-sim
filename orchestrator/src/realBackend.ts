@@ -91,8 +91,13 @@ import {
   type ModelSlugRegistryEntry,
 } from "./modelRegistry.js";
 import {
+  modelRouteFingerprint,
+  routeSmokeEntries,
+  routeSmokeFailure,
   smokeRouteModels,
+  withRouteSmoke,
   type ResolvedModelRoute,
+  type RouteSmokeStatus,
 } from "./modelRoutes.js";
 export {
   agentForSlug,
@@ -2061,8 +2066,30 @@ export class RealBackend implements Backend {
    * runner spends a productive dispatch on it. This deliberately uses the
    * selected Sandcastle provider, not a generic shell or a silent fallback.
    */
-  async smokeModelRoute(route: ResolvedModelRoute): Promise<ResolvedModelRoute> {
-    return smokeRouteModels(route, async (entry) => {
+  async currentCliVersions(
+    route: ResolvedModelRoute,
+  ): Promise<Readonly<Record<string, string | undefined>>> {
+    const versions: Record<string, string | undefined> = {};
+    for (const entry of routeSmokeEntries(route)) {
+      if (versions[entry.slug] === undefined) {
+        versions[entry.slug] = this.cliVersionForSlug(entry.slug);
+      }
+    }
+    return versions;
+  }
+
+  async smokeModelRoute(
+    route: ResolvedModelRoute,
+    currentCliVersions: Readonly<Record<string, string | undefined>> = {},
+  ): Promise<ResolvedModelRoute> {
+    const persisted = this.readRouteSmokeState(route);
+    if (persisted !== undefined) {
+      const hydrated = withRouteSmoke(route, persisted);
+      if (routeSmokeFailure(hydrated, Date.now(), undefined, currentCliVersions) === undefined) {
+        return hydrated;
+      }
+    }
+    const smoked = await smokeRouteModels(route, async (entry) => {
       let sawBash = false;
       const logDir = mkdtempSync(join(this.opts.home ?? homedir(), "route-smoke-"));
       try {
@@ -2098,6 +2125,41 @@ export class RealBackend implements Backend {
         rmSync(logDir, { recursive: true, force: true });
       }
     });
+    this.writeRouteSmokeState(smoked);
+    return smoked;
+  }
+
+  private routeSmokeStatePath(): string {
+    return join(this.opts.home ?? homedir(), ".sc-orchestrator", "route-smoke-state.json");
+  }
+
+  private readRouteSmokeState(
+    route: ResolvedModelRoute,
+  ): Readonly<Record<string, RouteSmokeStatus>> | undefined {
+    try {
+      const raw = JSON.parse(readFileSync(this.routeSmokeStatePath(), "utf8")) as unknown;
+      if (raw === null || typeof raw !== "object") return undefined;
+      const state = (raw as Record<string, unknown>)[modelRouteFingerprint(route)];
+      if (state === null || typeof state !== "object") return undefined;
+      return state as Readonly<Record<string, RouteSmokeStatus>>;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private writeRouteSmokeState(route: ResolvedModelRoute): void {
+    const path = this.routeSmokeStatePath();
+    let all: Record<string, unknown> = {};
+    try {
+      const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+      if (raw !== null && typeof raw === "object") all = raw as Record<string, unknown>;
+    } catch {
+      // Missing or malformed state is treated as empty; the fresh smoke result
+      // below becomes the new durable source of truth.
+    }
+    all[modelRouteFingerprint(route)] = route.smoke;
+    mkdirSync(join(this.opts.home ?? homedir(), ".sc-orchestrator"), { recursive: true });
+    writeFileSync(path, JSON.stringify(all, null, 2) + "\n", "utf8");
   }
 
   private cliVersionForSlug(slug: string): string {
