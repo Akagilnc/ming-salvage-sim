@@ -31,6 +31,7 @@ from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, monthly_amount, period_label,
 )
+from ming_sim.qualitative import qualitative_band
 from ming_sim.token_stats import tlog
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -47,25 +48,11 @@ _COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>
 
 
 def _public_support_description(value: object) -> str:
-    try:
-        score = int(value or 0)
-    except (TypeError, ValueError):
-        score = 0
-    return (
-        "民心稳固" if score >= 80 else "民心尚可" if score >= 60 else
-        "民心起伏" if score >= 40 else "民心偏弱" if score >= 20 else "民心堪忧"
-    )
+    return "民心" + qualitative_band(value, ("堪忧", "偏弱", "起伏", "尚可", "稳固"))
 
 
 def _unrest_description(value: object) -> str:
-    try:
-        score = int(value or 0)
-    except (TypeError, ValueError):
-        score = 0
-    return (
-        "动乱已炽" if score >= 80 else "动乱升高" if score >= 60 else
-        "动乱不安" if score >= 40 else "动乱有患" if score >= 20 else "动乱平静"
-    )
+    return "动乱" + qualitative_band(value, ("平静", "有患", "不安", "升高", "已炽"))
 
 
 def _building_level_description(value: object) -> str:
@@ -4853,22 +4840,15 @@ class GameDB:
         if str(row["controlled_by"]) != "ming":
             held = f"，控制权：已为{self.power_display_name(row['controlled_by'])}所据（非大明辖治）"
         if qualitative:
-            def score_band(value: object, words: tuple[str, str, str, str, str]) -> str:
-                try:
-                    n = int(value or 0)
-                except (TypeError, ValueError):
-                    n = 0
-                return words[4 if n >= 80 else 3 if n >= 60 else 2 if n >= 40 else 1 if n >= 20 else 0]
-
             return (
                 f"{row['name']}（{row['kind']}）{held}：人口{row['population']}万人，"
                 f"{_public_support_description(row['public_support'])}，"
                 f"{_unrest_description(row['unrest'])}，粮食{row['grain_security']}万石，"
                 f"田亩{row['registered_land']}万亩，隐田{row['hidden_land']}万亩，"
                 f"账面税收{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，"
-                f"士绅阻力{score_band(row['gentry_resistance'], ('极弱', '偏弱', '中等', '偏强', '强'))}，"
-                f"军事压力{score_band(row['military_pressure'], ('极低', '偏低', '中等', '偏高', '极高'))}，"
-                f"城防{score_band(row['city_level'], ('初设', '简陋', '成形', '坚固', '重镇'))}，"
+                f"士绅阻力{qualitative_band(row['gentry_resistance'], ('极弱', '偏弱', '中等', '偏强', '强'))}，"
+                f"军事压力{qualitative_band(row['military_pressure'], ('极低', '偏低', '中等', '偏高', '极高'))}，"
+                f"城防{qualitative_band(row['city_level'], ('初设', '简陋', '成形', '坚固', '重镇'))}，"
                 f"城防大炮{int(row['cannon'])}门。天灾：{row['natural_disaster']}；"
                 f"人祸：{row['human_disaster']}；状态：{row['status']}"
             )

@@ -174,6 +174,57 @@ def test_minister_memorial_tools_hide_unlisted_abstract_stop_thresholds(game):
     assert "power.houjin.military_strength条件已存档" in rendered
 
 
+def test_minister_memorial_tools_hide_abstract_resolve_and_fail_conditions(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="工具条件定性测试",
+        origin_kind="decree",
+        origin_ref="test:qualitative-resolve-fail",
+        bar_value=0,
+        inertia=0,
+        stage_text="正在推进",
+        resolve_condition="region.shaanxi.public_support >= 70",
+        fail_condition="region.shaanxi.unrest >= 80",
+    )
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
+
+    rendered = tools["inspect_memorial"](1)
+
+    assert ">= 70" not in rendered
+    assert ">= 80" not in rendered
+    assert "陕西民心达到所定档位" in rendered
+    assert "陕西动乱达到所定档位" in rendered
+
+
+def test_estimate_resistance_returns_only_qualitative_level(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="阻力定性测试",
+        origin_kind="decree",
+        origin_ref="test:qualitative-resistance",
+        bar_value=0,
+        inertia=0,
+        stage_text="正在推进",
+        severity=80,
+        faction_hint="边军",
+    )
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
+
+    rendered = tools["estimate_resistance"](1)
+
+    assert "阻力" in rendered
+    assert "估算阻力值" not in rendered
+    assert not re.search(r"阻力(?:低|中|高)[^。]*\d+", rendered)
+
+
 def test_character_context_never_exposes_other_faction_dossiers(game):
     db, _state, content = game
     minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))

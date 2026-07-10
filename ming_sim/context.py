@@ -16,6 +16,7 @@ from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMContractError
 from ming_sim.models import Army, Character, Event, GameState, Region
+from ming_sim.qualitative import qualitative_band
 from ming_sim.skills import available_skill_names
 
 _content: Optional[GameContent] = None
@@ -159,21 +160,11 @@ _CHARACTER_BANDS = {
 
 
 def _character_band(field: str, value: object) -> str:
-    try:
-        n = int(value or 0)
-    except (TypeError, ValueError):
-        n = 0
-    words = _CHARACTER_BANDS[field]
-    return words[4 if n >= 80 else 3 if n >= 60 else 2 if n >= 40 else 1 if n >= 20 else 0]
+    return qualitative_band(value, _CHARACTER_BANDS[field])
 
 
 def _identity_band(value: object) -> str:
-    try:
-        n = int(value or 0)
-    except (TypeError, ValueError):
-        n = 50
-    return ("党色极深" if n >= 80 else "党色较深" if n >= 60 else
-            "党色不显" if n >= 40 else "党色较淡" if n >= 20 else "几乎不染党色")
+    return qualitative_band(value, ("几乎不染党色", "党色较淡", "党色不显", "党色较深", "党色极深"), default=50)
 
 
 def _identity_bucket(value: object) -> str:
@@ -189,11 +180,7 @@ def _faction_band(field: str, value: object) -> str:
         "satisfaction": ("怨气深重", "颇多不满", "态度平常", "颇为顺应", "乐于奉行"),
         "leverage": ("人马凋零", "朝中孤弱", "根基平常", "颇有根基", "势重可动员"),
     }[field]
-    try:
-        n = int(value or 0)
-    except (TypeError, ValueError):
-        n = 50
-    return words[4 if n >= 80 else 3 if n >= 60 else 2 if n >= 40 else 1 if n >= 20 else 0]
+    return qualitative_band(value, words, default=50)
 
 
 def character_context(character: Character) -> str:

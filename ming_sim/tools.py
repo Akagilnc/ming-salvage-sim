@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Dict, List
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
 from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
+from ming_sim.qualitative import qualitative_band
 from ming_sim.skills import skill_template
 
 _STATUS_CN = {
@@ -62,11 +64,7 @@ def _compact_json_text(raw: object) -> str:
 
 
 def _progress_band(value: object) -> str:
-    try:
-        n = int(value or 0)
-    except (TypeError, ValueError):
-        n = 0
-    return "未见起色" if n < 20 else "略有起色" if n < 40 else "进展过半" if n < 60 else "进展顺利" if n < 80 else "近于收束"
+    return qualitative_band(value, ("未见起色", "略有起色", "进展过半", "进展顺利", "近于收束"))
 
 
 _ABSTRACT_STOP_FIELDS = {
@@ -145,6 +143,38 @@ def _qualitative_stop_condition(raw: object) -> str:
             # 未知字段也不应成为抽象分数泄漏的后门：保留字段名，隐藏比较符和阈值。
             parts.append(f"{key_text}条件已存档")
     return "、".join(parts) or "（条件未详）"
+
+
+def _qualitative_condition(raw: object) -> str:
+    """Hide abstract thresholds in legacy resolve/fail condition strings."""
+    text = str(raw or "").strip()
+    match = re.fullmatch(r"([^<>=!]+?)\s*(?:<=|>=|==|!=|<|>)\s*(-?\d+(?:\.\d+)?)", text)
+    if not match:
+        return "（条件已存档）" if text else "（未填）"
+    key = match.group(1).strip()
+    field = key.rsplit(".", 1)[-1]
+    if field in _COUNTABLE_STOP_FIELDS:
+        return f"{key}{match.group(2)}"
+    display_key = key
+    parts = key.split(".")
+    if len(parts) >= 2:
+        subject = parts[-2]
+        try:
+            content = _content_ctx()
+            for collection in (content.regions, content.armies, content.characters):
+                match_subject = next(
+                    (item.name for item in collection.values()
+                     if getattr(item, "id", None) == subject),
+                    None,
+                )
+                if match_subject:
+                    subject = match_subject
+                    break
+        except (AttributeError, RuntimeError):
+            pass
+        display_key = f"{subject}{field}"
+    label = _ABSTRACT_STOP_FIELDS.get(field, field)
+    return f"{display_key.replace(field, label)}达到所定档位"
 
 
 def _commitment_tool_fields(db, state, row) -> str:
@@ -238,7 +268,8 @@ def build_minister_tools(character: Character, context: CourtContext,
             f"#{row['id']} {row['title']}（进展{_progress_band(row['bar_value'])}，"
             f"{row['bar_bad_meaning']}↔{row['bar_good_meaning']}）。"
             f"阶段：{row['stage_text']}。牵涉：{row['faction_hint'] or '—'}。"
-            f"结案条件：{row['resolve_condition'] or '（未填）'}。失败条件：{row['fail_condition'] or '（未填）'}。"
+            f"结案条件：{_qualitative_condition(row['resolve_condition'])}。"
+            f"失败条件：{_qualitative_condition(row['fail_condition'])}。"
             f"{commitment_text}"
         )
 
@@ -281,10 +312,12 @@ def build_minister_tools(character: Character, context: CourtContext,
         if any(t in tags for t in ("边", "军")):
             # arrears 累计欠饷万两，按【引擎实扣月应发 army_needed】归一成"平均欠饷月数"再加权
             # （#173：替退役 maintenance_per_turn；army_needed 是 Python 公式，故在此 Python 求均值）。
+            from ming_sim.flows import army_needed
+
             ratios = [
                 float(r["arrears"] or 0) / pay
                 for r in db.army_rows()  # 封装入口（线上 gemini），不直接碰 db.conn
-                if (pay := db._army_pay(r)) > 0
+                if (pay := army_needed(r)) > 0
             ]
             months = (sum(ratios) / len(ratios)) if ratios else 0.0
             resistance += int(months * 2)
@@ -299,7 +332,7 @@ def build_minister_tools(character: Character, context: CourtContext,
             level = "中"
         else:
             level = "低"
-        return f"{row['title']}阻力{level}，主要牵涉：{tags or '—'}。估算阻力值：{resistance}。"
+        return f"{row['title']}阻力{level}，主要牵涉：{tags or '—'}。"
 
     def read_past_report(year: int = 0, month: int = 0) -> str:
         """读某年某月邸报全文，了解此前朝局走向、地方动静、灾兵祸福，避免接旨时凭空臆议。
