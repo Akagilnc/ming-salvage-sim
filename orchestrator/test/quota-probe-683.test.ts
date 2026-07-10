@@ -391,12 +391,13 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
   } as const;
 
   // Models must be registered in MODEL_SLUG_REGISTRY (agentForSlug preflight).
-  // Pool is stubbed via runQuotaProbe — model slug only needs to be valid CLI.
+  // Pool is stubbed via runQuotaProbe — model slug only needs to be a live registry entry.
+  // Post-#764: gpt-5.5 is retired from the live allowlist; use gpt-5.6-terra.
   const coderSpec: StepSpec = {
     id: "S2",
     role: "coder",
     promptFile: "coder_implement.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-terra",
     completionSignal: "CODER_STEP_COMPLETE",
     maxIter: 1,
     soul: "coder",
@@ -516,7 +517,7 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
     });
     // Production quotaProbe context carries model/step but not a hand-filled pid.
     expect(backend.lastQuotaProbe).toMatchObject({
-      modelRef: "gpt-5.5",
+      modelRef: "gpt-5.6-terra",
       step: "S2",
       issueNumber: 683,
     });
