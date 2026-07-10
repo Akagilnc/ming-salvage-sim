@@ -1189,6 +1189,25 @@ export interface LedgerEntry {
   readonly roundTriggerHeadOid?: string;
   /** Online review round re-trigger marker (#600 r25): ISO instant the round began. */
   readonly roundTriggerAt?: string;
+  /**
+   * Monitor handle for an in-flight external CLI worker (#684). Persisted so a
+   * resumed run can rebuild alive/idle/kill judgment without global pgrep.
+   */
+  readonly monitorHandle?: WorkerMonitorHandle;
+}
+
+/**
+ * Structured monitor handle produced atomically at CLI worker dispatch (#684).
+ * Alive/idle/kill operations must use this handle — never global process-name matching.
+ */
+export interface WorkerMonitorHandle {
+  readonly pid: number;
+  readonly logPath: string;
+  /** Pool / route identity (e.g. `grok/composer`, `zai/glm-5.2`). */
+  readonly poolId: string;
+  readonly completionSignal: string;
+  readonly stepId: string;
+  readonly dispatchedAt: string;
 }
 
 /**

@@ -285,6 +285,8 @@ function buildPersistentEntry(opts: {
   repairMovementPaths?: ReadonlyArray<string>;
   /** Terminal stop reason summary (#450). */
   stopSummary?: StopSummary;
+  /** External CLI worker monitor handle (#684). */
+  monitorHandle?: import("./types.js").WorkerMonitorHandle;
 }): PersistentLedgerEntry {
   let entry: PersistentLedgerEntry = {
     step: opts.step,
@@ -313,6 +315,9 @@ function buildPersistentEntry(opts: {
   }
   if (opts.stopSummary !== undefined) {
     entry = { ...entry, stopSummary: opts.stopSummary };
+  }
+  if (opts.monitorHandle !== undefined) {
+    entry = { ...entry, monitorHandle: opts.monitorHandle };
   }
   return entry;
 }
@@ -2546,6 +2551,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     escalationKind?: EscalationKind,
     stopSummary?: StopSummary,
     repairMovementPaths?: ReadonlyArray<string>,
+    monitorHandle?: import("./types.js").WorkerMonitorHandle,
   ): Promise<void> {
     const ph = await hashPrompt(promptFile, s, backend);
     const branchHEAD = await resolveBranchHEAD();
@@ -2561,6 +2567,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       findingDispositions,
       repairMovementPaths,
       stopSummary,
+      monitorHandle,
     });
 
     const mirrorInMemoryLedgerPersistedFields = (

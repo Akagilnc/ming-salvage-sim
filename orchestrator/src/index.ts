@@ -34,6 +34,25 @@ export {
   shipWorkerSpec,
 } from "./dispatchWorker.js";
 export {
+  collectPidTree,
+  dispatchMonitoredCliWorker,
+  hasCompletionSignalInLog,
+  isWorkerAlive,
+  isWorkerIdle,
+  killWorkerTree,
+  monitorHandleFromLedger,
+  poolIdForWorker,
+  readLogActivity,
+  validateMonitorHandle,
+} from "./workerMonitor.js";
+export type {
+  KillWorkerTreeResult,
+  LogActivitySnapshot,
+  MonitoredCliDispatchInput,
+  MonitoredCliDispatchResult,
+  WorkerMonitorDeps,
+} from "./workerMonitor.js";
+export {
   dispatchFamilyWorker,
   legacyDispatchFamilyWorker,
   cmrWorkerSpec,
@@ -135,4 +154,5 @@ export type {
   CmrResult,
   ShipResult,
   MergeWorkerResult,
+  WorkerMonitorHandle,
 } from "./types.js";
