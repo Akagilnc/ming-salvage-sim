@@ -3777,7 +3777,7 @@ export class RealBackend implements Backend {
     handle: WorkerMonitorHandle,
     spec: WorkerSpec,
     ctx: DispatchContext,
-  ): Promise<"hang" | "wait_for_reset"> {
+  ): Promise<"hang" | "hang_with_live_pool" | "wait_for_reset"> {
     const result = await handleIdleThreshold({
       // #686: a same-model relay may have changed provider/billing pool. Probe
       // the active dispatch pool carried by the runner whenever it is present.
@@ -3794,7 +3794,7 @@ export class RealBackend implements Backend {
     if (result.disposition.kind === "wait_for_reset") {
       throw new QuotaWaitForResetError(result);
     }
-    return "hang";
+    return result.probe.kind === "ok" ? "hang_with_live_pool" : "hang";
   }
 
   /**

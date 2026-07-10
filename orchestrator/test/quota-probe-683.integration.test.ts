@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -81,7 +81,7 @@ function monitoredBackend(
       if (result.disposition.kind === "wait_for_reset") {
         throw new QuotaWaitForResetError(result);
       }
-      return "hang";
+    return result.probe.kind === "ok" ? "hang_with_live_pool" : "hang";
     },
     awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
       kind: "completed",
@@ -148,15 +148,81 @@ describe("#683 integration at the real monitored dispatch path", () => {
     expect(ledger).toEqual([]);
   });
 
-  it("probe network error fails safe through the same hang→resource-error path", async () => {
+  it("probe network error fails safe as a plain hang, never a live-pool relay", async () => {
     const ledger: unknown[] = [];
     const out = await runMonitored(
       { kind: "error", cause: "network unavailable" },
       ledger,
     );
 
-    expect(out.error).toBeInstanceOf(HangWithLivePoolError);
+    expect(out.error).toBeInstanceOf(Error);
+    expect(out.error).not.toBeInstanceOf(HangWithLivePoolError);
     expect(out.killed.some((pid) => pid > 0)).toBe(true);
     expect(ledger).toEqual([]);
+  });
+
+  it("missing idle probe fails safe as a plain hang, never a live-pool relay", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "missing-probe-686-"));
+    tempDirs.push(dir);
+    const killed: number[] = [];
+    const backend = {
+      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => {}, 1000)"],
+        logDir: dir,
+        poolId: "zai",
+        completionSignal: "<coder>",
+        stepId: "S2",
+        readInstanceId: () => "test-instance",
+      }),
+      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      }),
+    } as unknown as Backend;
+
+    await expect(
+      dispatchWorkerWithMonitor(backend, workerSpec(), {}, undefined, {
+        idleThresholdMs: 0,
+        pollIntervalMs: 1,
+        monitorDeps: {
+          readInstanceId: () => "test-instance",
+          killPid: (pid) => killed.push(pid),
+          isPidAlive: (pid) => pid > 0 && !killed.includes(pid),
+          listChildPids: () => [],
+          readParentPid: () => undefined,
+          sleepMs: async () => {},
+        },
+      }),
+    ).rejects.not.toBeInstanceOf(HangWithLivePoolError);
+    expect(killed.some((pid) => pid > 0)).toBe(true);
+  });
+
+  it("only parses relay tags emitted after this dispatch began", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "relay-log-offset-686-"));
+    tempDirs.push(dir);
+    writeFileSync(
+      join(dir, "S2.log"),
+      '<relay>{"blocked":{"reason":"baton A","state_summary":"stale","remaining":"do not replay"}}</relay>\n',
+    );
+    const backend = {
+      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
+        command: process.platform === "win32" ? "cmd" : "true",
+        args: process.platform === "win32" ? ["/c", "exit", "0"] : [],
+        logDir: dir,
+        poolId: "zai",
+        completionSignal: "<coder>",
+        stepId: "S2",
+        readInstanceId: () => "test-instance",
+      }),
+      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      }),
+    } as unknown as Backend;
+
+    await expect(dispatchWorkerWithMonitor(backend, workerSpec(), {})).resolves.toMatchObject({
+      result: { kind: "completed" },
+    });
   });
 });

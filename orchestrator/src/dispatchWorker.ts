@@ -850,14 +850,17 @@ export async function dispatchWorkerWithMonitor(
               "raising the backend's quota park error",
           );
         }
-        // #686: hang with live pool — kill THIS pid tree, then surface as a
-        // resource failure so the runner relays (NEVER mechanical-retry / reset).
+        // Only a positive probe result may classify this as a live-pool hang.
+        // Unknown/error/no-probe cases retain the ordinary fail-safe hang path.
         await killWorkerTree(handle, monitorDeps);
-        throw new HangWithLivePoolError({
-          workerPid: handle.pid,
-          poolId: handle.poolId,
-          step: spec.id,
-        });
+        if (disposition === "hang_with_live_pool") {
+          throw new HangWithLivePoolError({
+            workerPid: handle.pid,
+            poolId: handle.poolId,
+            step: spec.id,
+          });
+        }
+        throw new Error(`monitored worker idle hang: ${spec.id}`);
       }
       return await exitPromise.then((exitCode) => ({ kind: "exit", exitCode }));
     })();
@@ -889,7 +892,9 @@ export async function dispatchWorkerWithMonitor(
     // relay (preserve drift). Malformed/absent tags are ignored here.
     try {
       if (existsSync(handle.logPath)) {
-        const log = readFileSync(handle.logPath, "utf8");
+        const log = readFileSync(handle.logPath)
+          .subarray(handle.logStartOffset ?? 0)
+          .toString("utf8");
         const tag = tryParseActionableRelayTag(log);
         if (tag !== undefined) {
           throw new SelfReportedRelayError(tag, spec.id);

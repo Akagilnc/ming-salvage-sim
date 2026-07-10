@@ -8,9 +8,18 @@
  * the next baton via the same roster + ADR 0124 pool-orthogonal lookup.
  */
 
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { z } from "zod";
 import type { CoderRosterEntry } from "./coderRoster.js";
 import type { IdleDisposition } from "./quotaProbe.js";
@@ -146,6 +155,31 @@ export function classifyFailureForRetryOrRelay(input: {
 
 export const RELAY_FOCUS_FILENAME = ".relay-focus.md";
 
+/** Keep runner-owned relay focus out of worker commits, like ship focus/snapshots. */
+function excludeRelayFocusFromGit(worktreePath: string): void {
+  try {
+    const excludePath = execFileSync(
+      "git",
+      ["-C", worktreePath, "rev-parse", "--git-path", "info/exclude"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
+    if (excludePath.length === 0) return;
+    const absolutePath = resolve(worktreePath, excludePath);
+    mkdirSync(join(absolutePath, ".."), { recursive: true });
+    const existing = existsSync(absolutePath)
+      ? readFileSync(absolutePath, "utf8")
+      : "";
+    if (!existing.split(/\r?\n/).includes(RELAY_FOCUS_FILENAME)) {
+      appendFileSync(
+        absolutePath,
+        `${existing.endsWith("\n") || existing.length === 0 ? "" : "\n"}${RELAY_FOCUS_FILENAME}\n`,
+      );
+    }
+  } catch {
+    // Non-git fixtures still receive the focus file; real worktrees get excluded.
+  }
+}
+
 export type RelayHandoffTrigger =
   | "quota_wall"
   | "hang_with_live_pool"
@@ -241,6 +275,7 @@ export function stageRelayFocusFile(
   commit(): void;
   discard(): void;
 } {
+  excludeRelayFocusFromGit(worktreePath);
   const path = join(worktreePath, RELAY_FOCUS_FILENAME);
   const stagedPath = join(
     worktreePath,
