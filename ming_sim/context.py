@@ -158,6 +158,8 @@ _CHARACTER_BANDS = {
     "courage": ("临事易退", "多有顾忌", "进退审慎", "敢任其事", "临难不屈"),
 }
 
+_INTRIGUE_PLACEHOLDER = "阴谋能力未详，暂以查案行事表现推知"
+
 
 def _character_band(field: str, value: object) -> str:
     return qualitative_band(value, _CHARACTER_BANDS[field])
@@ -189,7 +191,9 @@ def character_context(character: Character) -> str:
         f"人物行事可见为：忠诚{_character_band('loyalty', character.loyalty)}、"
         f"能力{_character_band('ability', character.ability)}、"
         f"清廉{_character_band('integrity', character.integrity)}、"
-        f"胆略{_character_band('courage', character.courage)}。"
+        f"胆略{_character_band('courage', character.courage)}、"
+        f"党派认同{_identity_band(character.identity)}、"
+        f"阴谋{_INTRIGUE_PLACEHOLDER}。"
     )
 
 
