@@ -324,7 +324,7 @@ export function labelClass(key: string): string {
 }
 export const stripOrganicMarkdown = (text: string): string => {
   return text
-    .replace(/^\s*[-+*]\s+/gm, "")
+    .replace(/^\s*(?:[-+*]|\d+[.)])\s+/gm, "")
     .replace(/(\*\*|__)(.*?)\1/g, "$2")
     .replace(/(\*|_)(.*?)\1/g, "$2");
 };
