@@ -350,12 +350,16 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
     expect(familyBackend.merges.some((m) => m.childIssue === 11)).toBe(true);
   });
 
-  it("park → answer → reconcile at the parked head → resumes in place without an infra failure", async () => {
+  it("a merged sibling advances the parked head → answer → reconcile → resumes in place without an infra failure", async () => {
     const singleSliceBackend = new EscalatingChildBackend(11, true);
     const familyBackend = new FakeFamilyBackend();
 
+    // #10 and #11 share wave 1. #10 completes and merges first, advancing the
+    // real family head; #11 then decision-parks. This exercises the production
+    // merge → recordChildDecisionParked seam rather than manufacturing a head on
+    // the ledger row below.
     const first = await runFamily({
-      epic: epicWith(11),
+      epic: epicWith(10, 11),
       familyBackend,
       singleSliceBackend,
       familyBase: "family/604-base",
@@ -365,19 +369,15 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
     const parkedIndex = familyBackend.ledger.findIndex(
       (entry) => entry.status === "child_decision_parked",
     );
-    // The production family-485 record includes the then-live family head.
-    // Model that real persisted row before the re-entry invocation.
-    const parked = {
-      ...familyBackend.ledger[parkedIndex]!,
-      familyHeadAfter: "family-base-0",
-    } as FamilyLedgerEntry;
-    familyBackend.ledger[parkedIndex] = parked;
+    // The parked row is production-written after #10's successful merge, so it
+    // must retain the resulting family head without any test-side mutation.
+    const parked = familyBackend.ledger[parkedIndex];
     expect(parked).toMatchObject({
       event: "child_decision_parked",
       phase: "wave",
       escalationKind: "decision",
       childIssue: 11,
-      familyHeadAfter: "family-base-0",
+      familyHeadAfter: "+10",
     });
 
     await recordFamilyEscalationAnswered(familyBackend, {
@@ -388,7 +388,7 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
     expect(familyBackend.ledger.at(-1)).not.toHaveProperty("familyHeadAfter");
 
     const second = await runFamily({
-      epic: epicWith(11),
+      epic: epicWith(10, 11),
       familyBackend,
       singleSliceBackend,
       familyBase: "family/604-base",
