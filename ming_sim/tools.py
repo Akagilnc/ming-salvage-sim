@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Dict, List
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
 from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
+from ming_sim.qualitative import qualitative_band, safe_historical_text
 from ming_sim.skills import skill_template
 
 _STATUS_CN = {
@@ -61,6 +63,120 @@ def _compact_json_text(raw: object) -> str:
         return text
 
 
+def _progress_band(value: object) -> str:
+    return qualitative_band(value, ("未见起色", "略有起色", "进展过半", "进展顺利", "近于收束"))
+
+
+_ABSTRACT_STOP_FIELDS = {
+    "loyalty": "忠诚",
+    "ability": "能力",
+    "integrity": "操守",
+    "courage": "胆略",
+    "leverage": "朝势",
+    "satisfaction": "态度",
+    "public_support": "民心",
+    "unrest": "动乱",
+    "gentry_resistance": "士绅阻力",
+    "military_pressure": "军事压力",
+    "morale": "士气",
+    "training": "训练",
+    "equipment": "装备",
+    "firearm_equipment": "火器",
+    "military_strength": "军力",
+    "corruption": "贪腐",
+    "grain_security": "粮情",
+    "city_level": "城防",
+    "mobility": "机动",
+    "cohesion": "凝聚",
+    "supply": "补给",
+    "bar_value": "进展",
+    "progress": "进展",
+    "皇威": "皇威",
+    "民心": "民心",
+    "动乱": "动乱",
+    "满意度": "态度",
+    "忠诚": "忠诚",
+    "能力": "能力",
+    "清廉": "操守",
+    "胆略": "胆略",
+    "进度": "进展",
+}
+_COUNTABLE_STOP_FIELDS = {
+    "treasury", "国库", "内库", "arrears", "欠饷", "manpower", "兵额",
+    "population", "registered_land", "hidden_land", "tax_per_turn", "grain",
+    "army_needed", "cannon", "cannon_equipment",
+}
+
+
+def _qualitative_stop_field(key: str) -> str:
+    parts = key.split(".")
+    field = parts[-1]
+    label = _ABSTRACT_STOP_FIELDS.get(field)
+    if label is None:
+        label = next((value for name, value in _ABSTRACT_STOP_FIELDS.items() if name in key), "")
+    if not label:
+        return ""
+    subject = parts[-2] if len(parts) > 1 else ""
+    return f"{subject}{label}" if subject else label
+
+
+def _qualitative_stop_condition(raw: object) -> str:
+    """把承诺停止条件转成大臣可读的定性提示，保留钱粮条件的可数性。"""
+    try:
+        parsed = json.loads(str(raw or "")) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        parsed = {}
+    if not isinstance(parsed, dict):
+        return "（条件已存档）"
+    parts = []
+    for key, condition in parsed.items():
+        key_text = str(key)
+        value_text = str(condition)
+        qualitative_field = _qualitative_stop_field(key_text)
+        if qualitative_field:
+            suffix = "已达较高水准" if key_text.split(".")[-1] == "loyalty" else "达到所定档位"
+            parts.append(f"{qualitative_field}{suffix}")
+        elif any(name == key_text.split(".")[-1] for name in _COUNTABLE_STOP_FIELDS):
+            parts.append(f"{key_text}{value_text}")
+        else:
+            # 只有明确可数物（如欠饷、银两、兵额）才把机器条件原样交给大臣。
+            # 未知字段也不应成为抽象分数泄漏的后门：保留字段名，隐藏比较符和阈值。
+            parts.append(f"{key_text}条件已存档")
+    return "、".join(parts) or "（条件未详）"
+
+
+def _qualitative_condition(raw: object) -> str:
+    """Hide abstract thresholds in legacy resolve/fail condition strings."""
+    text = str(raw or "").strip()
+    match = re.fullmatch(r"([^<>=!]+?)\s*(<=|>=|==|!=|<|>)\s*(-?\d+(?:\.\d+)?)", text)
+    if not match:
+        return "（条件已存档）" if text else "（未填）"
+    key = match.group(1).strip()
+    field = key.rsplit(".", 1)[-1]
+    if field in _COUNTABLE_STOP_FIELDS:
+        return f"{key}{match.group(2)}{match.group(3)}"
+    display_key = key
+    parts = key.split(".")
+    if len(parts) >= 2:
+        subject = parts[-2]
+        try:
+            content = _content_ctx()
+            for collection in (content.regions, content.armies, content.characters):
+                match_subject = next(
+                    (item.name for item in collection.values()
+                     if getattr(item, "id", None) == subject),
+                    None,
+                )
+                if match_subject:
+                    subject = match_subject
+                    break
+        except (AttributeError, RuntimeError):
+            pass
+        display_key = f"{subject}{field}"
+    label = _ABSTRACT_STOP_FIELDS.get(field, field)
+    return f"{display_key.replace(field, label)}达到所定档位"
+
+
 def _commitment_tool_fields(db, state, row) -> str:
     keys = row.keys() if hasattr(row, "keys") else []
     commitment_kind = str(row["commitment_kind"] if "commitment_kind" in keys else "").strip()
@@ -70,7 +186,7 @@ def _commitment_tool_fields(db, state, row) -> str:
 
     progress = commitment_progress_payload(db, state, row) or {}
     progress_text = commitment_display_text(progress, row) if progress else "（暂无进展）"
-    stop_condition = _compact_json_text(row["stop_condition"] if "stop_condition" in keys else "")
+    stop_condition = _qualitative_stop_condition(row["stop_condition"] if "stop_condition" in keys else "")
     try:
         end_turn = int(row["end_turn"] if "end_turn" in keys else 0)
     except (TypeError, ValueError):
@@ -113,7 +229,11 @@ def build_minister_tools(character: Character, context: CourtContext,
 
     def query_army_roster(names: List[str] = []) -> str:
         """查全军名册。names 为空返回军名+欠饷+状态索引；传军名列表返回指定军队完整信息。"""
-        return context.db.army_roster(filter_names=names if names else None, index_only=not names)
+        return context.db.army_roster(
+            filter_names=names if names else None,
+            index_only=not names,
+            qualitative_equipment=True,
+        )
 
     def list_memorials() -> str:
         """查看当前在办的所有事项（issue）。"""
@@ -127,7 +247,8 @@ def build_minister_tools(character: Character, context: CourtContext,
             commitment_suffix = f"，{commitment_fields}" if commitment_fields else ""
             lines.append(
                 f"{idx}. #{row['id']}[{kind_tag}]{row['title']}"
-                f"（bar {int(row['bar_value'])}/{row['bar_good_meaning']}，{row['stage_text']}{commitment_suffix}）"
+                f"（进展{_progress_band(row['bar_value'])}；向好端：{row['bar_good_meaning']}；"
+                f"{row['stage_text']}{commitment_suffix}）"
             )
         return "\n".join(lines)
 
@@ -144,9 +265,11 @@ def build_minister_tools(character: Character, context: CourtContext,
         commitment_fields = _commitment_tool_fields(context.db, context.state, row)
         commitment_text = f"承诺字段：{commitment_fields}。" if commitment_fields else ""
         return (
-            f"#{row['id']} {row['title']}（bar {int(row['bar_value'])}，{row['bar_bad_meaning']}↔{row['bar_good_meaning']}）。"
+            f"#{row['id']} {row['title']}（进展{_progress_band(row['bar_value'])}，"
+            f"{row['bar_bad_meaning']}↔{row['bar_good_meaning']}）。"
             f"阶段：{row['stage_text']}。牵涉：{row['faction_hint'] or '—'}。"
-            f"结案条件：{row['resolve_condition'] or '（未填）'}。失败条件：{row['fail_condition'] or '（未填）'}。"
+            f"结案条件：{_qualitative_condition(row['resolve_condition'])}。"
+            f"失败条件：{_qualitative_condition(row['fail_condition'])}。"
             f"{commitment_text}"
         )
 
@@ -157,18 +280,18 @@ def build_minister_tools(character: Character, context: CourtContext,
     def inspect_region(region_name: str) -> str:
         """查看某一地区人口、民心、动乱、天灾、人祸、田亩和税收。"""
         try:
-            return context.db.region_detail(region_name)
+            return context.db.region_detail(region_name, qualitative=True)
         except ValueError as e:
             return f"未找到地区 '{region_name}'。可先调 list_regions 看地区 id/名称列表。错误：{e}"
 
     def list_buildings() -> str:
         """查看全国在册建筑（火炮厂、矿厂、常平仓、边堡、织造局等）的等级、完好、维护费与产出。"""
-        return context.db.buildings_report()
+        return context.db.buildings_report(qualitative=True)
 
     def inspect_building(building_name: str) -> str:
         """查看某座建筑的类别、等级、完好、维护费、风险与产出。"""
         try:
-            return context.db.building_detail(building_name)
+            return context.db.building_detail(building_name, qualitative=True)
         except ValueError as e:
             return f"未找到建筑 '{building_name}'。可先调 list_buildings 看建筑列表。错误：{e}"
 
@@ -189,10 +312,12 @@ def build_minister_tools(character: Character, context: CourtContext,
         if any(t in tags for t in ("边", "军")):
             # arrears 累计欠饷万两，按【引擎实扣月应发 army_needed】归一成"平均欠饷月数"再加权
             # （#173：替退役 maintenance_per_turn；army_needed 是 Python 公式，故在此 Python 求均值）。
+            from ming_sim.flows import army_needed
+
             ratios = [
                 float(r["arrears"] or 0) / pay
                 for r in db.army_rows()  # 封装入口（线上 gemini），不直接碰 db.conn
-                if (pay := db._army_pay(r)) > 0
+                if (pay := army_needed(r)) > 0
             ]
             months = (sum(ratios) / len(ratios)) if ratios else 0.0
             resistance += int(months * 2)
@@ -207,7 +332,7 @@ def build_minister_tools(character: Character, context: CourtContext,
             level = "中"
         else:
             level = "低"
-        return f"{row['title']}阻力{level}，主要牵涉：{tags or '—'}。估算阻力值：{resistance}。"
+        return f"{row['title']}阻力{level}，主要牵涉：{tags or '—'}。"
 
     def read_past_report(year: int = 0, month: int = 0) -> str:
         """读某年某月邸报全文，了解此前朝局走向、地方动静、灾兵祸福，避免接旨时凭空臆议。
@@ -234,7 +359,8 @@ def build_minister_tools(character: Character, context: CourtContext,
         ).fetchone()
         if not row or not row["report"]:
             return f"{target_year}年{target_month}月未见正式邸报记录。"
-        return f"【{target_year}年{target_month}月邸报】\n{row['report']}"
+        report = safe_historical_text(row["report"], "历史邸报")
+        return f"【{target_year}年{target_month}月邸报】\n{report}"
 
     def search_memories(keywords: str = "", year: int = 0, period: int = 0) -> str:
         """检索起居注章节旧事。支持两种方式（可同时用）：
@@ -262,7 +388,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         label = " ".join(kw_list) or f"{year}年{period}月"
         lines = [f"【起居注检索：{label}】"]
         for c in hits[-8:]:
-            body = (c.get("body") or c.get("title") or "").strip()
+            body = safe_historical_text(c.get("body") or c.get("title"), "起居注章节")
             lines.append(f"- {c['year']}年{c['period']}月：{body}")
         return "\n".join(lines)
 
@@ -378,7 +504,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         """密令统一入口。action 取值：
         - "issue"：下达新密令。需填 title、content；assignee 留空默认当前大臣；deadline_months=0 无硬限。
         - "progress"：汇报进展（兼查历史）。填 order_id；progress 非空且非建档当月则暂存落档，同月补充会修正本月行。
-        - "submit"：提交结案。填 order_id、claim（办结陈词200字内）。
+        - "submit"：提交结案。填 order_id、claim（办结陈词）。
         - "rush"：催办加急。填 order_id；deadline_months=1 下月核议，0=本月即核。
         """
         # 恢复窗总闸（PR #90 R2 codex P2）：FRONT_HALF_DONE 时四个 action 都是
@@ -399,13 +525,13 @@ def build_minister_tools(character: Character, context: CourtContext,
     def _secret_order_issue(title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0) -> str:
         """皇帝下达密令，返回待确认密令 payload，由召对确认闸门决定是否正式落库。
 
-        title：密令标题（20字内）。
+        title：密令标题。
         content：密令详情，交代任务目标、保密要求、期限等。
         tags_json：JSON 数组，填相关人名/地区/事项关键词，用于日后检索，如 '["辽饷","兵部","密查"]'。
         assignee：实际承办人姓名。留空则默认为当前召见的大臣；若皇帝指名他人承办（如"命毕自严去查"），填该人全名。
         deadline_months：硬期限月数；0 表示无硬期限。若皇帝说"下月务必结案"填 1，说"三个月内结案"填 3。
         """
-        t = (title or "").strip()[:20]
+        t = (title or "").strip()
         c = (content or "").strip()
         if not t or not c:
             return "密令下达失败：标题或内容为空。"
@@ -448,7 +574,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         if order["status"] != "active":
             return f"密令 #{order['id']} 已{order['status']}，不能再记进展。"
         is_issuing_turn = int(order.get("turn_issued") or 0) == int(context.state.turn)
-        note = (progress or "").strip()[:200]
+        note = (progress or "").strip()
         if note and not is_issuing_turn:
             return _pending_secret_action("记进展", int(order["id"]), {"note": note})
         order = context.db.get_secret_order(order["id"]) or order
@@ -471,7 +597,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         text = (claim or "").strip()
         if not text:
             return "提交失败：claim 为空。"
-        return _pending_secret_action("提交核议", int(order["id"]), {"claim": text[:200]})
+        return _pending_secret_action("提交核议", int(order["id"]), {"claim": text})
 
     def _secret_order_rush(order_id: int, deadline_months: int = 1, reason: str = "") -> str:
         order, err = _own_secret_order(order_id)

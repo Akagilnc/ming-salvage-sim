@@ -16,7 +16,8 @@ from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMContractError
 from ming_sim.models import Army, Character, Event, GameState, Region
-from ming_sim.skills import available_skill_names, office_skills
+from ming_sim.qualitative import qualitative_band, qualitative_bucket
+from ming_sim.skills import available_skill_names
 
 _content: Optional[GameContent] = None
 
@@ -150,19 +151,86 @@ def format_metric_delta(delta: Dict[str, int]) -> str:
     return "数值变化：" + "；".join(parts)
 
 
+_CHARACTER_BANDS = {
+    "loyalty": ("离心已显", "心志浮动", "大体守中", "颇知向背", "可托腹心"),
+    "ability": ("才具浅薄", "才具有限", "堪当常务", "才具出众", "足任大事"),
+    "integrity": ("操守多亏", "操守未稳", "操守平常", "操守清正", "清介可称"),
+    "courage": ("临事易退", "多有顾忌", "进退审慎", "敢任其事", "临难不屈"),
+}
+
+_INTRIGUE_PLACEHOLDER = "阴谋能力未详，暂以查案行事表现推知"
+
+
+def _character_band(field: str, value: object) -> str:
+    return qualitative_band(value, _CHARACTER_BANDS[field])
+
+
+def _identity_band(value: object) -> str:
+    return qualitative_band(value, ("几乎不染党色", "党色较淡", "党色不显", "党色较深", "党色极深"), default=50)
+
+
+def _identity_bucket(value: object) -> str:
+    return ("low", "middle", "high")[qualitative_bucket(value, (40, 80), default=50)]
+
+
+def _faction_band(field: str, value: object) -> str:
+    words = {
+        "satisfaction": ("怨气深重", "颇多不满", "态度平常", "颇为顺应", "乐于奉行"),
+        "leverage": ("人马凋零", "朝中孤弱", "根基平常", "颇有根基", "势重可动员"),
+    }[field]
+    return qualitative_band(value, words, default=50)
+
+
 def character_context(character: Character) -> str:
+    skills = "、".join(character.personal_skills) or "未留专长档案"
+    summary = (character.summary or "").strip() or "未有专门 dossier，以官职、性情和任事处作通用特征化。"
+    style = (character.style or "").strip() or "未详，以官职与任事处推知其处世分寸。"
     return (
-        f"{character.name}，{character.office}，职位类型：{character.office_type}，派系：{character.faction}，"
-        f"别名：{', '.join(character.aliases) or '无'}，"
-        f"人物标签：{', '.join(character.personal_skills)}，"
-        f"职位技能：{', '.join(office_skills(character.office_type))}，"
-        f"忠诚{character.loyalty}，能力{character.ability}，清廉{character.integrity}，"
-        f"胆略{character.courage}，风格：{character.style}"
+        f"【人物档料】{character.name}，{character.office}，职位类型：{character.office_type}；"
+        f"身份简介：{summary}；性情：{style}；专长：{skills}。"
+        f"人物行事可见为：忠诚{_character_band('loyalty', character.loyalty)}、"
+        f"能力{_character_band('ability', character.ability)}、"
+        f"清廉{_character_band('integrity', character.integrity)}、"
+        f"胆略{_character_band('courage', character.courage)}、"
+        f"党派认同{_identity_band(character.identity)}、"
+        f"阴谋{_INTRIGUE_PLACEHOLDER}。"
     )
 
 
 def character_context_with_db(character: Character, db: GameDB) -> str:
-    return character_context(character) + f"，当前可用技能：{available_skill_names(character, db)}"
+    return (
+        character_context(character)
+        + faction_context_with_db(character, db)
+        + f"当前可用技能：{available_skill_names(character, db)}"
+    )
+
+
+def faction_context_with_db(character: Character, db: GameDB) -> str:
+    """只组装当前人物认同度允许知道的本派档料；不提供全局派系表。"""
+    faction = db.conn.execute(
+        "SELECT agenda, satisfaction, leverage FROM factions WHERE name = ?",
+        (character.faction,),
+    ).fetchone()
+    bucket = _identity_bucket(character.identity)
+    if bucket == "low":
+        faction_text = "与该派仅有名义关联，未提供该派内情；人物立场由自身经历与当下处境呈现。"
+    elif faction is None:
+        faction_text = "该派尚无完整档料，以人物所处官职和已知行动推知其所求。"
+    elif bucket == "middle":
+        faction_text = (
+            f"所求：{faction['agenda']}；当前朝势："
+            f"{_faction_band('leverage', faction['leverage'])}。"
+        )
+    else:
+        faction_text = (
+            f"所求：{faction['agenda']}；当前朝势："
+            f"{_faction_band('leverage', faction['leverage'])}，"
+            f"对政局态度{_faction_band('satisfaction', faction['satisfaction'])}。"
+        )
+    return (
+        f"【派系档料】{character.faction}：{faction_text}"
+        f"【党派认同】此人对本派的认同为{_identity_band(character.identity)}。"
+    )
 
 
 def event_context(event: Event) -> str:

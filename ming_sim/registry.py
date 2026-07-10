@@ -16,9 +16,15 @@ from agno.skills.loaders.local import LocalSkills
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
-from ming_sim.context import character_context_with_db
+from ming_sim.context import character_context_with_db, faction_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig, MINISTER_CHAT_CLI_TIMEOUT_SECONDS
 from ming_sim.llm_model import create_chat_model
+from ming_sim.qualitative import (
+    building_output_effect,
+    building_qualitative_fields,
+    power_band,
+    safe_historical_text,
+)
 from ming_sim.token_stats import tlog
 from ming_sim.tools import _duty_location, build_minister_tools
 
@@ -61,7 +67,7 @@ def _ctx() -> GameContent:
     return _content
 
 
-def build_court_brief(context: CourtContext) -> str:
+def build_court_brief(context: CourtContext, character: Optional[Character] = None) -> str:
     """每回合精简上下文：仅含回合 + 核心数值 + 在办事项 + 钱粮一句话。
     地区/军队/派系/事项详情靠大臣按需调 tool 查（list_regions, inspect_memorial 等）。
     """
@@ -69,30 +75,52 @@ def build_court_brief(context: CourtContext) -> str:
     money_line = (
         f"国库{metrics.get('国库', 0)}万两，内库{metrics.get('内库', 0)}万两。"
     )
-    score_line = "；".join(
-        f"{k}{metrics[k]}"
-        for k in ("民心", "皇威")
-        if k in metrics
-    )
+    score_line = "民情与君威见于各地奏报和行事反应。"
     issues = context.db.list_active_issues()
     issue_lines: List[str] = []
     for row in issues[:10]:
         kind_tag = "系统" if row["kind"] == "situation" else "玩家"
-        bar = int(row["bar_value"])
-        # 注意：bar_good_meaning/bar_bad_meaning 是进度条「两端」的含义，
-        # 不是当前状态。当前 bar 值才是进度，满 100 才算到 good 端。
         issue_lines.append(
             f"#{row['id']}[{kind_tag}]{row['title']}"
-            f"（进度{bar}/100；满100={row['bar_good_meaning']}，跌0={row['bar_bad_meaning']}）"
+            f"（局势未决；向好端：{row['bar_good_meaning']}；向坏端：{row['bar_bad_meaning']}）"
         )
     issues_brief = "；".join(issue_lines) if issue_lines else "无"
+    identity_brief = faction_context_with_db(character, context.db) if character else ""
     return (
         f"本{TURN_UNIT}：{context.state.year}年{context.state.period}月（第{context.state.turn}回合）。"
         f"钱粮：{money_line}国势：{score_line}。"
         f"在办事项：{issues_brief}。"
-        f"势力：{context.db.power_report(exclude_self=True)}。"
-        f"朝堂派系（满意度/影响力均为当前实值，据此判断各派当前强弱，不要凭印象推断）：{context.db.faction_report()}。"
+        f"{identity_brief}"
+        f"势力档料：{_power_brief(context)}。"
         f"地区/奏报/钱粮详情按需调工具查（list_regions/inspect_region/inspect_memorial/check_treasury 等）；人事与军队详情见下方固定名册。"
+    )
+
+
+def _minister_game_world_prompt(prompt: str) -> str:
+    """给大臣的世界观说明只保留呈现口径，不把引擎量表喂给角色。"""
+    lines = []
+    for line in prompt.splitlines():
+        if "国势核心数值四个：" in line:
+            line = "- 国势以奏报呈现：国库、内库保留钱粮口径；民心、皇威只作定性描述。"
+        elif "地区盘面使用两京十三省的核心字段：" in line:
+            line = "- 地区盘面中人口、粮食、田亩、隐田、每回合税收等可数物照实呈报；民心、动乱、士绅阻力、军事压力以定性描述呈报。"
+        elif "军队盘面使用主要军队核心字段：" in line:
+            line = "- 军队盘面中驻地、统帅、兵种、人数、月饷与欠饷等可数物照实呈报；补给、士气、训练、装备、火器、机动、忠诚以定性描述呈报；随军大炮照门数呈报。"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _power_brief(context: CourtContext) -> str:
+    """势力的抽象轴也只以定性档料进入扮演 prompt。"""
+    rows = context.db.power_rows(exclude_self=True)
+    if not rows:
+        return "势力未建档。"
+
+    return "；".join(
+        f"{row['name']}（{row['leader']}）：{row['stance']}，朝势{power_band(row['leverage'])}、"
+        f"军力{power_band(row['military_strength'])}、财力{power_band(row['supply'])}，"
+        f"{row['status']}；近动：{row['last_action'] or '尚无新动'}"
+        for row in rows
     )
 
 
@@ -160,7 +188,8 @@ def build_last_gazette_brief(context: CourtContext) -> str:
     report = context.db.get_turn_report(prev_turn)
     if not report or not report.strip():
         return ""
-    return "【上回合邸报全文（上月朝局实录，作答涉及上月动静以此为准；更早月份调 read_past_report 查）】\n" + report.strip()
+    safe_report = safe_historical_text(report, "上回合邸报")
+    return "【上回合邸报全文（上月朝局实录，作答涉及上月动静以此为准；更早月份调 read_past_report 查）】\n" + safe_report
 
 
 def build_memory_brief(character: Character, context: CourtContext) -> str:
@@ -175,7 +204,7 @@ def build_memory_brief(character: Character, context: CourtContext) -> str:
         return ""
     lines = ["【更早朝局（起居注章节，上月详情见上方邸报）】"]
     for c in chapters:
-        body = (c.get("body") or c.get("title") or "").strip()
+        body = safe_historical_text(c.get("body") or c.get("title"), "起居注章节")
         if body:
             lines.append(f"- {c['year']}年{c['period']}月：{body}")
     if len(lines) == 1:
@@ -201,9 +230,9 @@ def build_secret_order_brief(character: Character, context: CourtContext) -> str
         return ""
     lines = [
         "【你身上还在办的密令】",
-        "★ 皇帝问进度时调 `report_secret_order_progress(order_id, progress=本月新一步进展100字内)`：有 progress 时先暂存待确认，确认后落档；若只想查看历史则留空 progress；同月补充会修正本月行。",
+        "★ 皇帝问进度时调 `report_secret_order_progress(order_id, progress=本月新一步进展)`：有 progress 时先暂存待确认，确认后落档；若只想查看历史则留空 progress；同月补充会修正本月行。",
         "★ 皇帝催办/加急时调 `rush_secret_order(order_id, deadline_months=1/3/0, reason=催办缘由)`：1=下月核议，3=三月内核议，0=本月即核。",
-        "★ 自认任务办到位时调 `submit_secret_order_for_review(order_id, claim=自述办结陈词200字内)`：转入待核议状态，等推演月末判 done/failed。",
+        "★ 自认任务办到位时调 `submit_secret_order_for_review(order_id, claim=自述办结陈词)`：转入待核议状态，等推演月末判 done/failed。",
         "★ progress / claim 写具体事实：派谁去、查到什么、摸到哪一层、下一步指向谁。空话「待实据到手」不算。",
         "★ 大臣无权直接判 done/failed——结案权全归推演。提交后该月不再可推进。",
         "在册密令：",
@@ -236,7 +265,7 @@ def build_region_brief(context: CourtContext) -> str:
 
 
 def build_building_brief(context: CourtContext) -> str:
-    """现有建筑紧凑表（名·类·省 等级/完好/产出）——省去叙述控 token。
+    """现有建筑紧凑表（名·类·省 规模/完好/产出）——省去叙述控 token。
     CLI 后端无 list_buildings 工具，靠此让大臣知国家有哪些厂局仓坞。"""
     try:
         # 用中文地区名（LEFT JOIN regions），不漏拼音 region_id（beizhili 等英文进 system
@@ -253,13 +282,17 @@ def build_building_brief(context: CourtContext) -> str:
         return ""
     if not rows:
         return ""
+
     lines = []
     for r in rows:
-        out = f"·产{r['output_metric']}{int(r['output_amount'] or 0)}" if r["output_metric"] else ""
+        metric = str(r["output_metric"] or "")
+        out = building_output_effect(metric, r["output_amount"], prefix="·")
+        level, condition, _risk = building_qualitative_fields(r)
         lines.append(
-            f"{r['name']}（{r['category']}·{r['region_name']}）Lv{r['level']}完好{r['condition']}{out}"
+            f"{r['name']}（{r['category']}·{r['region_name']}）"
+            f"Lv档{level}，完好{condition}{out}"
         )
-    return "【现有建筑（名·类别·地区 等级/完好/产出；问营建/厂局/仓坞据此）】\n" + "；".join(lines)
+    return "【现有建筑（名·类别·地区 规模/完好/产出；问营建/厂局/仓坞据此）】\n" + "；".join(lines)
 
 
 def _make_cultivate_tool(character: Character, context: CourtContext):
@@ -447,7 +480,7 @@ def create_minister_agent(
         if extra_traits_str:
             cultivate_desc += f"性情逐渐变化：{extra_traits_str}。"
         instructions = [
-            c.game_world_prompt,
+            _minister_game_world_prompt(c.game_world_prompt),
             c.consort_agent_prompt,
             f"你当前扮演：{character.name}，{character.office}，性格{character.style}，"
             f"人物特质：{'、'.join(character.personal_skills)}。个人简介：{character.summary}"
@@ -460,7 +493,7 @@ def create_minister_agent(
         # 月度动态上下文全挂 system 末尾——每月变一次破尾段缓存，但前面 game_world /
         # minister_agent / character 静态段仍命中前缀缓存，且大臣全程不会因 history 滚窗
         # 而忘掉年月、钱粮、在办事项、上回合旧事、自己名下密令。
-        court_brief = build_court_brief(context)
+        court_brief = build_court_brief(context, character)
         # 运行时判断规模：人物>100 或军队>30 切换为 tool 按需查，否则全量注入 system
         active_char_count = sum(
             1 for ch in _ctx().characters.values()
@@ -481,7 +514,7 @@ def create_minister_agent(
         if use_army_tool:
             army_roster = context.db.army_roster(index_only=True)
         else:
-            army_roster = context.db.army_roster()
+            army_roster = context.db.army_roster(qualitative_equipment=True)
         last_gazette = build_last_gazette_brief(context)
         memory_brief = build_memory_brief(character, context)
         secret_brief = build_secret_order_brief(character, context)
@@ -507,7 +540,7 @@ def create_minister_agent(
         if secret_brief:
             monthly_block_parts.append(secret_brief)
         instructions = [
-            c.game_world_prompt,
+            _minister_game_world_prompt(c.game_world_prompt),
             c.minister_agent_prompt,
             f"你当前扮演：{character_context_with_db(character, context.db)}，"
             f"任事处：{_duty_location(character.office, character.office_type, 'active')}。",
