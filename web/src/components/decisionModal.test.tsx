@@ -111,6 +111,32 @@ describe("DecisionModal", () => {
     cleanup();
   });
 
+  it("leaves focus and Ctrl+` available to a cheat console opened before decisions arrive", () => {
+    const cheatConsole = document.createElement("div");
+    cheatConsole.className = "cheat-console";
+    const cheatInput = document.createElement("textarea");
+    cheatConsole.appendChild(cheatInput);
+    document.body.appendChild(cheatConsole);
+    cheatInput.focus();
+
+    const closeCheatConsole = vi.fn();
+    const shortcut = (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.key === "`") closeCheatConsole();
+    };
+    window.addEventListener("keydown", shortcut);
+
+    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
+    expect(document.activeElement).toBe(cheatInput);
+
+    const event = new KeyboardEvent("keydown", { key: "`", ctrlKey: true, bubbles: true, cancelable: true });
+    act(() => cheatInput.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(false);
+    expect(closeCheatConsole).toHaveBeenCalledOnce();
+
+    window.removeEventListener("keydown", shortcut);
+    cleanup();
+  });
+
   it("moves focus to the next memorial when continuing to the next decision", () => {
     const cleanup = render(<DecisionModal decisions={decisions} onResolve={vi.fn()} />);
     const options = document.querySelectorAll<HTMLButtonElement>(".decision-option");
