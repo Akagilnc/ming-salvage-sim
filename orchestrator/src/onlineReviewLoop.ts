@@ -855,10 +855,9 @@ export function recheckConvergenceConfirmsFixMarkedKeys(
   landing: WorkerLandingPayload,
 ): boolean {
   if (verify.isRecheck !== true || verify.converged !== true) return true;
-  const expected = landing.fixMarkedFindingIdentityKeys;
-  const expectedThreads = landing.fixMarkedFindingThreads;
+  const expected = landing.fixMarkedFindingIdentityKeys ?? [];
+  const expectedThreads = landing.fixMarkedFindingThreads ?? [];
   const confirmed = verify.fixMarkedFindingIdentityKeys;
-  if (expected === undefined || expectedThreads === undefined) return false;
   if (expected.length === 0) return expectedThreads.length === 0;
   if (confirmed === undefined) return false;
   if (expected.length !== confirmed.length) return false;

@@ -4210,8 +4210,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             }
             verifyOutput = recheckOutcome;
             if (
+              onlineReviewRound > 1 &&
               onlineReviewLanding !== undefined &&
-              (onlineReviewLanding.fixMarkedFindingThreads?.length ?? 0) > 0 &&
               !recheckConvergenceConfirmsFixMarkedKeys(
                 verifyOutput,
                 onlineReviewLanding,
