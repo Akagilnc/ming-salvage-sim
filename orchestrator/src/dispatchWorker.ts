@@ -752,20 +752,36 @@ export interface DispatchWorkerWithMonitorOptions {
   readonly monitorDeps?: WorkerMonitorDeps;
 }
 
-type MonitorRace =
+type ChildExit =
   | { readonly kind: "exit"; readonly exitCode: number | null }
-  | { readonly kind: "killed" };
+  | { readonly kind: "killed"; readonly signal: NodeJS.Signals };
+
+type MonitorRace = ChildExit;
 
 const DEFAULT_MONITOR_IDLE_THRESHOLD_MS = 10 * 60 * 1000;
 const DEFAULT_MONITOR_POLL_INTERVAL_MS = 250;
 
-function waitForChildExit(child: ChildProcess): Promise<number | null> {
+/**
+ * Wait for a monitored child to leave the process table.
+ * Signal-killed children resolve as `{ kind: "killed" }` so telemetry can stamp
+ * a `killed` collect row instead of treating `exitCode === null` as a quiet exit.
+ */
+function waitForChildExit(child: ChildProcess): Promise<ChildExit> {
+  const toExit = (
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): ChildExit => {
+    if (signal !== null) {
+      return { kind: "killed", signal };
+    }
+    return { kind: "exit", exitCode: code };
+  };
   if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve(child.exitCode);
+    return Promise.resolve(toExit(child.exitCode, child.signalCode));
   }
   return new Promise((resolve, reject) => {
     child.once("error", reject);
-    child.once("exit", (code) => resolve(code));
+    child.once("exit", (code, signal) => resolve(toExit(code, signal)));
   });
 }
 
@@ -801,14 +817,14 @@ export async function dispatchWorkerWithMonitor(
   // Best-effort only: never changes worker semantics or resume contracts.
   const ledgerDir = ctx.stateDir;
   const legId = newLegId();
-  const dispatchedAt = new Date().toISOString();
-  const dispatchStamp = buildDispatchStamp({
+  // model family for token extract — pure stamp, not the durable dispatch row.
+  // Durable dispatched_at comes from handle.dispatchedAt after real spawn.
+  const modelFamily = buildDispatchStamp({
     legId,
     spec,
     ctx,
-    dispatchedAt,
-  });
-  const modelFamily = dispatchStamp.model.family;
+    dispatchedAt: new Date().toISOString(),
+  }).model.family;
   let firstOutputAt: string | null = null;
   let logPath: string | null = null;
   let logStartOffset: number | undefined;
@@ -835,6 +851,7 @@ export async function dispatchWorkerWithMonitor(
         completedAt: new Date().toISOString(),
         terminal: classified.terminal,
         errorCategory: classified.errorCategory,
+        errorMessage: classified.errorMessage,
         tokens:
           logText !== null
             ? extractTokensFromLog(logText, modelFamily)
@@ -848,22 +865,6 @@ export async function dispatchWorkerWithMonitor(
 
   try {
     const cliSpec = backend.resolveCliMonitorDispatch?.(spec, ctx, landing);
-    // Dispatch half-row: prefer CLI pool id when the monitored path is taken.
-    tryAppendTelemetryRecord(
-      ledgerDir,
-      buildDispatchStamp({
-        legId,
-        spec,
-        ctx,
-        dispatchedAt,
-        poolId:
-          cliSpec !== undefined
-            ? cliSpec.poolId
-            : ctx.billingPool !== undefined
-              ? ctx.billingPool
-              : undefined,
-      }),
-    );
 
     if (cliSpec !== undefined) {
       const input: MonitoredCliDispatchInput = {
@@ -888,6 +889,18 @@ export async function dispatchWorkerWithMonitor(
       const { handle, child } = await dispatchMonitoredCliWorker(input);
       logPath = handle.logPath;
       logStartOffset = handle.logStartOffset;
+      // Dispatch half-row AFTER spawn: use the monitor handle's exact stamp
+      // (same clock as the log line / instance identity), not a pre-parse guess.
+      tryAppendTelemetryRecord(
+        ledgerDir,
+        buildDispatchStamp({
+          legId,
+          spec,
+          ctx,
+          dispatchedAt: handle.dispatchedAt,
+          poolId: cliSpec.poolId,
+        }),
+      );
       const exitPromise = waitForChildExit(child);
       // SPAWN-TIME persist seam: handle is available before waitForChildExit so a
       // hang still leaves a ledger-rebuildable handle for judge/kill/resume.
@@ -916,7 +929,7 @@ export async function dispatchWorkerWithMonitor(
       let monitorCancelled = false;
       const monitorPromise: Promise<MonitorRace> = (async () => {
         if (initialActivity === undefined) {
-          return await exitPromise.then((exitCode) => ({ kind: "exit", exitCode }));
+          return await exitPromise;
         }
         let previous = initialActivity;
         while (
@@ -958,26 +971,33 @@ export async function dispatchWorkerWithMonitor(
           }
           // Only a positive probe result may classify this as a live-pool hang.
           // Unknown/error/no-probe cases retain the ordinary fail-safe hang path.
-          await killWorkerTree(handle, monitorDeps);
-          if (disposition === "hang_with_live_pool") {
-            throw new HangWithLivePoolError({
-              workerPid: handle.pid,
-              poolId: handle.poolId,
-              step: spec.id,
-            });
+          //
+          // Reject the race with the hang error FIRST, then kill the tree. If we
+          // kill-then-throw, the child signal-exit can settle before the throw and
+          // win Promise.race as `killed`, swallowing HangWithLivePoolError (relay
+          // would never see the hang). Kill is best-effort after the reject.
+          const hangError =
+            disposition === "hang_with_live_pool"
+              ? new HangWithLivePoolError({
+                  workerPid: handle.pid,
+                  poolId: handle.poolId,
+                  step: spec.id,
+                })
+              : new Error(`monitored worker idle hang: ${spec.id}`);
+          const killPromise = killWorkerTree(handle, monitorDeps);
+          try {
+            throw hangError;
+          } finally {
+            await killPromise.catch(() => undefined);
           }
-          throw new Error(`monitored worker idle hang: ${spec.id}`);
         }
-        return await exitPromise.then((exitCode) => ({ kind: "exit", exitCode }));
+        return await exitPromise;
       })();
-      const race = await Promise.race([
-        exitPromise.then((exitCode): MonitorRace => ({ kind: "exit", exitCode })),
-        monitorPromise,
-      ]);
-      // Observe the race loser. If exit won while handleMonitoredWorkerIdle was
-      // still in flight, a late QuotaWaitForResetError (or other throw) must be
-      // swallowed-with-log — never an unhandledRejection that can crash Node.
-      if (race.kind === "exit") {
+      const race = await Promise.race([exitPromise, monitorPromise]);
+      // Observe the race loser. If exit/kill won while handleMonitoredWorkerIdle
+      // was still in flight, a late QuotaWaitForResetError (or other throw) must
+      // be swallowed-with-log — never an unhandledRejection that can crash Node.
+      if (race.kind === "exit" || race.kind === "killed") {
         monitorCancelled = true;
         void monitorPromise.then(
           () => undefined,
@@ -990,8 +1010,19 @@ export async function dispatchWorkerWithMonitor(
           },
         );
       }
-      const exitCode =
-        race.kind === "exit" ? race.exitCode : await exitPromise;
+      // Signal-killed legs must land a `killed` collect row — do not silently
+      // feed null exitCode into awaitMonitoredCliWorker and drop the terminal.
+      // Hang dispositions reject monitorPromise (above) before kill settles, so
+      // they never reach this branch. Late post-exit handler throws stay swallowed.
+      if (race.kind === "killed") {
+        const result: WorkerResult = {
+          kind: "failed",
+          reason: `CLI worker ${spec.id} killed by signal ${race.signal}`,
+        };
+        stampCollect({ kind: "result", result });
+        return { result, monitorHandle: handle };
+      }
+      const exitCode = race.exitCode;
       if (backend.awaitMonitoredCliWorker === undefined) {
         const result: WorkerResult = {
           kind: "failed",
@@ -1030,6 +1061,19 @@ export async function dispatchWorkerWithMonitor(
       stampCollect({ kind: "result", result });
       return { result, monitorHandle: handle };
     }
+    // Container / legacy path: stamp dispatch at the moment we hand off to the
+    // backend (no monitor handle.dispatchedAt available).
+    tryAppendTelemetryRecord(
+      ledgerDir,
+      buildDispatchStamp({
+        legId,
+        spec,
+        ctx,
+        dispatchedAt: new Date().toISOString(),
+        poolId:
+          ctx.billingPool !== undefined ? ctx.billingPool : undefined,
+      }),
+    );
     const result = await dispatchWorker(backend, spec, ctx, landing);
     stampCollect({ kind: "result", result });
     return { result };

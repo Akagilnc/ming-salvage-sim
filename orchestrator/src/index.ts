@@ -46,6 +46,7 @@ export {
   buildCollectStamp,
   buildDispatchStamp,
   buildEnvironmentStamp,
+  categoryFromReason,
   classifyWorkerTerminal,
   ensureEnvironmentStamp,
   extractClaudeTokens,
