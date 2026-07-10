@@ -163,7 +163,7 @@ def test_knowledge_world_is_qualitative_not_numeric(game):
     assert not any(char.isdigit() for char in view["world"]["treasury"])
 
 
-def test_secret_office_exclusion_blocks_dynamic_office_bucket(game):
+def test_secret_office_exclusion_does_not_hide_unrelated_world_bucket(game):
     db, state, content = game
     clerk = next(c for c in content.characters.values() if c.office_type == "户部")
     order = db.create_secret_order(
@@ -173,7 +173,7 @@ def test_secret_office_exclusion_blocks_dynamic_office_bucket(game):
 
     assert db.list_secret_orders()[0]["excluded_targets"] == {"people": [], "offices": ["户部"]}
     assert view["world"]["public"] == "登基伊始，朝廷暂无前回合奏报。"
-    assert view["world"].get("treasury", "") == ""
+    assert view["world"].get("treasury")
     assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
 
 
@@ -189,7 +189,7 @@ def test_secret_exclusion_is_source_scoped_not_global_for_same_bucket(game):
     excluded_view = db.get_character_knowledge(state, excluded.name)
     unaffected_view = db.get_character_knowledge(state, unaffected.name)
 
-    assert "treasury" not in excluded_view["world"]
+    assert excluded_view["world"].get("treasury")
     assert unaffected_view["world"].get("treasury")
 
 
@@ -266,7 +266,7 @@ def test_office_blacklist_preserves_unrelated_court_domain_fact(game):
     view = db.get_character_knowledge(state, minister.name)
 
     assert view["world"].get("personnel")
-    assert view["world"].get("treasury") == ""
+    assert view["world"].get("treasury")
 
 
 def test_event_office_blacklist_matches_current_office_name(game):

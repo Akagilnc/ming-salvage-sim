@@ -35,55 +35,15 @@ def _qualitative(text: object) -> str:
 
 
 def _world(
-    db: Any, state: Any, office_type: str, office_name: str,
-    excluded_people: set[str] | None = None, excluded_offices: set[str] | None = None,
+    db: Any, state: Any, office_type: str,
 ) -> Dict[str, str]:
     bucket = _OFFICE_BUCKETS.get(office_type, "public")
     reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
     def fact(text: object) -> str:
-        value = _qualitative(text)
-        for person in excluded_people or set():
-            value = value.replace(person, "某人")
-        return value
+        return _qualitative(text)
 
     public = "\n".join(fact(r.get("report")) for r in reports)
-    if office_type in (excluded_offices or set()) or office_name in (excluded_offices or set()):
-        # A direct office-level blackout removes the reader's public view too;
-        # cross-domain readers still retain their unrelated public layer.
-        public = ""
     result: Dict[str, str] = {"public": public or "登基伊始，朝廷暂无前回合奏报。"}
-
-    # Keep each world fact tied to its domain.  A blacklist for 户部 therefore
-    # removes the treasury fact even when it is being read by 内阁, without
-    # accidentally deleting 内阁's personnel fact as well.  The current office
-    # and title are checked at read time, so appointment changes cannot revive a
-    # fact that was blacklisted for that office.
-    domain_offices = {
-        "treasury": {"户部"}, "military": {"兵部", "边镇"},
-        "regional": {"督抚", "地方", "外臣"}, "personnel": {"吏部"},
-        "construction": {"工部"}, "security": {"锦衣卫", "东厂"},
-        "court": {"内阁", "司礼监", "内臣", "内廷"},
-    }
-
-    def blocked(domain: str) -> bool:
-        # Office exclusions are provenance-aware: an exclusion for 户部 may
-        # hide the treasury fact, but must not erase unrelated personnel or
-        # court facts.  Do not compare against the reader's office here; the
-        # source office of the fact is the secrecy boundary.
-        fact_sources = domain_offices.get(domain, set())
-        targets = excluded_offices or set()
-        if fact_sources & targets:
-            return True
-        # A persisted exclusion may use a concrete office title (for example
-        # ``南京户部尚书``) rather than the normalized office_type.  Resolve
-        # that title to its source type without turning the exclusion into a
-        # global "clear every bucket" switch.
-        characters = getattr(getattr(db, "content", None), "characters", {}) or {}
-        return office_name in targets and any(
-            str(getattr(character, "office", "") or "") == office_name
-            and str(getattr(character, "office_type", "") or "") in fact_sources
-            for character in characters.values()
-        )
 
     facts = {
         "treasury": db.treasury_report(state),
@@ -108,32 +68,14 @@ def _world(
             # generic offices must not treat it as a deterministic report
             # source (there is no ``facts["public"]`` entry).
             continue
-        if blocked(domain):
-            # Keep the domain addressable while making the secrecy boundary
-            # explicit.  A missing key is indistinguishable from an unmapped
-            # office/domain and lets callers accidentally fall back to it.
-            if office_type in {"内阁", "司礼监", "内臣", "内廷"}:
-                result[domain] = ""
-            continue
-        else:
-            result[domain] = fact(facts[domain])
+        result[domain] = fact(facts[domain])
     return result
 
 
 def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[str, object]:
     character = db.content.characters.get(character_name) if db.content else None
     office_type = str(getattr(character, "office_type", "") or "")
-    exclusion_targets = {"people": set(), "offices": set()}
-    for order in db.list_secret_orders():
-        targets = json.loads(order.get("excluded_targets") or "{}") if isinstance(order.get("excluded_targets"), str) else order.get("excluded_targets") or {}
-        exclusion_targets["people"].update(str(x) for x in targets.get("people", []))
-        exclusion_targets["offices"].update(str(x) for x in targets.get("offices", []))
-    office_name = str(getattr(character, "office", "") or "")
-    world = _world(
-        db, state, office_type, office_name,
-        {character_name} if character_name in exclusion_targets["people"] else set(),
-        exclusion_targets["offices"],
-    )
+    world = _world(db, state, office_type)
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
     # Issued directives are public by their nature.  Read them here so old
