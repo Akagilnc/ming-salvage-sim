@@ -17,12 +17,9 @@ from agno.skills.loaders.local import LocalSkills
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.context import character_context_with_db, faction_context_with_db
-from ming_sim.db import (
-    _building_output_effect,
-    building_qualitative_fields,
-)
 from ming_sim.models import Character, CourtContext, LLMConfig, MINISTER_CHAT_CLI_TIMEOUT_SECONDS
 from ming_sim.llm_model import create_chat_model
+from ming_sim.qualitative import building_output_effect, building_qualitative_fields, power_band
 from ming_sim.token_stats import tlog
 from ming_sim.tools import _duty_location, build_minister_tools
 
@@ -114,16 +111,9 @@ def _power_brief(context: CourtContext) -> str:
     if not rows:
         return "势力未建档。"
 
-    def band(value: object) -> str:
-        try:
-            n = int(value or 0)
-        except (TypeError, ValueError):
-            n = 50
-        return "极弱" if n < 20 else "偏弱" if n < 40 else "中等" if n < 60 else "偏强" if n < 80 else "强盛"
-
     return "；".join(
-        f"{row['name']}（{row['leader']}）：{row['stance']}，朝势{band(row['leverage'])}、"
-        f"军力{band(row['military_strength'])}、财力{band(row['supply'])}，"
+        f"{row['name']}（{row['leader']}）：{row['stance']}，朝势{power_band(row['leverage'])}、"
+        f"军力{power_band(row['military_strength'])}、财力{power_band(row['supply'])}，"
         f"{row['status']}；近动：{row['last_action'] or '尚无新动'}"
         for row in rows
     )
@@ -290,7 +280,7 @@ def build_building_brief(context: CourtContext) -> str:
     lines = []
     for r in rows:
         metric = str(r["output_metric"] or "")
-        out = _building_output_effect(metric, r["output_amount"], prefix="·")
+        out = building_output_effect(metric, r["output_amount"], prefix="·")
         level, condition, _risk = building_qualitative_fields(r)
         lines.append(
             f"{r['name']}（{r['category']}·{r['region_name']}）"

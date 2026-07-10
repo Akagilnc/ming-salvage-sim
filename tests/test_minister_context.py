@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 from ming_sim.models import CourtContext
 from ming_sim.context import character_context_with_db
+from ming_sim.context import _faction_band, _identity_band, _identity_bucket
 from ming_sim.registry import (
     build_building_brief,
     build_court_brief,
@@ -20,6 +21,7 @@ from ming_sim.registry import (
 )
 from ming_sim.models import LLMConfig
 from ming_sim.tools import build_minister_tools
+from ming_sim.tools import _qualitative_condition
 
 
 def _ctx(game):
@@ -200,6 +202,13 @@ def test_minister_memorial_tools_hide_abstract_resolve_and_fail_conditions(game)
     assert "陕西动乱达到所定档位" in rendered
 
 
+@pytest.mark.parametrize("operator", ["<", "<=", ">", ">=", "==", "!="])
+def test_minister_tools_preserve_comparison_operator_for_countable_conditions(operator):
+    rendered = _qualitative_condition(f"army.guanning.arrears {operator} 12.5")
+
+    assert rendered == f"army.guanning.arrears{operator}12.5"
+
+
 def test_estimate_resistance_returns_only_qualitative_level(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -256,6 +265,13 @@ def test_minister_context_is_characterized_without_abstract_numbers(game):
     assert str(minister.integrity) not in rendered
     assert str(minister.courage) not in rendered
     assert str(minister.identity) not in rendered
+
+
+def test_character_and_faction_zero_scores_use_lowest_qualitative_bucket():
+    assert _identity_bucket(0) == "low"
+    assert _identity_band(0) == "几乎不染党色"
+    assert _faction_band("satisfaction", 0) == "怨气深重"
+    assert _faction_band("leverage", 0) == "人马凋零"
 
 
 def test_minister_context_falls_back_for_character_without_dossier(game):

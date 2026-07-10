@@ -148,13 +148,13 @@ def _qualitative_stop_condition(raw: object) -> str:
 def _qualitative_condition(raw: object) -> str:
     """Hide abstract thresholds in legacy resolve/fail condition strings."""
     text = str(raw or "").strip()
-    match = re.fullmatch(r"([^<>=!]+?)\s*(?:<=|>=|==|!=|<|>)\s*(-?\d+(?:\.\d+)?)", text)
+    match = re.fullmatch(r"([^<>=!]+?)\s*(<=|>=|==|!=|<|>)\s*(-?\d+(?:\.\d+)?)", text)
     if not match:
         return "（条件已存档）" if text else "（未填）"
     key = match.group(1).strip()
     field = key.rsplit(".", 1)[-1]
     if field in _COUNTABLE_STOP_FIELDS:
-        return f"{key}{match.group(2)}"
+        return f"{key}{match.group(2)}{match.group(3)}"
     display_key = key
     parts = key.split(".")
     if len(parts) >= 2:

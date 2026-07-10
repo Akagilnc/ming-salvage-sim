@@ -31,7 +31,11 @@ from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, monthly_amount, period_label,
 )
-from ming_sim.qualitative import qualitative_band
+from ming_sim.qualitative import (
+    building_output_effect,
+    building_qualitative_fields,
+    qualitative_band,
+)
 from ming_sim.token_stats import tlog
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -53,52 +57,6 @@ def _public_support_description(value: object) -> str:
 
 def _unrest_description(value: object) -> str:
     return "动乱" + qualitative_band(value, ("平静", "有患", "不安", "升高", "已炽"))
-
-
-def _building_level_description(value: object) -> str:
-    try:
-        level = int(value or 0)
-    except (TypeError, ValueError):
-        level = 0
-    return "初设" if level <= 1 else "成形" if level == 2 else "完备" if level == 3 else "宏整" if level == 4 else "巨构"
-
-
-def _building_condition_description(value: object) -> str:
-    try:
-        condition = int(value or 0)
-    except (TypeError, ValueError):
-        condition = 0
-    return "残损" if condition < 20 else "失修" if condition < 40 else "尚可" if condition < 60 else "完好" if condition < 80 else "坚固"
-
-
-def _building_risk_description(value: object) -> str:
-    try:
-        risk = int(value or 0)
-    except (TypeError, ValueError):
-        risk = 0
-    return "低" if risk < 20 else "中" if risk < 50 else "偏高" if risk < 80 else "极高"
-
-
-def _building_output_effect(metric: str, amount: object, prefix: str = "") -> str:
-    if not metric:
-        return ""
-    if metric in ("民心", "皇威"):
-        try:
-            output = int(amount or 0)
-        except (TypeError, ValueError):
-            output = 0
-        effect = "略有裨益" if output < 10 else "颇有裨益" if output < 30 else "有显著裨益"
-        return f"{prefix}对{metric}{effect}"
-    return f"{prefix}产出{metric}{amount}"
-
-
-def building_qualitative_fields(row: object) -> Tuple[str, str, str]:
-    """建筑呈现层共用的规模、完好、风险定性，避免各出口阈值漂移。"""
-    return (
-        _building_level_description(row["level"]),
-        _building_condition_description(row["condition"]),
-        _building_risk_description(row["risk"]),
-    )
 
 
 class ProvinceFiscalTickOutcome(NamedTuple):
@@ -6205,7 +6163,7 @@ class GameDB:
         for r in rows:
             metric = str(r["output_metric"])
             if metric in ("民心", "皇威") and qualitative:
-                out = _building_output_effect(metric, r["output_amount"])
+                out = building_output_effect(metric, r["output_amount"])
             elif metric:
                 out = f"产出{metric}{r['output_amount']}"
             else:
@@ -6265,7 +6223,7 @@ class GameDB:
             raise ValueError(f"未找到建筑 '{name_or_id}'")
         metric = str(row["output_metric"])
         if metric in ("民心", "皇威") and qualitative:
-            out = _building_output_effect(metric, row["output_amount"])
+            out = building_output_effect(metric, row["output_amount"])
         else:
             out = f"产出{metric}{row['output_amount']}/{TURN_UNIT}" if metric else "无结算产出"
         if qualitative:
