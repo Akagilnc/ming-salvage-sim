@@ -504,7 +504,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         """密令统一入口。action 取值：
         - "issue"：下达新密令。需填 title、content；assignee 留空默认当前大臣；deadline_months=0 无硬限。
         - "progress"：汇报进展（兼查历史）。填 order_id；progress 非空且非建档当月则暂存落档，同月补充会修正本月行。
-        - "submit"：提交结案。填 order_id、claim（办结陈词200字内）。
+        - "submit"：提交结案。填 order_id、claim（办结陈词）。
         - "rush"：催办加急。填 order_id；deadline_months=1 下月核议，0=本月即核。
         """
         # 恢复窗总闸（PR #90 R2 codex P2）：FRONT_HALF_DONE 时四个 action 都是
@@ -525,13 +525,13 @@ def build_minister_tools(character: Character, context: CourtContext,
     def _secret_order_issue(title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0) -> str:
         """皇帝下达密令，返回待确认密令 payload，由召对确认闸门决定是否正式落库。
 
-        title：密令标题（20字内）。
+        title：密令标题。
         content：密令详情，交代任务目标、保密要求、期限等。
         tags_json：JSON 数组，填相关人名/地区/事项关键词，用于日后检索，如 '["辽饷","兵部","密查"]'。
         assignee：实际承办人姓名。留空则默认为当前召见的大臣；若皇帝指名他人承办（如"命毕自严去查"），填该人全名。
         deadline_months：硬期限月数；0 表示无硬期限。若皇帝说"下月务必结案"填 1，说"三个月内结案"填 3。
         """
-        t = (title or "").strip()[:20]
+        t = (title or "").strip()
         c = (content or "").strip()
         if not t or not c:
             return "密令下达失败：标题或内容为空。"
@@ -574,7 +574,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         if order["status"] != "active":
             return f"密令 #{order['id']} 已{order['status']}，不能再记进展。"
         is_issuing_turn = int(order.get("turn_issued") or 0) == int(context.state.turn)
-        note = (progress or "").strip()[:200]
+        note = (progress or "").strip()
         if note and not is_issuing_turn:
             return _pending_secret_action("记进展", int(order["id"]), {"note": note})
         order = context.db.get_secret_order(order["id"]) or order
@@ -597,7 +597,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         text = (claim or "").strip()
         if not text:
             return "提交失败：claim 为空。"
-        return _pending_secret_action("提交核议", int(order["id"]), {"claim": text[:200]})
+        return _pending_secret_action("提交核议", int(order["id"]), {"claim": text})
 
     def _secret_order_rush(order_id: int, deadline_months: int = 1, reason: str = "") -> str:
         order, err = _own_secret_order(order_id)
