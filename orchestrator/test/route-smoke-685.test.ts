@@ -88,7 +88,7 @@ describe("#685 route tool smoke", () => {
 
     expect(Object.values(smoked.smoke).every((status) => status.state === "passed")).toBe(true);
     expect(routeSmokeFailure(smoked)).toBeUndefined();
-    expect(smoked.smoke["coder:sonnet"]).toMatchObject({
+    expect(smoked.smoke["coder:gpt-5.6-terra"]).toMatchObject({
       state: "passed",
       cliVersion: "cli-1",
     });

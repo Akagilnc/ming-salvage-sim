@@ -427,7 +427,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         repairHint: expect.stringContaining("leg accounting payload"),
         metadata: expect.objectContaining({
           routeAccounting: expect.objectContaining({
-            declaredLegs: ["gpt-5.5", "agy"],
+            declaredLegs: ["gpt-5.6-sol", "agy"],
             successfulLegs: ["agy", "opus"],
             skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
             routeFingerprint: expect.any(String),
@@ -436,7 +436,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
               content: expect.objectContaining({
                 legCollections: expect.objectContaining({
                   cmrReview: expect.arrayContaining([
-                    expect.objectContaining({ slug: "gpt-5.5" }),
+                    expect.objectContaining({ slug: "gpt-5.6-sol" }),
                     expect.objectContaining({ slug: "agy" }),
                   ]),
                 }),
