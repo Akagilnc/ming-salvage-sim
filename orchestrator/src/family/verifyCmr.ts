@@ -97,6 +97,10 @@ import {
   waitForBotQuiescence,
   type OnlineReviewLoopStageResult,
 } from "../onlineReviewLoop.js";
+import {
+  priorCmrFindingsFromFamilyLedger,
+  priorOnlineReviewFindingsFromLedger,
+} from "../findingFamilies.js";
 import { applyVerifySideEffects } from "../onlineReviewSideEffects.js";
 import {
   isValidCleanupResult,
@@ -128,6 +132,7 @@ import type {
   DispatchContext,
   EscalationAnswerPayload,
   FindingDisposition,
+  FindingFamily,
   ShipResult,
   StepOutput,
   VerifyResult,
@@ -1055,6 +1060,7 @@ async function runCmrCoderFix(input: {
   readonly familyBase: string;
   readonly classification: CmrEnvelope;
   readonly blockingFindingIdentityKeys: readonly string[];
+  readonly findingFamilies?: ReadonlyArray<FindingFamily>;
   readonly familyHeadBefore?: string;
   readonly escalationAnswer?: EscalationAnswerPayload;
   readonly familyIssue?: number;
@@ -1066,6 +1072,7 @@ async function runCmrCoderFix(input: {
     familyBase,
     classification,
     blockingFindingIdentityKeys,
+    findingFamilies,
     familyHeadBefore,
     escalationAnswer,
     familyIssue,
@@ -1098,7 +1105,10 @@ async function runCmrCoderFix(input: {
         ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
         ...(familyIssue !== undefined ? { familyIssue } : {}),
       },
-      { blockingFindings: classification.blocking },
+      {
+        blockingFindings: classification.blocking,
+        ...(findingFamilies !== undefined ? { findingFamilies } : {}),
+      },
     );
     const familyHeadAfter = await readPostCmrFamilyHead(
       familyBackend,
@@ -1858,6 +1868,21 @@ export async function runFamilyOnlineReviewLoop(input: {
       {
         initialRound: loopState.round,
         initialFixCommitSha: loopState.lastFixSha,
+        enrichVerifyLanding: async (landing, round) => {
+          const ledger = await input.familyBackend.readFamilyLedger();
+          // Family ledger rows are phase-level markers; slice-style S9 outputs may
+          // also be present when the family path reuses single-slice review rows.
+          const priorRoundFindings = priorOnlineReviewFindingsFromLedger(
+            ledger as ReadonlyArray<{
+              readonly step?: string;
+              readonly output?: StepOutput;
+            }>,
+            round,
+          );
+          return priorRoundFindings.length > 0
+            ? { ...landing, priorRoundFindings }
+            : landing;
+        },
       },
     );
   } catch (err) {
@@ -2031,6 +2056,8 @@ async function runIntegratedCmrPass(input: {
     };
   }
   const spec = cmrWorkerSpec("fresh", pass, resolvedRoute);
+  const familyLedger = await familyBackend.readFamilyLedger();
+  const priorRoundFindings = priorCmrFindingsFromFamilyLedger(familyLedger, pass);
   const dispatchCtx: DispatchContext = {
     familyBase,
     cmrPass: pass,
@@ -2042,6 +2069,7 @@ async function runIntegratedCmrPass(input: {
     ...(priorCmrFindingIdentityKeys !== undefined
       ? { priorCmrFindingIdentityKeys }
       : {}),
+    ...(priorRoundFindings.length > 0 ? { priorRoundFindings } : {}),
   };
   // #598: one "logical cmr attempt" = a fresh dispatch + the same-worker
   // `rewriteOutcomeProtocolFailure` counter (OUTCOME_REWRITE_RETRY_CAP). When that
@@ -2450,6 +2478,9 @@ async function runIntegratedCmrPass(input: {
           familyBase,
           classification: cmrFindingClassification,
           blockingFindingIdentityKeys,
+          ...(cmrResult.output.findingFamilies !== undefined
+            ? { findingFamilies: cmrResult.output.findingFamilies }
+            : {}),
           familyHeadBefore: postWorkerFamilyHead,
           escalationAnswer,
           familyIssue,

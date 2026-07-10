@@ -5,6 +5,8 @@ same-class-bug scan and regression self-check, then commit fixes and push so bot
 can re-review.
 
 Fix only findings listed in `fixMarkedFindingIdentityKeys` in the landing file.
+When `.fix-focus.md` is present, run same-type sweeps **per family** in that
+file (not per isolated finding) before committing.
 
 Inspect the current branch for each assigned finding before emitting your outcome:
 

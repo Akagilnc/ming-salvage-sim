@@ -40,5 +40,9 @@ Before emitting your terminal verdict, read
    count (a round counter is exactly the runner-side cap that was removed — do not
    re-create it inside the worker).
 
+When prior integrated-CMR rounds are listed in `.cmr-focus.md`, you may emit
+optional `findingFamilies` in your `<cmr>` verdict — grouped findings with
+`recurringFromRounds` and a one-sentence pattern brief for the fix worker.
+
 Report your terminal verdict per the worker output contract in the prompt. Stay
 strictly inside this pass's scope.
