@@ -317,8 +317,13 @@ describe("#685 route tool smoke", () => {
     const home = mkdtempSync(join(tmpdir(), "route-smoke-production-"));
     const route = resolveRouteModels("normal", {});
     const smokeRunCount = new Set(routeSmokeEntries(route).map(({ slug }) => slug)).size;
+    let mutateNextSmokeEnvTo: string | undefined = "7";
     runSpy.mockImplementation(async (options: Parameters<typeof sc.run>[0]) => {
       if (options.logging?.type === "file") {
+        if (mutateNextSmokeEnvTo !== undefined) {
+          process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = mutateNextSmokeEnvTo;
+          mutateNextSmokeEnvTo = undefined;
+        }
         options.logging.onAgentStreamEvent?.({
           type: "toolCall",
           name: "bash",
@@ -341,6 +346,7 @@ describe("#685 route tool smoke", () => {
 
       runSpy.mockClear();
       process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = "7";
+      mutateNextSmokeEnvTo = "42";
       await backend.smokeModelRoute(
         route,
         Object.fromEntries(routeSmokeEntries(route).map(({ slug }) => [slug, "changed-cli-version"])),
