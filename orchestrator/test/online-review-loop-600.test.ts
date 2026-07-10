@@ -1297,7 +1297,9 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
         threadReplies: [{ threadId: "99", body: "rejected: unrelated prior reply" }],
       },
       fixingCommitSha: "abc123def456",
-      approvedFixMarkedFindingIdentityKeys: ["finding:99"],
+      approvedFixMarkedFindingThreads: [
+        { identityKey: "finding:99", threadId: "99" },
+      ],
     });
     const fixedReplies = result.repliesPosted.filter((r) =>
       r.body.startsWith("fixed: https://github.com/o/r/commit/"),
@@ -1359,7 +1361,9 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
         threadsToResolve: ["99"],
       },
       fixingCommitSha: "abc123def456",
-      approvedFixMarkedFindingIdentityKeys: ["finding:99"],
+      approvedFixMarkedFindingThreads: [
+        { identityKey: "finding:99", threadId: "99" },
+      ],
     });
     expect(result.threadsResolved).toEqual(["99"]);
     expect(
@@ -1389,7 +1393,39 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
         threadsToResolve: ["99"],
       },
       fixingCommitSha: "abc123def456",
-      approvedFixMarkedFindingIdentityKeys: ["finding:approved"],
+      approvedFixMarkedFindingThreads: [
+        { identityKey: "finding:approved", threadId: "99" },
+      ],
+    });
+
+    expect(result.threadsResolved).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("#743 R2: an approved identity cannot be rebound to a different landing thread", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      return JSON.stringify(GITHUB_RESOLVE_MUTATION_SHAPE);
+    };
+
+    const result = applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      verify: {
+        kind: "verify",
+        converged: false,
+        isRecheck: true,
+        findingDispositions: [
+          { identityKey: "finding:approved", threadId: "99", action: "fix" },
+        ],
+        threadsToResolve: ["99"],
+      },
+      fixingCommitSha: "abc123def456",
+      approvedFixMarkedFindingThreads: [
+        { identityKey: "finding:approved", threadId: "42" },
+      ],
     });
 
     expect(result.threadsResolved).toEqual([]);
@@ -1537,7 +1573,9 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
         threadsToResolve: ["4242"],
       },
       fixingCommitSha: "abc123def456",
-      approvedFixMarkedFindingIdentityKeys: ["finding:4242"],
+      approvedFixMarkedFindingThreads: [
+        { identityKey: "finding:4242", threadId: "4242" },
+      ],
     });
     expect(result.threadsResolved).toEqual(["PRRT_kwDOExampleThread"]);
     expect(
@@ -1584,7 +1622,9 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
         threadsToResolve: ["PRRT_kwDOExampleThread"],
       },
       fixingCommitSha: "abc123def456",
-      approvedFixMarkedFindingIdentityKeys: ["finding:4242"],
+      approvedFixMarkedFindingThreads: [
+        { identityKey: "finding:4242", threadId: "PRRT_kwDOExampleThread" },
+      ],
     });
     expect(result.threadsResolved).toEqual(["PRRT_kwDOExampleThread"]);
     expect(
@@ -4268,6 +4308,9 @@ describe("#600 r26 runner-owned isRecheck", () => {
     );
 
     expect(recheckLanding?.fixMarkedFindingIdentityKeys).toEqual([expectedKey]);
+    expect(recheckLanding?.fixMarkedFindingThreads).toEqual([
+      { identityKey: expectedKey, threadId: "1" },
+    ]);
     expect(result).toEqual({
       ok: false,
       terminalState: "decision_gate_raised",
@@ -4598,8 +4641,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
           landingThreads: [
             { id: "4242", threadNodeId: "PRRT_kwDOExampleThread" },
           ],
-          approvedFixMarkedFindingIdentityKeys:
-            landing.fixMarkedFindingIdentityKeys,
+          approvedFixMarkedFindingThreads: landing.fixMarkedFindingThreads,
         });
         return verify;
       },
@@ -5340,6 +5382,67 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
       } else {
         process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
       }
+    }
+  });
+
+  it("#743 R2 runner path: rebuilding the round-2 landing still rejects bare convergence", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      class RebuildGuardBackend extends HookPollBackend {
+        verifyCount = 0;
+
+        override async pollOnlineReviewState(): Promise<OnlineReviewLandingSnapshot> {
+          return { ...greenHookSnapshot(), prUrl: offlinePr };
+        }
+
+        override async dispatchWorker(
+          spec: WorkerSpec,
+          ctx?: DispatchContext,
+          landing?: WorkerLandingPayload,
+        ): Promise<WorkerResult> {
+          if (spec.kind === "ship") {
+            return {
+              kind: "completed",
+              output: {
+                kind: "ship",
+                branch: worktree.branch,
+                status: "pr_opened",
+                pr: offlinePr,
+              },
+            };
+          }
+          if (spec.kind === "verify") {
+            this.verifyCount += 1;
+            if (this.verifyCount === 1) {
+              return {
+                kind: "completed",
+                output: {
+                  kind: "verify",
+                  converged: false,
+                  findingDispositions: [
+                    { identityKey: "finding:r2", threadId: "4242", action: "fix" },
+                  ],
+                },
+              };
+            }
+            return { kind: "completed", output: { kind: "verify", converged: true } };
+          }
+          return super.dispatchWorker(spec, ctx, landing);
+        }
+      }
+
+      const result = await runOrchestrator({
+        issueNumber: 600,
+        backend: new RebuildGuardBackend(),
+      });
+      expect(result.status).toBe("error");
+      expect(result.stopSummary).toEqual(
+        expect.objectContaining({ reason: "contract_drift" }),
+      );
+    } finally {
+      if (prev === undefined) delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      else process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
     }
   });
 });

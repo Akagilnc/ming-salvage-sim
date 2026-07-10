@@ -419,6 +419,9 @@ class ReviewLoopResumeBackend extends DispatchRecordingResumeBackend {
           output: {
             kind: "verify",
             converged: true,
+            ...(landing?.fixMarkedFindingIdentityKeys?.length
+              ? { isRecheck: true }
+              : {}),
             fixMarkedFindingIdentityKeys:
               landing?.fixMarkedFindingIdentityKeys ?? [],
           } satisfies VerifyResult,
@@ -1517,6 +1520,9 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     const fixerLanding = backend.dispatchLandings[fixerIdx];
     expect(fixerLanding?.onlineReviewSnapshot).toBeDefined();
     expect(fixerLanding?.fixMarkedFindingIdentityKeys).toEqual(["f:1"]);
+    expect(fixerLanding?.fixMarkedFindingThreads).toEqual([
+      { identityKey: "f:1", threadId: "100" },
+    ]);
     expect(
       backend.dispatchContexts.find((_, i) => backend.dispatchSpecs[i]?.id === "S10")
         ?.onlineReviewRound,

@@ -716,6 +716,15 @@ export interface WorkerLandingPayload {
   readonly onlineReviewRound?: number;
   /** S10 fixer only: fix-marked finding identity keys from verify worker. */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /**
+   * S9/S10: the original review thread bound to each fixer-approved identity.
+   * A key alone is not authority to close another thread that happens to claim
+   * the same identity.
+   */
+  readonly fixMarkedFindingThreads?: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
   /** S9 verify: prior online-review rounds from ledger (#711). */
   readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
   /** S10 fixer / S5 coder-fix: pattern briefs from prior judge worker (#711). */
