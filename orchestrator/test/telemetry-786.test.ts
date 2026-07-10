@@ -597,6 +597,19 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     return backend as unknown as Backend;
   }
 
+  class ReceiverBoundTelemetryBackend {
+    public readonly opts: { installs: number };
+
+    constructor(opts: { installs: number }) {
+      this.opts = opts;
+    }
+
+    // Production shape: a prototype class method that must retain `this`.
+    installTelemetryRunEnvironment(): void {
+      this.opts.installs += 1;
+    }
+  }
+
   it("does not reinstall telemetry environment when the ledger is already stamped", async () => {
     const dir = tempDir("orch-786-existing-env-");
     const ledgerDir = join(dir, ".ledger-786");
@@ -606,13 +619,10 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       join(ledgerDir, TELEMETRY_FILENAME),
       JSON.stringify(envRecordStub()) + "\n",
     );
-    let installCalls = 0;
-    const backend = quickExitBackend("done\n") as Backend & {
-      installTelemetryRunEnvironment(): void;
-    };
-    backend.installTelemetryRunEnvironment = () => {
-      installCalls += 1;
-    };
+    const backend = Object.assign(
+      new ReceiverBoundTelemetryBackend({ installs: 0 }),
+      quickExitBackend("done\n"),
+    ) as Backend & ReceiverBoundTelemetryBackend;
 
     await dispatchWorkerWithMonitor(
       backend,
@@ -629,7 +639,34 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       },
     );
 
-    expect(installCalls).toBe(0);
+    expect(backend.opts.installs).toBe(0);
+  });
+
+  it("calls a receiver-bound backend installer asynchronously and writes the missing environment stamp", async () => {
+    const dir = tempDir("orch-786-receiver-bound-env-");
+    const ledgerDir = join(dir, ".ledger-786");
+    const backend = Object.assign(
+      new ReceiverBoundTelemetryBackend({ installs: 0 }),
+      quickExitBackend("done\n"),
+    ) as Backend & ReceiverBoundTelemetryBackend;
+
+    await dispatchWorkerWithMonitor(
+      backend,
+      workerSpec(),
+      { stateDir: ledgerDir, modelRoute: smokedRoute() },
+      undefined,
+      {
+        idleThresholdMs: 60_000,
+        pollIntervalMs: 20,
+        monitorDeps: {
+          readInstanceId: () => "test-instance-786-receiver-bound",
+          sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),
+        },
+      },
+    );
+
+    expect(backend.opts.installs).toBe(1);
+    expect(readTelemetryRecords(ledgerDir).some((r) => r.phase === "environment")).toBe(true);
   });
 
   it("writes environment + dispatch + collect half-rows joined by legId", async () => {

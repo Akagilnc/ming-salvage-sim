@@ -392,13 +392,12 @@ export class RealFamilyBackend implements FamilyBackend {
     this.opts = opts;
     this.validateFamilyPromptsDir();
     this.validateSoulsDir();
-    // #786 — seed process-level run env (family promptsDir). Child legs reinstall
-    // their own fingerprints on dispatch; family legs call this again before stamp.
-    this.installTelemetryRunEnvironment();
   }
 
   /**
-   * #786: reinstall this family backend's fingerprints before environment stamp.
+   * #786: install this family backend's fingerprints immediately before an absent
+   * environment stamp is written. Deliberately not called from the constructor:
+   * image inspection and directory hashing must never block backend creation.
    */
   installTelemetryRunEnvironment(): void {
     configureTelemetryFromWorkerImage({
