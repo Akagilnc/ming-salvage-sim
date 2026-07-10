@@ -401,7 +401,7 @@ def test_final_minister_context_rejects_any_injected_abstract_value_shape(game):
 def test_historical_context_rejects_injected_abstract_values_across_all_history_seams(game):
     """邸报、章节记忆和历史报告工具都必须守住最终上下文的 P4 边界。"""
     db, state, content = game
-    injected = "民心=73；忠诚：88；动乱 19；欠饷约三月。"
+    injected = "忠诚值：88；能力评分：98；民心数值：73；进度指标：41/100；欠饷约三月。"
     state.turn = max(2, int(state.turn))
     db.get_turn_report = lambda _turn: injected
     db.list_chapter_memories = lambda **_kwargs: [
@@ -421,9 +421,10 @@ def test_historical_context_rejects_injected_abstract_values_across_all_history_
     memories = tools["search_memories"](keywords="旧事")
 
     for rendered in (gazette, memory, history, memories):
-        assert "民心=73" not in rendered
-        assert "忠诚：88" not in rendered
-        assert "动乱 19" not in rendered
+        assert "忠诚值：88" not in rendered
+        assert "能力评分：98" not in rendered
+        assert "民心数值：73" not in rendered
+        assert "进度指标：41/100" not in rendered
         assert "已略去" in rendered or "未见正式邸报记录" in rendered
 
 
