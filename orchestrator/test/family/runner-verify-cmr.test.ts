@@ -85,23 +85,18 @@ class ChildBackend implements Backend {
   async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
 }
 
-/** Models an old persisted ledger row whose invalid stop reason bypassed today's schema. */
+/** Models an old persisted CMR-abort row using the current durable shape. */
 function readMalformedPersistedCmrAbort(): FamilyLedgerEntry {
-  return JSON.parse(
-    JSON.stringify({
-      status: "aborted",
-      event: "aborted",
-      phase: "final",
-      cmrPass: "correctness",
-      familyHeadAfter: "head-after-coder-fix",
-      blockingFindingIdentityKeys: [],
-      reason: "integrated cmr correctness did not converge",
-      stopSummary: {
-        reason: "not_converged",
-        summary: "integrated CMR correctness did not converge after coder-fix",
-      },
-    }),
-  );
+  const persistedLegacyRow = {
+    status: "aborted" as const,
+    event: "aborted" as const,
+    phase: "final" as const,
+    cmrPass: "correctness" as const,
+    familyHeadAfter: "head-after-coder-fix",
+    blockingFindingIdentityKeys: [],
+    reason: "integrated cmr correctness did not converge",
+  };
+  return persistedLegacyRow;
 }
 
 class FakeFamilyBackend implements FamilyBackend {

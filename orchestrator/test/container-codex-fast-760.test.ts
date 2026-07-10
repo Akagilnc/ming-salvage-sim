@@ -96,7 +96,9 @@ function fakeFamilyBackend(): FamilyBackend & { reconcileGit(): ReconcileGit } {
       familyHead: "head-after-merge",
       childHead: "child-head",
     }),
-    appendFamilyLedger: async (entry: unknown) => ledger.push(entry),
+    appendFamilyLedger: async (entry: unknown): Promise<void> => {
+      ledger.push(entry);
+    },
     readFamilyLedger: async () => ledger,
     reconcileGit: () => ({
       liveFamilyHead: async () => "head-after-merge",
