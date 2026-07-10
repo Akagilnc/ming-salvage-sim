@@ -146,11 +146,29 @@ describe("#760 real backend Codex fast write-site consumption", () => {
       readFileSync(join(here, "..", "src", "realBackend.ts"), "utf8"),
       readFileSync(join(here, "..", "src", "family", "realFamilyBackend.ts"), "utf8"),
     ];
-    const writeLines = sources
-      .flatMap((source) => source.split("\n"))
-      .filter((line) => line.includes("writeContainerCodexConfig("));
+    const countMatches = (source: string) => {
+      const matches: string[] = [];
+      for (const match of source.matchAll(/writeContainerCodexConfig\s*\(/g)) {
+        const openParen = match.index! + match[0].length - 1;
+        let depth = 0;
+        let closeParen = -1;
+        for (let index = openParen; index < source.length; index += 1) {
+          if (source[index] === "(") depth += 1;
+          if (source[index] === ")" && --depth === 0) {
+            closeParen = index;
+            break;
+          }
+        }
+        if (closeParen >= 0) matches.push(source.slice(match.index!, closeParen + 1));
+      }
+      const valid = matches.filter((match) => match.includes("this.opts.codexFast"));
+      return { total: matches.length, valid: valid.length };
+    };
 
-    expect(writeLines).toHaveLength(5);
-    expect(writeLines.every((line) => line.includes("this.opts.codexFast"))).toBe(true);
+    const realResult = countMatches(sources[0]);
+    const familyResult = countMatches(sources[1]);
+
+    expect(realResult).toEqual({ total: 2, valid: 2 });
+    expect(familyResult).toEqual({ total: 3, valid: 3 });
   });
 });
