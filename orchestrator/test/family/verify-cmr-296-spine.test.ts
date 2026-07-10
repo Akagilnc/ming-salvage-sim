@@ -949,8 +949,8 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
       cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
-    }) as CapableFamilyBackend & { verifyFamilyShippedPr?: undefined };
-    backend.verifyFamilyShippedPr = undefined;
+    });
+    Reflect.set(backend, "verifyFamilyShippedPr", undefined);
     backend.ledger.push(
       { childIssue: 294, status: "merged" },
       { childIssue: 295, status: "merged" },

@@ -19,11 +19,15 @@ import { execFileSync } from "node:child_process";
 import { runFamily } from "../../src/family/runner.js";
 import type {
   Backend,
+  DispatchContext,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
+  WorkerLandingPayload,
+  WorkerResult,
+  WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
 import type {
@@ -31,9 +35,12 @@ import type {
   FamilyEpic,
   FamilyLedgerEntry,
   MergeRequest,
+  VerifyFamilyShippedPrRequest,
+  VerifyFamilyShippedPrResult,
 } from "../../src/family/types.js";
 import { resolveActiveModelRoute } from "../../src/modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
+import type { StopSummary } from "../../src/stopSummary.js";
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
 
@@ -123,9 +130,15 @@ class FakeFamilyBackend implements FamilyBackend {
   }
 
   // #596 r2 support for full final barrier in spine tests (runVerifyCmr fresh path)
-  runFamilyVerify?: (req: any) => Promise<any>;
-  dispatchWorker?: (spec: any, ctx?: any) => Promise<any>;
-  verifyFamilyShippedPr?: (req: any) => Promise<{ ok: boolean }>;
+  runFamilyVerify?: FamilyBackend["runFamilyVerify"];
+  dispatchWorker?: (
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ) => Promise<WorkerResult>;
+  verifyFamilyShippedPr?: (
+    _req: VerifyFamilyShippedPrRequest,
+  ) => Promise<VerifyFamilyShippedPrResult>;
 }
 
 function epicWith(...childIssues: number[]): FamilyEpic {
@@ -539,7 +552,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
               ...(landing?.fixMarkedFindingIdentityKeys ?? [authKey]),
             ],
           },
-        };
+        } satisfies WorkerResult;
       }
       const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
       return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
@@ -638,7 +651,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
   it("shipped stopSummary with verifiedCmrHead is copied into review_loop_converged terminal marker and visible on resume (F1 regression: makes fresh-ship path consistent)", async () => {
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();
-    const richStopSummary = {
+    const richStopSummary: StopSummary = {
       reason: "success",
       summary: "family shipped+loop",
       metadata: {

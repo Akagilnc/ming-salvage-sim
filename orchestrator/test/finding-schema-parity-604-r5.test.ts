@@ -26,7 +26,7 @@ import {
   isValidPriorFindingDisposition,
   isValidReviewerOutput,
 } from "../src/validate.js";
-import type { StepOutput } from "../src/backend.js";
+import type { StepOutput } from "../src/types.js";
 import { priorFindingDispositionSchema } from "../src/realBackend.js";
 
 const suppression = {
