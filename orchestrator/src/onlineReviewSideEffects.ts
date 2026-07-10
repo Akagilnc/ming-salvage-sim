@@ -26,6 +26,8 @@ export interface ApplyVerifySideEffectsInput {
   readonly prUrl: string;
   readonly verify: VerifyResult;
   readonly fixingCommitSha?: string;
+  /** Runner-approved fixer identities. Missing or empty means resolve nothing. */
+  readonly approvedFixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
   /** Poll snapshot threads — required for live side effects to translate worker-echoed ids. */
   readonly landingThreads?: ReadonlyArray<LandingThreadRef>;
 }
@@ -362,7 +364,13 @@ type VerifySideEffectPlan = {
 export function planVerifySideEffects(
   input: ApplyVerifySideEffectsInput,
 ): VerifySideEffectPlan {
-  const { repo, verify, landingThreads } = input;
+  const {
+    repo,
+    verify,
+    landingThreads,
+    approvedFixMarkedFindingIdentityKeys = [],
+  } = input;
+  const approvedIdentityKeys = new Set(approvedFixMarkedFindingIdentityKeys);
   const existingReplies = replyByThreadId(verify);
   const defers = deferDispositions(verify);
 
@@ -453,6 +461,17 @@ export function planVerifySideEffects(
   const fixingCommitSha = input.fixingCommitSha;
   const resolves: ResolveSideEffectPlan[] = [];
   for (const threadId of verify.threadsToResolve ?? []) {
+    const isApprovedFixThread = (verify.findingDispositions ?? []).some(
+      (disposition) =>
+        disposition.action === "fix" &&
+        approvedIdentityKeys.has(disposition.identityKey) &&
+        threadIdsReferToSameLandingThread(
+          disposition.threadId,
+          threadId,
+          landingThreads,
+        ),
+    );
+    if (!isApprovedFixThread) continue;
     const commentId = restCommentIdForReply(threadId, landingThreads);
     const nodeId = graphqlNodeIdForResolve(threadId, landingThreads);
     const fixedReply = `fixed: https://github.com/${repo}/commit/${fixingCommitSha}`;

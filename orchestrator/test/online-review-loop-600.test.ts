@@ -1290,10 +1290,14 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
         kind: "verify",
         converged: true,
         isRecheck: true,
+        findingDispositions: [
+          { identityKey: "finding:99", threadId: "99", action: "fix" },
+        ],
         threadsToResolve: ["99"],
         threadReplies: [{ threadId: "99", body: "rejected: unrelated prior reply" }],
       },
       fixingCommitSha: "abc123def456",
+      approvedFixMarkedFindingIdentityKeys: ["finding:99"],
     });
     const fixedReplies = result.repliesPosted.filter((r) =>
       r.body.startsWith("fixed: https://github.com/o/r/commit/"),
@@ -1349,15 +1353,74 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
         kind: "verify",
         converged: true,
         isRecheck: true,
+        findingDispositions: [
+          { identityKey: "finding:99", threadId: "99", action: "fix" },
+        ],
         threadsToResolve: ["99"],
       },
       fixingCommitSha: "abc123def456",
+      approvedFixMarkedFindingIdentityKeys: ["finding:99"],
     });
     expect(result.threadsResolved).toEqual(["99"]);
     expect(
       result.repliesPosted.find((r) => r.threadId === "99")?.body,
     ).toContain("fixed: https://github.com/o/r/commit/abc123def456");
     expect(calls.filter((c) => c.includes("resolveReviewThread"))).toHaveLength(1);
+  });
+
+  it("#743 R1 runner path: a non-converged recheck cannot close a thread outside the fixer-approved identity set", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      return JSON.stringify(GITHUB_RESOLVE_MUTATION_SHAPE);
+    };
+
+    const result = applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      verify: {
+        kind: "verify",
+        converged: false,
+        isRecheck: true,
+        findingDispositions: [
+          { identityKey: "finding:unapproved", threadId: "99", action: "fix" },
+        ],
+        threadsToResolve: ["99"],
+      },
+      fixingCommitSha: "abc123def456",
+      approvedFixMarkedFindingIdentityKeys: ["finding:approved"],
+    });
+
+    expect(result.threadsResolved).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("#743 R1 family-resume path: missing approved identities closes no recheck threads", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      return JSON.stringify(GITHUB_RESOLVE_MUTATION_SHAPE);
+    };
+
+    const result = applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      verify: {
+        kind: "verify",
+        converged: false,
+        isRecheck: true,
+        findingDispositions: [
+          { identityKey: "finding:fixed", threadId: "99", action: "fix" },
+        ],
+        threadsToResolve: ["99"],
+      },
+      fixingCommitSha: "abc123def456",
+    });
+
+    expect(result.threadsResolved).toEqual([]);
+    expect(calls).toEqual([]);
   });
 
   const LANDING_THREAD_PAIR = [
@@ -1468,9 +1531,13 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
         kind: "verify",
         converged: true,
         isRecheck: true,
+        findingDispositions: [
+          { identityKey: "finding:4242", threadId: "4242", action: "fix" },
+        ],
         threadsToResolve: ["4242"],
       },
       fixingCommitSha: "abc123def456",
+      approvedFixMarkedFindingIdentityKeys: ["finding:4242"],
     });
     expect(result.threadsResolved).toEqual(["PRRT_kwDOExampleThread"]);
     expect(
@@ -1507,9 +1574,17 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
         kind: "verify",
         converged: true,
         isRecheck: true,
+        findingDispositions: [
+          {
+            identityKey: "finding:4242",
+            threadId: "PRRT_kwDOExampleThread",
+            action: "fix",
+          },
+        ],
         threadsToResolve: ["PRRT_kwDOExampleThread"],
       },
       fixingCommitSha: "abc123def456",
+      approvedFixMarkedFindingIdentityKeys: ["finding:4242"],
     });
     expect(result.threadsResolved).toEqual(["PRRT_kwDOExampleThread"]);
     expect(
@@ -4483,20 +4558,37 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       poll: async () => baseSnapshot,
       dispatchVerify: async (_landing, round) => {
         if (round === 1) {
-          return { kind: "verify", converged: false };
+          return {
+            kind: "verify",
+            converged: false,
+            findingDispositions: [
+              {
+                identityKey: "finding:thread",
+                threadId: "PRRT_kwDOExampleThread",
+                action: "fix",
+              },
+            ],
+          };
         }
         return {
           kind: "verify",
           converged: true,
           isRecheck: true,
-          fixMarkedFindingIdentityKeys: [],
+          fixMarkedFindingIdentityKeys: ["finding:thread"],
+          findingDispositions: [
+            {
+              identityKey: "finding:thread",
+              threadId: "PRRT_kwDOExampleThread",
+              action: "fix",
+            },
+          ],
           threadsToResolve: ["PRRT_kwDOExampleThread"],
         };
       },
       dispatchFixer: async () => fixerCommitted(),
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
-      applySideEffects: (_landing, verify, fixingCommitSha) => {
+      applySideEffects: (landing, verify, fixingCommitSha) => {
         applyVerifySideEffects({
           sh,
           repo: "o/r",
@@ -4506,6 +4598,8 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
           landingThreads: [
             { id: "4242", threadNodeId: "PRRT_kwDOExampleThread" },
           ],
+          approvedFixMarkedFindingIdentityKeys:
+            landing.fixMarkedFindingIdentityKeys,
         });
         return verify;
       },

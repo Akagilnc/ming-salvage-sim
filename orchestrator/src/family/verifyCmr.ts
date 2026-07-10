@@ -1832,6 +1832,8 @@ export async function runFamilyOnlineReviewLoop(input: {
         verify,
         fixingCommitSha,
         landingThreads: landing.onlineReviewSnapshot?.threads,
+        approvedFixMarkedFindingIdentityKeys:
+          landing.fixMarkedFindingIdentityKeys,
       });
       return {
         ...verify,
