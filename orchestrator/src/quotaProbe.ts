@@ -174,6 +174,8 @@ export function probeConfigForPool(pool: QuotaPoolId): PoolProbeConfig {
  * from naming conventions used by the cheap-coder benches (#424 / #440).
  */
 export function poolForModelRef(modelRef: string): QuotaPoolId {
+  // Defensive: untyped callers may pass non-strings; never throw on .trim().
+  if (typeof modelRef !== "string" || modelRef.length === 0) return "unknown";
   const raw = modelRef.trim().toLowerCase();
   if (raw.length === 0) return "unknown";
 
@@ -303,6 +305,23 @@ export function parseZaiResetAt(body: string): Date | undefined {
   const hour = Number(m[4]);
   const minute = Number(m[5]);
   const second = m[6] !== undefined ? Number(m[6]) : 0;
+  // Reject out-of-range components before Date.UTC — otherwise e.g.
+  // month=99 / day=99 rolls into a plausible-looking valid Date.
+  if (
+    !Number.isFinite(year) ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59 ||
+    second < 0 ||
+    second > 59
+  ) {
+    return undefined;
+  }
   // Asia/Shanghai = UTC+8 year-round (no DST).
   const utcMs = Date.UTC(year, month - 1, day, hour - 8, minute, second);
   const d = new Date(utcMs);
@@ -512,7 +531,9 @@ function isQuotaLimitBody(body: string): boolean {
   return (
     lower.includes("429") ||
     lower.includes("rate limit") ||
+    lower.includes("rate-limit") ||
     lower.includes("rate_limit") ||
+    lower.includes("too many requests") ||
     lower.includes("quota") ||
     body.includes("额度") ||
     body.includes("余额不足") ||
