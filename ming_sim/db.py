@@ -31,6 +31,12 @@ from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, monthly_amount, period_label,
 )
+from ming_sim.qualitative import (
+    building_output_effect,
+    building_qualitative_fields,
+    city_defense_description,
+    qualitative_band,
+)
 from ming_sim.token_stats import tlog
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -44,6 +50,14 @@ _ARMY_PAY_SOURCE_DELTA_FIELDS = frozenset((
     "is_tusi", "self_funded_pay",
 ))
 _COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
+
+
+def _public_support_description(value: object) -> str:
+    return "民心" + qualitative_band(value, ("堪忧", "偏弱", "起伏", "尚可", "稳固"))
+
+
+def _unrest_description(value: object) -> str:
+    return "动乱" + qualitative_band(value, ("平静", "有患", "不安", "升高", "已炽"))
 
 
 class ProvinceFiscalTickOutcome(NamedTuple):
@@ -4768,12 +4782,14 @@ class GameDB:
                 held = f"【已为{self.power_display_name(row['controlled_by'])}所据】"
             defense = f"、城防炮{int(row['cannon'])}门" if int(row["cannon"] or 0) > 0 else ""
             parts.append(
-                f"{row['name']}{held}：民心{row['public_support']}、动乱{row['unrest']}、"
-                f"粮食{row['grain_security']}万石、税{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}{defense}，{row['status']}"
+                f"{row['name']}{held}：{_public_support_description(row['public_support'])}、"
+                f"{_unrest_description(row['unrest'])}、"
+                f"粮情{qualitative_band(row['grain_security'], ('告急', '偏紧', '平稳', '充裕', '丰足'))}、"
+                f"税{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}{defense}，{row['status']}"
             )
         return f"地区警讯：{'；'.join(parts)}。两京十三省账面{TURN_UNIT}税合计{format_money(monthly_amount(total_tax_value))}。"
 
-    def region_detail(self, raw_name: str) -> str:
+    def region_detail(self, raw_name: str, qualitative: bool = False) -> str:
         region_id = match_region_id_from_text(raw_name, self.content.regions)
         if region_id is None:
             raise ValueError(f"未找到地区：{raw_name}")
@@ -4783,6 +4799,19 @@ class GameDB:
         held = ""
         if str(row["controlled_by"]) != "ming":
             held = f"，控制权：已为{self.power_display_name(row['controlled_by'])}所据（非大明辖治）"
+        if qualitative:
+            return (
+                f"{row['name']}（{row['kind']}）{held}：人口{row['population']}万人，"
+                f"{_public_support_description(row['public_support'])}，"
+                f"{_unrest_description(row['unrest'])}，粮食{row['grain_security']}万石，"
+                f"田亩{row['registered_land']}万亩，隐田{row['hidden_land']}万亩，"
+                f"账面税收{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，"
+                f"士绅阻力{qualitative_band(row['gentry_resistance'], ('极弱', '偏弱', '中等', '偏强', '强'))}，"
+                f"军事压力{qualitative_band(row['military_pressure'], ('极低', '偏低', '中等', '偏高', '极高'))}，"
+                f"城防{city_defense_description(row['city_level'])}，"
+                f"城防大炮{int(row['cannon'])}门。天灾：{row['natural_disaster']}；"
+                f"人祸：{row['human_disaster']}；状态：{row['status']}"
+            )
         return (
             f"{row['name']}（{row['kind']}）{held}：人口{row['population']}万人，"
             f"民心{row['public_support']}，动乱{row['unrest']}，粮食{row['grain_security']}万石，"
@@ -5274,8 +5303,13 @@ class GameDB:
             f"状态：{row['status']}"
         )
 
-    def army_roster(self, filter_names: Optional[List[str]] = None, index_only: bool = False) -> str:
-        """全军名册。filter_names 非空则只返回指定军队；index_only=True 只返回军名+欠饷+状态索引。"""
+    def army_roster(
+        self,
+        filter_names: Optional[List[str]] = None,
+        index_only: bool = False,
+        qualitative_equipment: bool = False,
+    ) -> str:
+        """全军名册；大臣上下文可将火器装备以定性词呈现。"""
         rows = self.conn.execute(
             "SELECT * FROM armies ORDER BY owner_power='ming' DESC, theater, name"
         ).fetchall()
@@ -5312,7 +5346,9 @@ class GameDB:
                         _qualitative_army_stat("mobility", row["mobility"]),
                         _qualitative_army_stat("loyalty", row["loyalty"]),
                         arrears_text, row["status"],
-                        row["firearm_equipment"], row["cannon_equipment"],
+                        _qualitative_army_stat("equipment", row["firearm_equipment"])
+                        if qualitative_equipment else row["firearm_equipment"],
+                        row["cannon_equipment"],
                     ))
                 )
             else:
@@ -5324,7 +5360,11 @@ class GameDB:
                 )
         out = [
             "【全军名册（现状以此为准，谈某军欠饷/补给/士气直接据此；欠饷为奏报近似总额，不拆省/中央分账）】",
-            "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为0-100，随军大炮为门数0-12）：",
+            (
+                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为定性装备，随军大炮为门数0-12）："
+                if qualitative_equipment else
+                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为0-100，随军大炮为门数0-12）："
+            ),
             *own,
         ]
         if other:
@@ -6109,7 +6149,7 @@ class GameDB:
             self.conn.commit()
         return changes
 
-    def buildings_report(self, region_id: str = "") -> str:
+    def buildings_report(self, region_id: str = "", qualitative: bool = False) -> str:
         """月末奏报 / web 用建筑盘面摘要。region_id 为空取全国。"""
         if region_id:
             rows = self.conn.execute(
@@ -6124,10 +6164,19 @@ class GameDB:
         lines: List[str] = []
         for r in rows:
             metric = str(r["output_metric"])
-            if metric:
+            if metric in ("民心", "皇威") and qualitative:
+                out = building_output_effect(metric, r["output_amount"])
+            elif metric:
                 out = f"产出{metric}{r['output_amount']}"
             else:
                 out = "无结算产出"
+            if qualitative:
+                level, condition, risk = building_qualitative_fields(r)
+                lines.append(
+                    f"{r['name']}（{r['category']}·{r['region_id']}）规模{level}，"
+                    f"{condition}，维护{r['maintenance']}{MONEY_UNIT}/{TURN_UNIT}，风险{risk}，{out}。{r['status']}"
+                )
+                continue
             lines.append(
                 f"{r['name']}（{r['category']}·{r['region_id']}）等级{r['level']}，"
                 f"完好{r['condition']}，维护{r['maintenance']}{MONEY_UNIT}/{TURN_UNIT}，"
@@ -6163,7 +6212,7 @@ class GameDB:
             for r in rows
         ]
 
-    def building_detail(self, name_or_id: str) -> str:
+    def building_detail(self, name_or_id: str, qualitative: bool = False) -> str:
         key = (name_or_id or "").strip()
         row = self.conn.execute(
             "SELECT * FROM buildings WHERE id = ? OR name = ?", (key, key)
@@ -6175,7 +6224,17 @@ class GameDB:
         if row is None:
             raise ValueError(f"未找到建筑 '{name_or_id}'")
         metric = str(row["output_metric"])
-        out = f"产出{metric}{row['output_amount']}/{TURN_UNIT}" if metric else "无结算产出"
+        if metric in ("民心", "皇威") and qualitative:
+            out = building_output_effect(metric, row["output_amount"])
+        else:
+            out = f"产出{metric}{row['output_amount']}/{TURN_UNIT}" if metric else "无结算产出"
+        if qualitative:
+            level, condition, risk = building_qualitative_fields(row)
+            return (
+                f"{row['name']}（{row['category']}，{row['region_id']}，{row['origin']}）："
+                f"规模{level}，{condition}，维护{row['maintenance']}{MONEY_UNIT}/{TURN_UNIT}，风险{risk}，{out}。\n"
+                f"{row['status']}"
+            )
         return (
             f"{row['name']}（{row['category']}，{row['region_id']}，{row['origin']}）："
             f"等级{row['level']}，完好{row['condition']}，"
