@@ -14,8 +14,14 @@
  */
 
 import { dirname, join } from "node:path";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -72,6 +78,11 @@ import type * as sc from "@ai-hero/sandcastle";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
 // brief); S1's `extractAgentBrief` is the surviving brief reader.
 import { StructuredOutputError } from "@ai-hero/sandcastle";
+
+/** #748: per-test $HOME so RealBackend never reads/writes real ~/.sc-orchestrator. */
+function tempHome(prefix = "rb-home-748-"): string {
+  return mkdtempSync(join(tmpdir(), prefix));
+}
 
 // ─── gh JSON → IssueMeta / IssueSnapshot ─────────────────────────────────────
 
@@ -555,6 +566,63 @@ describe("realBackend auth mount paths", () => {
       buildAuthPaths(257, "/h").hostCodexAuthDir,
     );
   });
+
+  it("defaults home to os.homedir() when omitted (production default unchanged)", () => {
+    // Pure path construction only — no file I/O.
+    const p = buildAuthPaths(748);
+    expect(p.hostCodexAuthDir).toBe(
+      join(homedir(), ".sc-orchestrator", "auth-748"),
+    );
+  });
+});
+
+// ─── #748: injectable home keeps auth I/O off real ~/.sc-orchestrator ────────
+
+describe("#748 RealBackend home injection (auth mount stays off real $HOME)", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+
+  /** Expose mountAuth over the production seam with clone/git stubbed. */
+  class MountProbeBackend extends RealBackend {
+    protected override cloneDirExists(): boolean {
+      return true;
+    }
+    protected override sh(file: string, args: string[]): string {
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+        return ".git";
+      }
+      return "";
+    }
+    public mount(issueNumber: number): { authDir: string; claudeToken?: string } {
+      return this.mountAuth(issueNumber);
+    }
+  }
+
+  it("mountAuth with opts.home writes only under the injected home, never real ~/.sc-orchestrator", () => {
+    const injected = tempHome("rb-home-748-mount-");
+    const issue = 748;
+    const realAuthDir = join(homedir(), ".sc-orchestrator", `auth-${issue}`);
+    const existedBefore = existsSync(realAuthDir);
+
+    const backend = new MountProbeBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 748,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
+      home: injected,
+    });
+
+    const { authDir } = backend.mount(issue);
+    expect(authDir).toBe(join(injected, ".sc-orchestrator", `auth-${issue}`));
+    expect(existsSync(join(authDir, "config.toml"))).toBe(true);
+    // Production seam honored: nothing landed under the real user auth root for
+    // this issue when it did not already exist.
+    if (!existedBefore) {
+      expect(existsSync(realAuthDir)).toBe(false);
+    }
+  });
 });
 
 // ─── model slug → CLI (role decides soul/model) ──────────────────────────────
@@ -986,6 +1054,8 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     imageName: "img",
     soulsDir: realSoulsDir,
     skillsMount: "/tmp/skills",
+    // #748: construction still resolves clone paths under home.
+    home: tempHome("rb-home-prompts-"),
   };
 
   it("constructs successfully against the checked-in absolute prompts/ dir", () => {
@@ -1081,6 +1151,7 @@ describe("RealBackend reviewer output contract", () => {
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
       soulsDir: join(here, "..", "image", "souls"),
+      home: tempHome("rb-home-reviewer-"),
     });
 
     expect(() =>
@@ -1117,6 +1188,7 @@ describe("RealBackend reviewer output contract", () => {
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
       soulsDir: join(here, "..", "image", "souls"),
+      home: tempHome("rb-home-reviewer-"),
     });
 
     const decoded = (
@@ -1170,6 +1242,7 @@ describe("RealBackend reviewer output contract", () => {
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
       soulsDir: join(here, "..", "image", "souls"),
+      home: tempHome("rb-home-reviewer-"),
     });
 
     expect(() =>
@@ -1216,6 +1289,7 @@ describe("RealBackend reviewer output contract", () => {
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
       soulsDir: join(here, "..", "image", "souls"),
+      home: tempHome("rb-home-reviewer-"),
     });
 
     expect(() =>
@@ -1266,6 +1340,7 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
       soulsDir: join(here, "..", "image", "souls"),
+      home: tempHome("rb-home-596-"),
     });
   }
 
@@ -1517,6 +1592,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       imageName: "ming-worker:bad",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
+      // #748: runStep → box → mountAuth must not touch real ~/.sc-orchestrator.
+      home: tempHome("rb-home-286-"),
     });
   }
 
@@ -1949,6 +2026,7 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
       skillsMount: "/tmp/skills",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
+      home: tempHome("rb-home-329-"),
     });
   }
 
@@ -2293,6 +2371,7 @@ describe("realBackend resume coder commit truth", () => {
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
       soulsDir: join(here, "..", "image", "souls"),
+      home: tempHome("rb-home-285-"),
     });
 
     expect(() =>

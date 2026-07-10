@@ -1312,6 +1312,8 @@ describe("#602 docRelease non-interactive dispatch env", () => {
       repo: REPO,
       promptsDir: "/Users/akagilnc/WorkSpace/Ming_LLM-bench-602/orchestrator/prompts",
       soulsDir: "/Users/akagilnc/WorkSpace/Ming_LLM-bench-602/orchestrator/image/souls",
+      // #748: construction resolves paths under home; keep off real $HOME.
+      home: mkdtempSync(join(tmpdir(), "rb-home-602-")),
     }).workerEnv();
     expect(env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });

@@ -54,7 +54,11 @@ describe.skipIf(!RUN)("#335 cmr worker e2e — real 2b container fan-out", () =>
       // MUST live under $HOME: colima shares $HOME into the Docker VM, $TMPDIR is
       // NOT shared (the same spike constraint codex auth hit) — a repo under
       // $TMPDIR mounts EMPTY in the container → "not a git repository".
-      const e2eRoot = join(homedir(), ".sc-orchestrator", "cmr-e2e");
+      // Keep this in a disposable injected HOME so the e2e path cannot touch the
+      // real ~/.sc-orchestrator auth root (#748).
+      const e2eHome = mkdtempSync(join(homedir(), ".sc-orchestrator-e2e-home-"));
+      cleanups.push(e2eHome);
+      const e2eRoot = join(e2eHome, ".sc-orchestrator", "cmr-e2e");
       mkdirSync(e2eRoot, { recursive: true });
       const repo = mkdtempSync(join(e2eRoot, "repo-"));
       cleanups.push(repo);
@@ -94,6 +98,7 @@ describe.skipIf(!RUN)("#335 cmr worker e2e — real 2b container fan-out", () =>
         soulsDir,
         imageName: "ming-orchestrator-coder:latest",
         familyBaseStartHead: startHead,
+        home: e2eHome,
       });
 
       const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase });
