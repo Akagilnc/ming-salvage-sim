@@ -1475,15 +1475,15 @@ class ReviewerChecksOutOtherHeadBackend implements FamilyBackend {
 }
 
 class MalformedReviewerMovesFamilyHeadBackend extends ReviewFixRereviewBackend {
-  override async readFamilyCurrentHead(): Promise<string> {
+  async readFamilyCurrentHead(): Promise<string> {
     return this.currentFamilyHead;
   }
 
-  override async readFamilyTrackedStatus(): Promise<readonly string[]> {
+  async readFamilyTrackedStatus(): Promise<readonly string[]> {
     return [];
   }
 
-  override async dispatchWorker(
+  async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
@@ -1508,15 +1508,15 @@ class MalformedReviewerMovesFamilyHeadBackend extends ReviewFixRereviewBackend {
 class MalformedReviewerWrongHeadBeforeRewriteBackend extends ReviewFixRereviewBackend {
   rewriteCalls = 0;
 
-  override async readFamilyCurrentHead(): Promise<string> {
+  async readFamilyCurrentHead(): Promise<string> {
     return this.currentFamilyHead;
   }
 
-  override async readFamilyTrackedStatus(): Promise<readonly string[]> {
+  async readFamilyTrackedStatus(): Promise<readonly string[]> {
     return [];
   }
 
-  override async dispatchWorker(
+  async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
@@ -1541,7 +1541,7 @@ class MalformedReviewerWrongHeadBeforeRewriteBackend extends ReviewFixRereviewBa
     return onlineReviewLoopWorkerOrThrow(spec);
   }
 
-  override async rewriteWorkerOutcome(): Promise<WorkerResult> {
+  async rewriteWorkerOutcome(): Promise<WorkerResult> {
     this.rewriteCalls += 1;
     this.currentFamilyHead = "head-before-cmr-review";
     return {

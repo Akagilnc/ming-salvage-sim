@@ -31,9 +31,12 @@ import type {
   FamilyEpic,
   FamilyLedgerEntry,
   MergeRequest,
+  VerifyFamilyShippedPrRequest,
+  VerifyFamilyShippedPrResult,
 } from "../../src/family/types.js";
 import { resolveActiveModelRoute } from "../../src/modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
+import type { StopSummary } from "../../src/stopSummary.js";
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
 
@@ -124,8 +127,10 @@ class FakeFamilyBackend implements FamilyBackend {
 
   // #596 r2 support for full final barrier in spine tests (runVerifyCmr fresh path)
   runFamilyVerify?: (req: any) => Promise<any>;
-  dispatchWorker?: (spec: any, ctx?: any) => Promise<any>;
-  verifyFamilyShippedPr?: (req: any) => Promise<{ ok: boolean }>;
+  dispatchWorker?: (spec: any, ctx?: any, landing?: any) => Promise<any>;
+  verifyFamilyShippedPr?: (
+    _req: VerifyFamilyShippedPrRequest,
+  ) => Promise<VerifyFamilyShippedPrResult>;
 }
 
 function epicWith(...childIssues: number[]): FamilyEpic {
@@ -526,7 +531,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
 
     const verifyRounds: number[] = [];
-    familyBackend.dispatchWorker = async (spec, ctx, landing) => {
+    familyBackend.dispatchWorker = async (spec: any, ctx?: any, landing?: any) => {
       if (spec.kind === "verify") {
         verifyRounds.push(ctx?.onlineReviewRound ?? 0);
         return {
@@ -638,7 +643,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
   it("shipped stopSummary with verifiedCmrHead is copied into review_loop_converged terminal marker and visible on resume (F1 regression: makes fresh-ship path consistent)", async () => {
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();
-    const richStopSummary = {
+    const richStopSummary: StopSummary = {
       reason: "success",
       summary: "family shipped+loop",
       metadata: {

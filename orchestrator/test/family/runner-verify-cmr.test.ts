@@ -715,7 +715,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       boundedReopen,
     };
     const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
-      if (input.phase === "final") {
+      if (input.phase === "final" && input.moduleContext) {
         classified.push(
           deriveCmrEnvelope({
             familyIssue: 287,
@@ -1491,7 +1491,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             familyHeadAfter: "head-before-coder-fix",
             blockingFindingIdentityKeys: [blockerKey],
             cmrDispositions: [],
-          } as FamilyLedgerEntry,
+          } as unknown as FamilyLedgerEntry,
           {
             status: "aborted",
             event: "aborted",
@@ -1505,7 +1505,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
               summary: "integrated CMR correctness coder-fix failed",
               repairHint: "repair the family CMR coder-fix worker contract",
             },
-          } as FamilyLedgerEntry,
+          } as unknown as FamilyLedgerEntry,
         ],
         "head-after-bad-coder-fix",
       );
@@ -1529,7 +1529,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             familyHeadAfter: "head-before-coder-fix",
             blockingFindingIdentityKeys: [blockerKey],
             cmrDispositions: [],
-          } as FamilyLedgerEntry,
+          } as unknown as FamilyLedgerEntry,
           {
             status: "cmr_fix_committed",
             event: "cmr_fix_committed",
@@ -1538,7 +1538,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             familyHeadBefore: "head-before-coder-fix",
             familyHeadAfter: "head-after-coder-fix",
             blockingFindingIdentityKeys: [blockerKey],
-          } as FamilyLedgerEntry,
+          } as unknown as FamilyLedgerEntry,
           {
             // not_converged sentinel: a CLASSIFIED abort carrying an EMPTY envelope.
             status: "aborted",
@@ -1552,7 +1552,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
               reason: "not_converged",
               summary: "integrated CMR correctness did not converge after coder-fix",
             },
-          } as FamilyLedgerEntry,
+          } as unknown as FamilyLedgerEntry,
         ],
         "head-after-coder-fix",
       );

@@ -4,6 +4,6 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["test/defer-removed-617.test.ts"],
+  "include": ["test/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

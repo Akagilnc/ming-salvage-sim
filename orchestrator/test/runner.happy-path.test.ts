@@ -47,7 +47,7 @@ class HappyPathBackend implements Backend {
   };
 
   // #255: fresh-run defaults (this suite is the happy-path regression).
-  async findResumeState(): Promise<undefined> {
+  async findResumeState(): Promise<ResumeState | undefined> {
     return undefined;
   }
   async cleanResidue(): Promise<void> {
@@ -262,7 +262,8 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       reopenAttempts: 0,
     };
     class ResumeAfterS4Backend extends HappyPathBackend {
-      override async findResumeState(): Promise<ResumeState> {
+      // This fixture deliberately resumes after S4; keep the inherited broad return type.
+      async findResumeState(): Promise<ResumeState | undefined> {
         return {
           worktree: this.worktree,
           stateDir: "/resident/worktrees/.ledger-247",

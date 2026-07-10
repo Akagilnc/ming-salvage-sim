@@ -51,14 +51,10 @@ class ChildBackend implements Backend {
   }
   async writeSnapshot(): Promise<void> {}
   async runStep(_spec: StepSpec): Promise<StepOutput> {
-    return { kind: "completed", output: { kind: "coder", status: "success", head: "h" } };
+    return { kind: "coder", committed: true, commitsAdded: 1 };
   }
-  async pushBranch(): Promise<void> {}
-  async readLedger(): Promise<readonly []> {
-    return [];
-  }
-  async appendLedger(): Promise<void> {}
-  async emitProgress(): Promise<void> {}
+  async push(): Promise<void> {}
+  async writeLedger(): Promise<void> {}
 }
 
 class FakeFamilyBackend implements FamilyBackend {
@@ -80,8 +76,8 @@ class FakeFamilyBackend implements FamilyBackend {
   resolveFamilyWorkingRepo(): string | undefined {
     return undefined;
   }
-  verifyFamilyShippedPr?: (req: unknown) => Promise<{ ok: boolean }>;
-  dispatchWorker?: (spec: unknown, ctx?: unknown) => Promise<unknown>;
+  verifyFamilyShippedPr?: FamilyBackend["verifyFamilyShippedPr"];
+  dispatchWorker?: FamilyBackend["dispatchWorker"];
 }
 
 function epicWith(...childIssues: number[]): FamilyEpic {
@@ -154,7 +150,7 @@ describe("#603 ensureFamilyPostMergeCleanup — route after short-circuit", () =
       familyHeadAfter: "family-base-0",
     });
     let cleanupDispatched = 0;
-    familyBackend.dispatchWorker = async (spec: any) => {
+    familyBackend.dispatchWorker = async (spec) => {
       if (spec.kind === "cleanup") {
         cleanupDispatched += 1;
         return {

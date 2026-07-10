@@ -19,6 +19,7 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Worktree } from "@ai-hero/sandcastle";
 import { describe, expect, it } from "vitest";
 import {
   RealBackend,
@@ -62,9 +63,9 @@ class RecordingBackend extends RealBackend {
   protected override async createResidentWorktree(
     branch: string,
     baseBranch: string,
-  ): Promise<{ worktreePath: string } & Record<string, unknown>> {
+  ): Promise<Worktree> {
     RecordingBackend.cutBaseBranch = baseBranch;
-    return { worktreePath: `/clone/.worktrees/${branch}` } as never;
+    return { worktreePath: `/clone/.worktrees/${branch}` } as unknown as Worktree;
   }
 }
 

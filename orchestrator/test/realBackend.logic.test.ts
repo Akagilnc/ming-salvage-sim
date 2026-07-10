@@ -1709,7 +1709,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       iterations: [{ sessionId: "sess-286" }],
-    } as Awaited<ReturnType<typeof sc.run>>;
+    } as unknown as Awaited<ReturnType<typeof sc.run>>;
 
     const result = await backend.runStep(coderSpec, {
       branch: "feat/issue-286",
@@ -1738,7 +1738,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: "<coder>not json</coder>\nCODER_STEP_COMPLETE",
       commits: [{ sha: "abc123" }],
       iterations: [{ sessionId: "sess-496" }],
-    } as Awaited<ReturnType<typeof sc.run>>;
+    } as unknown as Awaited<ReturnType<typeof sc.run>>;
 
     const result = await backend.runStep(
       coderSpec,
@@ -1771,7 +1771,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed": true, "commitsAdded": 1}</coder>\nCODER_STEP_COMPLETE',
       commits: [{ sha: "abc123" }],
       iterations: [{ sessionId: "sess-dir-sidecar" }],
-    } as Awaited<ReturnType<typeof sc.run>>;
+    } as unknown as Awaited<ReturnType<typeof sc.run>>;
 
     const result = await backend.runStep(
       coderSpec,
@@ -1808,7 +1808,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: "no review tag here\nREVIEWER_STEP_COMPLETE",
       commits: [],
       iterations: [{ sessionId: "sess-review-sidecar" }],
-    } as Awaited<ReturnType<typeof sc.run>>;
+    } as unknown as Awaited<ReturnType<typeof sc.run>>;
 
     const result = await backend.runStep(
       reviewerSpec,
@@ -1847,7 +1847,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: "not json in any review tag\nREVIEWER_STEP_COMPLETE",
       commits: [],
       iterations: [{ sessionId: "sess-review-resume-sidecar" }],
-    } as Awaited<ReturnType<typeof sc.run>>;
+    } as unknown as Awaited<ReturnType<typeof sc.run>>;
 
     const result = await backend.resumeSession(
       reviewerSpec,
@@ -1884,7 +1884,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       iterations: [{ sessionId: "sess-bad-sidecar" }],
-    } as Awaited<ReturnType<typeof sc.run>>;
+    } as unknown as Awaited<ReturnType<typeof sc.run>>;
 
     await expect(
       backend.runStep(
@@ -1914,7 +1914,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<review>{"findings": []}</review>',
       commits: [],
       iterations: [{ sessionId: "sess-review-bad-sidecar" }],
-    } as Awaited<ReturnType<typeof sc.run>>;
+    } as unknown as Awaited<ReturnType<typeof sc.run>>;
 
     await expect(
       backend.runStep(
@@ -1949,7 +1949,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       iterations: [{ sessionId: "sess-286" }],
-    } as Awaited<ReturnType<typeof sc.run>>;
+    } as unknown as Awaited<ReturnType<typeof sc.run>>;
     const worktree = {
       branch: "feat/issue-286",
       base: "main",
@@ -2400,7 +2400,7 @@ describe("realBackend resume coder commit truth", () => {
           output: { kind: "coder", committed: true, commitsAdded: 1 },
         },
         { step: "S8", branchHEAD: head, handoffStatus: "escalate" },
-      ],
+      ] as never,
       "sess-coder",
     );
     expect(basis).toEqual({

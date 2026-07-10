@@ -2025,6 +2025,15 @@ function untrustedExecutableInstructionSummary(
 
 function stopSummaryForEscalation(escalation: Escalation): StopSummary {
   const reason = `${escalation.reason}: ${escalation.diagnosis}`;
+  // An exhausted malformed-output retry is synthesized by the runner, not a
+  // worker request for a human decision. Keep its terminal summary aligned with
+  // the persisted A-class `escalationKind: "failure"` sentinel.
+  if (escalation.synthesizedFailure === true) {
+    return infraFailureStopSummary({
+      summary: reason,
+      repairHint: "repair the worker output protocol before rerun",
+    });
+  }
   if (/review\/fix loop made no progress/i.test(escalation.reason)) {
     return {
       reason: "same_module_still_red",

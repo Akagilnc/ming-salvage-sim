@@ -470,7 +470,7 @@ describe("#706 — early-exit parked-child path reports ledger-merged sibling as
     familyBackend.ledger.push(
       {
         status: "merged",
-        event: "merged",
+        event: "reconciled",
         childIssue: 10,
       } as FamilyLedgerEntry,
       {
