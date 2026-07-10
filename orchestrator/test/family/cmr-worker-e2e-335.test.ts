@@ -20,7 +20,7 @@
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -51,12 +51,10 @@ describe.skipIf(!RUN)("#335 cmr worker e2e — real 2b container fan-out", () =>
     "invokes ak-cross-m-review in-container and returns a structured verdict",
     async () => {
       // ── a real repo with main + a family base carrying an injected cross-slice bug ──
-      // MUST live under $HOME: colima shares $HOME into the Docker VM, $TMPDIR is
-      // NOT shared (the same spike constraint codex auth hit) — a repo under
-      // $TMPDIR mounts EMPTY in the container → "not a git repository".
       // Keep this in a disposable injected HOME so the e2e path cannot touch the
-      // real ~/.sc-orchestrator auth root (#748).
-      const e2eHome = mkdtempSync(join(homedir(), ".sc-orchestrator-e2e-home-"));
+      // real ~/.sc-orchestrator auth root (#748). The container-backed test is
+      // explicitly opt-in and must not create host files under the real HOME.
+      const e2eHome = mkdtempSync(join(tmpdir(), "sc-orchestrator-e2e-home-"));
       cleanups.push(e2eHome);
       const e2eRoot = join(e2eHome, ".sc-orchestrator", "cmr-e2e");
       mkdirSync(e2eRoot, { recursive: true });
