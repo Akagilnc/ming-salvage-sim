@@ -54,6 +54,14 @@ describe("stripOrganicMarkdown", () => {
     expect(stripOrganicMarkdown("甲**乙*丙")).toBe("甲**乙*丙");
   });
 
+  it("strips valid nested emphasis after strong text", () => {
+    expect(stripOrganicMarkdown("**粗体***斜体*")).toBe("粗体斜体");
+  });
+
+  it("strips valid nested emphasis before strong text", () => {
+    expect(stripOrganicMarkdown("*斜体***粗体**")).toBe("斜体粗体");
+  });
+
   it("treats Chinese letters as word characters around emphasis markers", () => {
     expect(stripOrganicMarkdown("字段_税率_值")).toBe("字段_税率_值");
   });

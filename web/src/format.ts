@@ -1,5 +1,6 @@
 import React from "react";
-import { marked, type Token } from "marked";
+import MarkdownIt from "markdown-it";
+import type Token from "markdown-it/lib/token.mjs";
 import { ExtractionView } from "./components/extraction";
 import type { Army, GameState, LegacyEffect, MapNode } from "./types";
 
@@ -323,62 +324,54 @@ export function labelClass(key: string): string {
   if (at < 0) return key;
   return `${key.slice(0, at)}（${labelRegion(key.slice(at + 1))}）`;
 }
-const inlineTokens = (tokens: Token[]): string => {
-  let previousRaw = "";
-  return tokens.map((token) => {
-    const sharesAnOpeningDelimiter = (token.type === "em" || token.type === "strong")
-      && token.raw.startsWith(token.raw[0])
-      && previousRaw.endsWith(token.raw[0]);
-    const underscoreInsideAWord = (token.type === "em" || token.type === "strong")
-      && token.raw.startsWith("_")
-      && /[\p{L}\p{N}\p{M}_]$/u.test(previousRaw);
-    const rendered = sharesAnOpeningDelimiter || underscoreInsideAWord ? token.raw : tokenText(token);
-    previousRaw = token.raw;
-    return rendered;
-  }).join("");
-};
+const markdown = new MarkdownIt();
 
-const terminalNewlines = (raw: string) => raw.match(/\n+$/)?.[0] || "";
-
-const blockTokens = (tokens: Token[]): string => tokens.map((token) => (
-  token.type === "space" ? tokenText(token) : `${tokenText(token)}${terminalNewlines(token.raw)}`
-)).join("");
-
-const tokenText = (token: Token): string => {
+const inlineText = (tokens: Token[]): string => tokens.map((token) => {
   switch (token.type) {
-    case "space":
-      return token.raw;
-    case "codespan":
-    case "code":
-    case "escape":
     case "text":
-    case "html":
-      return token.text;
-    case "br":
+    case "code_inline":
+    case "html_inline":
+      return token.content;
+    case "softbreak":
+    case "hardbreak":
       return "\n";
-    case "strong":
-    case "em":
-    case "del":
-    case "link":
-    case "image":
-    case "paragraph":
-    case "heading":
-      return inlineTokens(token.tokens || []);
-    case "blockquote":
-      return blockTokens(token.tokens || []);
-    case "list":
-      return token.items.map((item: { tokens: Token[] }) => blockTokens(item.tokens)).join("\n");
-    case "list_item":
-      return blockTokens(token.tokens || []);
-    case "table": {
-      const table = token as { header: { tokens: Token[] }[]; rows: { tokens: Token[] }[][] };
-      return [table.header, ...table.rows]
-        .map((row) => row.map((cell) => inlineTokens(cell.tokens)).join(" "))
-        .join("\n");
-    }
     default:
-      return "text" in token ? String(token.text) : token.raw;
+      return "";
   }
+}).join("");
+
+const sourceSeparator = (source: string, previousEndLine: number, nextStartLine: number): string => {
+  const lineStarts = [0];
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] === "\n") lineStarts.push(index + 1);
+  }
+  const previousLineEnd = lineStarts[previousEndLine] === undefined
+    ? source.length
+    : lineStarts[previousEndLine] - 1;
+  return source.slice(previousLineEnd, lineStarts[nextStartLine]);
 };
 
-export const stripOrganicMarkdown = (text: string): string => blockTokens(marked.lexer(text));
+const blockText = (token: Token): string => {
+  if (token.type === "inline") return inlineText(token.children || []);
+  if (token.type === "fence" || token.type === "code_block" || token.type === "html_block") return token.content;
+  return "";
+};
+
+export const stripOrganicMarkdown = (text: string): string => {
+  const blocks = markdown.parse(text, {}).filter((token) => (
+    token.type === "inline" || token.type === "fence" || token.type === "code_block" || token.type === "html_block"
+  ));
+  let result = "";
+  let previousEndLine: number | undefined;
+
+  for (const block of blocks) {
+    const [startLine, endLine] = block.map || [];
+    if (previousEndLine !== undefined && startLine !== undefined) {
+      result += sourceSeparator(text, previousEndLine, startLine);
+    }
+    result += blockText(block);
+    previousEndLine = endLine;
+  }
+
+  return result;
+};
