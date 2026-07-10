@@ -111,6 +111,11 @@ export interface MechanicalRetryOptions {
  * A thrown exception is treated as a process failure and retried — UNLESS
  * `opts.callerOwns` claims it, in which case it is re-thrown (thrown outcome) or
  * returned (resolved outcome) for the caller's own semantic layer to handle.
+ *
+ * #686: resource failures (quota wall / hang-with-live-pool) are NEVER retried
+ * here and NEVER trigger `resetBeforeRetry` — they surface for relay disposition.
+ * On process-failure exhaustion the annotated result is a relay *candidate*
+ * (caller may hand off via roster+pool lookup) rather than a silent durable abort.
  */
 export async function withMechanicalRetry(
   spec: WorkerSpec,
@@ -132,6 +137,8 @@ export async function withMechanicalRetry(
     // this attempt's dispatch, record a synthetic reset failure, and let the loop retry
     // the reset next iteration (a transient reset failure recovers; a persistent one
     // exhausts into the durable abort below — the worker never runs on a dirty state).
+    // #686: only process-level retries reach here; resource failures throw above and
+    // never invoke resetBeforeRetry.
     if (attempt > 1) {
       try {
         await opts?.resetBeforeRetry?.();
@@ -151,8 +158,8 @@ export async function withMechanicalRetry(
       result = await dispatch(useSpec, useCtx);
       lastAttemptThrew = false;
     } catch (err) {
-      // #683: 429 quota wall parks the step — never mechanical-retry a park
-      // (would thrash the same pool and burn the reset window).
+      // #683/#686: 429 quota wall parks/relays the step — never mechanical-retry
+      // a resource failure (would thrash the same pool / destroy uncommitted drift).
       if (isQuotaWaitForResetError(err)) throw err;
       // A thrown error the caller's semantic layer owns is re-thrown untouched —
       // the generic layer never retries it (no double-count).
@@ -178,12 +185,13 @@ export async function withMechanicalRetry(
   // Otherwise return the last process-level failure, ANNOTATING the reason with the
   // generic dispatch attempt count (#598 crit 6 — durable abort names the failed
   // step [added by the caller] AND the attempt count, using the existing
-  // stop-reason vocabulary, no new field). Reached only when every bounded attempt
-  // was a process failure.
+  // stop-reason vocabulary, no new field). #686: exhaustion is a relay *candidate*
+  // (board depth) rather than a silent durable abort — the annotation keeps the
+  // existing vocabulary while signalling the caller may hand off.
   const attempts = MAX_DISPATCH_ATTEMPTS;
   return {
     ...(last as Extract<WorkerResult, { reason: string }>),
-    reason: `${(last as { reason: string }).reason} (after ${attempts} dispatch attempts)`,
+    reason: `${(last as { reason: string }).reason} (after ${attempts} dispatch attempts; relay candidate)`,
   };
 }
 

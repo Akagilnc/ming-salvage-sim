@@ -454,6 +454,8 @@ function isBookkeepingEntry(entry: LedgerEntry): boolean {
 /**
  * #683 — latest durable marker is a quota wait park. Resume re-enters the
  * parked step (not S8(error)). Same family as `online_review_ci_pending` parks.
+ * #686 — a newer `relay_baton_handoff` also resumes the interrupted step so the
+ * next baton can continue from the preserved worktree.
  */
 function sliceQuotaWaitPending(
   ledger: ReadonlyArray<{
@@ -463,7 +465,10 @@ function sliceQuotaWaitPending(
 ): StepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
-    if (entry.event === "quota_wait_for_reset") {
+    if (
+      entry.event === "quota_wait_for_reset" ||
+      entry.event === "relay_baton_handoff"
+    ) {
       const step = entry.step;
       if (
         step === "S2" ||
@@ -569,7 +574,7 @@ async function parkQuotaWaitForReset(opts: {
       reason: "provider_degraded",
       summary: `quota wait for reset on pool ${ledgerEntry.pool}${resetHint}`,
       repairHint:
-        "wait for the provider quota to reset, then re-feed — resume re-enters the parked step (auto re-dispatch is #686)",
+        "wait for the provider quota to reset, then re-feed — resume re-enters the parked step; when a live baton exists beyond T, #686 relays instead of parking",
     },
     deferredFindings,
   };

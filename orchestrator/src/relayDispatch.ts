@@ -1,0 +1,544 @@
+/**
+ * #686 — relay dispatch: tag contract, handoff triggers, resource-failure
+ * boundary vs mechanical retry, ledger + parameter-file forwarding, and
+ * review-gate closure.
+ *
+ * Builds on #683 (quota probe / park) and #767 (Coder-Rec roster). Does not
+ * duplicate those modules — forks at the #683 disposition point and selects
+ * the next baton via the same roster + ADR 0124 pool-orthogonal lookup.
+ */
+
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { z } from "zod";
+import type { CoderRosterEntry } from "./coderRoster.js";
+import type { IdleDisposition } from "./quotaProbe.js";
+import type { StepId } from "./types.js";
+import {
+  decideParkOrRelay,
+  hasLiveRelayBaton,
+  selectNextRelayBaton,
+  type BillingPoolEntry,
+  type BillingPoolId,
+  type NextRelayBaton,
+  type ParkOrRelayDecision,
+} from "./quotaPoolTable.js";
+
+// ── <relay> tag contract (mirror ship/cmr fail-closed shape) ────────────────
+
+const nonEmpty = z.string().trim().min(1);
+
+const phaseCompleteSchema = z
+  .object({
+    phase_complete: z.enum(["build", "clear"]),
+    state_summary: nonEmpty,
+    remaining: nonEmpty,
+  })
+  .strict();
+
+const blockedSchema = z
+  .object({
+    blocked: z
+      .object({
+        reason: nonEmpty,
+        state_summary: nonEmpty,
+        remaining: nonEmpty.optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type RelayTagOutcome =
+  | {
+      readonly kind: "phase_complete";
+      readonly phase: "build" | "clear";
+      readonly state_summary: string;
+      readonly remaining: string;
+    }
+  | {
+      readonly kind: "blocked";
+      readonly reason: string;
+      readonly state_summary: string;
+      readonly remaining?: string;
+    }
+  | { readonly kind: "malformed"; readonly reason: string };
+
+/**
+ * Parse the worker's `<relay>{…}</relay>` terminal. Shape-validated and
+ * fail-closed: malformed ≠ phase_complete. Only the LAST tag is read.
+ */
+export function parseRelayTag(stdout: string): RelayTagOutcome {
+  const re = /<relay>([\s\S]*?)<\/relay>/g;
+  let last: string | undefined;
+  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
+  if (last === undefined) {
+    return { kind: "malformed", reason: "worker emitted no <relay> tag" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(last.trim());
+  } catch {
+    return { kind: "malformed", reason: "relay tag was not valid JSON" };
+  }
+  if (parsed === null || typeof parsed !== "object") {
+    return { kind: "malformed", reason: "relay tag was not a JSON object" };
+  }
+  const blocked = blockedSchema.safeParse(parsed);
+  if (blocked.success) {
+    const b = blocked.data.blocked;
+    return {
+      kind: "blocked",
+      reason: b.reason,
+      state_summary: b.state_summary,
+      ...(b.remaining !== undefined ? { remaining: b.remaining } : {}),
+    };
+  }
+  const phase = phaseCompleteSchema.safeParse(parsed);
+  if (phase.success) {
+    return {
+      kind: "phase_complete",
+      phase: phase.data.phase_complete,
+      state_summary: phase.data.state_summary,
+      remaining: phase.data.remaining,
+    };
+  }
+  return {
+    kind: "malformed",
+    reason: "relay tag failed shape validation (fail-closed)",
+  };
+}
+
+// ── failure-type boundary vs mechanical retry (#598/#661) ───────────────────
+
+export type FailureClassKind =
+  | "quota_wall"
+  | "pool_dead"
+  | "hang_with_live_pool"
+  | "self_reported_blocked"
+  | "process_failed"
+  | "malformed"
+  | "outcome_protocol_failure";
+
+export type RetryOrRelayClass = "resource" | "mechanical_retry";
+
+/**
+ * Failure-type boundary: process-level → mechanical retry (may reset);
+ * resource failure → relay (NEVER reset — preserves uncommitted drift).
+ */
+export function classifyFailureForRetryOrRelay(input: {
+  readonly kind: FailureClassKind;
+}): RetryOrRelayClass {
+  switch (input.kind) {
+    case "quota_wall":
+    case "pool_dead":
+    case "hang_with_live_pool":
+    case "self_reported_blocked":
+      return "resource";
+    case "process_failed":
+    case "malformed":
+    case "outcome_protocol_failure":
+      return "mechanical_retry";
+  }
+}
+
+// ── ledger + parameter file ─────────────────────────────────────────────────
+
+export const RELAY_FOCUS_FILENAME = ".relay-focus.md";
+
+export type RelayHandoffTrigger =
+  | "quota_wall"
+  | "hang_with_live_pool"
+  | "self_reported_blocked"
+  | "phase_complete"
+  | "pool_dead";
+
+/**
+ * Append-only ledger row when a baton hands off (#686).
+ * `state_summary` is the load-bearing field forwarded to the next baton.
+ */
+export interface RelayHandoffLedgerEvent {
+  readonly event: "relay_baton_handoff";
+  readonly trigger: RelayHandoffTrigger;
+  readonly state_summary: string;
+  readonly remaining?: string;
+  readonly reason?: string;
+  readonly fromModelId: string;
+  readonly fromPool: BillingPoolId;
+  readonly toModelId: string;
+  readonly toPool: BillingPoolId;
+  readonly step?: StepId;
+  readonly ts: string;
+}
+
+export function buildRelayHandoffLedgerEntry(input: {
+  readonly trigger: RelayHandoffTrigger;
+  readonly state_summary: string;
+  readonly remaining?: string;
+  readonly reason?: string;
+  readonly fromModelId: string;
+  readonly fromPool: BillingPoolId;
+  readonly toModelId: string;
+  readonly toPool: BillingPoolId;
+  readonly step?: StepId;
+  readonly now: Date;
+}): RelayHandoffLedgerEvent {
+  return {
+    event: "relay_baton_handoff",
+    trigger: input.trigger,
+    state_summary: input.state_summary,
+    ...(input.remaining !== undefined ? { remaining: input.remaining } : {}),
+    ...(input.reason !== undefined ? { reason: input.reason } : {}),
+    fromModelId: input.fromModelId,
+    fromPool: input.fromPool,
+    toModelId: input.toModelId,
+    toPool: input.toPool,
+    ...(input.step !== undefined ? { step: input.step } : {}),
+    ts: input.now.toISOString(),
+  };
+}
+
+/**
+ * Write the next baton's parameter file (thin: state_summary + remaining +
+ * baton identity). Runner mechanically forwards — no method in the prompt.
+ */
+export function buildRelayFocusFile(
+  worktreePath: string,
+  entry: RelayHandoffLedgerEvent,
+): string {
+  const path = join(worktreePath, RELAY_FOCUS_FILENAME);
+  const lines = [
+    `# Relay baton handoff`,
+    ``,
+    `- trigger: ${entry.trigger}`,
+    `- from: ${entry.fromModelId} @ ${entry.fromPool}`,
+    `- to: ${entry.toModelId} @ ${entry.toPool}`,
+    `- ts: ${entry.ts}`,
+    ``,
+    `## state_summary`,
+    ``,
+    entry.state_summary,
+    ``,
+  ];
+  if (entry.remaining !== undefined && entry.remaining.length > 0) {
+    lines.push(`## remaining`, ``, entry.remaining, ``);
+  }
+  if (entry.reason !== undefined && entry.reason.length > 0) {
+    lines.push(`## reason`, ``, entry.reason, ``);
+  }
+  writeFileSync(path, lines.join("\n"), "utf8");
+  return path;
+}
+
+/** Resume from the latest relay handoff row in an append-only ledger. */
+export function resumeRelayFromLedger(
+  ledger: ReadonlyArray<RelayHandoffLedgerEvent>,
+): RelayHandoffLedgerEvent | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const row = ledger[i]!;
+    if (row.event === "relay_baton_handoff") return row;
+  }
+  return undefined;
+}
+
+// ── handoff composition ─────────────────────────────────────────────────────
+
+export type RelayDispositionResult =
+  | {
+      readonly kind: "park";
+      readonly preserveWorktree: true;
+      readonly reason: string;
+      readonly resetAt?: Date;
+    }
+  | {
+      readonly kind: "park_fallback";
+      readonly preserveWorktree: true;
+      readonly reason: string;
+      readonly resetAt?: Date;
+    }
+  | {
+      readonly kind: "relay";
+      readonly preserveWorktree: true;
+      readonly trigger: RelayHandoffTrigger;
+      readonly nextBaton: NextRelayBaton;
+      readonly reason: string;
+      readonly ledgerEntry?: RelayHandoffLedgerEvent;
+    }
+  | {
+      readonly kind: "hang";
+      readonly preserveWorktree: false;
+      readonly reason: string;
+    };
+
+export interface DecideRelayAfterIdleInput {
+  /** Probe outcome kind from #683 (`ok` | `quota_limited` | `error`). */
+  readonly probeKind: "ok" | "quota_limited" | "error";
+  readonly resetAt?: Date;
+  readonly now: Date;
+  readonly parkThresholdMs: number;
+  readonly currentModelId: string;
+  readonly currentPool: BillingPoolId;
+  readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
+  readonly pools: ReadonlyArray<BillingPoolEntry>;
+  readonly reviewerSlugs?: ReadonlyArray<string>;
+  readonly workerPid: number;
+  readonly killPidTree: (pid: number) => void | Promise<void>;
+  /**
+   * Mechanical-retry reset seam (#598/#661). Resource-failure paths MUST NOT
+   * call this — negative tests assert that.
+   */
+  readonly resetBeforeRetry?: () => void | Promise<void>;
+  readonly state_summary?: string;
+  readonly remaining?: string;
+  readonly step?: StepId;
+}
+
+/**
+ * Fork at the #683 idle/quota disposition point into park / relay /
+ * hang-with-relay. Resource paths never call `resetBeforeRetry`.
+ */
+export async function decideRelayAfterIdle(
+  input: DecideRelayAfterIdleInput,
+): Promise<RelayDispositionResult> {
+  const batonInput = {
+    currentModelId: input.currentModelId,
+    currentPool: input.currentPool,
+    rosterOrder: input.rosterOrder,
+    pools: input.pools,
+    reviewerSlugs: input.reviewerSlugs,
+  };
+
+  if (input.probeKind === "quota_limited") {
+    const live = hasLiveRelayBaton(batonInput);
+    const tier = decideParkOrRelay({
+      now: input.now,
+      resetAt: input.resetAt,
+      parkThresholdMs: input.parkThresholdMs,
+      hasLiveBaton: live,
+    });
+    if (tier === "park") {
+      return {
+        kind: "park",
+        preserveWorktree: true,
+        reason: "same-pool reset within T; park original baton",
+        ...(input.resetAt !== undefined ? { resetAt: input.resetAt } : {}),
+      };
+    }
+    if (tier === "park_fallback") {
+      return {
+        kind: "park_fallback",
+        preserveWorktree: true,
+        reason: "no live baton; park fallback",
+        ...(input.resetAt !== undefined ? { resetAt: input.resetAt } : {}),
+      };
+    }
+    // relay — do NOT kill (429 path preserves the parked process semantics of
+    // #683: sandbox may already be released; worktree drift stays).
+    const next = selectNextRelayBaton(batonInput);
+    if (next === undefined) {
+      return {
+        kind: "park_fallback",
+        preserveWorktree: true,
+        reason: "relay selected but no baton resolved; park fallback",
+        ...(input.resetAt !== undefined ? { resetAt: input.resetAt } : {}),
+      };
+    }
+    const ledgerEntry = buildRelayHandoffLedgerEntry({
+      trigger: "quota_wall",
+      state_summary:
+        input.state_summary ?? "quota wall interrupt; uncommitted drift preserved",
+      remaining: input.remaining,
+      fromModelId: input.currentModelId,
+      fromPool: input.currentPool,
+      toModelId: next.modelId,
+      toPool: next.pool,
+      step: input.step,
+      now: input.now,
+    });
+    return {
+      kind: "relay",
+      preserveWorktree: true,
+      trigger: "quota_wall",
+      nextBaton: next,
+      reason: "quota wall beyond T with live baton; relay",
+      ledgerEntry,
+    };
+  }
+
+  if (input.probeKind === "ok") {
+    // Hang with live pool → kill THIS pid tree, then relay (not same-role retry).
+    await input.killPidTree(input.workerPid);
+    const next = selectNextRelayBaton(batonInput);
+    if (next === undefined) {
+      return {
+        kind: "hang",
+        preserveWorktree: false,
+        reason: "hang; no live baton to relay to",
+      };
+    }
+    const ledgerEntry = buildRelayHandoffLedgerEntry({
+      trigger: "hang_with_live_pool",
+      state_summary:
+        input.state_summary ??
+        "worker hang with live pool; pid tree killed; drift preserved",
+      remaining: input.remaining,
+      fromModelId: input.currentModelId,
+      fromPool: input.currentPool,
+      toModelId: next.modelId,
+      toPool: next.pool,
+      step: input.step,
+      now: input.now,
+    });
+    return {
+      kind: "relay",
+      preserveWorktree: true,
+      trigger: "hang_with_live_pool",
+      nextBaton: next,
+      reason: "hang with live pool; killed pid tree and relay",
+      ledgerEntry,
+    };
+  }
+
+  // probe error → fail-safe hang (same as #683); no relay guess on unknown pool.
+  await input.killPidTree(input.workerPid);
+  return {
+    kind: "hang",
+    preserveWorktree: false,
+    reason: "idle probe error; fail-safe hang",
+  };
+}
+
+/**
+ * Pure fork at the #683 `wait_for_reset` disposition point (ADR 0125).
+ * Callers that already ran {@link import("./quotaProbe.js").decideIdleAfterProbe}
+ * feed the wait_for_reset disposition here to choose park vs relay vs park_fallback.
+ */
+export function forkQuotaWallAt683Point(input: {
+  readonly disposition: Extract<IdleDisposition, { kind: "wait_for_reset" }>;
+  readonly now: Date;
+  readonly parkThresholdMs: number;
+  readonly currentModelId: string;
+  readonly currentPool: BillingPoolId;
+  readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
+  readonly pools: ReadonlyArray<BillingPoolEntry>;
+  readonly reviewerSlugs?: ReadonlyArray<string>;
+  readonly state_summary?: string;
+  readonly remaining?: string;
+  readonly step?: StepId;
+}): {
+  readonly tier: ParkOrRelayDecision;
+  readonly nextBaton?: NextRelayBaton;
+  readonly ledgerEntry?: RelayHandoffLedgerEvent;
+} {
+  const batonInput = {
+    currentModelId: input.currentModelId,
+    currentPool: input.currentPool,
+    rosterOrder: input.rosterOrder,
+    pools: input.pools,
+    reviewerSlugs: input.reviewerSlugs,
+  };
+  const live = hasLiveRelayBaton(batonInput);
+  const tier = decideParkOrRelay({
+    now: input.now,
+    resetAt: input.disposition.resetAt,
+    parkThresholdMs: input.parkThresholdMs,
+    hasLiveBaton: live,
+  });
+  if (tier !== "relay") {
+    return { tier };
+  }
+  const nextBaton = selectNextRelayBaton(batonInput);
+  if (nextBaton === undefined) {
+    return { tier: "park_fallback" };
+  }
+  return {
+    tier: "relay",
+    nextBaton,
+    ledgerEntry: buildRelayHandoffLedgerEntry({
+      trigger: "quota_wall",
+      state_summary:
+        input.state_summary ??
+        "quota wall interrupt; uncommitted drift preserved",
+      remaining: input.remaining,
+      fromModelId: input.currentModelId,
+      fromPool: input.currentPool,
+      toModelId: nextBaton.modelId,
+      toPool: nextBaton.pool,
+      step: input.step,
+      now: input.now,
+    }),
+  };
+}
+
+export interface ApplyResourceFailureHandoffInput {
+  readonly trigger: RelayHandoffTrigger;
+  readonly state_summary: string;
+  readonly remaining?: string;
+  readonly reason?: string;
+  readonly currentModelId: string;
+  readonly currentPool: BillingPoolId;
+  readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
+  readonly pools: ReadonlyArray<BillingPoolEntry>;
+  readonly reviewerSlugs?: ReadonlyArray<string>;
+  readonly resetBeforeRetry?: () => void | Promise<void>;
+  readonly now: Date;
+  readonly step?: StepId;
+}
+
+/**
+ * Resource-failure handoff. Intentionally never calls `resetBeforeRetry` —
+ * that seam belongs exclusively to mechanical retry (#598/#661).
+ */
+export async function applyResourceFailureHandoff(
+  input: ApplyResourceFailureHandoffInput,
+): Promise<RelayDispositionResult> {
+  // Deliberate: do NOT await/call input.resetBeforeRetry.
+  void input.resetBeforeRetry;
+
+  const next = selectNextRelayBaton({
+    currentModelId: input.currentModelId,
+    currentPool: input.currentPool,
+    rosterOrder: input.rosterOrder,
+    pools: input.pools,
+    reviewerSlugs: input.reviewerSlugs,
+  });
+  if (next === undefined) {
+    return {
+      kind: "park_fallback",
+      preserveWorktree: true,
+      reason: "resource failure but no live baton; park fallback",
+    };
+  }
+  const ledgerEntry = buildRelayHandoffLedgerEntry({
+    trigger: input.trigger,
+    state_summary: input.state_summary,
+    remaining: input.remaining,
+    reason: input.reason,
+    fromModelId: input.currentModelId,
+    fromPool: input.currentPool,
+    toModelId: next.modelId,
+    toPool: next.pool,
+    step: input.step,
+    now: input.now,
+  });
+  return {
+    kind: "relay",
+    preserveWorktree: true,
+    trigger: input.trigger,
+    nextBaton: next,
+    reason: input.reason ?? `resource failure → relay (${input.trigger})`,
+    ledgerEntry,
+  };
+}
+
+/**
+ * Relay chain ends at the normal review gate. A closing baton's normal
+ * terminal (no relay tag) is required — self-reported phase_complete / clear
+ * is NOT a review-gate exemption (#596 empiric).
+ */
+export function isRelayChainReadyForReviewGate(input: {
+  readonly closingBatonCompleted: boolean;
+  readonly emittedRelayTag: boolean;
+  readonly lastRelayPhase?: "build" | "clear";
+}): boolean {
+  return input.closingBatonCompleted === true && input.emittedRelayTag === false;
+}

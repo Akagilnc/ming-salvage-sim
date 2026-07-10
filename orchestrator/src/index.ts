@@ -181,6 +181,7 @@ export type {
   LedgerEntry,
   LedgerBookkeepingEvent,
   QuotaWaitForResetEvent,
+  RelayBatonHandoffEvent,
   PersistentLedgerEntry,
   ReviewerOutput,
   RunInput,
@@ -225,3 +226,42 @@ export {
 } from "./coderRoster.js";
 export type { CoderPoolId, CoderRosterEntry, SelectCoderRecOptions } from "./coderRoster.js";
 export { applyCoderRecToRoute, withCoderSlot } from "./modelRoutes.js";
+
+// ── relay dispatch (#686 / ADR 0124–0126) ───────────────────────────────────
+export {
+  DEFAULT_PARK_THRESHOLD_MS,
+  decideParkOrRelay,
+  hasLiveRelayBaton,
+  selectNextRelayBaton,
+} from "./quotaPoolTable.js";
+export type {
+  BillingPoolEntry,
+  BillingPoolId,
+  BillingPoolStatus,
+  NextRelayBaton,
+  ParkOrRelayDecision,
+  PoolTable,
+  SelectNextRelayBatonInput,
+} from "./quotaPoolTable.js";
+export {
+  RELAY_FOCUS_FILENAME,
+  applyResourceFailureHandoff,
+  buildRelayFocusFile,
+  buildRelayHandoffLedgerEntry,
+  classifyFailureForRetryOrRelay,
+  decideRelayAfterIdle,
+  forkQuotaWallAt683Point,
+  isRelayChainReadyForReviewGate,
+  parseRelayTag,
+  resumeRelayFromLedger,
+} from "./relayDispatch.js";
+export type {
+  ApplyResourceFailureHandoffInput,
+  DecideRelayAfterIdleInput,
+  FailureClassKind,
+  RelayDispositionResult,
+  RelayHandoffLedgerEvent,
+  RelayHandoffTrigger,
+  RelayTagOutcome,
+  RetryOrRelayClass,
+} from "./relayDispatch.js";
