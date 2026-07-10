@@ -70,7 +70,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 85,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "张瑞图",
@@ -253,7 +256,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 70,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "杨嗣昌",
@@ -280,7 +286,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 80,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(『四正六隅十面网』主抚之争议是数年后事,不预判)",
+        "severity": "无"
+      }
     },
     {
       "name": "温体仁",
@@ -308,7 +317,10 @@
       "historical_death_month": 7,
       "power_id": "ming",
       "identity": 18,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(品性污点:工心计、枚卜案讦钱谦益以自进、柄国专务逢迎不引正人——《明史》列奸臣传,属品性污点非可坐之现行罪;integ30仅线索)",
+        "severity": "无"
+      }
     },
     {
       "name": "钱龙锡",
@@ -335,7 +347,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 78,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "刘鸿训",
@@ -362,7 +377,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 72,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "钱谦益",
@@ -419,7 +437,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 75,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "孙承宗",
@@ -448,7 +469,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 88,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "崔呈秀",
@@ -507,7 +531,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 65,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(主『修筑重关』之议与孙承宗辽东战略分歧属政见之争非罪)",
+        "severity": "无"
+      }
     },
     {
       "name": "徐光启",
@@ -535,7 +562,10 @@
       "historical_death_month": 10,
       "power_id": "ming",
       "identity": 90,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "袁可立",
@@ -561,7 +591,10 @@
       "historical_death_month": 10,
       "power_id": "ming",
       "identity": 86,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "周延儒",
@@ -588,7 +621,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 16,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(品性污点:投机贪权、与温体仁合谋排钱谦益——《明史》列奸臣传,属品性污点非可坐之现行罪;首辅任内贪纵赐死是后事;integ32仅线索)",
+        "severity": "无"
+      }
     },
     {
       "name": "倪元璐",
@@ -615,7 +651,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 87,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "黄道周",
@@ -643,7 +682,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 94,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "曹化淳",
@@ -671,7 +713,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 78,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "王体乾",
@@ -729,7 +774,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 95,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "魏忠贤",
@@ -852,7 +900,10 @@
       "historical_death_month": 3,
       "power_id": "ming",
       "identity": 85,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "客氏",
@@ -909,7 +960,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 80,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "曹文诏",
@@ -936,7 +990,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 82,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "祖大寿",
@@ -964,7 +1021,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 55,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(大凌河诈降、再叛、终降清皆后事,坚决不预坐)",
+        "severity": "无"
+      }
     },
     {
       "name": "满桂",
@@ -991,7 +1051,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 85,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "赵率教",
@@ -1018,7 +1081,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 85,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "王之臣",
@@ -1045,7 +1111,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 68,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "毛文龙",
@@ -1134,7 +1203,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 80,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(松锦战败后降清是崇祯十五年后事,铁律不预坐;此刻陕西督粮参政忠勤明臣)",
+        "severity": "无"
+      }
     },
     {
       "name": "孙传庭",
@@ -1161,7 +1233,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 82,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "卢象升",
@@ -1188,7 +1263,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 90,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "史可法",
@@ -1214,7 +1292,10 @@
       "historical_death_month": 0,
       "power_id": "ming",
       "identity": 94,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "周皇后",
@@ -1737,7 +1818,10 @@
       "power_id": "ming",
       "location": "liaodong",
       "identity": 45,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(引清入关是十余年后事,坚决不预判)",
+        "severity": "无"
+      }
     },
     {
       "name": "左良玉",
@@ -1768,7 +1852,10 @@
       "power_id": "ming",
       "location": "liaodong",
       "identity": 50,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(后期拥兵自重、剽掠地方军阀化是后事,存疑不预坐)",
+        "severity": "无"
+      }
     },
     {
       "name": "高迎祥",
@@ -1916,7 +2003,10 @@
       "power_id": "ming",
       "location": "beizhili",
       "identity": 82,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(登莱之变孔有德兵变后孙被弃市属政治替罪之后事,非现行罪,铁律不预坐)",
+        "severity": "无"
+      }
     },
     {
       "name": "陈新甲",
@@ -1946,7 +2036,10 @@
       "power_id": "ming",
       "location": "",
       "identity": 55,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(后任兵书因泄议和事被诛是后事)",
+        "severity": "无"
+      }
     },
     {
       "name": "傅宗龙",
@@ -1977,7 +2070,10 @@
       "power_id": "ming",
       "location": "",
       "identity": 70,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "丁启睿",
@@ -2006,7 +2102,10 @@
       "power_id": "ming",
       "location": "",
       "identity": 50,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(后督师剿闯朱仙镇溃败是后事,败绩非此刻之罪)",
+        "severity": "无"
+      }
     },
     {
       "name": "朱常洵",
@@ -2070,7 +2169,10 @@
       "power_id": "ming",
       "location": "huguang",
       "identity": 70,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "朱由崧",
@@ -2100,7 +2202,10 @@
       "power_id": "ming",
       "location": "henan",
       "identity": 70,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(后为弘光帝其失政皆十余年后事,铁律不预坐)",
+        "severity": "无"
+      }
     },
     {
       "name": "懿安皇后",
@@ -2132,7 +2237,10 @@
       "power_id": "ming",
       "location": "beizhili",
       "identity": 40,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "张延登",
@@ -2162,7 +2270,10 @@
       "power_id": "ming",
       "location": "",
       "identity": 63,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "吴甡",
@@ -2193,7 +2304,10 @@
       "power_id": "ming",
       "location": "",
       "identity": 70,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "吴昌时",
@@ -2253,7 +2367,10 @@
       "power_id": "ming",
       "location": "",
       "identity": 48,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(后任兵书畏敌避战、自请视师服毒求免责是后事)",
+        "severity": "无"
+      }
     },
     {
       "name": "朱燮元",
@@ -2284,7 +2401,10 @@
       "power_id": "ming",
       "location": "guizhou",
       "identity": 78,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "邹维琏",
@@ -2314,7 +2434,10 @@
       "power_id": "ming",
       "location": "fujian",
       "identity": 66,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "练国事",
@@ -2343,7 +2466,10 @@
       "power_id": "ming",
       "location": "shaanxi",
       "identity": 58,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "李待问",
@@ -2372,7 +2498,10 @@
       "power_id": "ming",
       "location": "",
       "identity": 56,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "焦源溥",
@@ -2401,7 +2530,10 @@
       "power_id": "ming",
       "location": "shanxi",
       "identity": 62,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "曾樱",
@@ -2431,7 +2563,10 @@
       "power_id": "ming",
       "location": "fujian",
       "identity": 68,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "余大成",
@@ -2460,7 +2595,10 @@
       "power_id": "ming",
       "location": "",
       "identity": 55,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "王尊德",
@@ -2490,7 +2628,10 @@
       "power_id": "ming",
       "location": "guangdong",
       "identity": 60,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "郑芝龙",
@@ -2555,7 +2696,10 @@
       "power_id": "ming",
       "location": "",
       "identity": 68,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "瞿式耜",
@@ -2586,7 +2730,10 @@
       "power_id": "ming",
       "location": "",
       "identity": 85,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "郑成功",
@@ -2617,7 +2764,10 @@
       "power_id": "ming",
       "location": "fujian",
       "identity": 40,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(此刻仅郑芝龙之子、童子;抗清复台是数十年后事,坚决不预判)",
+        "severity": "无"
+      }
     },
     {
       "name": "李定国",
@@ -2704,7 +2854,10 @@
       "power_id": "ming",
       "location": "zhejiang",
       "identity": 88,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "孔有德",
@@ -2734,7 +2887,10 @@
       "power_id": "ming",
       "location": "dongjiang_area",
       "identity": 40,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(此刻东江毛部将之明军武弁未叛;崇祯六年起降清是后事,务必勿预坐叛罪)",
+        "severity": "无"
+      }
     },
     {
       "name": "耿仲明",
@@ -2764,7 +2920,10 @@
       "power_id": "ming",
       "location": "dongjiang_area",
       "identity": 40,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(此刻东江毛部将之明军武弁未叛;后随孔有德降清是后事,勿预坐)",
+        "severity": "无"
+      }
     },
     {
       "name": "尚可喜",
@@ -2794,7 +2953,10 @@
       "power_id": "ming",
       "location": "dongjiang_area",
       "identity": 42,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(此刻东江明将未叛;崇祯七年降清是后事,勿预坐)",
+        "severity": "无"
+      }
     },
     {
       "name": "多铎",
@@ -2962,7 +3124,10 @@
       "power_id": "ming",
       "location": "huguang",
       "identity": 50,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无(此刻约四五岁孩童;后为永历帝南明末事,铁律不预坐)",
+        "severity": "无"
+      }
     },
     {
       "name": "朱术桂",
@@ -2991,7 +3156,10 @@
       "power_id": "ming",
       "location": "",
       "identity": 60,
-      "seed_guilt": {}
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     }
   ]
 }

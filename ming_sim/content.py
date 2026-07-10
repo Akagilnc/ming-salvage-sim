@@ -73,7 +73,27 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
     characters: Dict[str, Character] = {}
     for idx, raw in enumerate(require_list(data.get("characters"), "characters.json.characters"), 1):
         item = require_dict(raw, f"characters.json.characters[{idx}]")
+        path = f"characters.json.characters[{idx}]"
         name = str_field(item, "name", f"characters.json.characters[{idx}]")
+        identity = int_field(item, "identity", path) if "identity" in item else 50
+        if not 0 <= identity <= 100:
+            raise SystemExit(f"设定字段超出范围：{path}.identity（应为 0–100）")
+        seed_guilt = item.get("seed_guilt", {})
+        if not isinstance(seed_guilt, dict):
+            raise SystemExit(f"设定字段应为对象：{path}.seed_guilt")
+        if seed_guilt:
+            if set(seed_guilt) != {"crime", "severity"}:
+                raise SystemExit(
+                    f"设定字段结构非法：{path}.seed_guilt（仅允许 crime、severity）"
+                )
+            crime = seed_guilt.get("crime")
+            severity = seed_guilt.get("severity")
+            if not isinstance(crime, str) or not crime.strip():
+                raise SystemExit(f"设定字段应为非空字符串：{path}.seed_guilt.crime")
+            if severity not in {"无", "轻", "中", "重"}:
+                raise SystemExit(
+                    f"设定字段枚举非法：{path}.seed_guilt.severity（仅允许 无/轻/中/重）"
+                )
         characters[name] = Character(
             name=name,
             office=str_field(item, "office", f"characters.json.characters[{idx}]"),
@@ -99,10 +119,8 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             reason_code=str(item.get("reason_code") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
-            identity=int(item.get("identity") if item.get("identity") is not None else 50),
-            seed_guilt=json.dumps(item.get("seed_guilt"), ensure_ascii=False)
-            if item.get("seed_guilt")
-            else "",
+            identity=identity,
+            seed_guilt=json.dumps(seed_guilt, ensure_ascii=False) if seed_guilt else "",
         )
 
     aliases_by_faction: Dict[str, Set[str]] = {}
