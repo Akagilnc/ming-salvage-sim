@@ -27,7 +27,7 @@ import {
   mkdirSync,
   readFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   resolveCoderRecOrder,
@@ -783,6 +783,11 @@ export function telemetryPath(ledgerDir: string): string {
   return join(ledgerDir, TELEMETRY_FILENAME);
 }
 
+function writeTelemetryLine(ledgerDir: string, record: TelemetryRecord): void {
+  const line = `${JSON.stringify(record)}\n`;
+  appendFileSync(telemetryPath(ledgerDir), line, { encoding: "utf8", flag: "a" });
+}
+
 /**
  * Append one telemetry record as a single JSONL line.
  *
@@ -795,13 +800,19 @@ export function appendTelemetryRecord(
   record: TelemetryRecord,
 ): void {
   mkdirSync(ledgerDir, { recursive: true });
-  const line = `${JSON.stringify(record)}\n`;
-  appendFileSync(telemetryPath(ledgerDir), line, { encoding: "utf8", flag: "a" });
+  writeTelemetryLine(ledgerDir, record);
 }
 
 /**
  * Best-effort append: swallows errors so dispatch never fails on telemetry.
  * Returns true when the line was written.
+ *
+ * Does **not** invent missing ancestor directories. Unit/integration fixtures
+ * pass opaque fake `stateDir` strings (e.g. `/resident/worktrees/.ledger-N`)
+ * that must never be materialised: recursive mkdir either spams ENOENT on
+ * every worker leg or, when privileged, pollutes the host FS. Production
+ * `stateDir` is a sibling under an already-existing worktree parent, so the
+ * leaf `.ledger-N` is still created when only that leaf is missing.
  */
 export function tryAppendTelemetryRecord(
   ledgerDir: string | undefined,
@@ -809,7 +820,15 @@ export function tryAppendTelemetryRecord(
 ): boolean {
   if (ledgerDir === undefined || ledgerDir.length === 0) return false;
   try {
-    appendTelemetryRecord(ledgerDir, record);
+    if (!existsSync(ledgerDir)) {
+      const parent = dirname(ledgerDir);
+      // Root / empty-parent / non-existent ancestor → silent fail-open.
+      if (parent === ledgerDir || parent.length === 0 || !existsSync(parent)) {
+        return false;
+      }
+      mkdirSync(ledgerDir, { recursive: true });
+    }
+    writeTelemetryLine(ledgerDir, record);
     return true;
   } catch (err) {
     console.warn(
