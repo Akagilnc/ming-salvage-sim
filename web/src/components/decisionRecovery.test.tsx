@@ -2,7 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { DecisionRecoveryPanel } from "./decisionRecovery";
-import { PAUSED_DECISION_MSG, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "../decisionRouting";
+import { PAUSED_DECISION_MSG, replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "../decisionRouting";
 import type { PendingDecision } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -92,6 +92,11 @@ describe("decision routing — issueDecree entry (routeIssueDecisions)", () => {
 });
 
 describe("decision routing — refresh entry (routeRefreshDecisions)", () => {
+  it("replaces an old batch when refresh rejects the new batch", () => {
+    const route = routeRefreshDecisions("awaiting_decision", [validDecision, { broken: true }]);
+    expect(replacePendingDecisionsOnRefresh([validDecision], route.pendingDecisions)).toEqual([]);
+  });
+
   it("rejects the whole batch on page refresh when any decision is corrupt", () => {
     const route = routeRefreshDecisions("awaiting_decision", [validDecision, { broken: true }]);
     expect(route.pendingDecisions).toEqual([]);

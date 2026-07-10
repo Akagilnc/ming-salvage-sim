@@ -13,7 +13,7 @@ import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, Re
 import { SituationPanel } from "./components/situation";
 import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
-import { PAUSED_DECISION_MSG, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "./decisionRouting";
+import { replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
@@ -221,7 +221,7 @@ function App() {
     const route = routeRefreshDecisions(state.turn.phase, state.pending_decisions || []);
     if (route.pendingDecisions !== null) {
       const next = route.pendingDecisions;
-      setPendingDecisions((prev) => (prev.length ? prev : next));
+      setPendingDecisions((prev) => replacePendingDecisionsOnRefresh(prev, next) || []);
     }
     if (route.error !== null) setPausedDecisionError(route.error);
   }, [state]);
