@@ -2133,7 +2133,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (applied.route === modelRoute) return;
     modelRoute = applied.route;
     stepSpecs = stepSpecsForRoute(modelRoute);
-    // New coder slug may lack a smoke record — re-check before the next worker.
+    // Clear so the caller re-runs ensureRouteSmoke for the new coder slug
+    // before its first dispatch (top-of-loop OR the S2/S5 advance path).
     routeSmokeChecked = false;
     if (applied.entry !== undefined) {
       console.info(
@@ -3507,8 +3508,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
         // #767: before each coder dispatch, re-select from Coder-Rec using the
         // number of completed S6 fix rounds as the non-convergence counter.
+        // Mid-loop advance clears routeSmokeChecked — re-smoke here because the
+        // top-of-loop check already ran for this iteration.
         if (step === "S2" || step === "S5") {
           applyCoderRecSelection(coderRecRoundsFromLedger(ledger));
+          if (!routeSmokeChecked) {
+            const smokeResult = await ensureRouteSmoke();
+            if (smokeResult !== undefined) return smokeResult;
+          }
         }
         promptFile = stepSpecs[step].promptFile;
         const expectedKind = stepSpecs[step].role as "coder" | "reviewer";
