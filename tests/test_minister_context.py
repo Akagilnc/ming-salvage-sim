@@ -10,12 +10,15 @@ import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from ming_sim.models import CourtContext
 from ming_sim.context import character_context_with_db
 from ming_sim.context import _faction_band, _identity_band, _identity_bucket
 from ming_sim.registry import (
     build_building_brief,
     build_court_brief,
+    build_memory_brief,
     build_region_brief,
     create_minister_agent,
 )
@@ -389,6 +392,34 @@ def test_final_minister_context_rejects_any_injected_abstract_value_shape(game):
 
     rendered = "\n".join(captured["instructions"])
     assert not re.search(r"(?:民心|动乱|皇威|火器|完好|进度)\s*[:：]?\s*\d+", rendered)
+
+
+def test_historical_context_rejects_injected_abstract_values_across_all_history_seams(game):
+    """邸报、章节记忆和历史报告工具都必须守住最终上下文的 P4 边界。"""
+    db, state, content = game
+    injected = "民心=73；忠诚：88；动乱 19；欠饷约三月。"
+    state.turn = max(2, int(state.turn))
+    db.get_turn_report = lambda _turn: injected
+    db.list_chapter_memories = lambda **_kwargs: [
+        {"turn": 1, "year": 1628, "period": 1, "title": "旧事", "body": injected}
+    ]
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    db.conn.execute(
+        "INSERT OR REPLACE INTO turn_reports(turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (state.turn - 2, state.year, state.period, injected),
+    )
+    db.conn.commit()
+
+    gazette = build_last_gazette_brief(_ctx(game))
+    memory = build_memory_brief(minister, _ctx(game))
+    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
+    history = tools["read_past_report"](year=state.year, month=state.period)
+
+    for rendered in (gazette, memory, history):
+        assert "民心=73" not in rendered
+        assert "忠诚：88" not in rendered
+        assert "动乱 19" not in rendered
+        assert "已略去" in rendered or "未见正式邸报记录" in rendered
 
 
 def test_final_minister_context_keeps_secret_order_tools_without_length_caps(game, monkeypatch):

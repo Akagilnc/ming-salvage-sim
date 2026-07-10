@@ -2,6 +2,38 @@
 
 from __future__ import annotations
 
+import re
+
+
+# 历史邸报/章节正文是 LLM 产物，不能假定它已经遵守 P4。只拦截
+# ``字段 + 直接数值`` 这种明确的裸抽象轴写法；钱粮、兵额、欠饷月数等
+# 真实可数物不在这里列出，仍可随历史叙事传递。
+_ABSTRACT_VALUE_RE = re.compile(
+    r"(?:民心|动乱|皇威|忠诚(?:度)?|能力|操守|廉洁|胆略|勇气|满意度|态度|"
+    r"朝势|军力|财力|士气|训练|装备|火器|机动|士绅阻力|军事压力|"
+    r"进度|进展|bar(?:_value)?|public_support|unrest|loyalty|ability|"
+    r"integrity|courage|satisfaction|leverage|military_strength|morale|"
+    r"training|equipment|firearm_equipment|progress)"
+    r"\s*(?:[:：=]\s*|(?:由|为|达|至|是|从)\s*|\s+)[-+]?\d+(?:\.\d+)?"
+    r"(?:\s*/\s*100|\s*%)?",
+    re.IGNORECASE,
+)
+
+
+def safe_historical_text(text: object, kind: str = "历史记录") -> str:
+    """Return historical prose only when it does not leak abstract raw scores.
+
+    Stored reports remain authoritative game history; this presentation guard
+    rejects unsafe prose at every minister-facing history seam instead of
+    trying to infer a qualitative bucket from arbitrary LLM text.
+    """
+    rendered = str(text or "").strip()
+    if not rendered:
+        return ""
+    if _ABSTRACT_VALUE_RE.search(rendered):
+        return f"（{kind}含抽象指标原值，已略去；请以当时正式定性奏报为准。）"
+    return rendered
+
 
 def qualitative_bucket(
     value: object,

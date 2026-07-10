@@ -9,7 +9,7 @@ from typing import Dict, List
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
 from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
-from ming_sim.qualitative import qualitative_band
+from ming_sim.qualitative import qualitative_band, safe_historical_text
 from ming_sim.skills import skill_template
 
 _STATUS_CN = {
@@ -359,7 +359,8 @@ def build_minister_tools(character: Character, context: CourtContext,
         ).fetchone()
         if not row or not row["report"]:
             return f"{target_year}年{target_month}月未见正式邸报记录。"
-        return f"【{target_year}年{target_month}月邸报】\n{row['report']}"
+        report = safe_historical_text(row["report"], "历史邸报")
+        return f"【{target_year}年{target_month}月邸报】\n{report}"
 
     def search_memories(keywords: str = "", year: int = 0, period: int = 0) -> str:
         """检索起居注章节旧事。支持两种方式（可同时用）：
@@ -387,7 +388,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         label = " ".join(kw_list) or f"{year}年{period}月"
         lines = [f"【起居注检索：{label}】"]
         for c in hits[-8:]:
-            body = (c.get("body") or c.get("title") or "").strip()
+            body = safe_historical_text(c.get("body") or c.get("title"), "起居注章节")
             lines.append(f"- {c['year']}年{c['period']}月：{body}")
         return "\n".join(lines)
 
