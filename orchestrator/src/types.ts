@@ -1448,8 +1448,8 @@ export interface PersistentLedgerEntry extends LedgerEntry {
  * the recorded breakpoint instead of re-cutting from S0.
  *
  * Crash-resume and escalate-resume share ONE machine: both read this state,
- * reuse the worktree, clean uncommitted residue, and continue from the step
- * the ledger says is next (decided by `route()`, not LLM memory).
+ * reuse the worktree, preserve uncommitted residue as work product, and
+ * continue on the existing scene; only terminal-success GC removes worktrees.
  *
  * `ledger` is the persisted step ledger read from the sibling state dir
  * (`<stateDir>/steps.jsonl`) — the resume truth. The last entry's step + output
