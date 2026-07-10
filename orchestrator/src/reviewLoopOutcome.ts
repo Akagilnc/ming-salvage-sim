@@ -147,6 +147,8 @@ export function isValidVerifyResult(
   if (obj.isRecheck !== undefined && typeof obj.isRecheck !== "boolean") {
     return false;
   }
+  // #711: findingFamilies is an accelerator, not a gate. Malformed values must
+  // not fail the whole verify verdict — callers sanitize/drop them to no-brief.
   return true;
 }
 

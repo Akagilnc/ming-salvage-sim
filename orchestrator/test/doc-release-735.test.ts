@@ -21,6 +21,7 @@ import { offlineReviewLoopDispatchAdmissible } from "../src/evidenceAdmissibilit
 import {
   legacyDispatchFamilyWorker,
 } from "../src/family/dispatchFamilyWorker.js";
+import { resolveRouteModels, routeSmokeEntries } from "../src/modelRoutes.js";
 import type { FamilyBackend } from "../src/family/types.js";
 import type {
   Backend,
@@ -34,6 +35,17 @@ import type {
 const REPO = "Akagilnc/ming-salvage-sim";
 const LIVE_PR = "https://github.com/Akagilnc/ming-salvage-sim/pull/735";
 const OFFLINE_PR = "pr://slice/735-offline";
+const SMOKED_ROUTE = resolveRouteModels(
+  "normal",
+  {},
+  {},
+  Object.fromEntries(
+    routeSmokeEntries(resolveRouteModels("normal", {})).map((entry) => [
+      entry.key,
+      { state: "passed", at: new Date().toISOString(), cliVersion: "test" },
+    ]),
+  ),
+);
 
 function readySnapshot(overrides?: Partial<PrReviewSnapshot>): PrReviewSnapshot {
   return {
@@ -356,7 +368,7 @@ describe("#735 docRelease dispatch: live not unconditional stub; offline hatch",
     const result = await dispatchWorker(
       backend,
       docReleaseWorkerSpec(),
-      { worktree, prUrl: LIVE_PR, repo: REPO },
+      { worktree, modelRoute: SMOKED_ROUTE, prUrl: LIVE_PR, repo: REPO },
     );
     expect(observed).toHaveLength(1);
     expect(observed[0]!.kind).toBe("docRelease");
@@ -380,7 +392,7 @@ describe("#735 docRelease dispatch: live not unconditional stub; offline hatch",
     const result = await dispatchWorker(
       backend as Backend,
       docReleaseWorkerSpec(),
-      { worktree, prUrl: LIVE_PR, repo: REPO },
+      { worktree, modelRoute: SMOKED_ROUTE, prUrl: LIVE_PR, repo: REPO },
     );
     expect(result.kind).toBe("completed");
     if (result.kind === "completed") {
@@ -401,7 +413,7 @@ describe("#735 docRelease dispatch: live not unconditional stub; offline hatch",
     const result = await dispatchWorker(
       backend as Backend,
       docReleaseWorkerSpec(),
-      { worktree, prUrl: LIVE_PR, repo: REPO },
+      { worktree, modelRoute: SMOKED_ROUTE, prUrl: LIVE_PR, repo: REPO },
     );
     expect(result.kind).toBe("failed");
   });

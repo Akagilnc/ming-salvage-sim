@@ -33,6 +33,10 @@ const WT: WorktreeHandle = {
  * the optional true-value helpers. Records every persisted ledger entry.
  */
 class SeamExtensionBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly persisted: PersistentLedgerEntry[] = [];
   /** When false, runStep returns a BARE StepOutput (no per-step sessionId). */
   constructor(
