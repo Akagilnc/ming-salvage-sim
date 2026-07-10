@@ -1,0 +1,750 @@
+/**
+ * #786 — orchestrator telemetry sidecar (append-only JSONL).
+ *
+ * Parallel to the step ledger (`steps.jsonl`): raw per-leg stamps only.
+ * Aggregation / stats are out of scope for this ticket.
+ *
+ * Layout: `<ledgerDir>/telemetry.jsonl` — one JSON object per line.
+ * Phases:
+ *   - `environment` — once per run (image / route lineup / CLI versions)
+ *   - `dispatch`    — half-row at spawn (identity / model / pool / time)
+ *   - `collect`     — half-row at finish (terminal / tokens / session / log)
+ *
+ * Join key: `legId` shared by a dispatch+collect pair.
+ * Unobtainable fields are `null` — never block the worker path.
+ * Telemetry I/O is best-effort: callers must not let throws escape into
+ * dispatch control flow.
+ */
+
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+} from "node:fs";
+import { join } from "node:path";
+
+import {
+  resolveCoderRecOrder,
+} from "./coderRoster.js";
+import {
+  effortForLiveOfficer,
+  modelFamilyForSlug,
+  resolveModelSlug,
+} from "./modelRegistry.js";
+import type { ResolvedModelRoute } from "./modelRoutes.js";
+import { isQuotaWaitForResetError } from "./quotaProbe.js";
+import {
+  isHangWithLivePoolError,
+  isSelfReportedRelayError,
+} from "./relayDispatch.js";
+import type {
+  DispatchContext,
+  WorkerResult,
+  WorkerSpec,
+} from "./types.js";
+import { poolIdForWorker } from "./workerMonitor.js";
+
+/** Sidecar filename under the ledger/state directory. */
+export const TELEMETRY_FILENAME = "telemetry.jsonl";
+
+/** Schema version for forward-compatible consumers. */
+export const TELEMETRY_SCHEMA_VERSION = 1 as const;
+
+/**
+ * Error categories for failed/aborted legs (issue #786).
+ * Distinct: at-capacity ≠ 429-quota ≠ hang-idle ≠ stream-disconnect.
+ */
+export type TelemetryErrorCategory =
+  | "at-capacity"
+  | "429-quota"
+  | "hang-idle"
+  | "stream-disconnect"
+  | "honest-incomplete"
+  | "relay-out"
+  | "killed";
+
+/** Terminal discriminant recorded on the collect half-row. */
+export type TelemetryTerminal =
+  | "completed"
+  | "failed"
+  | "malformed"
+  | "outcome_protocol_failure"
+  | "escalated"
+  | "thrown";
+
+/** Token triple (+ optional total when only a single count is available). */
+export interface TelemetryTokenUsage {
+  readonly input: number | null;
+  readonly output: number | null;
+  readonly cached: number | null;
+  /** Codex often prints only a total; keep it when the split is unavailable. */
+  readonly total: number | null;
+}
+
+export interface TelemetryCoderRecProvenance {
+  /** Designer Coder-Rec order (roster ids), when parseable from the issue body. */
+  readonly order: readonly string[] | null;
+  /** Model slug actually dispatched. */
+  readonly selected: string | null;
+  /** True when selected is not the head of the order. */
+  readonly wasFallback: boolean | null;
+  /** True when ORCHESTRATOR_CODER_MODEL env forced the coder. */
+  readonly envOverride: boolean | null;
+}
+
+export interface TelemetryModelStamp {
+  readonly slug: string | null;
+  readonly family: string | null;
+  readonly effort: string | null;
+  /** ORCHESTRATOR_CODEX_FAST / service_tier=fast when known. */
+  readonly fast: boolean | null;
+}
+
+interface TelemetryRecordBase {
+  readonly v: typeof TELEMETRY_SCHEMA_VERSION;
+  /** Wall-clock when this JSONL line was written. */
+  readonly stamped_at: string;
+}
+
+/** Once-per-run environment stamp. */
+export interface TelemetryEnvironmentRecord extends TelemetryRecordBase {
+  readonly phase: "environment";
+  readonly runId: string | null;
+  readonly imageTag: string | null;
+  readonly routeName: string | null;
+  /** Slot → model slug lineup from the resolved route. */
+  readonly routeSlots: Readonly<Record<string, string>> | null;
+  /** CMR review leg slugs, when present. */
+  readonly routeCmrReviewLegs: readonly string[] | null;
+  /** slug → cliVersion from route-smoke passed records. */
+  readonly cliVersions: Readonly<Record<string, string>> | null;
+}
+
+/** Dispatch half-row (identity / model / pool / time). */
+export interface TelemetryDispatchRecord extends TelemetryRecordBase {
+  readonly phase: "dispatch";
+  readonly legId: string;
+  readonly runId: string | null;
+  readonly issue: number | null;
+  readonly stepId: string | null;
+  readonly role: string | null;
+  readonly kind: string | null;
+  /** Online-review round or null when not applicable / unknown. */
+  readonly round: number | null;
+  /** Mechanical-retry attempt ordinal; null when the seam does not know. */
+  readonly attempt: number | null;
+  readonly model: TelemetryModelStamp;
+  readonly poolId: string | null;
+  readonly coderRec: TelemetryCoderRecProvenance | null;
+  readonly cliVersion: string | null;
+  readonly dispatched_at: string;
+}
+
+/** Collect half-row (terminal / tokens / session / log). */
+export interface TelemetryCollectRecord extends TelemetryRecordBase {
+  readonly phase: "collect";
+  readonly legId: string;
+  readonly first_output_at: string | null;
+  readonly completed_at: string;
+  readonly terminal: TelemetryTerminal;
+  readonly errorCategory: TelemetryErrorCategory | null;
+  readonly tokens: TelemetryTokenUsage | null;
+  readonly sessionId: string | null;
+  readonly logPath: string | null;
+}
+
+export type TelemetryRecord =
+  | TelemetryEnvironmentRecord
+  | TelemetryDispatchRecord
+  | TelemetryCollectRecord;
+
+// ───────────────────────── pure helpers ─────────────────────────
+
+/** Fresh join key for a dispatch↔collect pair. */
+export function newLegId(): string {
+  return globalThis.crypto.randomUUID();
+}
+
+/**
+ * Codex CLI prints a total on stderr/stdout:
+ *   `tokens used\n27,290`  or  `tokens used: 12345`
+ * Returns null when no match.
+ */
+export function extractCodexTokens(logText: string): TelemetryTokenUsage | null {
+  if (logText.length === 0) return null;
+  // Prefer the last occurrence (final summary after the run).
+  const block = /tokens used\s*[:：]?\s*(?:\r?\n\s*)?([\d,]+)/gi;
+  let last: string | undefined;
+  for (const m of logText.matchAll(block)) {
+    if (m[1] !== undefined) last = m[1];
+  }
+  if (last === undefined) return null;
+  const total = parseTokenInt(last);
+  if (total === null) return null;
+  return { input: null, output: null, cached: null, total };
+}
+
+/**
+ * Claude Code / Anthropic-style usage lines. Accepts JSON-ish fields and a few
+ * human-readable forms. Unmatched → null.
+ */
+export function extractClaudeTokens(logText: string): TelemetryTokenUsage | null {
+  if (logText.length === 0) return null;
+
+  // JSON-ish: "input_tokens":123 / input_tokens: 123 (optional quotes around key).
+  // Negative lookbehind avoids matching the tail of cache_read_input_tokens.
+  const input = matchLastInt(
+    logText,
+    /(?<![A-Za-z_])(?:input_tokens|prompt_tokens)"?\s*[=:]\s*(\d+)/gi,
+  );
+  const output = matchLastInt(
+    logText,
+    /(?<![A-Za-z_])(?:output_tokens|completion_tokens)"?\s*[=:]\s*(\d+)/gi,
+  );
+  const cached = matchLastInt(
+    logText,
+    /(?<![A-Za-z_])(?:cache_read_input_tokens|cache_read_tokens|cached_tokens)"?\s*[=:]\s*(\d+)/gi,
+  );
+
+  // Human forms: "Usage: input=123 output=45 cache=10" / "Input: 123 tokens"
+  const humanInput =
+    input ??
+    matchLastInt(logText, /(?:^|\s)(?:input|prompt)\s*[:=]\s*([\d,]+)\s*tokens?/gi);
+  const humanOutput =
+    output ??
+    matchLastInt(
+      logText,
+      /(?:^|\s)(?:output|completion)\s*[:=]\s*([\d,]+)\s*tokens?/gi,
+    );
+  const humanCached =
+    cached ??
+    matchLastInt(logText, /(?:^|\s)(?:cache(?:d)?|cache_read)\s*[:=]\s*([\d,]+)/gi);
+
+  if (humanInput === null && humanOutput === null && humanCached === null) {
+    return null;
+  }
+  const total =
+    humanInput !== null || humanOutput !== null
+      ? (humanInput ?? 0) + (humanOutput ?? 0)
+      : null;
+  return {
+    input: humanInput,
+    output: humanOutput,
+    cached: humanCached,
+    total,
+  };
+}
+
+/**
+ * Pick an extractor by model family, falling back across both formats.
+ */
+export function extractTokensFromLog(
+  logText: string,
+  family: string | null | undefined,
+): TelemetryTokenUsage | null {
+  if (family === "codex") {
+    return extractCodexTokens(logText) ?? extractClaudeTokens(logText);
+  }
+  if (family === "claude") {
+    return extractClaudeTokens(logText) ?? extractCodexTokens(logText);
+  }
+  // Unknown family: try both, prefer a non-null result with any filled field.
+  return extractCodexTokens(logText) ?? extractClaudeTokens(logText);
+}
+
+/**
+ * Classify a finished worker result or a thrown error into terminal + category.
+ * Pure: no I/O.
+ */
+export function classifyWorkerTerminal(
+  outcome:
+    | { readonly kind: "result"; readonly result: WorkerResult }
+    | { readonly kind: "thrown"; readonly error: unknown },
+): {
+  readonly terminal: TelemetryTerminal;
+  readonly errorCategory: TelemetryErrorCategory | null;
+  readonly sessionId: string | null;
+} {
+  if (outcome.kind === "result") {
+    const r = outcome.result;
+    const sessionId =
+      "sessionId" in r && typeof r.sessionId === "string" ? r.sessionId : null;
+    if (r.kind === "completed") {
+      return { terminal: "completed", errorCategory: null, sessionId };
+    }
+    if (r.kind === "escalated") {
+      return { terminal: "escalated", errorCategory: null, sessionId };
+    }
+    if (r.kind === "malformed") {
+      return {
+        terminal: "malformed",
+        errorCategory: categoryFromReason(r.reason),
+        sessionId,
+      };
+    }
+    if (r.kind === "outcome_protocol_failure") {
+      return {
+        terminal: "outcome_protocol_failure",
+        errorCategory: categoryFromReason(r.reason),
+        sessionId,
+      };
+    }
+    // failed
+    return {
+      terminal: "failed",
+      errorCategory: categoryFromReason(r.reason),
+      sessionId,
+    };
+  }
+
+  const err = outcome.error;
+  if (isQuotaWaitForResetError(err)) {
+    return { terminal: "thrown", errorCategory: "429-quota", sessionId: null };
+  }
+  if (isSelfReportedRelayError(err)) {
+    return { terminal: "thrown", errorCategory: "relay-out", sessionId: null };
+  }
+  if (isHangWithLivePoolError(err)) {
+    return { terminal: "thrown", errorCategory: "hang-idle", sessionId: null };
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  return {
+    terminal: "thrown",
+    errorCategory: categoryFromReason(msg),
+    sessionId: null,
+  };
+}
+
+function categoryFromReason(reason: string): TelemetryErrorCategory | null {
+  const lower = reason.toLowerCase();
+  if (
+    lower.includes("at-capacity") ||
+    lower.includes("at capacity") ||
+    lower.includes("capacity exceeded")
+  ) {
+    return "at-capacity";
+  }
+  if (
+    lower.includes("429") ||
+    lower.includes("quota") ||
+    lower.includes("rate limit") ||
+    lower.includes("rate_limit")
+  ) {
+    return "429-quota";
+  }
+  if (
+    lower.includes("idle hang") ||
+    lower.includes("hang-idle") ||
+    lower.includes("worker idle") ||
+    lower.includes("hang with live pool")
+  ) {
+    return "hang-idle";
+  }
+  if (
+    lower.includes("stream disconnect") ||
+    lower.includes("stream-disconnect") ||
+    lower.includes("disconnected") ||
+    lower.includes("econnreset")
+  ) {
+    return "stream-disconnect";
+  }
+  if (
+    lower.includes("honest-incomplete") ||
+    lower.includes("honest incomplete") ||
+    lower.includes("incomplete response")
+  ) {
+    return "honest-incomplete";
+  }
+  if (lower.includes("relay") || lower.includes("phase_complete")) {
+    return "relay-out";
+  }
+  if (
+    lower.includes("killed") ||
+    lower.includes("sigkill") ||
+    lower.includes("sigterm")
+  ) {
+    return "killed";
+  }
+  return null;
+}
+
+function parseTokenInt(raw: string): number | null {
+  const n = Number.parseInt(raw.replace(/,/g, ""), 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function matchLastInt(text: string, re: RegExp): number | null {
+  let last: string | undefined;
+  for (const m of text.matchAll(re)) {
+    if (m[1] !== undefined) last = m[1];
+  }
+  return last === undefined ? null : parseTokenInt(last);
+}
+
+// ───────────────────────── record builders ─────────────────────────
+
+export interface BuildDispatchStampInput {
+  readonly legId: string;
+  readonly spec: WorkerSpec;
+  readonly ctx: DispatchContext;
+  readonly dispatchedAt: string;
+  readonly poolId?: string | null;
+  readonly attempt?: number | null;
+  readonly now?: () => string;
+}
+
+/** Build a dispatch half-row from the seam inputs (nulls for unknowns). */
+export function buildDispatchStamp(
+  input: BuildDispatchStampInput,
+): TelemetryDispatchRecord {
+  const { legId, spec, ctx, dispatchedAt } = input;
+  const now = input.now?.() ?? new Date().toISOString();
+  const model = modelStampFor(spec);
+  const poolId =
+    input.poolId !== undefined
+      ? input.poolId
+      : ctx.billingPool !== undefined
+        ? ctx.billingPool
+        : poolIdForWorker(spec);
+  const issue = issueFromContext(ctx);
+  const runId = runIdFromContext(ctx);
+  return {
+    v: TELEMETRY_SCHEMA_VERSION,
+    phase: "dispatch",
+    stamped_at: now,
+    legId,
+    runId,
+    issue,
+    stepId: spec.id,
+    role: spec.role,
+    kind: spec.kind,
+    round: ctx.onlineReviewRound ?? null,
+    attempt: input.attempt ?? null,
+    model,
+    poolId,
+    coderRec: coderRecProvenance(spec, ctx),
+    cliVersion: cliVersionForSlug(ctx.modelRoute, spec.model),
+    dispatched_at: dispatchedAt,
+  };
+}
+
+export interface BuildCollectStampInput {
+  readonly legId: string;
+  readonly completedAt: string;
+  readonly terminal: TelemetryTerminal;
+  readonly errorCategory: TelemetryErrorCategory | null;
+  readonly tokens: TelemetryTokenUsage | null;
+  readonly sessionId: string | null;
+  readonly logPath: string | null;
+  readonly firstOutputAt: string | null;
+  readonly now?: () => string;
+}
+
+/** Build a collect half-row. */
+export function buildCollectStamp(
+  input: BuildCollectStampInput,
+): TelemetryCollectRecord {
+  const now = input.now?.() ?? new Date().toISOString();
+  return {
+    v: TELEMETRY_SCHEMA_VERSION,
+    phase: "collect",
+    stamped_at: now,
+    legId: input.legId,
+    first_output_at: input.firstOutputAt,
+    completed_at: input.completedAt,
+    terminal: input.terminal,
+    errorCategory: input.errorCategory,
+    tokens: input.tokens,
+    sessionId: input.sessionId,
+    logPath: input.logPath,
+  };
+}
+
+export interface BuildEnvironmentStampInput {
+  readonly ctx: DispatchContext;
+  readonly imageTag?: string | null;
+  readonly runId?: string | null;
+  readonly now?: () => string;
+}
+
+/** Build the once-per-run environment stamp. */
+export function buildEnvironmentStamp(
+  input: BuildEnvironmentStampInput,
+): TelemetryEnvironmentRecord {
+  const now = input.now?.() ?? new Date().toISOString();
+  const route = input.ctx.modelRoute;
+  const imageTag =
+    input.imageTag !== undefined
+      ? input.imageTag
+      : process.env.IMAGE_TAG?.trim() ||
+        process.env.ORCHESTRATOR_IMAGE_TAG?.trim() ||
+        null;
+  return {
+    v: TELEMETRY_SCHEMA_VERSION,
+    phase: "environment",
+    stamped_at: now,
+    runId: input.runId ?? runIdFromContext(input.ctx),
+    imageTag: imageTag && imageTag.length > 0 ? imageTag : null,
+    routeName: route?.routeName ?? null,
+    routeSlots: route !== undefined ? { ...route.slots } : null,
+    routeCmrReviewLegs:
+      route !== undefined
+        ? route.legCollections.cmrReview.map((leg) => leg.slug)
+        : null,
+    cliVersions: cliVersionsFromRoute(route),
+  };
+}
+
+function modelStampFor(spec: WorkerSpec): TelemetryModelStamp {
+  let family: string | null = null;
+  let effort: string | null = null;
+  try {
+    family = modelFamilyForSlug(spec.model);
+  } catch {
+    family = null;
+  }
+  try {
+    const entry = resolveModelSlug(spec.model);
+    const opts = entry.options;
+    if (opts !== undefined && "effort" in opts) {
+      const e = (opts as { readonly effort?: unknown }).effort;
+      if (typeof e === "string") effort = e;
+    }
+    const live = effortForLiveOfficer(spec.model, {
+      role: spec.role,
+      soul: spec.soul,
+    });
+    if (live !== undefined) effort = live;
+  } catch {
+    // unknown slug — leave effort null
+  }
+  const fastEnv = process.env.ORCHESTRATOR_CODEX_FAST;
+  const fast =
+    family === "codex"
+      ? fastEnv === "1" || fastEnv === "true"
+        ? true
+        : fastEnv === "0" || fastEnv === "false"
+          ? false
+          : null
+      : null;
+  return {
+    slug: spec.model,
+    family,
+    effort,
+    fast,
+  };
+}
+
+function coderRecProvenance(
+  spec: WorkerSpec,
+  ctx: DispatchContext,
+): TelemetryCoderRecProvenance | null {
+  const body = ctx.issueSnapshot?.body;
+  const envRaw = process.env.ORCHESTRATOR_CODER_MODEL?.trim();
+  const envOverride = envRaw !== undefined && envRaw.length > 0;
+  let order: readonly string[] | null = null;
+  let primarySlug: string | null = null;
+  if (body !== undefined && body.length > 0) {
+    try {
+      const entries = resolveCoderRecOrder(body);
+      order = entries.map((e) => e.id);
+      primarySlug = entries[0]?.slug ?? null;
+    } catch {
+      order = null;
+      primarySlug = null;
+    }
+  }
+  // Non-coder legs with no Coder-Rec body and no env override: nothing to stamp.
+  if (order === null && !envOverride && spec.kind !== "coder") {
+    return null;
+  }
+  const selected = spec.model;
+  let wasFallback: boolean | null = null;
+  if (primarySlug !== null) {
+    // Head of order is the primary recommendation; anything else is fallback/补位.
+    wasFallback = primarySlug !== selected && order?.[0] !== selected;
+  }
+  return {
+    order,
+    selected,
+    wasFallback,
+    envOverride,
+  };
+}
+
+function issueFromContext(ctx: DispatchContext): number | null {
+  if (ctx.issueSnapshot?.number !== undefined) return ctx.issueSnapshot.number;
+  if (ctx.familyIssue !== undefined) return ctx.familyIssue;
+  if (ctx.stateDir !== undefined) {
+    const m = /(?:^|\/)\.ledger-(\d+)\/?$/.exec(ctx.stateDir);
+    if (m?.[1] !== undefined) {
+      const n = Number.parseInt(m[1], 10);
+      if (Number.isInteger(n) && n > 0) return n;
+    }
+  }
+  return null;
+}
+
+function runIdFromContext(ctx: DispatchContext): string | null {
+  // No dedicated run UUID on DispatchContext yet — use stateDir as a stable proxy.
+  return ctx.stateDir ?? null;
+}
+
+function cliVersionForSlug(
+  route: ResolvedModelRoute | undefined,
+  slug: string,
+): string | null {
+  if (route === undefined) return null;
+  for (const status of Object.values(route.smoke)) {
+    if (status.state !== "passed") continue;
+  }
+  // Prefer smoke keys that end with `:${slug}` (routeSmokeEntries key shape).
+  for (const [key, status] of Object.entries(route.smoke)) {
+    if (status.state === "passed" && (key === slug || key.endsWith(`:${slug}`))) {
+      return status.cliVersion;
+    }
+  }
+  // Fall back: any passed smoke for the same slug family via value scan is not
+  // possible (status has no slug). Return first passed if only one slug smoked.
+  const passed = Object.values(route.smoke).filter(
+    (s): s is Extract<typeof s, { state: "passed" }> => s.state === "passed",
+  );
+  if (passed.length === 1) return passed[0]!.cliVersion;
+  return null;
+}
+
+function cliVersionsFromRoute(
+  route: ResolvedModelRoute | undefined,
+): Readonly<Record<string, string>> | null {
+  if (route === undefined) return null;
+  const out: Record<string, string> = {};
+  for (const [key, status] of Object.entries(route.smoke)) {
+    if (status.state !== "passed") continue;
+    // Keys look like `coder:grok-4.5` — use the slug suffix when present.
+    const colon = key.lastIndexOf(":");
+    const slug = colon >= 0 ? key.slice(colon + 1) : key;
+    out[slug] = status.cliVersion;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+// ───────────────────────── JSONL I/O ─────────────────────────
+
+/** Absolute path of the telemetry sidecar under a ledger/state directory. */
+export function telemetryPath(ledgerDir: string): string {
+  return join(ledgerDir, TELEMETRY_FILENAME);
+}
+
+/**
+ * Append one telemetry record as a single JSONL line.
+ *
+ * Uses O_APPEND (`flag: "a"`) so short writes are atomic on POSIX.
+ * Creates `ledgerDir` when missing. Throws on I/O failure — callers that
+ * must not affect worker semantics should wrap in try/catch.
+ */
+export function appendTelemetryRecord(
+  ledgerDir: string,
+  record: TelemetryRecord,
+): void {
+  mkdirSync(ledgerDir, { recursive: true });
+  const line = `${JSON.stringify(record)}\n`;
+  appendFileSync(telemetryPath(ledgerDir), line, { encoding: "utf8", flag: "a" });
+}
+
+/**
+ * Best-effort append: swallows errors so dispatch never fails on telemetry.
+ * Returns true when the line was written.
+ */
+export function tryAppendTelemetryRecord(
+  ledgerDir: string | undefined,
+  record: TelemetryRecord,
+): boolean {
+  if (ledgerDir === undefined || ledgerDir.length === 0) return false;
+  try {
+    appendTelemetryRecord(ledgerDir, record);
+    return true;
+  } catch (err) {
+    console.warn(
+      `[orchestrator] telemetry append failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return false;
+  }
+}
+
+/**
+ * Ensure a single environment stamp exists for this ledgerDir.
+ * Idempotent: skips when an environment phase line is already present.
+ */
+export function ensureEnvironmentStamp(
+  ledgerDir: string | undefined,
+  ctx: DispatchContext,
+  opts?: { readonly imageTag?: string | null; readonly runId?: string | null },
+): boolean {
+  if (ledgerDir === undefined || ledgerDir.length === 0) return false;
+  try {
+    const path = telemetryPath(ledgerDir);
+    if (existsSync(path)) {
+      const raw = readFileSync(path, "utf8");
+      // Cheap scan: any environment phase line already written.
+      if (raw.includes('"phase":"environment"')) return false;
+    }
+    return tryAppendTelemetryRecord(
+      ledgerDir,
+      buildEnvironmentStamp({
+        ctx,
+        imageTag: opts?.imageTag,
+        runId: opts?.runId,
+      }),
+    );
+  } catch (err) {
+    console.warn(
+      `[orchestrator] telemetry environment stamp failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return false;
+  }
+}
+
+/**
+ * Read and parse all telemetry lines (test / offline consumers).
+ * Blank lines skipped; malformed lines throw (fail-closed for tools).
+ */
+export function readTelemetryRecords(ledgerDir: string): TelemetryRecord[] {
+  const path = telemetryPath(ledgerDir);
+  if (!existsSync(path)) return [];
+  const raw = readFileSync(path, "utf8");
+  const out: TelemetryRecord[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    if (line.trim().length === 0) continue;
+    out.push(JSON.parse(line) as TelemetryRecord);
+  }
+  return out;
+}
+
+/**
+ * Slice a shared step log to this dispatch's bytes (logStartOffset..EOF).
+ * Used before GC so token lines are captured into the sidecar.
+ */
+export function readDispatchLogSlice(
+  logPath: string | undefined,
+  logStartOffset: number | undefined,
+): string | null {
+  if (logPath === undefined || logPath.length === 0) return null;
+  if (!existsSync(logPath)) return null;
+  try {
+    const buf = readFileSync(logPath);
+    const start =
+      logStartOffset !== undefined &&
+      Number.isInteger(logStartOffset) &&
+      logStartOffset >= 0
+        ? logStartOffset
+        : 0;
+    return buf.subarray(Math.min(start, buf.length)).toString("utf8");
+  } catch {
+    return null;
+  }
+}
