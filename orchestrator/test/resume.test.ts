@@ -2618,6 +2618,107 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     // resume residue clean (1) + S12 retry reset (1) — proves resetBeforeRetry wired
     expect(backend.cleanResidueCount).toBeGreaterThanOrEqual(2);
   });
+
+  it("#735 Codex P1: post-doc CI pending parks without sticky S8; re-feed retries auto-merge", async () => {
+    const convergedHead = "deadbeefcommitsha";
+    const livePr = "https://github.com/Akagilnc/ming-salvage-sim/pull/255";
+    const prior: PersistentLedgerEntry[] = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: livePr,
+        prHead: convergedHead,
+      }),
+      {
+        ...entry("S9", { kind: "verify", converged: true }),
+        event: "online_review_converged",
+        prUrl: livePr,
+        prHead: convergedHead,
+        onlineReviewRound: 1,
+      },
+    ];
+
+    let mergeAttempts = 0;
+    const mergeSpy = vi.spyOn(autoMerge, "runAutoMergeStage").mockImplementation(async () => {
+      mergeAttempts += 1;
+      if (mergeAttempts === 1) {
+        return {
+          ok: false,
+          terminalState: "not_ready",
+          stopSummary: {
+            reason: "decision_gate_park",
+            summary: "PR merge readiness blocked: ci_pending",
+            repairHint:
+              "wait for post-doc-release CI to finish, then re-feed to resume auto-merge",
+          },
+        };
+      }
+      return {
+        ok: true,
+        terminalState: "merged",
+        record: {
+          prUrl: livePr,
+          prNumber: 255,
+          remoteBranchName: WORKTREE.branch,
+          mergedHeadOid: convergedHead,
+          convergedHeadOid: convergedHead,
+        },
+      };
+    });
+
+    try {
+      const backend = new DispatchRecordingResumeBackend({
+        worktree: WORKTREE,
+        stateDir: STATE_DIR,
+        ledger: prior,
+      });
+      const parked = await runOrchestrator({ issueNumber: 255, backend });
+      expect(parked.status).toBe("escalate");
+      expect(parked.stopSummary?.summary ?? "").toMatch(/ci_pending/);
+      expect(
+        parked.stepLedger.some(
+          (e) =>
+            e.step === "S8" &&
+            (e as { handoffStatus?: string }).handoffStatus === "escalate",
+        ),
+      ).toBe(false);
+      expect(
+        parked.stepLedger.some(
+          (e) =>
+            e.step === "S12" &&
+            e.output?.kind === "docRelease" &&
+            e.output.released === true,
+        ),
+      ).toBe(true);
+
+      // Re-feed from ledger ending at S12 released:true (no sticky S8) → S11 → merge
+      const parkedPrior: PersistentLedgerEntry[] = [
+        ...prior,
+        entry(
+          "S12",
+          { kind: "docRelease", released: true },
+          "session-prior",
+          convergedHead,
+        ),
+      ];
+      const resumeBackend = new DispatchRecordingResumeBackend({
+        worktree: WORKTREE,
+        stateDir: STATE_DIR,
+        ledger: parkedPrior,
+      });
+      const refeed = await runOrchestrator({ issueNumber: 255, backend: resumeBackend });
+      expect(refeed.status).toBe("success");
+      expect(mergeAttempts).toBeGreaterThanOrEqual(2);
+    } finally {
+      mergeSpy.mockRestore();
+    }
+  });
 });
 
 // ─── C-1 (integ-cmr int-r1): S7 SHIP escalate-resume re-dispatches the ship worker

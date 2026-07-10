@@ -14,6 +14,11 @@ method outside the skill.
 - If the skill created a commit, **you** push it to the PR head branch before
   reporting success. Push is part of S12 success; a local-only commit must not
   unlock merge against a stale remote tip.
+- **Retry / residual HEAD**: if local branch is **ahead of remote PR tip**
+  (e.g. prior attempt committed then crashed before push, and mechanical retry
+  preserved that commit), **push that ahead HEAD** even when this skill run is
+  a 文档发布空跑 with no *new* commit. `released:true` requires remote tip to
+  match local HEAD when local was ahead.
 - Do **not** wait for CI green inside this step. Merge-stage live readiness is
   the single wait point for checks / threads / ruleset.
 
