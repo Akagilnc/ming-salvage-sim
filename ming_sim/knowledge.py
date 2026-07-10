@@ -25,6 +25,24 @@ _OFFICE_BUCKETS = {
     "富商": "public", "布衣": "public", "流寇": "public", "待铨": "public",
 }
 
+# Every supported office type gets a current-state rail in addition to the
+# public layer.  These are the closest existing reports for social/roster
+# roles whose dedicated rail is not yet modeled.
+_OFFICE_VISIBLE_DOMAINS = {
+    "户部": {"treasury"}, "兵部": {"military", "regional"},
+    "吏部": {"personnel"}, "工部": {"construction"},
+    "礼部": {"personnel"}, "刑部": {"security"},
+    "翰林院": {"personnel"}, "都察院": {"personnel", "security"},
+    "内阁": {"treasury", "personnel"}, "督抚": {"regional"},
+    "司礼监": {"treasury", "personnel"}, "内臣": {"treasury", "personnel"},
+    "锦衣卫": {"security"}, "东厂": {"security"},
+    "边镇": {"military", "regional"}, "地方": {"regional"},
+    "外臣": {"regional"}, "内廷": {"treasury", "personnel"},
+    "后宫": {"personnel"}, "宗藩": {"regional"}, "未仕": {"personnel"},
+    "生员": {"personnel"}, "乡绅": {"regional"}, "富商": {"treasury"},
+    "布衣": {"regional"}, "流寇": {"military", "regional"}, "待铨": {"personnel"},
+}
+
 
 def _qualitative(text: object) -> str:
     """Render an engine report for a minister without exposing machine values."""
@@ -53,20 +71,7 @@ def _world(
         "construction": db.buildings_report(),
         "security": db.power_report(exclude_self=True),
     }
-    visible_domains = {
-        "户部": {"treasury"}, "兵部": {"military", "regional"},
-        "吏部": {"personnel"}, "工部": {"construction"},
-        # The remaining court offices do not yet have dedicated report rails.
-        # Keep the public layer for everyone, and expose the closest current
-        # state rail instead of collapsing these offices into public-only.
-        "礼部": {"personnel"}, "刑部": {"security"},
-        "翰林院": {"personnel"}, "都察院": {"personnel", "security"},
-        "督抚": {"regional"}, "边镇": {"military", "regional"},
-        "地方": {"regional"}, "外臣": {"regional"},
-        "锦衣卫": {"security"}, "东厂": {"security"},
-        "内阁": {"treasury", "personnel"}, "司礼监": {"treasury", "personnel"},
-        "内臣": {"treasury", "personnel"}, "内廷": {"treasury", "personnel"},
-    }.get(office_type, {bucket})
+    visible_domains = _OFFICE_VISIBLE_DOMAINS.get(office_type, {bucket})
     for domain in visible_domains:
         if domain == "public":
             # The public layer is already built from the turn reports above;

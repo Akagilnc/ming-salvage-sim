@@ -1,6 +1,24 @@
 """#489 角色见闻：职位裁切、公开事件与参与留痕。"""
 
 from ming_sim.models import Character
+from ming_sim.knowledge import _OFFICE_BUCKETS
+
+
+def test_every_supported_office_type_has_a_role_specific_current_world_slice(game):
+    db, state, content = game
+    characters_by_type = {
+        character.office_type: character
+        for character in content.characters.values()
+        if character.office_type
+    }
+
+    for office_type, bucket in _OFFICE_BUCKETS.items():
+        character = characters_by_type.get(office_type)
+        if character is None:
+            continue
+        world = db.get_character_knowledge(state, character.name)["world"]
+        assert bucket in world, office_type
+        assert bucket != "public" or len(world) > 1, office_type
 
 
 def test_generic_offices_receive_distinct_current_world_slices(game):
@@ -202,6 +220,26 @@ def test_secret_office_exclusion_does_not_hide_unrelated_world_bucket(game):
     assert view["world"]["public"] == "登基伊始，朝廷暂无前回合奏报。"
     assert view["world"].get("treasury")
     assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
+
+
+def test_secret_office_exclusion_snapshots_people_before_transfer_and_publication(game):
+    db, state, content = game
+    excluded = next(c for c in content.characters.values() if c.office_type == "户部")
+    order = db.create_secret_order(
+        state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=["户部"]
+    )
+
+    db.set_character_office(excluded.name, "礼部尚书", office_type="礼部")
+    db.record_public_knowledge_event(
+        state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
+    )
+
+    row = db.conn.execute("SELECT excluded_names FROM secret_orders WHERE id=?", (order,)).fetchone()
+    assert excluded.name in row["excluded_names"]
+    view = db.get_character_knowledge(state, excluded.name)
+    assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
+    assert not any(item["source_id"] == f"secret_order:{order}" for item in view["public_events"])
+    assert excluded.office == "礼部尚书"
 
 
 def test_secret_exclusion_is_source_scoped_not_global_for_same_bucket(game):
