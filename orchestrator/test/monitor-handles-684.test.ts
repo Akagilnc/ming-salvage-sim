@@ -25,6 +25,7 @@ import {
   collectPidTree,
   dispatchMonitoredCliWorker,
   hasCompletionSignalInLog,
+  instanceMatchesHandle,
   isWorkerAlive,
   isWorkerIdle,
   killWorkerTree,
@@ -217,6 +218,25 @@ describe("#684 worker monitor handles", () => {
     expect(result.killedPids).toEqual([]);
     expect(result.residualPids).toEqual([]);
     expect(result.skippedDueToPidReuse).toBe(true);
+  });
+
+  it("accepts the documented spawned identity when the platform cannot read a live instance id", () => {
+    const handle = baseHandle({
+      pid: 100,
+      instanceId: "spawned:100:2026-07-10T07:00:00.000Z",
+    });
+    const deps: WorkerMonitorDeps = {
+      isPidAlive: () => true,
+      readInstanceId: () => undefined,
+    };
+
+    expect(instanceMatchesHandle(handle, deps)).toBe(true);
+    expect(
+      instanceMatchesHandle(
+        { ...handle, instanceId: "spawned:101:2026-07-10T07:00:00.000Z" },
+        deps,
+      ),
+    ).toBe(false);
   });
 
   it("checks every child identity before signalling, not only the root", async () => {
@@ -648,6 +668,16 @@ exit 0
     expect(dispatchSrc).toMatch(/dispatchWorkerWithMonitor/);
     expect(runnerSrc).toMatch(/dispatchWorkerWithMonitor/);
     expect(runnerSrc).toMatch(/monitorHandle/);
+  });
+
+  it("only seeds a resumed monitor handle into the matching step", () => {
+    const runnerSrc = readFileSync(
+      new URL("../src/runner.ts", import.meta.url),
+      "utf8",
+    );
+    expect(runnerSrc).toMatch(
+      /resumeMonitorHandle\?\.stepId === step \? resumeMonitorHandle : undefined/,
+    );
   });
 
   it("documents re-parent-to-init residual limit in killWorkerTree", () => {

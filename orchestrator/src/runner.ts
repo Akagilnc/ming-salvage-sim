@@ -3225,7 +3225,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // Seed from resume rebuild (monitorHandleFromLedger) until a fresh spawn
     // overwrites via onMonitorHandleSpawned.
     let stepMonitorHandle: import("./types.js").WorkerMonitorHandle | undefined =
-      resumeMonitorHandle;
+      resumeMonitorHandle?.stepId === step ? resumeMonitorHandle : undefined;
     // Consume resume handle once so a later step does not inherit a stale one.
     resumeMonitorHandle = undefined;
 

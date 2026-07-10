@@ -154,7 +154,13 @@ export function instanceMatchesHandle(
   const d = resolveDeps(deps);
   if (!d.isPidAlive(handle.pid)) return false;
   const liveId = d.readInstanceId(handle.pid);
-  if (liveId === undefined) return false;
+  // Some supported platforms do not expose `ps`/an equivalent process-start
+  // identity reader. In that documented boundary, only accept the
+  // dispatch-scoped fallback for this exact PID; Unix-like platforms still
+  // require the real start identity match above this comparison.
+  if (liveId === undefined) {
+    return handle.instanceId.startsWith(`spawned:${handle.pid}:`);
+  }
   return liveId === handle.instanceId;
 }
 
