@@ -23,6 +23,8 @@ import {
 } from "../src/coderRoster.js";
 import {
   DEFAULT_PARK_THRESHOLD_MS,
+  DEFAULT_POOL_MODELS,
+  billingPoolFromQuotaPool,
   buildDefaultBillingPools,
   decideParkOrRelay,
   hasLiveRelayBaton,
@@ -334,6 +336,73 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
         ],
       }),
     ).toBeUndefined();
+  });
+
+  /**
+   * #789 / codex bot P2 on PR #792: roster entries alone are not enough —
+   * selectNextRelayBaton only picks models served by a live BillingPoolEntry.
+   * Default pool table must map sonnet-5 / haiku-4.5 onto the claude pool so a
+   * Coder-Rec line `grok-4.5 → haiku-4.5 → sonnet-5` can hand off after grok
+   * parks past T (when the claude pool is live / probed).
+   */
+  it("#789 grok exhaustion relay selects Claude baton via default pool models", () => {
+    expect(DEFAULT_POOL_MODELS.claude).toEqual(
+      expect.arrayContaining(["haiku-4.5", "sonnet-5", "haiku", "sonnet"]),
+    );
+    expect(billingPoolFromQuotaPool("claude")).toBe("claude");
+
+    const order = resolveCoderRecOrder(
+      "Coder-Rec: grok-4.5 → haiku-4.5 → sonnet-5",
+    );
+    expect(order.map((e) => e.id)).toEqual([
+      "grok-4.5",
+      "haiku-4.5",
+      "sonnet-5",
+    ]);
+
+    const next = selectNextRelayBaton({
+      currentModelId: "grok-4.5",
+      currentPool: "grok-build",
+      rosterOrder: order,
+      pools: [
+        deadPool("grok-build", DEFAULT_POOL_MODELS["grok-build"]),
+        deadPool("cursor", DEFAULT_POOL_MODELS.cursor),
+        deadPool("zai", DEFAULT_POOL_MODELS.zai),
+        deadPool("codex-5h", DEFAULT_POOL_MODELS["codex-5h"]),
+        livePool("claude", DEFAULT_POOL_MODELS.claude),
+      ],
+      // normal CMR Claude leg is opus — distinct slug from sonnet/haiku.
+      reviewerSlugs: ["opus", "gpt-5.6-sol", "agy"],
+    });
+    expect(next).toEqual({
+      modelId: "haiku-4.5",
+      slug: "haiku",
+      pool: "claude",
+    });
+  });
+
+  it("#789 default pool table includes claude row without fabricating live status", () => {
+    const pools = buildDefaultBillingPools({
+      limitedPool: "grok-build",
+      resetAt: new Date("2026-07-10T13:00:00.000Z"),
+    });
+    const claude = pools.find((p) => p.id === "claude");
+    expect(claude).toBeDefined();
+    expect(claude!.status).toBe("dead");
+    expect(claude!.models).toEqual(
+      expect.arrayContaining(["haiku-4.5", "sonnet-5"]),
+    );
+    // Unprobed default still must not invent a live Claude baton.
+    expect(
+      hasLiveRelayBaton({
+        currentModelId: "grok-4.5",
+        currentPool: "grok-build",
+        rosterOrder: resolveCoderRecOrder(
+          "Coder-Rec: grok-4.5 → haiku-4.5 → sonnet-5",
+        ),
+        pools,
+      }),
+    ).toBe(false);
   });
 
   it("roster table remains the single source (no second relay fallback table)", () => {
