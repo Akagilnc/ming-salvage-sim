@@ -64,7 +64,6 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
-import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import { z } from "zod";
 
 import {
@@ -2095,7 +2094,7 @@ export class RealBackend implements Backend {
       try {
         const result = await sc.run({
           agent: agentForSlug(entry.slug),
-          sandbox: noSandbox(),
+          sandbox: this.routeSmokeSandbox(),
           cwd: this.workingRepo,
           promptFile: join(this.opts.promptsDir, "route-smoke.md"),
           maxIterations: 1,
@@ -2166,6 +2165,17 @@ export class RealBackend implements Backend {
     const provider = resolveModelSlug(slug).provider;
     const command = provider === "claudeCode" ? "claude" : provider;
     return this.sh(command, ["--version"]).trim() || "unknown";
+  }
+
+  /** Route smoke must exercise the same image, auth, and soul mounts as workers. */
+  private routeSmokeSandbox(): sc.SandboxProvider {
+    const auth = this.mountAuth(this.opts.runKey);
+    return docker(
+      this.boxConfig(
+        { ...auth, ghToken: this.readGhToken() },
+        { role: "reviewer", soul: "READ-ONLY" },
+      ),
+    );
   }
 
   /**
@@ -2645,7 +2655,7 @@ export class RealBackend implements Backend {
 
   private box(
     issueNumber: number,
-    spec: StepSpec,
+    spec: Pick<StepSpec, "role" | "soul">,
     options?: AgentStepRunOptions,
   ): sc.SandboxProvider {
     const auth = this.mountAuth(issueNumber);
@@ -2736,7 +2746,7 @@ export class RealBackend implements Backend {
    */
   protected boxConfig(
     auth: { authDir: string; claudeToken?: string; ghToken?: string },
-    spec: StepSpec,
+    spec: Pick<StepSpec, "role" | "soul">,
     issueNumber?: number,
     options?: AgentStepRunOptions,
   ): {
