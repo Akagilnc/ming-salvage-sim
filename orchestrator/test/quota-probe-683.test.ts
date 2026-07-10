@@ -12,10 +12,11 @@
  * Probes are STUBBED — no real network/CLI in unit tests.
  */
 
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import {
   RealBackend,
   type AgentSandboxRunOptions,
@@ -426,6 +427,8 @@ describe("#683 isAgentIdleTimeoutError", () => {
 });
 
 describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor path)", () => {
+  const testHome = mkdtempSync(join(tmpdir(), "orchestrator-auth-683-"));
+  afterAll(() => rmSync(testHome, { recursive: true, force: true }));
   /**
    * Fallback coverage only: runStep → runFreshAgentStep → runAgentSandbox →
    * post-sc.run AgentIdleTimeoutError + probe. Live production idle disposition
@@ -536,6 +539,7 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
       imageName: "ming-worker:test",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
+      home: testHome,
     });
   }
 

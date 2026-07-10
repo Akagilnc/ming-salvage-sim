@@ -68,6 +68,7 @@ import type {
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
+  OnlineReviewLandingSnapshot,
 } from "../src/types.js";
 
 describe("#686 relay tag contract (fail-closed)", () => {
@@ -545,7 +546,7 @@ describe("#686 state_summary ledger + next-baton parameter file", () => {
       remaining: "clear reds then 收口",
       fromModelId: "grok-4.5",
       fromPool: "grok-build",
-      toModelId: "terra@med",
+      toModelId: "luna@med",
       toPool: "codex-5h",
       step: "S2",
       now,
@@ -555,14 +556,14 @@ describe("#686 state_summary ledger + next-baton parameter file", () => {
       state_summary: "142 tests pending, apply half-done",
       remaining: "clear reds then 收口",
       fromModelId: "grok-4.5",
-      toModelId: "terra@med",
+      toModelId: "luna@med",
     } satisfies Partial<RelayHandoffLedgerEvent>);
 
     const focusPath = buildRelayFocusFile(tmp, entry);
     expect(focusPath).toBe(join(tmp, RELAY_FOCUS_FILENAME));
     const body = readFileSync(focusPath, "utf8");
     expect(body).toContain("142 tests pending, apply half-done");
-    expect(body).toContain("terra@med");
+    expect(body).toContain("luna@med");
     expect(body).toContain("clear reds then 收口");
   });
 
@@ -575,7 +576,7 @@ describe("#686 state_summary ledger + next-baton parameter file", () => {
       remaining: "continue",
       fromModelId: "grok-4.5",
       fromPool: "grok-build",
-      toModelId: "terra@med",
+      toModelId: "luna@med",
       toPool: "codex-5h",
       step: "S2",
       now: new Date("2026-07-10T12:00:00.000Z"),
@@ -908,7 +909,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       repo: string;
       prUrl: string;
       pollCount: number;
-    }) {
+    }): Promise<OnlineReviewLandingSnapshot> {
       void input;
       return {
         prUrl: PR_URL,
@@ -1304,11 +1305,11 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     expect(handoff).toMatchObject({
       event: "relay_baton_handoff",
       trigger: "mechanical_retry_exhausted",
-      toModelId: "terra@med",
+      toModelId: "luna@med",
     });
     expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(true);
-    // Relayed baton was actually dispatched (terra slug).
-    expect(coderModels).toContain("gpt-5.6-terra");
+    // #767's final roster advance selected the Luna baton.
+    expect(coderModels).toContain("gpt-5.6-luna");
     // The S2 relay belongs only to that coder step. The normal S3 reviewer must
     // select its own channel from its reviewer route, not inherit the coder's
     // billing pool or baton brief.
@@ -1509,6 +1510,8 @@ describe("#686 R2 production seams", () => {
         spec: {
           id: "S2",
           kind: "coder",
+          role: "coder",
+          host: "codex",
           session: "fresh",
           contextRetention: "retain",
           promptFile: "coder.md",
@@ -1548,6 +1551,8 @@ describe("#686 R2 production seams", () => {
       await legacyDispatchWorker(backend, {
         id: "S2",
         kind: "coder",
+        role: "coder",
+        host: "codex",
         session: "fresh",
         contextRetention: "retain",
         promptFile: "coder.md",
