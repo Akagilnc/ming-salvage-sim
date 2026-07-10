@@ -5863,7 +5863,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("pin r26: family crash mid-round-2 restores round+trigger+fixSHA from ledger", async () => {
+  it("#743 R3: family resume fails closed when a bare recheck omits persisted fixer authorization", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     const fixSha = "fixsha1111111111111111111111111111111111";
@@ -5871,6 +5871,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     try {
       class ResumeFamilyBackend extends ReviewLoopFamilyBackend {
         readonly verifyRounds: number[] = [];
+        readonly verifyLandings: WorkerLandingPayload[] = [];
         override async dispatchWorker(
           spec: WorkerSpec,
           ctx: DispatchContext,
@@ -5878,6 +5879,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         ): Promise<WorkerResult> {
           if (spec.kind === "verify") {
             this.verifyRounds.push(ctx.onlineReviewRound ?? landing?.onlineReviewRound ?? 0);
+            if (landing !== undefined) this.verifyLandings.push(landing);
             return {
               kind: "completed",
               output: {
@@ -5908,6 +5910,10 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
           phase: "final",
           familyHeadAfter: fixSha,
           pr: offlineShip.pr,
+          fixMarkedFindingIdentityKeys: ["finding:r3"],
+          fixMarkedFindingThreads: [
+            { identityKey: "finding:r3", threadId: "thread:r3" },
+          ],
         },
       );
       const result = await runFamilyOnlineReviewLoop({
@@ -5915,8 +5921,19 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         familyBase: "family/r7",
         ship: offlineShip,
       });
-      expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
+      expect(result).toEqual({
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round: 2,
+        stopSummary: expect.objectContaining({ reason: "contract_drift" }),
+      });
       expect(backend.verifyRounds).toEqual([2]);
+      expect(backend.verifyLandings[0]?.fixMarkedFindingIdentityKeys).toEqual([
+        "finding:r3",
+      ]);
+      expect(backend.verifyLandings[0]?.fixMarkedFindingThreads).toEqual([
+        { identityKey: "finding:r3", threadId: "thread:r3" },
+      ]);
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

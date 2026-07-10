@@ -353,6 +353,11 @@ export interface FamilyLedgerEntry {
    * markers are the durable prior-round data for resume.
    */
   readonly fixMarkedFindingIdentityKeys?: readonly string[];
+  /** Original thread binding for each fix-marked identity (#743 resume authority). */
+  readonly fixMarkedFindingThreads?: readonly {
+    readonly identityKey: string;
+    readonly threadId: string;
+  }[];
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────

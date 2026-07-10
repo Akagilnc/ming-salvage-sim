@@ -690,6 +690,58 @@ export function lastOnlineReviewFixCommitShaFromFamilyLedger(
   return undefined;
 }
 
+/**
+ * Rebuild the last fixer authorization from the durable family ledger. A
+ * resumed recheck must retain both the identity contract and its original
+ * thread binding; missing fields remain empty so the caller fails closed for
+ * a non-empty key contract.
+ */
+export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
+  entries: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+    readonly fixMarkedFindingThreads?: ReadonlyArray<{
+      readonly identityKey?: string;
+      readonly threadId?: string;
+    }>;
+  }>,
+): {
+  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
+  readonly fixMarkedFindingThreads: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
+} {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      entry.status !== "online_review_fix_committed" ||
+      entry.event !== "online_review_fix_committed"
+    ) {
+      continue;
+    }
+    return {
+      fixMarkedFindingIdentityKeys: (entry.fixMarkedFindingIdentityKeys ?? []).filter(
+        (key) => typeof key === "string" && key.trim().length > 0,
+      ),
+      fixMarkedFindingThreads: (entry.fixMarkedFindingThreads ?? []).flatMap(
+        (binding) =>
+          typeof binding.identityKey === "string" &&
+          binding.identityKey.trim().length > 0 &&
+          typeof binding.threadId === "string" &&
+          binding.threadId.trim().length > 0
+            ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
+            : [],
+      ),
+    };
+  }
+  return {
+    fixMarkedFindingIdentityKeys: [],
+    fixMarkedFindingThreads: [],
+  };
+}
+
 /** Latest persisted round ≥2 freshness anchor from the family ledger (#600 r26). */
 export function onlineReviewRoundTriggerFromFamilyLedger(
   entries: ReadonlyArray<{
@@ -1367,6 +1419,13 @@ export async function runOnlineReviewLoopStage(
   opts?: {
     readonly initialRound?: number;
     readonly initialFixCommitSha?: string;
+    /** Durable fixer authorization reconstructed for a post-crash recheck. */
+    readonly initialFixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+    /** Durable identity-to-thread bindings reconstructed for side effects. */
+    readonly initialFixMarkedFindingThreads?: ReadonlyArray<{
+      readonly identityKey: string;
+      readonly threadId: string;
+    }>;
     /** Optional runner-owned landing enrichment (#711 prior-round data). */
     readonly enrichVerifyLanding?: (
       landing: WorkerLandingPayload,
@@ -1379,10 +1438,11 @@ export async function runOnlineReviewLoopStage(
   /** Consecutive poll cycles blocked only on pending CI (not fixer rounds). */
   let pendingCiPolls = 0;
   /** The previous fixer assignment, required as the next verify's recheck contract. */
-  let recheckFixMarkedFindingIdentityKeys: ReadonlyArray<string> | undefined;
+  let recheckFixMarkedFindingIdentityKeys: ReadonlyArray<string> | undefined =
+    opts?.initialFixMarkedFindingIdentityKeys;
   let recheckFixMarkedFindingThreads:
     | ReadonlyArray<{ readonly identityKey: string; readonly threadId: string }>
-    | undefined;
+    | undefined = opts?.initialFixMarkedFindingThreads;
   /**
    * In-loop prior-round findings (#711). Family ledgers only persist
    * fix/retrigger markers — not S9 verify outputs — so the continuous multi-round
