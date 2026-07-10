@@ -9222,12 +9222,25 @@ class GameDB:
     ) -> None:
         """Adapt any durable record carrying participants into the knowledge ledger."""
         participants: List[str] = []
+        roster = record.get("participant_roster")
+        if isinstance(roster, (list, tuple)):
+            for item in roster:
+                if isinstance(item, Mapping):
+                    name = item.get("character_id") or item.get("name")
+                    if name:
+                        participants.append(str(name))
         for key in ("participants", "participant_names", "actors"):
             value = record.get(key)
             if isinstance(value, str):
                 participants.append(value)
             elif isinstance(value, Iterable):
-                participants.extend(str(item) for item in value)
+                for item in value:
+                    if isinstance(item, Mapping):
+                        name = item.get("character_id") or item.get("name")
+                        if name:
+                            participants.append(str(name))
+                    else:
+                        participants.append(str(item))
         for key in ("assignee", "minister_name", "character_name", "actor"):
             value = record.get(key)
             if value:

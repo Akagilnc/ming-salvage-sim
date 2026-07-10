@@ -170,6 +170,7 @@ def test_secret_office_exclusion_blocks_dynamic_office_bucket(game):
     view = db.get_character_knowledge(state, clerk.name)
 
     assert db.list_secret_orders()[0]["excluded_targets"] == {"people": [], "offices": ["户部"]}
+    assert view["world"]["public"] == "登基伊始，朝廷暂无前回合奏报。"
     assert view["world"].get("treasury", "") == ""
     assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
 
@@ -186,3 +187,22 @@ def test_issue_roster_is_structured_and_read_side_projection_needs_no_write_hook
     assert row["participants"] == f'["{minister.name}"]'
     assert '"tier": "主办"' in row["participant_roster"]
     assert any(item["source_id"] == f"issue:{issue_id}" for item in db.get_character_knowledge(state, minister.name)["events"])
+
+
+def test_participation_adapter_reads_structured_roster_without_fake_names(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    db.record_participation_record(
+        state,
+        {
+            "participant_roster": [{"character_id": minister.name, "tier": "主办", "role": "督办"}],
+            "title": "清丈差事",
+            "body": "奉命督办",
+        },
+        kind="assignment",
+        source_id="assignment:structured",
+    )
+
+    view = db.get_character_knowledge(state, minister.name)
+
+    assert any(item["source_id"] == "assignment:structured" for item in view["events"])
