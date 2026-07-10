@@ -3031,6 +3031,131 @@ describe("#600 r4 central evidence admissibility gate", () => {
     expect(snap.bots.codex).not.toEqual({ state: "complete", findingCount: 1 });
   });
 
+  it("pin #741: substring-spoof logins do not count as bot evidence via pollPrReviewState", () => {
+    // Production seam: pollPrReviewState → hasBotReviewSignal/countBotFindings → loginMatchesBot.
+    // Substring match would treat "xxx-coderabbit-fan" / "sourcery-fan" / "codex-fan" as bots.
+    const emptyPr = (cmd: string): string | undefined => {
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews") &&
+        !cmd.includes("check-runs")
+      ) {
+        return JSON.stringify({
+          head: { sha: "headsha1" },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("check-runs")) {
+        return JSON.stringify({ check_runs: [] });
+      }
+      if (
+        (cmd.includes("pulls/comments/") || cmd.includes("issues/comments/")) &&
+        cmd.includes("/reactions")
+      ) {
+        return "[]";
+      }
+      return reviewThreadsGraphqlFallback(cmd);
+    };
+
+    const spoofSh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      const pr = emptyPr(cmd);
+      if (pr !== undefined) return pr;
+      if (cmd.includes("issues/42/comments") || cmd.includes("pulls/42/comments")) {
+        return JSON.stringify([
+          {
+            user: { login: "xxx-coderabbit-fan" },
+            body: "Summary: spoofed coderabbit complete signal body",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+          {
+            user: { login: "sourcery-fan" },
+            body: "Sourcery spoof review complete signal body",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+          {
+            user: { login: "gemini-code-fan" },
+            body: "Gemini spoof review complete signal body",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+        ]);
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return JSON.stringify([
+          {
+            user: { login: "chatgpt-codex-fan" },
+            state: "COMMENTED",
+            submitted_at: FRESH_BOT_TIMESTAMP,
+            body: "Codex spoof review complete",
+          },
+        ]);
+      }
+      return "[]";
+    };
+
+    const spoofSnap = pollPrReviewState(spoofSh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
+    });
+    for (const bot of ONLINE_REVIEW_BOT_IDS) {
+      expect(spoofSnap.bots[bot].state).toBe("pending");
+    }
+    expect(spoofSnap.bots.coderabbit).not.toEqual(
+      expect.objectContaining({ state: "complete" }),
+    );
+
+    // Real bot logins still count; case differs only in letter case (GitHub login rules).
+    const realSh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      const pr = emptyPr(cmd);
+      if (pr !== undefined) return pr;
+      if (cmd.includes("issues/42/comments") || cmd.includes("pulls/42/comments")) {
+        return JSON.stringify([
+          {
+            user: { login: "CodeRabbitAI[bot]" },
+            body: "Summary: real coderabbit complete signal body",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+          {
+            user: { login: "sourcery-ai[bot]" },
+            body: "Sourcery review complete signal body ok",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+          {
+            user: { login: "gemini-code-assist[bot]" },
+            body: "Gemini review complete signal body ok",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+        ]);
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return JSON.stringify([
+          {
+            user: { login: "chatgpt-codex-connector[bot]" },
+            state: "COMMENTED",
+            submitted_at: FRESH_BOT_TIMESTAMP,
+            body: "Codex review complete",
+          },
+        ]);
+      }
+      return "[]";
+    };
+
+    const realSnap = pollPrReviewState(realSh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
+    });
+    for (const bot of ONLINE_REVIEW_BOT_IDS) {
+      expect(realSnap.bots[bot].state).toBe("complete");
+    }
+  });
+
   it("pin botPolling: historical bot comments before round trigger stay pending", () => {
     const sh: Sh = (file, args) => {
       const cmd = args.join(" ");
