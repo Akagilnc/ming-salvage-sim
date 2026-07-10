@@ -250,26 +250,26 @@
       "historical_death_year": 0,
       "historical_death_month": 0,
       "seed_guilt": {
-        "crime": "",
-        "severity": "无"
+        "crime": "交结近侍又次等",
+        "severity": "次等"
       },
       "identity": 45,
       "power_id": "ming"
     },
     {
       "name": "张缙彦",
-      "office": "户部吏员",
-      "office_type": "户部",
+      "office": "举人",
+      "office_type": "未仕",
       "faction": "皇党",
       "aliases": [
         "张缙彦",
-        "张主事",
-        "张稽查"
+        "张坦公",
+        "张举人"
       ],
       "personal_skills": [
-        "钱粮稽核",
-        "押解对账",
-        "不避风险"
+        "经学应试",
+        "经世议论",
+        "地方治理"
       ],
       "loyalty": 70,
       "ability": 66,
@@ -284,6 +284,9 @@
         "severity": "无"
       },
       "identity": 70,
+      "status": "offstage",
+      "debut_year": 1631,
+      "debut_month": 1,
       "power_id": "ming"
     },
     {
@@ -574,8 +577,8 @@
     },
     {
       "name": "汤若望",
-      "office": "西洋传教士，历法火器顾问",
-      "office_type": "工部",
+      "office": "西安传教士",
+      "office_type": "外来",
       "faction": "西学",
       "aliases": [
         "汤若望",
@@ -600,6 +603,10 @@
         "severity": "无"
       },
       "identity": 66,
+      "status": "offstage",
+      "debut_year": 1630,
+      "debut_month": 1,
+      "location": "西安",
       "power_id": "ming"
     },
     {
@@ -1167,15 +1174,16 @@
     },
     {
       "name": "胡廷宴",
-      "office": "原三边总督，革职候勘",
+      "office": "陕西巡抚",
       "office_type": "督抚",
-      "faction": "中立",
+      "faction": "阉党",
       "aliases": [
         "胡廷宴",
-        "胡总督"
+        "胡巡抚"
       ],
       "personal_skills": [
-        "三边军务",
+        "陕西赈济",
+        "巡抚地方",
         "边镇调度"
       ],
       "loyalty": 50,
@@ -1186,28 +1194,30 @@
       "birth_year": 0,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "status": "dismissed",
-      "status_reason": "延绥兵变弹压不力，革职候勘",
+      "status": "active",
       "seed_guilt": {
-        "crime": "",
-        "severity": "无"
+        "crime": "请建魏忠贤生祠",
+        "severity": "轻等"
       },
       "identity": 50,
       "power_id": "ming"
     },
     {
       "name": "李从心",
-      "office": "陕西布政使",
-      "office_type": "地方",
+      "office": "工部尚书，总理河道，兼都察院右副都御史",
+      "office_type": "工部",
       "faction": "阉党",
       "aliases": [
         "李从心",
-        "李布政",
-        "陕西布政使"
+        "李尚书",
+        "李总河",
+        "工部尚书",
+        "总理河道"
       ],
       "personal_skills": [
-        "地方钱谷",
-        "布政转运",
+        "河道治理",
+        "漕运工程",
+        "工部营造",
         "内廷关说"
       ],
       "loyalty": 40,
@@ -1219,8 +1229,8 @@
       "historical_death_year": 0,
       "historical_death_month": 0,
       "seed_guilt": {
-        "crime": "",
-        "severity": "无"
+        "crime": "交结近侍又次等",
+        "severity": "次等"
       },
       "identity": 42,
       "power_id": "ming"
