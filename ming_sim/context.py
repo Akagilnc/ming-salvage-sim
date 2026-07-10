@@ -11,7 +11,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 from ming_sim.constants import ECONOMY_ACCOUNTS, TURN_UNIT
-from ming_sim.assets import format_money, format_money_delta
+from ming_sim.assets import format_money, format_money_delta, load_json_asset
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMContractError
@@ -20,6 +20,41 @@ from ming_sim.qualitative import qualitative_band, qualitative_bucket
 from ming_sim.skills import available_skill_names
 
 _content: Optional[GameContent] = None
+
+
+# 内容层档料与数值盘面分离：这些文字是给角色理解人物的事实材料，不是
+# prompt 形式约束，也不把 identity/能力等内部数值暴露给角色。
+_MINISTER_DOSSIERS = load_json_asset("minister_dossiers.json")
+_FACTION_DOSSIERS = {
+    "阉党": {
+        "core": "依托内廷、厂卫和人事网络维持旧有权力与清算余地。",
+        "internal": "其内部重恩威和门生故旧，失去护持时也最容易互相推责。",
+    },
+    "皇党": {
+        "core": "以皇帝直控、清账和让诏令落地为共同取向，成员并不总有同一套办事手段。",
+        "internal": "其内部看重离御前远近与办事成效，常在忠勤和迎合之间拉扯。",
+    },
+    "东林": {
+        "core": "重清议、名分和制度约束，通常把裁抑阉党视作朝局要务。",
+        "internal": "其内部既有敢言清流，也有经营声望与人脉的文臣，彼此并非铁板一块。",
+    },
+    "军队": {
+        "core": "把补饷、守边和少受外朝掣肘视为军务能否持续的根本。",
+        "internal": "其内部在守城、出战和保存部曲之间各有盘算，粮道断裂时最先显出裂缝。",
+    },
+    "宗室": {
+        "core": "优先维护宗禄、藩国田产和宗藩体面，警惕削藩与清核。",
+        "internal": "其内部按亲疏、封地和现实利害分化，未必会为同宗承担同样风险。",
+    },
+    "中立": {
+        "core": "以部院实务和按章办事为立足点，尽量避开公开党争。",
+        "internal": "其内部更看重可交割的职责与退路，局势逼迫时也会选择靠向能办事的一方。",
+    },
+    "西学": {
+        "core": "重历算、农政、火器和水利等可验证的知识，愿以实务回应国用。",
+        "internal": "其内部在技术试办和身份疑忌之间周旋，需要把新知翻译成官府听得懂的利害。",
+    },
+}
 
 
 def bind_content(content: GameContent) -> None:
@@ -181,13 +216,35 @@ def _faction_band(field: str, value: object) -> str:
     return qualitative_band(value, words, default=50)
 
 
+def minister_dossier(character: Character) -> str:
+    """返回人物特征档料；没有富化资料时保留 S1 的通用兜底。"""
+    dossier = _MINISTER_DOSSIERS.get(character.name)
+    if dossier is None:
+        identity = (character.summary or "").strip() or "未有专门 dossier，以官职、性情和任事处作通用特征化"
+        temperament = (character.style or "").strip() or "以官职与任事处推知其处世分寸"
+        skills = "、".join(character.personal_skills) or "未留专长档案"
+        motivation = f"在{character.office or '所任官署'}任事并完成本分"
+        burden = "暂无可核的特别包袱"
+        episode = f"曾以{skills}处理任内事务"
+        dossier = {
+            "identity": identity,
+            "temperament": temperament,
+            "motivation": motivation,
+            "burden": burden,
+            "episode": episode,
+        }
+    return (
+        f"身份：{dossier['identity']}；脾性：{dossier['temperament']}；"
+        f"动机：{dossier['motivation']}；包袱：{dossier['burden']}；"
+        f"事例：{dossier['episode']}"
+    )
+
+
 def character_context(character: Character) -> str:
     skills = "、".join(character.personal_skills) or "未留专长档案"
-    summary = (character.summary or "").strip() or "未有专门 dossier，以官职、性情和任事处作通用特征化。"
-    style = (character.style or "").strip() or "未详，以官职与任事处推知其处世分寸。"
     return (
         f"【人物档料】{character.name}，{character.office}，职位类型：{character.office_type}；"
-        f"身份简介：{summary}；性情：{style}；专长：{skills}。"
+        f"{minister_dossier(character)}；专长：{skills}。"
         f"人物行事可见为：忠诚{_character_band('loyalty', character.loyalty)}、"
         f"能力{_character_band('ability', character.ability)}、"
         f"清廉{_character_band('integrity', character.integrity)}、"
@@ -212,17 +269,21 @@ def faction_context_with_db(character: Character, db: GameDB) -> str:
         (character.faction,),
     ).fetchone()
     bucket = _identity_bucket(character.identity)
+    dossier = _FACTION_DOSSIERS.get(character.faction)
     if bucket == "low":
         faction_text = "与该派仅有名义关联，未提供该派内情；人物立场由自身经历与当下处境呈现。"
-    elif faction is None:
+    elif dossier is None:
         faction_text = "该派尚无完整档料，以人物所处官职和已知行动推知其所求。"
+    elif faction is None:
+        faction_text = f"这个党是什么样一伙人：{dossier['core']}"
     elif bucket == "middle":
         faction_text = (
-            f"所求：{faction['agenda']}；当前朝势："
+            f"这个党是什么样一伙人：{dossier['core']}所求：{faction['agenda']}；当前朝势："
             f"{_faction_band('leverage', faction['leverage'])}。"
         )
     else:
         faction_text = (
+            f"这个党是什么样一伙人：{dossier['core']}其内部：{dossier['internal']}"
             f"所求：{faction['agenda']}；当前朝势："
             f"{_faction_band('leverage', faction['leverage'])}，"
             f"对政局态度{_faction_band('satisfaction', faction['satisfaction'])}。"
