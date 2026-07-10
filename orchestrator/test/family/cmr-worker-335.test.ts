@@ -146,7 +146,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       `<cmr>${JSON.stringify({
         converged: false,
         reason: "cross-slice field-name mismatch",
-        successfulLegs: ["gpt-5.5"],
+        successfulLegs: ["gpt-5.6-sol"],
         ...VALID_CMR_VERDICT_FIELDS,
         skippedLegs: [
           { slug: "opus", reason: "auth unavailable" },
@@ -158,7 +158,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
     if (o.kind === "verdict") {
       expect(o.converged).toBe(false);
       expect(o.reason).toBe("cross-slice field-name mismatch");
-      expect(o.successfulLegs).toEqual(["gpt-5.5"]);
+      expect(o.successfulLegs).toEqual(["gpt-5.6-sol"]);
     }
   });
 
@@ -425,7 +425,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       const o = parseCmrOutcome(
         `<cmr>${JSON.stringify({
           converged: true,
-          successfulLegs: ["gpt-5.5", "agy"],
+          successfulLegs: ["gpt-5.6-sol", "agy"],
           ...VALID_CMR_VERDICT_FIELDS,
         })}</cmr>`,
       );
@@ -433,7 +433,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       expect(o).toEqual({
         kind: "verdict",
         converged: true,
-        successfulLegs: ["gpt-5.5", "agy"],
+        successfulLegs: ["gpt-5.6-sol", "agy"],
         ...EMPTY_CMR_CLOSURE,
         ...CMR_EVIDENCE,
       });
@@ -448,7 +448,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
             converged: true,
             successfulLegs: ["agy", "opus"],
             ...VALID_CMR_VERDICT_FIELDS,
-            skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
+            skippedLegs: [{ slug: "gpt-5.6-sol", reason: "auth unavailable" }],
           })}</cmr>`,
         ).kind,
       ).toBe("malformed");
@@ -461,7 +461,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         parseCmrOutcome(
           `<cmr>${JSON.stringify({
             converged: true,
-            successfulLegs: ["gpt-5.5", "agy"],
+            successfulLegs: ["gpt-5.6-sol", "agy"],
             ...VALID_CMR_VERDICT_FIELDS,
             skippedLegs: [{ slug: "opus", reason: "auth unavailable" }],
           })}</cmr>`,
@@ -476,7 +476,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
           successfulLegs: ["opus"],
           ...VALID_CMR_VERDICT_FIELDS,
           skippedLegs: [
-            { slug: "gpt-5.5", reason: "auth unavailable" },
+            { slug: "gpt-5.6-sol", reason: "auth unavailable" },
             { slug: "agy", reason: "quota exhausted" },
           ],
         })}</cmr>`,
@@ -485,7 +485,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       if (o.kind === "verdict") {
         expect(o.successfulLegs).toEqual(["opus"]);
         expect(o.skippedLegs).toEqual([
-          { slug: "gpt-5.5", reason: "auth unavailable" },
+          { slug: "gpt-5.6-sol", reason: "auth unavailable" },
           { slug: "agy", reason: "quota exhausted" },
         ]);
       }
@@ -519,7 +519,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
           `<cmr>${JSON.stringify({
             converged: false,
             reason: "seam mismatch",
-            successfulLegs: ["gpt-5.5"],
+            successfulLegs: ["gpt-5.6-sol"],
             ...VALID_CMR_VERDICT_FIELDS,
             skippedLegs: [
               { slug: "opus", reason: "auth unavailable" },
@@ -1628,7 +1628,7 @@ describe("#378 mountCmrAuth — writes a minimal danger-full-access config, neve
     writeFileSync(
       join(codexDir, "config.toml"),
       [
-        'model = "gpt-5.5"',
+        'model = "gpt-5.6-sol"',
         'sandbox_mode = "workspace-write"',
         'notify = ["/Users/host/notify.app"]',
         '[plugins."github@openai-curated"]',

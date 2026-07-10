@@ -75,15 +75,6 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     family: "codex",
     strongLeg: true,
   },
-  // Pinned historical ledgers still name the retired 5.5 Codex leg. Keep it
-  // resolvable for replay only; no live route selects it.
-  "gpt-5.5": {
-    provider: "codex",
-    model: "gpt-5.5",
-    options: { effort: "high" },
-    family: "codex",
-    strongLeg: true,
-  },
   sonnet: {
     provider: "claudeCode",
     model: "claude-sonnet-4-6",
@@ -109,6 +100,14 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     model: "grok-4.3",
     family: "agy",
   },
+};
+
+/**
+ * Pinned ledger/replay compatibility only. Retired model names MUST NOT enter
+ * MODEL_SLUG_REGISTRY: that registry is the executable live-worker allowlist.
+ */
+const HISTORICAL_CMR_LEG_FAMILIES: Readonly<Record<string, ModelFamily>> = {
+  "gpt-5.5": "codex",
 };
 
 const CMR_REVIEW_LEG_REGISTRY: Readonly<Record<string, ModelFamily>> = {
@@ -163,7 +162,7 @@ export function modelFamilyForCmrReviewLeg(slug: string): ModelFamily {
   if (entry !== undefined) {
     return entry.family;
   }
-  const cmrLeg = CMR_REVIEW_LEG_REGISTRY[slug];
+  const cmrLeg = CMR_REVIEW_LEG_REGISTRY[slug] ?? HISTORICAL_CMR_LEG_FAMILIES[slug];
   if (cmrLeg !== undefined) {
     return cmrLeg;
   }
