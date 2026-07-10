@@ -29,6 +29,7 @@ import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import { runOrchestrator } from "../src/runner.js";
 import { dispatchFamilyWorker } from "../src/family/dispatchFamilyWorker.js";
 import { runVerifyCmr } from "../src/family/verifyCmr.js";
+import { resolveActiveModelRoute, withRouteSmoke } from "../src/modelRoutes.js";
 import type {
   Backend,
   CmrResult,
@@ -55,6 +56,16 @@ const ROLE_WORKTREE: WorktreeHandle = {
   path: "/resident/worktrees/issue-601",
 };
 
+const SMOKED_FAMILY_ROUTE = withRouteSmoke(
+  resolveActiveModelRoute({ ORCHESTRATOR_ROUTE: "normal" }),
+  Object.fromEntries(
+    Object.keys(resolveActiveModelRoute({ ORCHESTRATOR_ROUTE: "normal" }).smoke).map((key) => [
+      key,
+      { state: "passed", at: new Date().toISOString(), cliVersion: "test" },
+    ]),
+  ),
+);
+
 /**
  * Minimal backend shell: every method not under test returns a clean success so
  * the runner reaches the step under test. Worker dispatch is overridden per
@@ -62,6 +73,10 @@ const ROLE_WORKTREE: WorktreeHandle = {
  * so these tests assert against the SAME shared seam, not a re-implementation.
  */
 abstract class RoleRetryBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
@@ -489,7 +504,7 @@ class CmrClosureVersionSkewFamilyBackend implements FamilyBackend {
       const cmrOutput: CmrResult = {
         kind: "cmr",
         converged: true,
-        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         evidencePaths: ["cmr/review-summary.json"],
@@ -665,7 +680,7 @@ function cmrClosureWithMissingSuppressionFields(): CmrResult {
   return {
     kind: "cmr",
     converged: true,
-    successfulLegs: ["opus", "gpt-5.5", "agy"],
+    successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
     claimedFixedFindingIdentityKeys: [],
     priorFindingDispositions: [
       {
@@ -719,7 +734,7 @@ describe("#601 AC#3 — a CMR closure whose downstream required-field re-validat
     const backend = new CmrClosureVersionSkewFamilyBackend(1);
     const result = await withMechanicalRetry(
       cmrClosureSpec(),
-      { familyBase: "family/601-closure" },
+      { familyBase: "family/601-closure", modelRoute: SMOKED_FAMILY_ROUTE },
       (s, c) => dispatchFamilyWorker(backend, s, c),
     );
     expect(result.kind).toBe("completed");
@@ -734,7 +749,7 @@ describe("#601 AC#3 — a CMR closure whose downstream required-field re-validat
     const backend = new CmrClosureVersionSkewFamilyBackend(Number.MAX_SAFE_INTEGER);
     const result = await withMechanicalRetry(
       cmrClosureSpec(),
-      { familyBase: "family/601-closure" },
+      { familyBase: "family/601-closure", modelRoute: SMOKED_FAMILY_ROUTE },
       (s, c) => dispatchFamilyWorker(backend, s, c),
     );
     expect(result.kind).toBe("malformed");
@@ -789,7 +804,7 @@ describe("#601 AC#4 — dogfoodReplay-pattern regression: dogfood-362, family-40
       output: {
         kind: "cmr",
         converged: true,
-        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         evidencePaths: ["cmr/review-summary.json"],
@@ -825,7 +840,7 @@ describe("#601 AC#4 — dogfoodReplay-pattern regression: dogfood-362, family-40
     const backend = new FamilyShipMalformedThenConvergeBackend(1);
     const result = await withMechanicalRetry(
       familyShipSpec(),
-      { familyBase: "family/405-replay" },
+      { familyBase: "family/405-replay", modelRoute: SMOKED_FAMILY_ROUTE },
       (s, c) => dispatchFamilyWorker(backend, s, c),
     );
     expect(result.kind).toBe("completed");
@@ -863,7 +878,7 @@ describe("#601 AC#4 — dogfoodReplay-pattern regression: dogfood-362, family-40
     const backend = new CmrClosureVersionSkewFamilyBackend(1);
     const result = await withMechanicalRetry(
       cmrClosureSpec(),
-      { familyBase: "family/70-replay" },
+      { familyBase: "family/70-replay", modelRoute: SMOKED_FAMILY_ROUTE },
       (s, c) => dispatchFamilyWorker(backend, s, c),
     );
     expect(result.kind).toBe("completed");

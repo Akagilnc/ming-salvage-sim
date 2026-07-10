@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runFamily } from "../../src/family/runner.js";
 import { ensureFamilyPostMergeCleanup } from "../../src/family/verifyCmr.js";
 import * as verifyCmr from "../../src/family/verifyCmr.js";
-import { resolveActiveModelRoute } from "../../src/modelRoutes.js";
+import { resolveActiveModelRoute, smokeRouteModels } from "../../src/modelRoutes.js";
 import type {
   Backend,
   IssueMeta,
@@ -23,6 +23,10 @@ import type {
 } from "../../src/family/types.js";
 
 class ChildBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
@@ -134,7 +138,10 @@ describe("#603 ensureFamilyPostMergeCleanup — route after short-circuit", () =
 
   it("dispatch path uses threaded resolvedRoute when env route is broken", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "totally-unknown-route-603");
-    const goodRoute = resolveActiveModelRoute({ ORCHESTRATOR_ROUTE: "normal" });
+    const goodRoute = await smokeRouteModels(
+      resolveActiveModelRoute({ ORCHESTRATOR_ROUTE: "normal" }),
+      async () => ({ cliVersion: "test" }),
+    );
     const familyBackend = new FakeFamilyBackend();
     familyBackend.ledger.push({
       status: "pr_merged",

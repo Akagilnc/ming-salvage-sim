@@ -397,22 +397,27 @@ export function paginateReviewThreadNodes(
   return allNodes;
 }
 
+/**
+ * Known GitHub logins for each online-review bot (#741).
+ * Exact whole-login match only (case-insensitive per GitHub login rules).
+ * Substring match would let logins like `xxx-coderabbit-fan` spoof bot evidence.
+ */
+export const ONLINE_REVIEW_BOT_LOGINS: Readonly<
+  Record<OnlineReviewBotId, readonly string[]>
+> = {
+  coderabbit: ["coderabbitai[bot]"],
+  sourcery: ["sourcery-ai[bot]"],
+  codex: ["chatgpt-codex-connector[bot]"],
+  gemini: ["gemini-code-assist[bot]"],
+};
+
+/** True when `login` is exactly a known login for `bot` (case-insensitive). */
 function loginMatchesBot(login: string, bot: OnlineReviewBotId): boolean {
+  if (!login) return false;
   const lower = login.toLowerCase();
-  switch (bot) {
-    case "coderabbit":
-      return lower.includes("coderabbit");
-    case "sourcery":
-      return lower.includes("sourcery");
-    case "codex":
-      return lower.includes("codex") || lower.includes("chatgpt-codex");
-    case "gemini":
-      return lower.includes("gemini");
-    default: {
-      const never: never = bot;
-      return never;
-    }
-  }
+  return ONLINE_REVIEW_BOT_LOGINS[bot].some(
+    (known) => known === lower,
+  );
 }
 
 /** REST issue/PR comments expose `user.login`; tolerate legacy `author.login` in fakes. */

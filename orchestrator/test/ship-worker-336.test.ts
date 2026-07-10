@@ -107,6 +107,8 @@ function fixtured(): FixturedShipBackend {
     soulsDir: realSoulsDir,
     imageName: "ming-orchestrator-coder:latest",
     runKey: "k336",
+    // #748: coder dispatch may reach mountAuth; keep it off real ~/.sc-orchestrator.
+    home: mkDir("ship-home-"),
   });
 }
 
@@ -243,6 +245,7 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
       soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336cfg",
+      home: mkDir("ship-home-cfg-"),
     });
   }
 
@@ -352,6 +355,7 @@ describe("#336 single-slice runShipWorker — fail-closed when the top-level Cla
       soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336noauth",
+      home: mkDir("ship-home-noauth-"),
     });
   }
 
@@ -423,6 +427,7 @@ describe("#336 single-slice runShipWorker — fail-closed when gh auth is missin
       soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336nogh",
+      home: mkDir("ship-home-nogh-"),
     });
   }
 
@@ -464,6 +469,7 @@ describe("#336 single-slice runShipWorker — fail-closed when gh auth is missin
       soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336ghok",
+      home: mkDir("ship-home-ghok-"),
     });
     await expect(be.run(shipWorkerSpec(), { worktree })).rejects.toThrow(
       /shipSandbox should not be built/,
@@ -530,6 +536,7 @@ describe("#336 single-slice runShipWorker — outcome sidecar cleanup", () => {
       soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k336outcome",
+      home: mkDir("ship-home-outcome-"),
     });
 
     const outcome = await be.run(shipWorkerSpec(), {
@@ -584,6 +591,7 @@ describe("#439 single-slice ship worker resume answer focus", () => {
       soulsDir: realSoulsDir,
       imageName: "ming-orchestrator-coder:latest",
       runKey: "k439shipanswer",
+      home: mkDir("ship-home-answer-"),
     });
 
     await expect(
@@ -616,7 +624,7 @@ describe("#378 RealBackend auth mounts — write a minimal danger-full-access co
     writeFileSync(
       join(codexDir, "config.toml"),
       [
-        'model = "gpt-5.5"',
+        'model = "gpt-5.6-sol"',
         'sandbox_mode = "workspace-write"',
         'notify = ["/Users/host/notify.app"]',
         '[plugins."github@openai-curated"]',

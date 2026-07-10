@@ -50,6 +50,10 @@ import type { FindingDisposition } from "../../src/types.js";
 
 /** A single-slice Backend that drives every child to S8(success). */
 class ChildBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
@@ -103,7 +107,7 @@ function epicWith(...issues: number[]): FamilyEpic {
   return { issue: 293, children: issues.map((issue) => ({ issue, blockedBy: [] })) };
 }
 
-const COMPLETE_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
+const COMPLETE_CMR_LEGS = ["opus", "gpt-5.6-sol", "agy"] as const;
 
 describe("family spine verify-cmr wiring (#293 seam 4)", () => {
   it("calls the verify hook at the wave barrier AND end-of-run, each with phase + context", async () => {
@@ -1400,7 +1404,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
   // prior-disposition source) — NOT the fat `cmrFindingClassification` structure
   // (Finding full text / results[] audit / dispositions[] merged into one blob).
   describe("thin CMR envelope on the ledger (#604 slice 3 / ADR 0062)", () => {
-    const CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
+    const CMR_LEGS = ["opus", "gpt-5.6-sol", "agy"] as const;
 
     /** Drive the real final CMR gate; no coder-fix worker so a blocker aborts. */
     class ScriptedCmrBackend extends FakeFamilyBackend {

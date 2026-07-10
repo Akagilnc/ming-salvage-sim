@@ -22,7 +22,7 @@
  *     control flow consumes, so the prefactor does not touch route()/validate().
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
 import {
   appendFileSync,
   existsSync,
@@ -40,8 +40,17 @@ import {
 } from "./findingFamilies.js";
 import { dispatchPostMergeCleanup } from "./postMergeCleanup.js";
 import type { Sh } from "./familyDriver.js";
-import { modelForSlot, type ResolvedModelRoute } from "./modelRoutes.js";
+import {
+  modelForSlot,
+  routeSmokeFailure,
+  type ResolvedModelRoute,
+} from "./modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
+import {
+  dispatchMonitoredCliWorker,
+  killWorkerTree,
+  type MonitoredCliDispatchInput,
+} from "./workerMonitor.js";
 import type {
   Backend,
   DispatchContext,
@@ -52,6 +61,7 @@ import type {
   WorkerContextRetention,
   WorkerKind,
   WorkerLandingPayload,
+  WorkerMonitorHandle,
   WorkerResult,
   WorkerSessionMode,
   WorkerSpec,
@@ -666,10 +676,140 @@ export async function dispatchWorker(
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
 ): Promise<WorkerResult> {
+  if (ctx.modelRoute === undefined) {
+    throw new Error("worker dispatch refused (fail-closed): model route smoke state is missing");
+  }
+  const smokeFailure = routeSmokeFailure(ctx.modelRoute);
+  if (smokeFailure !== undefined) {
+    throw new Error(`worker dispatch refused (fail-closed): ${smokeFailure}`);
+  }
   if (backend.dispatchWorker !== undefined) {
     return backend.dispatchWorker(spec, ctx, landing);
   }
   return legacyDispatchWorker(backend, spec, ctx, landing);
+}
+
+/**
+ * Production dispatch outcome (#684): the {@link WorkerResult} plus an optional
+ * monitor handle when the worker was spawned as a host-side CLI process.
+ */
+export interface DispatchWorkerWithMonitorOutcome {
+  readonly result: WorkerResult;
+  readonly monitorHandle?: WorkerMonitorHandle;
+}
+
+/**
+ * Options for {@link dispatchWorkerWithMonitor} (#684 R2).
+ *
+ * `onMonitorHandleSpawned` fires AT SPAWN TIME — before waiting for the child
+ * to exit — so the runner can persist the handle to the ledger while the worker
+ * is still running (hang judge/kill/resume needs a live handle, not a post-exit
+ * one).
+ */
+export interface DispatchWorkerWithMonitorOptions {
+  readonly onMonitorHandleSpawned?: (
+    handle: WorkerMonitorHandle,
+  ) => void | Promise<void>;
+}
+
+function waitForChildExit(child: ChildProcess): Promise<number | null> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(child.exitCode);
+  }
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => resolve(code));
+  });
+}
+
+/**
+ * THE production dispatch path used by the runner (#684).
+ *
+ * When the backend supplies a CLI spawn via {@link Backend.resolveCliMonitorDispatch},
+ * this spawns through {@link dispatchMonitoredCliWorker} so the monitor handle
+ * (pid / log / pool / signal / instance identity) is generated atomically with
+ * real dispatch, then maps the finished process via
+ * {@link Backend.awaitMonitoredCliWorker}.
+ *
+ * The handle is handed to {@link DispatchWorkerWithMonitorOptions.onMonitorHandleSpawned}
+ * immediately after spawn (before wait) so ledger persistence can happen at
+ * spawn time (#684 R2).
+ *
+ * Otherwise falls through to {@link dispatchWorker} (container / legacy seam)
+ * with no monitor handle.
+ *
+ * The runner always calls this (not bare {@link dispatchWorker}) so CLI workers
+ * land a ledger-rebuildable handle and hang/kill judgment never needs global
+ * process-name matching. RealBackend / RealFamilyBackend implement the hooks so
+ * S2/S3/S5/S6/S7/S9–S12 take this monitored branch in production.
+ */
+export async function dispatchWorkerWithMonitor(
+  backend: Backend,
+  spec: WorkerSpec,
+  ctx: DispatchContext,
+  landing?: WorkerLandingPayload,
+  opts?: DispatchWorkerWithMonitorOptions,
+): Promise<DispatchWorkerWithMonitorOutcome> {
+  const cliSpec = backend.resolveCliMonitorDispatch?.(spec, ctx, landing);
+  if (cliSpec !== undefined) {
+    const input: MonitoredCliDispatchInput = {
+      command: cliSpec.command,
+      args: cliSpec.args,
+      logDir: cliSpec.logDir,
+      poolId: cliSpec.poolId,
+      completionSignal: cliSpec.completionSignal,
+      stepId: cliSpec.stepId,
+      ...(cliSpec.cwd !== undefined ? { cwd: cliSpec.cwd } : {}),
+      ...(cliSpec.env !== undefined ? { env: cliSpec.env } : {}),
+      ...(cliSpec.logBasename !== undefined
+        ? { logBasename: cliSpec.logBasename }
+        : {}),
+      ...(cliSpec.readInstanceId !== undefined
+        ? { readInstanceId: cliSpec.readInstanceId }
+        : {}),
+      ...(cliSpec.resultPath !== undefined
+        ? { resultPath: cliSpec.resultPath }
+        : {}),
+    };
+    const { handle, child } = await dispatchMonitoredCliWorker(input);
+    const exitPromise = waitForChildExit(child);
+    // SPAWN-TIME persist seam: handle is available before waitForChildExit so a
+    // hang still leaves a ledger-rebuildable handle for judge/kill/resume.
+    if (opts?.onMonitorHandleSpawned !== undefined) {
+      try {
+        await opts.onMonitorHandleSpawned(handle);
+      } catch (error) {
+        await killWorkerTree(handle);
+        try {
+          await exitPromise;
+        } catch {
+          // Preserve the original spawn-persist error if child cleanup fails.
+        }
+        throw error;
+      }
+    }
+    const exitCode = await exitPromise;
+    if (backend.awaitMonitoredCliWorker === undefined) {
+      return {
+        result: {
+          kind: "failed",
+          reason:
+            `CLI worker ${spec.id} finished (exit ${exitCode}) but backend has ` +
+            `no awaitMonitoredCliWorker to map the process into a WorkerResult`,
+        },
+        monitorHandle: handle,
+      };
+    }
+    const result = await backend.awaitMonitoredCliWorker(
+      handle,
+      exitCode,
+      spec,
+      ctx,
+      landing,
+    );
+    return { result, monitorHandle: handle };
+  }
+  return { result: await dispatchWorker(backend, spec, ctx, landing) };
 }
 
 /**

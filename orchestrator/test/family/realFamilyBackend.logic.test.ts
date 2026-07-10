@@ -58,6 +58,7 @@ import type {
   IntegratedCmrResult,
 } from "../../src/family/types.js";
 import { DEFAULT_IMAGE_TAG, resolveImageTag } from "../../src/familyDriver.js";
+import type { WorkerSpec } from "../../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
@@ -106,6 +107,43 @@ afterEach(() => {
   for (const d of ledgerDirs) rmSync(d, { recursive: true, force: true });
   repos = [];
   ledgerDirs = [];
+});
+
+describe("RealFamilyBackend live officer effort", () => {
+  class Probe extends RealFamilyBackend {
+    public agentForLiveSpec(spec: WorkerSpec): sc.AgentProvider {
+      return this.agentForSpec(spec);
+    }
+  }
+
+  const liveSpec = (overrides: Partial<WorkerSpec>): WorkerSpec => ({
+    id: "S3",
+    kind: "cmr",
+    role: "reviewer",
+    host: "claude",
+    session: "fresh",
+    contextRetention: "clean",
+    promptFile: "integrated_cmr_completeness.md",
+    completionSignal: "CMR_STEP_COMPLETE",
+    maxIter: 1,
+    model: "gpt-5.6-terra",
+    soul: "cmr",
+    toolchain: [],
+    ...overrides,
+  });
+
+  it("passes xhigh through the family CMR and verify dispatch agent", () => {
+    const backend = new Probe(opts(trackRepo()));
+    const commandFor = (spec: WorkerSpec) =>
+      backend.agentForLiveSpec(spec).buildPrintCommand({ prompt: "test" }).command;
+
+    expect(commandFor(liveSpec({ soul: "cmr" }))).toContain(
+      'model_reasoning_effort="xhigh"',
+    );
+    expect(
+      commandFor(liveSpec({ id: "S5", kind: "verify", role: "verify", soul: "READ-ONLY" })),
+    ).toContain('model_reasoning_effort="xhigh"');
+  });
 });
 
 /** Default options pointing the Backend at a real repo + the real prompts dir. */
@@ -359,11 +397,11 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override isNodeProject(_cwd: string): boolean {
         return true;
       }
-      runVerifyForTest(): void {
-        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
-    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
+    await new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
     // Unconditional install first (by construction), then project's scripts.
     // (installDeps chooses "ci" or "install" based on whether lockfile exists at the cwd path.)
     expect(calls[0].file).toBe("npm");
@@ -406,13 +444,13 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override isNodeProject(_cwd: string): boolean {
         return true;
       }
-      runVerifyForTest(): void {
-        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
     // Note: pass verifyCwd=proj so run reaches install+scripts (isNode true by override).
     // We do NOT override depsInstalled (it no longer exists).
-    new SpyBackend(opts("/clone/root", { verifyCwd: proj })).runVerifyForTest();
+    await new SpyBackend(opts("/clone/root", { verifyCwd: proj })).runVerifyForTest();
     // Install MUST run (first) even though node_modules existed + manifest mutated post-wave.
     expect(calls[0].file).toBe("npm");
     expect(["ci", "install"]).toContain(calls[0].args[0]);
@@ -443,11 +481,11 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override isNodeProject(_cwd: string): boolean {
         return true;
       }
-      runVerifyForTest(): void {
-        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
-    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/web" })).runVerifyForTest();
+    await new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/web" })).runVerifyForTest();
     // Unconditional install first (even if node_modules "existed"), then web's scripts.
     expect(calls[0].file).toBe("npm");
     expect(["ci", "install"]).toContain(calls[0].args[0]);
@@ -479,7 +517,7 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(calls).toEqual([]); // nothing installed, nothing run
   });
 
-  it("R3: a SINGLE-project repo (package.json at the clone ROOT) falls back to workingRepo verify", () => {
+  it("R3: a SINGLE-project repo (package.json at the clone ROOT) falls back to workingRepo verify", async () => {
     // gemini R3: dropping the `?? workingRepo` fallback made single-project repos
     // (package.json at root, no subproject) skip verify entirely. Restore the
     // fallback — but ONLY when the root IS a Node project (multi-project non-Node
@@ -496,12 +534,12 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["test"];
       }
-      runVerifyForTest(): void {
-        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
     // No verifyCwd; resolver undefined (no subproject) → root is Node → verify at root.
-    new SpyBackend(opts("/clone/root", { resolveVerifyCwd: () => undefined })).runVerifyForTest();
+    await new SpyBackend(opts("/clone/root", { resolveVerifyCwd: () => undefined })).runVerifyForTest();
     // Unconditional: install first, then test.
     expect(calls[0].file).toBe("npm");
     expect(["ci", "install"]).toContain(calls[0].args[0]);
@@ -510,7 +548,7 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(calls.slice(1).every((c) => c.cwd === "/clone/root")).toBe(true);
   });
 
-  it("R1-T3: an EXPLICIT verifyCwd that is NOT a Node project FAILS CLOSED (throws), never silent-passes", () => {
+  it("R1-T3: an EXPLICIT verifyCwd that is NOT a Node project FAILS CLOSED (throws), never silent-passes", async () => {
     // codex R1 T3: a docs/content/root-only diff (inferred-undefined) legitimately
     // skips, but an EXPLICITLY-set verifyCwd pointing at a non-Node dir is a caller
     // misconfig — it must NOT be treated like "nothing to verify" and green-light an
@@ -523,13 +561,13 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override isNodeProject(_cwd: string): boolean {
         return false; // explicit cwd has no package.json
       }
-      runVerifyForTest(): void {
-        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
-    expect(() =>
+    await expect(
       new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/not-node" })).runVerifyForTest(),
-    ).toThrow(/not a Node project/i);
+    ).rejects.toThrow(/not a Node project/i);
   });
 
   it("familyBaseStartHead returns the recorded start head", async () => {
@@ -649,7 +687,7 @@ class FakeSeamsBackend extends RealFamilyBackend {
   mergerCalls: ConflictResolveRequest[] = [];
   verifyOutcome: "green" | "red" = "green";
   verifyCalls: FamilyVerifyRequest[] = [];
-  cmrResult: IntegratedCmrResult = { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
+  cmrResult: IntegratedCmrResult = { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
   cmrCalls: IntegratedCmrRequest[] = [];
   shCalls: Array<{ file: string; args: string[] }> = [];
   prViewResponse: unknown = {
@@ -1129,7 +1167,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       outcomePath,
       JSON.stringify({
         converged: true,
-        successfulLegs: ["gpt-5.5"],
+        successfulLegs: ["gpt-5.6-sol"],
         skippedLegs: [
           { slug: "opus", reason: "not configured for this test" },
           { slug: "agy", reason: "not configured for this test" },
@@ -1147,7 +1185,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       outcomePath,
       cmrReviewLegs: [
         { family: "claude", slug: "opus" },
-        { family: "codex", slug: "gpt-5.5" },
+        { family: "codex", slug: "gpt-5.6-sol" },
         { family: "gemini", slug: "agy" },
       ],
     });
@@ -1155,7 +1193,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     expect(outcome).toMatchObject({
       kind: "verdict",
       converged: true,
-      successfulLegs: ["gpt-5.5"],
+      successfulLegs: ["gpt-5.6-sol"],
     });
   });
 
@@ -1167,7 +1205,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       JSON.stringify({
         converged: false,
         reason: "same-module budget summary label mismatch remains",
-        successfulLegs: ["opus", "gpt-5.5"],
+        successfulLegs: ["opus", "gpt-5.6-sol"],
         skippedLegs: [{ slug: "agy", reason: "no active conversation" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
@@ -1196,7 +1234,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       outcomePath,
       cmrReviewLegs: [
         { family: "claude", slug: "opus" },
-        { family: "codex", slug: "gpt-5.5" },
+        { family: "codex", slug: "gpt-5.6-sol" },
         { family: "gemini", slug: "agy" },
       ],
     });
@@ -1244,9 +1282,9 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = cmrOutcomeFromResult({
       completionSignal: "CMR_STEP_COMPLETE",
       stdout:
-        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.5"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>',
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>',
       outcomePath,
-      cmrReviewLegs: [{ family: "codex", slug: "gpt-5.5" }],
+      cmrReviewLegs: [{ family: "codex", slug: "gpt-5.6-sol" }],
     });
 
     expect(outcome.kind).toBe("malformed");
@@ -1261,11 +1299,11 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = cmrOutcomeFromResult({
       completionSignal: "CMR_STEP_COMPLETE",
       stdout:
-        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.5"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       outcomePath,
       cmrReviewLegs: [
         { family: "claude", slug: "opus" },
-        { family: "codex", slug: "gpt-5.5" },
+        { family: "codex", slug: "gpt-5.6-sol" },
         { family: "gemini", slug: "agy" },
       ],
     });
@@ -1278,10 +1316,10 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = cmrOutcomeFromResult({
       completionSignal: "CMR_STEP_COMPLETE",
       stdout:
-        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.5"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       cmrReviewLegs: [
         { family: "claude", slug: "opus" },
-        { family: "codex", slug: "gpt-5.5" },
+        { family: "codex", slug: "gpt-5.6-sol" },
         { family: "gemini", slug: "agy" },
       ],
     });
@@ -1289,7 +1327,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     expect(outcome).toMatchObject({
       kind: "verdict",
       converged: true,
-      successfulLegs: ["gpt-5.5"],
+      successfulLegs: ["gpt-5.6-sol"],
     });
   });
 
@@ -1301,9 +1339,9 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = cmrOutcomeFromResult({
       completionSignal: undefined,
       stdout:
-        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.5"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>',
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>',
       outcomePath,
-      cmrReviewLegs: [{ family: "codex", slug: "gpt-5.5" }],
+      cmrReviewLegs: [{ family: "codex", slug: "gpt-5.6-sol" }],
     });
 
     expect(outcome.kind).toBe("escalate");
@@ -1316,7 +1354,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: false,
       reason: "accepted suppression remains",
-      successfulLegs: ["gpt-5.5"],
+      successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: [
         { slug: "opus", reason: "not part of this parser unit" },
         { slug: "agy", reason: "not part of this parser unit" },
@@ -1362,7 +1400,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: false,
       reason: "accepted suppression remains",
-      successfulLegs: ["gpt-5.5"],
+      successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: [
         { slug: "opus", reason: "not part of this parser unit" },
         { slug: "agy", reason: "not part of this parser unit" },
@@ -1398,7 +1436,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
   it("rejects accepted_suppressed prior dispositions that omit reason", () => {
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: true,
-      successfulLegs: ["gpt-5.5"],
+      successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: [
         { slug: "opus", reason: "not part of this parser unit" },
         { slug: "agy", reason: "not part of this parser unit" },
@@ -1427,7 +1465,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
   it("rejects converged CMR verdicts that omit evidence paths", () => {
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: true,
-      successfulLegs: ["gpt-5.5"],
+      successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: [
         { slug: "opus", reason: "not part of this parser unit" },
         { slug: "agy", reason: "not part of this parser unit" },
@@ -1448,7 +1486,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: false,
       reason: "blocking findings remain",
-      successfulLegs: ["gpt-5.5"],
+      successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: [
         { slug: "opus", reason: "not part of this parser unit" },
         { slug: "agy", reason: "not part of this parser unit" },
@@ -1478,7 +1516,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
   it("strips legacy disposition aliases even when status is already present", () => {
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: true,
-      successfulLegs: ["gpt-5.5"],
+      successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: [
         { slug: "opus", reason: "not part of this parser unit" },
         { slug: "agy", reason: "not part of this parser unit" },

@@ -26,6 +26,10 @@ import type {
  *   - S7 ship succeeds → S8 handoff(status=success)
  */
 class HappyPathBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   /** Ordered log of every Backend method invoked (the call timeline). */
   readonly calls: string[] = [];
   /** Ordered log of every agent step actually dispatched to a sandbox. */
@@ -131,18 +135,18 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       [
         "[orchestrator] model route lineup",
         "route=normal",
-        "coder=sonnet",
-        "reviewer=gpt-5.5",
-        "coderFix=sonnet",
+        "coder=gpt-5.6-terra",
+        "reviewer=gpt-5.6-sol",
+        "coderFix=gpt-5.6-terra",
         "ship=sonnet",
         "merger=sonnet",
-        "cmrCompleteness=opus",
-        "cmrCorrectness=opus",
-        "verify=opus",
+        "cmrCompleteness=gpt-5.6-terra",
+        "cmrCorrectness=gpt-5.6-terra",
+        "verify=gpt-5.6-terra",
         "fixer=sonnet",
         "cleanup=sonnet",
         "docRelease=sonnet",
-        "cmrReview=[codex:gpt-5.5,claude:opus,agy:agy]",
+        "cmrReview=[codex:gpt-5.6-sol,claude:opus,agy:agy]",
       ].join("\n"),
     );
     expect(info.mock.invocationCallOrder[0]).toBeLessThan(

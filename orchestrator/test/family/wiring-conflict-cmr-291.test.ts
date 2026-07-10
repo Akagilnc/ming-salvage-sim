@@ -51,6 +51,10 @@ import type {
 
 /** A single-slice Backend that drives every child to S8(success). */
 class ChildBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
@@ -121,7 +125,7 @@ class ConflictCmrFamilyBackend implements FamilyBackend {
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
-    return { converged: true, successfulLegs: ["opus", "gpt-5.5", "agy"] };
+    return { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);

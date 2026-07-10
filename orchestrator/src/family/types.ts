@@ -16,6 +16,7 @@
 import type {
   Backend,
   CleanupResult,
+  CliMonitorSpawnSpec,
   DispatchContext,
   Escalation,
   EscalationAnswerPayload,
@@ -24,6 +25,7 @@ import type {
   FindingDisposition,
   PriorFindingDisposition,
   WorkerLandingPayload,
+  WorkerMonitorHandle,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -181,7 +183,8 @@ export interface FamilyLedgerEntry {
     | "escalation_answered"
     | "admission_skipped"
     | "online_review_fix_committed"
-    | "online_review_round_retrigger";
+    | "online_review_round_retrigger"
+    | "worker_dispatched";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -233,7 +236,10 @@ export interface FamilyLedgerEntry {
     | "escalation_answered"
     | "admission_skipped"
     | "online_review_fix_committed"
-    | "online_review_round_retrigger";
+    | "online_review_round_retrigger"
+    | "worker_dispatched";
+  /** Monitor handle persisted at family-worker spawn time (#684). */
+  readonly monitorHandle?: WorkerMonitorHandle;
   /**
    * Which phase this PHASE-LEVEL event belongs to. Set on `aborted` entries and
    * on `cmr_passed` audit entries; `merged` / `reconciled` entries omit it because
@@ -542,6 +548,27 @@ export interface FamilyBackend {
    * inject it to assert the family dispatch sequence + spec.
    */
   dispatchWorker?(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult>;
+  /**
+   * #684 optional: host-side CLI spawn for the family monitored-dispatch path
+   * (parallel to {@link Backend.resolveCliMonitorDispatch}). RealFamilyBackend
+   * implements this so family cmr/ship/coder-fix take the monitored branch.
+   */
+  resolveCliMonitorDispatch?(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): CliMonitorSpawnSpec | undefined;
+  /**
+   * #684: map a finished monitored family CLI child into a {@link WorkerResult}.
+   * Required when {@link resolveCliMonitorDispatch} returns a spawn spec.
+   */
+  awaitMonitoredCliWorker?(
+    handle: WorkerMonitorHandle,
+    exitCode: number | null,
     spec: WorkerSpec,
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,

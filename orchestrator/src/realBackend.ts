@@ -54,6 +54,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  renameSync,
   readFileSync,
   rmSync,
   statSync,
@@ -74,6 +75,11 @@ import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
 import { findingIdentityKey } from "./findings.js";
 import {
+  provisionRepoNodeModules,
+  runProvisionCommand,
+  type Sh as ProvisionSh,
+} from "./provisionNodeModules.js";
+import {
   attachSanitizedFindingFamilies,
   normalizeFindingFamiliesWireAliases,
 } from "./findingFamilies.js";
@@ -84,6 +90,7 @@ import {
 import {
   agentForSlug,
   CODER_CODEX_SLUG,
+  effortForLiveOfficer,
   modelFamilyForSlug,
   modelIdForSlug,
   modelIsStrongLeg,
@@ -93,6 +100,36 @@ import {
   type ModelProviderFactory,
   type ModelSlugRegistryEntry,
 } from "./modelRegistry.js";
+import {
+  modelRouteFingerprint,
+  routeSmokeEntries,
+  routeSmokeFailure,
+  smokeRouteModels,
+  withRouteSmoke,
+  type ResolvedModelRoute,
+  type RouteSmokeStatus,
+} from "./modelRoutes.js";
+
+export function routeSmokeCacheKey(
+  route: ResolvedModelRoute,
+  sandboxFingerprint: string,
+): string {
+  return `${modelRouteFingerprint(route)}\0${sandboxFingerprint}`;
+}
+
+export function routeSmokeToolCallIsEchoOk(event: {
+  readonly type?: unknown;
+  readonly name?: unknown;
+  readonly formattedArgs?: unknown;
+}): boolean {
+  return (
+    event.type === "toolCall" &&
+    typeof event.name === "string" &&
+    /^(bash|shell)$/i.test(event.name) &&
+    typeof event.formattedArgs === "string" &&
+    /echo\s+(?:"OK"|'OK'|OK)/i.test(event.formattedArgs)
+  );
+}
 export {
   agentForSlug,
   CODER_CODEX_SLUG,
@@ -106,12 +143,16 @@ export {
   type ModelSlugRegistryEntry,
 };
 import {
-  DOCRELEASE_PROMPT_FILE,
-  FIXER_PROMPT_FILE,
-  legacyDispatchWorker,
-  SHIP_PROMPT_FILE,
-  VERIFY_PROMPT_FILE,
-} from "./dispatchWorker.js";
+  buildCliMonitorSpawnSpec,
+  workerResultFromMonitorSidecar,
+} from "./cliMonitorHooks.js";
+import {
+   DOCRELEASE_PROMPT_FILE,
+   FIXER_PROMPT_FILE,
+   legacyDispatchWorker,
+   SHIP_PROMPT_FILE,
+   VERIFY_PROMPT_FILE,
+ } from "./dispatchWorker.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
   shipOutcomeFromResult,
@@ -127,6 +168,7 @@ import {
 import type {
   AgentStepRunOptions,
   Backend,
+  CliMonitorSpawnSpec,
   DispatchContext,
   Finding,
   IssueMeta,
@@ -141,6 +183,7 @@ import type {
   StepSpec,
   RepairEvidence,
   WorkerLandingPayload,
+  WorkerMonitorHandle,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -2083,6 +2126,166 @@ export class RealBackend implements Backend {
   }
 
   /**
+   * #685: prove every selected model×pipe can actually invoke bash before the
+   * runner spends a productive dispatch on it. This deliberately uses the
+   * selected Sandcastle provider, not a generic shell or a silent fallback.
+   */
+  async currentCliVersions(
+    route: ResolvedModelRoute,
+  ): Promise<Readonly<Record<string, string | undefined>>> {
+    const versions: Record<string, string | undefined> = {};
+    for (const entry of routeSmokeEntries(route)) {
+      if (versions[entry.slug] === undefined) {
+        versions[entry.slug] = this.cliVersionForSlug(entry.slug);
+      }
+    }
+    return versions;
+  }
+
+  async smokeModelRoute(
+    route: ResolvedModelRoute,
+    currentCliVersions: Readonly<Record<string, string | undefined>> = {},
+  ): Promise<ResolvedModelRoute> {
+    const sandboxFingerprint = this.routeSmokeSandboxFingerprint();
+    const persisted = this.readRouteSmokeState(route, sandboxFingerprint);
+    if (persisted !== undefined) {
+      const hydrated = withRouteSmoke(route, persisted);
+      if (routeSmokeFailure(hydrated, Date.now(), undefined, currentCliVersions) === undefined) {
+        return hydrated;
+      }
+    }
+    const smoked = await smokeRouteModels(route, async (entry) => {
+      let sawBash = false;
+      const logDir = mkdtempSync(join(this.opts.home ?? homedir(), "route-smoke-"));
+      try {
+        const result = await sc.run({
+          agent: agentForSlug(entry.slug, effortForLiveOfficer(entry.slug, { smokeKey: entry.key })),
+          sandbox: this.routeSmokeSandbox(),
+          cwd: this.workingRepo,
+          promptFile: join(this.opts.promptsDir, "route-smoke.md"),
+          maxIterations: 1,
+          idleTimeoutSeconds: 10,
+          completionSignal: "ROUTE_SMOKE_COMPLETE",
+          logging: {
+            type: "file",
+            path: join(logDir, "run.log"),
+            onAgentStreamEvent: (event) => {
+              if (
+                routeSmokeToolCallIsEchoOk(event)
+              ) {
+                sawBash = true;
+              }
+            },
+          },
+        });
+        if (result.completionSignal !== "ROUTE_SMOKE_COMPLETE" || !sawBash) {
+          throw new Error(
+            `model did not complete an observable bash smoke for ${entry.slug}`,
+          );
+        }
+        return { cliVersion: this.cliVersionForSlug(entry.slug) };
+      } finally {
+        rmSync(logDir, { recursive: true, force: true });
+      }
+    });
+    this.writeRouteSmokeState(smoked, sandboxFingerprint);
+    return smoked;
+  }
+
+  private routeSmokeStatePath(): string {
+    return join(this.opts.home ?? homedir(), ".sc-orchestrator", "route-smoke-state.json");
+  }
+
+  private readRouteSmokeState(
+    route: ResolvedModelRoute,
+    sandboxFingerprint: string,
+  ): Readonly<Record<string, RouteSmokeStatus>> | undefined {
+    try {
+      const raw = JSON.parse(readFileSync(this.routeSmokeStatePath(), "utf8")) as unknown;
+      if (raw === null || typeof raw !== "object") return undefined;
+      const state = (raw as Record<string, unknown>)[routeSmokeCacheKey(route, sandboxFingerprint)];
+      if (state === null || typeof state !== "object") return undefined;
+      return state as Readonly<Record<string, RouteSmokeStatus>>;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private writeRouteSmokeState(route: ResolvedModelRoute, sandboxFingerprint: string): void {
+    const path = this.routeSmokeStatePath();
+    let all: Record<string, unknown> = {};
+    try {
+      const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+      if (raw !== null && typeof raw === "object") all = raw as Record<string, unknown>;
+    } catch {
+      // Missing or malformed state is treated as empty; the fresh smoke result
+      // below becomes the new durable source of truth.
+    }
+    all[routeSmokeCacheKey(route, sandboxFingerprint)] = route.smoke;
+    mkdirSync(join(this.opts.home ?? homedir(), ".sc-orchestrator"), { recursive: true });
+    const tempPath = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+    try {
+      writeFileSync(tempPath, JSON.stringify(all, null, 2) + "\n", "utf8");
+      renameSync(tempPath, path);
+    } finally {
+      if (existsSync(tempPath)) rmSync(tempPath, { force: true });
+    }
+  }
+
+  private cliVersionForSlug(slug: string): string {
+    const provider = resolveModelSlug(slug).provider;
+    const command = provider === "claudeCode" ? "claude" : provider;
+    try {
+      return this.sh(command, ["--version"]).trim() || "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+
+  private routeSmokeSandboxFingerprint(): string {
+    const hash = createHash("sha256");
+    hash.update(`image:${this.opts.imageName}\n`);
+    try {
+      hash.update(`image-id:${this.sh("docker", ["image", "inspect", "--format", "{{.Id}}", this.opts.imageName]).trim()}\n`);
+    } catch {
+      hash.update("image-id:unknown\n");
+    }
+    const auth = buildAuthPaths(this.opts.runKey, this.opts.home);
+    const files = [
+      join(this.opts.promptsDir, "route-smoke.md"),
+      ...REQUIRED_SOUL_FILES.map((file) => join(this.opts.soulsDir, file)),
+      auth.srcCodexAuth,
+      auth.srcCodexConfig,
+      auth.claudeTokenFile,
+    ];
+    for (const file of files) {
+      hash.update(`file:${file}\0`);
+      try {
+        hash.update(readFileSync(file));
+      } catch {
+        hash.update("missing");
+      }
+    }
+    try {
+      hash.update(`gh:${this.sh("gh", ["auth", "token"]).trim()}\n`);
+    } catch {
+      hash.update("gh:missing\n");
+    }
+    return hash.digest("hex");
+  }
+
+  /** Route smoke must exercise the same image, auth, and soul mounts as workers. */
+  private routeSmokeSandbox(): sc.SandboxProvider {
+    const auth = this.mountAuth(this.opts.runKey);
+    return docker(
+      this.boxConfig(
+        { ...auth, ghToken: this.readGhToken() },
+        { role: "reviewer", soul: "READ-ONLY" },
+      ),
+    );
+  }
+
+  /**
    * Build (or reuse) the dedicated clone for this invocation (ADR 0024 dec. 1).
    *
    * Path = `<home>/.sc-orchestrator/<repo-slug>-iso-<runKey>`, addressed by the
@@ -2336,13 +2539,22 @@ export class RealBackend implements Backend {
     // the best-effort `git fetch`, the residue clean, and the `git worktree add`
     // cut all MUTATE the shared `.git` — concurrent ones race on `.git/index.lock`
     // / per-ref locks (distinct child BRANCHES isolate the logical work, NOT the
-    // git locks). So the whole git-mutating section runs under a per-clone mutex
-    // keyed on the working repo: same-clone children serialise their cuts, while a
-    // DIFFERENT clone (another run in the same process) never blocks. A standalone
-    // single-slice run is the degenerate single-holder case (no contention).
-    return runExclusive(this.workingRepo, () =>
+    // git locks). So the git-mutating section runs under a per-clone mutex keyed on
+    // the working repo: same-clone children serialise their cuts, while a DIFFERENT
+    // clone (another run in the same process) never blocks. A standalone single-slice
+    // run is the degenerate single-holder case (no contention).
+    //
+    // #746 R2: node_modules provisioning is NOT a git mutation — each worktree has
+    // its own directory; template reads are read-only. Keeping npm ci / clonefile
+    // inside the mutex serialises N wave children on ~90s cold installs (the issue's
+    // goal is the opposite). Mutex covers only the cut/reuse git section; provision
+    // runs after release. Residue clean still precedes provision (ordering: clean
+    // inside exclusive → return handle → provision that path).
+    const handle = await runExclusive(this.workingRepo, () =>
       this.prepareWorktreeLocked(issueNumber, base),
     );
+    await this.provisionWorktreeNodeModules(handle.path);
+    return handle;
   }
 
   /** The git-mutating body of {@link prepareWorktree}, run under the per-clone mutex. */
@@ -2406,6 +2618,36 @@ export class RealBackend implements Backend {
     // resident worktree is reaped only by an explicit terminal-success GC, never
     // by normal-path disposal.
     return { branch, base, path: wt.worktreePath };
+  }
+
+  /**
+   * #746 — host-side Node deps for a resident worktree. Uses the driver
+   * `sourceRepo` as the warm template monorepo. No package.json under the path
+   * (fake/stub worktrees in unit tests) ⇒ no-op. `protected` so a subclass can
+   * skip / spy without a real FS. May return a Promise (tests hold provision to
+   * prove it runs outside the git mutex); callers always await.
+   */
+  protected provisionWorktreeNodeModules(
+    worktreePath: string,
+  ): Promise<void> {
+    return provisionRepoNodeModules(worktreePath, {
+      templateRoot: this.opts.sourceRepo,
+      sh: (file, args, cwd) => this.provisionCommand(file, args, cwd ?? worktreePath),
+    }).then(() => undefined);
+  }
+
+  /** Provision-only async shell seam; ordinary git/gh commands remain synchronous. */
+  protected provisionCommand(
+    file: string,
+    args: string[],
+    cwd?: string,
+  ): string | Promise<string> {
+    // Test doubles override the synchronous general shell seam; preserve that
+    // seam for observability while the production implementation uses async I/O.
+    if (this.sh !== RealBackend.prototype.sh) {
+      return this.sh(file, args, cwd);
+    }
+    return (runProvisionCommand as ProvisionSh)(file, args, cwd);
   }
 
   /**
@@ -2517,7 +2759,9 @@ export class RealBackend implements Backend {
     authDir: string;
     claudeToken?: string;
   } {
-    const paths = buildAuthPaths(issueNumber, this.opts.home);
+    // #748: resolve home at this seam so tests can inject a tmpdir via opts.home;
+    // production keeps the os.homedir() default when opts.home is omitted.
+    const paths = buildAuthPaths(issueNumber, this.opts.home ?? homedir());
     rmSync(paths.hostCodexAuthDir, { recursive: true, force: true });
     // Owner-only dir: this holds copied credential material (auth.json /
     // config.toml). 0o700 keeps it off world-readable multi-user hosts
@@ -2543,7 +2787,7 @@ export class RealBackend implements Backend {
     // so the dir is a valid mount even when codex auth was absent.
     writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"), this.opts.codexFast);
     // The Claude token is BEST-EFFORT (#384 codex P2). The coder step now runs
-    // Codex (model gpt-5.5), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
+    // Codex (model gpt-5.6-terra), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
     // with Codex auth but no `~/.sc-claude-token` must still start the worker — a
     // missing token degrades the Claude leg (undefined) rather than throwing and
     // blocking the Codex coder before it can start (mirrors ShipAuth's optional
@@ -2559,7 +2803,7 @@ export class RealBackend implements Backend {
 
   private box(
     issueNumber: number,
-    spec: StepSpec,
+    spec: Pick<StepSpec, "role" | "soul">,
     options?: AgentStepRunOptions,
   ): sc.SandboxProvider {
     const auth = this.mountAuth(issueNumber);
@@ -2650,7 +2894,7 @@ export class RealBackend implements Backend {
    */
   protected boxConfig(
     auth: { authDir: string; claudeToken?: string; ghToken?: string },
-    spec: StepSpec,
+    spec: Pick<StepSpec, "role" | "soul">,
     issueNumber?: number,
     options?: AgentStepRunOptions,
   ): {
@@ -2664,7 +2908,7 @@ export class RealBackend implements Backend {
       [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
-    // Inject the Claude token only when present: a Codex coder (model gpt-5.5)
+    // Inject the Claude token only when present: a Codex coder (model gpt-5.6-terra)
     // needs no CLAUDE_CODE_OAUTH_TOKEN, and an empty/undefined value would defeat
     // the in-container Claude auth on a Codex-only host (#384 codex P2).
     if (auth.claudeToken) {
@@ -3052,9 +3296,9 @@ export class RealBackend implements Backend {
       cwd: worktree.path,
       sandbox: this.box(issueNumber, spec, options),
       // The build worker's CLI is the spec's model slug → provider (the S2 coder
-      // runs on Codex gpt-5.5; a claude slug stays claudeCode). agentForSlug keeps
+      // runs on Codex gpt-5.6-terra; a claude slug stays claudeCode). agentForSlug keeps
       // the "model slug → baked CLI" #244 mapping unit-testable.
-      agent: agentForSlug(spec.model),
+      agent: agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec)),
       // #7 maxIter: enforce the WITHIN-STEP Ralph retry budget = StepSpec.maxIter
       // (reviewer = 1 single pass; coder/fix > 1). Hitting it ends THE STEP
       // normally — route() continues — it is NEVER the orchestrator giving up
@@ -3111,8 +3355,8 @@ export class RealBackend implements Backend {
         cwd: worktree.path,
         sandbox: this.box(issueNumber, spec, options),
         // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
-        // codex for the gpt-5.5 coder, claudeCode for a claude slug).
-        agent: agentForSlug(spec.model),
+        // codex for the gpt-5.6-terra coder, claudeCode for a claude slug).
+        agent: agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec)),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
         completionSignal: spec.completionSignal,
@@ -3266,6 +3510,43 @@ export class RealBackend implements Backend {
   }
 
   /**
+   * #684: production monitored-CLI spawn for productive workers.
+   *
+   * Returns a host-side bridge spawn so {@link dispatchWorkerWithMonitor} takes
+   * the monitored branch (handle atomic with real dispatch). The bridge child
+   * re-enters {@link dispatchWorker} with ORCHESTRATOR_CLI_MONITOR_CHILD=1 so
+   * these hooks short-circuit and the existing container seam does the work.
+   * Absent log sink / non-productive kind / already-in-child → undefined.
+   */
+  resolveCliMonitorDispatch(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): CliMonitorSpawnSpec | undefined {
+    return buildCliMonitorSpawnSpec({
+      backendKind: "real",
+      backendOpts: this.opts,
+      spec,
+      ctx,
+      landing,
+    });
+  }
+
+  /**
+   * #684: map a finished monitored CLI bridge child into a WorkerResult by
+   * reading the result sidecar the child wrote.
+   */
+  async awaitMonitoredCliWorker(
+    handle: WorkerMonitorHandle,
+    exitCode: number | null,
+    _spec: WorkerSpec,
+    _ctx: DispatchContext,
+    _landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    return workerResultFromMonitorSidecar(handle, exitCode);
+  }
+
+  /**
    * Run the ship WORKER: ONE `sc.run` of the 2b container's route-selected agent
    * invoking `gstack-ship` over the resident slice worktree (#336). `protected` so
    * a unit test fixtures the outcome without a real container (the real container
@@ -3340,7 +3621,7 @@ export class RealBackend implements Backend {
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: worktree.path,
           sandbox: this.shipSandbox(auth, outcomeLanding),
-          agent: agentForSlug(spec.model),
+          agent: agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec)),
           // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
           // container (用户 note); maxIter is the within-worker budget. A genuine block
           // is the worker's `<ship>` escalate verdict, not the iteration limit.
@@ -3478,7 +3759,8 @@ export class RealBackend implements Backend {
    * the gh CLI (it lives in the OS keyring, not a portable file).
    */
   protected mountShipAuth(issueNumber: number): ShipAuth {
-    const paths = buildAuthPaths(issueNumber, this.opts.home);
+    // #748: same injectable-home seam as mountAuth (opts.home ?? os.homedir()).
+    const paths = buildAuthPaths(issueNumber, this.opts.home ?? homedir());
     let codexAuthDir: string | undefined;
     let tempCodexDir: string | undefined;
     try {

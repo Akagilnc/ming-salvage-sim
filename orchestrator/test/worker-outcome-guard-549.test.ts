@@ -18,7 +18,7 @@ describe("#549 worker outcome guard", () => {
 
       const outcome = {
         converged: true,
-        successfulLegs: ["gpt-5.5"],
+        successfulLegs: ["gpt-5.6-sol"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         evidencePaths: ["cmr/review.json"],
@@ -52,12 +52,12 @@ describe("#549 worker outcome guard", () => {
         completionSignal: "CMR_STEP_COMPLETE",
         stdout,
         outcomePath: sidecarPath,
-        cmrReviewLegs: [{ slug: "gpt-5.5" }],
+        cmrReviewLegs: [{ slug: "gpt-5.6-sol" }],
       });
       expect(parsed).toMatchObject({
         kind: "verdict",
         converged: true,
-        successfulLegs: ["gpt-5.5"],
+        successfulLegs: ["gpt-5.6-sol"],
         evidencePaths: ["cmr/review.json"],
       });
     } finally {
@@ -74,7 +74,7 @@ describe("#549 worker outcome guard", () => {
       const outcome = {
         converged: false,
         reason: "blocking findings remain",
-        successfulLegs: ["gpt-5.5"],
+        successfulLegs: ["gpt-5.6-sol"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         findings: [
@@ -115,13 +115,13 @@ describe("#549 worker outcome guard", () => {
         completionSignal: "CMR_STEP_COMPLETE",
         stdout,
         outcomePath: sidecarPath,
-        cmrReviewLegs: [{ slug: "gpt-5.5" }],
+        cmrReviewLegs: [{ slug: "gpt-5.6-sol" }],
       });
       expect(parsed).toMatchObject({
         kind: "verdict",
         converged: false,
         reason: "blocking findings remain",
-        successfulLegs: ["gpt-5.5"],
+        successfulLegs: ["gpt-5.6-sol"],
         evidencePaths: ["cmr/review.json"],
       });
     } finally {
@@ -141,7 +141,7 @@ describe("#549 worker outcome guard", () => {
         draftPath,
         JSON.stringify({
           converged: true,
-          successfulLegs: ["gpt-5.5"],
+          successfulLegs: ["gpt-5.6-sol"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           findings: [
@@ -201,7 +201,7 @@ describe("#549 worker outcome guard", () => {
         JSON.stringify({
           converged: false,
           reason: "blocking findings remain",
-          successfulLegs: ["gpt-5.5"],
+          successfulLegs: ["gpt-5.6-sol"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           findings: [
@@ -373,7 +373,7 @@ describe("#549 worker outcome guard", () => {
         draftPath,
         JSON.stringify({
           converged: true,
-          successfulLegs: ["gpt-5.5"],
+          successfulLegs: ["gpt-5.6-sol"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           evidencePaths: ["cmr/review.json"],
@@ -422,7 +422,7 @@ describe("#549 worker outcome guard", () => {
         draftPath,
         JSON.stringify({
           converged: true,
-          successfulLegs: ["gpt-5.5"],
+          successfulLegs: ["gpt-5.6-sol"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           evidencePaths: [evidencePath],
@@ -466,7 +466,7 @@ describe("#549 worker outcome guard", () => {
 
       const outcome = {
         converged: true,
-        successfulLegs: ["gpt-5.5"],
+        successfulLegs: ["gpt-5.6-sol"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         evidencePaths: [evidencePath.replace(/^\//, "")],
@@ -512,7 +512,7 @@ describe("#549 worker outcome guard", () => {
         draftPath,
         JSON.stringify({
           converged: true,
-          successfulLegs: ["gpt-5.5"],
+          successfulLegs: ["gpt-5.6-sol"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [{ status: "verified-closed" }],
           evidencePaths: ["cmr/review.json"],
@@ -558,7 +558,7 @@ describe("#549 worker outcome guard", () => {
         draftPath,
         JSON.stringify({
           converged: true,
-          successfulLegs: ["gpt-5.5"],
+          successfulLegs: ["gpt-5.6-sol"],
           claimedFixedFindingIdentityKeys: [
             "standards|orchestrator/image/bin/orchestrator-outcome-guard|weak accepted suppression",
           ],
@@ -618,7 +618,7 @@ describe("#549 worker outcome guard", () => {
           "standards|orchestrator/image/bin/orchestrator-outcome-guard|accepted suppression source";
         const outcome = {
           converged: true,
-          successfulLegs: ["gpt-5.5"],
+          successfulLegs: ["gpt-5.6-sol"],
           claimedFixedFindingIdentityKeys: [identityKey],
           priorFindingDispositions: [
             {
@@ -726,7 +726,7 @@ function expectGuardRejectsFinding(
       JSON.stringify({
         converged: false,
         reason: "blocking findings remain",
-        successfulLegs: ["gpt-5.5"],
+        successfulLegs: ["gpt-5.6-sol"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         findings: [finding],

@@ -48,7 +48,7 @@ import {
 // instead of reaching for runStep/resumeSession/push directly.
 import {
   cleanupWorkerSpec,
-  dispatchWorker,
+  dispatchWorkerWithMonitor,
   docReleaseWorkerSpec,
   fixerWorkerSpec,
   SHIP_PROMPT_FILE,
@@ -57,6 +57,8 @@ import {
   verifyWorkerSpec,
   workerResultToStep,
 } from "./dispatchWorker.js";
+import { monitorHandleFromLedger } from "./workerMonitor.js";
+import { routeSmokeFailure } from "./modelRoutes.js";
 import {
   fixerEnvelopeFixCommitSha,
   fixerProceedsToVerify,
@@ -297,6 +299,8 @@ function buildPersistentEntry(opts: {
   repairMovementPaths?: ReadonlyArray<string>;
   /** Terminal stop reason summary (#450). */
   stopSummary?: StopSummary;
+  /** External CLI worker monitor handle (#684). */
+  monitorHandle?: import("./types.js").WorkerMonitorHandle;
   /** S9 verify rows are keyed by their logical online-review round. */
   onlineReviewRound?: number;
 }): PersistentLedgerEntry {
@@ -327,6 +331,9 @@ function buildPersistentEntry(opts: {
   }
   if (opts.stopSummary !== undefined) {
     entry = { ...entry, stopSummary: opts.stopSummary };
+  }
+  if (opts.monitorHandle !== undefined) {
+    entry = { ...entry, monitorHandle: opts.monitorHandle };
   }
   if (opts.onlineReviewRound !== undefined) {
     entry = { ...entry, onlineReviewRound: opts.onlineReviewRound };
@@ -1860,7 +1867,7 @@ export function stepSpecsForRoute(
       role: "coder",
       promptFile: "coder_implement.md",
       // The whole-slice build worker's model is env-switchable (default Codex
-      // gpt-5.5; was Sonnet 4.6). The slug is resolved to the baked CLI by
+      // gpt-5.6-terra; was Sonnet 4.6). The slug is resolved to the baked CLI by
       // agentForSlug (realBackend); switching the model is `ORCHESTRATOR_CODER_MODEL`
       // alone — no image rebuild, no StepSpec shape change.
       model: route.slots.coder,
@@ -2566,6 +2573,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     escalationKind?: EscalationKind,
     stopSummary?: StopSummary,
     repairMovementPaths?: ReadonlyArray<string>,
+    monitorHandle?: import("./types.js").WorkerMonitorHandle,
   ): Promise<void> {
     const ph = await hashPrompt(promptFile, s, backend);
     const branchHEAD = await resolveBranchHEAD();
@@ -2581,6 +2589,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       findingDispositions,
       repairMovementPaths,
       stopSummary,
+      monitorHandle,
       ...(s === "S9" ? { onlineReviewRound } : {}),
     });
 
@@ -2619,6 +2628,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ts: entry.ts,
       branchHEAD: entry.branchHEAD,
     });
+  }
+
+  /**
+   * #684 R2: persist the monitor handle AT SPAWN TIME (bookkeeping event, not a
+   * completed step). Hang judge/kill/resume can rebuild via
+   * {@link monitorHandleFromLedger} while the worker is still running.
+   */
+  async function persistMonitorHandleAtSpawn(
+    s: StepId,
+    handle: import("./types.js").WorkerMonitorHandle,
+  ): Promise<void> {
+    if (stateDir === undefined) return;
+    const ph = await hashPrompt(undefined, s, backend);
+    const branchHEAD = await resolveBranchHEAD();
+    const entry: PersistentLedgerEntry = {
+      step: s,
+      event: "worker_monitor_spawned",
+      sessionId,
+      prompt_hash: ph,
+      branchHEAD,
+      ts: new Date().toISOString(),
+      monitorHandle: handle,
+    };
+    ledger.push({
+      step: s,
+      event: "worker_monitor_spawned",
+      monitorHandle: handle,
+    });
+    await backend.writeLedger(entry, stateDir);
   }
 
   /**
@@ -2894,6 +2932,68 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // its original memory-bearing session). Cleared after the step is dispatched once.
   let resumeFor: { step: StepId; sessionId: string } | undefined;
   let resumedEscalationAnswer: EscalationAnswerEvent | undefined;
+  // #684 R2: monitor handle rebuilt from ledger via monitorHandleFromLedger on resume.
+  let resumeMonitorHandle:
+    | import("./types.js").WorkerMonitorHandle
+    | undefined;
+  let routeSmokeChecked = false;
+
+  const ensureRouteSmoke = async (): Promise<RunResult | undefined> => {
+    if (typeof backend.smokeModelRoute !== "function") {
+      const reason =
+        "route smoke executor is required before dispatch; backend did not provide smokeModelRoute";
+      return {
+        status: "error",
+        errorPackage: { failedStep: "S0", reason },
+        stepLedger: [],
+        stopSummary: infraFailureStopSummary({
+          summary: reason,
+          repairHint: "provide a real model×pipe smoke executor before dispatching workers",
+        }),
+        deferredFindings: [],
+      };
+    }
+
+    let currentCliVersions: Readonly<Record<string, string | undefined>>;
+    try {
+      currentCliVersions = backend.currentCliVersions
+        ? await backend.currentCliVersions(modelRoute)
+        : {};
+      modelRoute = await backend.smokeModelRoute(modelRoute, currentCliVersions);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      return {
+        status: "error",
+        errorPackage: { failedStep: "S0", reason: `route smoke failed: ${reason}` },
+        stepLedger: [],
+        stopSummary: infraFailureStopSummary({
+          summary: `route smoke failed: ${reason}`,
+          repairHint: "repair the selected model×pipe tool smoke before dispatching workers",
+        }),
+        deferredFindings: [],
+      };
+    }
+    const smokeFailure = routeSmokeFailure(
+      modelRoute,
+      Date.now(),
+      undefined,
+      currentCliVersions,
+    );
+    if (smokeFailure !== undefined) {
+      return {
+        status: "error",
+        errorPackage: { failedStep: "S0", reason: smokeFailure },
+        stepLedger: [],
+        stopSummary: infraFailureStopSummary({
+          summary: smokeFailure,
+          repairHint: "rerun the route smoke or repair the selected model×pipe",
+        }),
+        deferredFindings: [],
+      };
+    }
+    routeSmokeChecked = true;
+    return undefined;
+  };
 
   if (resumeState !== undefined && resumeState.ledger.length > 0) {
     // Reuse the resident worktree (NO re-cut) and fix the sibling stateDir.
@@ -2934,6 +3034,30 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         backend,
       )) ?? planResume(resumeLedger);
     resumeHistoryLedger = resumeLedger;
+
+    // #684 R2: production call site for monitorHandleFromLedger — rebuild any
+    // in-flight CLI monitor handle from the persisted ledger so hang judge/kill
+    // can resume without global process-name matching.
+    resumeMonitorHandle = (() => {
+      for (let i = resumeLedger.length - 1; i >= 0; i--) {
+        const candidate = resumeLedger[i]!;
+        // Completed step entries also carry the handle for auditability. Only
+        // the spawn bookkeeping event denotes an in-flight worker; otherwise a
+        // later resume could inherit a stale handle from the previous step.
+        if (candidate.event !== "worker_monitor_spawned") continue;
+        const superseded = resumeLedger
+          .slice(i + 1)
+          .some(
+            (entry) =>
+              entry.step === candidate.step &&
+              entry.event !== "worker_monitor_spawned",
+          );
+        if (superseded) continue;
+        const rebuilt = monitorHandleFromLedger(candidate);
+        if (rebuilt !== undefined) return rebuilt;
+      }
+      return undefined;
+    })();
 
     // Seed the in-memory ledger with prior progress so committed work is
     // preserved and the prior steps are NOT re-run.
@@ -3168,6 +3292,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // loop visible in S3/S4/S5/S6, but still rejects a blind round cap; a `for (;;)`
   // keeps the absence of any "数到 N 就停" cap explicit (US#18).
   for (;;) {
+    if (!routeSmokeChecked && step !== "S0") {
+      const smokeResult = await ensureRouteSmoke();
+      if (smokeResult !== undefined) return smokeResult;
+    }
     let output: StepOutput | undefined;
     // promptFile for the current step (agent steps only; undefined for runner actions).
     let promptFile: string | undefined;
@@ -3176,6 +3304,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // actions and for a fake Backend that returns a bare StepOutput → the ledger
     // records the run-level UUID fallback for those.
     let stepSessionId: string | undefined;
+    // #684: monitor handle from production CLI dispatch (dispatchWorkerWithMonitor),
+    // when the worker was spawned as a host-side CLI process. Persisted on the
+    // ledger so resume can rebuild alive/idle/kill judgment without global pgrep.
+    // Seed from resume rebuild (monitorHandleFromLedger) until a fresh spawn
+    // overwrites via onMonitorHandleSpawned.
+    let stepMonitorHandle: import("./types.js").WorkerMonitorHandle | undefined;
+    if (resumeMonitorHandle?.stepId === step) {
+      stepMonitorHandle = resumeMonitorHandle;
+      // Consume resume handle once so a later step does not inherit a stale one.
+      resumeMonitorHandle = undefined;
+    }
 
     switch (step) {
       case "S0": {
@@ -3253,6 +3392,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               `Merge the upstream changes before running.`,
           ));
         }
+
+        const smokeResult = await ensureRouteSmoke();
+        if (smokeResult !== undefined) return smokeResult;
 
         break;
       }
@@ -3337,7 +3479,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           let attempts = 0;
           for (;;) {
             attempts += 1;
-            let result: Awaited<ReturnType<typeof dispatchWorker>>;
+            let result: Awaited<
+              ReturnType<typeof dispatchWorkerWithMonitor>
+            >["result"];
             try {
               const workerSpec = stepSpecToWorkerSpec(
                 stepSpecs[step],
@@ -3346,6 +3490,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const dispatchCtx = {
                 worktree,
                 stateDir,
+                modelRoute,
                 ...(typeof resumeSessionId === "string" ? { resumeSessionId } : {}),
                 ...(escalationAnswerForStep != null
                   ? { escalationAnswer: escalationAnswerForStep }
@@ -3422,7 +3567,33 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               result = await withMechanicalRetry(
                 workerSpec,
                 dispatchCtx,
-                (s, c) => dispatchWorker(backend, s, c, landingPayload),
+                async (s, c) => {
+                  // #684: production path — CLI workers go through
+                  // dispatchMonitoredCliWorker atomically via
+                  // dispatchWorkerWithMonitor; RealBackend hooks make this the
+                  // production branch. Handle persisted AT SPAWN (not post-exit).
+                  const outcome = await dispatchWorkerWithMonitor(
+                    backend,
+                    s,
+                    c,
+                    landingPayload,
+                    {
+                      onMonitorHandleSpawned: async (handle) => {
+                        stepMonitorHandle = handle;
+                        try {
+                          await persistMonitorHandleAtSpawn(s.id, handle);
+                        } catch {
+                          // Best-effort: spawn-time ledger write must not abort
+                          // the worker; post-step emitLedger still records it.
+                        }
+                      },
+                    },
+                  );
+                  if (outcome.monitorHandle !== undefined) {
+                    stepMonitorHandle = outcome.monitorHandle;
+                  }
+                  return outcome.result;
+                },
                 retryOpts,
               );
             } catch (err) {
@@ -3603,6 +3774,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           const shipCtx = {
             worktree,
             stateDir,
+            modelRoute,
             ...(escalationAnswerForStep != null
               ? { escalationAnswer: escalationAnswerForStep }
               : {}),
@@ -3633,7 +3805,29 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           const shipResult = await withMechanicalRetry(
             shipSpec,
             shipCtx,
-            (s, c) => dispatchWorker(backend, s, c),
+            async (s, c) => {
+              // #684: production monitored dispatch (CLI → handle atomic with spawn).
+              const outcome = await dispatchWorkerWithMonitor(
+                backend,
+                s,
+                c,
+                undefined,
+                {
+                  onMonitorHandleSpawned: async (handle) => {
+                    stepMonitorHandle = handle;
+                    try {
+                      await persistMonitorHandleAtSpawn(s.id, handle);
+                    } catch {
+                      // Best-effort spawn-time persist.
+                    }
+                  },
+                },
+              );
+              if (outcome.monitorHandle !== undefined) {
+                stepMonitorHandle = outcome.monitorHandle;
+              }
+              return outcome.result;
+            },
             {
               callerOwns: (o) => "result" in o && o.result.kind === "failed",
               ...shipResetOpt,
@@ -3852,6 +4046,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           const reviewCtx = {
             worktree,
             stateDir,
+            modelRoute,
             repo: defaultRepo(),
             prUrl: lastShipOutput.pr,
             prHead:
@@ -4021,14 +4216,31 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               reviewCtx,
               async (s, c) => {
                 let dispatchError: unknown | undefined;
-                let workerResult: Awaited<ReturnType<typeof dispatchWorker>>;
+                let workerResult: Awaited<
+                  ReturnType<typeof dispatchWorkerWithMonitor>
+                >["result"];
                 try {
-                  workerResult = await dispatchWorker(
+                  // #684: production monitored dispatch for review-loop workers.
+                  const outcome = await dispatchWorkerWithMonitor(
                     backend,
                     s,
                     c,
                     reviewLanding,
+                    {
+                      onMonitorHandleSpawned: async (handle) => {
+                        stepMonitorHandle = handle;
+                        try {
+                          await persistMonitorHandleAtSpawn(s.id, handle);
+                        } catch {
+                          // Best-effort spawn-time persist.
+                        }
+                      },
+                    },
                   );
+                  workerResult = outcome.result;
+                  if (outcome.monitorHandle !== undefined) {
+                    stepMonitorHandle = outcome.monitorHandle;
+                  }
                 } catch (err) {
                   dispatchError = err;
                 }
@@ -4777,6 +4989,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ...(stepRepairMovementPaths !== undefined
         ? { repairMovementPaths: stepRepairMovementPaths }
         : {}),
+      // #684: surface the CLI monitor handle in-memory too (resume rebuild parity).
+      ...(stepMonitorHandle !== undefined
+        ? { monitorHandle: stepMonitorHandle }
+        : {}),
     });
     // #6: a writeLedger failure here is a backend-call exception → it must
     // converge to S8(error) with an error package, NOT raw-reject out of
@@ -4785,6 +5001,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     try {
       // #256: pass the real per-step sandbox session id (captured from the seam
       // extension) so the ledger records the true id resumeSession will resume.
+      // #684: pass the monitor handle so resume can rebuild alive/idle/kill judgment.
       await emitLedger(
         step,
         output,
@@ -4795,6 +5012,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         undefined,
         undefined,
         stepRepairMovementPaths,
+        stepMonitorHandle,
       );
     } catch (err) {
       // integ-cmr base r2 (D): the step is already in the in-memory ledger
