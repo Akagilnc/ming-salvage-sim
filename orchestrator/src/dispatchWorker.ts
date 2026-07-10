@@ -815,52 +815,140 @@ export async function dispatchWorkerWithMonitor(
 ): Promise<DispatchWorkerWithMonitorOutcome> {
   // #786 — per-leg telemetry sidecar (dispatch + collect half-rows).
   // Best-effort only: never changes worker semantics or resume contracts.
+  // Fail-open: telemetry init (legId / model stamp) lives in a guarded block so
+  // crypto.randomUUID (or pure stamp builders) cannot abort dispatch before the
+  // backend is invoked.
   const ledgerDir = ctx.stateDir;
-  const legId = newLegId();
-  // model family for token extract — pure stamp, not the durable dispatch row.
-  // Durable dispatched_at comes from handle.dispatchedAt after real spawn.
-  const modelFamily = buildDispatchStamp({
-    legId,
-    spec,
-    ctx,
-    dispatchedAt: new Date().toISOString(),
-  }).model.family;
+  let legId: string | null = null;
+  let modelFamily: string | null = null;
   let firstOutputAt: string | null = null;
   let logPath: string | null = null;
   let logStartOffset: number | undefined;
   let collectStamped = false;
+  // Collect half-row only pairs with a successfully stamped dispatch half-row
+  // (no orphan collect on resolve/spawn failure).
+  let dispatchStamped = false;
 
-  ensureEnvironmentStamp(ledgerDir, ctx);
+  try {
+    legId = newLegId();
+    // model family for token extract — pure stamp, not the durable dispatch row.
+    // Durable dispatched_at comes from handle.dispatchedAt after real spawn.
+    modelFamily = buildDispatchStamp({
+      legId,
+      spec,
+      ctx,
+      dispatchedAt: new Date().toISOString(),
+    }).model.family;
+  } catch (err) {
+    console.warn(
+      `[orchestrator] telemetry init failed (fail-open): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    legId = null;
+    modelFamily = null;
+  }
+
+  try {
+    ensureEnvironmentStamp(ledgerDir, ctx);
+  } catch (err) {
+    console.warn(
+      `[orchestrator] telemetry environment stamp failed (fail-open): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
 
   const stampCollect = (
     outcome:
       | { readonly kind: "result"; readonly result: WorkerResult }
       | { readonly kind: "thrown"; readonly error: unknown },
   ): void => {
-    if (collectStamped) return;
+    if (collectStamped || legId === null || !dispatchStamped) return;
     collectStamped = true;
-    const logText = readDispatchLogSlice(
-      logPath ?? undefined,
-      logStartOffset,
-    );
-    const classified = classifyWorkerTerminal(outcome);
-    tryAppendTelemetryRecord(
-      ledgerDir,
-      buildCollectStamp({
-        legId,
-        completedAt: new Date().toISOString(),
-        terminal: classified.terminal,
-        errorCategory: classified.errorCategory,
-        errorMessage: classified.errorMessage,
-        tokens:
-          logText !== null
-            ? extractTokensFromLog(logText, modelFamily)
-            : null,
-        sessionId: classified.sessionId,
-        logPath,
-        firstOutputAt,
-      }),
-    );
+    try {
+      const logText = readDispatchLogSlice(
+        logPath ?? undefined,
+        logStartOffset,
+      );
+      const classified = classifyWorkerTerminal(outcome);
+      tryAppendTelemetryRecord(
+        ledgerDir,
+        buildCollectStamp({
+          legId,
+          completedAt: new Date().toISOString(),
+          terminal: classified.terminal,
+          errorCategory: classified.errorCategory,
+          errorMessage: classified.errorMessage,
+          tokens:
+            logText !== null
+              ? extractTokensFromLog(logText, modelFamily)
+              : null,
+          sessionId: classified.sessionId,
+          logPath,
+          firstOutputAt,
+        }),
+      );
+    } catch (err) {
+      console.warn(
+        `[orchestrator] telemetry collect stamp failed (fail-open): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  };
+
+  const stampDispatch = (
+    dispatchedAt: string,
+    poolId: string | undefined,
+  ): void => {
+    if (legId === null) return;
+    try {
+      tryAppendTelemetryRecord(
+        ledgerDir,
+        buildDispatchStamp({
+          legId,
+          spec,
+          ctx,
+          dispatchedAt,
+          poolId,
+        }),
+      );
+      dispatchStamped = true;
+    } catch (err) {
+      console.warn(
+        `[orchestrator] telemetry dispatch stamp failed (fail-open): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  };
+
+  /**
+   * #786 first_output_at: first log growth past the post-spawn orchestrator
+   * marker (not subsequent poll-only growth). Covers (a) worker output already
+   * present when the first activity snapshot is taken and (b) quick-exit before
+   * the idle poll loop observes growth.
+   */
+  const noteFirstOutputIfPastBaseline = (
+    sizeBytes: number,
+    baselineBytes: number,
+  ): void => {
+    if (firstOutputAt === null && sizeBytes > baselineBytes) {
+      firstOutputAt = new Date().toISOString();
+    }
+  };
+
+  const reconcileFirstOutputAt = (
+    handle: WorkerMonitorHandle,
+    baselineBytes: number,
+    monitorDeps: WorkerMonitorDeps | undefined,
+  ): void => {
+    if (firstOutputAt !== null) return;
+    const activity = readLogActivity(handle, monitorDeps);
+    if (activity !== undefined) {
+      noteFirstOutputIfPastBaseline(activity.sizeBytes, baselineBytes);
+    }
   };
 
   try {
@@ -891,16 +979,7 @@ export async function dispatchWorkerWithMonitor(
       logStartOffset = handle.logStartOffset;
       // Dispatch half-row AFTER spawn: use the monitor handle's exact stamp
       // (same clock as the log line / instance identity), not a pre-parse guess.
-      tryAppendTelemetryRecord(
-        ledgerDir,
-        buildDispatchStamp({
-          legId,
-          spec,
-          ctx,
-          dispatchedAt: handle.dispatchedAt,
-          poolId: cliSpec.poolId,
-        }),
-      );
+      stampDispatch(handle.dispatchedAt, cliSpec.poolId);
       const exitPromise = waitForChildExit(child);
       // SPAWN-TIME persist seam: handle is available before waitForChildExit so a
       // hang still leaves a ledger-rebuildable handle for judge/kill/resume.
@@ -922,7 +1001,16 @@ export async function dispatchWorkerWithMonitor(
         opts?.idleThresholdMs ?? DEFAULT_MONITOR_IDLE_THRESHOLD_MS;
       const pollIntervalMs =
         opts?.pollIntervalMs ?? DEFAULT_MONITOR_POLL_INTERVAL_MS;
+      // Baseline = pre-dispatch size + orchestrator marker line. Growth past this
+      // is worker (or tool) output — not the dispatch marker itself.
+      const firstOutputBaseline = firstOutputBaselineBytes(handle);
       const initialActivity = readLogActivity(handle, monitorDeps);
+      if (initialActivity !== undefined) {
+        noteFirstOutputIfPastBaseline(
+          initialActivity.sizeBytes,
+          firstOutputBaseline,
+        );
+      }
       // Cancellation seam: when exit wins the race, stop further idle polls /
       // handleMonitoredWorkerIdle calls. A throw already in-flight is observed
       // below so it cannot become an unhandledRejection.
@@ -945,13 +1033,11 @@ export async function dispatchWorkerWithMonitor(
           if (!isWorkerIdle(handle, idleThresholdMs, previous, monitorDeps)) {
             const current = readLogActivity(handle, monitorDeps);
             if (current !== undefined) {
-              // #786 first_output_at: first log growth after the spawn marker.
-              if (
-                firstOutputAt === null &&
-                current.sizeBytes > previous.sizeBytes
-              ) {
-                firstOutputAt = new Date().toISOString();
-              }
+              // First growth past post-marker baseline (not merely vs previous).
+              noteFirstOutputIfPastBaseline(
+                current.sizeBytes,
+                firstOutputBaseline,
+              );
               previous = current;
             }
             continue;
@@ -1010,6 +1096,9 @@ export async function dispatchWorkerWithMonitor(
           },
         );
       }
+      // Quick-exit / race-won-by-exit: poll loop may never have observed growth.
+      // Re-read the log once so first_output_at is not left null when bytes exist.
+      reconcileFirstOutputAt(handle, firstOutputBaseline, monitorDeps);
       // Signal-killed legs must land a `killed` collect row — do not silently
       // feed null exitCode into awaitMonitoredCliWorker and drop the terminal.
       // Hang dispositions reject monitorPromise (above) before kill settles, so
@@ -1058,21 +1147,16 @@ export async function dispatchWorkerWithMonitor(
         if (err instanceof SelfReportedRelayError) throw err;
         // Log read failures are non-fatal — fall through with the worker result.
       }
+      // Final reconcile in case await path delayed past more log growth.
+      reconcileFirstOutputAt(handle, firstOutputBaseline, monitorDeps);
       stampCollect({ kind: "result", result });
       return { result, monitorHandle: handle };
     }
     // Container / legacy path: stamp dispatch at the moment we hand off to the
     // backend (no monitor handle.dispatchedAt available).
-    tryAppendTelemetryRecord(
-      ledgerDir,
-      buildDispatchStamp({
-        legId,
-        spec,
-        ctx,
-        dispatchedAt: new Date().toISOString(),
-        poolId:
-          ctx.billingPool !== undefined ? ctx.billingPool : undefined,
-      }),
+    stampDispatch(
+      new Date().toISOString(),
+      ctx.billingPool !== undefined ? ctx.billingPool : undefined,
     );
     const result = await dispatchWorker(backend, spec, ctx, landing);
     stampCollect({ kind: "result", result });
@@ -1081,6 +1165,24 @@ export async function dispatchWorkerWithMonitor(
     stampCollect({ kind: "thrown", error: err });
     throw err;
   }
+}
+
+/**
+ * Byte offset after the pre-dispatch log prefix + the orchestrator spawn marker
+ * written by {@link dispatchMonitoredCliWorker}. Worker first-output is any
+ * further growth past this baseline (marker alone does not count).
+ */
+function firstOutputBaselineBytes(handle: WorkerMonitorHandle): number {
+  const offset =
+    typeof handle.logStartOffset === "number" &&
+    Number.isFinite(handle.logStartOffset) &&
+    handle.logStartOffset >= 0
+      ? handle.logStartOffset
+      : 0;
+  const marker =
+    `[orchestrator] dispatched ${handle.stepId} pid=${handle.pid} ` +
+    `pool=${handle.poolId} instance=${handle.instanceId} at ${handle.dispatchedAt}\n`;
+  return offset + Buffer.byteLength(marker, "utf8");
 }
 
 /**
