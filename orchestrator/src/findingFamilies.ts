@@ -102,8 +102,10 @@ export function sanitizeFindingFamilies(
 export function isFindingFamilyArray(
   value: unknown,
 ): value is ReadonlyArray<FindingFamily> {
-  const sanitized = sanitizeFindingFamilies(value);
-  return sanitized !== undefined && sanitized.length === (value as unknown[]).length;
+  return (
+    Array.isArray(value) &&
+    value.every((entry) => findingFamilySchema.safeParse(entry).success)
+  );
 }
 
 /**
@@ -289,7 +291,11 @@ export function priorCmrFindingsFromFamilyLedger(
       });
       round += 1;
     }
-    if (entry.output?.kind === "cmr" && entry.output.findings !== undefined) {
+    if (
+      entry.cmrPass === cmrPass &&
+      entry.output?.kind === "cmr" &&
+      entry.output.findings !== undefined
+    ) {
       const blocking = entry.output.findings
         .filter((f) => f.action === "fix_now")
         .map((f) => findingIdentityKey(f));

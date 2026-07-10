@@ -9,7 +9,9 @@ import { mergeResumeLedgerHistory } from "../src/runner.js";
 import {
   FIX_FOCUS_LANDING_FILE,
   formatFixFocusMarkdown,
+  isFindingFamilyArray,
   mergePriorRoundFindings,
+  priorCmrFindingsFromFamilyLedger,
   priorOnlineReviewFindingsFromFamilyLedger,
   priorOnlineReviewFindingsFromLedger,
   sanitizeFindingFamilies,
@@ -88,6 +90,29 @@ describe("#711 findingFamilies contract", () => {
         brief: "Fix the class.",
       },
     ]);
+  });
+
+  it("isFindingFamilyArray rejects normalized-only aliases", () => {
+    expect(
+      isFindingFamilyArray([
+        {
+          family: "silence-not-green",
+          members: ["t:1"],
+          recurring_from_rounds: [1],
+          brief: "Fix the class.",
+        },
+      ]),
+    ).toBe(false);
+    expect(
+      isFindingFamilyArray([
+        {
+          family: "silence-not-green",
+          members: ["t:1"],
+          recurringFromRounds: [1],
+          brief: "Fix the class.",
+        },
+      ]),
+    ).toBe(true);
   });
 
   it("verify schema accepts finding_families snake_case top-level and degrades malformed families", () => {
@@ -564,6 +589,28 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
     expect(priorOnlineReviewFindingsFromFamilyLedger(familyLedger, 3)).toEqual([
       { round: 1, fixMarkedFindingIdentityKeys: ["silence:r1"] },
       { round: 2, fixMarkedFindingIdentityKeys: ["silence:r2"] },
+    ]);
+  });
+
+  it("priorCmrFindingsFromFamilyLedger excludes other and unclassified CMR passes", () => {
+    const finding = {
+      severity: "medium" as const,
+      category: "correctness" as const,
+      claim_quote: "silence treated as green",
+      location: "src/a.ts",
+      suggested_fix: "fail closed",
+      action: "fix_now" as const,
+    };
+    const ledger = [
+      { event: "cmr_reviewed", cmrPass: "completeness", blockingFindingIdentityKeys: ["reviewed:complete"] },
+      { output: { kind: "cmr", findings: [finding] }, cmrPass: "correctness" },
+      { output: { kind: "cmr", findings: [finding] }, cmrPass: "completeness" },
+      { output: { kind: "cmr", findings: [finding] } },
+    ];
+
+    expect(priorCmrFindingsFromFamilyLedger(ledger, "completeness")).toEqual([
+      { round: 1, fixMarkedFindingIdentityKeys: [], blockingFindingIdentityKeys: ["reviewed:complete"] },
+      { round: 2, fixMarkedFindingIdentityKeys: [], blockingFindingIdentityKeys: ["correctness|src/a.ts|silence treated as green"] },
     ]);
   });
 
