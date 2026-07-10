@@ -10,6 +10,8 @@
  *   6. reviewerSlugsFromRoute — includes CMR gate slots (completeness/correctness/verify)
  *   7. runner mid-loop advance — re-smoke before first dispatch of advanced slug
  *   8. runner ledger wiring — 2 completed S6 rounds advance the DISPATCHED coder
+ *   9. resume re-fetches issue body so Coder-Rec (+ advance position) survives
+ *  10. S0 smokes the final Coder-Rec route once (not preset-then-override)
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -36,6 +38,8 @@ import type {
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
+  ResumeState,
+  StepId,
   StepOutput,
   StepSpec,
   WorktreeHandle,
@@ -291,13 +295,30 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
   };
   const blockingKey = findingIdentityKey(blockingFinding);
 
+  function ledgerEntry(
+    step: StepId,
+    output?: StepOutput,
+  ): PersistentLedgerEntry {
+    return {
+      step,
+      sessionId: "session-prior",
+      prompt_hash: `hash-${step}`,
+      branchHEAD: "deadbeefcommitsha",
+      ts: "2026-07-10T00:00:00.000Z",
+      ...(output !== undefined ? { output } : {}),
+    };
+  }
+
   class CoderRecBackend implements Backend {
     async smokeModelRoute(route: any) {
+      this.smokedCoderSlugs.push(route.slots.coder);
+      this.events.push(`smoke:${route.slots.coder}`);
       const { smokeRouteModels } = await import("../src/modelRoutes.js");
       return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
     }
     readonly coderModels: string[] = [];
     readonly smokedCoderSlugs: string[] = [];
+    readonly events: string[] = [];
     readonly worktree: WorktreeHandle = {
       branch: "feat/767-coder-roster",
       base: "main",
@@ -336,6 +357,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     async runStep(spec: StepSpec): Promise<StepOutput> {
       if (spec.role === "coder") {
         this.coderModels.push(spec.model);
+        this.events.push(`dispatch:${spec.model}`);
       }
       if (spec.role === "reviewer") {
         return { kind: "reviewer", findings: [] };
@@ -350,14 +372,6 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
   class CoderRecAdvanceBackend extends CoderRecBackend {
     private reviewerAttempts = 0;
     readonly ledgerWrites: PersistentLedgerEntry[] = [];
-    /** Interleaved smoke/dispatch timeline for ordering assertions. */
-    readonly events: string[] = [];
-
-    override async smokeModelRoute(route: any) {
-      this.smokedCoderSlugs.push(route.slots.coder);
-      this.events.push(`smoke:${route.slots.coder}`);
-      return super.smokeModelRoute(route);
-    }
 
     override async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
       this.ledgerWrites.push(entry);
@@ -408,12 +422,116 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     }
   }
 
+  /**
+   * Crash after S5 with 2 completed S6 rounds already on the ledger, then
+   * resume into the next S5. Without a resume-path body re-fetch, Coder-Rec
+   * is undefined → skippedForMissingMarking → preset coder (sonnet).
+   */
+  class CoderRecResumeAfterS5Backend extends CoderRecBackend {
+    override async findResumeState(): Promise<ResumeState> {
+      const mediumBlocking = { ...blockingFinding, severity: "medium" as const };
+      return {
+        worktree: this.worktree,
+        stateDir: "/resident/ledgers/issue-767",
+        ledger: [
+          ledgerEntry("S0"),
+          ledgerEntry("S1"),
+          ledgerEntry("S2", {
+            kind: "coder",
+            committed: true,
+            commitsAdded: 1,
+          }),
+          ledgerEntry("S3", {
+            kind: "reviewer",
+            findings: [blockingFinding],
+          }),
+          ledgerEntry("S4"),
+          ledgerEntry("S5", {
+            kind: "coder",
+            committed: true,
+            commitsAdded: 1,
+          }),
+          ledgerEntry("S6", {
+            kind: "reviewer",
+            findings: [blockingFinding],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          }),
+          ledgerEntry("S4"),
+          ledgerEntry("S5", {
+            kind: "coder",
+            committed: true,
+            commitsAdded: 1,
+          }),
+          ledgerEntry("S6", {
+            kind: "reviewer",
+            findings: [mediumBlocking],
+            priorFindingDispositions: [
+              { identityKey: blockingKey, status: "still-active" },
+            ],
+          }),
+          // Crash after the post-threshold S5 was about to run: last durable
+          // boundary is S4 with blocking still open → planResume → S5.
+          ledgerEntry("S4"),
+        ],
+      };
+    }
+
+    override async runStep(spec: StepSpec): Promise<StepOutput> {
+      if (spec.role === "coder") {
+        this.coderModels.push(spec.model);
+        this.events.push(`dispatch:${spec.model}`);
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      if (spec.role === "reviewer") {
+        return {
+          kind: "reviewer",
+          findings: [],
+          priorFindingDispositions: [
+            { identityKey: blockingKey, status: "verified-closed" },
+          ],
+        };
+      }
+      return { kind: "coder", committed: true, commitsAdded: 1 };
+    }
+  }
+
   it("S2 dispatches the first roster-valid Coder-Rec entry from the issue body", async () => {
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
     const backend = new CoderRecBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
     expect(backend.coderModels).toEqual(["grok-4.5"]);
+  });
+
+  it("S0 smokes the Coder-Rec final route once, not the preset then the override", async () => {
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    const backend = new CoderRecBackend();
+    const result = await runOrchestrator({ issueNumber: 767, backend });
+    expect(result.status).toBe("success");
+    // First smoke must already see the Coder-Rec coder — not the route preset
+    // (sonnet) that would force a full re-smoke after applyCoderRecSelection.
+    expect(backend.smokedCoderSlugs[0]).toBe("grok-4.5");
+    expect(backend.smokedCoderSlugs).not.toContain("sonnet");
+    const firstDispatch = backend.events.findIndex((e) =>
+      e.startsWith("dispatch:"),
+    );
+    const smokesBeforeDispatch = backend.events
+      .slice(0, firstDispatch)
+      .filter((e) => e.startsWith("smoke:"));
+    expect(smokesBeforeDispatch).toEqual(["smoke:grok-4.5"]);
+  });
+
+  it("resume after S5 keeps the Coder-Rec entry at the ledger advance position", async () => {
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    const backend = new CoderRecResumeAfterS5Backend();
+    const result = await runOrchestrator({ issueNumber: 767, backend });
+    expect(result.status).toBe("success");
+    // 2 completed S6 rounds on the restored ledger → advance to terra@med,
+    // not the route preset (sonnet) and not the first Coder-Rec entry.
+    expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
+    expect(backend.coderModels).not.toContain("sonnet");
   });
 
   it("re-smokes the advanced coder slug before its first mid-loop S5 dispatch", async () => {

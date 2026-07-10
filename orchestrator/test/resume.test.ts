@@ -539,9 +539,12 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     expect(backend.runStepIds).toEqual(["S3"]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
     expect(backend.pushCount).toBe(1);
-    // S0/S1 are not re-executed either (no re-gate, no re-cut, no re-snapshot).
-    expect(backend.calls).not.toContain("fetchIssueMeta(255)");
+    // S0 gate / S1 load are NOT re-executed (no re-cut, no re-snapshot write).
+    // #767 may re-fetch issue meta/body for Coder-Rec on the resume path.
     expect(backend.calls).not.toContain("prepareWorktree(255, main)");
+    expect(backend.calls).not.toContain(
+      `writeSnapshot(${WORKTREE.branch}, #255)`,
+    );
 
     // The run completes from the resumed point.
     expect(result.status).toBe("success");
@@ -1408,9 +1411,12 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     // Identical reuse/clean behaviour as the crash-resume path.
     expect(backend.prepareWorktreeCount).toBe(0);
     expect(backend.cleanResidueCount).toBe(1);
-    // S0 gate / S1 load are NOT re-run.
-    expect(backend.calls).not.toContain("fetchIssueMeta(255)");
-    expect(backend.calls).not.toContain("fetchIssueSnapshot(255)");
+    // S0 gate / S1 load are NOT re-run (no re-cut / no snapshot write).
+    // #767 may re-fetch issue meta/body for Coder-Rec on the resume path.
+    expect(backend.calls).not.toContain("prepareWorktree(255, main)");
+    expect(backend.calls).not.toContain(
+      `writeSnapshot(${WORKTREE.branch}, #255)`,
+    );
   });
 
   it("AC4: resume carries the ledger's recorded sessionId into resumeSession", async () => {
