@@ -112,6 +112,10 @@ import {
 } from "../reviewLoopOutcome.js";
 import { ONLINE_REVIEW_LANDING_FILE } from "../onlineReviewLoop.js";
 import {
+  provisionNodeModules,
+  resolveTemplateProjectDir,
+} from "../provisionNodeModules.js";
+import {
   WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
   readRequiredWorkerOutcomeSidecar,
@@ -256,6 +260,13 @@ export interface RealFamilyBackendOptions {
    * family run always returns verify_failed). Defaults to `workingRepo`.
    */
   readonly verifyCwd?: string;
+  /**
+   * #746 — monorepo root whose warm `node_modules` trees are the clonefile
+   * template for verify installs (typically the driver `sourceRepo`). Not a
+   * user-facing config surface: familyDriver wires it from sourceRepo. When
+   * absent, installDeps falls back to full npm ci/install (pre-#746 behaviour).
+   */
+  readonly depsTemplateRoot?: string;
   /**
    * LAZY verify-cwd resolver (#4): when `verifyCwd` is not set, this is called at
    * verify TIME (after the children have merged onto the family base) to infer the
@@ -1072,14 +1083,24 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Install the Node project's deps in `cwd` before verify (#3). Prefer `npm ci`
-   * (a lockfile-exact, reproducible install) when a `package-lock.json` is
-   * present; fall back to `npm install` when it is not (`npm ci` REQUIRES a
-   * lockfile). `protected` for test seam (used by verify tests).
+   * Install the Node project's deps in `cwd` before verify (#3 + #746).
+   *
+   * Prefer APFS clonefile of a lockfile-matching template `node_modules` from
+   * {@link RealFamilyBackendOptions.depsTemplateRoot} (source monorepo) over a
+   * full `npm ci`. Lockfile hash mismatch / missing template / clonefile failure
+   * → real `npm ci` (or `npm install` without a lock). Still unconditional in the
+   * #372 sense: we always re-ensure deps; the fast path is clonefile, not a
+   * presence/mtime skip. `protected` for test seam (used by verify tests).
    */
   protected installDeps(cwd: string): void {
-    const hasLock = existsSync(join(cwd, "package-lock.json"));
-    this.sh("npm", [hasLock ? "ci" : "install"], cwd);
+    const templateProjectDir = resolveTemplateProjectDir(cwd, {
+      templateRoot: this.opts.depsTemplateRoot,
+      targetRoot: this.opts.workingRepo,
+    });
+    provisionNodeModules(cwd, {
+      templateProjectDir,
+      sh: (file, args, c) => this.sh(file, args, c),
+    });
   }
 
   // ─────────────────────── unified worker dispatch (#335) ───────────────────────

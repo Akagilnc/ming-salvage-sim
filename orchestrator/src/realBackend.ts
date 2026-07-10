@@ -73,6 +73,7 @@ import {
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
 import { findingIdentityKey } from "./findings.js";
+import { provisionRepoNodeModules } from "./provisionNodeModules.js";
 import {
   sourceAuthFailureStopSummary,
   type StopSummary,
@@ -2334,6 +2335,8 @@ export class RealBackend implements Backend {
     const existing = this.findExistingWorktree(issueNumber);
     if (existing !== undefined) {
       this.cleanResidueAt(existing.path);
+      // #746: ensure node_modules on reuse too (lock-matched clonefile or npm).
+      this.provisionWorktreeNodeModules(existing.path);
       return { branch: existing.branch, base, path: existing.path };
     }
     const branch = branchForIssue(issueNumber);
@@ -2374,7 +2377,23 @@ export class RealBackend implements Backend {
     // close() removes a clean worktree, which would delete the resume truth. The
     // resident worktree is reaped only by an explicit terminal-success GC, never
     // by normal-path disposal.
+    // #746: after the git worktree cut, provision node_modules via APFS clonefile
+    // from sourceRepo (lockfile match) instead of a full npm ci when possible.
+    this.provisionWorktreeNodeModules(wt.worktreePath);
     return { branch, base, path: wt.worktreePath };
+  }
+
+  /**
+   * #746 — host-side Node deps for a resident worktree. Uses the driver
+   * `sourceRepo` as the warm template monorepo. No package.json under the path
+   * (fake/stub worktrees in unit tests) ⇒ no-op. `protected` so a subclass can
+   * skip / spy without a real FS.
+   */
+  protected provisionWorktreeNodeModules(worktreePath: string): void {
+    provisionRepoNodeModules(worktreePath, {
+      templateRoot: this.opts.sourceRepo,
+      sh: (file, args, cwd) => this.sh(file, args, cwd ?? worktreePath),
+    });
   }
 
   /**
