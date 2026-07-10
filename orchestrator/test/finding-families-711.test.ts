@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { legacyDispatchWorker } from "../src/dispatchWorker.js";
+import { mergeResumeLedgerHistory } from "../src/runner.js";
 import {
   FIX_FOCUS_LANDING_FILE,
   formatFixFocusMarkdown,
@@ -434,6 +435,45 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
     expect(priorOnlineReviewFindingsFromLedger(ledger, 3)).toEqual([
       { round: 1, fixMarkedFindingIdentityKeys: ["t:r1"] },
       { round: 2, fixMarkedFindingIdentityKeys: ["t:r2-real"] },
+    ]);
+  });
+
+  it("does not let a resume-seeded ledger prefix double-count inferred rounds", () => {
+    const s9Round1 = {
+      step: "S9",
+      output: {
+        kind: "verify",
+        converged: false,
+        fixMarkedFindingIdentityKeys: ["t:r1"],
+      } satisfies VerifyResult,
+    };
+    const s10Round1 = {
+      step: "S10",
+      output: { kind: "fixer", committed: true, fixCommitSha: "fix-1" },
+    };
+    const s9Round2 = {
+      step: "S9",
+      output: {
+        kind: "verify",
+        converged: false,
+        fixMarkedFindingIdentityKeys: ["t:r2"],
+      } satisfies VerifyResult,
+    };
+
+    // S7 resume planning seeds these same entry objects into the in-memory
+    // ledger before appending new rows. Reference de-duplication must preserve
+    // the original inferred round sequence.
+    expect(
+      priorOnlineReviewFindingsFromLedger(
+        mergeResumeLedgerHistory(
+          [s9Round1, s10Round1],
+          [s9Round1, s10Round1, s9Round2],
+        ),
+        3,
+      ),
+    ).toEqual([
+      { round: 1, fixMarkedFindingIdentityKeys: ["t:r1"] },
+      { round: 2, fixMarkedFindingIdentityKeys: ["t:r2"] },
     ]);
   });
 
