@@ -5,6 +5,10 @@ import {
   routeSmokeFailure,
   smokeRouteModels,
 } from "../src/modelRoutes.js";
+import {
+  ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS,
+  resolveRouteSmokeIdleTimeoutSeconds,
+} from "../src/realBackend.js";
 import type {
   Backend,
   IssueMeta,
@@ -183,5 +187,25 @@ describe("#685 route tool smoke", () => {
     expect(result.status).toBe("success");
     expect(result.stopSummary.reason).toBe("already_done");
     expect(backend.calls).toEqual(["findResumeState"]);
+  });
+
+  it("uses a 60s default idle budget for the route smoke when the env override is unset", () => {
+    expect(resolveRouteSmokeIdleTimeoutSeconds(undefined)).toBe(60);
+    expect(resolveRouteSmokeIdleTimeoutSeconds("")).toBe(60);
+    expect(resolveRouteSmokeIdleTimeoutSeconds("   ")).toBe(60);
+    // The exported constant is exactly the resolver applied to the live env, so
+    // whatever ambient value is present, default-or-override is honored.
+    expect(ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS).toBe(
+      resolveRouteSmokeIdleTimeoutSeconds(process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS),
+    );
+  });
+
+  it("honors ORCHESTRATOR_SMOKE_IDLE_SECONDS and falls back to 60 on illegal values", () => {
+    expect(resolveRouteSmokeIdleTimeoutSeconds("25")).toBe(25);
+    expect(resolveRouteSmokeIdleTimeoutSeconds("120")).toBe(120);
+    expect(resolveRouteSmokeIdleTimeoutSeconds("0")).toBe(60);
+    expect(resolveRouteSmokeIdleTimeoutSeconds("-5")).toBe(60);
+    expect(resolveRouteSmokeIdleTimeoutSeconds("3.5")).toBe(60);
+    expect(resolveRouteSmokeIdleTimeoutSeconds("not-a-number")).toBe(60);
   });
 });
