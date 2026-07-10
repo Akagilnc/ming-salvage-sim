@@ -121,6 +121,10 @@ import {
   modelForSlot,
   type CmrLegAccountingRoute,
 } from "../modelRoutes.js";
+import {
+  buildCliMonitorSpawnSpec,
+  workerResultFromMonitorSidecar,
+} from "../cliMonitorHooks.js";
 import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import { retryProcessCrash } from "../dispatchRetry.js";
 import { dispatchPostMergeCleanup } from "../postMergeCleanup.js";
@@ -134,9 +138,11 @@ import {
 
 import type {
   CleanupResult,
+  CliMonitorSpawnSpec,
   CoderResult,
   DispatchContext,
   DocReleaseResult,
+  WorkerMonitorHandle,
   Finding,
   FixerResult,
   PriorFindingDisposition,
@@ -1162,6 +1168,37 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const outcome = await this.runCmrWorker(spec, ctx);
     return this.cmrOutcomeToWorkerResult(outcome, ctx);
+  }
+
+  /**
+   * #684: production monitored-CLI spawn for family productive workers.
+   * Same bridge pattern as {@link RealBackend.resolveCliMonitorDispatch}.
+   */
+  resolveCliMonitorDispatch(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): CliMonitorSpawnSpec | undefined {
+    return buildCliMonitorSpawnSpec({
+      backendKind: "realFamily",
+      backendOpts: this.opts,
+      spec,
+      ctx,
+      landing,
+    });
+  }
+
+  /**
+   * #684: map a finished monitored family CLI bridge child into a WorkerResult.
+   */
+  async awaitMonitoredCliWorker(
+    handle: WorkerMonitorHandle,
+    exitCode: number | null,
+    _spec: WorkerSpec,
+    _ctx: DispatchContext,
+    _landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    return workerResultFromMonitorSidecar(handle, exitCode);
   }
 
   async rewriteWorkerOutcome(

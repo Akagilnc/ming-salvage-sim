@@ -624,6 +624,20 @@ export interface DispatchWorkerWithMonitorOutcome {
   readonly monitorHandle?: WorkerMonitorHandle;
 }
 
+/**
+ * Options for {@link dispatchWorkerWithMonitor} (#684 R2).
+ *
+ * `onMonitorHandleSpawned` fires AT SPAWN TIME — before waiting for the child
+ * to exit — so the runner can persist the handle to the ledger while the worker
+ * is still running (hang judge/kill/resume needs a live handle, not a post-exit
+ * one).
+ */
+export interface DispatchWorkerWithMonitorOptions {
+  readonly onMonitorHandleSpawned?: (
+    handle: WorkerMonitorHandle,
+  ) => void | Promise<void>;
+}
+
 function waitForChildExit(child: ChildProcess): Promise<number | null> {
   if (child.exitCode !== null) return Promise.resolve(child.exitCode);
   return new Promise((resolve, reject) => {
@@ -641,18 +655,24 @@ function waitForChildExit(child: ChildProcess): Promise<number | null> {
  * real dispatch, then maps the finished process via
  * {@link Backend.awaitMonitoredCliWorker}.
  *
+ * The handle is handed to {@link DispatchWorkerWithMonitorOptions.onMonitorHandleSpawned}
+ * immediately after spawn (before wait) so ledger persistence can happen at
+ * spawn time (#684 R2).
+ *
  * Otherwise falls through to {@link dispatchWorker} (container / legacy seam)
  * with no monitor handle.
  *
  * The runner always calls this (not bare {@link dispatchWorker}) so CLI workers
  * land a ledger-rebuildable handle and hang/kill judgment never needs global
- * process-name matching.
+ * process-name matching. RealBackend / RealFamilyBackend implement the hooks so
+ * S2/S3/S5/S6/S7/S9–S12 take this monitored branch in production.
  */
 export async function dispatchWorkerWithMonitor(
   backend: Backend,
   spec: WorkerSpec,
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
+  opts?: DispatchWorkerWithMonitorOptions,
 ): Promise<DispatchWorkerWithMonitorOutcome> {
   const cliSpec = backend.resolveCliMonitorDispatch?.(spec, ctx, landing);
   if (cliSpec !== undefined) {
@@ -670,6 +690,11 @@ export async function dispatchWorkerWithMonitor(
         : {}),
     };
     const { handle, child } = await dispatchMonitoredCliWorker(input);
+    // SPAWN-TIME persist seam: handle is available before waitForChildExit so a
+    // hang still leaves a ledger-rebuildable handle for judge/kill/resume.
+    if (opts?.onMonitorHandleSpawned !== undefined) {
+      await opts.onMonitorHandleSpawned(handle);
+    }
     const exitCode = await waitForChildExit(child);
     if (backend.awaitMonitoredCliWorker === undefined) {
       return {
