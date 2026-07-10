@@ -26,6 +26,7 @@ import {
   canClonefileNodeModules,
   listNodeProjectDirs,
   lockfileFingerprint,
+  packageJsonFingerprint,
   provisionNodeModules,
   provisionRepoNodeModules,
   resolveTemplateProjectDir,
@@ -149,6 +150,20 @@ describe("canClonefileNodeModules", () => {
     const tpl = mkDir("can-no-nm-p-");
     writeProject(target, { lock: LOCK_A });
     writeProject(tpl, { lock: LOCK_A });
+    expect(canClonefileNodeModules(target, tpl)).toBe(false);
+  });
+
+  it("false when package.json diverges even if package-lock.json matches", () => {
+    const target = mkDir("can-pkg-drift-t-");
+    const tpl = mkDir("can-pkg-drift-p-");
+    writeProject(target, { lock: LOCK_A });
+    writeProject(tpl, { lock: LOCK_A, withModules: true });
+    writeFileSync(
+      join(target, "package.json"),
+      JSON.stringify({ name: "proj", version: "0.0.0", dependencies: { fresh: "1.0.0" } }),
+    );
+
+    expect(packageJsonFingerprint(target)).not.toBe(packageJsonFingerprint(tpl));
     expect(canClonefileNodeModules(target, tpl)).toBe(false);
   });
 });
@@ -319,16 +334,23 @@ describe("provisionNodeModules", () => {
     writeProject(join(template, "orchestrator"), { lock: LOCK_A, withModules: true });
 
     const calls: string[] = [];
+    let active = 0;
+    let maxActive = 0;
     const results = await provisionRepoNodeModules(repo, {
       templateRoot: template,
       sh: async (file, args, cwd) => {
         calls.push(`${file} ${args.join(" ")} ${cwd}`);
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active -= 1;
         return "";
       },
     });
 
     expect(results).toHaveLength(2);
     expect(calls).toHaveLength(2);
+    expect(maxActive).toBe(2);
   });
 });
 

@@ -68,6 +68,8 @@ lock_hash() {
   fi
   if command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$f" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$f" | awk '{print $1}'
   else
     # No hash utility: return empty so provision_project takes the npm path.
     echo ""
@@ -84,13 +86,20 @@ provision_project() {
   local t_lock="$target/package-lock.json"
   local m_lock="$template/package-lock.json"
   local t_hash m_hash
-  t_hash="$(lock_hash "$t_lock")"
-  m_hash="$(lock_hash "$m_lock")"
+  # A matching lockfile alone is not enough: npm ci must still validate a
+  # package.json changed by the slice against that lockfile.
+  if [[ ! -f "$template/package.json" ]] || ! cmp -s "$target/package.json" "$template/package.json"; then
+    t_hash=""
+    m_hash=""
+  else
+    t_hash="$(lock_hash "$t_lock")"
+    m_hash="$(lock_hash "$m_lock")"
+  fi
   if [[ -n "$t_hash" && "$t_hash" == "$m_hash" && -d "$template/node_modules" ]]; then
     local start end
     start="$(date +%s)"
     rm -rf "$target/node_modules"
-    if cp -cR "$template/node_modules" "$target/node_modules"; then
+    if cp -cR "$template/node_modules" "$target/node_modules" 2>/dev/null; then
       end="$(date +%s)"
       echo "[provision] $label: clonefile ok (${start}→${end}s wall≈$((end - start))s)"
       return 0

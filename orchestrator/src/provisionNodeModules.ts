@@ -23,15 +23,16 @@
  *
  * ## Dirty-cache / staleness criterion
  *
- * Sole freshness signal = **SHA-256 of `package-lock.json` file bytes** on target
- * vs template (`lockfileFingerprint`). Match **and** template `node_modules`
- * present as a directory ⇒ clonefile allowed. Boundaries:
+ * Sole freshness signal = matching **`package.json` and `package-lock.json` file
+ * bytes** on target vs template (`packageJsonFingerprint` and
+ * `lockfileFingerprint`). Match **and** template `node_modules` present as a
+ * directory ⇒ clonefile allowed. Boundaries:
  * - No lock on either side → not clonefile (target uses `npm install`).
  * - Lock present but hashes differ → `npm ci` (wave mutated the lock; template
  *   tree is wrong deps).
  * - Template lacks `node_modules` / not a dir → `npm ci`/`install`.
  * - Clonefile command throws (non-APFS, no `cp -c`, I/O) → fall through to npm.
- * - **Never** mtime, presence-of-`node_modules` alone, or package.json hash.
+ * - **Never** mtime or presence-of-`node_modules` alone.
  *
  * ## Relation to ADR 0024 resident worktree reap / clean
  *
@@ -108,6 +109,17 @@ export function lockfileFingerprint(projectDir: string): string | undefined {
   }
 }
 
+/** SHA-256 of `package.json` contents, or `undefined` when it is absent/unreadable. */
+export function packageJsonFingerprint(projectDir: string): string | undefined {
+  const packagePath = join(projectDir, "package.json");
+  if (!existsSync(packagePath)) return undefined;
+  try {
+    return createHash("sha256").update(readFileSync(packagePath)).digest("hex");
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Map a target project dir onto the same relative path under `templateRoot`.
  * Returns undefined when the target is outside `targetRoot` or roots are missing.
@@ -165,7 +177,9 @@ export function listNodeProjectDirs(repoRoot: string): string[] {
 
 /**
  * Whether target may safely receive template's node_modules via clonefile:
- * template has node_modules, both have package-lock.json, fingerprints equal.
+ * template has node_modules, both manifests exist, and both manifest fingerprints
+ * match. The package.json comparison preserves npm ci's lock/manifest validation
+ * when a slice changes dependencies without regenerating its lockfile.
  */
 export function canClonefileNodeModules(
   targetProjectDir: string,
@@ -180,8 +194,11 @@ export function canClonefileNodeModules(
   }
   const targetHash = lockfileFingerprint(targetProjectDir);
   const templateHash = lockfileFingerprint(templateProjectDir);
+  const targetPackageHash = packageJsonFingerprint(targetProjectDir);
+  const templatePackageHash = packageJsonFingerprint(templateProjectDir);
   if (targetHash === undefined || templateHash === undefined) return false;
-  return targetHash === templateHash;
+  if (targetPackageHash === undefined || templatePackageHash === undefined) return false;
+  return targetHash === templateHash && targetPackageHash === templatePackageHash;
 }
 
 /**
@@ -239,18 +256,16 @@ export async function provisionRepoNodeModules(
   } = {},
 ): Promise<readonly ProvisionResult[]> {
   const projects = listNodeProjectDirs(repoRoot);
-  const results: ProvisionResult[] = [];
-  for (const project of projects) {
-    const templateProjectDir = resolveTemplateProjectDir(project, {
-      templateRoot: options.templateRoot,
-      targetRoot: repoRoot,
-    });
-    results.push(
-      await provisionNodeModules(project, {
+  return Promise.all(
+    projects.map((project) => {
+      const templateProjectDir = resolveTemplateProjectDir(project, {
+        templateRoot: options.templateRoot,
+        targetRoot: repoRoot,
+      });
+      return provisionNodeModules(project, {
         templateProjectDir,
         sh: options.sh,
-      }),
-    );
-  }
-  return results;
+      });
+    }),
+  );
 }
