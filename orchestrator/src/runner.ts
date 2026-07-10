@@ -82,6 +82,7 @@ import {
   slicePrMergedRecordFromLedger,
   type PrMergedTerminalRecord,
 } from "./autoMerge.js";
+import { priorOnlineReviewFindingsFromLedger } from "./findingFamilies.js";
 import { shouldReclaimSliceHost } from "./hostReclaim.js";
 import { buildCleanupLanding } from "./postMergeCleanup.js";
 import {
@@ -3786,11 +3787,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             if (stateDir !== undefined) {
               writeOnlineReviewSnapshotFile(stateDir, snapshot);
             }
-            onlineReviewLanding = buildOnlineReviewLanding(
-              snapshot,
-              lastShipOutput,
+            const priorRoundFindings = priorOnlineReviewFindingsFromLedger(
+              ledger,
               onlineReviewRound,
             );
+            onlineReviewLanding = {
+              ...buildOnlineReviewLanding(
+                snapshot,
+                lastShipOutput,
+                onlineReviewRound,
+              ),
+              ...(priorRoundFindings.length > 0
+                ? { priorRoundFindings }
+                : {}),
+            };
           }
           const reviewCtx = {
             worktree,
@@ -3874,6 +3884,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ...onlineReviewLanding,
                   fixMarkedFindingIdentityKeys:
                     onlineReviewLanding.fixMarkedFindingIdentityKeys ?? [],
+                  ...(onlineReviewLanding.findingFamilies !== undefined
+                    ? { findingFamilies: onlineReviewLanding.findingFamilies }
+                    : {}),
                 }
               : onlineReviewLanding;
           const convergedHeadForCleanup =
@@ -4316,6 +4329,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               onlineReviewLanding = {
                 ...onlineReviewLanding,
                 fixMarkedFindingIdentityKeys: fixKeys,
+                ...(verifyOutput.findingFamilies !== undefined
+                  ? { findingFamilies: verifyOutput.findingFamilies }
+                  : {}),
               };
             }
             // Same-type as stage (R8 Gemini): CI red + no bot fix marks → park with

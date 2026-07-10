@@ -10,6 +10,7 @@
  * reject an off-contract output instead of silently advancing.
  */
 
+import { isFindingFamilyArray } from "./findingFamilies.js";
 import { isValidGithubIssueUrl } from "./onlineReviewSideEffects.js";
 import type {
   CleanupResult,
@@ -145,6 +146,12 @@ export function isValidVerifyResult(
     return false;
   }
   if (obj.isRecheck !== undefined && typeof obj.isRecheck !== "boolean") {
+    return false;
+  }
+  if (
+    obj.findingFamilies !== undefined &&
+    !isFindingFamilyArray(obj.findingFamilies)
+  ) {
     return false;
   }
   return true;

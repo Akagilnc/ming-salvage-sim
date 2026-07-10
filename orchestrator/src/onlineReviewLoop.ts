@@ -876,6 +876,9 @@ export function reconstructOnlineReviewLandingForResume(input: {
   return {
     ...buildOnlineReviewLanding(snapshot, input.ship, input.round),
     fixMarkedFindingIdentityKeys: fixKeys,
+    ...(lastVerify?.findingFamilies !== undefined
+      ? { findingFamilies: lastVerify.findingFamilies }
+      : {}),
   };
 }
 
@@ -1330,6 +1333,11 @@ export async function runOnlineReviewLoopStage(
   opts?: {
     readonly initialRound?: number;
     readonly initialFixCommitSha?: string;
+    /** Optional runner-owned landing enrichment (#711 prior-round data). */
+    readonly enrichVerifyLanding?: (
+      landing: WorkerLandingPayload,
+      round: number,
+    ) => WorkerLandingPayload | Promise<WorkerLandingPayload>;
   },
 ): Promise<OnlineReviewLoopStageResult> {
   let round = opts?.initialRound ?? 1;
@@ -1348,6 +1356,9 @@ export async function runOnlineReviewLoopStage(
       return decisionGateFromDispatchInfra(round, "poll", err);
     }
     let landing = buildOnlineReviewLanding(snapshot, ship, round);
+    if (opts?.enrichVerifyLanding !== undefined) {
+      landing = await opts.enrichVerifyLanding(landing, round);
+    }
 
     let verify: VerifyResult;
     try {
@@ -1424,7 +1435,13 @@ export async function runOnlineReviewLoopStage(
       };
     }
     const fixKeys = fixMarkedKeysFromVerify(verify);
-    landing = { ...landing, fixMarkedFindingIdentityKeys: fixKeys };
+    landing = {
+      ...landing,
+      fixMarkedFindingIdentityKeys: fixKeys,
+      ...(verify.findingFamilies !== undefined
+        ? { findingFamilies: verify.findingFamilies }
+        : {}),
+    };
 
     const reviewSnap = landing.onlineReviewSnapshot;
     const checkRuns = reviewSnap?.checkRuns ?? [];
