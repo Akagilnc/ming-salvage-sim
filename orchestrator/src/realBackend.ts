@@ -2586,8 +2586,7 @@ export class RealBackend implements Backend {
   ): Promise<WorktreeHandle> {
     // #291 B7: the family spine fans a wave out CONCURRENTLY, and every child in
     // the wave shares THIS one dedicated clone (ADR 0024). The worktree-list scan,
-    // the best-effort `git fetch`, the residue clean, and the `git worktree add`
-    // cut all MUTATE the shared `.git` — concurrent ones race on `.git/index.lock`
+    // the best-effort `git fetch`, and the `git worktree add` cut all MUTATE the shared `.git` — concurrent ones race on `.git/index.lock`
     // / per-ref locks (distinct child BRANCHES isolate the logical work, NOT the
     // git locks). So the git-mutating section runs under a per-clone mutex keyed on
     // the working repo: same-clone children serialise their cuts, while a DIFFERENT
@@ -2598,8 +2597,8 @@ export class RealBackend implements Backend {
     // its own directory; template reads are read-only. Keeping npm ci / clonefile
     // inside the mutex serialises N wave children on ~90s cold installs (the issue's
     // goal is the opposite). Mutex covers only the cut/reuse git section; provision
-    // runs after release. Residue clean still precedes provision (ordering: clean
-    // inside exclusive → return handle → provision that path).
+    // runs after release. #661 preserves reused scenes intact; provisioning occurs
+    // after the exclusive cut/reuse decision without cleaning user or worker files.
     const handle = await runExclusive(this.workingRepo, () =>
       this.prepareWorktreeLocked(issueNumber, base),
     );
