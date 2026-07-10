@@ -37,6 +37,10 @@ import type {
  * can prove concurrency. The slowest child is started FIRST in the wave array.
  */
 class LatentChildBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   active = 0;
   maxActive = 0;
   readonly enterOrder: number[] = [];

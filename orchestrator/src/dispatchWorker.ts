@@ -608,11 +608,12 @@ export async function dispatchWorker(
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
 ): Promise<WorkerResult> {
-  if (ctx.modelRoute !== undefined) {
-    const smokeFailure = routeSmokeFailure(ctx.modelRoute);
-    if (smokeFailure !== undefined) {
-      throw new Error(`worker dispatch refused (fail-closed): ${smokeFailure}`);
-    }
+  if (ctx.modelRoute === undefined) {
+    throw new Error("worker dispatch refused (fail-closed): model route smoke state is missing");
+  }
+  const smokeFailure = routeSmokeFailure(ctx.modelRoute);
+  if (smokeFailure !== undefined) {
+    throw new Error(`worker dispatch refused (fail-closed): ${smokeFailure}`);
   }
   if (backend.dispatchWorker !== undefined) {
     return backend.dispatchWorker(spec, ctx, landing);

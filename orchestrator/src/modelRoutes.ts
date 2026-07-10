@@ -380,6 +380,13 @@ export function routeSmokeEntries(route: Pick<ResolvedModelRoute, "slots" | "leg
   return entries;
 }
 
+export function withRouteSmoke(
+  route: ResolvedModelRoute,
+  smoke: Readonly<Record<string, RouteSmokeStatus>>,
+): ResolvedModelRoute {
+  return { ...route, smoke: { ...route.smoke, ...smoke } };
+}
+
 export function routeSmokeFailure(
   route: Pick<ResolvedModelRoute, "slots" | "legCollections" | "smoke">,
   now = Date.now(),

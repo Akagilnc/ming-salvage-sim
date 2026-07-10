@@ -1357,6 +1357,10 @@ describe("#602 runOrchestrator slice path — AC8 pr_merged ledger", () => {
   }
 
   class SliceAutoMergeResumeBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
     readonly ledgerWrites: PersistentLedgerEntry[] = [];
     readonly dispatchSpecs: WorkerSpec[] = [];
 

@@ -472,6 +472,10 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
 
 /** A fake backend that records dispatch + drives a one-round fix loop. */
 class ReviewWorkerBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly dispatched: string[] = [];
   readonly specs: WorkerSpec[] = [];
   readonly ctxs: DispatchContext[] = [];

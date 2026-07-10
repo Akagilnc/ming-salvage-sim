@@ -186,6 +186,10 @@ const RUN_WORKTREE: WorktreeHandle = {
  * cleanly. Counts coder dispatches so the test can assert a retry happened.
  */
 class CoderCrashBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   coderDispatches = 0;
   constructor(private readonly coderFailures: number) {}
 
@@ -249,6 +253,10 @@ describe("#598 integration — a coder (S2) process crash retries fresh (the #59
  * crash, so the generic layer retries it (#598 replay: connection drops recover).
  */
 class ReviewerCrashBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   reviewerDispatches = 0;
   constructor(private readonly reviewerFailures: number) {}
 
@@ -335,6 +343,10 @@ describe("#598 integration — a transient reviewer non-structured crash recover
  * Everything upstream completes so the run reaches S7.
  */
 class ShipScriptBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   shipDispatches = 0;
   constructor(
     private readonly crashes: number,
@@ -425,6 +437,10 @@ describe("#598 integration — the SHIP role: crash retries, a judged failed ver
  * generic layer does NOT also retry — the reviewer budget is not double-counted.
  */
 class ReviewerAlwaysMalformedBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   reviewerDispatches = 0;
   async findResumeState(): Promise<undefined> {
     return undefined;

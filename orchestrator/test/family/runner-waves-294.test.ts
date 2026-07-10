@@ -46,6 +46,10 @@ import type {
  * this fake only needs to honour each child's S0 gate + run it to success.
  */
 class RecordingChildBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   pushCount = 0;
 
   async findResumeState(): Promise<undefined> {

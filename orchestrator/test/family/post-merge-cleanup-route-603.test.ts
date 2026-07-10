@@ -23,6 +23,10 @@ import type {
 } from "../../src/family/types.js";
 
 class ChildBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   async findResumeState(): Promise<undefined> {
     return undefined;
   }

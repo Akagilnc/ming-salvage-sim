@@ -77,6 +77,20 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     family: "claude",
     strongLeg: true,
   },
+  "opencode-grok": {
+    provider: "opencode",
+    model: "grok-4.3",
+    family: "opencode",
+    strongLeg: true,
+  },
+  // `agy` is retained as the route-facing family/slug for compatibility, but
+  // it is now backed by the real OpenCode executor instead of a non-runnable
+  // CMR-only label.
+  agy: {
+    provider: "opencode",
+    model: "grok-4.3",
+    family: "agy",
+  },
 };
 
 const CMR_REVIEW_LEG_REGISTRY: Readonly<Record<string, ModelFamily>> = {

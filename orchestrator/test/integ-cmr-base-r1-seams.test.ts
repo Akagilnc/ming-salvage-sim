@@ -80,6 +80,10 @@ const WORKTREE: WorktreeHandle = {
  * Base fake Backend. Override runStep / push / writeLedger per test.
  */
 class SpyBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly ledgerCalls: Array<{
     entry: PersistentLedgerEntry;
     stateDir: string;

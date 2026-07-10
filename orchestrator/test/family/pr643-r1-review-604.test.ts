@@ -53,6 +53,10 @@ const STUCK: Escalation = {
 // A single-slice backend whose `escalateIssue` child decision-escalates on its
 // first S2; every other child completes cleanly (mirrors the slice-5 fake).
 class EscalatingChildBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly childLedgers = new Map<number, PersistentLedgerEntry[]>();
   readonly runStepCalls: Array<{ issue: number; step: string }> = [];
   constructor(private readonly escalateIssue: number) {}
