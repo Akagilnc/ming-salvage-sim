@@ -25,6 +25,7 @@ import type {
   IssueMeta,
   IssueSnapshot,
   OnlineReviewLandingSnapshot,
+  PersistentLedgerEntry,
   StepOutput,
   VerifyResult,
   WorkerKind,
@@ -36,7 +37,7 @@ import type { PrReviewSnapshot } from "../src/botPolling.js";
 
 type OnlineLedgerFixture = {
   readonly step?: string;
-  readonly event?: string;
+  readonly event?: PersistentLedgerEntry["event"];
   readonly ts?: string;
   readonly branchHEAD?: string;
   readonly prHead?: string;
@@ -44,16 +45,7 @@ type OnlineLedgerFixture = {
   readonly roundTriggerAt?: string;
   readonly onlineReviewRound?: number;
   readonly fixCommitSha?: string;
-  readonly output?: {
-    readonly kind?: string;
-    readonly status?: string;
-    readonly converged?: boolean;
-    readonly committed?: boolean;
-    readonly alreadySatisfied?: boolean;
-    readonly fixCommitSha?: string;
-    readonly fixMarkedFindingIdentityKeys?: readonly string[];
-    readonly dispositions?: readonly { readonly action?: string }[];
-  };
+  readonly output?: StepOutput;
 };
 
 function onlineLedger(entries: readonly OnlineLedgerFixture[]): readonly OnlineLedgerFixture[] {
@@ -3102,10 +3094,10 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
   });
 
   it("pin r26: onlineReviewResumeHeadKeyFromLedger keys no-fix convergence to S9 branchHEAD", () => {
-    const ledger = [
+    const ledger: OnlineLedgerFixture[] = [
       {
         step: "S7",
-        output: { kind: "ship", status: "pr_opened" },
+        output: { kind: "ship", branch: "feat/600", status: "pr_opened" },
       },
       {
         step: "S9",
@@ -3141,10 +3133,10 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
   });
 
   it("pin r36/r38: without converged marker, ship/fix/verify-row fallback unchanged and does not resume-skip", () => {
-    const ledger = [
+    const ledger: OnlineLedgerFixture[] = [
       {
         step: "S7",
-        output: { kind: "ship", status: "pr_opened" },
+        output: { kind: "ship", branch: "feat/600", status: "pr_opened" },
       },
       {
         step: "S9",
@@ -4426,7 +4418,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       step: "S9",
       output: { kind: "verify", converged: false },
       ts: "2026-07-08T12:00:00.000Z",
-    };
+    } satisfies OnlineLedgerFixture;
     const s10Row = {
       step: "S10",
       output: { kind: "fixer", committed: true, fixCommitSha: FIXER_ENVELOPE_SHA },
@@ -4495,7 +4487,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       step: "S9",
       output: { kind: "verify", converged: false },
       ts: "2026-07-08T12:00:00.000Z",
-    };
+    } satisfies OnlineLedgerFixture;
     const s10Row = {
       step: "S10",
       output: { kind: "fixer", committed: true, fixCommitSha: FIXER_ENVELOPE_SHA },
@@ -4559,7 +4551,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       step: "S9",
       output: { kind: "verify", converged: false },
       ts: "2026-07-08T12:00:00.000Z",
-    };
+    } satisfies OnlineLedgerFixture;
     const retriggerOnly = {
       step: "S10",
       event: "online_review_round_retrigger" as const,
@@ -4567,7 +4559,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       roundTriggerAt: RETRIGGER_TS,
       onlineReviewRound: 2,
       ts: fixTs,
-    };
+    } satisfies OnlineLedgerFixture;
     const ledger = [s9False, retriggerOnly];
 
     expect(slicePostFixVerifyPendingFromMarkerGap(ledger)).toBe(true);
@@ -4796,20 +4788,20 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       step: "S9",
       output: { kind: "verify", converged: false },
       ts: "2026-07-08T12:00:00.000Z",
-    };
+    } satisfies OnlineLedgerFixture;
     const s10Row = {
       step: "S10",
       output: { kind: "fixer", committed: true, fixCommitSha: FIXER_ENVELOPE_SHA },
       branchHEAD: fixSha,
       ts: fixTs,
-    };
+    } satisfies OnlineLedgerFixture;
     const fixCommittedOnly = {
       step: "S10",
       event: "online_review_fix_committed" as const,
       fixCommitSha: fixSha,
       onlineReviewRound: 1,
       ts: fixTs,
-    };
+    } satisfies OnlineLedgerFixture;
     const retrigger = {
       step: "S10",
       event: "online_review_round_retrigger" as const,
@@ -4817,7 +4809,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
       roundTriggerAt: retriggerTs,
       onlineReviewRound: 2,
       ts: retriggerTs,
-    };
+    } satisfies OnlineLedgerFixture;
 
     // crash after fixer S10 row, before fix_committed persist → resume uses S10 row
     const afterS10Only = [s9False, s10Row];
