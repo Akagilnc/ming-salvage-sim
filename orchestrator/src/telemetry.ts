@@ -596,17 +596,13 @@ function cliVersionForSlug(
   slug: string,
 ): string | null {
   if (route === undefined) return null;
-  for (const status of Object.values(route.smoke)) {
-    if (status.state !== "passed") continue;
-  }
   // Prefer smoke keys that end with `:${slug}` (routeSmokeEntries key shape).
   for (const [key, status] of Object.entries(route.smoke)) {
     if (status.state === "passed" && (key === slug || key.endsWith(`:${slug}`))) {
       return status.cliVersion;
     }
   }
-  // Fall back: any passed smoke for the same slug family via value scan is not
-  // possible (status has no slug). Return first passed if only one slug smoked.
+  // Fall back: return the sole passed smoke when only one model was smoked.
   const passed = Object.values(route.smoke).filter(
     (s): s is Extract<typeof s, { state: "passed" }> => s.state === "passed",
   );
