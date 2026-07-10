@@ -73,7 +73,10 @@ import {
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
 import { findingIdentityKey } from "./findings.js";
-import { attachSanitizedFindingFamilies } from "./findingFamilies.js";
+import {
+  attachSanitizedFindingFamilies,
+  normalizeFindingFamiliesWireAliases,
+} from "./findingFamilies.js";
 import {
   sourceAuthFailureStopSummary,
   type StopSummary,
@@ -1938,22 +1941,29 @@ const onlineReviewThreadReplySchema = z
   })
   .strict();
 
-export const verifyOutputSchema = z
-  .object({
-    converged: z.boolean(),
-    findingDispositions: z.array(onlineReviewFindingDispositionSchema).optional(),
-    fixMarkedFindingIdentityKeys: z.array(z.string()).optional(),
-    threadReplies: z.array(onlineReviewThreadReplySchema).optional(),
-    threadsToResolve: z.array(z.string()).optional(),
-    deferredIssueUrls: z.array(z.string()).optional(),
-    terminalState: z
-      .enum(["mergeable", "round_budget_exhausted", "decision_gate_raised"])
-      .optional(),
-    isRecheck: z.boolean().optional(),
-    // #711: malformed families degrade to no brief — never block the verify gate.
-    findingFamilies: z.unknown().optional(),
-  })
-  .strict();
+/** Verify wire schema — normalizes `finding_families` before strict key check. */
+export const verifyOutputSchema = z.preprocess(
+  normalizeFindingFamiliesWireAliases,
+  z
+    .object({
+      converged: z.boolean(),
+      findingDispositions: z
+        .array(onlineReviewFindingDispositionSchema)
+        .optional(),
+      fixMarkedFindingIdentityKeys: z.array(z.string()).optional(),
+      threadReplies: z.array(onlineReviewThreadReplySchema).optional(),
+      threadsToResolve: z.array(z.string()).optional(),
+      deferredIssueUrls: z.array(z.string()).optional(),
+      terminalState: z
+        .enum(["mergeable", "round_budget_exhausted", "decision_gate_raised"])
+        .optional(),
+      isRecheck: z.boolean().optional(),
+      // #711: malformed families degrade to no brief — never block the verify gate.
+      // Accepts camelCase + snake_case top-level via normalizeFindingFamiliesWireAliases.
+      findingFamilies: z.unknown().optional(),
+    })
+    .strict(),
+);
 export const fixerOutputSchema = z
   .object({
     committed: z.boolean(),

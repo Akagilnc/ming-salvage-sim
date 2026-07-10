@@ -346,6 +346,13 @@ export interface FamilyLedgerEntry {
   readonly roundTriggerAt?: string;
   /** Online review loop round (#600 r26): 1-based round at fix/retrigger time. */
   readonly onlineReviewRound?: number;
+  /**
+   * Fix-marked finding identity keys from the verify that drove an
+   * `online_review_fix_committed` marker (#711 prior-round synthesis source).
+   * Family online-review does not persist S9 verify rows; these keys on fix
+   * markers are the durable prior-round data for resume.
+   */
+  readonly fixMarkedFindingIdentityKeys?: readonly string[];
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────

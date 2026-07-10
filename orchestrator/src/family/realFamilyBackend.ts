@@ -115,6 +115,7 @@ import {
   FIX_FOCUS_LANDING_FILE,
   attachSanitizedFindingFamilies,
   formatFixFocusMarkdown,
+  normalizeFindingFamiliesWireAliases,
 } from "../findingFamilies.js";
 import { ONLINE_REVIEW_LANDING_FILE } from "../onlineReviewLoop.js";
 import {
@@ -2058,13 +2059,15 @@ export class RealFamilyBackend implements FamilyBackend {
             2,
           )}\n\`\`\`\n\nDo not invent claimed-fixed identity keys outside this list. If the list is empty, emit empty closure arrays unless this pass reports new findings.`
         : "\n\nRunner-owned prior CMR finding identity keys (#450 closure context): none supplied. Do not claim fixed prior findings; emit empty closure arrays unless this pass reports new findings.";
+    // #711: runner only carries prior-round data — method for synthesis lives in
+    // versioned cmr souls (cmr_completeness / cmr_correctness).
     const priorRoundBlock =
       ctx.priorRoundFindings !== undefined && ctx.priorRoundFindings.length > 0
-        ? `\n\nPrior integrated-CMR rounds from the family ledger (#711 — use for recurring-class synthesis):\n\n\`\`\`json\n${JSON.stringify(
+        ? `\n\nPrior integrated-CMR rounds from the family ledger (#711):\n\n\`\`\`json\n${JSON.stringify(
             ctx.priorRoundFindings,
             null,
             2,
-          )}\n\`\`\`\n\nEmit optional \`findingFamilies\` in your <cmr> verdict when findings share a cross-round pattern.`
+          )}\n\`\`\``
         : "";
     // The focus file is pass-scoped: it pins only the exact review scope and the
     // machine-resolved-child focus. Cross-pass accounting lives in the durable
@@ -3313,10 +3316,14 @@ function isJsonRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<string, unknown> {
-  const dispositions = parsed.priorFindingDispositions;
-  if (!Array.isArray(dispositions)) return parsed;
+  // #711: accept finding_families / recurring_from_rounds wire aliases (spec)
+  // before .strict() schemas reject them as extra keys.
+  const withFamilies = normalizeFindingFamiliesWireAliases(parsed);
+  const base = isJsonRecord(withFamilies) ? withFamilies : parsed;
+  const dispositions = base.priorFindingDispositions;
+  if (!Array.isArray(dispositions)) return base;
   return {
-    ...parsed,
+    ...base,
     priorFindingDispositions: dispositions.map((rawDisposition) => {
       if (
         !isJsonRecord(rawDisposition) ||

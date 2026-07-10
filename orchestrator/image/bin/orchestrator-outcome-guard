@@ -62,6 +62,10 @@ def validate_cmr_outcome(draft: dict) -> None:
         "claimedFixedFindingIdentityKeys",
         "priorFindingDispositions",
         "findings",
+        # #711: accelerator field souls may emit; malformed families are dropped
+        # by the TS sanitizer — never reject the whole CMR verdict here.
+        "findingFamilies",
+        "finding_families",
         "evidencePaths",
     }
     if converged is True:

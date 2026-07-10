@@ -99,7 +99,7 @@ import {
 } from "../onlineReviewLoop.js";
 import {
   priorCmrFindingsFromFamilyLedger,
-  priorOnlineReviewFindingsFromLedger,
+  priorOnlineReviewFindingsFromFamilyLedger,
 } from "../findingFamilies.js";
 import { applyVerifySideEffects } from "../onlineReviewSideEffects.js";
 import {
@@ -134,7 +134,6 @@ import type {
   FindingDisposition,
   FindingFamily,
   ShipResult,
-  StepOutput,
   VerifyResult,
   WorkerLandingPayload,
   WorkerResult,
@@ -1633,6 +1632,9 @@ export async function runFamilyOnlineReviewLoop(input: {
     };
   }
   let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
+  /** #711: last fixer landing's fix-marked keys for durable family ledger prior rounds. */
+  let lastFixMarkedFindingIdentityKeys: ReadonlyArray<string> = [];
+  let lastFixerOnlineReviewRound = loopState.round;
 
   try {
     return await runOnlineReviewLoopStage(
@@ -1759,6 +1761,9 @@ export async function runFamilyOnlineReviewLoop(input: {
     },
     dispatchFixer: async (landing: WorkerLandingPayload) => {
       const round = landing.onlineReviewRound ?? baseCtx.onlineReviewRound ?? 1;
+      lastFixMarkedFindingIdentityKeys =
+        landing.fixMarkedFindingIdentityKeys ?? [];
+      lastFixerOnlineReviewRound = round;
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
         fixerWorkerSpec(input.resolvedRoute),
@@ -1861,6 +1866,10 @@ export async function runFamilyOnlineReviewLoop(input: {
       await recordOnlineReviewFixCommitted(input.familyBackend, {
         familyHeadAfter: sha,
         pr: prUrl,
+        onlineReviewRound: lastFixerOnlineReviewRound,
+        ...(lastFixMarkedFindingIdentityKeys.length > 0
+          ? { fixMarkedFindingIdentityKeys: lastFixMarkedFindingIdentityKeys }
+          : {}),
       });
       return sha;
     },
@@ -1869,14 +1878,18 @@ export async function runFamilyOnlineReviewLoop(input: {
         initialRound: loopState.round,
         initialFixCommitSha: loopState.lastFixSha,
         enrichVerifyLanding: async (landing, round) => {
+          // In-loop accumulation already seeds priorRoundFindings during a
+          // continuous multi-round pass. On resume, seed from family ledger
+          // fix_committed markers (family never writes S9 verify rows).
+          if (
+            landing.priorRoundFindings !== undefined &&
+            landing.priorRoundFindings.length > 0
+          ) {
+            return landing;
+          }
           const ledger = await input.familyBackend.readFamilyLedger();
-          // Family ledger rows are phase-level markers; slice-style S9 outputs may
-          // also be present when the family path reuses single-slice review rows.
-          const priorRoundFindings = priorOnlineReviewFindingsFromLedger(
-            ledger as ReadonlyArray<{
-              readonly step?: string;
-              readonly output?: StepOutput;
-            }>,
+          const priorRoundFindings = priorOnlineReviewFindingsFromFamilyLedger(
+            ledger,
             round,
           );
           return priorRoundFindings.length > 0

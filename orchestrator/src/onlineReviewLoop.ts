@@ -38,6 +38,7 @@ import type {
   OnlineReviewLandingSnapshot,
   OnlineReviewTerminalState,
   PersistentLedgerEntry,
+  PriorRoundFindingSnapshot,
   ShipResult,
   StepOutput,
   VerifyResult,
@@ -1344,6 +1345,12 @@ export async function runOnlineReviewLoopStage(
   let lastFixCommitSha = opts?.initialFixCommitSha;
   /** Consecutive poll cycles blocked only on pending CI (not fixer rounds). */
   let pendingCiPolls = 0;
+  /**
+   * In-loop prior-round findings (#711). Family ledgers only persist
+   * fix/retrigger markers — not S9 verify outputs — so the continuous multi-round
+   * path accumulates snapshots here after each successful fix cycle.
+   */
+  const priorRoundFindingsAccum: PriorRoundFindingSnapshot[] = [];
 
   while (round <= MAX_ONLINE_REVIEW_ROUNDS + 1) {
     let snapshot: PrReviewSnapshot;
@@ -1356,6 +1363,12 @@ export async function runOnlineReviewLoopStage(
       return decisionGateFromDispatchInfra(round, "poll", err);
     }
     let landing = buildOnlineReviewLanding(snapshot, ship, round);
+    if (priorRoundFindingsAccum.length > 0) {
+      landing = {
+        ...landing,
+        priorRoundFindings: priorRoundFindingsAccum.map((s) => ({ ...s })),
+      };
+    }
     if (opts?.enrichVerifyLanding !== undefined) {
       landing = await opts.enrichVerifyLanding(landing, round);
     }
@@ -1547,6 +1560,14 @@ export async function runOnlineReviewLoopStage(
         stopSummary: verifySideEffectFailureStopSummary(err),
       };
     }
+    // #711: record this round's fix-marked keys for the next verify's priorRoundFindings.
+    priorRoundFindingsAccum.push({
+      round,
+      fixMarkedFindingIdentityKeys: fixKeys,
+      ...(verify.findingDispositions !== undefined
+        ? { findingDispositions: verify.findingDispositions }
+        : {}),
+    });
     round += 1;
   }
 

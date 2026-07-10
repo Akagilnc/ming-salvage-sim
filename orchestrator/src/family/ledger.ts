@@ -959,6 +959,10 @@ export async function recordOnlineReviewFixCommitted(
   record: {
     readonly familyHeadAfter: string;
     readonly pr?: string;
+    /** 1-based online-review round that produced this fix (#711 prior rounds). */
+    readonly onlineReviewRound?: number;
+    /** Fix-marked identity keys from the verify that drove this fix (#711). */
+    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
   },
 ): Promise<void> {
   const familyHeadAfter = record.familyHeadAfter.trim();
@@ -967,6 +971,12 @@ export async function recordOnlineReviewFixCommitted(
       "family online_review_fix_committed marker must include a non-empty familyHeadAfter",
     );
   }
+  const fixKeys =
+    record.fixMarkedFindingIdentityKeys !== undefined
+      ? record.fixMarkedFindingIdentityKeys.filter(
+          (k) => typeof k === "string" && k.trim().length > 0,
+        )
+      : [];
   await backend.appendFamilyLedger(
     compact({
       status: "online_review_fix_committed",
@@ -975,6 +985,14 @@ export async function recordOnlineReviewFixCommitted(
       familyHeadAfter,
       ...(record.pr !== undefined && record.pr.trim().length > 0
         ? { pr: record.pr.trim() }
+        : {}),
+      ...(typeof record.onlineReviewRound === "number" &&
+      Number.isSafeInteger(record.onlineReviewRound) &&
+      record.onlineReviewRound >= 1
+        ? { onlineReviewRound: record.onlineReviewRound }
+        : {}),
+      ...(fixKeys.length > 0
+        ? { fixMarkedFindingIdentityKeys: fixKeys }
         : {}),
       ts: new Date().toISOString(),
     }) as FamilyLedgerEntry,
