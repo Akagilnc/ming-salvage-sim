@@ -6307,7 +6307,7 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
         }
         override async dispatchWorker(
           spec: WorkerSpec,
-          _ctx?: DispatchContext,
+          ctx: DispatchContext,
           landing?: WorkerLandingPayload,
         ): Promise<WorkerResult> {
           if (spec.kind === "verify" && landing !== undefined) {
@@ -6324,7 +6324,7 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
               },
             };
           }
-          return super.dispatchWorker(spec, {} as DispatchContext);
+          return super.dispatchWorker(spec, ctx, landing);
         }
       }
       const backend = new OfflineHookBackend();
@@ -6363,7 +6363,7 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
 
         override async dispatchWorker(
           spec: WorkerSpec,
-          ctx?: DispatchContext,
+          ctx: DispatchContext,
           landing?: WorkerLandingPayload,
         ): Promise<WorkerResult> {
           if (spec.kind === "ship") {
@@ -6393,7 +6393,7 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
             }
             return { kind: "completed", output: { kind: "verify", converged: true } };
           }
-          return super.dispatchWorker(spec, ctx!, landing);
+          return super.dispatchWorker(spec, ctx, landing);
         }
       }
 

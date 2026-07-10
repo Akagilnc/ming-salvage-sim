@@ -55,6 +55,7 @@ import type {
   ResumeState,
   DispatchContext,
   OnlineReviewLandingSnapshot,
+  PrMergedEvent,
   StepId,
   StepOutput,
   StepSpec,
@@ -64,6 +65,8 @@ import type {
   WorkerSpec,
   WorktreeHandle,
 } from "../src/types.js";
+
+type PrMergedLedgerFixture = PersistentLedgerEntry & PrMergedEvent;
 
 // ─── shared fixtures ──────────────────────────────────────────────────────────
 
@@ -2584,7 +2587,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
 
   it("#603 P1: crash after S12+pr_merged resumes S11 with durable marker (not truncated away)", async () => {
     const convergedHead = "deadbeefcommitsha";
-    const prior: PersistentLedgerEntry[] = [
+    const prior: Array<PersistentLedgerEntry | PrMergedLedgerFixture> = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -2605,7 +2608,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         onlineReviewRound: 1,
       },
       entry("S12", { kind: "docRelease", released: true }, "session-prior", convergedHead),
-      {
+      ({
         step: "S12",
         event: "pr_merged",
         sessionId: "session-prior",
@@ -2617,7 +2620,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         remoteBranchName: "feat/orchestrator/issue-255",
         mergedHeadOid: convergedHead,
         prHead: convergedHead,
-      },
+      } satisfies PrMergedLedgerFixture),
     ];
     const backend = new DispatchRecordingResumeBackend({
       worktree: WORKTREE,
@@ -2644,7 +2647,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
 
   it("#603 P2: non-terminal S11 parks resumable (re-feed re-dispatches S11, not S8 error)", async () => {
     const convergedHead = "deadbeefcommitsha";
-    const prior: PersistentLedgerEntry[] = [
+    const prior: Array<PersistentLedgerEntry | PrMergedLedgerFixture> = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -2665,7 +2668,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         onlineReviewRound: 1,
       },
       entry("S12", { kind: "docRelease", released: true }, "session-prior", convergedHead),
-      {
+      ({
         step: "S12",
         event: "pr_merged",
         sessionId: "session-prior",
@@ -2677,7 +2680,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         remoteBranchName: "feat/orchestrator/issue-255",
         mergedHeadOid: convergedHead,
         prHead: convergedHead,
-      },
+      } satisfies PrMergedLedgerFixture),
     ];
 
     class NonTerminalCleanupBackend extends DispatchRecordingResumeBackend {
