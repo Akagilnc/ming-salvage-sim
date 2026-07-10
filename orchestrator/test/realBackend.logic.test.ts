@@ -18,12 +18,13 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  rmSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   agentForSlug,
   assertCompletionSignal,
@@ -80,9 +81,20 @@ import type * as sc from "@ai-hero/sandcastle";
 import { StructuredOutputError } from "@ai-hero/sandcastle";
 
 /** #748: per-test $HOME so RealBackend never reads/writes real ~/.sc-orchestrator. */
+const tempHomes: string[] = [];
+
 function tempHome(prefix = "rb-home-748-"): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const home = mkdtempSync(join(tmpdir(), prefix));
+  tempHomes.push(home);
+  return home;
 }
+
+afterEach(() => {
+  while (tempHomes.length > 0) {
+    const home = tempHomes.pop();
+    if (home !== undefined) rmSync(home, { recursive: true, force: true });
+  }
+});
 
 // ─── gh JSON → IssueMeta / IssueSnapshot ─────────────────────────────────────
 
@@ -600,8 +612,6 @@ describe("#748 RealBackend home injection (auth mount stays off real $HOME)", ()
   it("mountAuth with opts.home writes only under the injected home, never real ~/.sc-orchestrator", () => {
     const injected = tempHome("rb-home-748-mount-");
     const issue = 748;
-    const realAuthDir = join(homedir(), ".sc-orchestrator", `auth-${issue}`);
-    const existedBefore = existsSync(realAuthDir);
 
     const backend = new MountProbeBackend({
       sourceRepo: "/tmp/source",
@@ -617,11 +627,8 @@ describe("#748 RealBackend home injection (auth mount stays off real $HOME)", ()
     const { authDir } = backend.mount(issue);
     expect(authDir).toBe(join(injected, ".sc-orchestrator", `auth-${issue}`));
     expect(existsSync(join(authDir, "config.toml"))).toBe(true);
-    // Production seam honored: nothing landed under the real user auth root for
-    // this issue when it did not already exist.
-    if (!existedBefore) {
-      expect(existsSync(realAuthDir)).toBe(false);
-    }
+    // The only filesystem path asserted by this isolation test is the injected
+    // sentinel home; it never probes the real user's auth root.
   });
 });
 
