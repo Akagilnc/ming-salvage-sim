@@ -21,7 +21,7 @@ const GUARD = resolve(process.cwd(), "image/bin/orchestrator-outcome-guard");
 function baseSuccessDraft(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     converged: true,
-    successfulLegs: ["gpt-5.5"],
+    successfulLegs: ["gpt-5.6-sol"],
     claimedFixedFindingIdentityKeys: [],
     priorFindingDispositions: [],
     evidencePaths: ["cmr/review.json"],
@@ -33,7 +33,7 @@ function baseBlockingDraft(overrides: Record<string, unknown> = {}): Record<stri
   return {
     converged: false,
     reason: "blocking findings remain",
-    successfulLegs: ["gpt-5.5"],
+    successfulLegs: ["gpt-5.6-sol"],
     claimedFixedFindingIdentityKeys: [],
     priorFindingDispositions: [],
     findings: [

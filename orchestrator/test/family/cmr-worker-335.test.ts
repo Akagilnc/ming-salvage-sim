@@ -72,13 +72,13 @@ import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
 const realSoulsDir = join(here, "..", "..", "image", "souls");
-const DEFAULT_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
+const DEFAULT_CMR_LEGS = ["opus", "gpt-5.6-sol", "agy"] as const;
 const FROZEN_NORMAL_CMR_REVIEW_LEGS = [
-  { family: "codex", slug: "gpt-5.5" },
+  { family: "codex", slug: "gpt-5.6-sol" },
   { family: "claude", slug: "opus" },
   { family: "agy", slug: "agy" },
 ] as const;
-const STRONG_LEGS = ["opus", "gpt-5.5"] as const;
+const STRONG_LEGS = ["opus", "gpt-5.6-sol"] as const;
 const EMPTY_CMR_CLOSURE = {
   claimedFixedFindingIdentityKeys: [],
   priorFindingDispositions: [],
@@ -146,7 +146,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       `<cmr>${JSON.stringify({
         converged: false,
         reason: "cross-slice field-name mismatch",
-        successfulLegs: ["gpt-5.5"],
+        successfulLegs: ["gpt-5.6-sol"],
         ...VALID_CMR_VERDICT_FIELDS,
         skippedLegs: [
           { slug: "opus", reason: "auth unavailable" },
@@ -158,7 +158,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
     if (o.kind === "verdict") {
       expect(o.converged).toBe(false);
       expect(o.reason).toBe("cross-slice field-name mismatch");
-      expect(o.successfulLegs).toEqual(["gpt-5.5"]);
+      expect(o.successfulLegs).toEqual(["gpt-5.6-sol"]);
     }
   });
 
@@ -425,7 +425,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       const o = parseCmrOutcome(
         `<cmr>${JSON.stringify({
           converged: true,
-          successfulLegs: ["gpt-5.5", "agy"],
+          successfulLegs: ["gpt-5.6-sol", "agy"],
           ...VALID_CMR_VERDICT_FIELDS,
         })}</cmr>`,
       );
@@ -433,7 +433,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       expect(o).toEqual({
         kind: "verdict",
         converged: true,
-        successfulLegs: ["gpt-5.5", "agy"],
+        successfulLegs: ["gpt-5.6-sol", "agy"],
         ...EMPTY_CMR_CLOSURE,
         ...CMR_EVIDENCE,
       });
@@ -448,7 +448,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
             converged: true,
             successfulLegs: ["agy", "opus"],
             ...VALID_CMR_VERDICT_FIELDS,
-            skippedLegs: [{ slug: "gpt-5.5", reason: "auth unavailable" }],
+            skippedLegs: [{ slug: "gpt-5.6-sol", reason: "auth unavailable" }],
           })}</cmr>`,
         ).kind,
       ).toBe("malformed");
@@ -461,7 +461,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         parseCmrOutcome(
           `<cmr>${JSON.stringify({
             converged: true,
-            successfulLegs: ["gpt-5.5", "agy"],
+            successfulLegs: ["gpt-5.6-sol", "agy"],
             ...VALID_CMR_VERDICT_FIELDS,
             skippedLegs: [{ slug: "opus", reason: "auth unavailable" }],
           })}</cmr>`,
@@ -476,7 +476,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
           successfulLegs: ["opus"],
           ...VALID_CMR_VERDICT_FIELDS,
           skippedLegs: [
-            { slug: "gpt-5.5", reason: "auth unavailable" },
+            { slug: "gpt-5.6-sol", reason: "auth unavailable" },
             { slug: "agy", reason: "quota exhausted" },
           ],
         })}</cmr>`,
@@ -485,7 +485,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       if (o.kind === "verdict") {
         expect(o.successfulLegs).toEqual(["opus"]);
         expect(o.skippedLegs).toEqual([
-          { slug: "gpt-5.5", reason: "auth unavailable" },
+          { slug: "gpt-5.6-sol", reason: "auth unavailable" },
           { slug: "agy", reason: "quota exhausted" },
         ]);
       }
@@ -519,7 +519,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
           `<cmr>${JSON.stringify({
             converged: false,
             reason: "seam mismatch",
-            successfulLegs: ["gpt-5.5"],
+            successfulLegs: ["gpt-5.6-sol"],
             ...VALID_CMR_VERDICT_FIELDS,
             skippedLegs: [
               { slug: "opus", reason: "auth unavailable" },
@@ -1483,7 +1483,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
 
     expect(legs).toEqual([
-      { family: "codex", slug: "gpt-5.5" },
+      { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
       { family: "agy", slug: "agy" },
     ]);
@@ -1497,7 +1497,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
 
     expect(legs).toEqual([
-      { family: "codex", slug: "gpt-5.5" },
+      { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
       { family: "agy", slug: "agy" },
     ]);
@@ -1674,7 +1674,7 @@ describe("#378 mountCmrAuth — writes a minimal danger-full-access config, neve
     writeFileSync(
       join(codexDir, "config.toml"),
       [
-        'model = "gpt-5.5"',
+        'model = "gpt-5.6-sol"',
         'sandbox_mode = "workspace-write"',
         'notify = ["/Users/host/notify.app"]',
         '[plugins."github@openai-curated"]',
@@ -1908,7 +1908,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     expect(route).toEqual({
       pass: "correctness",
       reviewLegs: [
-        { family: "codex", slug: "gpt-5.5" },
+        { family: "codex", slug: "gpt-5.6-sol" },
         { family: "claude", slug: "opus" },
         { family: "agy", slug: "agy" },
       ],
@@ -1940,7 +1940,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       reviewLegs: unknown;
     };
     expect(route.reviewLegs).toEqual([
-      { family: "codex", slug: "gpt-5.5" },
+      { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
       { family: "agy", slug: "agy" },
     ]);
@@ -2099,7 +2099,7 @@ describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
-    const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb" });
+    const outcome = await be.run(legacyClaudeCmrSpec(), { familyBase: "fb" });
     expect(outcome.kind).toBe("escalate");
     if (outcome.kind === "escalate") {
       expect(outcome.reason).toMatch(/claude|token|auth/i);
@@ -2121,7 +2121,7 @@ describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
-    const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
+    const res = await be.dispatchWorker(legacyClaudeCmrSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("escalated");
   });
 });
@@ -2130,6 +2130,12 @@ function realRepo335(): string {
   const repo = mkDir("cmr-guard-repo-");
   execFileSync("git", ["init", "-q"], { cwd: repo });
   return repo;
+}
+
+// The live CMR worker is now Codex. Keep this direct legacy spec only to cover
+// the conditional Claude-auth guard for replayed historical worker records.
+function legacyClaudeCmrSpec(): ReturnType<typeof cmrWorkerSpec> {
+  return { ...cmrWorkerSpec(), model: "opus" };
 }
 
 // ═══════ 4f. runCmrWorker reclaims its per-run temp auth dirs (online review r1) ═══════
@@ -2177,7 +2183,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       { codexAuthDir: codexDir, agyDir }, // no claudeToken ⇒ early escalate
     );
 
-    const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb" });
+    const outcome = await be.run(legacyClaudeCmrSpec(), { familyBase: "fb" });
     expect(outcome.kind).toBe("escalate");
     // The finally reclaimed BOTH per-run dirs even though sc.run never ran.
     expect(existsSync(codexDir)).toBe(false);

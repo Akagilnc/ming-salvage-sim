@@ -90,6 +90,7 @@ import {
 import {
   agentForSlug,
   CODER_CODEX_SLUG,
+  effortForLiveOfficer,
   modelFamilyForSlug,
   modelIdForSlug,
   modelIsStrongLeg,
@@ -2158,7 +2159,7 @@ export class RealBackend implements Backend {
       const logDir = mkdtempSync(join(this.opts.home ?? homedir(), "route-smoke-"));
       try {
         const result = await sc.run({
-          agent: agentForSlug(entry.slug),
+          agent: agentForSlug(entry.slug, effortForLiveOfficer(entry.slug, { smokeKey: entry.key })),
           sandbox: this.routeSmokeSandbox(),
           cwd: this.workingRepo,
           promptFile: join(this.opts.promptsDir, "route-smoke.md"),
@@ -2786,7 +2787,7 @@ export class RealBackend implements Backend {
     // so the dir is a valid mount even when codex auth was absent.
     writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"), this.opts.codexFast);
     // The Claude token is BEST-EFFORT (#384 codex P2). The coder step now runs
-    // Codex (model gpt-5.5), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
+    // Codex (model gpt-5.6-terra), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
     // with Codex auth but no `~/.sc-claude-token` must still start the worker — a
     // missing token degrades the Claude leg (undefined) rather than throwing and
     // blocking the Codex coder before it can start (mirrors ShipAuth's optional
@@ -2907,7 +2908,7 @@ export class RealBackend implements Backend {
       [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
-    // Inject the Claude token only when present: a Codex coder (model gpt-5.5)
+    // Inject the Claude token only when present: a Codex coder (model gpt-5.6-terra)
     // needs no CLAUDE_CODE_OAUTH_TOKEN, and an empty/undefined value would defeat
     // the in-container Claude auth on a Codex-only host (#384 codex P2).
     if (auth.claudeToken) {
@@ -3295,9 +3296,9 @@ export class RealBackend implements Backend {
       cwd: worktree.path,
       sandbox: this.box(issueNumber, spec, options),
       // The build worker's CLI is the spec's model slug → provider (the S2 coder
-      // runs on Codex gpt-5.5; a claude slug stays claudeCode). agentForSlug keeps
+      // runs on Codex gpt-5.6-terra; a claude slug stays claudeCode). agentForSlug keeps
       // the "model slug → baked CLI" #244 mapping unit-testable.
-      agent: agentForSlug(spec.model),
+      agent: agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec)),
       // #7 maxIter: enforce the WITHIN-STEP Ralph retry budget = StepSpec.maxIter
       // (reviewer = 1 single pass; coder/fix > 1). Hitting it ends THE STEP
       // normally — route() continues — it is NEVER the orchestrator giving up
@@ -3354,8 +3355,8 @@ export class RealBackend implements Backend {
         cwd: worktree.path,
         sandbox: this.box(issueNumber, spec, options),
         // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
-        // codex for the gpt-5.5 coder, claudeCode for a claude slug).
-        agent: agentForSlug(spec.model),
+        // codex for the gpt-5.6-terra coder, claudeCode for a claude slug).
+        agent: agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec)),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
         completionSignal: spec.completionSignal,
@@ -3620,7 +3621,7 @@ export class RealBackend implements Backend {
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: worktree.path,
           sandbox: this.shipSandbox(auth, outcomeLanding),
-          agent: agentForSlug(spec.model),
+          agent: agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec)),
           // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
           // container (用户 note); maxIter is the within-worker budget. A genuine block
           // is the worker's `<ship>` escalate verdict, not the iteration limit.

@@ -451,6 +451,64 @@ describe("#604 slice 5 (F8) — early-exit re-entry reports the unanswered parke
   });
 });
 
+// ─── #706: early-exit parked-child path pins ledger-merged sibling as already_done ─
+//
+// F8 above covers the unanswered parked child → escalated (and a never-run sibling
+// → skipped), but has no ledger-merged sibling. The early-exit branch at
+// runner.ts ~1048 maps `ledgerMerged` children to `"already_done"`; without a pin
+// that asserts the literal, mutating it back to `"merged"` leaves the suite green.
+// Scenario: re-entry with an unanswered `child_decision_parked` row AND a sibling
+// that merged in a prior invocation → the merged sibling must read `already_done`.
+
+describe("#706 — early-exit parked-child path reports ledger-merged sibling as already_done", () => {
+  it("re-entry with unanswered parked child + prior-merged sibling → sibling is already_done", async () => {
+    // Seed durable ledger truth from a prior invocation: #10 merged, #11 parked
+    // unanswered. Re-entry hits the early-exit path (unanswered.length > 0) before
+    // the wave loop — no child is re-run this invocation.
+    const singleSliceBackend = new EscalatingChildBackend(11);
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      {
+        status: "merged",
+        event: "merged",
+        childIssue: 10,
+      } as FamilyLedgerEntry,
+      {
+        status: "child_decision_parked",
+        event: "child_decision_parked",
+        escalationKind: "decision",
+        childIssue: 11,
+        reason: "design ambiguity on field X",
+        diagnosis:
+          "product decision required before implementation can proceed",
+      } as FamilyLedgerEntry,
+    );
+
+    const epic: FamilyEpic = {
+      issue: 706,
+      children: [
+        { issue: 10, blockedBy: [] },
+        { issue: 11, blockedBy: [] },
+      ],
+    };
+    const result = await runFamily({
+      epic,
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/706-base",
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(result.children.find((c) => c.issue === 11)?.status).toBe("escalated");
+    // #706 pin: early-exit ledgerMerged branch (runner.ts ~1048) must use the
+    // FamilyChildStatus contract literal — prior-run proven ⇒ already_done, not
+    // merged (this-invocation merge).
+    expect(result.children.find((c) => c.issue === 10)?.status).toBe("already_done");
+    // Early-exit: no wave work this invocation.
+    expect(singleSliceBackend.runStepCalls).toHaveLength(0);
+  });
+});
+
 // ─── test 7 (P1-b): a family answer with MISSING resume state fails closed ───────
 //
 // #604 correctness r1 (P1-b): when a human answered a parked child's decision gate

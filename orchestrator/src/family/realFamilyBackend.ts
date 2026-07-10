@@ -71,6 +71,7 @@ import {
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
 import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
+import { effortForLiveOfficer } from "../modelRegistry.js";
 import {
   agentForSlug,
   assertCompletionSignal,
@@ -547,7 +548,7 @@ export class RealFamilyBackend implements FamilyBackend {
    * without spinning a real `sc.run`.
    */
   protected agentForSpec(spec: WorkerSpec): sc.AgentProvider {
-    return agentForSlug(spec.model);
+    return agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec));
   }
 
   // ─────────────────────────── family ledger ───────────────────────────

@@ -691,7 +691,8 @@ describe("realBackend WORKER_IDLE_TIMEOUT_SECONDS (idle-timeout disable)", () =>
 
 describe("realBackend modelIdForSlug", () => {
   it("maps supported slugs to baked CLI model ids through the registry", () => {
-    expect(modelIdForSlug("gpt-5.5")).toBe("gpt-5.5");
+    expect(modelIdForSlug("gpt-5.6-terra")).toBe("gpt-5.6-terra");
+    expect(modelIdForSlug("gpt-5.6-sol")).toBe("gpt-5.6-sol");
     expect(modelIdForSlug("sonnet")).toBe("claude-sonnet-4-6");
     expect(modelIdForSlug("opus")).toBe("claude-opus-4-8");
   });
@@ -716,10 +717,15 @@ describe("realBackend resolveModelSlug", () => {
   });
 
   it("resolves existing slugs to the same provider/model/options as the pre-registry mapping", () => {
-    expect(resolveModelSlug("gpt-5.5")).toEqual({
+    expect(resolveModelSlug("gpt-5.6-terra")).toEqual({
       provider: "codex",
-      model: "gpt-5.5",
-      options: { effort: "high" },
+      model: "gpt-5.6-terra",
+      options: { effort: "low" },
+    });
+    expect(resolveModelSlug("gpt-5.6-sol")).toEqual({
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      options: { effort: "medium" },
     });
     expect(resolveModelSlug("sonnet")).toEqual({
       provider: "claudeCode",
@@ -729,10 +735,11 @@ describe("realBackend resolveModelSlug", () => {
       provider: "claudeCode",
       model: "claude-opus-4-8",
     });
-    expect(modelFamilyForSlug("gpt-5.5")).toBe("codex");
+    expect(modelFamilyForSlug("gpt-5.6-terra")).toBe("codex");
     expect(modelFamilyForSlug("sonnet")).toBe("claude");
     expect(modelFamilyForSlug("opus")).toBe("claude");
-    expect(modelIsStrongLeg("gpt-5.5")).toBe(true);
+    expect(modelIsStrongLeg("gpt-5.6-terra")).toBe(true);
+    expect(modelIsStrongLeg("gpt-5.6-sol")).toBe(true);
     expect(modelIsStrongLeg("sonnet")).toBe(false);
     expect(modelIsStrongLeg("opus")).toBe(true);
   });
@@ -745,11 +752,11 @@ describe("realBackend resolveModelSlug", () => {
 // ─── agentForSlug (model slug → baked-in CLI provider) ────────────────────────
 
 describe("realBackend agentForSlug", () => {
-  it("resolves the codex coder slug to the codex provider (gpt-5.5)", () => {
-    // The S2 build worker (coder) runs on Codex gpt-5.5 — agentForSlug returns the
+  it("resolves each ratified 5.6 officer through the Codex provider", () => {
+    // The S2 build worker (coder) runs on Codex gpt-5.6-terra — agentForSlug returns the
     // sandcastle codex provider (`.name === "codex"`), NOT claudeCode.
-    const provider = agentForSlug("gpt-5.5");
-    expect(provider.name).toBe("codex");
+    expect(agentForSlug("gpt-5.6-terra").name).toBe("codex");
+    expect(agentForSlug("gpt-5.6-sol").name).toBe("codex");
   });
   it("resolves the claude slugs to the claudeCode provider (reviewer/ship)", () => {
     // opus (reviewer / per-slice review subagent) and sonnet (the ship worker) stay
@@ -1208,7 +1215,7 @@ describe("RealBackend reviewer output contract", () => {
     id: "S6",
     role: "reviewer",
     promptFile: "reviewer_review.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     completionSignal: "REVIEWER_STEP_COMPLETE",
     maxIter: 1,
     soul: "READ-ONLY",
@@ -1432,7 +1439,7 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     id: "S9",
     role: "verify",
     promptFile: "dummy.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     completionSignal: "VERIFY_COMPLETE",
     maxIter: 1,
     soul: "READ-ONLY",
@@ -1442,7 +1449,7 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     id: "S10",
     role: "fixer",
     promptFile: "dummy.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     completionSignal: "FIXER_COMPLETE",
     maxIter: 1,
     soul: "coder",
@@ -1452,7 +1459,7 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     id: "S11",
     role: "cleanup",
     promptFile: "dummy.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     completionSignal: "CLEANUP_COMPLETE",
     maxIter: 1,
     soul: "READ-ONLY",
@@ -1462,7 +1469,7 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     id: "S12",
     role: "docRelease",
     promptFile: "dummy.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     completionSignal: "DOCRELEASE_COMPLETE",
     maxIter: 1,
     soul: "READ-ONLY",
@@ -1615,7 +1622,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     id: "S2",
     role: "coder",
     promptFile: "coder_implement.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     completionSignal: "CODER_STEP_COMPLETE",
     maxIter: 5,
     soul: "coder",
@@ -1625,7 +1632,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     id: "S3",
     role: "reviewer",
     promptFile: "reviewer_review.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     completionSignal: "REVIEWER_STEP_COMPLETE",
     maxIter: 1,
     soul: "READ-ONLY",
