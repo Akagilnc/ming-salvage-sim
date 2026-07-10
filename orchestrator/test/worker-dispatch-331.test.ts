@@ -17,6 +17,7 @@ import type {
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
+  OnlineReviewLandingSnapshot,
   StepOutput,
   StepSpec,
   WorkerOutcomeLandingFile,
@@ -111,7 +112,7 @@ class DispatchBackend implements Backend {
     repo: string;
     prUrl: string;
     pollCount: number;
-  }) {
+  }): Promise<OnlineReviewLandingSnapshot> {
     void input;
     return {
       prUrl: "pr://slice/offline-331",

@@ -1709,6 +1709,7 @@ module_scope:
         slots: {} as never,
         legCollections: { cmrReview: ["agy"] } as never,
         tightFamilyViolations: [],
+        smoke: {},
       },
     });
 
@@ -1970,7 +1971,6 @@ module_scope:
         reason: "cross_module_defer",
         summary: "old material defer",
         repairHint: "old follow-up",
-        targetModule: "old-module",
       },
     });
 

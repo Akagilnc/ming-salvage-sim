@@ -154,9 +154,9 @@ function cleanSuccessTail(spec: WorkerSpec): WorkerResult {
  */
 function cmrClosureSpec(): WorkerSpec {
   return {
-    id: "cmr-completeness",
+    id: "S3",
     kind: "cmr",
-    role: "cmr",
+    role: "reviewer",
     host: "claude",
     session: "fresh",
     contextRetention: "retain",
@@ -176,9 +176,9 @@ function cmrClosureSpec(): WorkerSpec {
  */
 function familyShipSpec(): WorkerSpec {
   return {
-    id: "family-ship",
+    id: "S7",
     kind: "ship",
-    role: "ship",
+    role: "coder",
     host: "claude",
     session: "fresh",
     contextRetention: "retain",

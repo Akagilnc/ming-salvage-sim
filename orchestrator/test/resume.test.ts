@@ -54,6 +54,8 @@ import type {
   PersistentLedgerEntry,
   ResumeState,
   DispatchContext,
+  OnlineReviewLandingSnapshot,
+  PrMergedEvent,
   StepId,
   StepOutput,
   StepSpec,
@@ -63,6 +65,8 @@ import type {
   WorkerSpec,
   WorktreeHandle,
 } from "../src/types.js";
+
+type PrMergedLedgerFixture = PersistentLedgerEntry & PrMergedEvent;
 
 // ─── shared fixtures ──────────────────────────────────────────────────────────
 
@@ -298,7 +302,10 @@ class ResumeBackend implements Backend {
     this.calls.push(`writeSnapshot(${worktree.branch}, #${snapshot.number})`);
   }
 
-  async runStep(spec: StepSpec): Promise<StepOutput> {
+  async runStep(
+    spec: StepSpec,
+    _worktree: WorktreeHandle,
+  ): Promise<StepOutput> {
     this.calls.push(`runStep(${spec.id})`);
     this.runStepIds.push(spec.id);
     if (spec.role === "reviewer") {
@@ -332,7 +339,7 @@ class ResumeBackend implements Backend {
     repo: string;
     prUrl: string;
     pollCount: number;
-  }) {
+  }): Promise<OnlineReviewLandingSnapshot> {
     void input;
     return {
       prUrl: "pr://slice/offline-255",
@@ -420,7 +427,15 @@ class ReviewLoopResumeBackend extends DispatchRecordingResumeBackend {
       if (this.verifyDispatchCount === 1) {
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true } satisfies VerifyResult,
+          output: {
+            kind: "verify",
+            converged: true,
+            ...(landing?.fixMarkedFindingIdentityKeys?.length
+              ? { isRecheck: true }
+              : {}),
+            fixMarkedFindingIdentityKeys:
+              landing?.fixMarkedFindingIdentityKeys ?? [],
+          } satisfies VerifyResult,
         };
       }
       return {
@@ -429,6 +444,8 @@ class ReviewLoopResumeBackend extends DispatchRecordingResumeBackend {
           kind: "verify",
           converged: true,
           isRecheck: true,
+          fixMarkedFindingIdentityKeys:
+            landing?.fixMarkedFindingIdentityKeys ?? [],
           threadsToResolve: ["100"],
         } satisfies VerifyResult,
       };
@@ -438,13 +455,16 @@ class ReviewLoopResumeBackend extends DispatchRecordingResumeBackend {
 }
 
 class MissingCoderTagBackend extends ResumeBackend {
-  override async runStep(spec: StepSpec): Promise<StepOutput> {
+  override async runStep(
+    spec: StepSpec,
+    worktree: WorktreeHandle,
+  ): Promise<StepOutput> {
     if (spec.id === "S2") {
       throw new Error(
         "realBackend: coder step stdout carried no <coder>…</coder> tag — the coder must emit its structured result in a <coder> tag.",
       );
     }
-    return super.runStep(spec);
+    return super.runStep(spec, worktree);
   }
 }
 
@@ -530,9 +550,12 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     expect(backend.runStepIds).toEqual(["S3"]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
     expect(backend.pushCount).toBe(1);
-    // S0/S1 are not re-executed either (no re-gate, no re-cut, no re-snapshot).
-    expect(backend.calls).not.toContain("fetchIssueMeta(255)");
+    // S0 gate / S1 load are NOT re-executed (no re-cut, no re-snapshot write).
+    // #767 may re-fetch issue meta/body for Coder-Rec on the resume path.
     expect(backend.calls).not.toContain("prepareWorktree(255, main)");
+    expect(backend.calls).not.toContain(
+      `writeSnapshot(${WORKTREE.branch}, #255)`,
+    );
 
     // The run completes from the resumed point.
     expect(result.status).toBe("success");
@@ -1399,9 +1422,12 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     // Identical reuse/preserve behaviour as the crash-resume path (#661).
     expect(backend.prepareWorktreeCount).toBe(0);
     expect(backend.cleanResidueCount).toBe(0);
-    // S0 gate / S1 load are NOT re-run.
-    expect(backend.calls).not.toContain("fetchIssueMeta(255)");
-    expect(backend.calls).not.toContain("fetchIssueSnapshot(255)");
+    // S0 gate / S1 load are NOT re-run (no re-cut / no snapshot write).
+    // #767 may re-fetch issue meta/body for Coder-Rec on the resume path.
+    expect(backend.calls).not.toContain("prepareWorktree(255, main)");
+    expect(backend.calls).not.toContain(
+      `writeSnapshot(${WORKTREE.branch}, #255)`,
+    );
   });
 
   it("AC4: resume carries the ledger's recorded sessionId into resumeSession", async () => {
@@ -1416,7 +1442,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
   });
 
   it("AC2: crash inside review-loop (ledger truncated at S10) resumes at S9 re-verify — prior S9/S10 skipped, run completes verify→S12→S11→S8 (F3)", async () => {
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -1428,7 +1454,13 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         status: "pr_opened",
         pr: "pr://slice/offline-255",
       }),
-      entry("S9", { kind: "verify", converged: false }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
       entry("S10", {
         kind: "fixer",
         committed: true,
@@ -1437,7 +1469,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       // truncated before fresh re-verify / S11; no S8 yet — S9 false → S10 is the
       // legal loop-back topology (not converged:true then fixer).
     ];
-    const backend = new DispatchRecordingResumeBackend({
+    const backend = new ReviewLoopResumeBackend({
       worktree: WORKTREE,
       stateDir: STATE_DIR,
       ledger: prior,
@@ -1471,7 +1503,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
   it("AC2 r7: crash after S9(converged:false) resumes S10 with reconstructed landing (#600 F1)", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "resume-snapshot-"));
     writeResumeOnlineReviewSnapshot(stateDir);
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -1505,6 +1537,9 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     const fixerLanding = backend.dispatchLandings[fixerIdx];
     expect(fixerLanding?.onlineReviewSnapshot).toBeDefined();
     expect(fixerLanding?.fixMarkedFindingIdentityKeys).toEqual(["f:1"]);
+    expect(fixerLanding?.fixMarkedFindingThreads).toEqual([
+      { identityKey: "f:1", threadId: "100" },
+    ]);
     expect(
       backend.dispatchContexts.find((_, i) => backend.dispatchSpecs[i]?.id === "S10")
         ?.onlineReviewRound,
@@ -1514,7 +1549,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
   it("pin r29: crash after retrigger-only marker resumes S9 with round (no fix SHA)", async () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const retriggerTs = "2026-07-08T13:00:00.000Z";
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -1567,7 +1602,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
   it("pin r30: crash after fix_committed only (before retrigger) resumes S9 not fixer", async () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const fixTs = "2026-07-08T12:30:00.000Z";
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -1616,11 +1651,162 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
   });
 
-  it("pin online R3 Codex P1: retrigger fail after fix_committed parks escalate (not S8 error)", async () => {
-    const livePr = "https://github.com/o/r/pull/255";
-    const stateDir = mkdtempSync(join(tmpdir(), "resume-retrigger-fail-"));
+  it("#743 R5: single-slice legacy key-only recheck resume fails closed before merge", async () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-r5-key-only-"));
     writeResumeOnlineReviewSnapshot(stateDir);
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        // Old #743 ledger shape carried the authorized key but no pair binding.
+        // Resume must fail closed rather than treating this stale row as mergeable.
+        isRecheck: true,
+        fixMarkedFindingIdentityKeys: ["f:1"],
+      }),
+      {
+        step: "S10" as const,
+        event: "online_review_fix_committed" as const,
+        fixCommitSha: fixSha,
+        onlineReviewRound: 1,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: "2026-07-08T12:30:00.000Z",
+      },
+    ];
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.stopSummary).toEqual(
+      expect.objectContaining({ reason: "contract_drift" }),
+    );
+    expect(backend.dispatchSpecs.filter((s) => s.id === "S11")).toHaveLength(0);
+  });
+
+  it("#743 R6: single-slice resume with empty last-S9 rebuild fails closed on bare converge", async () => {
+    const fixSha = "fixsha4444444444444444444444444444444444";
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-r6-empty-auth-"));
+    writeResumeOnlineReviewSnapshot(stateDir);
+    const prior: PersistentLedgerEntry[] = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+      }),
+      {
+        step: "S10" as const,
+        event: "online_review_fix_committed" as const,
+        fixCommitSha: fixSha,
+        onlineReviewRound: 1,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: "2026-07-08T12:30:00.000Z",
+      },
+    ];
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.stopSummary).toEqual(
+      expect.objectContaining({ reason: "contract_drift" }),
+    );
+    expect(backend.dispatchSpecs.filter((s) => s.id === "S11")).toHaveLength(0);
+  });
+
+  it("#743 R6: single-slice fix_committed authorization pairs survive key-only last-S9 resume", async () => {
+    const fixSha = "fixsha5555555555555555555555555555555555";
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-r6-marker-auth-"));
+    writeResumeOnlineReviewSnapshot(stateDir);
+    const prior: PersistentLedgerEntry[] = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        // Key-only recheck shape — threads must come from the fix_committed marker.
+        isRecheck: true,
+        fixMarkedFindingIdentityKeys: ["f:1"],
+      }),
+      {
+        step: "S10" as const,
+        event: "online_review_fix_committed" as const,
+        fixCommitSha: fixSha,
+        onlineReviewRound: 1,
+        fixMarkedFindingIdentityKeys: ["f:1"],
+        fixMarkedFindingThreads: [{ identityKey: "f:1", threadId: "100" }],
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: "2026-07-08T12:30:00.000Z",
+      },
+    ];
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    const verifyIdx = backend.dispatchSpecs.findIndex((s) => s.id === "S9");
+    expect(verifyIdx).toBeGreaterThanOrEqual(0);
+    expect(backend.dispatchLandings[verifyIdx]?.fixMarkedFindingIdentityKeys).toEqual([
+      "f:1",
+    ]);
+    expect(backend.dispatchLandings[verifyIdx]?.fixMarkedFindingThreads).toEqual([
+      { identityKey: "f:1", threadId: "100" },
+    ]);
+  });
+
+  it("#743 R6: single-slice continuous path persists (key,thread) on fix_committed", async () => {
+    const livePr = "https://github.com/o/r/pull/255";
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-r6-persist-auth-"));
+    writeResumeOnlineReviewSnapshot(stateDir);
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -1648,6 +1834,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         prNumber: 255,
         prUrl: input.prUrl,
         headOid: input.roundTrigger.headOid,
+        roundTriggerUsed: input.roundTrigger,
         pollCount: 1,
         bots: {
           coderabbit: { state: "complete", findingCount: 0 },
@@ -1657,6 +1844,103 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         },
         threads: [],
         checkRuns: [],
+        checkRunsEmptyMeans: "converged",
+        totalFindingCount: 0,
+        quiescent: true,
+      }));
+    const retriggerSpy = vi
+      .spyOn(onlineReviewLoop, "retriggerBotsAndPoll")
+      .mockImplementation(() => {
+        throw new Error("retriggerBotsAndPoll: gh api failed");
+      });
+
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
+    vi.stubEnv("ORCHESTRATOR_REPO", "o/r");
+
+    try {
+      const backend = new ReviewLoopResumeBackend({
+        worktree: WORKTREE,
+        stateDir,
+        ledger: prior,
+      });
+      backend.verifyDispatchCount = 0;
+      const origDispatch = backend.dispatchWorker.bind(backend);
+      backend.dispatchWorker = async (spec, ctx, landing) => {
+        if (spec.kind === "fixer") {
+          backend.dispatchSpecs.push(spec);
+          backend.dispatchContexts.push(ctx);
+          backend.dispatchLandings.push(landing);
+          return {
+            kind: "completed",
+            output: {
+              kind: "fixer",
+              committed: true,
+              fixCommitSha: "fixsha1111111111111111111111111111111111",
+            },
+          };
+        }
+        return origDispatch(spec, ctx, landing);
+      };
+
+      await runOrchestrator({ issueNumber: 255, backend });
+
+      const marker = backend.ledgerWrites.find(
+        (e) => e.event === "online_review_fix_committed",
+      );
+      expect(marker).toMatchObject({
+        fixMarkedFindingIdentityKeys: ["f:1"],
+        fixMarkedFindingThreads: [{ identityKey: "f:1", threadId: "100" }],
+      });
+    } finally {
+      retriggerSpy.mockRestore();
+      pollSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("pin online R3 Codex P1: retrigger fail after fix_committed parks escalate (not S8 error)", async () => {
+    const livePr = "https://github.com/o/r/pull/255";
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-retrigger-fail-"));
+    writeResumeOnlineReviewSnapshot(stateDir);
+    const prior: PersistentLedgerEntry[] = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: livePr,
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+    ];
+
+    const pollSpy = vi
+      .spyOn(onlineReviewLoop, "waitForBotQuiescence")
+      .mockImplementation(async (_sh, input) => ({
+        repo: "o/r",
+        prNumber: 255,
+        prUrl: input.prUrl,
+        headOid: input.roundTrigger.headOid,
+        roundTriggerUsed: input.roundTrigger,
+        pollCount: 1,
+        bots: {
+          coderabbit: { state: "complete", findingCount: 0 },
+          sourcery: { state: "complete", findingCount: 0 },
+          codex: { state: "complete", findingCount: 0 },
+          gemini: { state: "complete", findingCount: 0 },
+        },
+        threads: [],
+        checkRuns: [],
+        checkRunsEmptyMeans: "converged",
         totalFindingCount: 0,
         quiescent: true,
       }));
@@ -1781,6 +2065,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         prNumber: 255,
         prUrl: input.prUrl,
         headOid: input.roundTrigger.headOid,
+        roundTriggerUsed: input.roundTrigger,
         pollCount: 1,
         bots: {
           coderabbit: { state: "complete", findingCount: 0 },
@@ -1790,6 +2075,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         },
         threads: [],
         checkRuns: [],
+        checkRunsEmptyMeans: "converged",
         totalFindingCount: 0,
         quiescent: true,
       }));
@@ -1808,7 +2094,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     let autoMergeSpy: ReturnType<typeof stubAutoMergeMergedForLiveReviewTests> | undefined;
     try {
       autoMergeSpy = stubAutoMergeMergedForLiveReviewTests(livePr, fixSha);
-      const fixGapPrior = [
+      const fixGapPrior: PersistentLedgerEntry[] = [
         ...reviewLoopBase,
         {
           step: "S10",
@@ -1861,7 +2147,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       ).toBe(2);
       expect(fixGapBackend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
 
-      const retriggerPrior = [
+      const retriggerPrior: PersistentLedgerEntry[] = [
         ...reviewLoopBase,
         {
           step: "S10",
@@ -1944,7 +2230,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         ],
       }),
     ];
-    const happyPrior = [
+    const happyPrior: PersistentLedgerEntry[] = [
       ...reviewLoopBase,
       {
         step: "S10",
@@ -1989,6 +2275,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         prNumber: 255,
         prUrl: input.prUrl,
         headOid: input.roundTrigger.headOid,
+        roundTriggerUsed: input.roundTrigger,
         pollCount: 1,
         bots: {
           coderabbit: { state: "complete", findingCount: 0 },
@@ -1998,6 +2285,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         },
         threads: [],
         checkRuns: [],
+        checkRunsEmptyMeans: "converged",
         totalFindingCount: 0,
         quiescent: true,
       }));
@@ -2054,7 +2342,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     const fixTs = "2026-07-08T12:30:00.000Z";
     const stateDir = mkdtempSync(join(tmpdir(), "resume-codex-p2-"));
     writeResumeOnlineReviewSnapshot(stateDir);
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -2137,7 +2425,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     const fixSha = "fixsha1111111111111111111111111111111111";
     const retriggerTs = "2026-07-08T13:00:00.000Z";
     const fixTs = "2026-07-08T12:30:00.000Z";
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -2199,7 +2487,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
 
   it("AC2 r7: crash after S10 resumes S9 with round+fix SHA from full ledger (#600 F1)", async () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -2248,7 +2536,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
   });
 
   it("pin r26: crash after converged marker resumes into S12 (skips re-verify)", async () => {
-    const prior = [
+    const prior: PersistentLedgerEntry[] = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -2296,7 +2584,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
 
   it("#603 P1: crash after S12+pr_merged resumes S11 with durable marker (not truncated away)", async () => {
     const convergedHead = "deadbeefcommitsha";
-    const prior: PersistentLedgerEntry[] = [
+    const prior: Array<PersistentLedgerEntry | PrMergedLedgerFixture> = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -2317,7 +2605,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         onlineReviewRound: 1,
       },
       entry("S12", { kind: "docRelease", released: true }, "session-prior", convergedHead),
-      {
+      ({
         step: "S12",
         event: "pr_merged",
         sessionId: "session-prior",
@@ -2329,7 +2617,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         remoteBranchName: "feat/orchestrator/issue-255",
         mergedHeadOid: convergedHead,
         prHead: convergedHead,
-      },
+      } satisfies PrMergedLedgerFixture),
     ];
     const backend = new DispatchRecordingResumeBackend({
       worktree: WORKTREE,
@@ -2356,7 +2644,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
 
   it("#603 P2: non-terminal S11 parks resumable (re-feed re-dispatches S11, not S8 error)", async () => {
     const convergedHead = "deadbeefcommitsha";
-    const prior: PersistentLedgerEntry[] = [
+    const prior: Array<PersistentLedgerEntry | PrMergedLedgerFixture> = [
       entry("S0"),
       entry("S1"),
       entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
@@ -2377,7 +2665,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         onlineReviewRound: 1,
       },
       entry("S12", { kind: "docRelease", released: true }, "session-prior", convergedHead),
-      {
+      ({
         step: "S12",
         event: "pr_merged",
         sessionId: "session-prior",
@@ -2389,7 +2677,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         remoteBranchName: "feat/orchestrator/issue-255",
         mergedHeadOid: convergedHead,
         prHead: convergedHead,
-      },
+      } satisfies PrMergedLedgerFixture),
     ];
 
     class NonTerminalCleanupBackend extends DispatchRecordingResumeBackend {

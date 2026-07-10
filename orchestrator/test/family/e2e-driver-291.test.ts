@@ -200,7 +200,7 @@ class E2EFamilyBackend extends RealFamilyBackend {
   readonly cmrCalls: IntegratedCmrRequest[] = [];
   readonly prCalls: OpenFamilyPrRequest[] = [];
   readonly shipCalls: string[] = [];
-  protected override runVerifyCommands(req: FamilyVerifyRequest): void {
+  protected override async runVerifyCommands(req: FamilyVerifyRequest): Promise<void> {
     this.verifyCalls.push(req); // green: no throw, no real npx.
   }
   // #335: the integrated cmr is a CONTAINER cmr worker via dispatchWorker →
@@ -215,7 +215,12 @@ class E2EFamilyBackend extends RealFamilyBackend {
       familyBase: ctx.familyBase!,
       ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
     });
-    return { kind: "verdict", converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
+    return {
+      kind: "verdict",
+      converged: true,
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      evidencePaths: ["cmr/review-summary.json"],
+    };
   }
   // #336: 止于 PR is now a CONTAINER ship WORKER (gstack-ship) via dispatchWorker →
   // runShipWorker, NOT the inline openFamilyPr. Override the worker seam (no real

@@ -34,6 +34,8 @@ import type {
   FamilyEpic,
   FamilyLedgerEntry,
   MergeRequest,
+  VerifyFamilyShippedPrRequest,
+  VerifyFamilyShippedPrResult,
 } from "../../src/family/types.js";
 
 const createdTempDirs: string[] = [];
@@ -119,8 +121,8 @@ class FakeFamilyBackend implements FamilyBackend {
     return this.workingRepo;
   }
   verifyFamilyShippedPr?: (
-    req: unknown,
-  ) => Promise<{ ok: boolean; reason?: string }>;
+    _req: VerifyFamilyShippedPrRequest,
+  ) => Promise<VerifyFamilyShippedPrResult>;
   dispatchWorker?: (spec: any, ctx?: any) => Promise<any>;
 }
 
