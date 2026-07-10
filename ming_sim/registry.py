@@ -510,7 +510,7 @@ def create_minister_agent(
         if use_army_tool:
             army_roster = context.db.army_roster(index_only=True)
         else:
-            army_roster = context.db.army_roster()
+            army_roster = context.db.army_roster(qualitative_equipment=True)
         last_gazette = build_last_gazette_brief(context)
         memory_brief = build_memory_brief(character, context)
         secret_brief = build_secret_order_brief(character, context)

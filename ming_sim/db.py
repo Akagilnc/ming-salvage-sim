@@ -5297,8 +5297,13 @@ class GameDB:
             f"状态：{row['status']}"
         )
 
-    def army_roster(self, filter_names: Optional[List[str]] = None, index_only: bool = False) -> str:
-        """全军名册。filter_names 非空则只返回指定军队；index_only=True 只返回军名+欠饷+状态索引。"""
+    def army_roster(
+        self,
+        filter_names: Optional[List[str]] = None,
+        index_only: bool = False,
+        qualitative_equipment: bool = False,
+    ) -> str:
+        """全军名册；大臣上下文可将火器装备以定性词呈现。"""
         rows = self.conn.execute(
             "SELECT * FROM armies ORDER BY owner_power='ming' DESC, theater, name"
         ).fetchall()
@@ -5335,7 +5340,9 @@ class GameDB:
                         _qualitative_army_stat("mobility", row["mobility"]),
                         _qualitative_army_stat("loyalty", row["loyalty"]),
                         arrears_text, row["status"],
-                        row["firearm_equipment"], row["cannon_equipment"],
+                        _qualitative_army_stat("equipment", row["firearm_equipment"])
+                        if qualitative_equipment else row["firearm_equipment"],
+                        row["cannon_equipment"],
                     ))
                 )
             else:
@@ -5347,7 +5354,11 @@ class GameDB:
                 )
         out = [
             "【全军名册（现状以此为准，谈某军欠饷/补给/士气直接据此；欠饷为奏报近似总额，不拆省/中央分账）】",
-            "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为0-100，随军大炮为门数0-12）：",
+            (
+                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为定性装备，随军大炮为门数0-12）："
+                if qualitative_equipment else
+                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为0-100，随军大炮为门数0-12）："
+            ),
             *own,
         ]
         if other:
