@@ -1310,6 +1310,9 @@ export interface CliMonitorSpawnSpec {
   readonly readInstanceId?: (pid: number) => string | undefined;
 }
 
+/** #683: the monitor asks the backend to probe before it owns hang-kill. */
+export type MonitoredWorkerIdleDisposition = "hang" | "wait_for_reset";
+
 /**
  * Full persisted ledger entry (#249). Extends {@link LedgerEntry} with the
  * audit and resume fields required by ADR 0018 §3.
@@ -1568,6 +1571,16 @@ export interface Backend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
+  /**
+   * #683: called while the monitored worker is still alive at the idle threshold.
+   * A backend may throw its quota-park error; returning `hang` leaves verified
+   * pid-tree kill exclusively to the monitor.
+   */
+  handleMonitoredWorkerIdle?(
+    handle: WorkerMonitorHandle,
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<MonitoredWorkerIdleDisposition>;
   /** S7: push the resident slice branch (no PR, no merge). */
   push(worktree: WorktreeHandle): Promise<void>;
   /**

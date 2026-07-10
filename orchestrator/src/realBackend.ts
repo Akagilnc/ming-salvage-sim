@@ -722,8 +722,8 @@ export const SANDBOX_GH_TOKEN_ENV = "GH_TOKEN";
 export const WORKER_IDLE_TIMEOUT_SECONDS = 604_800;
 
 /**
- * #683 context threaded beside Sandcastle run options so idle timeout can probe
- * the correct pool before hang disposition. Stripped before `sc.run`
+ * #683 context threaded beside Sandcastle run options for the internal-timeout
+ * fallback. The live CLI monitor owns the normal idle disposition.
  * (Sandcastle does not know this field).
  *
  * `workerPid` is optional at the call site — production dispatch paths leave it
@@ -731,13 +731,10 @@ export const WORKER_IDLE_TIMEOUT_SECONDS = 604_800;
  * handle via {@link RealBackend.noteActiveSandboxWorkerPid}. Callers must not
  * hand-stuff a fake pid; hang kill no-ops on `pid <= 0`.
  *
- * 429 semantic (R2): by the time Sandcastle surfaces `AgentIdleTimeoutError`,
- * `withSandbox` has already released the sandbox regardless of outcome — so
- * "quota wall must not kill the worker process" is unsatisfiable post-return.
- * The meaningful outcome is: do NOT mark the step failed; park it for quota
- * reset (runner consumes {@link QuotaWaitForResetError} via existing park
- * machinery). Hang (probe ok/error) still attempts pid-tree kill with the
- * captured handle pid (best-effort against leftovers).
+ * 429 fallback semantic: by the time Sandcastle surfaces
+ * `AgentIdleTimeoutError`, `withSandbox` has already released the sandbox. The
+ * fallback may park a quota wall, but never owns hang-kill; live worker kills
+ * belong exclusively to the #684 monitor handle.
  */
 export interface QuotaProbeRunContext {
   /** Model/route slug → {@link import("./quotaProbe.js").poolForModelRef}. */
@@ -3362,7 +3359,8 @@ export class RealBackend implements Backend {
       // would throw on a bad/missing compatibility tag before the backend can
       // read the sidecar machine protocol.
       ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
-      // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
+      // #683 fallback context for Sandcastle's own internal timeout only. The
+      // normal live-worker path is dispatched through the #684 monitor.
       quotaProbe: {
         modelRef: spec.model,
         step: spec.id,
@@ -3548,17 +3546,16 @@ export class RealBackend implements Backend {
       if (!isAgentIdleTimeoutError(err) || quotaProbe === undefined) {
         throw err;
       }
-      const pid = this.resolveWorkerPid(quotaProbe);
       const result = await this.resolveIdleAfterQuotaProbe({
         ...quotaProbe,
-        ...(pid > 0 ? { workerPid: pid } : {}),
       });
       if (result.disposition.kind === "wait_for_reset") {
         // 429: park for quota reset. Sandbox already released by Sandcastle;
         // runner consumes this error via existing park machinery (not S8 error).
         throw new QuotaWaitForResetError(result);
       }
-      // hang path already applied killPidTree via handleIdleThreshold
+      // Internal Sandcastle timeout fallback: the sandbox already owns its
+      // teardown. Do not kill via the old backend-local pid path.
       throw err;
     } finally {
       this.activeSandboxWorkerPid = undefined;
@@ -3581,7 +3578,9 @@ export class RealBackend implements Backend {
         ...(ctx.step !== undefined ? { step: ctx.step } : {}),
       },
       actions: {
-        killPidTree: (p) => this.killWorkerPidTree(p),
+        // The live monitor owns verified pid-tree kill. This action is only a
+        // no-op for the post-Sandcastle internal-timeout fallback.
+        killPidTree: () => undefined,
         recordLedger: (entry) => this.recordQuotaWaitLedger(entry, ctx),
         now: () => this.idleNow(),
       },
@@ -3600,24 +3599,6 @@ export class RealBackend implements Backend {
    */
   protected async runQuotaProbe(pool: QuotaPoolId): Promise<QuotaProbeResult> {
     return runPoolProbe(pool);
-  }
-
-  /**
-   * Kill only this worker's pid tree (never global pgrep/pkill -f). No-op for
-   * unknown/invalid pids (Sandcastle may already have interrupted the process).
-   */
-  protected killWorkerPidTree(pid: number): void {
-    if (!Number.isInteger(pid) || pid <= 0) return;
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // already dead / not ours
-    }
-    try {
-      execFileSync("pkill", ["-P", String(pid)], { stdio: "ignore" });
-    } catch {
-      // no children or pkill unavailable
-    }
   }
 
   /**
@@ -3769,6 +3750,43 @@ export class RealBackend implements Backend {
     _landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     return workerResultFromMonitorSidecar(handle, exitCode);
+  }
+
+  /**
+   * #683: probe at the live #684 monitor threshold. The monitor owns the
+   * verified pid-tree kill; this backend only applies the quota state machine
+   * and records a wait row when the pool returns 429.
+   */
+  async handleMonitoredWorkerIdle(
+    handle: WorkerMonitorHandle,
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<"hang" | "wait_for_reset"> {
+    const worktree = ctx.worktree;
+    const result = await handleIdleThreshold({
+      modelRef: spec.model,
+      worker: { pid: handle.pid, step: spec.id },
+      actions: {
+        killPidTree: () => undefined,
+        recordLedger: (entry) =>
+          this.recordQuotaWaitLedger(entry, {
+            modelRef: spec.model,
+            step: spec.id,
+            workerPid: handle.pid,
+            ...(worktree !== undefined
+              ? {
+                  worktreePath: worktree.path,
+                  issueNumber: this.issueOf(worktree),
+                }
+              : {}),
+          }),
+      },
+      probe: (pool) => this.runQuotaProbe(pool),
+    });
+    if (result.disposition.kind === "wait_for_reset") {
+      throw new QuotaWaitForResetError(result);
+    }
+    return "hang";
   }
 
   /**
