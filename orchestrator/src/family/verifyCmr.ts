@@ -1559,6 +1559,7 @@ export async function runFamilyOnlineReviewLoop(input: {
   readonly familyBase: string;
   readonly ship: ShipResult;
   readonly resolvedRoute?: ResolvedModelRoute;
+  readonly escalationAnswer?: EscalationAnswerPayload;
 }): Promise<OnlineReviewLoopStageResult> {
   const repo =
     process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
@@ -1597,6 +1598,9 @@ export async function runFamilyOnlineReviewLoop(input: {
     repo,
     prUrl,
     prHead: input.ship.prHead,
+    ...(input.escalationAnswer !== undefined
+      ? { escalationAnswer: input.escalationAnswer }
+      : {}),
   };
 
   const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
@@ -1758,15 +1762,24 @@ export async function runFamilyOnlineReviewLoop(input: {
       // Cursor R11 medium + self-check: escalated must park with decision_gate_park
       // + escalate payload text — not a bare decision_gate_raised that drops reason.
       if (result.kind === "escalated") {
+        const escalationSummary = `family verify worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
+        const stopSummary =
+          result.escalation.synthesizedFailure === true
+            ? infraFailureStopSummary({
+                summary: escalationSummary,
+                repairHint:
+                  "repair the family verify worker startup/authentication failure, then re-feed the family online review loop",
+              })
+            : decisionGateParkStopSummary({
+                summary: escalationSummary,
+                repairHint:
+                  "answer the decision gate / unstick the verify worker, then re-feed the family online review loop",
+              });
         throw new OnlineReviewLoopTerminal({
           ok: false,
           terminalState: "decision_gate_raised",
           round,
-          stopSummary: decisionGateParkStopSummary({
-            summary: `family verify worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`,
-            repairHint:
-              "answer the decision gate / unstick the verify worker, then re-feed the family online review loop",
-          }),
+          stopSummary,
         });
       }
       if (result.kind !== "completed" || !isValidVerifyResult(result.output)) {
@@ -1799,15 +1812,23 @@ export async function runFamilyOnlineReviewLoop(input: {
         landing,
       );
       if (result.kind === "escalated") {
+        const escalationSummary = `family fixer worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
         throw new OnlineReviewLoopTerminal({
           ok: false,
           terminalState: "decision_gate_raised",
           round,
-          stopSummary: decisionGateParkStopSummary({
-            summary: `family fixer worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`,
-            repairHint:
-              "answer the decision gate / unstick the fixer worker, then re-feed the family online review loop",
-          }),
+          stopSummary:
+            result.escalation.synthesizedFailure === true
+              ? infraFailureStopSummary({
+                  summary: escalationSummary,
+                  repairHint:
+                    "repair the family fixer worker startup/authentication failure, then re-feed the family online review loop",
+                })
+              : decisionGateParkStopSummary({
+                  summary: escalationSummary,
+                  repairHint:
+                    "answer the decision gate / unstick the fixer worker, then re-feed the family online review loop",
+                }),
         });
       }
       if (result.kind !== "completed" || !isValidFixerResult(result.output)) {
