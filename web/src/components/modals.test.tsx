@@ -428,6 +428,26 @@ describe("ChatModal — elapsed timer during thinking (issue #353)", () => {
 });
 
 describe("ReportModal — two-page settlement bulletin", () => {
+  it("renders narrative and account reports without literal organic markdown", () => {
+    renderReportModal({
+      report: "**辽东军情**\n- 军前缺饷",
+      accountReport: "**实账**\n1. 户部已支银",
+    });
+
+    expect(document.body.textContent).toContain("辽东军情");
+    expect(document.body.textContent).toContain("军前缺饷");
+    expect(document.body.textContent).not.toContain("**");
+    expect(document.body.textContent).not.toContain("- 军前缺饷");
+
+    const page2 = Array.from(document.querySelectorAll("button"))
+      .find((btn) => btn.textContent?.includes("实账"));
+    act(() => (page2 as HTMLButtonElement).click());
+
+    expect(document.body.textContent).toContain("户部已支银");
+    expect(document.body.textContent).not.toContain("**");
+    expect(document.body.textContent).not.toContain("1. 户部已支银");
+  });
+
   it("shows narrative as page 1 and account text as manually selected page 2", () => {
     renderReportModal({
       report: "辽东有警，诸臣奏闻。",
