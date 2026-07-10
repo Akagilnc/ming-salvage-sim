@@ -48,6 +48,24 @@ export function deferredTrackingIssueTitle(identityKey: string): string {
   return `${DEFERRED_TRACKING_ISSUE_TITLE_PREFIX}${identityKey}`;
 }
 
+/**
+ * Derive the deferred-finding identity on the host, from GitHub's landing
+ * identifiers. Worker-provided identity keys are judgment output and may
+ * change between rounds; the review thread/comment is the durable anchor.
+ */
+export function hostSideDeferredIdentityKey(
+  echoedThreadId: string,
+  landingThreads: ReadonlyArray<LandingThreadRef> | undefined,
+): string {
+  const landing = landingThreads?.find(
+    (thread) =>
+      thread.id === echoedThreadId ||
+      String(thread.id) === echoedThreadId ||
+      thread.threadNodeId === echoedThreadId,
+  );
+  return landing?.threadNodeId ?? landing?.id ?? echoedThreadId;
+}
+
 /** GitHub issue URL shape returned by `gh api repos/{repo}/issues --jq .html_url`. */
 export function isValidGithubIssueUrl(url: string): boolean {
   const trimmed = url.trim();
@@ -68,22 +86,95 @@ export function findOpenDeferredTrackingIssueUrl(
   repo: string,
   title: string,
 ): string | undefined {
-  const items = paginateGhApi(sh, `repos/${repo}/issues?state=open`);
-  for (const item of items) {
+  const matching = listOpenDeferredTrackingIssues(sh, repo, title);
+  return matching[0]?.htmlUrl;
+}
+
+type OpenDeferredTrackingIssue = {
+  readonly htmlUrl: string;
+  readonly number?: number;
+  readonly createdAt?: string;
+};
+
+function listOpenDeferredTrackingIssues(
+  sh: Sh,
+  repo: string,
+  title: string,
+): OpenDeferredTrackingIssue[] {
+  const matches: OpenDeferredTrackingIssue[] = [];
+  for (const item of paginateGhApi(sh, `repos/${repo}/issues?state=open`)) {
     if (item === null || typeof item !== "object") continue;
     const obj = item as {
       title?: unknown;
       html_url?: unknown;
       pull_request?: unknown;
+      number?: unknown;
+      created_at?: unknown;
     };
-    // REST /issues includes pull requests; only real issues are tracking targets.
-    if (obj.pull_request !== undefined) continue;
-    if (typeof obj.title !== "string" || obj.title !== title) continue;
+    if (obj.pull_request !== undefined || obj.title !== title) continue;
     if (typeof obj.html_url !== "string") continue;
-    const url = obj.html_url.trim();
-    if (isValidGithubIssueUrl(url)) return url;
+    const htmlUrl = obj.html_url.trim();
+    if (!isValidGithubIssueUrl(htmlUrl)) continue;
+    matches.push({
+      htmlUrl,
+      ...(typeof obj.number === "number" && Number.isSafeInteger(obj.number)
+        ? { number: obj.number }
+        : {}),
+      ...(typeof obj.created_at === "string" ? { createdAt: obj.created_at } : {}),
+    });
   }
-  return undefined;
+  matches.sort(compareDeferredIssues);
+  return matches;
+}
+
+function compareDeferredIssues(
+  a: OpenDeferredTrackingIssue,
+  b: OpenDeferredTrackingIssue,
+): number {
+  const aTime = a.createdAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(a.createdAt);
+  const bTime = b.createdAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(b.createdAt);
+  if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+    return aTime - bTime;
+  }
+  if (a.number !== undefined && b.number !== undefined && a.number !== b.number) {
+    return a.number - b.number;
+  }
+  return a.htmlUrl.localeCompare(b.htmlUrl);
+}
+
+function issueNumberFromUrl(url: string): number | undefined {
+  const match = url.match(/\/issues\/(\d+)(?:[/?#]|$)/i);
+  return match === null ? undefined : Number(match[1]);
+}
+
+function closeDuplicateDeferredIssue(
+  sh: Sh,
+  repo: string,
+  issue: OpenDeferredTrackingIssue,
+): void {
+  const number = issue.number ?? issueNumberFromUrl(issue.htmlUrl);
+  if (number === undefined || !Number.isSafeInteger(number)) return;
+  sh("gh", [
+    "api",
+    `repos/${repo}/issues/${number}`,
+    "-X",
+    "PATCH",
+    "-f",
+    "state=closed",
+  ]);
+}
+
+function adoptOldestDeferredIssue(
+  sh: Sh,
+  repo: string,
+  issues: OpenDeferredTrackingIssue[],
+): string | undefined {
+  const canonical = issues[0];
+  if (canonical === undefined) return undefined;
+  for (const duplicate of issues.slice(1)) {
+    closeDuplicateDeferredIssue(sh, repo, duplicate);
+  }
+  return canonical.htmlUrl;
 }
 
 /**
@@ -98,10 +189,23 @@ export function createDeferredTrackingIssue(
   title: string,
   body: string,
 ): string {
-  const existing = findOpenDeferredTrackingIssueUrl(sh, repo, title);
-  if (existing !== undefined) {
-    return existing;
-  }
+  const existing = adoptOldestDeferredIssue(
+    sh,
+    repo,
+    listOpenDeferredTrackingIssues(sh, repo, title),
+  );
+  if (existing !== undefined) return existing;
+
+  // Narrow the check/create window. This cannot make GitHub issue creation an
+  // atomic compare-and-create, so the post-create convergence below remains
+  // required for overlapping runners.
+  const beforeCreate = adoptOldestDeferredIssue(
+    sh,
+    repo,
+    listOpenDeferredTrackingIssues(sh, repo, title),
+  );
+  if (beforeCreate !== undefined) return beforeCreate;
+
   const url = sh("gh", [
     "api",
     `repos/${repo}/issues`,
@@ -118,7 +222,12 @@ export function createDeferredTrackingIssue(
       `createDeferredTrackingIssue: gh returned invalid issue URL "${url}"`,
     );
   }
-  return trimmed;
+  const afterCreate = adoptOldestDeferredIssue(
+    sh,
+    repo,
+    listOpenDeferredTrackingIssues(sh, repo, title),
+  );
+  return afterCreate ?? trimmed;
 }
 
 /** Post an evidence-bearing reply on a PR review thread (#600 AC6). */
@@ -135,6 +244,33 @@ export function replyToReviewThread(
     "-f",
     `body=${body}`,
   ]);
+}
+
+function hasIdenticalReviewReply(
+  sh: Sh,
+  repo: string,
+  prNumber: number,
+  commentId: string,
+  body: string,
+): boolean {
+  const parentId = Number(commentId);
+  for (const item of paginateGhApi(
+    sh,
+    `repos/${repo}/pulls/${prNumber}/comments`,
+  )) {
+    if (item === null || typeof item !== "object") continue;
+    const comment = item as {
+      body?: unknown;
+      in_reply_to_id?: unknown;
+    };
+    const replyParent = comment.in_reply_to_id;
+    const sameParent =
+      replyParent === commentId ||
+      String(replyParent) === commentId ||
+      (Number.isSafeInteger(parentId) && replyParent === parentId);
+    if (sameParent && comment.body === body) return true;
+  }
+  return false;
 }
 
 /**
@@ -445,7 +581,9 @@ export function planVerifySideEffects(
     )?.body;
     deferred.push({
       disposition,
-      title: deferredTrackingIssueTitle(disposition.identityKey),
+      title: deferredTrackingIssueTitle(
+        hostSideDeferredIdentityKey(disposition.threadId, landingThreads),
+      ),
       issueBody,
       replyBodyTemplate: existingReplyBody ?? "",
       commentId,
@@ -585,8 +723,10 @@ export function applyVerifySideEffects(
       item.disposition,
       issueUrl,
     );
-    replyToReviewThread(sh, repo, prNumber, item.commentId, replyBody);
-    repliesPosted.push({ threadId: item.commentId, body: replyBody });
+    if (!hasIdenticalReviewReply(sh, repo, prNumber, item.commentId, replyBody)) {
+      replyToReviewThread(sh, repo, prNumber, item.commentId, replyBody);
+      repliesPosted.push({ threadId: item.commentId, body: replyBody });
+    }
   }
 
   for (const reply of plan.replies) {
