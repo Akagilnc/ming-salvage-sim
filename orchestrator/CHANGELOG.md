@@ -5,7 +5,8 @@
 ## [Unreleased]
 
 ### 新增
-- **#683 额度探针状态机**：idle 超阈先探 pool 额度再判 hang；429 → `quota_wait_for_reset` ledger（含 resetAt）+ runner 既有 park 家族（status escalate，非 S8 error abort；re-feed 重回 parked step）；探针通过/网络错误 → fail-safe hang（只杀该实例 pid 树，pid 来自 live sandbox handle via `noteActiveSandboxWorkerPid`，非手填）。per-pool 配置（zai chat / opencode PONG / grok TBD）随 model ref 映射。生产路径：`RealBackend.runAgentSandbox` + runner park 消费 `QuotaWaitForResetError`（S2/S3/S5/S6/S7）。自动重派属 #686。
+- **#686 接力派工（relay dispatch）**：`<relay>` tag 契约 fail-closed；route 池表（ADR 0124，与 #767 Coder-Rec 正交）+ 三段式 park/relay（ADR 0125，在 #683 额度处置点分叉）；下一棒走同一张 Coder-Rec 表 + 池正交查表（ADR 0126：同模型换马甲 → 顺位换模型）；三种换棒触发（429 保留现场 / hang-with-live-pool 杀 pid 树换棒 / 自报 blocked）；resource failure 永不 reset（守 #661）；`state_summary` 进 ledger 并落 `.relay-focus.md`；收口棒完成进常规评审闸。模块：`quotaPoolTable.ts` / `relayDispatch.ts`。
+- **#683 额度探针状态机**：idle 超阈先探 pool 额度再判 hang；429 → `quota_wait_for_reset` ledger（含 resetAt）+ runner 既有 park 家族（status escalate，非 S8 error abort；re-feed 重回 parked step）；探针通过/网络错误 → fail-safe hang（只杀该实例 pid 树，pid 来自 live sandbox handle via `noteActiveSandboxWorkerPid`，非手填）。per-pool 配置（zai chat / opencode PONG / grok TBD）随 model ref 映射。生产路径：`RealBackend.runAgentSandbox` + runner park 消费 `QuotaWaitForResetError`（S2/S3/S5/S6/S7）。#686 在此处置点分叉 park vs relay。
 - **family escalation answer resume**：family decision escalation 可通过 append-only `escalation_answered` ledger row 续跑；答案会传回重新派发的 coder-fix / reviewer / CMR / ship worker，failure escalation 仍 fail closed。
 - **family ship PR/head 复核**：`shipped` marker 绑定当前 family HEAD；resume skip 前会重新验证 PR 仍 OPEN、base/head branch 正确且 PR head OID 等于当前 family HEAD。
 - **RealBackend toolchain preflight**：worker 启动前先验证该 StepSpec 声明的工具链，缺工具时给出可诊断失败，不再进入半启动状态。

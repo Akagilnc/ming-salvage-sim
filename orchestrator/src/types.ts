@@ -420,8 +420,9 @@ export interface OnlineReviewCiPendingEvent {
 
 /**
  * #683 — idle-threshold quota probe hit a 429/limit wall. Step is parked for
- * quota reset (runner status escalate, not S8(error)); auto re-dispatch after
- * reset is #686 (out of scope). Same park family as `online_review_ci_pending`.
+ * quota reset (runner status escalate, not S8(error)). #686 forks this
+ * disposition into park vs relay (three-tier rule, ADR 0125) when a live
+ * baton exists. Same park family as `online_review_ci_pending`.
  * Shape mirrors {@link import("./quotaProbe.js").QuotaWaitForResetLedgerEvent}.
  */
 export interface QuotaWaitForResetEvent {
@@ -433,6 +434,26 @@ export interface QuotaWaitForResetEvent {
   readonly reason: string;
   readonly step?: StepId;
   readonly workerPid?: number;
+  readonly ts: string;
+}
+
+/**
+ * #686 — baton handoff on a resource failure (quota wall / hang-with-live-pool /
+ * self-reported blocked). `state_summary` is forwarded as the next baton's
+ * parameter file (`.relay-focus.md`). Worktree drift is preserved (no reset).
+ * Shape mirrors {@link import("./relayDispatch.js").RelayHandoffLedgerEvent}.
+ */
+export interface RelayBatonHandoffEvent {
+  readonly event: "relay_baton_handoff";
+  readonly trigger: string;
+  readonly state_summary: string;
+  readonly remaining?: string;
+  readonly reason?: string;
+  readonly fromModelId: string;
+  readonly fromPool: string;
+  readonly toModelId: string;
+  readonly toPool: string;
+  readonly step?: StepId;
   readonly ts: string;
 }
 
@@ -454,6 +475,7 @@ export type LedgerBookkeepingEvent =
   | OnlineReviewCiFailedEvent
   | OnlineReviewCiPendingEvent
   | QuotaWaitForResetEvent
+  | RelayBatonHandoffEvent
   | WorkerMonitorSpawnedEvent;
 
 /**
@@ -1220,6 +1242,17 @@ export interface LedgerEntry {
   readonly resetAt?: string;
   /** #683 — worker pid preserved while waiting for quota reset. */
   readonly workerPid?: number;
+  /** #686 — relay handoff state_summary (next baton parameter). */
+  readonly state_summary?: string;
+  /** #686 — relay handoff remaining work hint. */
+  readonly remaining?: string;
+  /** #686 — relay from/to model + pool (ledger-visible strings). */
+  readonly fromModelId?: string;
+  readonly fromPool?: string;
+  readonly toModelId?: string;
+  readonly toPool?: string;
+  /** #686 — relay handoff trigger discriminant. */
+  readonly trigger?: string;
   /** Step this answer reopens when `event === "escalation_answered"` (#439). */
   readonly forStep?: StepId;
   /** Human answer payload when `event === "escalation_answered"` (#439). */
