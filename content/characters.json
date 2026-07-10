@@ -2773,6 +2773,66 @@
       "location": "huguang"
     },
     {
+      "name": "许誉卿",
+      "office": "兵科给事中",
+      "office_type": "六科",
+      "faction": "东林",
+      "aliases": [
+        "许誉卿",
+        "许公实",
+        "许给事"
+      ],
+      "personal_skills": [
+        "封驳建言",
+        "纠劾权阉",
+        "科道章奏"
+      ],
+      "loyalty": 64,
+      "ability": 68,
+      "integrity": 78,
+      "courage": 76,
+      "style": "敢言持论",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "华亭人，万历四十四年进士；天启三年授吏科给事中，崇祯即位后起兵科给事中。出处：《万历四十四年丙辰科进士履历》；《明史》卷258《许誉卿传》。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "京师"
+    },
+    {
+      "name": "韩一良",
+      "office": "户科给事中",
+      "office_type": "六科",
+      "faction": "中立",
+      "aliases": [
+        "韩一良",
+        "韩象儒",
+        "韩给事"
+      ],
+      "personal_skills": [
+        "财政纠察",
+        "直言弹劾",
+        "吏治清议"
+      ],
+      "loyalty": 60,
+      "ability": 67,
+      "integrity": 80,
+      "courage": 78,
+      "style": "刚直敢谏",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "澄城人，万历四十七年进士；崇祯元年任户科给事中，上疏论吏治贪墨。出处：《明史》卷258《韩一良传》；《明季北略》卷4。",
+      "debut_year": 1628,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "京师"
+    },
+    {
       "name": "朱术桂",
       "office": "宗室幼藩",
       "office_type": "宗藩",
