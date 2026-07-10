@@ -3,6 +3,7 @@
 import sqlite3
 from pathlib import Path
 
+from ming_sim.content import load_character_content
 from ming_sim.db import GameDB
 from ming_sim.models import Character
 
@@ -191,3 +192,14 @@ def test_personnel_extractor_prompt_teaches_person_change_contract():
     assert "在人物名册内才写 `人物变更`" in personnel
     assert "同时写 `任命` 授武将名分" in personnel
     assert "走 `任命`，不走这里" not in personnel
+
+
+def test_north_star_named_figures_are_seeded_with_identity_metadata():
+    """ADR 0009 can reject no named target used by north-star scenes/prompts."""
+    _factions, characters = load_character_content()
+
+    expected = {"郭允厚", "李之藻", "张缙彦", "李从心", "汤若望", "胡廷宴", "徐应秋"}
+    assert expected <= characters.keys()
+    for name in expected:
+        assert isinstance(characters[name].identity, int)
+        assert characters[name].seed_guilt
