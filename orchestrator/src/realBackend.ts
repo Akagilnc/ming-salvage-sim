@@ -2173,8 +2173,8 @@ export class RealBackend implements Backend {
    * environment stamp is written. Deliberately not called from the constructor:
    * image inspection and directory hashing must never block backend creation.
    */
-  installTelemetryRunEnvironment(): void {
-    configureTelemetryFromWorkerImage({
+  async installTelemetryRunEnvironment(): Promise<void> {
+    await configureTelemetryFromWorkerImage({
       imageName: this.opts.imageName,
       codexFast: this.opts.codexFast,
       soulsDir: this.opts.soulsDir,

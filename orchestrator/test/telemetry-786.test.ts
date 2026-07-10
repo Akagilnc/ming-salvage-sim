@@ -3,6 +3,7 @@
  */
 
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -455,12 +456,12 @@ describe("#786 telemetry pure helpers", () => {
     expect((records[0] as TelemetryEnvironmentRecord).imageTag).toBe("img:leaf");
   });
 
-  it("buildEnvironmentStamp uses configured imageName and always exposes digest/sandbox/souls/prompt fields", () => {
+  it("buildEnvironmentStamp uses configured imageName and always exposes digest/sandbox/souls/prompt fields", async () => {
     const soulsDir = tempDir("orch-786-souls-");
     const promptsDir = tempDir("orch-786-prompts-");
     writeFileSync(join(soulsDir, "coder.md"), "soul-body\n", "utf8");
     writeFileSync(join(promptsDir, "coder.md"), "prompt-body\n", "utf8");
-    configureTelemetryFromWorkerImage({
+    await configureTelemetryFromWorkerImage({
       imageName: "ming-orchestrator-coder:from-imageName",
       codexFast: true,
       soulsDir,
@@ -671,48 +672,85 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     expect(readTelemetryRecords(ledgerDir).some((r) => r.phase === "environment")).toBe(true);
   });
 
-  it("defers a missing-ledger environment install until the quick-exit handle persists", async () => {
+  it("keeps quick-exit first output independent of a slow first environment fingerprint", async () => {
     const dir = tempDir("orch-786-env-after-handle-");
     const ledgerDir = join(dir, ".ledger-786");
+    const binDir = join(dir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const dockerPath = join(binDir, "docker");
+    writeFileSync(
+      dockerPath,
+      "#!/bin/sh\nsleep 0.25\nprintf 'sha256:telemetry-test\\n'\n",
+      "utf8",
+    );
+    chmodSync(dockerPath, 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
     let handlePersisted = false;
     let installerSawPersistedHandle = false;
     const backend = {
       ...quickExitBackend("first token from model\\n"),
       installTelemetryRunEnvironment: () => {
         installerSawPersistedHandle = handlePersisted;
-        // Model the synchronous first fingerprint calculation that previously
-        // delayed the quick-exit first-output observation.
-        const until = Date.now() + 25;
-        while (Date.now() < until) {
-          // Intentional synchronous work.
-        }
+        return configureTelemetryFromWorkerImage({
+          imageName: "ming-orchestrator-coder:test",
+        });
       },
     } as Backend;
 
-    const outcome = await dispatchWorkerWithMonitor(
-      backend,
-      workerSpec(),
-      { stateDir: ledgerDir },
-      undefined,
-      {
-        idleThresholdMs: 60_000,
-        pollIntervalMs: 5_000,
-        monitorDeps: {
-          readInstanceId: () => "test-instance-786-env-after-handle",
-          sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
+    try {
+      const outcome = await dispatchWorkerWithMonitor(
+        backend,
+        workerSpec(),
+        { stateDir: ledgerDir },
+        undefined,
+        {
+          idleThresholdMs: 60_000,
+          pollIntervalMs: 5_000,
+          monitorDeps: {
+            readInstanceId: () => "test-instance-786-env-after-handle",
+            sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
+          },
+          onMonitorHandleSpawned: async () => {
+            handlePersisted = true;
+          },
         },
-        onMonitorHandleSpawned: async () => {
-          handlePersisted = true;
-        },
-      },
-    );
+      );
 
-    expect(outcome.result.kind).toBe("completed");
-    expect(installerSawPersistedHandle).toBe(true);
-    const collect = readTelemetryRecords(ledgerDir).find(
-      (r) => r.phase === "collect",
-    ) as TelemetryCollectRecord | undefined;
-    expect(collect?.first_output_at).not.toBeNull();
+      expect(outcome.result.kind).toBe("completed");
+      expect(installerSawPersistedHandle).toBe(true);
+      const records = readTelemetryRecords(ledgerDir);
+      const dispatch = records.find(
+        (r) => r.phase === "dispatch",
+      ) as TelemetryDispatchRecord | undefined;
+      const collect = records.find(
+        (r) => r.phase === "collect",
+      ) as TelemetryCollectRecord | undefined;
+      expect(collect?.first_output_at).not.toBeNull();
+      expect(
+        new Date(collect!.first_output_at!).getTime() -
+          new Date(dispatch!.dispatched_at).getTime(),
+      ).toBeLessThan(200);
+
+      // The delayed first calculation must still finish before writing the
+      // environment row; a prompt first-output stamp must not trade away data.
+      let environment: TelemetryEnvironmentRecord | undefined;
+      for (let attempt = 0; attempt < 100 && environment === undefined; attempt += 1) {
+        environment = readTelemetryRecords(ledgerDir).find(
+          (r) => r.phase === "environment",
+        ) as TelemetryEnvironmentRecord | undefined;
+        if (environment === undefined) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 20));
+        }
+      }
+      expect(environment?.imageDigest).toBe("sha256:telemetry-test");
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+    }
   });
 
   it("writes environment + dispatch + collect half-rows joined by legId", async () => {
@@ -1018,11 +1056,11 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     expect(childHash).not.toBe(familyHash);
 
     // Simulate familyDriver construction order: RealBackend then RealFamilyBackend.
-    configureTelemetryFromWorkerImage({
+    await configureTelemetryFromWorkerImage({
       imageName: "ming-orchestrator-coder:test",
       promptsDir: childPrompts,
     });
-    configureTelemetryFromWorkerImage({
+    await configureTelemetryFromWorkerImage({
       imageName: "ming-orchestrator-coder:test",
       promptsDir: familyPrompts,
     });
@@ -1032,7 +1070,7 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     const ledgerDir = join(tempDir("orch-786-env-reinstall-"), ".ledger");
     const backend = {
       installTelemetryRunEnvironment: () => {
-        configureTelemetryFromWorkerImage({
+        return configureTelemetryFromWorkerImage({
           imageName: "ming-orchestrator-coder:test",
           promptsDir: childPrompts,
         });

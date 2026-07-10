@@ -1675,7 +1675,7 @@ export interface Backend {
    *
    * Fail-open at the call site — must not throw into dispatch control flow.
    */
-  installTelemetryRunEnvironment?(): void;
+  installTelemetryRunEnvironment?(): void | Promise<void>;
   /**
    * #684 optional: when a worker runs as a host-side CLI process (opencode /
    * grok / …), return the spawn input. The production

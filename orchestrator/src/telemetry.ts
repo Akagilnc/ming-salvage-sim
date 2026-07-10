@@ -21,7 +21,7 @@
  * `orchestrator/README.md` § first_output_at.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
@@ -31,6 +31,7 @@ import {
   readFileSync,
   statSync,
 } from "node:fs";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
@@ -103,29 +104,30 @@ export function getTelemetryRunEnvironment(): TelemetryRunEnvironment {
  * RealFamilyBackend immediately before an absent environment stamp). Best-effort:
  * missing docker / dirs → null fields.
  */
-export function configureTelemetryFromWorkerImage(opts: {
+export async function configureTelemetryFromWorkerImage(opts: {
   readonly imageName: string;
   readonly codexFast?: boolean;
   readonly soulsDir?: string;
   readonly promptsDir?: string;
-}): void {
+}): Promise<void> {
   const imageTag =
     opts.imageName.trim().length > 0 ? opts.imageName.trim() : null;
-  const imageDigest =
-    imageTag !== null ? resolveDockerImageDigest(imageTag) : null;
-  const soulsHash =
-    opts.soulsDir !== undefined ? hashDirectoryContents(opts.soulsDir) : null;
-  const promptHash =
+  // Every expensive input starts as asynchronous work before this function
+  // yields. The first telemetry row must never delay worker output/exit events.
+  const [imageDigest, soulsHash, promptHash] = await Promise.all([
+    imageTag !== null ? resolveDockerImageDigestAsync(imageTag) : null,
+    opts.soulsDir !== undefined ? hashDirectoryContentsAsync(opts.soulsDir) : null,
     opts.promptsDir !== undefined
-      ? hashDirectoryContents(opts.promptsDir)
-      : null;
+      ? hashDirectoryContentsAsync(opts.promptsDir)
+      : null,
+  ]);
   const sandboxFingerprint =
     imageTag !== null
-      ? computeSandboxFingerprint({
+      ? computeSandboxFingerprintFromHashes({
           imageTag,
           imageDigest,
-          soulsDir: opts.soulsDir,
-          promptsDir: opts.promptsDir,
+          soulsHash,
+          promptHash,
         })
       : null;
   const codexFast =
@@ -139,6 +141,26 @@ export function configureTelemetryFromWorkerImage(opts: {
     soulsHash,
     promptHash,
     codexFast,
+  });
+}
+
+/** Async counterpart used by the first-run environment stamp path. */
+function resolveDockerImageDigestAsync(imageTag: string): Promise<string | null> {
+  if (imageTag.trim().length === 0) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    execFile(
+      "docker",
+      ["image", "inspect", "--format", "{{.Id}}", imageTag],
+      { encoding: "utf8", timeout: 5_000 },
+      (err, stdout) => {
+        if (err !== null) {
+          resolve(null);
+          return;
+        }
+        const value = String(stdout).trim();
+        resolve(value.length > 0 ? value : null);
+      },
+    );
   });
 }
 
@@ -185,6 +207,39 @@ export function hashDirectoryContents(dir: string): string | null {
   }
 }
 
+/**
+ * Async stable SHA-256 over files under `dir`. File reads and directory walks
+ * leave the event loop available; the periodic setImmediate also prevents a
+ * very large cached tree from monopolising the promise queue between reads.
+ */
+async function hashDirectoryContentsAsync(dir: string): Promise<string | null> {
+  if (dir.trim().length === 0) return null;
+  try {
+    if (!(await stat(dir)).isDirectory()) return null;
+    const hash = createHash("sha256");
+    const files = (await listFilesRecursiveAsync(dir)).sort();
+    if (files.length === 0) {
+      hash.update("empty-dir\n");
+    }
+    for (let index = 0; index < files.length; index += 1) {
+      if (index > 0 && index % 32 === 0) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      const rel = files[index]!;
+      hash.update(`file:${rel}\0`);
+      try {
+        hash.update(await readFile(join(dir, rel)));
+      } catch {
+        hash.update("unreadable");
+      }
+      hash.update("\n");
+    }
+    return hash.digest("hex");
+  } catch {
+    return null;
+  }
+}
+
 /** Lightweight sandbox fingerprint: image + souls + prompts content (no auth). */
 export function computeSandboxFingerprint(input: {
   readonly imageTag: string;
@@ -192,22 +247,65 @@ export function computeSandboxFingerprint(input: {
   readonly soulsDir?: string;
   readonly promptsDir?: string;
 }): string {
+  return computeSandboxFingerprintFromHashes({
+    imageTag: input.imageTag,
+    imageDigest: input.imageDigest,
+    soulsHash:
+      input.soulsDir !== undefined
+        ? hashDirectoryContents(input.soulsDir)
+        : undefined,
+    promptHash:
+      input.promptsDir !== undefined
+        ? hashDirectoryContents(input.promptsDir)
+        : undefined,
+  });
+}
+
+function computeSandboxFingerprintFromHashes(input: {
+  readonly imageTag: string;
+  readonly imageDigest?: string | null;
+  readonly soulsHash?: string | null;
+  readonly promptHash?: string | null;
+}): string {
   const hash = createHash("sha256");
   hash.update(`image:${input.imageTag}\n`);
   hash.update(`image-id:${input.imageDigest ?? "unknown"}\n`);
-  if (input.soulsDir !== undefined) {
-    hash.update(`souls:${hashDirectoryContents(input.soulsDir) ?? "missing"}\n`);
+  if (input.soulsHash !== undefined) {
+    hash.update(`souls:${input.soulsHash ?? "missing"}\n`);
   } else {
     hash.update("souls:unset\n");
   }
-  if (input.promptsDir !== undefined) {
-    hash.update(
-      `prompts:${hashDirectoryContents(input.promptsDir) ?? "missing"}\n`,
-    );
+  if (input.promptHash !== undefined) {
+    hash.update(`prompts:${input.promptHash ?? "missing"}\n`);
   } else {
     hash.update("prompts:unset\n");
   }
   return hash.digest("hex");
+}
+
+async function listFilesRecursiveAsync(root: string, base = ""): Promise<string[]> {
+  const out: string[] = [];
+  let entries: string[];
+  try {
+    entries = await readdir(join(root, base));
+  } catch {
+    return out;
+  }
+  for (const name of entries) {
+    const rel = base.length > 0 ? `${base}/${name}` : name;
+    const abs = join(root, rel);
+    try {
+      const entry = await stat(abs);
+      if (entry.isDirectory()) {
+        out.push(...(await listFilesRecursiveAsync(root, rel)));
+      } else if (entry.isFile()) {
+        out.push(rel);
+      }
+    } catch {
+      // skip unreadable entries
+    }
+  }
+  return out;
 }
 
 function listFilesRecursive(root: string, base = ""): string[] {

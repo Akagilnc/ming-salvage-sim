@@ -106,13 +106,13 @@ function scheduleTelemetryEnvironmentStamp(
     return;
   }
   pendingTelemetryEnvironmentStamps.add(ledgerDir);
-  queueMicrotask(() => {
+  queueMicrotask(async () => {
     try {
       if (!hasEnvironmentStamp(ledgerDir)) {
         // Invoke through the backend receiver. Production implementations are
         // class methods that read `this.opts`; extracting and bare-calling the
         // method loses that receiver and skips the environment stamp entirely.
-        backend.installTelemetryRunEnvironment?.();
+        await backend.installTelemetryRunEnvironment?.();
         ensureEnvironmentStamp(ledgerDir, ctx);
       }
     } catch (err) {
