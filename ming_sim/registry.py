@@ -69,30 +69,59 @@ def build_court_brief(context: CourtContext) -> str:
     money_line = (
         f"国库{metrics.get('国库', 0)}万两，内库{metrics.get('内库', 0)}万两。"
     )
-    score_line = "；".join(
-        f"{k}{metrics[k]}"
-        for k in ("民心", "皇威")
-        if k in metrics
-    )
+    score_line = "民情与君威见于各地奏报和行事反应。"
     issues = context.db.list_active_issues()
     issue_lines: List[str] = []
     for row in issues[:10]:
         kind_tag = "系统" if row["kind"] == "situation" else "玩家"
-        bar = int(row["bar_value"])
-        # 注意：bar_good_meaning/bar_bad_meaning 是进度条「两端」的含义，
-        # 不是当前状态。当前 bar 值才是进度，满 100 才算到 good 端。
         issue_lines.append(
             f"#{row['id']}[{kind_tag}]{row['title']}"
-            f"（进度{bar}/100；满100={row['bar_good_meaning']}，跌0={row['bar_bad_meaning']}）"
+            f"（局势未决；向好端：{row['bar_good_meaning']}；向坏端：{row['bar_bad_meaning']}）"
         )
     issues_brief = "；".join(issue_lines) if issue_lines else "无"
     return (
         f"本{TURN_UNIT}：{context.state.year}年{context.state.period}月（第{context.state.turn}回合）。"
         f"钱粮：{money_line}国势：{score_line}。"
         f"在办事项：{issues_brief}。"
-        f"势力：{context.db.power_report(exclude_self=True)}。"
-        f"朝堂派系（满意度/影响力均为当前实值，据此判断各派当前强弱，不要凭印象推断）：{context.db.faction_report()}。"
+        f"势力档料：{_power_brief(context)}。"
+        f"朝堂派系档料（以档案所述 agenda 和当前态势判断，不凭历史印象推断）：{_faction_brief(context)}。"
         f"地区/奏报/钱粮详情按需调工具查（list_regions/inspect_region/inspect_memorial/check_treasury 等）；人事与军队详情见下方固定名册。"
+    )
+
+
+def _faction_brief(context: CourtContext) -> str:
+    """给扮演大臣的派系档料：保留 agenda，态势只用定性词，不喂抽象分数。"""
+    rows = context.db.conn.execute(
+        "SELECT name, satisfaction, leverage, agenda FROM factions ORDER BY name"
+    ).fetchall()
+    if not rows:
+        return "派系未建档。"
+    from ming_sim.context import _faction_band
+    return "；".join(
+        f"{row['name']}（所求：{row['agenda']}；朝势{_faction_band('leverage', row['leverage'])}；"
+        f"态度{_faction_band('satisfaction', row['satisfaction'])}）"
+        for row in rows
+    )
+
+
+def _power_brief(context: CourtContext) -> str:
+    """势力的抽象轴也只以定性档料进入扮演 prompt。"""
+    rows = context.db.power_rows(exclude_self=True)
+    if not rows:
+        return "势力未建档。"
+
+    def band(value: object) -> str:
+        try:
+            n = int(value or 0)
+        except (TypeError, ValueError):
+            n = 50
+        return "极弱" if n < 20 else "偏弱" if n < 40 else "中等" if n < 60 else "偏强" if n < 80 else "强盛"
+
+    return "；".join(
+        f"{row['name']}（{row['leader']}）：{row['stance']}，朝势{band(row['leverage'])}、"
+        f"军力{band(row['military_strength'])}、财力{band(row['supply'])}，"
+        f"{row['status']}；近动：{row['last_action'] or '尚无新动'}"
+        for row in rows
     )
 
 
