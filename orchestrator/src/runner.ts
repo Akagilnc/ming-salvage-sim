@@ -166,23 +166,16 @@ import {
   isRelayCandidateExhaustion,
   applyResourceFailureHandoff,
   resumeRelayFromLedger,
-  tryBuildRelayFocusFile,
+  tryStageRelayFocusFile,
   isHangWithLivePoolError,
   isSelfReportedRelayError,
   RELAY_FOCUS_FILENAME,
   type RelayHandoffLedgerEvent,
 } from "./relayDispatch.js";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { isFilledString } from "./shipOutcome.js";
 
-function removeRelayFocus(path: string): void {
-  try {
-    unlinkSync(path);
-  } catch {
-    // Best effort only: never hide the ledger persistence failure.
-  }
-}
 // Shared seam guards — single source of truth, also used by route(), so the
 // coder-output / commitsAdded rules can never drift.
 import {
@@ -626,10 +619,10 @@ async function parkOrRelayQuotaWall(opts: {
 
   if (forked.tier === "relay" && forked.nextBaton && forked.ledgerEntry) {
     const entry = forked.ledgerEntry;
-    // Write focus first, but remove it if durable ledger persistence fails: an
-    // orphan brief is never a consumable handoff.
-    const focus = tryBuildRelayFocusFile(opts.worktreePath, entry);
-    if (!focus.ok) {
+    // Stage the new brief while the previous durable baton remains consumable.
+    // Promote only after the matching ledger row commits.
+    const staged = tryStageRelayFocusFile(opts.worktreePath, entry);
+    if (!staged.ok) {
       return {
         kind: "park",
         result: await parkQuotaWaitForResetLegacy({
@@ -671,7 +664,7 @@ async function parkOrRelayQuotaWall(opts: {
           stateDir,
         );
       } catch {
-        removeRelayFocus(focus.path);
+        staged.focus.discard();
         return {
           kind: "park",
           result: await parkQuotaWaitForResetLegacy({
@@ -688,12 +681,23 @@ async function parkOrRelayQuotaWall(opts: {
         };
       }
     }
+    try {
+      staged.focus.commit();
+    } catch {
+      return {
+        kind: "park",
+        result: await parkQuotaWaitForResetLegacy({
+          step, err, ledger, stateDir, sessionId, backend, deferredFindings,
+          resolveBranchHEAD: opts.resolveBranchHEAD, hashPrompt: opts.hashPrompt,
+        }),
+      };
+    }
     ledger.push(marker);
     return {
       kind: "relay",
       nextBaton: forked.nextBaton,
       ledgerEntry: entry,
-      focusPath: focus.path,
+      focusPath: staged.focus.path,
     };
   }
 
@@ -2483,6 +2487,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let stickyRelayCoderSlug: string | undefined;
   /** #686 — last written relay focus path (forwarded on next dispatch). */
   let activeRelayFocusPath: string | undefined;
+  /** The only step allowed to consume the current relay pool and focus baton. */
+  let activeRelayStep: StepId | undefined;
 
   const applyCoderRecSelection = (nonConvergingRounds: number): void => {
     if (coderRecEnvSkipped) return;
@@ -2534,6 +2540,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   /** #686 — apply a relay baton onto the wall-hit role slot (role-aware). */
   const applyRelayBaton = (baton: NextRelayBaton, wallStep?: StepId): void => {
     currentBillingPool = baton.pool;
+    activeRelayStep = wallStep ?? "S2";
     const slots = { ...modelRoute.slots };
     if (wallStep === "S3" || wallStep === "S6") {
       slots.reviewer = baton.slug;
@@ -2612,7 +2619,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     return lookupCoderRosterEntry(slug)?.id ?? slug;
   };
 
-  const relayFocusForDispatch = (): string | undefined => activeRelayFocusPath;
+  const relayBillingPoolForDispatch = (
+    dispatchStep: StepId,
+  ): BillingPoolId | undefined =>
+    activeRelayStep === dispatchStep ? currentBillingPool : undefined;
+  const relayFocusForDispatch = (dispatchStep: StepId): string | undefined =>
+    activeRelayStep === dispatchStep ? activeRelayFocusPath : undefined;
+  const clearCompletedRelayState = (completedStep: StepId, completed: StepOutput | undefined): void => {
+    if (
+      activeRelayStep !== completedStep ||
+      completed === undefined ||
+      escalateOf(completed) !== undefined ||
+      (completed.kind === "coder" && !completed.committed)
+    ) return;
+    currentBillingPool = undefined;
+    activeRelayFocusPath = undefined;
+    activeRelayStep = undefined;
+  };
 
   const coderRecRoundsFromLedger = (
     entries: ReadonlyArray<LedgerEntry>,
@@ -4023,7 +4046,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 stepSpecs[step],
                 typeof resumeSessionId === "string" ? "resume" : "fresh",
               );
-              const focusPath = relayFocusForDispatch();
+              const focusPath = relayFocusForDispatch(step);
               const dispatchCtx = {
                 worktree,
                 stateDir,
@@ -4032,8 +4055,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ...(escalationAnswerForStep != null
                   ? { escalationAnswer: escalationAnswerForStep }
                   : {}),
-                ...(currentBillingPool !== undefined
-                  ? { billingPool: currentBillingPool }
+                ...(relayBillingPoolForDispatch(step) !== undefined
+                  ? { billingPool: relayBillingPoolForDispatch(step) }
                   : {}),
                 ...(focusPath !== undefined ? { relayFocusPath: focusPath } : {}),
                 // 信封宪法 (ADR 0062): the dispatch structure carries only the
@@ -4223,12 +4246,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 });
                 if (handoff.kind === "relay" && handoff.ledgerEntry) {
                   const entry = handoff.ledgerEntry;
-                  // Focus first — never durable-ledger a baton without focus (#686 P1).
-                  const focus = tryBuildRelayFocusFile(worktree?.path, entry);
-                  if (!focus.ok) {
+                  const staged = tryStageRelayFocusFile(worktree?.path, entry);
+                  if (!staged.ok) {
                     return await errorTermination(
                       step,
-                      new Error(focus.reason),
+                      new Error(staged.reason),
                     );
                   }
                   const marker: LedgerEntry = {
@@ -4265,7 +4287,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         stateDir,
                       );
                 } catch {
-                  removeRelayFocus(focus.path);
+                  staged.focus.discard();
                   return await errorTermination(
                         step,
                         new Error(
@@ -4274,8 +4296,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       );
                     }
                   }
+                  try {
+                    staged.focus.commit();
+                  } catch (focusErr) {
+                    return await errorTermination(step, focusErr);
+                  }
                   ledger.push(marker);
-                  activeRelayFocusPath = focus.path;
+                  activeRelayFocusPath = staged.focus.path;
                   applyRelayBaton(handoff.nextBaton, step);
                   continue orchestratorStepLoop;
                 }
@@ -4383,12 +4410,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             });
             if (handoff.kind === "relay" && handoff.ledgerEntry) {
               const entry = handoff.ledgerEntry;
-              // Focus first — never durable-ledger a baton without focus (#686 P1).
-              const focus = tryBuildRelayFocusFile(worktree?.path, entry);
-              if (!focus.ok) {
+              const staged = tryStageRelayFocusFile(worktree?.path, entry);
+              if (!staged.ok) {
                 return await errorTermination(
                   step,
-                  new Error(focus.reason),
+                  new Error(staged.reason),
                 );
               }
               const marker: LedgerEntry = {
@@ -4419,12 +4445,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     stateDir,
                   );
                 } catch {
-                  removeRelayFocus(focus.path);
+                  staged.focus.discard();
                   return await errorTermination(step, err);
                 }
               }
+              try {
+                staged.focus.commit();
+              } catch (focusErr) {
+                return await errorTermination(step, focusErr);
+              }
               ledger.push(marker);
-              activeRelayFocusPath = focus.path;
+              activeRelayFocusPath = staged.focus.path;
               applyRelayBaton(handoff.nextBaton, step);
               continue orchestratorStepLoop;
             }
@@ -4522,11 +4553,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             worktree,
             stateDir,
             modelRoute,
-            ...(currentBillingPool !== undefined
-              ? { billingPool: currentBillingPool }
+            ...(relayBillingPoolForDispatch("S7") !== undefined
+              ? { billingPool: relayBillingPoolForDispatch("S7") }
               : {}),
-            ...(relayFocusForDispatch() !== undefined
-              ? { relayFocusPath: relayFocusForDispatch() }
+            ...(relayFocusForDispatch("S7") !== undefined
+              ? { relayFocusPath: relayFocusForDispatch("S7") }
               : {}),
             ...(escalationAnswerForStep != null
               ? { escalationAnswer: escalationAnswerForStep }
@@ -4736,9 +4767,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             });
             if (handoff.kind === "relay" && handoff.ledgerEntry) {
               const entry = handoff.ledgerEntry;
-              const focus = tryBuildRelayFocusFile(worktree?.path, entry);
-              if (!focus.ok) {
-                return await errorTermination("S7", new Error(focus.reason));
+              const staged = tryStageRelayFocusFile(worktree?.path, entry);
+              if (!staged.ok) {
+                return await errorTermination("S7", new Error(staged.reason));
               }
               const marker: LedgerEntry = {
                 step: entry.step ?? "S7",
@@ -4763,12 +4794,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     ts: entry.ts,
                   }, stateDir);
                 } catch {
-                  removeRelayFocus(focus.path);
+                  staged.focus.discard();
                   return await errorTermination("S7", err);
                 }
               }
+              try {
+                staged.focus.commit();
+              } catch (focusErr) {
+                return await errorTermination("S7", focusErr);
+              }
               ledger.push(marker);
-              activeRelayFocusPath = focus.path;
+              activeRelayFocusPath = staged.focus.path;
               applyRelayBaton(handoff.nextBaton, "S7");
               continue orchestratorStepLoop;
             }
@@ -4891,11 +4927,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             prHead:
               onlineReviewLanding?.shipDelivery?.prHead ?? lastShipOutput.prHead,
             onlineReviewRound,
-            ...(currentBillingPool !== undefined
-              ? { billingPool: currentBillingPool }
+            ...(relayBillingPoolForDispatch(reviewStep) !== undefined
+              ? { billingPool: relayBillingPoolForDispatch(reviewStep) }
               : {}),
-            ...(relayFocusForDispatch() !== undefined
-              ? { relayFocusPath: relayFocusForDispatch() }
+            ...(relayFocusForDispatch(reviewStep) !== undefined
+              ? { relayFocusPath: relayFocusForDispatch(reviewStep) }
               : {}),
           };
           const headBefore =
@@ -5824,9 +5860,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             });
             if (handoff.kind === "relay" && handoff.ledgerEntry) {
               const entry = handoff.ledgerEntry;
-              const focus = tryBuildRelayFocusFile(worktree?.path, entry);
-              if (!focus.ok) {
-                return await errorTermination(reviewStep, new Error(focus.reason));
+              const staged = tryStageRelayFocusFile(worktree?.path, entry);
+              if (!staged.ok) {
+                return await errorTermination(reviewStep, new Error(staged.reason));
               }
               const marker: LedgerEntry = {
                 step: entry.step ?? reviewStep,
@@ -5851,12 +5887,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     ts: entry.ts,
                   }, stateDir);
                 } catch {
-                  removeRelayFocus(focus.path);
+                  staged.focus.discard();
                   return await errorTermination(reviewStep, err);
                 }
               }
+              try {
+                staged.focus.commit();
+              } catch (focusErr) {
+                return await errorTermination(reviewStep, focusErr);
+              }
               ledger.push(marker);
-              activeRelayFocusPath = focus.path;
+              activeRelayFocusPath = staged.focus.path;
               applyRelayBaton(handoff.nextBaton, reviewStep);
               step = reviewStep;
               continue orchestratorStepLoop;
@@ -5953,6 +5994,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         repairMovementPaths: stepRepairMovementPaths,
       });
     }
+
+    // A relay baton is a step-local override. Once its relayed step has
+    // durably completed, normal downstream roles must reselect their own route.
+    clearCompletedRelayState(step, output);
 
     // The runner — not the agent — decides the next step.
     // The runner owns the review/fix loop, but termination is still not a blind

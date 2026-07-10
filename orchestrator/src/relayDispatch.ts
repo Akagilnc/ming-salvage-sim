@@ -8,7 +8,8 @@
  * the next baton via the same roster + ADR 0124 pool-orthogonal lookup.
  */
 
-import { writeFileSync } from "node:fs";
+import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import type { CoderRosterEntry } from "./coderRoster.js";
@@ -202,11 +203,9 @@ export function buildRelayHandoffLedgerEntry(input: {
  * Write the next baton's parameter file (thin: state_summary + remaining +
  * baton identity). Runner mechanically forwards — no method in the prompt.
  */
-export function buildRelayFocusFile(
-  worktreePath: string,
+function relayFocusBody(
   entry: RelayHandoffLedgerEvent,
 ): string {
-  const path = join(worktreePath, RELAY_FOCUS_FILENAME);
   const lines = [
     `# Relay baton handoff`,
     ``,
@@ -226,8 +225,49 @@ export function buildRelayFocusFile(
   if (entry.reason !== undefined && entry.reason.length > 0) {
     lines.push(`## reason`, ``, entry.reason, ``);
   }
-  writeFileSync(path, lines.join("\n"), "utf8");
-  return path;
+  return lines.join("\n");
+}
+
+/**
+ * Stage a relay brief beside the durable filename. Call {@link commit} only
+ * after its matching ledger row has been persisted; {@link discard} leaves the
+ * previously durable baton untouched when that persistence fails.
+ */
+export function stageRelayFocusFile(
+  worktreePath: string,
+  entry: RelayHandoffLedgerEvent,
+): {
+  readonly path: string;
+  commit(): void;
+  discard(): void;
+} {
+  const path = join(worktreePath, RELAY_FOCUS_FILENAME);
+  const stagedPath = join(
+    worktreePath,
+    `.${RELAY_FOCUS_FILENAME}.${randomUUID()}.staged`,
+  );
+  writeFileSync(stagedPath, relayFocusBody(entry), "utf8");
+  return {
+    path,
+    commit: () => renameSync(stagedPath, path),
+    discard: () => {
+      try {
+        unlinkSync(stagedPath);
+      } catch {
+        // Nothing to do when staging failed before creating the temp file.
+      }
+    },
+  };
+}
+
+/** Write a focus file immediately for isolated callers and test setup. */
+export function buildRelayFocusFile(
+  worktreePath: string,
+  entry: RelayHandoffLedgerEvent,
+): string {
+  const staged = stageRelayFocusFile(worktreePath, entry);
+  staged.commit();
+  return staged.path;
 }
 
 /**
@@ -250,6 +290,31 @@ export function tryBuildRelayFocusFile(
     return {
       ok: false,
       reason: `relay focus write failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    };
+  }
+}
+
+/** Stage, but do not promote, a relay brief for a pending durable ledger row. */
+export function tryStageRelayFocusFile(
+  worktreePath: string | undefined,
+  entry: RelayHandoffLedgerEvent,
+):
+  | { readonly ok: true; readonly focus: ReturnType<typeof stageRelayFocusFile> }
+  | { readonly ok: false; readonly reason: string } {
+  if (worktreePath === undefined || worktreePath.trim().length === 0) {
+    return {
+      ok: false,
+      reason: "relay handoff requires a worktree to stage .relay-focus.md",
+    };
+  }
+  try {
+    return { ok: true, focus: stageRelayFocusFile(worktreePath, entry) };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `relay focus staging failed: ${
         err instanceof Error ? err.message : String(err)
       }`,
     };

@@ -34,17 +34,16 @@
  * - Clonefile command throws (non-APFS, no `cp -c`, I/O) → fall through to npm.
  * - **Never** mtime or presence-of-`node_modules` alone.
  *
- * ## Relation to ADR 0024 resident worktree reap / clean
+ * ## Relation to #661 resident worktree preservation
  *
  * This is host-side **deps only**. It does not create, dispose, pool, or prune
  * worktrees. Lifecycle stays ADR 0024 / 0017:
- * - Prepare still: find existing → fail-closed residue clean (`reset --hard` +
- *   `clean -fd`, **no** repo-level `worktree prune`) → return path; else cut
- *   resident worktree and **do not** `.close()` it.
- * - Reap only on terminal-success GC, never via normal-path disposal.
- * - Provision runs on **both** fresh cut and resident-reuse (after residue clean)
- *   so a reused tree whose modules were wiped by `clean -fd` (or never installed)
- *   is re-ensured without a full `npm ci` when the lock still matches source.
+ * - Prepare reuses an existing scene AS-IS; #661 forbids reset, clean, prune, or
+ *   any other destructive resume behavior. Fresh runs cut a resident worktree and
+ *   do not `.close()` it.
+ * - Only terminal-success GC may reap a resident worktree.
+ * - Provision runs on both fresh and preserved resident trees, ensuring modules
+ *   when absent without treating the scene as disposable residue.
  * - Sandcastle prune stays Sandcastle's job inside the dedicated clone; the
  *   template root is the driver's `sourceRepo`, not a pooled worktree.
  */

@@ -46,6 +46,7 @@ import {
   isRelayChainReadyForReviewGate,
   parseRelayTag,
   resumeRelayFromLedger,
+  stageRelayFocusFile,
   tryBuildRelayFocusFile,
   tryParseActionableRelayTag,
   type RelayHandoffLedgerEvent,
@@ -57,6 +58,7 @@ import { runOrchestrator } from "../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
+  DispatchContext,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
@@ -563,6 +565,31 @@ describe("#686 state_summary ledger + next-baton parameter file", () => {
     expect(body).toContain("clear reds then 收口");
   });
 
+  it("keeps durable baton A's focus consumable when baton B's ledger write fails", () => {
+    tmp = mkdtempSync(join(tmpdir(), "relay-686-atomic-focus-"));
+    const batonA = buildRelayHandoffLedgerEntry({
+      trigger: "quota_wall", state_summary: "A durable", remaining: "finish A",
+      fromModelId: "grok-4.5", fromPool: "grok-build", toModelId: "terra@med",
+      toPool: "codex-5h", step: "S2", now: new Date("2026-07-10T12:00:00.000Z"),
+    });
+    const focusA = stageRelayFocusFile(tmp, batonA);
+    focusA.commit(); // ledger A committed before the staged focus is promoted.
+
+    const batonB = buildRelayHandoffLedgerEntry({
+      trigger: "quota_wall", state_summary: "B must not replace A", remaining: "finish B",
+      fromModelId: "terra@med", fromPool: "codex-5h", toModelId: "luna@med",
+      toPool: "codex-5h", step: "S2", now: new Date("2026-07-10T12:30:00.000Z"),
+    });
+    const focusB = stageRelayFocusFile(tmp, batonB);
+    // Simulate the only failed operation: B's durable ledger append. Its staged
+    // file must be discarded, never promoted or allowed to erase A's baton.
+    focusB.discard();
+
+    const durableFocus = readFileSync(join(tmp, RELAY_FOCUS_FILENAME), "utf8");
+    expect(durableFocus).toContain("A durable");
+    expect(durableFocus).not.toContain("B must not replace A");
+  });
+
   it("resume can continue from any baton interrupt via ledger", () => {
     const ledger: RelayHandoffLedgerEvent[] = [
       buildRelayHandoffLedgerEntry({
@@ -957,6 +984,58 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     );
   });
 
+  it("keeps baton A's durable focus when baton B's relay ledger append fails", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "relay-686-two-baton-ledger-fail-"));
+    const worktree: WorktreeHandle = {
+      branch: "feat/686-relay-two-baton",
+      base: "main",
+      path: tmp,
+    };
+    class TwoBatonLedgerFailureBackend extends S9RelayBackend {
+      public relayLedgerWrites = 0;
+
+      override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "verify") {
+          this.verifyDispatches += 1;
+          this.verifyModels.push(spec.model);
+          if (this.verifyDispatches <= 2) {
+            throw quotaWaitError("S9", new Date(NOW.getTime() + 45 * 60 * 1000));
+          }
+        }
+        return super.dispatchWorker(spec);
+      }
+
+      override async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+        if (entry.event === "relay_baton_handoff" && ++this.relayLedgerWrites === 2) {
+          throw new Error("baton B ledger write failed");
+        }
+        await super.writeLedger(entry);
+      }
+    }
+
+    const backend = new TwoBatonLedgerFailureBackend(worktree, priorThroughShip(worktree));
+    const result = await runOrchestrator({
+      issueNumber: 686,
+      backend,
+      relayPools: [
+        ...livePools("grok-build", new Date(NOW.getTime() + 45 * 60 * 1000)),
+        {
+          id: "zai",
+          status: "live",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["luna@med"],
+        },
+      ],
+      now: () => NOW,
+    });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.relayLedgerWrites).toBe(2);
+    const durableFocus = readFileSync(join(tmp, RELAY_FOCUS_FILENAME), "utf8");
+    expect(durableFocus).toContain("to: terra@med");
+    expect(durableFocus).not.toContain("to: luna@med");
+  });
+
   it("S9 hang with a live pool → relay on the same scene (not S8)", async () => {
     tmp = mkdtempSync(join(tmpdir(), "relay-686-s9-hang-"));
     const worktree: WorktreeHandle = {
@@ -1088,6 +1167,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     };
     let coderFails = 0;
     let coderModels: string[] = [];
+    const reviewerDispatches: Array<{ spec: WorkerSpec; ctx: DispatchContext }> = [];
     class ExhaustBackend implements Backend {
       public ledgerWrites: PersistentLedgerEntry[] = [];
       async smokeModelRoute(route: any): Promise<any> {
@@ -1130,7 +1210,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
         this.ledgerWrites.push(entry);
       }
-      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
         if (spec.kind === "coder" && spec.id === "S2") {
           coderModels.push(spec.model);
           coderFails += 1;
@@ -1144,6 +1224,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           };
         }
         if (spec.kind === "reviewer") {
+          reviewerDispatches.push({ spec, ctx });
           return {
             kind: "completed",
             output: { kind: "reviewer", findings: [] },
@@ -1205,6 +1286,12 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(true);
     // Relayed baton was actually dispatched (terra slug).
     expect(coderModels).toContain("gpt-5.6-terra");
+    // The S2 relay belongs only to that coder step. The normal S3 reviewer must
+    // select its own channel from its reviewer route, not inherit the coder's
+    // billing pool or baton brief.
+    expect(reviewerDispatches).toHaveLength(1);
+    expect(reviewerDispatches[0]?.ctx.billingPool).toBeUndefined();
+    expect(reviewerDispatches[0]?.ctx.relayFocusPath).toBeUndefined();
     expect(result.status).not.toBe("error");
   });
 });
