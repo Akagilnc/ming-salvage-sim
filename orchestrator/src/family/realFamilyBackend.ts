@@ -247,6 +247,8 @@ export interface FamilyEscalationRecord extends FamilyEscalation {
 
 /** Options for {@link RealFamilyBackend}. */
 export interface RealFamilyBackendOptions {
+  /** Enable Codex priority processing for every in-container Codex leg. */
+  readonly codexFast?: boolean;
   /**
    * The dedicated clone the family run owns (ADR 0024) — the family base branch
    * + every child branch live here, and every git op anchors on it. In production
@@ -872,7 +874,7 @@ export class RealFamilyBackend implements FamilyBackend {
       tempCodexDir = mkdtempSync(join(root, "merger-codex-auth-"));
       copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
       chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ no codex mount. Reclaim the mkdtemp dir if it was
@@ -2214,7 +2216,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // bwrap is impossible — the failure that degrades cmr legs to static-only).
       // The host config.toml is host-personal and irrelevant — only auth.json
       // crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). Reclaim the
@@ -2660,7 +2662,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
       // bwrap is impossible). The host config.toml is host-personal and irrelevant
       // — only auth.json crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). gh is NOT here — it is
