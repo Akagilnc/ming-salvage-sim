@@ -220,6 +220,11 @@ def character_context_with_db(character: Character, db: GameDB) -> str:
         faction_text = "与该派仅有名义关联，未提供该派内情；人物立场由自身经历与当下处境呈现。"
     elif faction is None:
         faction_text = "该派尚无完整档料，以人物所处官职和已知行动推知其所求。"
+    elif bucket == "middle":
+        faction_text = (
+            f"所求：{faction['agenda']}；当前朝势："
+            f"{_faction_band('leverage', faction['leverage'])}。"
+        )
     else:
         faction_text = (
             f"所求：{faction['agenda']}；当前朝势："

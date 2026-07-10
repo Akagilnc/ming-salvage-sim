@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from ming_sim.models import CourtContext
 from ming_sim.context import character_context_with_db
@@ -14,7 +15,9 @@ from ming_sim.registry import (
     build_building_brief,
     build_court_brief,
     build_region_brief,
+    create_minister_agent,
 )
+from ming_sim.models import LLMConfig
 from ming_sim.tools import build_minister_tools
 
 
@@ -146,8 +149,38 @@ def test_identity_bucket_selects_objective_faction_dossier(game):
 
     assert "守住漕运与军饷" in high
     assert "守住漕运与军饷" in middle
+    assert "对政局态度" in high
+    assert "对政局态度" not in middle
     assert "守住漕运与军饷" not in low
     assert "行为" not in low
+
+
+def test_final_minister_context_rejects_injected_abstract_values(game):
+    """最终 instructions seam 不得把抽象分数重新带回上下文。"""
+    db, _state, content = game
+    db.conn.execute("UPDATE regions SET public_support=13, unrest=87")
+    db.conn.execute("UPDATE armies SET firearm_equipment=30 WHERE owner_power='ming'")
+    db.conn.commit()
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    ctx = _ctx(game)
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
+         patch("ming_sim.registry._ctx", return_value=content), \
+         patch("ming_sim.registry._skills_for", return_value=None), \
+         patch("ming_sim.registry.build_minister_tools", return_value=[]):
+        create_minister_agent(minister, cfg, ctx, db)
+
+    rendered = "\n".join(captured["instructions"])
+    for pattern in ("民心13", "动乱87", "火器30", "皇威13", "进度13/100"):
+        assert pattern not in rendered
+    assert "火器" in rendered and any(word in rendered for word in ("短缺", "尚可", "精良"))
 
 
 def test_north_star_sample_is_reviewable():
