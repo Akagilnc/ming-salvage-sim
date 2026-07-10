@@ -69,8 +69,9 @@ export const DEFAULT_CODER_REC_ORDER: ReadonlyArray<string> = [
  */
 export const CODER_REC_FALLBACK_AFTER_ROUNDS = 2;
 
+/** Allow optional Markdown bullet markers (`- `, `* `, `+ `) before the label. */
 const CODER_REC_LINE =
-  /^\s*Coder-Rec\s*:\s*(.+?)\s*$/im;
+  /^\s*(?:[-*+]\s+)?Coder-Rec\s*:\s*(.+?)\s*$/im;
 
 function splitCoderRecTokens(raw: string): string[] {
   return raw
@@ -138,10 +139,23 @@ export function resolveCoderRecOrder(
     issueBody !== undefined && issueBody.length > 0
       ? parseCoderRec(issueBody)
       : undefined;
-  const fromMarking =
-    parsed !== undefined ? entriesForTokens(parsed) : [];
-  if (fromMarking.length > 0) return fromMarking;
-  return entriesForTokens(DEFAULT_CODER_REC_ORDER);
+  if (parsed === undefined) {
+    return entriesForTokens(DEFAULT_CODER_REC_ORDER);
+  }
+  const dropped = parsed.filter((t) => lookupCoderRosterEntry(t) === undefined);
+  const fromMarking = entriesForTokens(parsed);
+  if (fromMarking.length === 0) {
+    console.info(
+      `[coder-roster] Coder-Rec tokens all invalid (${dropped.join(", ")}); degrading to default order`,
+    );
+    return entriesForTokens(DEFAULT_CODER_REC_ORDER);
+  }
+  if (dropped.length > 0) {
+    console.info(
+      `[coder-roster] dropped invalid Coder-Rec token(s): ${dropped.join(", ")}`,
+    );
+  }
+  return fromMarking;
 }
 
 export interface SelectCoderRecOptions {
@@ -213,15 +227,28 @@ export function selectCoderRecEntry(
   return order[start]!;
 }
 
-/** Active reviewer-facing slugs from a resolved model route. */
+/**
+ * Active reviewer / CMR-leg slugs from a resolved model route.
+ * Includes per-slice reviewer, CMR gate slots (completeness / correctness /
+ * verify), and cmrReview collection legs — coder roster entries must not
+ * double as any of these (pool-separation hard rule).
+ */
 export function reviewerSlugsFromRoute(route: {
-  readonly slots: { readonly reviewer: string };
+  readonly slots: {
+    readonly reviewer: string;
+    readonly cmrCompleteness: string;
+    readonly cmrCorrectness: string;
+    readonly verify: string;
+  };
   readonly legCollections: {
     readonly cmrReview: ReadonlyArray<{ readonly slug: string }>;
   };
 }): string[] {
   return [
     route.slots.reviewer,
+    route.slots.cmrCompleteness,
+    route.slots.cmrCorrectness,
+    route.slots.verify,
     ...route.legCollections.cmrReview.map((leg) => leg.slug),
   ];
 }
