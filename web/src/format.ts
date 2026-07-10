@@ -346,6 +346,10 @@ const stripOrganicMarkdownFromPlainText = (text: string): string => {
     let depth = 1;
     let urlEnd = labelEnd + 2;
     while (urlEnd < withoutBlockPrefixes.length && depth > 0) {
+      if (withoutBlockPrefixes[urlEnd] === "\\") {
+        urlEnd += 2;
+        continue;
+      }
       if (withoutBlockPrefixes[urlEnd] === "(") depth += 1;
       if (withoutBlockPrefixes[urlEnd] === ")") depth -= 1;
       urlEnd += 1;
@@ -359,8 +363,10 @@ const stripOrganicMarkdownFromPlainText = (text: string): string => {
   withoutLinks += withoutBlockPrefixes.slice(linkTextStart);
 
   return withoutLinks
-    .replace(/(?<![\p{L}\p{N}_])(\*\*|__)(?=\S)([^\n]*?\S)\1(?![\p{L}\p{N}_])/gu, "$2")
-    .replace(/(?<![\p{L}\p{N}_])(\*|_)(?=\S)([^\n]*?\S)\1(?![\p{L}\p{N}_])/gu, "$2");
+    .replace(/(\*\*)(?=\S)([^\n]*?\S)\1/gu, "$2")
+    .replace(/(?<![\p{L}\p{N}\p{M}_])(__)(?=\S)([^\n]*?\S)\1(?![\p{L}\p{N}\p{M}_])/gu, "$2")
+    .replace(/(\*)(?=\S)([^\n]*?\S)\1/gu, "$2")
+    .replace(/(?<![\p{L}\p{N}\p{M}_])(_)(?=\S)([^\n]*?\S)\1(?![\p{L}\p{N}\p{M}_])/gu, "$2");
 };
 
 export const stripOrganicMarkdown = (text: string): string => {

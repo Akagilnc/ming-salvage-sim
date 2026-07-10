@@ -41,8 +41,20 @@ describe("stripOrganicMarkdown", () => {
     expect(stripOrganicMarkdown("字段_税率_值")).toBe("字段_税率_值");
   });
 
+  it("strips bold text adjacent to CJK letters", () => {
+    expect(stripOrganicMarkdown("甲**乙**丙")).toBe("甲乙丙");
+  });
+
+  it("keeps underscores next to combining marks", () => {
+    expect(stripOrganicMarkdown("e\u0301_x_!")).toBe("e\u0301_x_!");
+  });
+
   it("strips links whose URLs contain nested parentheses", () => {
     expect(stripOrganicMarkdown("[正文](https://example.com/a_(b))")).toBe("正文");
+  });
+
+  it("strips links whose URLs contain escaped closing parentheses", () => {
+    expect(stripOrganicMarkdown("[正文](https://example.com/a\\))")).toBe("正文");
   });
 
   it("strips nested block prefixes until the line is plain", () => {
