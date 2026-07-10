@@ -280,6 +280,8 @@ export function buildIssueMeta(
     openBlockedBy: blockedBy
       .filter((d) => d.state !== "closed")
       .map((d) => d.number),
+    // #767: body is cheap (unlike comments) and lets S0 parse Coder-Rec.
+    ...(typeof json.body === "string" ? { body: json.body } : {}),
   };
 }
 
@@ -2401,12 +2403,11 @@ export class RealBackend implements Backend {
     // a blocked-by-open issue (blocked_by query fault → [] → no blockers → allow)
     // slip past the pinned S0 three-way gate and run from a stale base.
     const json = this.phase("S0", "fetchIssueView", () => {
-      // S0 reads ONLY the gate fields: labels (ready-for-agent) + state (closed?,
-      // #2) here, plus the native sub-issue count + blocked_by from their own
-      // queries below. It does NOT pull body/comments — the Agent Brief is no
-      // longer an S0 gate (#328), so `comments` would only trigger gh's paginated
-      // preloadIssueComments for no consumer, and S1's full snapshot re-fetches
-      // both anyway (#329 perf).
+      // S0 reads the gate fields + body (#767 Coder-Rec). It does NOT pull
+      // comments — that would trigger gh's paginated preloadIssueComments for
+      // no S0 consumer, and S1's full snapshot re-fetches body+comments anyway
+      // (#329 perf). Body alone is cheap and lets the runner parse Coder-Rec
+      // before the first worker dispatch.
       const raw = this.sh("gh", [
         "issue",
         "view",
@@ -2414,7 +2415,7 @@ export class RealBackend implements Backend {
         "--repo",
         this.opts.repo,
         "--json",
-        "number,labels,state",
+        "number,labels,state,body",
       ]);
       return JSON.parse(raw) as GhIssueJson;
     });

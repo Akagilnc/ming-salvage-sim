@@ -1111,6 +1111,12 @@ export interface IssueMeta {
   readonly isClosed: boolean;
   /** Issue numbers of still-open blocked_by dependencies. */
   readonly openBlockedBy: ReadonlyArray<number>;
+  /**
+   * Issue body when the S0 fetch included it (#767 Coder-Rec). Optional so
+   * lightweight fakes / older callers stay valid; when present the runner
+   * parses the design-time `Coder-Rec:` marking before dispatch.
+   */
+  readonly body?: string;
 }
 
 /**
