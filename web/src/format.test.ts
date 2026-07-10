@@ -28,6 +28,25 @@ describe("stripOrganicMarkdown", () => {
       .toBe("**原样**\n- 原样");
   });
 
+  it("preserves inline-code content literally", () => {
+    expect(stripOrganicMarkdown("`  a  `\n`a\nb`"))
+      .toBe("  a  \na\nb");
+  });
+
+  it("keeps image alt text while stripping images and thematic breaks", () => {
+    expect(stripOrganicMarkdown("甲 ![军报](https://example.com/report.png) 乙\n\n---\n\n丙"))
+      .toBe("甲 军报 乙\n\n丙");
+  });
+
+  it("preserves table cell and row boundaries", () => {
+    expect(stripOrganicMarkdown("| 甲 | 乙 |\n| --- | --- |\n| 丙 | 丁 |"))
+      .toBe("甲\t乙\n丙\t丁");
+  });
+
+  it("decodes markdown entities consistently", () => {
+    expect(stripOrganicMarkdown("&copy; **2026**")).toBe("© 2026");
+  });
+
   it("does not treat user text that resembles an internal code placeholder as a code span", () => {
     expect(stripOrganicMarkdown("正文\uE0000\uE001尾")).toBe("正文\uE0000\uE001尾");
   });
