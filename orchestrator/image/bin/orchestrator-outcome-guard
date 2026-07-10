@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Iterator
 
 
 def main() -> int:
@@ -55,7 +56,7 @@ def validate_outcome(role: str, draft: object, evidence_root: str) -> None:
 
 # Open markdown checklist item: line-leading "- [ ]" or "* [ ]" (Rylaa Close Guard
 # parity). Closed forms "- [x]" / "- [~] deferred: …" are not open work.
-OPEN_CHECKBOX_RE = re.compile(r"(?m)^\s*[-*]\s+\[ \](?:\s.*)?$")
+OPEN_CHECKBOX_RE = re.compile(r"(?m)^\s*[-*+]\s+\[ \](?:\s.*)?$")
 
 # Draft shapes that claim terminal success / completed work. CMR uses
 # converged:true; keep status/kind literals so future role schemas get the same
@@ -78,20 +79,15 @@ def draft_claims_success(draft: dict) -> bool:
     return False
 
 
-def collect_strings(value: object) -> list:
+def collect_strings(value: object) -> Iterator[str]:
     if isinstance(value, str):
-        return [value]
-    if isinstance(value, list):
-        out = []
+        yield value
+    elif isinstance(value, list):
         for item in value:
-            out.extend(collect_strings(item))
-        return out
-    if isinstance(value, dict):
-        out = []
+            yield from collect_strings(item)
+    elif isinstance(value, dict):
         for item in value.values():
-            out.extend(collect_strings(item))
-        return out
-    return []
+            yield from collect_strings(item)
 
 
 def find_open_checkboxes(draft: dict) -> list:
