@@ -362,7 +362,13 @@ export function pidSafeToSignal(
   // the one we observed when walking the tree (PID slot reuse of a child).
   const expectedId = instanceAtCollect.get(pid);
   const liveId = d.readInstanceId(pid);
-  if (expectedId !== undefined && liveId !== undefined && liveId !== expectedId) {
+  // No evidence, no kill: a child absent from the collect snapshot, or a child
+  // whose identity read failed during collection, is never safe to signal. A
+  // later readable identity may belong to a reused PID.
+  if (!instanceAtCollect.has(pid) || expectedId === undefined) {
+    return false;
+  }
+  if (liveId !== undefined && liveId !== expectedId) {
     return false;
   }
   // If we cannot read a live identity for a non-root pid, refuse (fail-closed).

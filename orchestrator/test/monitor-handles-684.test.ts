@@ -21,6 +21,7 @@ import {
   isWorkerIdle,
   killWorkerTree,
   monitorHandleFromLedger,
+  pidSafeToSignal,
   poolIdForWorker,
   readLogActivity,
   validateMonitorHandle,
@@ -432,6 +433,22 @@ describe("#684 worker monitor handles", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("refuses to signal a child whose identity was not captured at collect time", () => {
+    const handle = baseHandle({ pid: 100, logPath: "/tmp/worker.log", instanceId: "root" });
+    const deps: WorkerMonitorDeps = {
+      isPidAlive: () => true,
+      readInstanceId: (pid) => (pid === 100 ? "root" : "reused-child"),
+      readParentPid: () => 100,
+    };
+
+    expect(
+      pidSafeToSignal(101, handle, new Set([100, 101]), new Map([[101, undefined]]), deps),
+    ).toBe(false);
+    expect(
+      pidSafeToSignal(101, handle, new Set([100, 101]), new Map(), deps),
+    ).toBe(false);
   });
 
   it("persists the monitor callback before awaiting the monitored child", async () => {
