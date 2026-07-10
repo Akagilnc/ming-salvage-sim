@@ -901,7 +901,7 @@ class GameSession:
         # 控制指令（退下/换人/技能）由 CLI 层 parse_court_command 处理；
         # GameSession.chat 只负责与 agent 对话与 tool 截获。
         agent = self.registry.get(character)
-        augmented = self._audience_prompt_for_message(message)
+        augmented = self._audience_prompt_for_message(message, character)
         action_intent_future = self._start_cli_action_intent(character, message)
         run_output = agent.run(augmented)
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
@@ -1017,6 +1017,7 @@ class GameSession:
                                 "assignee": str(payload.get("assignee") or character.name).strip(),
                                 "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
                                 "deadline_months": payload.get("deadline_months") or 0,
+                                "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
                             },
                         )
                 elif tool_result.startswith("__secret_order_registered__"):
@@ -1037,8 +1038,22 @@ class GameSession:
         )
         return result
 
-    def _audience_prompt_for_message(self, message: str) -> str:
+    def _audience_prompt_for_message(self, message: str, character: Character) -> str:
         augmented = self._retrieve_memories_for_message(message)
+        try:
+            knowledge = self.db.get_character_knowledge(self.state, character.name)
+            world = knowledge.get("world") or {}
+            events = knowledge.get("events") or []
+            public_events = knowledge.get("public_events") or []
+            lines = [f"【{character.name}此刻所知】"]
+            for key, value in world.items():
+                lines.append(f"{key}：{value}")
+            for item in [*public_events, *events][-20:]:
+                lines.append(f"- {item.get('title')}: {item.get('body')}")
+            augmented = "\n".join(lines) + "\n\n" + augmented
+        except Exception:
+            # A corrupt legacy save must not prevent ordinary audience chat.
+            pass
         # 本回合已核定草案随大臣议事滚动累加，agent system 在月初冻结拿不到——
         # 每次 chat 前置实时 draft_line 到 user message 头，确保大臣看得到兄弟大臣最新动作。
         draft_line = self.registry.build_draft_line() if self.registry is not None else ""
@@ -1196,6 +1211,7 @@ class GameSession:
                     "assignee": assignee,
                     "tags": so.get("tags") or [],
                     "deadline_months": so.get("deadline_months", 0),
+                    "excluded_names": so.get("excluded_names") or [],
                 },
             )
         if not out["secret_order_id"] and acts["secret_order"]:
@@ -1768,7 +1784,8 @@ class GameSession:
         except (TypeError, ValueError):
             deadline = 0
         print(f"[secret_order] 截获密令 minister={minister_name} assignee={assignee} title={title!r} tags={tags}")
-        return self.db.create_secret_order(self.state, assignee, title, content, tags, deadline_months=deadline)
+        excluded = data.get("excluded_names") if isinstance(data.get("excluded_names"), list) else []
+        return self.db.create_secret_order(self.state, assignee, title, content, tags, deadline_months=deadline, excluded_names=excluded)
 
     def _stage_legacy_registered_secret_order(self, order_id: int, fallback_minister: str) -> int:
         """Convert a legacy already-registered same-turn secret order into a pending candidate.

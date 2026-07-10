@@ -957,6 +957,7 @@ class GameDB:
                 status TEXT NOT NULL DEFAULT 'active',
                 result TEXT NOT NULL DEFAULT '',
                 sim_note TEXT NOT NULL DEFAULT '',
+                excluded_names TEXT NOT NULL DEFAULT '[]',
                 turn_closed INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -1170,6 +1171,23 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_event_memory_sources_memory
             ON event_memory_sources(memory_id);
 
+            CREATE TABLE IF NOT EXISTS character_knowledge_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                character_name TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL DEFAULT '',
+                source_id TEXT NOT NULL,
+                excluded_names TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(character_name, kind, source_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_character_knowledge_events_character
+                ON character_knowledge_events(character_name, turn, id);
+
             CREATE TABLE IF NOT EXISTS kv_store (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL DEFAULT '',
@@ -1255,6 +1273,7 @@ class GameDB:
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；到 due_turn 时自动转入待核议，由推演当月判 done/failed。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("secret_orders", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
         # BUG 3：directive 暂存 commit 成 turn_directives draft 时回填该 draft 行 id，
         # 使 undo_chat_turn 能精确删本轮自产的那条 draft（旧实现按 (turn,actor) 删，
         # 会连带删掉同 actor 同回合的无关 draft）。0=未 commit / 非 directive。
@@ -6333,6 +6352,12 @@ class GameDB:
             (minister_name, turn, role, content),
         )
         self.conn.commit()
+        if minister_name and role in {"user", "assistant", "minister"}:
+            state = self.load_state()
+            self.record_character_participation(
+                state, [minister_name], "audience", "召对", content,
+                f"chat_message:{cur.lastrowid}",
+            )
         return int(cur.lastrowid)
 
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
@@ -6343,6 +6368,10 @@ class GameDB:
             self.conn.executemany(
                 "DELETE FROM chat_messages WHERE id = ?",
                 [(mid,) for mid in ids],
+            )
+            self.conn.executemany(
+                "DELETE FROM character_knowledge_events WHERE source_id = ?",
+                [(f"chat_message:{mid}",) for mid in ids],
             )
 
     def load_all_chat_history(self) -> Dict[str, List[Dict[str, str]]]:
@@ -7822,8 +7851,11 @@ class GameDB:
                 tags_raw = payload.get("tags") or []
                 tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
                 deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
+                excluded = payload.get("excluded_names") or []
+                excluded = [str(t).strip() for t in excluded if str(t).strip()] if isinstance(excluded, list) else []
                 order_id = self.create_secret_order(
-                    state, assignee, title, content_text, tags, deadline_months=deadline)
+                    state, assignee, title, content_text, tags, deadline_months=deadline,
+                    excluded_names=excluded)
                 if registry is not None:
                     try:
                         registry.refresh(assignee)
@@ -9009,6 +9041,41 @@ class GameDB:
 
     # ----- secret_orders（密令系统）-----
 
+    def _character_knowledge_events(self, character_name: str, *, include_exclusions: bool = False) -> List[Dict[str, object]]:
+        rows = self.conn.execute(
+            "SELECT turn, year, period, kind, title, body, source_id, excluded_names "
+            "FROM character_knowledge_events WHERE character_name=? ORDER BY turn, id",
+            (str(character_name or ""),),
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = {"turn": int(row["turn"]), "year": int(row["year"]), "period": int(row["period"]),
+                    "kind": row["kind"], "title": row["title"], "body": row["body"], "source_id": row["source_id"]}
+            if include_exclusions:
+                item["excluded_names"] = row["excluded_names"] or "[]"
+            result.append(item)
+        return result
+
+    def record_character_participation(self, state: GameState, participants: Iterable[str], kind: str, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None) -> None:
+        source_id = source_id or f"{kind}:{state.turn}:{title}"
+        for name in dict.fromkeys(str(p).strip() for p in participants if str(p).strip()):
+            self.conn.execute(
+                "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id) VALUES (?,?,?,?,?,?,?,?)",
+                (state.turn, state.year, state.period, name, kind, title[:80], body[:400], source_id),
+            )
+        self.conn.commit()
+
+    def record_public_knowledge_event(self, state: GameState, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
+            (state.turn, state.year, state.period, "", "public", title[:80], body[:400], source_id or f"public:{state.turn}:{title}", json.dumps(list(excluded_names or []), ensure_ascii=False)),
+        )
+        self.conn.commit()
+
+    def get_character_knowledge(self, state: GameState, character_name: str) -> Dict[str, object]:
+        from ming_sim.knowledge import build_character_knowledge
+        return build_character_knowledge(self, state, character_name)
+
     def create_secret_order(
         self,
         state: GameState,
@@ -9018,6 +9085,7 @@ class GameDB:
         tags: List[str],
         importance: int = 4,
         deadline_months: int = 0,
+        excluded_names: Optional[Iterable[str]] = None,
     ) -> int:
         # 宗藩/外藩 非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
         # API / 大臣工具 / CLI 自然语言 / upsert 回落 create 全路（cmr R6 cross-section）。
@@ -9052,12 +9120,14 @@ class GameDB:
         cur = self.conn.execute(
             """
             INSERT INTO secret_orders
-                (turn_issued, due_turn, year_issued, period_issued, minister_name, title, content, tags, importance, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+                (turn_issued, due_turn, year_issued, period_issued, minister_name, title, content, tags, importance, status, excluded_names)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
             """,
-            (state.turn, due_turn, state.year, state.period, minister_name, title[:20], content, tags_json, importance),
+            (state.turn, due_turn, state.year, state.period, minister_name, title[:20], content, tags_json, importance,
+             json.dumps(list(excluded_names or []), ensure_ascii=False)),
         )
         self.conn.commit()
+        self.record_character_participation(state, [minister_name], "secret_order", title, content, f"secret_order:{cur.lastrowid}")
         tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
         return cur.lastrowid  # type: ignore[return-value]
 
@@ -9159,6 +9229,7 @@ class GameDB:
                 "status": r["status"],
                 "result": r["result"] or "",
                 "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
+                "excluded_names": json.loads(r["excluded_names"] or "[]") if "excluded_names" in r.keys() else [],
                 "turn_closed": r["turn_closed"],
             }
             for r in rows
