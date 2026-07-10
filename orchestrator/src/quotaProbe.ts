@@ -441,6 +441,19 @@ async function runOpencodePongProbe(
         child.stderr?.on("data", (c: Buffer) => {
           stderr += c.toString("utf8");
         });
+        // Readable 'error' without a listener becomes an uncaught exception and
+        // can crash the process — log-and-continue; close/error on the ChildProcess
+        // still settle the promise.
+        child.stdout?.on("error", (err: Error) => {
+          console.warn(
+            `[orchestrator] opencode probe stdout error: ${err.message}`,
+          );
+        });
+        child.stderr?.on("error", (err: Error) => {
+          console.warn(
+            `[orchestrator] opencode probe stderr error: ${err.message}`,
+          );
+        });
         child.on("error", (err) => {
           clearTimeout(timer);
           reject(err);

@@ -12,6 +12,7 @@
  * Probes are STUBBED — no real network/CLI in unit tests.
  */
 
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -273,6 +274,23 @@ describe("#683 buildQuotaWaitForResetLedgerEntry (ledger 外显)", () => {
       workerPid: 111,
       ts: "2026-07-08T12:00:00.000Z",
     });
+  });
+});
+
+describe("#683 opencode probe stream error listeners", () => {
+  it("default runCommand registers error listeners on stdout and stderr", () => {
+    // Readable stream 'error' without a listener becomes an uncaught exception
+    // and can crash the process; the default spawn path must log-and-continue.
+    const src = readFileSync(
+      new URL("../src/quotaProbe.ts", import.meta.url),
+      "utf8",
+    );
+    const spawnBlock = src.slice(
+      src.indexOf("async function runOpencodePongProbe"),
+      src.indexOf("function isQuotaLimitBody"),
+    );
+    expect(spawnBlock).toMatch(/child\.stdout\?\.on\(\s*["']error["']/);
+    expect(spawnBlock).toMatch(/child\.stderr\?\.on\(\s*["']error["']/);
   });
 });
 
