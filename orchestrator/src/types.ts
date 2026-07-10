@@ -1208,6 +1208,30 @@ export interface WorkerMonitorHandle {
   readonly completionSignal: string;
   readonly stepId: string;
   readonly dispatchedAt: string;
+  /**
+   * OS-level process start identity (e.g. `ps -o lstart=`) captured at spawn.
+   * Resume/kill must verify the live PID still matches this identity before any
+   * signal — otherwise a recycled PID would kill an unrelated process (#684 R1).
+   */
+  readonly instanceId: string;
+}
+
+/**
+ * Host-side CLI spawn input for the production monitored-dispatch path (#684).
+ * When a backend returns this from {@link Backend.resolveCliMonitorDispatch},
+ * the runner free function {@link dispatchWorkerWithMonitor} spawns via
+ * `dispatchMonitoredCliWorker` so the monitor handle is atomic with dispatch.
+ */
+export interface CliMonitorSpawnSpec {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly logDir: string;
+  readonly poolId: string;
+  readonly completionSignal: string;
+  readonly stepId: string;
+  readonly cwd?: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly logBasename?: string;
 }
 
 /**
@@ -1433,6 +1457,31 @@ export interface Backend {
    * dispatch SEQUENCE + each {@link WorkerSpec} (the #331 acceptance criterion).
    */
   dispatchWorker?(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult>;
+  /**
+   * #684 optional: when a worker runs as a host-side CLI process (opencode /
+   * grok / …), return the spawn input. The production
+   * {@link dispatchWorkerWithMonitor} path then uses `dispatchMonitoredCliWorker`
+   * so the monitor handle is generated atomically with real dispatch and can be
+   * persisted on the ledger for resume rebuild.
+   *
+   * Absent / returns undefined ⇒ container/legacy path (no CLI monitor handle).
+   */
+  resolveCliMonitorDispatch?(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): CliMonitorSpawnSpec | undefined;
+  /**
+   * #684: map a finished monitored CLI child into a {@link WorkerResult}.
+   * Required when {@link resolveCliMonitorDispatch} returns a spawn spec.
+   */
+  awaitMonitoredCliWorker?(
+    handle: WorkerMonitorHandle,
+    exitCode: number | null,
     spec: WorkerSpec,
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,

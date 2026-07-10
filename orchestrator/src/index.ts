@@ -28,21 +28,25 @@ export type {
 // ── unified worker-dispatch seam (ADR 0026 / PRD #330, #331) ────────────────
 export {
   dispatchWorker,
+  dispatchWorkerWithMonitor,
   legacyDispatchWorker,
   workerResultToStep,
   stepSpecToWorkerSpec,
   shipWorkerSpec,
 } from "./dispatchWorker.js";
+export type { DispatchWorkerWithMonitorOutcome } from "./dispatchWorker.js";
 export {
   collectPidTree,
   dispatchMonitoredCliWorker,
   hasCompletionSignalInLog,
+  instanceMatchesHandle,
   isWorkerAlive,
   isWorkerIdle,
   killWorkerTree,
   monitorHandleFromLedger,
   poolIdForWorker,
   readLogActivity,
+  readProcessInstanceId,
   validateMonitorHandle,
 } from "./workerMonitor.js";
 export type {

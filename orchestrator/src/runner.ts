@@ -48,7 +48,7 @@ import {
 // instead of reaching for runStep/resumeSession/push directly.
 import {
   cleanupWorkerSpec,
-  dispatchWorker,
+  dispatchWorkerWithMonitor,
   docReleaseWorkerSpec,
   fixerWorkerSpec,
   SHIP_PROMPT_FILE,
@@ -3161,6 +3161,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // actions and for a fake Backend that returns a bare StepOutput → the ledger
     // records the run-level UUID fallback for those.
     let stepSessionId: string | undefined;
+    // #684: monitor handle from production CLI dispatch (dispatchWorkerWithMonitor),
+    // when the worker was spawned as a host-side CLI process. Persisted on the
+    // ledger so resume can rebuild alive/idle/kill judgment without global pgrep.
+    let stepMonitorHandle: import("./types.js").WorkerMonitorHandle | undefined;
 
     switch (step) {
       case "S0": {
@@ -3322,7 +3326,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           let attempts = 0;
           for (;;) {
             attempts += 1;
-            let result: Awaited<ReturnType<typeof dispatchWorker>>;
+            let result: Awaited<
+              ReturnType<typeof dispatchWorkerWithMonitor>
+            >["result"];
             try {
               const workerSpec = stepSpecToWorkerSpec(
                 stepSpecs[step],
@@ -3407,7 +3413,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               result = await withMechanicalRetry(
                 workerSpec,
                 dispatchCtx,
-                (s, c) => dispatchWorker(backend, s, c, landingPayload),
+                async (s, c) => {
+                  // #684: production path — CLI workers go through
+                  // dispatchMonitoredCliWorker atomically via
+                  // dispatchWorkerWithMonitor; container path falls through.
+                  const outcome = await dispatchWorkerWithMonitor(
+                    backend,
+                    s,
+                    c,
+                    landingPayload,
+                  );
+                  if (outcome.monitorHandle !== undefined) {
+                    stepMonitorHandle = outcome.monitorHandle;
+                  }
+                  return outcome.result;
+                },
                 retryOpts,
               );
             } catch (err) {
@@ -3618,7 +3638,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           const shipResult = await withMechanicalRetry(
             shipSpec,
             shipCtx,
-            (s, c) => dispatchWorker(backend, s, c),
+            async (s, c) => {
+              // #684: production monitored dispatch (CLI → handle atomic with spawn).
+              const outcome = await dispatchWorkerWithMonitor(backend, s, c);
+              if (outcome.monitorHandle !== undefined) {
+                stepMonitorHandle = outcome.monitorHandle;
+              }
+              return outcome.result;
+            },
             {
               callerOwns: (o) => "result" in o && o.result.kind === "failed",
               ...shipResetOpt,
@@ -3970,14 +3997,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               reviewCtx,
               async (s, c) => {
                 let dispatchError: unknown | undefined;
-                let workerResult: Awaited<ReturnType<typeof dispatchWorker>>;
+                let workerResult: Awaited<
+                  ReturnType<typeof dispatchWorkerWithMonitor>
+                >["result"];
                 try {
-                  workerResult = await dispatchWorker(
+                  // #684: production monitored dispatch for review-loop workers.
+                  const outcome = await dispatchWorkerWithMonitor(
                     backend,
                     s,
                     c,
                     reviewLanding,
                   );
+                  workerResult = outcome.result;
+                  if (outcome.monitorHandle !== undefined) {
+                    stepMonitorHandle = outcome.monitorHandle;
+                  }
                 } catch (err) {
                   dispatchError = err;
                 }
@@ -4667,6 +4701,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ...(stepRepairMovementPaths !== undefined
         ? { repairMovementPaths: stepRepairMovementPaths }
         : {}),
+      // #684: surface the CLI monitor handle in-memory too (resume rebuild parity).
+      ...(stepMonitorHandle !== undefined
+        ? { monitorHandle: stepMonitorHandle }
+        : {}),
     });
     // #6: a writeLedger failure here is a backend-call exception → it must
     // converge to S8(error) with an error package, NOT raw-reject out of
@@ -4675,6 +4713,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     try {
       // #256: pass the real per-step sandbox session id (captured from the seam
       // extension) so the ledger records the true id resumeSession will resume.
+      // #684: pass the monitor handle so resume can rebuild alive/idle/kill judgment.
       await emitLedger(
         step,
         output,
@@ -4685,6 +4724,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         undefined,
         undefined,
         stepRepairMovementPaths,
+        stepMonitorHandle,
       );
     } catch (err) {
       // integ-cmr base r2 (D): the step is already in the in-memory ledger

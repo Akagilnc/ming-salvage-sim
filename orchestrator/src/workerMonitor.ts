@@ -47,6 +47,11 @@ export interface MonitoredCliDispatchResult {
 export interface KillWorkerTreeResult {
   readonly killedPids: readonly number[];
   readonly residualPids: readonly number[];
+  /**
+   * True when the handle PID is alive but its process start identity no longer
+   * matches — the PID was reused by an unrelated process and kill was refused.
+   */
+  readonly skippedDueToPidReuse?: boolean;
 }
 
 export interface WorkerMonitorDeps {
@@ -56,6 +61,8 @@ export interface WorkerMonitorDeps {
   readonly statLog?: (logPath: string) => LogActivitySnapshot;
   readonly readLogTail?: (logPath: string) => string;
   readonly sleepMs?: (ms: number) => Promise<void>;
+  /** OS-level process start identity for PID-reuse guards (#684 R1). */
+  readonly readInstanceId?: (pid: number) => string | undefined;
 }
 
 const defaultDeps: Required<WorkerMonitorDeps> = {
@@ -95,10 +102,37 @@ const defaultDeps: Required<WorkerMonitorDeps> = {
   },
   readLogTail: (logPath) => readFileSync(logPath, "utf8"),
   sleepMs: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  readInstanceId: (pid) => readProcessInstanceId(pid),
 };
+
+/** Read a stable process-start identity string for PID-reuse guards. */
+export function readProcessInstanceId(pid: number): string | undefined {
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  try {
+    const out = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return out.length > 0 ? out : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function resolveDeps(deps?: WorkerMonitorDeps): Required<WorkerMonitorDeps> {
   return { ...defaultDeps, ...deps };
+}
+
+/** True when the live PID still matches the handle's recorded instance identity. */
+export function instanceMatchesHandle(
+  handle: WorkerMonitorHandle,
+  deps?: WorkerMonitorDeps,
+): boolean {
+  const d = resolveDeps(deps);
+  if (!d.isPidAlive(handle.pid)) return false;
+  const liveId = d.readInstanceId(handle.pid);
+  if (liveId === undefined) return false;
+  return liveId === handle.instanceId;
 }
 
 /** Validate a persisted/rebuilt monitor handle shape. */
@@ -118,7 +152,9 @@ export function validateMonitorHandle(
     typeof handle.stepId === "string" &&
     handle.stepId.length > 0 &&
     typeof handle.dispatchedAt === "string" &&
-    handle.dispatchedAt.length > 0
+    handle.dispatchedAt.length > 0 &&
+    typeof handle.instanceId === "string" &&
+    handle.instanceId.length > 0
   );
 }
 
@@ -160,9 +196,12 @@ export async function dispatchMonitoredCliWorker(
     );
   }
 
+  // Capture OS start identity immediately so resume/kill can refuse PID reuse.
+  const instanceId = readProcessInstanceId(pid) ?? `spawned:${pid}:${dispatchedAt}`;
+
   appendFileSync(
     logPath,
-    `[orchestrator] dispatched ${input.stepId} pid=${pid} pool=${input.poolId} at ${dispatchedAt}\n`,
+    `[orchestrator] dispatched ${input.stepId} pid=${pid} pool=${input.poolId} instance=${instanceId} at ${dispatchedAt}\n`,
     "utf8",
   );
 
@@ -173,6 +212,7 @@ export async function dispatchMonitoredCliWorker(
     completionSignal: input.completionSignal,
     stepId: input.stepId,
     dispatchedAt,
+    instanceId,
   };
 
   if (!validateMonitorHandle(handle)) {
@@ -182,27 +222,38 @@ export async function dispatchMonitoredCliWorker(
   return { handle, child };
 }
 
-/** Alive check scoped to the handle pid only — never global name matching. */
+/**
+ * Alive check scoped to the handle pid + instance identity only — never global
+ * name matching. A live PID with a different start identity is treated as dead
+ * (PID reuse), so hang-kill will not target an unrelated process.
+ */
 export function isWorkerAlive(
   handle: WorkerMonitorHandle,
   deps?: WorkerMonitorDeps,
 ): boolean {
-  return resolveDeps(deps).isPidAlive(handle.pid);
+  return instanceMatchesHandle(handle, deps);
 }
 
-/** Read log growth signals for idle/progress judgment (#684). */
+/**
+ * Read log growth signals for idle/progress judgment (#684).
+ * Returns `undefined` when the log file is missing — callers must treat missing
+ * evidence as "not idle" (fail-closed: no evidence ⇒ do not kill).
+ */
 export function readLogActivity(
   handle: WorkerMonitorHandle,
   deps?: WorkerMonitorDeps,
-): LogActivitySnapshot {
+): LogActivitySnapshot | undefined {
   const d = resolveDeps(deps);
   if (!existsSync(handle.logPath)) {
-    return { sizeBytes: 0, mtimeMs: 0 };
+    return undefined;
   }
   return d.statLog(handle.logPath);
 }
 
-/** True when the handle log has not grown or changed within the idle threshold. */
+/**
+ * True when the handle log has not grown or changed within the idle threshold.
+ * Missing log ⇒ false (no evidence = do not treat as idle / do not hang-kill).
+ */
 export function isWorkerIdle(
   handle: WorkerMonitorHandle,
   idleThresholdMs: number,
@@ -210,6 +261,7 @@ export function isWorkerIdle(
   deps?: WorkerMonitorDeps,
 ): boolean {
   const current = readLogActivity(handle, deps);
+  if (current === undefined) return false;
   if (current.sizeBytes > previous.sizeBytes) return false;
   if (current.mtimeMs > previous.mtimeMs) return false;
   if (idleThresholdMs <= 0) return true;
@@ -249,19 +301,48 @@ export function collectPidTree(
   return tree;
 }
 
-/** Kill only the handle pid tree, then verify no residue remains. */
+/**
+ * Kill only the handle pid tree, then verify no residue remains.
+ *
+ * Residual check covers:
+ *   (1) the pre-kill tree snapshot, and
+ *   (2) a re-collected tree from the root if it is still the same instance
+ *       (captures children dynamically spawned during the kill window).
+ *
+ * LIMIT (re-parent to init / PID 1): children that re-parent to init (or another
+ * unrelated process) after their parent dies cannot be discovered via PPID walk
+ * from the original root. Mitigation: signal bottom-up (children before parents)
+ * so descendants receive SIGTERM/SIGKILL before re-parenting. Orphans that escape
+ * this window are outside the residual check by design.
+ *
+ * PID-reuse guard: if the handle PID is alive but its instance identity no
+ * longer matches, refuse to signal any process and report `skippedDueToPidReuse`.
+ */
 export async function killWorkerTree(
   handle: WorkerMonitorHandle,
   deps?: WorkerMonitorDeps,
 ): Promise<KillWorkerTreeResult> {
   const d = resolveDeps(deps);
+
+  // Refuse kill when the PID no longer refers to the original worker instance.
+  if (d.isPidAlive(handle.pid) && !instanceMatchesHandle(handle, deps)) {
+    return {
+      killedPids: [],
+      residualPids: [],
+      skippedDueToPidReuse: true,
+    };
+  }
+
   const tree = [...collectPidTree(handle.pid, deps)];
   const killed = new Set<number>();
 
   const trySignal = (signal: NodeJS.Signals) => {
+    // Bottom-up: children before parents, reducing re-parent-to-init orphans.
     for (let i = tree.length - 1; i >= 0; i--) {
       const pid = tree[i]!;
       if (!d.isPidAlive(pid)) continue;
+      // Only signal the root under identity guard; children are trusted via tree walk.
+      if (pid === handle.pid && !instanceMatchesHandle(handle, deps)) continue;
       try {
         d.killPid(pid, signal);
         killed.add(pid);
@@ -275,9 +356,20 @@ export async function killWorkerTree(
   await d.sleepMs(100);
   trySignal("SIGKILL");
 
-  const residualPids = tree.filter((pid) => d.isPidAlive(pid));
+  const residual = new Set<number>();
+  for (const pid of tree) {
+    if (d.isPidAlive(pid)) residual.add(pid);
+  }
+  // Re-collect while the original root instance is still alive — catches children
+  // that appeared during the kill window (dynamic spawn / late re-parent under root).
+  if (instanceMatchesHandle(handle, deps)) {
+    for (const pid of collectPidTree(handle.pid, deps)) {
+      if (d.isPidAlive(pid)) residual.add(pid);
+    }
+  }
+
   return {
     killedPids: [...killed],
-    residualPids,
+    residualPids: [...residual],
   };
 }
