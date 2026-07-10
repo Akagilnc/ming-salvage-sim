@@ -111,7 +111,10 @@ function listOpenDeferredTrackingIssues(
       number?: unknown;
       created_at?: unknown;
     };
-    if (obj.pull_request !== undefined || obj.title !== title) continue;
+    if (
+      (obj.pull_request !== undefined && obj.pull_request !== null) ||
+      obj.title !== title
+    ) continue;
     if (typeof obj.html_url !== "string") continue;
     const htmlUrl = obj.html_url.trim();
     if (!isValidGithubIssueUrl(htmlUrl)) continue;
@@ -366,8 +369,8 @@ export function resolveReviewThread(
     const firstCommentId = obj.comments?.nodes?.[0]?.databaseId;
     if (
       obj.id === threadId ||
-      firstCommentId === targetId ||
-      String(firstCommentId) === threadId
+      (firstCommentId !== undefined &&
+        (firstCommentId === targetId || String(firstCommentId) === threadId))
     ) {
       threadNodeId = obj.id;
       alreadyResolved = obj.isResolved === true;

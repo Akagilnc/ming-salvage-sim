@@ -120,6 +120,7 @@ import {
   applyVerifySideEffects,
   createDeferredTrackingIssue,
   deferredTrackingIssueTitle,
+  findOpenDeferredTrackingIssueUrl,
   fixMarkedKeysFromVerify,
   hostSideDeferredIdentityKey,
   replyToReviewThread,
@@ -989,6 +990,24 @@ describe("#600 stale head + artifact bot freshness (#600 AC3)", () => {
 });
 
 describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
+  it("#742 final: accepts a normalized non-PR issue with pull_request: null", () => {
+    const sh: Sh = (_file, args) =>
+      args.join(" ").includes("state=open")
+        ? JSON.stringify([
+            {
+              title: "defer finding",
+              html_url: "https://github.com/o/r/issues/99",
+              number: 99,
+              pull_request: null,
+            },
+          ])
+        : "[]";
+
+    expect(
+      findOpenDeferredTrackingIssueUrl(sh, "o/r", "defer finding"),
+    ).toBe("https://github.com/o/r/issues/99");
+  });
+
   it("createDeferredTrackingIssue uses gh api repos/{repo}/issues", () => {
     const calls: string[] = [];
     let created = false;
@@ -1804,6 +1823,37 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       calls.filter((c) => c.includes("resolveReviewThread")),
     ).toHaveLength(1);
     expect(calls.some((c) => c.includes("-X PUT"))).toBe(false);
+  });
+
+  it("#742 final: does not match an unrelated thread when firstCommentId is undefined", () => {
+    const calls: string[] = [];
+    const sh: Sh = (file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      const cmd = args.join(" ");
+      if (cmd.includes("graphql") && cmd.includes("reviewThreads")) {
+        return JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  pageInfo: { endCursor: "cursor-single-page", hasNextPage: false },
+                  nodes: [
+                    { id: "PRRT_unrelated", comments: { nodes: [{}] } },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      }
+      return "[]";
+    };
+
+    expect(() => resolveReviewThread(sh, "o/r", 42, "undefined")).toThrow(
+      /no GraphQL review thread/,
+    );
+
+    expect(calls.some((call) => call.includes("resolveReviewThread"))).toBe(false);
   });
 
   it("pin r27: applyVerifySideEffects refuses mismatched caller repo vs PR URL", () => {
