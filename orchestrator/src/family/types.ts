@@ -595,12 +595,12 @@ export interface FamilyBackend {
     request: VerifyFamilyShippedPrRequest,
   ): Promise<VerifyFamilyShippedPrResult>;
   /**
-   * Absolute git working directory for the family base clone (#602 doc-release
-   * fail-closed path reads). Optional — when absent, the LIVE auto-merge path
-   * cannot compute docReleasePaths and fails CLOSED (blocks merge); offline
-   * `pr://` test handles may pass `allowUnverifiedDocReleasePaths: true` via
-   * `offlineAutoMergeAllowUnverifiedDocPaths` — production host wiring must never
-   * set that hatch directly.
+   * Absolute git working directory for the family base clone. Optional — used to
+   * compute `docReleasePaths` for diagnostics only (ADR 0123 / #735). Missing
+   * working-repo does not block merge: path allowlist is not a merge gate.
+   * `allowUnverifiedDocReleasePaths` is a deprecated no-op retained for caller
+   * type-compat (see autoMerge.ts); merge still requires readiness + doc-release
+   * completed, independent of this field.
    */
   resolveFamilyWorkingRepo?(): string | undefined;
   /**

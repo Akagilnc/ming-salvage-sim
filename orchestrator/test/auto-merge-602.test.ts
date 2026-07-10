@@ -1082,7 +1082,7 @@ describe("#602 runAutoMergeStage", () => {
     ).toBe(false);
   });
 
-  it("allowUnverifiedDocReleasePaths field is a no-op under ADR 0123 (merge still needs readiness)", async () => {
+  it("allowUnverifiedDocReleasePaths is a no-op under ADR 0123 (green readiness still merges)", async () => {
     const merge = vi.fn();
     const result = await runAutoMergeStage({
       sh: fakeSh({}),
@@ -1099,6 +1099,39 @@ describe("#602 runAutoMergeStage", () => {
     });
     expect(result.ok).toBe(true);
     expect(merge).toHaveBeenCalled();
+  });
+
+  it("allowUnverifiedDocReleasePaths does not bypass red readiness (unresolved threads)", async () => {
+    // Counter-proof: if the no-op field were wrongly rewired as a readiness
+    // bypass, this case (field=true + unresolved threads) would merge.
+    const merge = vi.fn();
+    const result = await runAutoMergeStage({
+      sh: fakeSh({}),
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "head-1",
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      offlineSynthetic: true,
+      allowUnverifiedDocReleasePaths: true,
+      poll: async () =>
+        readySnapshot({
+          quiescent: false,
+          threads: [
+            {
+              id: "1",
+              threadNodeId: "T1",
+              body: "nit",
+              authorLogin: "bot",
+              isResolved: false,
+            },
+          ],
+        }),
+      executeMerge: merge,
+    });
+    expect(result.ok).toBe(false);
+    expect(merge).not.toHaveBeenCalled();
   });
 
   it("ADR 0123 / #735: offline synthetic without paths merges when readiness green", async () => {
