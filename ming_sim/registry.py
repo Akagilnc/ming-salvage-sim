@@ -89,6 +89,20 @@ def build_court_brief(context: CourtContext) -> str:
     )
 
 
+def _minister_game_world_prompt(prompt: str) -> str:
+    """给大臣的世界观说明只保留呈现口径，不把引擎量表喂给角色。"""
+    lines = []
+    for line in prompt.splitlines():
+        if "国势核心数值四个：" in line:
+            line = "- 国势以奏报呈现：国库、内库保留钱粮口径；民心、皇威只作定性描述。"
+        elif "地区盘面使用两京十三省的核心字段：" in line:
+            line = "- 地区盘面中人口、粮食、田亩、隐田、每回合税收等可数物照实呈报；民心、动乱、士绅阻力、军事压力以定性描述呈报。"
+        elif "军队盘面使用主要军队核心字段：" in line:
+            line = "- 军队盘面中驻地、统帅、兵种、人数、月饷与欠饷等可数物照实呈报；补给、士气、训练、装备、火器、机动、忠诚以定性描述呈报；随军大炮照门数呈报。"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _faction_brief(context: CourtContext) -> str:
     """给扮演大臣的派系档料：保留 agenda，态势只用定性词，不喂抽象分数。"""
     rows = context.db.conn.execute(
@@ -489,7 +503,7 @@ def create_minister_agent(
         if extra_traits_str:
             cultivate_desc += f"性情逐渐变化：{extra_traits_str}。"
         instructions = [
-            c.game_world_prompt,
+            _minister_game_world_prompt(c.game_world_prompt),
             c.consort_agent_prompt,
             f"你当前扮演：{character.name}，{character.office}，性格{character.style}，"
             f"人物特质：{'、'.join(character.personal_skills)}。个人简介：{character.summary}"
@@ -549,7 +563,7 @@ def create_minister_agent(
         if secret_brief:
             monthly_block_parts.append(secret_brief)
         instructions = [
-            c.game_world_prompt,
+            _minister_game_world_prompt(c.game_world_prompt),
             c.minister_agent_prompt,
             f"你当前扮演：{character_context_with_db(character, context.db)}，"
             f"任事处：{_duty_location(character.office, character.office_type, 'active')}。",

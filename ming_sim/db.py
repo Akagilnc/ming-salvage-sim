@@ -4796,7 +4796,7 @@ class GameDB:
             )
         return f"地区警讯：{'；'.join(parts)}。两京十三省账面{TURN_UNIT}税合计{format_money(monthly_amount(total_tax_value))}。"
 
-    def region_detail(self, raw_name: str) -> str:
+    def region_detail(self, raw_name: str, qualitative: bool = False) -> str:
         region_id = match_region_id_from_text(raw_name, self.content.regions)
         if region_id is None:
             raise ValueError(f"未找到地区：{raw_name}")
@@ -4806,6 +4806,26 @@ class GameDB:
         held = ""
         if str(row["controlled_by"]) != "ming":
             held = f"，控制权：已为{self.power_display_name(row['controlled_by'])}所据（非大明辖治）"
+        if qualitative:
+            def score_band(value: object, words: tuple[str, str, str, str, str]) -> str:
+                try:
+                    n = int(value or 0)
+                except (TypeError, ValueError):
+                    n = 0
+                return words[4 if n >= 80 else 3 if n >= 60 else 2 if n >= 40 else 1 if n >= 20 else 0]
+
+            return (
+                f"{row['name']}（{row['kind']}）{held}：人口{row['population']}万人，"
+                f"{_public_support_description(row['public_support'])}，"
+                f"{_unrest_description(row['unrest'])}，粮食{row['grain_security']}万石，"
+                f"田亩{row['registered_land']}万亩，隐田{row['hidden_land']}万亩，"
+                f"账面税收{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，"
+                f"士绅阻力{score_band(row['gentry_resistance'], ('极弱', '偏弱', '中等', '偏强', '强'))}，"
+                f"军事压力{score_band(row['military_pressure'], ('极低', '偏低', '中等', '偏高', '极高'))}，"
+                f"城防{score_band(row['city_level'], ('初设', '简陋', '成形', '坚固', '重镇'))}，"
+                f"城防大炮{int(row['cannon'])}门。天灾：{row['natural_disaster']}；"
+                f"人祸：{row['human_disaster']}；状态：{row['status']}"
+            )
         return (
             f"{row['name']}（{row['kind']}）{held}：人口{row['population']}万人，"
             f"民心{row['public_support']}，动乱{row['unrest']}，粮食{row['grain_security']}万石，"

@@ -223,6 +223,60 @@ def test_final_minister_context_rejects_any_injected_abstract_value_shape(game):
     assert not re.search(r"(?:民心|动乱|皇威|火器|完好|进度)\s*[:：]?\s*\d+", rendered)
 
 
+def test_minister_tools_characterize_region_army_and_issue_progress(game):
+    """大臣按需查询的三类盘面也不得绕过 P4，泄漏抽象轴原值。"""
+    db, state, content = game
+    db.conn.execute("UPDATE regions SET public_support=13, unrest=87, gentry_resistance=64, military_pressure=29")
+    db.conn.execute("UPDATE armies SET firearm_equipment=58 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="工具查询测试事项",
+        origin_kind="decree",
+        origin_ref="test:minister-tools",
+        bar_value=41,
+        inertia=0,
+        stage_text="正在推进",
+    )
+    db.conn.commit()
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game), use_army_tool=True)}
+
+    region = tools["inspect_region"]("陕西")
+    army = tools["query_army_roster"]([])
+    memorial = tools["list_memorials"]()
+
+    for rendered in (region, army, memorial):
+        assert not re.search(r"(?:民心|动乱|士绅阻力|军事压力|火器|进度|bar)\s*[:：]?\s*\d+", rendered)
+    assert any(word in region for word in ("民心偏弱", "民心堪忧", "动乱升高", "动乱已炽"))
+    assert any(word in army for word in ("火器：短缺", "火器：尚可", "火器：精良"))
+    assert "进展" in memorial and "/100" not in memorial
+
+
+def test_minister_world_prompt_hides_abstract_scales(game):
+    """最终大臣 instructions 中的通用世界观也必须是定性口径。"""
+    db, _state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
+         patch("ming_sim.registry._ctx", return_value=content), \
+         patch("ming_sim.registry._skills_for", return_value=None), \
+         patch("ming_sim.registry.build_minister_tools", return_value=[]):
+        create_minister_agent(minister, cfg, _ctx(game), db)
+
+    world = captured["instructions"][0]
+    assert not re.search(r"(?:民心|皇威|火器)[^\n]*\d+\s*-\s*\d+", world)
+    assert "抽象" in world or "定性" in world
+
+
 def test_north_star_sample_is_reviewable():
     sample = Path("docs/minister-context-north-star-sample.md").read_text()
     assert "同一问题" in sample
