@@ -356,10 +356,6 @@ describe("#683 RealBackend REAL dispatch path (no hand-filled pids)", () => {
       return this.probeResult;
     }
 
-    protected override killWorkerPidTree(pid: number): void {
-      this.killed.push(pid);
-    }
-
     protected override async recordQuotaWaitLedger(
       entry: QuotaWaitForResetLedgerEvent,
     ): Promise<void> {
@@ -440,23 +436,23 @@ describe("#683 RealBackend REAL dispatch path (no hand-filled pids)", () => {
     expect(backend.lastQuotaProbe?.workerPid).toBeUndefined();
   });
 
-  it("probe pass via runStep → hang kill fires with REAL sandbox handle pid", async () => {
+  it("probe pass via Sandcastle fallback rethrows without backend-local kill", async () => {
     const backend = makeBackend();
     backend.probeResult = { kind: "ok" };
     backend.sandboxHandlePid = 1002;
 
     await expect(backend.runStep(coderSpec, WORKTREE)).rejects.toThrow(/Agent idle for 600/);
-    expect(backend.killed).toEqual([1002]);
+    expect(backend.killed).toEqual([]);
     expect(backend.ledger).toEqual([]);
   });
 
-  it("network error via runStep → fail-safe hang + kill with real pid", async () => {
+  it("network error via Sandcastle fallback rethrows without backend-local kill", async () => {
     const backend = makeBackend();
     backend.probeResult = { kind: "error", cause: "ETIMEDOUT" };
     backend.sandboxHandlePid = 1003;
 
     await expect(backend.runStep(coderSpec, WORKTREE)).rejects.toThrow(/Agent idle for 600/);
-    expect(backend.killed).toEqual([1003]);
+    expect(backend.killed).toEqual([]);
     expect(backend.ledger).toEqual([]);
   });
 
@@ -502,6 +498,11 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
     public ledgerWrites: PersistentLedgerEntry[] = [];
     public coderDispatches = 0;
     public sandboxHandlePid = 7777;
+
+    async smokeModelRoute(route: any): Promise<any> {
+      const { smokeRouteModels } = await import("../src/modelRoutes.js");
+      return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+    }
 
     async findResumeState(): Promise<undefined> {
       return undefined;
