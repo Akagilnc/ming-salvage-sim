@@ -95,6 +95,29 @@ export type {
   FamilyAbortedEvent,
   FamilyEscalation,
 } from "./family/types.js";
+// ── #683 quota probe (idle → probe 429 → wait-for-reset | hang) ─────────────
+export {
+  applyIdleDisposition,
+  buildQuotaWaitForResetLedgerEntry,
+  decideIdleAfterProbe,
+  parseZaiResetAt,
+  poolForModelRef,
+  probeConfigForPool,
+  runPoolProbe,
+} from "./quotaProbe.js";
+export type {
+  ApplyIdleDispositionResult,
+  IdleDisposition,
+  IdleHangActions,
+  IdleWorkerHandle,
+  PoolProbeConfig,
+  PoolProbeDeps,
+  PoolProbeKind,
+  QuotaPoolId,
+  QuotaProbeResult,
+  QuotaWaitForResetLedgerEvent,
+} from "./quotaProbe.js";
+
 export type {
   Backend,
   ContinueFixingEvent,
@@ -109,6 +132,7 @@ export type {
   IssueSnapshotMeta,
   LedgerEntry,
   LedgerBookkeepingEvent,
+  QuotaWaitForResetEvent,
   PersistentLedgerEntry,
   ReviewerOutput,
   RunInput,
