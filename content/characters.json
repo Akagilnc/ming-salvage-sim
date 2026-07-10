@@ -251,15 +251,15 @@
       "historical_death_month": 0,
       "seed_guilt": {
         "crime": "交结近侍又次等",
-        "severity": "次等"
+        "severity": "中"
       },
       "identity": 45,
       "power_id": "ming"
     },
     {
       "name": "张缙彦",
-      "office": "举人",
-      "office_type": "未仕",
+      "office": "清涧知县",
+      "office_type": "地方",
       "faction": "皇党",
       "aliases": [
         "张缙彦",
@@ -547,8 +547,8 @@
     },
     {
       "name": "李之藻",
-      "office": "前太仆寺少卿，西学士人",
-      "office_type": "工部",
+      "office": "历局修历起复",
+      "office_type": "礼部",
       "faction": "西学",
       "aliases": [
         "李之藻",
@@ -573,12 +573,16 @@
         "severity": "无"
       },
       "identity": 72,
+      "status": "offstage",
+      "debut_year": 1629,
+      "debut_month": 1,
+      "location": "beizhili",
       "power_id": "ming"
     },
     {
       "name": "汤若望",
-      "office": "西安传教士",
-      "office_type": "外来",
+      "office": "钦天监历局修历",
+      "office_type": "礼部",
       "faction": "西学",
       "aliases": [
         "汤若望",
@@ -606,7 +610,7 @@
       "status": "offstage",
       "debut_year": 1630,
       "debut_month": 1,
-      "location": "西安",
+      "location": "beizhili",
       "power_id": "ming"
     },
     {
@@ -1197,7 +1201,7 @@
       "status": "active",
       "seed_guilt": {
         "crime": "请建魏忠贤生祠",
-        "severity": "轻等"
+        "severity": "轻"
       },
       "identity": 50,
       "power_id": "ming"
@@ -1230,7 +1234,7 @@
       "historical_death_month": 0,
       "seed_guilt": {
         "crime": "交结近侍又次等",
-        "severity": "次等"
+        "severity": "中"
       },
       "identity": 42,
       "power_id": "ming"

@@ -73,6 +73,18 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
     for idx, raw in enumerate(require_list(data.get("characters"), "characters.json.characters"), 1):
         item = require_dict(raw, f"characters.json.characters[{idx}]")
         name = str_field(item, "name", f"characters.json.characters[{idx}]")
+        seed_guilt_raw = item.get("seed_guilt") or {}
+        if not isinstance(seed_guilt_raw, dict):
+            raise SystemExit(f"characters.json.characters[{idx}].seed_guilt 必须是 JSON 对象。")
+        seed_guilt = {
+            "crime": str(seed_guilt_raw.get("crime") or "").strip(),
+            "severity": str(seed_guilt_raw.get("severity") or "无").strip(),
+        }
+        if seed_guilt["severity"] not in {"无", "轻", "中", "重"}:
+            raise SystemExit(
+                f"characters.json.characters[{idx}].seed_guilt.severity 非法："
+                f"{seed_guilt['severity']!r}（仅无/轻/中/重）。"
+            )
         characters[name] = Character(
             name=name,
             office=str_field(item, "office", f"characters.json.characters[{idx}]"),
@@ -98,6 +110,8 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             reason_code=str(item.get("reason_code") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
+            seed_guilt=seed_guilt,
+            identity=int(item.get("identity") or 50),
         )
 
     if not factions or not characters:
