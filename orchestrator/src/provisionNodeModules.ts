@@ -256,7 +256,7 @@ export async function provisionRepoNodeModules(
   } = {},
 ): Promise<readonly ProvisionResult[]> {
   const projects = listNodeProjectDirs(repoRoot);
-  return Promise.all(
+  const settled = await Promise.allSettled(
     projects.map((project) => {
       const templateProjectDir = resolveTemplateProjectDir(project, {
         templateRoot: options.templateRoot,
@@ -268,4 +268,32 @@ export async function provisionRepoNodeModules(
       });
     }),
   );
+
+  const failures = settled.flatMap((result, index) => {
+    if (result.status === "fulfilled") return [];
+    const reason = result.reason;
+    const detail = reason instanceof Error ? reason.message : String(reason);
+    return [{ project: projects[index], reason, detail }];
+  });
+
+  if (failures.length > 0) {
+    const errors = failures.map(
+      ({ project, reason, detail }) =>
+        new Error(`Provisioning failed for ${project}: ${detail}`, {
+          cause: reason,
+        }),
+    );
+    throw new AggregateError(
+      errors,
+      `${failures.length} provisioning failed:\n${errors.map((error) => error.message).join("\n")}`,
+    );
+  }
+
+  // `settled` preserves the input order, so successful results do too.
+  return settled.map((result) => {
+    if (result.status !== "fulfilled") {
+      throw new Error("unreachable: failed provisioning was already aggregated");
+    }
+    return result.value;
+  });
 }
