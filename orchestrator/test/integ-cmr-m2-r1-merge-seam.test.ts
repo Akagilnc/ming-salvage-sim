@@ -85,6 +85,10 @@ function s8(handoffStatus?: "success" | "escalate" | "error"): PersistentLedgerE
  * resume bookkeeping (resumeSession vs runStep).
  */
 class SeamBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly calls: string[] = [];
   readonly runStepIds: string[] = [];
   readonly resumeSessionCalls: Array<[string, string]> = [];

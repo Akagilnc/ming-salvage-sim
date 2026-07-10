@@ -28,17 +28,56 @@ export type {
 // ── unified worker-dispatch seam (ADR 0026 / PRD #330, #331) ────────────────
 export {
   dispatchWorker,
+  dispatchWorkerWithMonitor,
   legacyDispatchWorker,
   workerResultToStep,
   stepSpecToWorkerSpec,
   shipWorkerSpec,
 } from "./dispatchWorker.js";
+export type {
+  DispatchWorkerWithMonitorOptions,
+  DispatchWorkerWithMonitorOutcome,
+} from "./dispatchWorker.js";
+export {
+  collectPidTree,
+  dispatchMonitoredCliWorker,
+  hasCompletionSignalInLog,
+  instanceMatchesHandle,
+  isWorkerAlive,
+  isWorkerIdle,
+  killWorkerTree,
+  monitorHandleFromLedger,
+  pidSafeToSignal,
+  poolIdForWorker,
+  readLogActivity,
+  readProcessInstanceId,
+  validateMonitorHandle,
+} from "./workerMonitor.js";
+export type {
+  KillWorkerTreeResult,
+  LogActivitySnapshot,
+  MonitoredCliDispatchInput,
+  MonitoredCliDispatchResult,
+  WorkerMonitorDeps,
+} from "./workerMonitor.js";
 export {
   dispatchFamilyWorker,
+  dispatchFamilyWorkerWithMonitor,
   legacyDispatchFamilyWorker,
   cmrWorkerSpec,
   familyShipWorkerSpec,
 } from "./family/dispatchFamilyWorker.js";
+export type {
+  DispatchFamilyWorkerWithMonitorOptions,
+  DispatchFamilyWorkerWithMonitorOutcome,
+} from "./family/dispatchFamilyWorker.js";
+export {
+  buildCliMonitorSpawnSpec,
+  isCliMonitorChildProcess,
+  isMonitoredWorkerKind,
+  resolveMonitorLogDir,
+  workerResultFromMonitorSidecar,
+} from "./cliMonitorHooks.js";
 
 // ── family integration layer (ADR 0022, #293) ──────────────────────────────
 // The four independent extension modules + the spine that only CALLS them.
@@ -51,6 +90,7 @@ export {
   parseSubIssueAdmission,
   parseSubIssueNumbers,
   cutFamilyBase,
+  resolveCodexFast,
 } from "./familyDriver.js";
 export type { FamilyDriverOptions, Sh, SubIssueAdmission } from "./familyDriver.js";
 export { selectWave } from "./family/commander.js";
@@ -164,4 +204,5 @@ export type {
   CmrResult,
   ShipResult,
   MergeWorkerResult,
+  WorkerMonitorHandle,
 } from "./types.js";

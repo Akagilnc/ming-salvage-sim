@@ -16,6 +16,7 @@
 import type {
   Backend,
   CleanupResult,
+  CliMonitorSpawnSpec,
   DispatchContext,
   Escalation,
   EscalationAnswerPayload,
@@ -24,6 +25,7 @@ import type {
   FindingDisposition,
   PriorFindingDisposition,
   WorkerLandingPayload,
+  WorkerMonitorHandle,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -181,7 +183,8 @@ export interface FamilyLedgerEntry {
     | "escalation_answered"
     | "admission_skipped"
     | "online_review_fix_committed"
-    | "online_review_round_retrigger";
+    | "online_review_round_retrigger"
+    | "worker_dispatched";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -233,7 +236,10 @@ export interface FamilyLedgerEntry {
     | "escalation_answered"
     | "admission_skipped"
     | "online_review_fix_committed"
-    | "online_review_round_retrigger";
+    | "online_review_round_retrigger"
+    | "worker_dispatched";
+  /** Monitor handle persisted at family-worker spawn time (#684). */
+  readonly monitorHandle?: WorkerMonitorHandle;
   /**
    * Which phase this PHASE-LEVEL event belongs to. Set on `aborted` entries and
    * on `cmr_passed` audit entries; `merged` / `reconciled` entries omit it because
@@ -346,6 +352,13 @@ export interface FamilyLedgerEntry {
   readonly roundTriggerAt?: string;
   /** Online review loop round (#600 r26): 1-based round at fix/retrigger time. */
   readonly onlineReviewRound?: number;
+  /**
+   * Fix-marked finding identity keys from the verify that drove an
+   * `online_review_fix_committed` marker (#711 prior-round synthesis source).
+   * Family online-review does not persist S9 verify rows; these keys on fix
+   * markers are the durable prior-round data for resume.
+   */
+  readonly fixMarkedFindingIdentityKeys?: readonly string[];
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────
@@ -535,6 +548,27 @@ export interface FamilyBackend {
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
   /**
+   * #684 optional: host-side CLI spawn for the family monitored-dispatch path
+   * (parallel to {@link Backend.resolveCliMonitorDispatch}). RealFamilyBackend
+   * implements this so family cmr/ship/coder-fix take the monitored branch.
+   */
+  resolveCliMonitorDispatch?(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): CliMonitorSpawnSpec | undefined;
+  /**
+   * #684: map a finished monitored family CLI child into a {@link WorkerResult}.
+   * Required when {@link resolveCliMonitorDispatch} returns a spawn spec.
+   */
+  awaitMonitoredCliWorker?(
+    handle: WorkerMonitorHandle,
+    exitCode: number | null,
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult>;
+  /**
    * Runner fallback for outcome protocol failures (#552).
    *
    * When a worker finished but its outcome control envelope was malformed,
@@ -595,12 +629,12 @@ export interface FamilyBackend {
     request: VerifyFamilyShippedPrRequest,
   ): Promise<VerifyFamilyShippedPrResult>;
   /**
-   * Absolute git working directory for the family base clone (#602 doc-release
-   * fail-closed path reads). Optional — when absent, the LIVE auto-merge path
-   * cannot compute docReleasePaths and fails CLOSED (blocks merge); offline
-   * `pr://` test handles may pass `allowUnverifiedDocReleasePaths: true` via
-   * `offlineAutoMergeAllowUnverifiedDocPaths` — production host wiring must never
-   * set that hatch directly.
+   * Absolute git working directory for the family base clone. Optional — used to
+   * compute `docReleasePaths` for diagnostics only (ADR 0123 / #735). Missing
+   * working-repo does not block merge: path allowlist is not a merge gate.
+   * `allowUnverifiedDocReleasePaths` is a deprecated no-op retained for caller
+   * type-compat (see autoMerge.ts); merge still requires readiness + doc-release
+   * completed, independent of this field.
    */
   resolveFamilyWorkingRepo?(): string | undefined;
   /**

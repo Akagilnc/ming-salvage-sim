@@ -22,7 +22,7 @@
  *     control flow consumes, so the prefactor does not touch route()/validate().
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
 import {
   appendFileSync,
   existsSync,
@@ -34,10 +34,23 @@ import {
 import { join, resolve } from "node:path";
 
 import { offlineReviewLoopDispatchAdmissible } from "./evidenceAdmissibility.js";
+import {
+  FIX_FOCUS_LANDING_FILE,
+  formatFixFocusMarkdown,
+} from "./findingFamilies.js";
 import { dispatchPostMergeCleanup } from "./postMergeCleanup.js";
 import type { Sh } from "./familyDriver.js";
-import { modelForSlot, type ResolvedModelRoute } from "./modelRoutes.js";
+import {
+  modelForSlot,
+  routeSmokeFailure,
+  type ResolvedModelRoute,
+} from "./modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
+import {
+  dispatchMonitoredCliWorker,
+  killWorkerTree,
+  type MonitoredCliDispatchInput,
+} from "./workerMonitor.js";
 import type {
   Backend,
   DispatchContext,
@@ -48,6 +61,7 @@ import type {
   WorkerContextRetention,
   WorkerKind,
   WorkerLandingPayload,
+  WorkerMonitorHandle,
   WorkerResult,
   WorkerSessionMode,
   WorkerSpec,
@@ -178,6 +192,10 @@ function writeOnlineReviewLandingFile(
           shipDelivery: landing.shipDelivery,
           onlineReviewRound: landing.onlineReviewRound ?? ctx.onlineReviewRound,
           fixMarkedFindingIdentityKeys: landing.fixMarkedFindingIdentityKeys ?? [],
+          ...(landing.priorRoundFindings !== undefined &&
+          landing.priorRoundFindings.length > 0
+            ? { priorRoundFindings: landing.priorRoundFindings }
+            : {}),
         },
         null,
         2,
@@ -194,6 +212,43 @@ function writeOnlineReviewLandingFile(
   return {
     path: landingPath,
     sandboxPath: ONLINE_REVIEW_LANDING_FILE,
+    cleanup: ctx.stateDir === undefined,
+  };
+}
+
+function writeFixFocusLandingFile(
+  spec: WorkerSpec,
+  ctx: DispatchContext,
+  landing?: WorkerLandingPayload,
+): (FixFindingsLandingFile & { cleanup: boolean }) | undefined {
+  const needsFixFocus =
+    landing?.findingFamilies !== undefined &&
+    landing.findingFamilies.length > 0 &&
+    (spec.kind === "fixer" ||
+      (spec.kind === "coder" &&
+        (spec.id === "S5" || ctx.blockingFindingIdentityKeys !== undefined)));
+  if (!needsFixFocus || ctx.worktree === undefined) {
+    return undefined;
+  }
+  if (!existsSync(ctx.worktree.path)) return undefined;
+
+  const landingPath =
+    ctx.stateDir !== undefined
+      ? join(ctx.stateDir, "fix-focus.md")
+      : join(ctx.worktree.path, FIX_FOCUS_LANDING_FILE);
+  if (ctx.stateDir !== undefined) {
+    mkdirSync(ctx.stateDir, { recursive: true });
+  } else {
+    ensureGitExcluded(ctx.worktree.path, FIX_FOCUS_LANDING_FILE);
+  }
+  writeFileSync(
+    landingPath,
+    `${formatFixFocusMarkdown(landing.findingFamilies!)}\n`,
+    "utf8",
+  );
+  return {
+    path: landingPath,
+    sandboxPath: FIX_FOCUS_LANDING_FILE,
     cleanup: ctx.stateDir === undefined,
   };
 }
@@ -329,15 +384,14 @@ export function shipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   };
 }
 
-// TODO(#600/#603): placeholder prompts for verify/fixer remain skeleton-adjacent;
-// cleanup real path is #603; docRelease real path is #735.
+// Prompt status: verify.md / fixer.md real paths shipped in #600;
+// docRelease.md real path shipped in #735; cleanup real host path remains #603.
 export const VERIFY_PROMPT_FILE = "verify.md";
 export const FIXER_PROMPT_FILE = "fixer.md";
 export const CLEANUP_PROMPT_FILE = "cleanup.md";
 export const DOCRELEASE_PROMPT_FILE = "docRelease.md";
 
-/** S9 online-review / PR-check worker spec (#596 skeleton). */
-// TODO(#600/#603): skill/prompt wiring is inert placeholder here.
+/** S9 online-review / PR-check worker spec (#600 real prompt). */
 export function verifyWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S9",
@@ -356,8 +410,7 @@ export function verifyWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   };
 }
 
-/** S10 post-review fixer worker spec (#596 skeleton). */
-// TODO(#600/#603): skill/prompt wiring is inert placeholder here.
+/** S10 post-review fixer worker spec (#600 real prompt). */
 export function fixerWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S10",
@@ -376,8 +429,8 @@ export function fixerWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   };
 }
 
-/** S11 cleanup worker spec (#596 skeleton). */
-// TODO(#600/#603): skill/prompt wiring is inert placeholder here.
+/** S11 cleanup worker spec (#596 skeleton; real host path is #603). */
+// TODO(#603): cleanup skill/prompt wiring is still skeleton here.
 export function cleanupWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S11",
@@ -520,12 +573,16 @@ export async function legacyDispatchWorker(
   const stepSpec = workerSpecToStepSpec(spec);
   let ret: StepOutput | StepResult;
   const fixFindingsLanding = writeFixFindingsLandingFile(spec, ctx, landing);
+  const fixFocusLanding = writeFixFocusLandingFile(spec, ctx, landing);
   let onlineReviewLanding;
   try {
     onlineReviewLanding = writeOnlineReviewLandingFile(spec, ctx, landing);
   } catch (err) {
     if (fixFindingsLanding?.cleanup) {
       rmSync(fixFindingsLanding.path, { force: true });
+    }
+    if (fixFocusLanding?.cleanup) {
+      rmSync(fixFocusLanding.path, { force: true });
     }
     return {
       kind: "failed",
@@ -541,6 +598,15 @@ export async function legacyDispatchWorker(
           },
         }
       : undefined;
+  const fixFocusOptions =
+    fixFocusLanding !== undefined
+      ? {
+          fixFocusLanding: {
+            path: fixFocusLanding.path,
+            sandboxPath: fixFocusLanding.sandboxPath,
+          },
+        }
+      : undefined;
   const onlineReviewOptions =
     onlineReviewLanding !== undefined
       ? {
@@ -553,10 +619,12 @@ export async function legacyDispatchWorker(
   const outcomeLanding = writeWorkerOutcomeLandingFile(spec, ctx);
   const runOptions =
     fixFindingsOptions !== undefined ||
+    fixFocusOptions !== undefined ||
     onlineReviewOptions !== undefined ||
     outcomeLanding !== undefined
       ? {
           ...(fixFindingsOptions ?? {}),
+          ...(fixFocusOptions ?? {}),
           ...(onlineReviewOptions ?? {}),
           ...(outcomeLanding !== undefined ? { outcomeLanding } : {}),
         }
@@ -584,6 +652,9 @@ export async function legacyDispatchWorker(
     if (fixFindingsLanding?.cleanup) {
       rmSync(fixFindingsLanding.path, { force: true });
     }
+    if (fixFocusLanding?.cleanup) {
+      rmSync(fixFocusLanding.path, { force: true });
+    }
     if (onlineReviewLanding?.cleanup) {
       rmSync(onlineReviewLanding.path, { force: true });
     }
@@ -604,10 +675,140 @@ export async function dispatchWorker(
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
 ): Promise<WorkerResult> {
+  if (ctx.modelRoute === undefined) {
+    throw new Error("worker dispatch refused (fail-closed): model route smoke state is missing");
+  }
+  const smokeFailure = routeSmokeFailure(ctx.modelRoute);
+  if (smokeFailure !== undefined) {
+    throw new Error(`worker dispatch refused (fail-closed): ${smokeFailure}`);
+  }
   if (backend.dispatchWorker !== undefined) {
     return backend.dispatchWorker(spec, ctx, landing);
   }
   return legacyDispatchWorker(backend, spec, ctx, landing);
+}
+
+/**
+ * Production dispatch outcome (#684): the {@link WorkerResult} plus an optional
+ * monitor handle when the worker was spawned as a host-side CLI process.
+ */
+export interface DispatchWorkerWithMonitorOutcome {
+  readonly result: WorkerResult;
+  readonly monitorHandle?: WorkerMonitorHandle;
+}
+
+/**
+ * Options for {@link dispatchWorkerWithMonitor} (#684 R2).
+ *
+ * `onMonitorHandleSpawned` fires AT SPAWN TIME — before waiting for the child
+ * to exit — so the runner can persist the handle to the ledger while the worker
+ * is still running (hang judge/kill/resume needs a live handle, not a post-exit
+ * one).
+ */
+export interface DispatchWorkerWithMonitorOptions {
+  readonly onMonitorHandleSpawned?: (
+    handle: WorkerMonitorHandle,
+  ) => void | Promise<void>;
+}
+
+function waitForChildExit(child: ChildProcess): Promise<number | null> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(child.exitCode);
+  }
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => resolve(code));
+  });
+}
+
+/**
+ * THE production dispatch path used by the runner (#684).
+ *
+ * When the backend supplies a CLI spawn via {@link Backend.resolveCliMonitorDispatch},
+ * this spawns through {@link dispatchMonitoredCliWorker} so the monitor handle
+ * (pid / log / pool / signal / instance identity) is generated atomically with
+ * real dispatch, then maps the finished process via
+ * {@link Backend.awaitMonitoredCliWorker}.
+ *
+ * The handle is handed to {@link DispatchWorkerWithMonitorOptions.onMonitorHandleSpawned}
+ * immediately after spawn (before wait) so ledger persistence can happen at
+ * spawn time (#684 R2).
+ *
+ * Otherwise falls through to {@link dispatchWorker} (container / legacy seam)
+ * with no monitor handle.
+ *
+ * The runner always calls this (not bare {@link dispatchWorker}) so CLI workers
+ * land a ledger-rebuildable handle and hang/kill judgment never needs global
+ * process-name matching. RealBackend / RealFamilyBackend implement the hooks so
+ * S2/S3/S5/S6/S7/S9–S12 take this monitored branch in production.
+ */
+export async function dispatchWorkerWithMonitor(
+  backend: Backend,
+  spec: WorkerSpec,
+  ctx: DispatchContext,
+  landing?: WorkerLandingPayload,
+  opts?: DispatchWorkerWithMonitorOptions,
+): Promise<DispatchWorkerWithMonitorOutcome> {
+  const cliSpec = backend.resolveCliMonitorDispatch?.(spec, ctx, landing);
+  if (cliSpec !== undefined) {
+    const input: MonitoredCliDispatchInput = {
+      command: cliSpec.command,
+      args: cliSpec.args,
+      logDir: cliSpec.logDir,
+      poolId: cliSpec.poolId,
+      completionSignal: cliSpec.completionSignal,
+      stepId: cliSpec.stepId,
+      ...(cliSpec.cwd !== undefined ? { cwd: cliSpec.cwd } : {}),
+      ...(cliSpec.env !== undefined ? { env: cliSpec.env } : {}),
+      ...(cliSpec.logBasename !== undefined
+        ? { logBasename: cliSpec.logBasename }
+        : {}),
+      ...(cliSpec.readInstanceId !== undefined
+        ? { readInstanceId: cliSpec.readInstanceId }
+        : {}),
+      ...(cliSpec.resultPath !== undefined
+        ? { resultPath: cliSpec.resultPath }
+        : {}),
+    };
+    const { handle, child } = await dispatchMonitoredCliWorker(input);
+    const exitPromise = waitForChildExit(child);
+    // SPAWN-TIME persist seam: handle is available before waitForChildExit so a
+    // hang still leaves a ledger-rebuildable handle for judge/kill/resume.
+    if (opts?.onMonitorHandleSpawned !== undefined) {
+      try {
+        await opts.onMonitorHandleSpawned(handle);
+      } catch (error) {
+        await killWorkerTree(handle);
+        try {
+          await exitPromise;
+        } catch {
+          // Preserve the original spawn-persist error if child cleanup fails.
+        }
+        throw error;
+      }
+    }
+    const exitCode = await exitPromise;
+    if (backend.awaitMonitoredCliWorker === undefined) {
+      return {
+        result: {
+          kind: "failed",
+          reason:
+            `CLI worker ${spec.id} finished (exit ${exitCode}) but backend has ` +
+            `no awaitMonitoredCliWorker to map the process into a WorkerResult`,
+        },
+        monitorHandle: handle,
+      };
+    }
+    const result = await backend.awaitMonitoredCliWorker(
+      handle,
+      exitCode,
+      spec,
+      ctx,
+      landing,
+    );
+    return { result, monitorHandle: handle };
+  }
+  return { result: await dispatchWorker(backend, spec, ctx, landing) };
 }
 
 /**

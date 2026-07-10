@@ -65,6 +65,10 @@ const STUCK: Escalation = {
  * `runOrchestrator` → planResume → resumeSession path.
  */
 class EscalatingChildBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   /** Per-child durable ledger the family may inject an answer row into. */
   readonly childLedgers = new Map<number, PersistentLedgerEntry[]>();
   /** Every runStep call, tagged by the child issue it belonged to. */

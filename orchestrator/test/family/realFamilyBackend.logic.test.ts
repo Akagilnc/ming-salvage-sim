@@ -43,9 +43,11 @@ import {
   type MergerAuth,
   parseCmrOutcome,
   parseMergerOutcome,
+  REFERENCED_FAMILY_PROMPT_FILES,
   RealFamilyBackend,
   type RealFamilyBackendOptions,
 } from "../../src/family/realFamilyBackend.js";
+import { FIX_FOCUS_LANDING_FILE } from "../../src/findingFamilies.js";
 import { familyEscalationState } from "../../src/family/ledger.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { SANDBOX_SKILLS_DIR, SANDBOX_SOUL_ENV, soulsMount } from "../../src/realBackend.js";
@@ -357,11 +359,11 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override isNodeProject(_cwd: string): boolean {
         return true;
       }
-      runVerifyForTest(): void {
-        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
-    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
+    await new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
     // Unconditional install first (by construction), then project's scripts.
     // (installDeps chooses "ci" or "install" based on whether lockfile exists at the cwd path.)
     expect(calls[0].file).toBe("npm");
@@ -404,13 +406,13 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override isNodeProject(_cwd: string): boolean {
         return true;
       }
-      runVerifyForTest(): void {
-        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
     // Note: pass verifyCwd=proj so run reaches install+scripts (isNode true by override).
     // We do NOT override depsInstalled (it no longer exists).
-    new SpyBackend(opts("/clone/root", { verifyCwd: proj })).runVerifyForTest();
+    await new SpyBackend(opts("/clone/root", { verifyCwd: proj })).runVerifyForTest();
     // Install MUST run (first) even though node_modules existed + manifest mutated post-wave.
     expect(calls[0].file).toBe("npm");
     expect(["ci", "install"]).toContain(calls[0].args[0]);
@@ -441,11 +443,11 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override isNodeProject(_cwd: string): boolean {
         return true;
       }
-      runVerifyForTest(): void {
-        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
-    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/web" })).runVerifyForTest();
+    await new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/web" })).runVerifyForTest();
     // Unconditional install first (even if node_modules "existed"), then web's scripts.
     expect(calls[0].file).toBe("npm");
     expect(["ci", "install"]).toContain(calls[0].args[0]);
@@ -477,7 +479,7 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(calls).toEqual([]); // nothing installed, nothing run
   });
 
-  it("R3: a SINGLE-project repo (package.json at the clone ROOT) falls back to workingRepo verify", () => {
+  it("R3: a SINGLE-project repo (package.json at the clone ROOT) falls back to workingRepo verify", async () => {
     // gemini R3: dropping the `?? workingRepo` fallback made single-project repos
     // (package.json at root, no subproject) skip verify entirely. Restore the
     // fallback — but ONLY when the root IS a Node project (multi-project non-Node
@@ -494,12 +496,12 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["test"];
       }
-      runVerifyForTest(): void {
-        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
     // No verifyCwd; resolver undefined (no subproject) → root is Node → verify at root.
-    new SpyBackend(opts("/clone/root", { resolveVerifyCwd: () => undefined })).runVerifyForTest();
+    await new SpyBackend(opts("/clone/root", { resolveVerifyCwd: () => undefined })).runVerifyForTest();
     // Unconditional: install first, then test.
     expect(calls[0].file).toBe("npm");
     expect(["ci", "install"]).toContain(calls[0].args[0]);
@@ -508,7 +510,7 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(calls.slice(1).every((c) => c.cwd === "/clone/root")).toBe(true);
   });
 
-  it("R1-T3: an EXPLICIT verifyCwd that is NOT a Node project FAILS CLOSED (throws), never silent-passes", () => {
+  it("R1-T3: an EXPLICIT verifyCwd that is NOT a Node project FAILS CLOSED (throws), never silent-passes", async () => {
     // codex R1 T3: a docs/content/root-only diff (inferred-undefined) legitimately
     // skips, but an EXPLICITLY-set verifyCwd pointing at a non-Node dir is a caller
     // misconfig — it must NOT be treated like "nothing to verify" and green-light an
@@ -521,13 +523,13 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override isNodeProject(_cwd: string): boolean {
         return false; // explicit cwd has no package.json
       }
-      runVerifyForTest(): void {
-        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
-    expect(() =>
+    await expect(
       new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/not-node" })).runVerifyForTest(),
-    ).toThrow(/not a Node project/i);
+    ).rejects.toThrow(/not a Node project/i);
   });
 
   it("familyBaseStartHead returns the recorded start head", async () => {
@@ -596,7 +598,23 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
     ).toThrow(/does not exist/);
   });
 
-  it("constructs cleanly when all 3 family prompts are present (the real prompts dir)", () => {
+  it("family inventory covers every prompt dispatched by the family workflow", () => {
+    expect(new Set(REFERENCED_FAMILY_PROMPT_FILES)).toEqual(
+      new Set([
+        "integrated_cmr_completeness.md",
+        "integrated_cmr_correctness.md",
+        "coder_fix.md",
+        "outcome_rewrite.md",
+        "family_ship.md",
+        "merger_resolve_conflict.md",
+        "verify.md",
+        "fixer.md",
+        "docRelease.md",
+      ]),
+    );
+  });
+
+  it("constructs cleanly when all family prompts are present (the real prompts dir)", () => {
     const repo = trackRepo();
     expect(() => new RealFamilyBackend(opts(repo))).not.toThrow();
   });
@@ -1927,6 +1945,21 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
 });
 
 describe("RealFamilyBackend runtime file git excludes", () => {
+  it("removes a stale fix-focus file when no family brief is mounted", () => {
+    class Probe extends RealFamilyBackend {
+      public clearFixFocus(landing?: Parameters<RealFamilyBackend["writeFamilyFixFocusFile"]>[0]) {
+        return this.writeFamilyFixFocusFile(landing);
+      }
+    }
+    const repo = trackRepo();
+    const focusPath = join(repo, FIX_FOCUS_LANDING_FILE);
+    writeFileSync(focusPath, "stale interrupted brief\n", "utf8");
+    const b = new Probe(opts(repo));
+
+    expect(b.clearFixFocus()).toBeUndefined();
+    expect(existsSync(focusPath)).toBe(false);
+  });
+
   it("treats CRLF exclude entries as existing lines instead of appending duplicates", () => {
     class Probe extends RealFamilyBackend {
       public exclude(filename: string): void {
