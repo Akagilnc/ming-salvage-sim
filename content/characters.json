@@ -286,7 +286,7 @@
       "identity": 70,
       "status": "offstage",
       "debut_year": 1631,
-      "debut_month": 1,
+      "debut_month": 0,
       "power_id": "ming"
     },
     {
@@ -575,7 +575,7 @@
       "identity": 72,
       "status": "offstage",
       "debut_year": 1629,
-      "debut_month": 1,
+      "debut_month": 0,
       "location": "beizhili",
       "power_id": "ming"
     },
@@ -609,7 +609,7 @@
       "identity": 66,
       "status": "offstage",
       "debut_year": 1630,
-      "debut_month": 1,
+      "debut_month": 4,
       "location": "beizhili",
       "power_id": "ming"
     },
@@ -1179,7 +1179,7 @@
     {
       "name": "胡廷宴",
       "office": "陕西巡抚",
-      "office_type": "督抚",
+      "office_type": "地方",
       "faction": "阉党",
       "aliases": [
         "胡廷宴",

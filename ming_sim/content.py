@@ -73,7 +73,9 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
     for idx, raw in enumerate(require_list(data.get("characters"), "characters.json.characters"), 1):
         item = require_dict(raw, f"characters.json.characters[{idx}]")
         name = str_field(item, "name", f"characters.json.characters[{idx}]")
-        seed_guilt_raw = item.get("seed_guilt") or {}
+        seed_guilt_raw = item.get("seed_guilt")
+        if seed_guilt_raw is None:
+            seed_guilt_raw = {}
         if not isinstance(seed_guilt_raw, dict):
             raise SystemExit(f"characters.json.characters[{idx}].seed_guilt 必须是 JSON 对象。")
         seed_guilt = {
