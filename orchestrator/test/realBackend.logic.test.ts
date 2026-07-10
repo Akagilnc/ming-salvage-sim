@@ -1064,9 +1064,21 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     imageName: "img",
     soulsDir: realSoulsDir,
     skillsMount: "/tmp/skills",
-    // #748: construction still resolves clone paths under home.
-    home: tempHome("rb-home-prompts-"),
+    // #748: construction still resolves clone paths under home. Create it on
+    // access because each test's cleanup removes the previous temp home.
+    get home() {
+      return tempHome("rb-home-prompts-");
+    },
   };
+
+  it("allocates a fresh home for each base option access", () => {
+    const firstHome = baseOpts.home;
+    const secondHome = baseOpts.home;
+
+    expect(secondHome).not.toBe(firstHome);
+    expect(existsSync(firstHome)).toBe(true);
+    expect(existsSync(secondHome)).toBe(true);
+  });
 
   it("constructs successfully against the checked-in absolute prompts/ dir", () => {
     expect(
