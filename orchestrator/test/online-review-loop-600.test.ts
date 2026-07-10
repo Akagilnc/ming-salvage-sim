@@ -81,6 +81,7 @@ import { offlinePrReviewSnapshot } from "../src/onlineReviewLoop.js";
 import {
   enforceRunnerOwnedRecheck,
   immediateBotPollClock,
+  lastFixMarkedFindingAuthorizationFromFamilyLedger,
   lastOnlineReviewFixCommitShaFromFamilyLedger,
   lastOnlineReviewFixCommitShaFromLedger,
   MAX_ONLINE_REVIEW_ROUNDS,
@@ -128,7 +129,10 @@ import { isValidVerifyResult } from "../src/reviewLoopOutcome.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Sh } from "../src/familyDriver.js";
-import { familyReviewLoopConvergedForHead } from "../src/family/ledger.js";
+import {
+  familyReviewLoopConvergedForHead,
+  recordOnlineReviewFixCommitted,
+} from "../src/family/ledger.js";
 import { runFamilyOnlineReviewLoop } from "../src/family/verifyCmr.js";
 import { RealFamilyBackend } from "../src/family/realFamilyBackend.js";
 import type { FamilyBackend, FamilyLedgerEntry } from "../src/family/types.js";
@@ -5922,6 +5926,43 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
       }
     }
+  });
+
+  it("#743 online R1: family rebuild accepts the production recordOnlineReviewFixCommitted row shape", async () => {
+    // Gemini alleged status-only rows; pin the real writer output and rebuild from it.
+    class CaptureFamilyBackend implements FamilyBackend {
+      readonly appended: FamilyLedgerEntry[] = [];
+      async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
+        return { familyHead: "head" };
+      }
+      async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+        this.appended.push(entry);
+      }
+      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        return this.appended;
+      }
+    }
+    const backend = new CaptureFamilyBackend();
+    const authKey = "finding:prod-shape";
+    const authThread = "4242";
+    await recordOnlineReviewFixCommitted(backend, {
+      familyHeadAfter: "fixsha1111111111111111111111111111111111",
+      pr: "https://github.com/o/r/pull/42",
+      onlineReviewRound: 1,
+      fixMarkedFindingIdentityKeys: [authKey],
+      fixMarkedFindingThreads: [{ identityKey: authKey, threadId: authThread }],
+    });
+    expect(backend.appended).toHaveLength(1);
+    const productionRow = backend.appended[0]!;
+    // Production writer stamps BOTH status and event (not status-only).
+    expect(productionRow.status).toBe("online_review_fix_committed");
+    expect(productionRow.event).toBe("online_review_fix_committed");
+    expect(
+      lastFixMarkedFindingAuthorizationFromFamilyLedger([productionRow]),
+    ).toEqual({
+      fixMarkedFindingIdentityKeys: [authKey],
+      fixMarkedFindingThreads: [{ identityKey: authKey, threadId: authThread }],
+    });
   });
 
   it("#743 R4: family resume fails closed when a legacy key-only marker is echoed without thread authorization", async () => {
