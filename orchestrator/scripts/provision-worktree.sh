@@ -66,7 +66,12 @@ lock_hash() {
     echo ""
     return
   fi
-  shasum -a 256 "$f" | awk '{print $1}'
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$f" | awk '{print $1}'
+  else
+    # No hash utility: return empty so provision_project takes the npm path.
+    echo ""
+  fi
 }
 
 provision_project() {

@@ -27,6 +27,7 @@ import {
   listNodeProjectDirs,
   lockfileFingerprint,
   provisionNodeModules,
+  provisionRepoNodeModules,
   resolveTemplateProjectDir,
 } from "../src/provisionNodeModules.js";
 import {
@@ -153,14 +154,14 @@ describe("canClonefileNodeModules", () => {
 });
 
 describe("provisionNodeModules", () => {
-  it("clonefiles when lockfiles match (no npm)", () => {
+  it("clonefiles when lockfiles match (no npm)", async () => {
     const target = mkDir("prov-cf-t-");
     const tpl = mkDir("prov-cf-p-");
     writeProject(target, { lock: LOCK_A });
     writeProject(tpl, { lock: LOCK_A, withModules: true, modulesMarker: "tpl-marker" });
 
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
-    const result = provisionNodeModules(target, {
+    const result = await provisionNodeModules(target, {
       templateProjectDir: tpl,
       sh: (file, args, cwd) => {
         calls.push({ file, args, cwd });
@@ -180,14 +181,14 @@ describe("provisionNodeModules", () => {
     expect(readFileSync(join(target, "node_modules", ".marker"), "utf8")).toBe("tpl-marker");
   });
 
-  it("falls back to npm ci when lockfiles mismatch", () => {
+  it("falls back to npm ci when lockfiles mismatch", async () => {
     const target = mkDir("prov-mis-t-");
     const tpl = mkDir("prov-mis-p-");
     writeProject(target, { lock: LOCK_B });
     writeProject(tpl, { lock: LOCK_A, withModules: true });
 
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
-    const result = provisionNodeModules(target, {
+    const result = await provisionNodeModules(target, {
       templateProjectDir: tpl,
       sh: (file, args, cwd) => {
         calls.push({ file, args, cwd });
@@ -199,12 +200,12 @@ describe("provisionNodeModules", () => {
     expect(calls).toEqual([{ file: "npm", args: ["ci"], cwd: target }]);
   });
 
-  it("falls back to npm install when no lockfile", () => {
+  it("falls back to npm install when no lockfile", async () => {
     const target = mkDir("prov-inst-t-");
     writeProject(target);
 
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
-    const result = provisionNodeModules(target, {
+    const result = await provisionNodeModules(target, {
       sh: (file, args, cwd) => {
         calls.push({ file, args, cwd });
         return "";
@@ -215,14 +216,14 @@ describe("provisionNodeModules", () => {
     expect(calls).toEqual([{ file: "npm", args: ["install"], cwd: target }]);
   });
 
-  it("falls back to npm when clonefile command fails", () => {
+  it("falls back to npm when clonefile command fails", async () => {
     const target = mkDir("prov-fail-t-");
     const tpl = mkDir("prov-fail-p-");
     writeProject(target, { lock: LOCK_A });
     writeProject(tpl, { lock: LOCK_A, withModules: true });
 
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
-    const result = provisionNodeModules(target, {
+    const result = await provisionNodeModules(target, {
       templateProjectDir: tpl,
       sh: (file, args, cwd) => {
         calls.push({ file, args, cwd });
@@ -236,14 +237,14 @@ describe("provisionNodeModules", () => {
     expect(calls[1]).toEqual({ file: "npm", args: ["ci"], cwd: target });
   });
 
-  it("cleans a partial clonefile target before starting npm fallback", () => {
+  it("cleans a partial clonefile target before starting npm fallback", async () => {
     const target = mkDir("prov-partial-fail-t-");
     const tpl = mkDir("prov-partial-fail-p-");
     writeProject(target, { lock: LOCK_A });
     writeProject(tpl, { lock: LOCK_A, withModules: true });
 
     let targetWasCleanAtNpmStart: boolean | undefined;
-    const result = provisionNodeModules(target, {
+    const result = await provisionNodeModules(target, {
       templateProjectDir: tpl,
       sh: (file, _args, cwd) => {
         if (file === "cp") {
@@ -263,11 +264,11 @@ describe("provisionNodeModules", () => {
     expect(targetWasCleanAtNpmStart).toBe(true);
   });
 
-  it("falls back to npm ci when no template is provided", () => {
+  it("falls back to npm ci when no template is provided", async () => {
     const target = mkDir("prov-notpl-");
     writeProject(target, { lock: LOCK_A });
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
-    const result = provisionNodeModules(target, {
+    const result = await provisionNodeModules(target, {
       sh: (file, args, cwd) => {
         calls.push({ file, args, cwd });
         return "";
@@ -275,6 +276,59 @@ describe("provisionNodeModules", () => {
     });
     expect(result.method).toBe("npm-ci");
     expect(calls).toEqual([{ file: "npm", args: ["ci"], cwd: target }]);
+  });
+
+  it("awaits async shell work and overlaps concurrent provisions", async () => {
+    const targetA = mkDir("prov-async-a-");
+    const targetB = mkDir("prov-async-b-");
+    const template = mkDir("prov-async-tpl-");
+    writeProject(targetA, { lock: LOCK_A });
+    writeProject(targetB, { lock: LOCK_A });
+    writeProject(template, { lock: LOCK_A, withModules: true });
+
+    let active = 0;
+    let maxActive = 0;
+    let completedCommands = 0;
+    const HOLD_MS = 30;
+    const sh = async (file: string): Promise<string> => {
+      expect(file).toBe("cp");
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, HOLD_MS));
+      active -= 1;
+      completedCommands += 1;
+      return "";
+    };
+
+    const results = await Promise.all([
+      provisionNodeModules(targetA, { templateProjectDir: template, sh }),
+      provisionNodeModules(targetB, { templateProjectDir: template, sh }),
+    ]);
+
+    expect(results.map((result) => result.method)).toEqual(["clonefile", "clonefile"]);
+    expect(completedCommands).toBe(2);
+    expect(maxActive).toBe(2);
+  });
+
+  it("awaits every project when provisioning a repository", async () => {
+    const repo = mkDir("prov-repo-async-");
+    const template = mkDir("prov-repo-async-tpl-");
+    writeProject(repo, { lock: LOCK_A });
+    writeProject(join(repo, "orchestrator"), { lock: LOCK_A });
+    writeProject(template, { lock: LOCK_A, withModules: true });
+    writeProject(join(template, "orchestrator"), { lock: LOCK_A, withModules: true });
+
+    const calls: string[] = [];
+    const results = await provisionRepoNodeModules(repo, {
+      templateRoot: template,
+      sh: async (file, args, cwd) => {
+        calls.push(`${file} ${args.join(" ")} ${cwd}`);
+        return "";
+      },
+    });
+
+    expect(results).toHaveLength(2);
+    expect(calls).toHaveLength(2);
   });
 });
 
@@ -293,7 +347,7 @@ describe("RealFamilyBackend.installDeps uses clonefile when depsTemplateRoot mat
     };
   }
 
-  it("clonefiles from depsTemplateRoot subproject instead of npm when locks match", () => {
+  it("clonefiles from depsTemplateRoot subproject instead of npm when locks match", async () => {
     const clone = mkDir("rfb-clone-");
     const source = mkDir("rfb-src-");
     const verifyCwd = join(clone, "orchestrator");
@@ -317,12 +371,12 @@ describe("RealFamilyBackend.installDeps uses clonefile when depsTemplateRoot mat
       protected override isNodeProject(): boolean {
         return true;
       }
-      runVerifyForTest(): void {
-        this.runVerifyCommands({ phase: "final", familyBase: "family/746-base" });
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/746-base" });
       }
     }
 
-    new SpyBackend(
+    await new SpyBackend(
       opts(clone, { verifyCwd, depsTemplateRoot: source }),
     ).runVerifyForTest();
 
@@ -338,7 +392,7 @@ describe("RealFamilyBackend.installDeps uses clonefile when depsTemplateRoot mat
     expect(readFileSync(join(verifyCwd, "node_modules", ".marker"), "utf8")).toBe("src-orch");
   });
 
-  it("still npm ci when template lockfile mismatches (wave mutated lock)", () => {
+  it("still npm ci when template lockfile mismatches (wave mutated lock)", async () => {
     const clone = mkDir("rfb-mis-clone-");
     const source = mkDir("rfb-mis-src-");
     const verifyCwd = join(clone, "orchestrator");
@@ -357,12 +411,12 @@ describe("RealFamilyBackend.installDeps uses clonefile when depsTemplateRoot mat
       protected override isNodeProject(): boolean {
         return true;
       }
-      runVerifyForTest(): void {
-        this.runVerifyCommands({ phase: "final", familyBase: "family/746-base" });
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/746-base" });
       }
     }
 
-    new SpyBackend(
+    await new SpyBackend(
       opts(clone, { verifyCwd, depsTemplateRoot: source }),
     ).runVerifyForTest();
 
