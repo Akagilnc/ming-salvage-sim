@@ -176,6 +176,14 @@ def _identity_band(value: object) -> str:
             "党色不显" if n >= 40 else "党色较淡" if n >= 20 else "几乎不染党色")
 
 
+def _identity_bucket(value: object) -> str:
+    try:
+        n = int(value or 0)
+    except (TypeError, ValueError):
+        n = 50
+    return "high" if n >= 80 else "middle" if n >= 40 else "low"
+
+
 def _faction_band(field: str, value: object) -> str:
     words = {
         "satisfaction": ("怨气深重", "颇多不满", "态度平常", "颇为顺应", "乐于奉行"),
@@ -207,7 +215,10 @@ def character_context_with_db(character: Character, db: GameDB) -> str:
         "SELECT agenda, satisfaction, leverage FROM factions WHERE name = ?",
         (character.faction,),
     ).fetchone()
-    if faction is None:
+    bucket = _identity_bucket(character.identity)
+    if bucket == "low":
+        faction_text = "与该派仅有名义关联，未提供该派内情；人物立场由自身经历与当下处境呈现。"
+    elif faction is None:
         faction_text = "该派尚无完整档料，以人物所处官职和已知行动推知其所求。"
     else:
         faction_text = (
