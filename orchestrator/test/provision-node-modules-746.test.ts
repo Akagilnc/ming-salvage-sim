@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type * as sc from "@ai-hero/sandcastle";
 
+import { _resetGitMutex } from "../src/gitMutex.js";
 import {
   canClonefileNodeModules,
   listNodeProjectDirs,
@@ -45,6 +46,7 @@ const realSoulsDir = join(here, "..", "image", "souls");
 
 const cleanups: string[] = [];
 afterEach(() => {
+  _resetGitMutex();
   while (cleanups.length > 0) {
     const p = cleanups.pop();
     if (p !== undefined) rmSync(p, { recursive: true, force: true });
@@ -506,5 +508,81 @@ describe("RealBackend.prepareWorktreeLocked provisions node_modules (#746)", () 
     expect(readFileSync(join(existingPath, "node_modules", ".marker"), "utf8")).toBe(
       "reuse-path-src",
     );
+  });
+
+  /**
+   * #746 R2 P2 — provisioning must NOT run under the per-clone git mutex.
+   * Family waves share one RealBackend/clone: if npm/clonefile stays inside
+   * runExclusive, N concurrent prepares serialize on ~90s installs. Mutex covers
+   * git worktree mutations only; each worktree's node_modules is independent.
+   */
+  it("provisions OUTSIDE the git mutex — concurrent prepares overlap on provision", async () => {
+    const source = mkDir("rb-conc-src-");
+    const home = mkDir("rb-conc-home-");
+    writeProject(source, { lock: LOCK_A, withModules: true });
+
+    // Two wave children, one shared RealBackend clone (runKey = ISSUE = 746).
+    const ISSUE_A = 74601;
+    const ISSUE_B = 74602;
+    const clone = clonePathFor(home, repoSlug(source, REMOTE), ISSUE);
+    const pathA = join(clone, ".sandcastle", "worktrees", `issue-${ISSUE_A}`);
+    const pathB = join(clone, ".sandcastle", "worktrees", `issue-${ISSUE_B}`);
+    writeProject(pathA, { lock: LOCK_A });
+    writeProject(pathB, { lock: LOCK_A });
+
+    let activeProvisions = 0;
+    let maxConcurrentProvisions = 0;
+    const HOLD_MS = 40;
+
+    class ConcurrentProvisionBackend extends RealBackend {
+      protected override cloneDirExists(): boolean {
+        return true;
+      }
+      protected override sh(file: string, args: string[]): string {
+        if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+          return `${clone}/.git`;
+        }
+        if (
+          file === "git" &&
+          args[0] === "worktree" &&
+          args[1] === "list" &&
+          args[2] === "--porcelain"
+        ) {
+          return [
+            `worktree ${pathA}`,
+            "HEAD " + "a".repeat(40),
+            `branch refs/heads/feat/issue-${ISSUE_A}`,
+            "",
+            `worktree ${pathB}`,
+            "HEAD " + "b".repeat(40),
+            `branch refs/heads/feat/issue-${ISSUE_B}`,
+          ].join("\n");
+        }
+        return "";
+      }
+      protected override async createResidentWorktree(): Promise<sc.Worktree> {
+        throw new Error("concurrency test uses reuse path only");
+      }
+      /** Hold long enough that a second prepare can enter provision if mutex is free. */
+      protected override async provisionWorktreeNodeModules(
+        _worktreePath: string,
+      ): Promise<void> {
+        activeProvisions += 1;
+        maxConcurrentProvisions = Math.max(maxConcurrentProvisions, activeProvisions);
+        await new Promise((r) => setTimeout(r, HOLD_MS));
+        activeProvisions -= 1;
+      }
+    }
+
+    // One backend → one workingRepo mutex key (family-wave shape).
+    const backend = new ConcurrentProvisionBackend(backendOpts(source, home));
+    await Promise.all([
+      backend.prepareWorktree(ISSUE_A, "main"),
+      backend.prepareWorktree(ISSUE_B, "main"),
+    ]);
+
+    // If provision were still inside runExclusive, peak would be 1 (serial).
+    // Outside the mutex, the two delayed provisions overlap → peak 2.
+    expect(maxConcurrentProvisions).toBe(2);
   });
 });

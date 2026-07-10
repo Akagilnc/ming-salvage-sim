@@ -106,7 +106,11 @@ echo "[provision] worktree=$WORKTREE branch=$BRANCH base=$BASE"
 
 if [[ -d "$WORKTREE" ]]; then
   echo "[provision] worktree exists; reusing"
-  git -C "$WORKTREE" checkout "$BRANCH" 2>/dev/null || true
+  # Fail loudly: a failed checkout means wrong/dirty tree; do not provision on it.
+  if ! git -C "$WORKTREE" checkout "$BRANCH"; then
+    echo "[provision] error: git checkout '$BRANCH' failed in $WORKTREE" >&2
+    exit 1
+  fi
 else
   # Fetch base when possible (best-effort).
   git -C "$MAIN_REPO" fetch origin "$BASE" 2>/dev/null || true
