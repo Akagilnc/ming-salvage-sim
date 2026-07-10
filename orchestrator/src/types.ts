@@ -1242,10 +1242,6 @@ export interface LedgerEntry {
   readonly stopSummary?: StopSummary;
   /** Online review converged marker (#600): PR URL covered by this convergence. */
   readonly prUrl?: string;
-  /** Durable delivery metadata written with the `pr_merged` bookkeeping event. */
-  readonly prNumber?: number;
-  readonly remoteBranchName?: string;
-  readonly mergedHeadOid?: string;
   /** Online review converged marker (#600): reviewed PR head SHA. */
   readonly prHead?: string;
   /** Online review converged marker (#600): final round number. */
@@ -1274,8 +1270,6 @@ export interface LedgerEntry {
    * resumed run can rebuild alive/idle/kill judgment without global pgrep.
    */
   readonly monitorHandle?: WorkerMonitorHandle;
-  /** Runtime ledger rows retain the same branch HEAD recorded for persistence. */
-  readonly branchHEAD?: string;
 }
 
 /**
