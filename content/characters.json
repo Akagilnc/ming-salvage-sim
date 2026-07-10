@@ -580,6 +580,38 @@
       "power_id": "ming"
     },
     {
+      "name": "徐应秋",
+      "office": "工部右侍郎",
+      "office_type": "工部",
+      "faction": "中立",
+      "aliases": [
+        "徐应秋",
+        "徐云林"
+      ],
+      "personal_skills": [
+        "经史考据",
+        "典章议论",
+        "工部实务"
+      ],
+      "loyalty": 50,
+      "ability": 64,
+      "integrity": 58,
+      "courage": 46,
+      "style": "博学持论",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "seed_guilt": {
+        "crime": "",
+        "severity": "无"
+      },
+      "identity": 50,
+      "status": "offstage",
+      "debut_year": 1628,
+      "debut_month": 0,
+      "power_id": "ming"
+    },
+    {
       "name": "汤若望",
       "office": "钦天监历局修历",
       "office_type": "礼部",
@@ -609,7 +641,7 @@
       "identity": 66,
       "status": "offstage",
       "debut_year": 1630,
-      "debut_month": 4,
+      "debut_month": 0,
       "location": "beizhili",
       "power_id": "ming"
     },
