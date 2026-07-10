@@ -46,6 +46,7 @@ import {
   RealFamilyBackend,
   type RealFamilyBackendOptions,
 } from "../../src/family/realFamilyBackend.js";
+import { FIX_FOCUS_LANDING_FILE } from "../../src/findingFamilies.js";
 import { familyEscalationState } from "../../src/family/ledger.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { SANDBOX_SKILLS_DIR, SANDBOX_SOUL_ENV, soulsMount } from "../../src/realBackend.js";
@@ -1927,6 +1928,21 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
 });
 
 describe("RealFamilyBackend runtime file git excludes", () => {
+  it("removes a stale fix-focus file when no family brief is mounted", () => {
+    class Probe extends RealFamilyBackend {
+      public clearFixFocus(landing?: Parameters<RealFamilyBackend["writeFamilyFixFocusFile"]>[0]) {
+        return this.writeFamilyFixFocusFile(landing);
+      }
+    }
+    const repo = trackRepo();
+    const focusPath = join(repo, FIX_FOCUS_LANDING_FILE);
+    writeFileSync(focusPath, "stale interrupted brief\n", "utf8");
+    const b = new Probe(opts(repo));
+
+    expect(b.clearFixFocus()).toBeUndefined();
+    expect(existsSync(focusPath)).toBe(false);
+  });
+
   it("treats CRLF exclude entries as existing lines instead of appending duplicates", () => {
     class Probe extends RealFamilyBackend {
       public exclude(filename: string): void {

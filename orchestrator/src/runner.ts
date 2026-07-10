@@ -179,6 +179,14 @@ import type {
   WorktreeHandle,
 } from "./types.js";
 
+/** Merge resume history with the display-seeded ledger without replaying shared rows. */
+export function mergeResumeLedgerHistory(
+  resumeHistoryLedger: ReadonlyArray<LedgerEntry>,
+  ledger: ReadonlyArray<LedgerEntry>,
+): ReadonlyArray<LedgerEntry> {
+  return [...new Set([...resumeHistoryLedger, ...ledger])];
+}
+
 // ─── #256 seam-extension normalisation ───────────────────────────────────────
 //
 // #331 (ADR 0026): the runner-local `normalizeStepResult` was removed. The agent
@@ -3798,7 +3806,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               writeOnlineReviewSnapshotFile(stateDir, snapshot);
             }
             const priorRoundFindings = priorOnlineReviewFindingsFromLedger(
-              [...resumeHistoryLedger, ...ledger],
+              mergeResumeLedgerHistory(resumeHistoryLedger, ledger),
               onlineReviewRound,
             );
             onlineReviewLanding = {

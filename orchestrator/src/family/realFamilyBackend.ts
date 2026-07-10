@@ -1603,6 +1603,7 @@ export class RealFamilyBackend implements FamilyBackend {
     landing?: WorkerLandingPayload,
   ): { path: string; sandboxPath: string } | undefined {
     if (landing?.findingFamilies === undefined || landing.findingFamilies.length === 0) {
+      rmSync(join(this.opts.workingRepo, FIX_FOCUS_LANDING_FILE), { force: true });
       return undefined;
     }
     this.excludeOptionalRuntimeFileFromGit(FIX_FOCUS_LANDING_FILE);
