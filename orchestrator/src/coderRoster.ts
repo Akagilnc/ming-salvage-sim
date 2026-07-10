@@ -24,11 +24,15 @@ export interface CoderRosterEntry {
 }
 
 /** Roster table version — bump when #424 bench updates the eligible set. */
-export const CODER_ROSTER_VERSION = "2026-07-10";
+export const CODER_ROSTER_VERSION = "2026-07-11";
 
 /**
  * Eligible coder models (model × pool × aliases). Keep in sync with
  * `docs/CODER_ROSTER.md` and #424 bench updates.
+ *
+ * #789 — Claude pool entries (`sonnet-5` / `haiku-4.5`) are grok-exhaustion
+ * backups. Their runnable slugs (`sonnet` / `haiku`) differ from the cmrReview
+ * Claude leg (`opus`), so they do not trip pool-separation against normal CMR.
  */
 export const CODER_ROSTER: ReadonlyArray<CoderRosterEntry> = [
   {
@@ -53,6 +57,12 @@ export const CODER_ROSTER: ReadonlyArray<CoderRosterEntry> = [
     slug: "sonnet",
     pool: "claude",
     aliases: ["Sonnet 5", "sonnet"],
+  },
+  {
+    id: "haiku-4.5",
+    slug: "haiku",
+    pool: "claude",
+    aliases: ["Haiku 4.5", "haiku"],
   },
 ];
 
