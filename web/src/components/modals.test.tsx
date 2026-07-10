@@ -40,6 +40,7 @@ const CONSORT_MOCK: Minister = {
 function renderModal(props: {
   minister: Minister;
   portraitPrefix: string;
+  chat?: Array<{ role: "user" | "minister"; content: string }>;
   busy?: string;
   onCancel?: () => void;
   chatFailures?: PendingActionFailure[];
@@ -54,7 +55,7 @@ function renderModal(props: {
         minister={props.minister}
         portraitPrefix={props.portraitPrefix}
         busy={props.busy ?? ""}
-        chat={[]}
+        chat={props.chat ?? []}
         suggestions={[]}
         pendingUserMessage=""
         streamingMinisterMessage=""
@@ -325,6 +326,23 @@ describe("ChatModal — placeholder switches on character type", () => {
     expect(document.querySelector(".chat-failure-note")?.textContent).toContain("任免未能正式落库");
     const button = Array.from(document.querySelectorAll("button")).find((node) => node.textContent === "重试");
     expect(button).toBeUndefined();
+  });
+});
+
+describe("ChatModal — organic markdown display cleanup", () => {
+  it("strips markdown from minister replies while preserving the emperor's text", () => {
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      chat: [
+        { role: "user", content: "朕要看 **原文**。" },
+        { role: "minister", content: "**臣谨奏**：\n- 钱粮已足。" },
+      ],
+    });
+
+    const messages = Array.from(document.querySelectorAll(".chat-message p"));
+    expect(messages[0]?.textContent).toBe("朕要看 **原文**。");
+    expect(messages[1]?.textContent).toBe("臣谨奏：\n钱粮已足。");
   });
 });
 
