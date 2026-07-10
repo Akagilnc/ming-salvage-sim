@@ -1541,7 +1541,64 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     );
     const fnStart = source.indexOf("protected cmrSandboxConfig(");
     expect(fnStart).toBeGreaterThanOrEqual(0);
-    const fnBody = source.slice(fnStart, fnStart + 2500);
+    // Extract the ENTIRE method via brace matching — no arbitrary char window
+    // (a fixed slice can spuriously miss the assignment if the function grows).
+    // Signature shape: cmrSandboxConfig(...): { returnType } { body }
+    let i = source.indexOf("(", fnStart);
+    let depth = 0;
+    for (; i < source.length; i++) {
+      if (source[i] === "(") depth++;
+      else if (source[i] === ")") {
+        depth--;
+        if (depth === 0) {
+          i++;
+          break;
+        }
+      }
+    }
+    while (i < source.length && /\s/.test(source[i]!)) i++;
+    if (source[i] === ":") {
+      // Skip return-type annotation; the next `{` at nest 0 after type content
+      // is the function body opener.
+      i++;
+      let nest = 0;
+      let started = false;
+      while (i < source.length) {
+        const c = source[i]!;
+        if (c === "{" && nest === 0 && started) break;
+        if (c === "{" || c === "(" || c === "[") {
+          nest++;
+          started = true;
+          i++;
+        } else if (c === "}" || c === ")" || c === "]") {
+          nest--;
+          i++;
+        } else if (/\s/.test(c)) {
+          i++;
+        } else {
+          started = true;
+          i++;
+        }
+      }
+    } else {
+      while (i < source.length && source[i] !== "{") i++;
+    }
+    const bodyOpen = i;
+    expect(source[bodyOpen]).toBe("{");
+    depth = 0;
+    let fnEnd = -1;
+    for (i = bodyOpen; i < source.length; i++) {
+      if (source[i] === "{") depth++;
+      else if (source[i] === "}") {
+        depth--;
+        if (depth === 0) {
+          fnEnd = i + 1;
+          break;
+        }
+      }
+    }
+    expect(fnEnd).toBeGreaterThan(fnStart);
+    const fnBody = source.slice(fnStart, fnEnd);
     // Must match the real assignment/derivation line, not a comment mention alone.
     expect(fnBody).toMatch(/env\.CMR_CODEX_MODEL\s*=\s*codexReviewLeg\.slug/);
     // Object-literal hardcode OR assignment-form hardcode both RED.
