@@ -31,6 +31,10 @@ import type {
 
 /** Minimal fake backend that records every StepSpec passed to runStep. */
 class RecordingBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly capturedSpecs: StepSpec[] = [];
 
   readonly worktree: WorktreeHandle = {

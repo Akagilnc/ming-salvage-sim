@@ -329,6 +329,10 @@ describe("#422 model route presets", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
 
     class RecordingBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
       readonly specs: WorkerSpec[] = [];
       async findResumeState(): Promise<undefined> {
         return undefined;
@@ -441,6 +445,10 @@ describe("#422 model route presets", () => {
     vi.resetModules();
 
     class BackendShouldNotRun implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
       async findResumeState(): Promise<undefined> {
         throw new Error("backend should not run");
       }

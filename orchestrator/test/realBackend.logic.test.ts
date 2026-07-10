@@ -59,6 +59,8 @@ import {
   soulForStep,
   REFERENCED_PROMPT_FILES,
   RealBackend,
+  routeSmokeCacheKey,
+  routeSmokeToolCallIsEchoOk,
   SANDBOX_CODEX_DIR,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
@@ -69,9 +71,44 @@ import {
 } from "../src/realBackend.js";
 import type { RepairEvidence, StepSpec } from "../src/types.js";
 import type * as sc from "@ai-hero/sandcastle";
+import { resolveRouteModels } from "../src/modelRoutes.js";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
 // brief); S1's `extractAgentBrief` is the surviving brief reader.
 import { StructuredOutputError } from "@ai-hero/sandcastle";
+
+describe("#685 route smoke hardening", () => {
+  it("accepts the quoted echo form emitted by a shell tool call", () => {
+    expect(
+      routeSmokeToolCallIsEchoOk({
+        type: "toolCall",
+        name: "bash",
+        formattedArgs: 'echo "OK"',
+      }),
+    ).toBe(true);
+  });
+
+  it("changes the cache key when the sandbox fingerprint changes", () => {
+    const route = resolveRouteModels("normal", {});
+    expect(routeSmokeCacheKey(route, "image-a")).not.toBe(
+      routeSmokeCacheKey(route, "image-b"),
+    );
+  });
+
+  it("turns a missing host CLI into an unknown version instead of throwing", () => {
+    const backend = {
+      sh: () => {
+        throw new Error("host CLI missing");
+      },
+    };
+    const cliVersionForSlug = (
+      RealBackend.prototype as unknown as {
+        cliVersionForSlug(this: typeof backend, slug: string): string;
+      }
+    ).cliVersionForSlug;
+
+    expect(cliVersionForSlug.call(backend, "sonnet")).toBe("unknown");
+  });
+});
 
 // ─── gh JSON → IssueMeta / IssueSnapshot ─────────────────────────────────────
 

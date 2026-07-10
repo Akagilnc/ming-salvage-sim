@@ -68,6 +68,10 @@ function makeGitWorktree(): WorktreeHandle {
 }
 
 class RetryReviewBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly dispatched: string[] = [];
   readonly specs: WorkerSpec[] = [];
   readonly ctxs: DispatchContext[] = [];
@@ -2359,6 +2363,10 @@ describe("#369 runner resume/retry review fixes", () => {
 
   it("bounded-retries legacy reviewer parse exceptions before succeeding", async () => {
     class LegacyThrowingReviewBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
       readonly calls: string[] = [];
       reviewerAttempts = 0;
 
@@ -2408,6 +2416,10 @@ describe("#369 runner resume/retry review fixes", () => {
 
   it("retries a reviewer non-structured crash, then surfaces a persistent one as an S8 error (#598)", async () => {
     class FailingReviewBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
       reviewerAttempts = 0;
 
       async findResumeState(): Promise<undefined> { return undefined; }

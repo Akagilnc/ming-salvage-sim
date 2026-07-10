@@ -5115,6 +5115,10 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
   });
 
   class HookPollBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
     readonly hookCalls: string[] = [];
 
     async findResumeState(): Promise<undefined> {
