@@ -19,6 +19,37 @@ import type { StepId } from "./types.js";
 /** Provider quota pool the worker is drawing from. */
 export type QuotaPoolId = "zai" | "opencode-go" | "grok" | "unknown";
 
+const QUOTA_POOL_IDS: ReadonlySet<string> = new Set<QuotaPoolId>([
+  "zai",
+  "opencode-go",
+  "grok",
+  "unknown",
+]);
+
+function isQuotaPoolId(value: unknown): value is QuotaPoolId {
+  return typeof value === "string" && QUOTA_POOL_IDS.has(value);
+}
+
+const BRIDGE_STEP_IDS: ReadonlySet<string> = new Set<StepId>([
+  "S0",
+  "S1",
+  "S2",
+  "S3",
+  "S4",
+  "S5",
+  "S6",
+  "S7",
+  "S8",
+  "S9",
+  "S10",
+  "S11",
+  "S12",
+]);
+
+function isBridgeStepId(value: unknown): value is StepId {
+  return typeof value === "string" && BRIDGE_STEP_IDS.has(value);
+}
+
 /**
  * Per-pool probe kind (config follows the route/model table companion).
  *   - zai_chat      — minimal chat completions request
@@ -622,53 +653,73 @@ export function tryParseQuotaWaitForResetBridge(
 ): QuotaWaitForResetError | undefined {
   if (!reason.startsWith(QUOTA_WAIT_BRIDGE_REASON_PREFIX)) return undefined;
   const raw = reason.slice(QUOTA_WAIT_BRIDGE_REASON_PREFIX.length);
-  let payload: QuotaWaitBridgePayload;
+  let parsed: unknown;
   try {
-    payload = JSON.parse(raw) as QuotaWaitBridgePayload;
+    parsed = JSON.parse(raw);
   } catch {
     return undefined;
   }
-  if (
-    payload === null ||
-    typeof payload !== "object" ||
-    typeof payload.pool !== "string" ||
-    typeof payload.reason !== "string"
-  ) {
+  if (parsed === null || typeof parsed !== "object") {
     return undefined;
   }
+  const payload = parsed as Record<string, unknown>;
+  // Required fields: fail-closed (reject) when pool is missing / not a
+  // QuotaPoolId, or reason is not a string — same as other shape failures.
+  if (!isQuotaPoolId(payload.pool) || typeof payload.reason !== "string") {
+    return undefined;
+  }
+  const pool = payload.pool;
+  const reasonText = payload.reason;
+
   const resetAt =
     typeof payload.resetAt === "string" && payload.resetAt.length > 0
       ? new Date(payload.resetAt)
       : undefined;
   const disposition: Extract<IdleDisposition, { kind: "wait_for_reset" }> = {
     kind: "wait_for_reset",
-    pool: payload.pool,
-    reason: payload.reason,
+    pool,
+    reason: reasonText,
     ...(resetAt !== undefined && !Number.isNaN(resetAt.getTime())
       ? { resetAt }
       : {}),
   };
+
+  // Optional fields: drop/ignore malformed values rather than propagating.
+  const step = isBridgeStepId(payload.step) ? payload.step : undefined;
+  const workerPid =
+    typeof payload.workerPid === "number" &&
+    Number.isFinite(payload.workerPid) &&
+    Number.isInteger(payload.workerPid)
+      ? payload.workerPid
+      : undefined;
+  let now = new Date();
+  if (typeof payload.ts === "string" && payload.ts.length > 0) {
+    const parsedTs = new Date(payload.ts);
+    if (!Number.isNaN(parsedTs.getTime())) {
+      now = parsedTs;
+    }
+  }
+  const probeDetail =
+    typeof payload.probeDetail === "string" ? payload.probeDetail : undefined;
+
   const ledgerEntry = buildQuotaWaitForResetLedgerEntry({
-    pool: payload.pool,
+    pool,
     resetAt: disposition.resetAt,
-    reason: payload.reason,
-    step: payload.step,
-    workerPid: payload.workerPid,
-    now:
-      typeof payload.ts === "string" && payload.ts.length > 0
-        ? new Date(payload.ts)
-        : new Date(),
+    reason: reasonText,
+    ...(step !== undefined ? { step } : {}),
+    ...(workerPid !== undefined ? { workerPid } : {}),
+    now,
   });
   return new QuotaWaitForResetError({
     disposition,
     applied: { killed: false, ledgerEntry },
-    pool: payload.pool,
+    pool,
     probe: {
       kind: "quota_limited",
       ...(disposition.resetAt !== undefined
         ? { resetAt: disposition.resetAt }
         : {}),
-      detail: payload.probeDetail ?? payload.reason,
+      detail: probeDetail ?? reasonText,
     },
   });
 }

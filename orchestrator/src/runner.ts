@@ -77,6 +77,7 @@ import {
 } from "./botPolling.js";
 import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetry.js";
 import {
+  isQuotaWaitForResetError,
   QuotaWaitForResetError,
   type QuotaWaitForResetLedgerEvent,
 } from "./quotaProbe.js";
@@ -495,15 +496,6 @@ function sliceQuotaWaitPending(
     }
   }
   return undefined;
-}
-
-function isQuotaWaitForResetError(err: unknown): err is QuotaWaitForResetError {
-  return (
-    err instanceof QuotaWaitForResetError ||
-    (err !== null &&
-      typeof err === "object" &&
-      (err as { readonly name?: unknown }).name === "QuotaWaitForResetError")
-  );
 }
 
 /**

@@ -16,18 +16,8 @@
  * worker's self-reported content.
  */
 
-import { QuotaWaitForResetError } from "./quotaProbe.js";
+import { isQuotaWaitForResetError } from "./quotaProbe.js";
 import type { DispatchContext, WorkerResult, WorkerSpec } from "./types.js";
-
-/** True when a thrown dispatch error is a quota park (must not mechanical-retry). */
-function isQuotaWaitForResetError(err: unknown): boolean {
-  return (
-    err instanceof QuotaWaitForResetError ||
-    (err !== null &&
-      typeof err === "object" &&
-      (err as { readonly name?: unknown }).name === "QuotaWaitForResetError")
-  );
-}
 
 /**
  * Total dispatch attempts for one step (1 initial + retries) for a PROCESS-LEVEL
