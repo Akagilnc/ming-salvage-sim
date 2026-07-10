@@ -62,10 +62,23 @@ def _world(
     }
 
     def blocked(domain: str) -> bool:
-        targets = domain_offices.get(domain, set())
+        # Office exclusions are provenance-aware: an exclusion for 户部 may
+        # hide the treasury fact, but must not erase unrelated personnel or
+        # court facts.  Do not compare against the reader's office here; the
+        # source office of the fact is the secrecy boundary.
+        fact_sources = domain_offices.get(domain, set())
+        targets = excluded_offices or set()
+        if fact_sources & targets:
+            return True
+        # A persisted exclusion may use a concrete office title (for example
+        # ``南京户部尚书``) rather than the normalized office_type.  Resolve
+        # that title to its source type without turning the exclusion into a
+        # global "clear every bucket" switch.
+        characters = getattr(getattr(db, "content", None), "characters", {}) or {}
         return any(
-            target == office_type or target == office_name or target in targets
-            for target in (excluded_offices or set())
+            str(getattr(character, "office", "") or "") in targets
+            and str(getattr(character, "office_type", "") or "") in fact_sources
+            for character in characters.values()
         )
 
     facts = {
@@ -136,7 +149,8 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         targets = db.knowledge_exclusion_targets_for_source(source_id) if hasattr(db, "knowledge_exclusion_targets_for_source") else {"people": [], "offices": []}
         return (character_name in excluded_names
                 or character_name in targets.get("people", [])
-                or office_type in targets.get("offices", []))
+                or office_type in targets.get("offices", [])
+                or office_name in targets.get("offices", []))
 
     visible_events = [
         {

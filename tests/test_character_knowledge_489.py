@@ -267,3 +267,58 @@ def test_office_blacklist_preserves_unrelated_court_domain_fact(game):
 
     assert view["world"].get("personnel")
     assert view["world"].get("treasury") == ""
+
+
+def test_event_office_blacklist_matches_current_office_name(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    db.register_character_knowledge_source(
+        state,
+        [{"character_id": minister.name}],
+        "secret_order",
+        "仅瞒礼部尚书",
+        "不可宣示",
+        source_id="secret_order:office-name",
+        excluded_targets={"offices": [minister.office]},
+    )
+
+    view = db.get_character_knowledge(state, minister.name)
+
+    assert not any(
+        item["source_id"] == "secret_order:office-name"
+        for item in view["events"]
+    )
+
+
+def test_participant_roster_is_discovered_from_any_persistent_table(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    db.conn.execute(
+        """
+        CREATE TABLE custom_participant_records (
+            id INTEGER PRIMARY KEY,
+            turn INTEGER NOT NULL,
+            year INTEGER NOT NULL,
+            period INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',
+            source_id TEXT NOT NULL,
+            participant_roster TEXT NOT NULL
+        )
+        """
+    )
+    db.conn.execute(
+        """
+        INSERT INTO custom_participant_records
+            (turn, year, period, kind, title, body, source_id, participant_roster)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (state.turn, state.year, state.period, "custom", "新型案卷", "案卷内容",
+         "custom:1", '[{"character_id": "' + minister.name + '"}]'),
+    )
+    db.conn.commit()
+
+    view = db.get_character_knowledge(state, minister.name)
+
+    assert any(item["source_id"] == "custom:1" for item in view["events"])
