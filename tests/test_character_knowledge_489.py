@@ -16,6 +16,8 @@ def test_turn_zero_knowledge_is_role_specific_and_restores(game):
     assert household_view["world"] != war_view["world"]
     assert household_view["world"]["treasury"]
     assert war_view["world"]["military"]
+    assert any(item["source_id"] == "opening:accession" for item in household_view["public_events"])
+    assert any(item["source_id"] == "opening:anti_eunuch" for item in household_view["public_events"])
 
 
 def test_public_directive_is_seen_by_uninvolved_minister_but_secret_exclusion_wins(game):
@@ -175,6 +177,22 @@ def test_secret_office_exclusion_blocks_dynamic_office_bucket(game):
     assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
 
 
+def test_secret_exclusion_is_source_scoped_not_global_for_same_bucket(game):
+    db, state, content = game
+    treasury_ministers = [c for c in content.characters.values() if c.office_type == "户部"]
+    excluded = treasury_ministers[0]
+    unaffected = treasury_ministers[1]
+    db.create_secret_order(
+        state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=[excluded.office]
+    )
+
+    excluded_view = db.get_character_knowledge(state, excluded.name)
+    unaffected_view = db.get_character_knowledge(state, unaffected.name)
+
+    assert "treasury" not in excluded_view["world"]
+    assert unaffected_view["world"].get("treasury")
+
+
 def test_issue_roster_is_structured_and_read_side_projection_needs_no_write_hook(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
@@ -206,3 +224,16 @@ def test_participation_adapter_reads_structured_roster_without_fake_names(game):
     view = db.get_character_knowledge(state, minister.name)
 
     assert any(item["source_id"] == "assignment:structured" for item in view["events"])
+
+
+def test_new_participation_source_is_projected_without_read_side_type_branch(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    db.record_participation_record(
+        state,
+        {"participants": [minister.name], "title": "新型案卷", "body": "案卷内容"},
+        kind="new_record_type",
+        source_id="new_record:1",
+    )
+
+    assert any(item["source_id"] == "new_record:1" for item in db.get_character_knowledge(state, minister.name)["events"])

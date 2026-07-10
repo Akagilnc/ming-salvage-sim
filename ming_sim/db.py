@@ -1190,6 +1190,23 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_character_knowledge_events_character
                 ON character_knowledge_events(character_name, turn, id);
 
+            CREATE TABLE IF NOT EXISTS character_knowledge_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL DEFAULT '',
+                source_id TEXT NOT NULL UNIQUE,
+                participant_roster TEXT NOT NULL DEFAULT '[]',
+                excluded_names TEXT NOT NULL DEFAULT '[]',
+                excluded_targets TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_character_knowledge_sources_turn
+                ON character_knowledge_sources(turn, id);
+
             CREATE TABLE IF NOT EXISTS kv_store (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL DEFAULT '',
@@ -1283,6 +1300,22 @@ class GameDB:
         self.ensure_column("issues", "participants", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("issues", "participant_roster", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("secret_orders", "excluded_targets", "TEXT NOT NULL DEFAULT '{}'")
+        # Read-side projection is registry-driven, but old saves already contain
+        # durable issue/secret rows. Backfill them once so restore does not lose
+        # participation knowledge during the schema transition.
+        self.conn.execute(
+            "INSERT OR IGNORE INTO character_knowledge_sources "
+            "(turn,year,period,kind,title,body,source_id,participant_roster) "
+            "SELECT origin_turn, 0, 0, 'assignment', title, stage_text, "
+            "'issue:' || id, participant_roster FROM issues WHERE participant_roster <> '[]'"
+        )
+        self.conn.execute(
+            "INSERT OR IGNORE INTO character_knowledge_sources "
+            "(turn,year,period,kind,title,body,source_id,participant_roster,excluded_names,excluded_targets) "
+            "SELECT turn_issued, year_issued, period_issued, 'secret_order', title, content, "
+            "'secret_order:' || id, json_array(json_object('character_id', minister_name)), "
+            "excluded_names, excluded_targets FROM secret_orders"
+        )
         # BUG 3：directive 暂存 commit 成 turn_directives draft 时回填该 draft 行 id，
         # 使 undo_chat_turn 能精确删本轮自产的那条 draft（旧实现按 (turn,actor) 删，
         # 会连带删掉同 actor 同回合的无关 draft）。0=未 commit / 非 directive。
@@ -3530,19 +3563,26 @@ class GameDB:
             "SELECT 1 FROM turn_reports WHERE turn = ?",
             (prev_turn,),
         ).fetchone()
-        if exists is not None:
-            return
-        from pathlib import Path
-        from ming_sim.paths import bundled_path
-        gazette_path = Path(bundled_path("content", "opening_gazette.md"))
-        if not gazette_path.is_file():
-            return
-        text = gazette_path.read_text(encoding="utf-8").strip()
-        if not text:
-            return
-        self.conn.execute(
-            "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
-            (prev_turn, prev_year, prev_period, text),
+        if exists is None:
+            from pathlib import Path
+            from ming_sim.paths import bundled_path
+            gazette_path = Path(bundled_path("content", "opening_gazette.md"))
+            if gazette_path.is_file():
+                text = gazette_path.read_text(encoding="utf-8").strip()
+                if text:
+                    self.conn.execute(
+                        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+                        (prev_turn, prev_year, prev_period, text),
+                    )
+        # Keep the two opening facts addressable as public knowledge rather than
+        # requiring a character to infer them from an undifferentiated gazette.
+        self.record_public_knowledge_event(
+            state, "新君登基", "崇祯帝于乾清宫即位，朝廷进入新君亲政的开局。",
+            source_id="opening:accession",
+        )
+        self.record_public_knowledge_event(
+            state, "倒魏旧案", "阉党专权与魏忠贤乱政是朝野公开议论的政局事实，倒魏为新君必须面对的公共政务。",
+            source_id="opening:anti_eunuch",
         )
         self.conn.commit()
 
@@ -8736,6 +8776,15 @@ class GameDB:
         )
         if commit:
             self.conn.commit()
+        self.register_character_knowledge_source(
+            state,
+            participant_roster,
+            "assignment",
+            title,
+            stage_text,
+            f"issue:{int(cur.lastrowid)}",
+            commit=commit,
+        )
         return int(cur.lastrowid)
 
     def advance_issue(
@@ -9139,38 +9188,25 @@ class GameDB:
             result.append(item)
         known_sources = {str(item["source_id"]) for item in result}
         for row in self.conn.execute(
-            "SELECT id, origin_turn, title, stage_text, participants, participant_roster FROM issues"
+            "SELECT turn, year, period, kind, title, body, source_id, participant_roster, excluded_names "
+            "FROM character_knowledge_sources ORDER BY turn, id"
         ).fetchall():
             try:
                 roster = json.loads(row["participant_roster"] or "[]")
             except (TypeError, ValueError):
                 roster = []
-            if not roster:
-                try:
-                    roster = [{"character_id": name} for name in json.loads(row["participants"] or "[]")]
-                except (TypeError, ValueError):
-                    roster = []
-            source_id = f"issue:{int(row['id'])}"
-            if source_id not in known_sources and any(
-                isinstance(item, dict) and str(item.get("character_id") or "") == str(character_name)
-                for item in roster
-            ):
-                result.append({"turn": int(row["origin_turn"]), "year": 0, "period": 0,
-                               "kind": "assignment", "title": row["title"],
-                               "body": row["stage_text"], "source_id": source_id})
-        for row in self.conn.execute(
-            "SELECT id, turn_issued, year_issued, period_issued, minister_name, title, content, excluded_names FROM secret_orders"
-        ).fetchall():
-            source_id = f"secret_order:{int(row['id'])}"
-            if source_id in known_sources or str(row["minister_name"]) != str(character_name):
+            names = {
+                str(item.get("character_id") or item.get("name"))
+                for item in roster if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
+            }
+            if str(row["source_id"]) in known_sources or str(character_name) not in names:
                 continue
-            result.append({"turn": int(row["turn_issued"]), "year": int(row["year_issued"]),
-                           "period": int(row["period_issued"]), "kind": "secret_order",
-                           "title": row["title"], "body": row["content"], "source_id": source_id,
-                           "excluded_names": row["excluded_names"] or "[]"} if include_exclusions else
-                          {"turn": int(row["turn_issued"]), "year": int(row["year_issued"]),
-                           "period": int(row["period_issued"]), "kind": "secret_order",
-                           "title": row["title"], "body": row["content"], "source_id": source_id})
+            item = {"turn": int(row["turn"]), "year": int(row["year"]),
+                    "period": int(row["period"]), "kind": row["kind"],
+                    "title": row["title"], "body": row["body"], "source_id": row["source_id"]}
+            if include_exclusions:
+                item["excluded_names"] = row["excluded_names"] or "[]"
+            result.append(item)
         return result
 
     def knowledge_exclusions_for_source(self, source_id: str) -> List[str]:
@@ -9198,11 +9234,30 @@ class GameDB:
                     return [str(name) for name in json.loads(order["excluded_names"] or "[]")]
                 except (TypeError, ValueError):
                     return []
+        row = self.conn.execute(
+            "SELECT excluded_names FROM character_knowledge_sources WHERE source_id=?", (source,)
+        ).fetchone()
+        if row is not None:
+            try:
+                return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
+            except (TypeError, ValueError):
+                return []
         return []
 
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
-        if not str(source_id or "").startswith("secret_order:"):
-            return {"people": [], "offices": []}
+        source = str(source_id or "")
+        if not source.startswith("secret_order:"):
+            row = self.conn.execute(
+                "SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?", (source,)
+            ).fetchone()
+            if row is None:
+                return {"people": [], "offices": []}
+            try:
+                payload = json.loads(row["excluded_targets"] or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            return {"people": [str(x) for x in payload.get("people", [])],
+                    "offices": [str(x) for x in payload.get("offices", [])]}
         try:
             order_id = int(str(source_id).split(":", 1)[1])
         except (TypeError, ValueError):
@@ -9245,11 +9300,40 @@ class GameDB:
             value = record.get(key)
             if value:
                 participants.append(str(value))
+        roster = [{"character_id": name} for name in dict.fromkeys(participants) if name]
+        self.register_character_knowledge_source(
+            state, roster, kind, str(record.get("title") or kind),
+            str(record.get("body") or record.get("content") or ""),
+            source_id or str(record.get("source_id") or ""), excluded_names=excluded_names,
+            commit=commit,
+        )
         self.record_character_participation(
             state, participants, kind, str(record.get("title") or kind),
             str(record.get("body") or record.get("content") or ""),
             source_id or str(record.get("source_id") or ""), excluded_names, commit=commit,
         )
+
+    def register_character_knowledge_source(
+        self, state: GameState, participant_roster: Iterable[Mapping[str, object]],
+        kind: str, title: str, body: str = "", source_id: str = "",
+        excluded_names: Optional[Iterable[str]] = None,
+        excluded_targets: Optional[Mapping[str, Iterable[str]]] = None,
+        *, commit: bool = True,
+    ) -> None:
+        roster = [dict(item) for item in participant_roster if item.get("character_id") or item.get("name")]
+        if not source_id:
+            source_id = f"{kind}:{state.turn}:{title}"
+        self.conn.execute(
+            "INSERT OR REPLACE INTO character_knowledge_sources "
+            "(turn,year,period,kind,title,body,source_id,participant_roster,excluded_names,excluded_targets) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (state.turn, state.year, state.period, kind, title[:80], body[:400], source_id,
+             json.dumps(roster, ensure_ascii=False),
+             json.dumps(list(dict.fromkeys(str(x).strip() for x in (excluded_names or []) if str(x).strip())), ensure_ascii=False),
+             json.dumps({k: list(dict.fromkeys(str(x).strip() for x in values if str(x).strip())) for k, values in (excluded_targets or {}).items()}, ensure_ascii=False)),
+        )
+        if commit:
+            self.conn.commit()
 
     def record_character_participation(self, state: GameState, participants: Iterable[str], kind: str, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None, *, commit: bool = True) -> None:
         source_id = source_id or f"{kind}:{state.turn}:{title}"
@@ -9340,6 +9424,16 @@ class GameDB:
              json.dumps({"people": excluded_names, "offices": excluded_offices}, ensure_ascii=False)),
         )
         self.conn.commit()
+        self.register_character_knowledge_source(
+            state,
+            [{"character_id": minister_name, "tier": "主办"}],
+            "secret_order",
+            title,
+            content,
+            f"secret_order:{int(cur.lastrowid)}",
+            excluded_names=excluded_names,
+            excluded_targets={"people": excluded_names, "offices": excluded_offices},
+        )
         tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
         return cur.lastrowid  # type: ignore[return-value]
 
