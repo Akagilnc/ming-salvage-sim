@@ -292,12 +292,12 @@ const TEST_ROUND_TRIGGER = buildRoundTrigger(
   "2026-07-08T11:00:00.000Z",
 );
 
-const GITHUB_REPLY_SHAPE = {
+const GITHUB_REPLY_SHAPE = [{
   id: 99,
   body: "reply body",
   path: "src/example.ts",
   user: { login: "orchestrator-host" },
-};
+}];
 
 const GITHUB_RESOLVE_MUTATION_SHAPE = {
   data: {
@@ -1237,6 +1237,141 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     expect(replyCount).toBe(1);
   });
 
+  it("#742 R2 all reply paths are idempotent across a ledger crash", () => {
+    const cases: Array<{
+      name: string;
+      verify: VerifyResult;
+      fixingCommitSha?: string;
+      expectedBody: string;
+    }> = [
+      {
+        name: "evidence",
+        verify: {
+          kind: "verify",
+          converged: true,
+          threadReplies: [{ threadId: "3", body: "rejected: evidence" }],
+        },
+        expectedBody: "rejected: evidence",
+      },
+      {
+        name: "deferred",
+        verify: {
+          kind: "verify",
+          converged: false,
+          findingDispositions: [
+            { identityKey: "t:3", threadId: "3", action: "defer", reason: "needs design" },
+          ],
+        },
+        expectedBody: "deferred: needs design\nTracked issue: https://github.com/o/r/issues/101",
+      },
+      {
+        name: "fixed",
+        verify: {
+          kind: "verify",
+          converged: true,
+          isRecheck: true,
+          threadsToResolve: ["3"],
+        },
+        fixingCommitSha: "abc123def456",
+        expectedBody: "fixed: https://github.com/o/r/commit/abc123def456",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const comments: Array<{ id: number; body: string; in_reply_to_id: number }> = [];
+      let nextCommentId = 100;
+      let resolved = false;
+      let replyPosts = 0;
+      let resolveCalls = 0;
+      const sh: Sh = (_file, args) => {
+        const cmd = args.join(" ");
+        if (cmd.includes("repos/o/r/pulls/42/comments?") && !cmd.includes("/replies")) {
+          return JSON.stringify(comments);
+        }
+        if (cmd.includes("repos/o/r/issues?") && cmd.includes("state=open")) {
+          return testCase.name === "deferred"
+            ? JSON.stringify([{ number: 101, title: deferredTrackingIssueTitle("3"), html_url: "https://github.com/o/r/issues/101", created_at: "2026-01-01T00:00:00.000Z" }])
+            : "[]";
+        }
+        if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
+          return "https://github.com/o/r/issues/101";
+        }
+        if (cmd.includes("graphql") && cmd.includes("reviewThreads")) {
+          return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: {
+            pageInfo: { endCursor: "", hasNextPage: false },
+            nodes: [{ id: "PRRT_thread", isResolved: resolved, comments: { nodes: [{ databaseId: 3 }] } }],
+          } } } } });
+        }
+        if (cmd.includes("resolveReviewThread")) {
+          resolveCalls += 1;
+          resolved = true;
+          return JSON.stringify(GITHUB_RESOLVE_MUTATION_SHAPE);
+        }
+        if (cmd.includes("/replies")) {
+          replyPosts += 1;
+          const body = args.find((arg) => arg.startsWith("body="))?.slice(5) ?? "";
+          comments.push({ id: nextCommentId++, body, in_reply_to_id: 3 });
+          return JSON.stringify(GITHUB_REPLY_SHAPE);
+        }
+        return "[]";
+      };
+      const input = {
+        sh,
+        repo: "o/r",
+        prUrl: "https://github.com/o/r/pull/42",
+        verify: testCase.verify,
+        ...(testCase.fixingCommitSha === undefined ? {} : { fixingCommitSha: testCase.fixingCommitSha }),
+      };
+
+      applyVerifySideEffects(input);
+      applyVerifySideEffects(input);
+
+      expect(replyPosts, testCase.name).toBe(1);
+      expect(comments.filter((comment) => comment.body === testCase.expectedBody), testCase.name).toHaveLength(1);
+      if (testCase.name === "fixed") {
+        expect(resolveCalls).toBe(1);
+      }
+    }
+  });
+
+  it("#742 R2 reconciles overlapping reply posts by retaining the oldest identical reply", () => {
+    const comments = [
+      { id: 101, body: "rejected: evidence", in_reply_to_id: 3, created_at: "2026-01-01T00:00:00.000Z" },
+      { id: 102, body: "rejected: evidence", in_reply_to_id: 3, created_at: "2026-01-01T00:00:01.000Z" },
+    ];
+    const deleted: number[] = [];
+    const sh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      if (cmd.includes("repos/o/r/pulls/42/comments?") && !cmd.includes("/replies")) {
+        return JSON.stringify(comments);
+      }
+      if (cmd.includes("-X DELETE")) {
+        const id = Number(cmd.match(/comments\/(\d+)/)?.[1]);
+        if (Number.isSafeInteger(id)) {
+          deleted.push(id);
+          const index = comments.findIndex((comment) => comment.id === id);
+          if (index >= 0) comments.splice(index, 1);
+        }
+        return "";
+      }
+      return "[]";
+    };
+
+    applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      verify: {
+        kind: "verify",
+        converged: true,
+        threadReplies: [{ threadId: "3", body: "rejected: evidence" }],
+      },
+    });
+
+    expect(deleted).toEqual([102]);
+    expect(comments.map((comment) => comment.id)).toEqual([101]);
+  });
+
   it("#742 R1 createDeferredTrackingIssue re-queries before POST and adopts oldest on TOCTOU race", () => {
     // both-queried-before-either-created: two overlapping S9 runs both saw no
     // existing issue and both POSTed. Later convergence adopts oldest + closes dups.
@@ -1830,6 +1965,12 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       if (cmd.includes("/replies")) {
         return JSON.stringify({ id: 1, body: "ok" });
       }
+      if (cmd.includes("repos/o/r/pulls/42/comments?")) {
+        return "[]";
+      }
+      if (cmd.includes("reviewThreads")) {
+        return LANDING_THREAD_PAIR_GRAPHQL;
+      }
       return reviewThreadsGraphqlFallback(cmd) ?? LANDING_THREAD_PAIR_GRAPHQL;
     };
     const result = applyVerifySideEffects({
@@ -1868,6 +2009,12 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       }
       if (cmd.includes("/replies")) {
         return JSON.stringify({ id: 1, body: "ok" });
+      }
+      if (cmd.includes("repos/o/r/pulls/42/comments?")) {
+        return "[]";
+      }
+      if (cmd.includes("reviewThreads")) {
+        return LANDING_THREAD_PAIR_GRAPHQL;
       }
       return reviewThreadsGraphqlFallback(cmd) ?? LANDING_THREAD_PAIR_GRAPHQL;
     };

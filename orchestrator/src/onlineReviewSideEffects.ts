@@ -246,14 +246,20 @@ export function replyToReviewThread(
   ]);
 }
 
-function hasIdenticalReviewReply(
+type ReviewReplyMatch = {
+  readonly id?: number;
+  readonly createdAt?: string;
+};
+
+function listIdenticalReviewReplies(
   sh: Sh,
   repo: string,
   prNumber: number,
   commentId: string,
   body: string,
-): boolean {
+): ReviewReplyMatch[] {
   const parentId = Number(commentId);
+  const matches: ReviewReplyMatch[] = [];
   for (const item of paginateGhApi(
     sh,
     `repos/${repo}/pulls/${prNumber}/comments`,
@@ -268,9 +274,74 @@ function hasIdenticalReviewReply(
       replyParent === commentId ||
       String(replyParent) === commentId ||
       (Number.isSafeInteger(parentId) && replyParent === parentId);
-    if (sameParent && comment.body === body) return true;
+    if (!sameParent || comment.body !== body) continue;
+    matches.push({
+      ...(typeof (comment as { id?: unknown }).id === "number" &&
+      Number.isSafeInteger((comment as { id: number }).id)
+        ? { id: (comment as { id: number }).id }
+        : {}),
+      ...(typeof (comment as { created_at?: unknown }).created_at === "string"
+        ? { createdAt: (comment as { created_at: string }).created_at }
+        : {}),
+    });
   }
-  return false;
+  return matches;
+}
+
+function compareReviewReplies(a: ReviewReplyMatch, b: ReviewReplyMatch): number {
+  const aTime = a.createdAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(a.createdAt);
+  const bTime = b.createdAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(b.createdAt);
+  if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+    return aTime - bTime;
+  }
+  if (a.id !== undefined && b.id !== undefined && a.id !== b.id) {
+    return a.id - b.id;
+  }
+  return 0;
+}
+
+/** Keep the oldest matching reply and remove duplicates created by overlap. */
+function adoptOldestReviewReply(
+  sh: Sh,
+  repo: string,
+  prNumber: number,
+  commentId: string,
+  body: string,
+): boolean {
+  const matches = listIdenticalReviewReplies(sh, repo, prNumber, commentId, body);
+  if (matches.length === 0) return false;
+  const canonical = [...matches].sort(compareReviewReplies)[0];
+  if (canonical === undefined) return false;
+  for (const duplicate of matches) {
+    if (duplicate === canonical || duplicate.id === undefined) continue;
+    sh("gh", [
+      "api",
+      `repos/${repo}/pulls/comments/${duplicate.id}`,
+      "-X",
+      "DELETE",
+    ]);
+  }
+  return true;
+}
+
+/**
+ * Post only when the canonical parent/body reply is absent, then reconcile
+ * overlapping posts. This gives every reply path the same crash/overlap
+ * behavior as deferred issue creation (#742 R2).
+ */
+function ensureReviewReply(
+  sh: Sh,
+  repo: string,
+  prNumber: number,
+  commentId: string,
+  body: string,
+): boolean {
+  if (adoptOldestReviewReply(sh, repo, prNumber, commentId, body)) {
+    return false;
+  }
+  replyToReviewThread(sh, repo, prNumber, commentId, body);
+  adoptOldestReviewReply(sh, repo, prNumber, commentId, body);
+  return true;
 }
 
 /**
@@ -286,22 +357,24 @@ export function resolveReviewThread(
   threadId: string,
 ): void {
   let threadNodeId: string | undefined;
-  if (threadId.startsWith("PRRT_")) {
-    threadNodeId = threadId;
-  } else {
-    const nodes = paginateReviewThreadNodes(
-      sh,
-      repo,
-      prNumber,
-      "id isResolved comments(first:1){nodes{databaseId}}",
-    );
-    const targetId = Number(threadId);
-    for (const obj of nodes) {
-      const firstCommentId = obj.comments?.nodes?.[0]?.databaseId;
-      if (firstCommentId === targetId || String(firstCommentId) === threadId) {
-        threadNodeId = obj.id;
-        break;
-      }
+  let alreadyResolved = false;
+  const nodes = paginateReviewThreadNodes(
+    sh,
+    repo,
+    prNumber,
+    "id isResolved comments(first:1){nodes{databaseId}}",
+  );
+  const targetId = Number(threadId);
+  for (const obj of nodes) {
+    const firstCommentId = obj.comments?.nodes?.[0]?.databaseId;
+    if (
+      obj.id === threadId ||
+      firstCommentId === targetId ||
+      String(firstCommentId) === threadId
+    ) {
+      threadNodeId = obj.id;
+      alreadyResolved = obj.isResolved === true;
+      break;
     }
   }
   if (threadNodeId === undefined || threadNodeId.length === 0) {
@@ -309,6 +382,7 @@ export function resolveReviewThread(
       `onlineReviewSideEffects: no GraphQL review thread for comment id ${threadId}`,
     );
   }
+  if (alreadyResolved) return;
   const mutation = [
     "mutation($threadId:ID!){",
     "resolveReviewThread(input:{threadId:$threadId}){",
@@ -723,21 +797,22 @@ export function applyVerifySideEffects(
       item.disposition,
       issueUrl,
     );
-    if (!hasIdenticalReviewReply(sh, repo, prNumber, item.commentId, replyBody)) {
-      replyToReviewThread(sh, repo, prNumber, item.commentId, replyBody);
+    if (ensureReviewReply(sh, repo, prNumber, item.commentId, replyBody)) {
       repliesPosted.push({ threadId: item.commentId, body: replyBody });
     }
   }
 
   for (const reply of plan.replies) {
-    replyToReviewThread(sh, repo, prNumber, reply.commentId, reply.body);
-    repliesPosted.push({ threadId: reply.commentId, body: reply.body });
+    if (ensureReviewReply(sh, repo, prNumber, reply.commentId, reply.body)) {
+      repliesPosted.push({ threadId: reply.commentId, body: reply.body });
+    }
   }
 
   for (const item of plan.resolves) {
     if (item.needsFixedReply) {
-      replyToReviewThread(sh, repo, prNumber, item.commentId, item.fixedReply);
-      repliesPosted.push({ threadId: item.commentId, body: item.fixedReply });
+      if (ensureReviewReply(sh, repo, prNumber, item.commentId, item.fixedReply)) {
+        repliesPosted.push({ threadId: item.commentId, body: item.fixedReply });
+      }
     }
     resolveReviewThread(sh, repo, prNumber, item.nodeId);
     threadsResolved.push(item.nodeId);
