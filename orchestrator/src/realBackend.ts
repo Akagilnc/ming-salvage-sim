@@ -75,6 +75,11 @@ import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
 import { findingIdentityKey } from "./findings.js";
 import {
+  provisionRepoNodeModules,
+  runProvisionCommand,
+  type Sh as ProvisionSh,
+} from "./provisionNodeModules.js";
+import {
   attachSanitizedFindingFamilies,
   normalizeFindingFamiliesWireAliases,
 } from "./findingFamilies.js";
@@ -2527,13 +2532,22 @@ export class RealBackend implements Backend {
     // the best-effort `git fetch`, the residue clean, and the `git worktree add`
     // cut all MUTATE the shared `.git` — concurrent ones race on `.git/index.lock`
     // / per-ref locks (distinct child BRANCHES isolate the logical work, NOT the
-    // git locks). So the whole git-mutating section runs under a per-clone mutex
-    // keyed on the working repo: same-clone children serialise their cuts, while a
-    // DIFFERENT clone (another run in the same process) never blocks. A standalone
-    // single-slice run is the degenerate single-holder case (no contention).
-    return runExclusive(this.workingRepo, () =>
+    // git locks). So the git-mutating section runs under a per-clone mutex keyed on
+    // the working repo: same-clone children serialise their cuts, while a DIFFERENT
+    // clone (another run in the same process) never blocks. A standalone single-slice
+    // run is the degenerate single-holder case (no contention).
+    //
+    // #746 R2: node_modules provisioning is NOT a git mutation — each worktree has
+    // its own directory; template reads are read-only. Keeping npm ci / clonefile
+    // inside the mutex serialises N wave children on ~90s cold installs (the issue's
+    // goal is the opposite). Mutex covers only the cut/reuse git section; provision
+    // runs after release. Residue clean still precedes provision (ordering: clean
+    // inside exclusive → return handle → provision that path).
+    const handle = await runExclusive(this.workingRepo, () =>
       this.prepareWorktreeLocked(issueNumber, base),
     );
+    await this.provisionWorktreeNodeModules(handle.path);
+    return handle;
   }
 
   /** The git-mutating body of {@link prepareWorktree}, run under the per-clone mutex. */
@@ -2597,6 +2611,36 @@ export class RealBackend implements Backend {
     // resident worktree is reaped only by an explicit terminal-success GC, never
     // by normal-path disposal.
     return { branch, base, path: wt.worktreePath };
+  }
+
+  /**
+   * #746 — host-side Node deps for a resident worktree. Uses the driver
+   * `sourceRepo` as the warm template monorepo. No package.json under the path
+   * (fake/stub worktrees in unit tests) ⇒ no-op. `protected` so a subclass can
+   * skip / spy without a real FS. May return a Promise (tests hold provision to
+   * prove it runs outside the git mutex); callers always await.
+   */
+  protected provisionWorktreeNodeModules(
+    worktreePath: string,
+  ): Promise<void> {
+    return provisionRepoNodeModules(worktreePath, {
+      templateRoot: this.opts.sourceRepo,
+      sh: (file, args, cwd) => this.provisionCommand(file, args, cwd ?? worktreePath),
+    }).then(() => undefined);
+  }
+
+  /** Provision-only async shell seam; ordinary git/gh commands remain synchronous. */
+  protected provisionCommand(
+    file: string,
+    args: string[],
+    cwd?: string,
+  ): string | Promise<string> {
+    // Test doubles override the synchronous general shell seam; preserve that
+    // seam for observability while the production implementation uses async I/O.
+    if (this.sh !== RealBackend.prototype.sh) {
+      return this.sh(file, args, cwd);
+    }
+    return (runProvisionCommand as ProvisionSh)(file, args, cwd);
   }
 
   /**
