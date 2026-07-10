@@ -14,6 +14,7 @@
  */
 
 import type { FamilyModuleContext } from "./family/moduleDeclaration.js";
+import type { ResolvedModelRoute } from "./modelRoutes.js";
 import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
 
 // ───────────────────────────── step identifiers ─────────────────────────────
@@ -720,6 +721,8 @@ export interface WorkerLandingPayload {
  * (human answer, runner-observed gate failures) — never finding free-text content.
  */
 export interface DispatchContext {
+  /** The immutable route selected for this run, including its smoke records. */
+  readonly modelRoute?: ResolvedModelRoute;
   /**
    * The resident slice worktree (ADR 0017 commit truth). MANDATORY for
    * single-slice workers (coder/reviewer/ship S7); OPTIONAL for family-level
@@ -1305,6 +1308,8 @@ export interface ResumeState {
  * separately. Keep this minimal and stable — 9 slices layer on it.
  */
 export interface Backend {
+  /** Run the real model×pipe bash smoke and return the route with fresh records. */
+  smokeModelRoute?(route: ResolvedModelRoute): Promise<ResolvedModelRoute>;
   /**
    * #255: detect resume residue for this issue at the very start of a run.
    *
