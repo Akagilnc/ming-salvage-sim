@@ -91,6 +91,26 @@ export function preexistingAssertionTouched(input: AssertionDiffInput): boolean 
 }
 
 /**
+ * Runtime shape guard for refuse records. Callers may pass unvalidated JSON /
+ * ledger payloads; null/undefined/non-object (or non-string fields) must not
+ * throw — skip them (same fail-closed filter convention as empty strings).
+ */
+function isRefuseRecordShape(r: unknown): r is ReviewFixRefuseRecord {
+  if (r === null || r === undefined || typeof r !== "object") return false;
+  const rec = r as Record<string, unknown>;
+  return (
+    typeof rec.identityKey === "string" &&
+    rec.identityKey.trim().length > 0 &&
+    typeof rec.finding === "string" &&
+    rec.finding.trim().length > 0 &&
+    typeof rec.acceptanceCriterion === "string" &&
+    rec.acceptanceCriterion.trim().length > 0 &&
+    typeof rec.conflictReason === "string" &&
+    rec.conflictReason.trim().length > 0
+  );
+}
+
+/**
  * Build the legal refuse outcome for coder-fix (issue #677).
  *
  * Prefer another repair. When a finding cannot be fixed without overturning a
@@ -100,12 +120,8 @@ export function preexistingAssertionTouched(input: AssertionDiffInput): boolean 
 export function reviewFixDecisionGate(
   input: ReviewFixDecisionGateInput,
 ): LegalRefuseOutcome | undefined {
-  const records = input.records.filter(
-    (r) =>
-      r.identityKey.trim().length > 0 &&
-      r.finding.trim().length > 0 &&
-      r.acceptanceCriterion.trim().length > 0 &&
-      r.conflictReason.trim().length > 0,
+  const records = (input.records as ReadonlyArray<unknown>).filter(
+    isRefuseRecordShape,
   );
   if (records.length === 0) return undefined;
   return {
