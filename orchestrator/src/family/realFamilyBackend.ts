@@ -1847,6 +1847,7 @@ export class RealFamilyBackend implements FamilyBackend {
               `the family ${spec.kind} worker is a top-level Claude worker when the ` +
               "active route selects a Claude-family model; provide " +
               "CLAUDE_CODE_OAUTH_TOKEN / ~/.sc-claude-token or select a non-Claude route.",
+            synthesizedFailure: true,
           },
         };
       }
@@ -1910,6 +1911,9 @@ export class RealFamilyBackend implements FamilyBackend {
           shipDelivery: landing.shipDelivery,
           onlineReviewRound: landing.onlineReviewRound ?? ctx.onlineReviewRound,
           fixMarkedFindingIdentityKeys: landing.fixMarkedFindingIdentityKeys ?? [],
+          ...(ctx.escalationAnswer !== undefined
+            ? { escalationAnswer: ctx.escalationAnswer }
+            : {}),
           ...(landing.priorRoundFindings !== undefined &&
           landing.priorRoundFindings.length > 0
             ? { priorRoundFindings: landing.priorRoundFindings }
