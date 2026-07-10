@@ -94,6 +94,8 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
                 raise SystemExit(
                     f"设定字段枚举非法：{path}.seed_guilt.severity（仅允许 无/轻/中/重）"
                 )
+        if name in characters:
+            raise SystemExit(f"characters.json 不得存在重复人物名：{name}")
         characters[name] = Character(
             name=name,
             office=str_field(item, "office", f"characters.json.characters[{idx}]"),

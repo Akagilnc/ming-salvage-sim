@@ -93,6 +93,16 @@ def test_roster_rejects_alias_colliding_with_other_faction_name(monkeypatch):
         load_character_content()
 
 
+def test_roster_rejects_duplicate_canonical_name(monkeypatch):
+    data = load_json_asset("characters.json")
+    duplicate = json.loads(json.dumps(data["characters"][0]))
+    dup_name = duplicate["name"]
+    data["characters"].append(duplicate)
+    monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
+    with pytest.raises(SystemExit, match=dup_name):
+        load_character_content()
+
+
 @pytest.mark.parametrize(
     "field,value,match",
     [
