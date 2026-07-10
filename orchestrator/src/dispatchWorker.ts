@@ -329,15 +329,14 @@ export function shipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   };
 }
 
-// TODO(#600/#603): placeholder prompts for verify/fixer remain skeleton-adjacent;
-// cleanup real path is #603; docRelease real path is #735.
+// Prompt status: verify.md / fixer.md real paths shipped in #600;
+// docRelease.md real path shipped in #735; cleanup real host path remains #603.
 export const VERIFY_PROMPT_FILE = "verify.md";
 export const FIXER_PROMPT_FILE = "fixer.md";
 export const CLEANUP_PROMPT_FILE = "cleanup.md";
 export const DOCRELEASE_PROMPT_FILE = "docRelease.md";
 
-/** S9 online-review / PR-check worker spec (#596 skeleton). */
-// TODO(#600/#603): skill/prompt wiring is inert placeholder here.
+/** S9 online-review / PR-check worker spec (#600 real prompt). */
 export function verifyWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S9",
@@ -356,8 +355,7 @@ export function verifyWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   };
 }
 
-/** S10 post-review fixer worker spec (#596 skeleton). */
-// TODO(#600/#603): skill/prompt wiring is inert placeholder here.
+/** S10 post-review fixer worker spec (#600 real prompt). */
 export function fixerWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S10",
@@ -376,8 +374,8 @@ export function fixerWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   };
 }
 
-/** S11 cleanup worker spec (#596 skeleton). */
-// TODO(#600/#603): skill/prompt wiring is inert placeholder here.
+/** S11 cleanup worker spec (#596 skeleton; real host path is #603). */
+// TODO(#603): cleanup skill/prompt wiring is still skeleton here.
 export function cleanupWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S11",
