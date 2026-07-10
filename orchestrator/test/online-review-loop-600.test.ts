@@ -3324,8 +3324,10 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
       },
     );
     expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
-    expect(result.kind).toBe("failed");
-    if (result.kind === "failed") expect(result.reason).toContain("after 3 dispatch attempts");
+    expect(result).toMatchObject({
+      kind: "failed",
+      reason: expect.stringContaining("after 3 dispatch attempts"),
+    });
   });
 
   it("pin r10: verify that mutates HEAD then throws surfaces contract_drift (no retry on dirty tree)", async () => {
