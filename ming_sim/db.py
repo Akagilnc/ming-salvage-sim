@@ -56,6 +56,26 @@ def _secret_order_exclusion_targets(
     }
 
 
+def _snapshot_secret_order_people(
+    content: Any, explicit_people: Iterable[str], offices: Iterable[str],
+) -> List[str]:
+    """Freeze institution membership without changing target provenance.
+
+    ``excluded_names`` is the durable blacklist snapshot used for transfer and
+    later-publication semantics.  ``excluded_targets`` remains the caller's
+    original people/offices request, so a reader can distinguish "this person"
+    from "everyone holding this office" instead of reconstructing that intent
+    from the expanded names.
+    """
+    names = list(dict.fromkeys(str(name).strip() for name in explicit_people if str(name).strip()))
+    if not offices or content is None:
+        return names
+    for character in content.characters.values():
+        if character.office_type in offices or character.office in offices:
+            names.append(character.name)
+    return list(dict.fromkeys(names))
+
+
 class ProvinceFiscalTickOutcome(NamedTuple):
     region_id: str
     result: Any
@@ -9492,7 +9512,6 @@ class GameDB:
         raw_excluded_names = list(dict.fromkeys(
             str(name).strip() for name in (excluded_names or []) if str(name).strip()
         ))
-        snapshot_excluded_names = list(raw_excluded_names)
         excluded_offices = list(dict.fromkeys(
             str(office).strip() for office in (excluded_offices or []) if str(office).strip()
         ))
@@ -9500,14 +9519,9 @@ class GameDB:
         # office/type is only a lookup key; retaining the matched people makes
         # the blacklist stable when someone is transferred or the order later
         # becomes public.  Keep the original institution targets as provenance.
-        if excluded_offices and self.content is not None:
-            for character in self.content.characters.values():
-                if (
-                    character.office_type in excluded_offices
-                    or character.office in excluded_offices
-                ):
-                    snapshot_excluded_names.append(character.name)
-            snapshot_excluded_names = list(dict.fromkeys(snapshot_excluded_names))
+        snapshot_excluded_names = _snapshot_secret_order_people(
+            self.content, raw_excluded_names, excluded_offices,
+        )
         # ``excluded_targets.people`` is the caller's explicit person target;
         # the expanded institution snapshot lives in ``excluded_names`` so it
         # remains effective after transfers without changing target provenance.
