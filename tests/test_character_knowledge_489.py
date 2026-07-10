@@ -159,3 +159,30 @@ def test_knowledge_world_is_qualitative_not_numeric(game):
 
     assert "treasury" in view["world"]
     assert not any(char.isdigit() for char in view["world"]["treasury"])
+
+
+def test_secret_office_exclusion_blocks_dynamic_office_bucket(game):
+    db, state, content = game
+    clerk = next(c for c in content.characters.values() if c.office_type == "户部")
+    order = db.create_secret_order(
+        state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=["户部"]
+    )
+    view = db.get_character_knowledge(state, clerk.name)
+
+    assert db.list_secret_orders()[0]["excluded_targets"] == {"people": [], "offices": ["户部"]}
+    assert view["world"].get("treasury", "") == ""
+    assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
+
+
+def test_issue_roster_is_structured_and_read_side_projection_needs_no_write_hook(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    issue_id = db.insert_issue(
+        state, kind="initiative", title="清丈差事", participants=[
+            {"character_id": minister.name, "tier": "主办", "role": "监理", "delegator_id": "毕自严"}
+        ]
+    )
+    row = db.conn.execute("SELECT participants, participant_roster FROM issues WHERE id=?", (issue_id,)).fetchone()
+    assert row["participants"] == f'["{minister.name}"]'
+    assert '"tier": "主办"' in row["participant_roster"]
+    assert any(item["source_id"] == f"issue:{issue_id}" for item in db.get_character_knowledge(state, minister.name)["events"])

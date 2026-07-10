@@ -34,11 +34,16 @@ def _qualitative(text: object) -> str:
     return re.sub(r"[-+]?\d+(?:\.\d+)?%?", "若干", value)
 
 
-def _world(db: Any, state: Any, office_type: str) -> Dict[str, str]:
+def _world(db: Any, state: Any, office_type: str, excluded_offices: set[str] | None = None) -> Dict[str, str]:
     bucket = _OFFICE_BUCKETS.get(office_type, "public")
     reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
     public = "\n".join(_qualitative(r.get("report")) for r in reports)
     values: Dict[str, str] = {"public": public or "登基伊始，朝廷暂无前回合奏报。"}
+    # Office exclusions are evaluated against the current office at projection
+    # time, so a later appointment cannot resurrect a fact blacklisted by a
+    # secret order.
+    if office_type in (excluded_offices or set()):
+        return {"public": ""}
     if bucket in {"treasury", "court"}:
         values["treasury"] = _qualitative(db.treasury_report(state))
     if bucket in {"military", "regional", "security"}:
@@ -58,7 +63,12 @@ def _world(db: Any, state: Any, office_type: str) -> Dict[str, str]:
 def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[str, object]:
     character = db.content.characters.get(character_name) if db.content else None
     office_type = str(getattr(character, "office_type", "") or "")
-    world = _world(db, state, office_type)
+    exclusion_targets = {"people": set(), "offices": set()}
+    for order in db.list_secret_orders():
+        targets = json.loads(order.get("excluded_targets") or "{}") if isinstance(order.get("excluded_targets"), str) else order.get("excluded_targets") or {}
+        exclusion_targets["people"].update(str(x) for x in targets.get("people", []))
+        exclusion_targets["offices"].update(str(x) for x in targets.get("offices", []))
+    world = _world(db, state, office_type, exclusion_targets["offices"])
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
     # Issued directives are public by their nature.  Read them here so old
@@ -87,7 +97,10 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         if character_name in excluded_names:
             return True
         source_id = str(row.get("source_id") or "")
-        return character_name in db.knowledge_exclusions_for_source(source_id)
+        targets = db.knowledge_exclusion_targets_for_source(source_id) if hasattr(db, "knowledge_exclusion_targets_for_source") else {"people": [], "offices": []}
+        return (character_name in excluded_names
+                or character_name in targets.get("people", [])
+                or office_type in targets.get("offices", []))
 
     visible_events = [
         {

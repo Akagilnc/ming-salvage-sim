@@ -1034,6 +1034,7 @@ class GameSession:
                                 "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
                                 "deadline_months": payload.get("deadline_months") or 0,
                                 "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
+                                "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
                             },
                         )
                 elif tool_result.startswith("__secret_order_registered__"):
@@ -1228,6 +1229,7 @@ class GameSession:
                     "tags": so.get("tags") or [],
                     "deadline_months": so.get("deadline_months", 0),
                     "excluded_names": so.get("excluded_names") or [],
+                    "excluded_offices": so.get("excluded_offices") or [],
                 },
             )
         if not out["secret_order_id"] and acts["secret_order"]:
@@ -1801,7 +1803,9 @@ class GameSession:
             deadline = 0
         print(f"[secret_order] 截获密令 minister={minister_name} assignee={assignee} title={title!r} tags={tags}")
         excluded = data.get("excluded_names") if isinstance(data.get("excluded_names"), list) else []
-        return self.db.create_secret_order(self.state, assignee, title, content, tags, deadline_months=deadline, excluded_names=excluded)
+        excluded_offices = data.get("excluded_offices") if isinstance(data.get("excluded_offices"), list) else []
+        return self.db.create_secret_order(self.state, assignee, title, content, tags, deadline_months=deadline,
+                                           excluded_names=excluded, excluded_offices=excluded_offices)
 
     def _stage_legacy_registered_secret_order(self, order_id: int, fallback_minister: str) -> int:
         """Convert a legacy already-registered same-turn secret order into a pending candidate.
