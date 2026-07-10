@@ -123,6 +123,11 @@ import {
 } from "../modelRoutes.js";
 import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import { retryProcessCrash } from "../dispatchRetry.js";
+import {
+  DOCRELEASE_PROMPT_FILE,
+  FIXER_PROMPT_FILE,
+  VERIFY_PROMPT_FILE,
+} from "../dispatchWorker.js";
 import { dispatchPostMergeCleanup } from "../postMergeCleanup.js";
 import type { Sh } from "../familyDriver.js";
 import { recordFamilyEscalated } from "./ledger.js";
@@ -321,6 +326,9 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
     OUTCOME_REWRITE_PROMPT,
     "family_ship.md",
     MERGER_CONFLICT_PROMPT,
+    VERIFY_PROMPT_FILE,
+    FIXER_PROMPT_FILE,
+    DOCRELEASE_PROMPT_FILE,
   ]),
 ];
 /** The merger agent's completion signal (matches prompts/merger_resolve_conflict.md). */
