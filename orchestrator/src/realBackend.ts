@@ -2486,7 +2486,9 @@ export class RealBackend implements Backend {
     authDir: string;
     claudeToken?: string;
   } {
-    const paths = buildAuthPaths(issueNumber, this.opts.home);
+    // #748: resolve home at this seam so tests can inject a tmpdir via opts.home;
+    // production keeps the os.homedir() default when opts.home is omitted.
+    const paths = buildAuthPaths(issueNumber, this.opts.home ?? homedir());
     rmSync(paths.hostCodexAuthDir, { recursive: true, force: true });
     // Owner-only dir: this holds copied credential material (auth.json /
     // config.toml). 0o700 keeps it off world-readable multi-user hosts
@@ -3432,7 +3434,8 @@ export class RealBackend implements Backend {
    * the gh CLI (it lives in the OS keyring, not a portable file).
    */
   protected mountShipAuth(issueNumber: number): ShipAuth {
-    const paths = buildAuthPaths(issueNumber, this.opts.home);
+    // #748: same injectable-home seam as mountAuth (opts.home ?? os.homedir()).
+    const paths = buildAuthPaths(issueNumber, this.opts.home ?? homedir());
     let codexAuthDir: string | undefined;
     let tempCodexDir: string | undefined;
     try {

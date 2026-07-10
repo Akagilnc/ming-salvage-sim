@@ -23,7 +23,8 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 // vi.mock hoisted. Literal key avoids TDZ/eval order issues with vitest transform.
 // Only mock child_process (this file never calls it directly); for launcher smoke
@@ -121,6 +122,8 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
       imageName: "ming-orchestrator-coder:latest",
       promptsDir,
       soulsDir,
+      // #748: construction resolves paths under home; keep off real $HOME.
+      home: mkdtempSync(join(tmpdir(), "rb-home-334-")),
     });
   }
 
