@@ -71,6 +71,7 @@ function createCmrE2eHome(): string {
   // macOS tmpdir(). Keep the disposable home under $HOME without ever using the
   // real ~/.sc-orchestrator root (#748).
   const e2eHome = mkdtempSync(join(homedir(), ".sc-orchestrator-e2e-"));
+  cleanups.push(e2eHome);
   copyLiveAuthFile(e2eHome, ".codex/auth.json");
   copyLiveAuthFile(e2eHome, ".sc-agy-oauth-token");
   copyLiveAuthFile(e2eHome, ".sc-claude-token");
@@ -86,7 +87,6 @@ describe.skipIf(!RUN)("#335 cmr worker e2e — real 2b container fan-out", () =>
       // real ~/.sc-orchestrator auth root (#748). The container-backed test is
       // explicitly opt-in and must not create host files under the real HOME.
       const e2eHome = createCmrE2eHome();
-      cleanups.push(e2eHome);
       const e2eRoot = join(e2eHome, ".sc-orchestrator", "cmr-e2e");
       mkdirSync(e2eRoot, { recursive: true });
       const repo = mkdtempSync(join(e2eRoot, "repo-"));
