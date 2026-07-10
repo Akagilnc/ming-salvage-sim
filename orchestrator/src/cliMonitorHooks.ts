@@ -15,7 +15,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
-import { tryParseQuotaWaitForResetBridge } from "./quotaProbe.js";
+import {
+  isQuotaWaitForResetError,
+  tryParseQuotaWaitForResetBridge,
+} from "./quotaProbe.js";
 import { poolIdForWorker } from "./workerMonitor.js";
 import type {
   CliMonitorSpawnSpec,
@@ -185,11 +188,7 @@ export function workerResultFromMonitorSidecar(
       }
     } catch (err) {
       // Re-throw reconstructed quota park; other parse failures fall through.
-      if (
-        err !== null &&
-        typeof err === "object" &&
-        (err as { readonly name?: unknown }).name === "QuotaWaitForResetError"
-      ) {
+      if (isQuotaWaitForResetError(err)) {
         throw err;
       }
       // fall through to exit-code mapping

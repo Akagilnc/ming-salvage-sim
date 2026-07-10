@@ -90,6 +90,41 @@ describe("#683 bridge-child quota wall serialization", () => {
     });
     expect(tryParseQuotaWaitForResetBridge("hostCliWorkerRunner: worker threw")).toBeUndefined();
   });
+
+  it("rejects bridge payload whose pool is not a QuotaPoolId", () => {
+    const reason =
+      "QUOTA_WAIT_FOR_RESET_V1:" +
+      JSON.stringify({
+        pool: "not-a-real-pool",
+        reason: "quota limited (429); wait for reset",
+      });
+    expect(tryParseQuotaWaitForResetBridge(reason)).toBeUndefined();
+  });
+
+  it("drops malformed optional step/workerPid/ts rather than propagating them", () => {
+    const reason =
+      "QUOTA_WAIT_FOR_RESET_V1:" +
+      JSON.stringify({
+        pool: "zai",
+        reason: "quota limited (429); wait for reset",
+        step: 99,
+        workerPid: "not-a-pid",
+        ts: { when: "now" },
+        probeDetail: 42,
+      });
+    const restored = tryParseQuotaWaitForResetBridge(reason);
+    expect(restored).toBeInstanceOf(QuotaWaitForResetError);
+    expect(restored?.pool).toBe("zai");
+    expect(restored?.applied.ledgerEntry?.step).toBeUndefined();
+    expect(restored?.applied.ledgerEntry?.workerPid).toBeUndefined();
+    // Malformed ts → wall-clock now (valid ISO), not Invalid Date / object bleed.
+    expect(restored?.applied.ledgerEntry?.ts).toEqual(
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+    );
+    expect(
+      Number.isNaN(new Date(restored!.applied.ledgerEntry!.ts).getTime()),
+    ).toBe(false);
+  });
 });
 
 describe("#683 decideIdleAfterProbe (probe → disposition)", () => {
