@@ -391,6 +391,39 @@ def test_final_minister_context_rejects_any_injected_abstract_value_shape(game):
     assert not re.search(r"(?:民心|动乱|皇威|火器|完好|进度)\s*[:：]?\s*\d+", rendered)
 
 
+def test_final_minister_context_keeps_secret_order_tools_without_length_caps(game, monkeypatch):
+    """在办密令仍说明工具语义，但不把进展/办结陈词截成形式硬顶。"""
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    monkeypatch.setattr(
+        db,
+        "get_active_secret_orders_for_minister",
+        lambda name: [{"id": 7, "title": "核查军饷", "status": "active", "due_turn": state.turn + 3}],
+    )
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
+         patch("ming_sim.registry._ctx", return_value=content), \
+         patch("ming_sim.registry._skills_for", return_value=None), \
+         patch("ming_sim.registry.build_minister_tools", return_value=[]):
+        create_minister_agent(minister, cfg, _ctx(game), db)
+
+    rendered = "\n".join(captured["instructions"])
+    assert "report_secret_order_progress" in rendered
+    assert "submit_secret_order_for_review" in rendered
+    assert "100字内" not in rendered
+    assert "200字内" not in rendered
+    skill = Path(".agno_skills/secret-order/SKILL.md").read_text()
+    assert "100字内" not in skill
+    assert "200字内" not in skill
+
+
 def test_minister_tools_characterize_region_army_and_issue_progress(game):
     """大臣按需查询的三类盘面也不得绕过 P4，泄漏抽象轴原值。"""
     db, state, content = game
