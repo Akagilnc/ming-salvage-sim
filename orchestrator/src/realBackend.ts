@@ -64,6 +64,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import { z } from "zod";
 
 import {
@@ -89,6 +90,10 @@ import {
   type ModelProviderFactory,
   type ModelSlugRegistryEntry,
 } from "./modelRegistry.js";
+import {
+  smokeRouteModels,
+  type ResolvedModelRoute,
+} from "./modelRoutes.js";
 export {
   agentForSlug,
   CODER_CODEX_SLUG,
@@ -2049,6 +2054,56 @@ export class RealBackend implements Backend {
    */
   workingRepoPath(): string {
     return this.workingRepo;
+  }
+
+  /**
+   * #685: prove every selected model×pipe can actually invoke bash before the
+   * runner spends a productive dispatch on it. This deliberately uses the
+   * selected Sandcastle provider, not a generic shell or a silent fallback.
+   */
+  async smokeModelRoute(route: ResolvedModelRoute): Promise<ResolvedModelRoute> {
+    return smokeRouteModels(route, async (entry) => {
+      let sawBash = false;
+      const logDir = mkdtempSync(join(this.opts.home ?? homedir(), "route-smoke-"));
+      try {
+        const result = await sc.run({
+          agent: agentForSlug(entry.slug),
+          sandbox: noSandbox(),
+          cwd: this.workingRepo,
+          promptFile: join(this.opts.promptsDir, "route-smoke.md"),
+          maxIterations: 1,
+          idleTimeoutSeconds: 10,
+          completionSignal: "ROUTE_SMOKE_COMPLETE",
+          logging: {
+            type: "file",
+            path: join(logDir, "run.log"),
+            onAgentStreamEvent: (event) => {
+              if (
+                event.type === "toolCall" &&
+                /^(bash|shell)$/i.test(event.name) &&
+                /echo\s+OK/.test(event.formattedArgs)
+              ) {
+                sawBash = true;
+              }
+            },
+          },
+        });
+        if (result.completionSignal === undefined || !sawBash) {
+          throw new Error(
+            `model did not complete an observable bash smoke for ${entry.slug}`,
+          );
+        }
+        return { cliVersion: this.cliVersionForSlug(entry.slug) };
+      } finally {
+        rmSync(logDir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  private cliVersionForSlug(slug: string): string {
+    const provider = resolveModelSlug(slug).provider;
+    const command = provider === "claudeCode" ? "claude" : provider;
+    return this.sh(command, ["--version"]).trim() || "unknown";
   }
 
   /**

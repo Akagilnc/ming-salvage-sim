@@ -36,7 +36,11 @@ import { join, resolve } from "node:path";
 import { offlineReviewLoopDispatchAdmissible } from "./evidenceAdmissibility.js";
 import { dispatchPostMergeCleanup } from "./postMergeCleanup.js";
 import type { Sh } from "./familyDriver.js";
-import { modelForSlot, type ResolvedModelRoute } from "./modelRoutes.js";
+import {
+  modelForSlot,
+  routeSmokeFailure,
+  type ResolvedModelRoute,
+} from "./modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
 import type {
   Backend,
@@ -604,6 +608,12 @@ export async function dispatchWorker(
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
 ): Promise<WorkerResult> {
+  if (ctx.modelRoute !== undefined) {
+    const smokeFailure = routeSmokeFailure(ctx.modelRoute);
+    if (smokeFailure !== undefined) {
+      throw new Error(`worker dispatch refused (fail-closed): ${smokeFailure}`);
+    }
+  }
   if (backend.dispatchWorker !== undefined) {
     return backend.dispatchWorker(spec, ctx, landing);
   }

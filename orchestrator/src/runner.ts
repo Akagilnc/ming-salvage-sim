@@ -57,6 +57,7 @@ import {
   verifyWorkerSpec,
   workerResultToStep,
 } from "./dispatchWorker.js";
+import { routeSmokeFailure } from "./modelRoutes.js";
 import {
   fixerEnvelopeFixCommitSha,
   fixerProceedsToVerify,
@@ -2067,6 +2068,36 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       deferredFindings: [],
     };
   }
+  if (backend.smokeModelRoute !== undefined) {
+    try {
+      modelRoute = await backend.smokeModelRoute(modelRoute);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      return {
+        status: "error",
+        errorPackage: { failedStep: "S0", reason: `route smoke failed: ${reason}` },
+        stepLedger: [],
+        stopSummary: infraFailureStopSummary({
+          summary: `route smoke failed: ${reason}`,
+          repairHint: "repair the selected model×pipe tool smoke before dispatching workers",
+        }),
+        deferredFindings: [],
+      };
+    }
+  }
+  const smokeFailure = routeSmokeFailure(modelRoute);
+  if (smokeFailure !== undefined && backend.smokeModelRoute !== undefined) {
+    return {
+      status: "error",
+      errorPackage: { failedStep: "S0", reason: smokeFailure },
+      stepLedger: [],
+      stopSummary: infraFailureStopSummary({
+        summary: smokeFailure,
+        repairHint: "rerun the route smoke or repair the selected model×pipe",
+      }),
+      deferredFindings: [],
+    };
+  }
   const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
     interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
     warn: (message) => console.warn(`[orchestrator] ${message}`),
@@ -3324,6 +3355,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const dispatchCtx = {
                 worktree,
                 stateDir,
+                ...(backend.smokeModelRoute !== undefined ? { modelRoute } : {}),
                 ...(typeof resumeSessionId === "string" ? { resumeSessionId } : {}),
                 ...(escalationAnswerForStep != null
                   ? { escalationAnswer: escalationAnswerForStep }
@@ -3581,6 +3613,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           const shipCtx = {
             worktree,
             stateDir,
+            ...(backend.smokeModelRoute !== undefined ? { modelRoute } : {}),
             ...(escalationAnswerForStep != null
               ? { escalationAnswer: escalationAnswerForStep }
               : {}),
@@ -3795,6 +3828,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           const reviewCtx = {
             worktree,
             stateDir,
+            ...(backend.smokeModelRoute !== undefined ? { modelRoute } : {}),
             repo: defaultRepo(),
             prUrl: lastShipOutput.pr,
             prHead:

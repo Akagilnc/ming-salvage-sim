@@ -7,6 +7,38 @@ import {
   type ModelFamily,
 } from "./modelRegistry.js";
 
+export type RouteSmokeStatus =
+  | { readonly state: "unverified" }
+  | {
+      readonly state: "passed";
+      readonly at: string;
+      readonly cliVersion: string;
+    }
+  | {
+      readonly state: "failed";
+      readonly at: string;
+      readonly error: string;
+    };
+
+export interface RouteSmokeEntry {
+  readonly key: string;
+  readonly slug: string;
+  readonly family: ModelFamily;
+}
+
+export interface RouteSmokeExecutionInput {
+  readonly key: string;
+  readonly slug: string;
+  readonly family: ModelFamily;
+  readonly command: "echo OK";
+}
+
+export type RouteSmokeExecutor = (
+  input: RouteSmokeExecutionInput,
+) => Promise<{ readonly cliVersion: string }>;
+
+export const DEFAULT_ROUTE_SMOKE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
 export const MODEL_ROUTE_SLOTS = [
   "coder",
   "reviewer",
@@ -56,6 +88,8 @@ export interface ResolvedModelRoute {
   readonly slots: ModelSlotMap;
   readonly legCollections: ModelRouteLegCollectionMap;
   readonly tightFamilyViolations: ReadonlyArray<TightFamilyViolation>;
+  /** One smoke record for every model×pipe entry in this route. */
+  readonly smoke: Readonly<Record<string, RouteSmokeStatus>>;
 }
 
 export interface TightRoutePolicyStop {
@@ -269,6 +303,7 @@ export function resolveRouteModels(
   routeName: string,
   overrides: Readonly<Record<string, string | undefined>>,
   legCollectionOverrides: Readonly<Record<string, ReadonlyArray<string> | undefined>> = {},
+  smokeOverrides: Readonly<Record<string, RouteSmokeStatus | undefined>> = {},
 ): ResolvedModelRoute {
   const trimmedRoute = routeName.trim() || "normal";
   const preset = ROUTE_PRESETS[trimmedRoute];
@@ -310,6 +345,14 @@ export function resolveRouteModels(
     });
   }
 
+  const smoke: Record<string, RouteSmokeStatus> = {};
+  for (const entry of routeSmokeEntries({
+    slots,
+    legCollections,
+  })) {
+    smoke[entry.key] = smokeOverrides[entry.key] ?? { state: "unverified" };
+  }
+
   return {
     routeName: trimmedRoute,
     slots,
@@ -319,7 +362,81 @@ export function resolveRouteModels(
       legCollections,
       preset.tightFamilies ?? [],
     ),
+    smoke,
   };
+}
+
+export function routeSmokeEntries(route: Pick<ResolvedModelRoute, "slots" | "legCollections">): ReadonlyArray<RouteSmokeEntry> {
+  const entries: RouteSmokeEntry[] = [];
+  for (const slot of MODEL_ROUTE_SLOTS) {
+    const slug = route.slots[slot];
+    entries.push({ key: `${slot}:${slug}`, slug, family: modelFamilyForSlug(slug) });
+  }
+  for (const collection of MODEL_ROUTE_LEG_COLLECTIONS) {
+    for (const leg of route.legCollections[collection]) {
+      entries.push({ key: `${collection}:${leg.slug}`, slug: leg.slug, family: leg.family });
+    }
+  }
+  return entries;
+}
+
+export function routeSmokeFailure(
+  route: Pick<ResolvedModelRoute, "slots" | "legCollections" | "smoke">,
+  now = Date.now(),
+  maxAgeMs = DEFAULT_ROUTE_SMOKE_MAX_AGE_MS,
+  currentCliVersions: Readonly<Record<string, string | undefined>> = {},
+): string | undefined {
+  for (const entry of routeSmokeEntries(route)) {
+    const status = route.smoke[entry.key];
+    if (status === undefined || status.state === "unverified") {
+      return `route smoke required for ${entry.key}; run the ${entry.slug} tool smoke before dispatch`;
+    }
+    if (status.state === "failed") {
+      return `route smoke failed for ${entry.key}: ${status.error}`;
+    }
+    const at = Date.parse(status.at);
+    if (!Number.isFinite(at) || now - at > maxAgeMs || now < at) {
+      return `route smoke expired for ${entry.key}; last passed at ${status.at}`;
+    }
+    const currentCliVersion = currentCliVersions[entry.slug];
+    if (currentCliVersion !== undefined && currentCliVersion !== status.cliVersion) {
+      return `route smoke expired for ${entry.key}; CLI version changed from ${status.cliVersion} to ${currentCliVersion}`;
+    }
+  }
+  return undefined;
+}
+
+export async function smokeRouteModels(
+  route: ResolvedModelRoute,
+  executor: RouteSmokeExecutor,
+  now = new Date(),
+): Promise<ResolvedModelRoute> {
+  const smoke: Record<string, RouteSmokeStatus> = { ...route.smoke };
+  const entries = routeSmokeEntries(route);
+  const uniqueEntries = [...new Map(entries.map((entry) => [entry.slug, entry])).values()];
+  for (const entry of uniqueEntries) {
+    try {
+      const result = await executor({ ...entry, command: "echo OK" });
+      const status: RouteSmokeStatus = {
+        state: "passed",
+        at: now.toISOString(),
+        cliVersion: result.cliVersion,
+      };
+      for (const target of entries.filter((candidate) => candidate.slug === entry.slug)) {
+        smoke[target.key] = status;
+      }
+    } catch (error) {
+      const status: RouteSmokeStatus = {
+        state: "failed",
+        at: now.toISOString(),
+        error: error instanceof Error ? error.message : String(error),
+      };
+      for (const target of entries.filter((candidate) => candidate.slug === entry.slug)) {
+        smoke[target.key] = status;
+      }
+    }
+  }
+  return { ...route, smoke };
 }
 
 export function printableRouteLineup(route: ResolvedModelRoute): string {
