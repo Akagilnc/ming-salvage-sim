@@ -97,5 +97,8 @@ describe("DecisionModal", () => {
     ];
     const result = pendingDecisionsFrom(mixedEventStream);
     expect(result).toEqual([]);
+    const cleanup = render(<DecisionModal decisions={result} onResolve={vi.fn()} />);
+    expect(document.body.textContent).not.toContain("着户部核拨军饷");
+    cleanup();
   });
 });

@@ -13,14 +13,12 @@ import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, Re
 import { SituationPanel } from "./components/situation";
 import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
-import { pendingDecisionsFrom } from "./decisionRouting";
+import { PAUSED_DECISION_MSG, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
 import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
-
-const PAUSED_DECISION_MSG = "本回合仍在等待批红，但待批决策无法校验。请重新拉取后重试。";
 
 function App() {
   const [appView, setAppView] = React.useState<AppView>("menu");
@@ -220,15 +218,12 @@ function App() {
   // 刷新恢复：若回合停在 awaiting_decision 且有未裁决策点，自动重弹决策弹窗。
   React.useEffect(() => {
     if (!state) return;
-    if (state.turn.phase !== "awaiting_decision") return;
-    const decisions = pendingDecisionsFrom(state.pending_decisions || []);
-    if (decisions.length === 0) {
-      setPendingDecisions([]);
-      setPausedDecisionError(PAUSED_DECISION_MSG);
-      return;
+    const route = routeRefreshDecisions(state.turn.phase, state.pending_decisions || []);
+    if (route.pendingDecisions !== null) {
+      const next = route.pendingDecisions;
+      setPendingDecisions((prev) => (prev.length ? prev : next));
     }
-    setPausedDecisionError("");
-    setPendingDecisions((prev) => (prev.length ? prev : decisions));
+    if (route.error !== null) setPausedDecisionError(route.error);
   }, [state]);
 
   // 每次进入页面/换回合都弹上回合邸报。不持久化记录——刷新即重新弹。
@@ -858,16 +853,10 @@ function App() {
       if (outcome.kind === "decisions") {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
         const failures = outcome.data?.pending_action_failures || [];
-        const decisions = pendingDecisionsFrom(outcome.data.decisions || []);
         setDecisionFailures(failures);
-        if (decisions.length === 0) {
-          setPendingDecisions([]);
-          setPausedDecisionError(PAUSED_DECISION_MSG);
-          setBusy("");
-          return;
-        }
-        setPausedDecisionError("");
-        setPendingDecisions(decisions);
+        const route = routeIssueDecisions(outcome.data.decisions || []);
+        if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
+        if (route.error !== null) setPausedDecisionError(route.error);
         setBusy("");
         return;
       }
@@ -889,19 +878,9 @@ function App() {
     setPausedDecisionError("");
     try {
       const freshState = await loadState();
-      const decisions = pendingDecisionsFrom(freshState.pending_decisions || []);
-      if (freshState.turn.phase !== "awaiting_decision") {
-        setPendingDecisions([]);
-        setPausedDecisionError("");
-        return;
-      }
-      if (decisions.length === 0) {
-        setPendingDecisions([]);
-        setPausedDecisionError(PAUSED_DECISION_MSG);
-        return;
-      }
-      setPendingDecisions(decisions);
-      setPausedDecisionError("");
+      const route = routeRetryDecisions(freshState.turn.phase, freshState.pending_decisions || []);
+      if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
+      if (route.error !== null) setPausedDecisionError(route.error);
     } catch (err) {
       setPausedDecisionError(`重新拉取待批决策失败：${err instanceof Error ? err.message : String(err)}`);
     } finally {
