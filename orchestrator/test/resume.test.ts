@@ -529,25 +529,16 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     };
   }
 
-  it("AC1: reuses the existing worktree (no re-cut) and cleans residue first", async () => {
+  it("AC1: reuses the existing worktree (no re-cut) and preserves the scene", async () => {
     const backend = new ResumeBackend(crashedAtS2());
 
     await runOrchestrator({ issueNumber: 255, backend });
 
     // No fresh cut — the resident worktree is reused.
     expect(backend.prepareWorktreeCount).toBe(0);
-    // Residue clean (reset --hard / clean -fd / prune) ran before reuse.
-    expect(backend.cleanResidueCount).toBe(1);
-    // cleanResidue must come before the ship (push) of the resumed run.
-    const cleanIdx = backend.calls.indexOf("cleanResidue");
-    const firstWork = backend.calls.findIndex(
-      (c) =>
-        c.startsWith("runStep(") ||
-        c.startsWith("resumeSession(") ||
-        c.startsWith("push("),
-    );
-    expect(cleanIdx).toBeGreaterThanOrEqual(0);
-    expect(cleanIdx).toBeLessThan(firstWork);
+    // #661 owner ruling: resume continues the worker scene; it never resets
+    // or cleans uncommitted/partial worker output before re-entry.
+    expect(backend.cleanResidueCount).toBe(0);
   });
 
   it("AC2: continues from S3 (route successor of a committed S2) — does NOT re-run S0/S1/S2", async () => {
@@ -1423,14 +1414,14 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(result.status).toBe("success");
   });
 
-  it("AC3: same machine — reuses worktree + cleans residue (no re-cut from S0)", async () => {
+  it("AC3: same machine — reuses worktree + preserves scene (no re-cut from S0)", async () => {
     const backend = new ResumeBackend(escalatedAtS2());
 
     await runOrchestrator({ issueNumber: 255, backend });
 
-    // Identical reuse/clean behaviour as the crash-resume path.
+    // Identical reuse/preserve behaviour as the crash-resume path (#661).
     expect(backend.prepareWorktreeCount).toBe(0);
-    expect(backend.cleanResidueCount).toBe(1);
+    expect(backend.cleanResidueCount).toBe(0);
     // S0 gate / S1 load are NOT re-run (no re-cut / no snapshot write).
     // #767 may re-fetch issue meta/body for Coder-Rec on the resume path.
     expect(backend.calls).not.toContain("prepareWorktree(255, main)");
@@ -2915,8 +2906,8 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     const result = await runOrchestrator({ issueNumber: 255, backend });
     expect(result.status).toBe("success");
     expect(backend.docReleaseAttempts).toBe(2);
-    // Resume breakpoint clean only — S12 mechanical retry must not call cleanResidue
-    expect(backend.cleanResidueCount).toBe(1);
+    // #661: neither resume nor S12 mechanical retry may clean the scene.
+    expect(backend.cleanResidueCount).toBe(0);
     expect(backend.cleanResidueDuringDocReleaseRetry).toBe(0);
   });
 
@@ -3081,7 +3072,7 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     expect(result.status).toBe("success");
     expect(result.branch).toBe(WORKTREE.branch);
     expect(backend.prepareWorktreeCount).toBe(0);
-    expect(backend.cleanResidueCount).toBe(1);
+    expect(backend.cleanResidueCount).toBe(0);
     expect(backend.runStepIds).toEqual([]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
   });

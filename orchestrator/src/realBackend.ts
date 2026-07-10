@@ -91,6 +91,7 @@ import {
   agentForSlug,
   CODER_CODEX_SLUG,
   effortForLiveOfficer,
+  isBillingPoolDispatchId,
   modelFamilyForSlug,
   modelIdForSlug,
   modelIsStrongLeg,
@@ -2585,8 +2586,7 @@ export class RealBackend implements Backend {
   ): Promise<WorktreeHandle> {
     // #291 B7: the family spine fans a wave out CONCURRENTLY, and every child in
     // the wave shares THIS one dedicated clone (ADR 0024). The worktree-list scan,
-    // the best-effort `git fetch`, the residue clean, and the `git worktree add`
-    // cut all MUTATE the shared `.git` — concurrent ones race on `.git/index.lock`
+    // the best-effort `git fetch`, and the `git worktree add` cut all MUTATE the shared `.git` — concurrent ones race on `.git/index.lock`
     // / per-ref locks (distinct child BRANCHES isolate the logical work, NOT the
     // git locks). So the git-mutating section runs under a per-clone mutex keyed on
     // the working repo: same-clone children serialise their cuts, while a DIFFERENT
@@ -2597,8 +2597,8 @@ export class RealBackend implements Backend {
     // its own directory; template reads are read-only. Keeping npm ci / clonefile
     // inside the mutex serialises N wave children on ~90s cold installs (the issue's
     // goal is the opposite). Mutex covers only the cut/reuse git section; provision
-    // runs after release. Residue clean still precedes provision (ordering: clean
-    // inside exclusive → return handle → provision that path).
+    // runs after release. #661 preserves reused scenes intact; provisioning occurs
+    // after the exclusive cut/reuse decision without cleaning user or worker files.
     const handle = await runExclusive(this.workingRepo, () =>
       this.prepareWorktreeLocked(issueNumber, base),
     );
@@ -2614,18 +2614,11 @@ export class RealBackend implements Backend {
     // Idempotent reuse: if the resident worktree exists, reuse it (the runner's
     // #255 resume path drives this); else cut a fresh one from `base` (main).
     //
-    // integ-cmr 256 r3 (idempotent_reuse_dirty): reuse is FAIL-CLOSED. The runner
-    // reaches this fresh path even for an existing worktree when the ledger is
-    // missing/unreadable (findResumeState → undefined ⇒ no resume ⇒ no
-    // cleanResidue). Returning the dir AS-IS would reuse a prior crash's
-    // uncommitted residue / stale commits as a "fresh" start (ADR0017: 复用前清
-    // 未提留残留). So clean residue (reset --hard HEAD → clean -fd) BEFORE
-    // returning, so a no-ledger old branch can never masquerade as a clean fresh
-    // cut and leak residue into the pushed branch. (Repo-level prune handed back
-    // to Sandcastle — ADR 0024 dec. 2.)
+    // #661: an existing scene is work product, even if its ledger is missing or
+    // unreadable. Reuse it AS-IS; a genuinely unusable scene must be escalated,
+    // never reset or cleaned.
     const existing = this.findExistingWorktree(issueNumber);
     if (existing !== undefined) {
-      this.cleanResidueAt(existing.path);
       return { branch: existing.branch, base, path: existing.path };
     }
     const branch = branchForIssue(issueNumber);
@@ -3346,8 +3339,15 @@ export class RealBackend implements Backend {
       sandbox: this.box(issueNumber, spec, options),
       // The build worker's CLI is the spec's model slug → provider (the S2 coder
       // runs on Codex gpt-5.6-terra; a claude slug stays claudeCode). agentForSlug keeps
-      // the "model slug → baked CLI" #244 mapping unit-testable.
-      agent: agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec)),
+      // the "model slug → baked CLI" #244 mapping unit-testable. #686: billing pool
+      // overrides the channel when the same model lives on multiple pools.
+      agent: agentForSlug(
+        spec.model,
+        effortForLiveOfficer(spec.model, spec),
+        isBillingPoolDispatchId(options?.billingPool)
+          ? options.billingPool
+          : undefined,
+      ),
       // #7 maxIter: enforce the WITHIN-STEP Ralph retry budget = StepSpec.maxIter
       // (reviewer = 1 single pass; coder/fix > 1). Hitting it ends THE STEP
       // normally — route() continues — it is NEVER the orchestrator giving up
@@ -3412,8 +3412,15 @@ export class RealBackend implements Backend {
         cwd: worktree.path,
         sandbox: this.box(issueNumber, spec, options),
         // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
-        // codex for the gpt-5.6-terra coder, claudeCode for a claude slug).
-        agent: agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec)),
+        // codex for the gpt-5.6-terra coder, claudeCode for a claude slug). #686 pool
+        // channel must match the fresh dispatch.
+        agent: agentForSlug(
+          spec.model,
+          effortForLiveOfficer(spec.model, spec),
+          isBillingPoolDispatchId(options?.billingPool)
+            ? options.billingPool
+            : undefined,
+        ),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
         completionSignal: spec.completionSignal,
@@ -3769,10 +3776,12 @@ export class RealBackend implements Backend {
   async handleMonitoredWorkerIdle(
     handle: WorkerMonitorHandle,
     spec: WorkerSpec,
-    _ctx: DispatchContext,
-  ): Promise<"hang" | "wait_for_reset"> {
+    ctx: DispatchContext,
+  ): Promise<"hang" | "hang_with_live_pool" | "wait_for_reset"> {
     const result = await handleIdleThreshold({
-      modelRef: spec.model,
+      // #686: a same-model relay may have changed provider/billing pool. Probe
+      // the active dispatch pool carried by the runner whenever it is present.
+      modelRef: ctx.billingPool ?? spec.model,
       worker: { pid: handle.pid, step: spec.id },
       actions: {
         killPidTree: () => undefined,
@@ -3785,7 +3794,7 @@ export class RealBackend implements Backend {
     if (result.disposition.kind === "wait_for_reset") {
       throw new QuotaWaitForResetError(result);
     }
-    return "hang";
+    return result.probe.kind === "ok" ? "hang_with_live_pool" : "hang";
   }
 
   /**
@@ -3863,7 +3872,13 @@ export class RealBackend implements Backend {
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: worktree.path,
           sandbox: this.shipSandbox(auth, outcomeLanding),
-          agent: agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec)),
+          agent: agentForSlug(
+            spec.model,
+            effortForLiveOfficer(spec.model, spec),
+            isBillingPoolDispatchId(ctx.billingPool)
+              ? ctx.billingPool
+              : undefined,
+          ),
           // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
           // container (用户 note); maxIter is the within-worker budget. A genuine block
           // is the worker's `<ship>` escalate verdict, not the iteration limit.
@@ -4135,9 +4150,9 @@ export class RealBackend implements Backend {
     );
   }
 
-  // ── #255: clean uncommitted residue before reuse ───────────────────────────
+  // #661: retained only as a compatibility seam. Scenes are never destroyed.
   async cleanResidue(worktree: WorktreeHandle): Promise<void> {
-    this.cleanResidueAt(worktree.path);
+    void worktree;
   }
 
   /**
@@ -4156,25 +4171,6 @@ export class RealBackend implements Backend {
         // Best-effort: a missing worktree is already reclaimed.
       }
     });
-  }
-
-  /**
-   * The ADR0017 residue-clean applied to a worktree path before it is reused:
-   * `git reset --hard HEAD` (drop uncommitted tracked changes) → `git clean -fd`
-   * (drop untracked files/dirs). Factored out so BOTH the #255 resume path
-   * (cleanResidue) and the r3 fail-closed reuse path (prepareWorktree, no-ledger
-   * reuse) share one sequence.
-   *
-   * ADR 0024 decision 2: the repo-level `git worktree prune` that used to run here
-   * is REMOVED. It both duplicated Sandcastle's own per-acquire `pruneStale` AND
-   * was the cross-session reaper of #292 — with a dedicated clone (decision 1)
-   * pruning is Sandcastle's job and physically can't reach another session's
-   * worktree admin namespace. This method now ONLY does the per-worktree residue
-   * clean; it must not touch repo-level admin state.
-   */
-  private cleanResidueAt(wtPath: string): void {
-    this.sh("git", ["reset", "--hard", "HEAD"], wtPath);
-    this.sh("git", ["clean", "-fd"], wtPath);
   }
 
   // ── #255: detect resume residue ────────────────────────────────────────────

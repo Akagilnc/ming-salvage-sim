@@ -83,6 +83,7 @@ import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetr
 import {
   isQuotaWaitForResetError,
   QuotaWaitForResetError,
+  poolForModelRef,
   type QuotaWaitForResetLedgerEvent,
 } from "./quotaProbe.js";
 import {
@@ -148,10 +149,40 @@ import {
   modelForSlot,
   printableRouteLineup,
   resolveActiveModelRoute,
+  withCoderSlot,
   type ModelRouteEnv,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
+import {
+  resolveCoderRecOrder,
+  reviewerSlugsFromRoute,
+  lookupCoderRosterEntry,
+  CODER_REC_FALLBACK_AFTER_ROUNDS,
+} from "./coderRoster.js";
+import {
+  DEFAULT_PARK_THRESHOLD_MS,
+  billingPoolFromQuotaPool,
+  buildDefaultBillingPools,
+  type BillingPoolEntry,
+  type BillingPoolId,
+  type NextRelayBaton,
+} from "./quotaPoolTable.js";
+import {
+  canRelayHandoff,
+  forkQuotaWallAt683Point,
+  isRelayCandidateExhaustion,
+  applyResourceFailureHandoff,
+  resumeRelayFromLedger,
+  tryStageRelayFocusFile,
+  isHangWithLivePoolError,
+  isSelfReportedRelayError,
+  RELAY_FOCUS_FILENAME,
+  type RelayHandoffLedgerEvent,
+} from "./relayDispatch.js";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { isFilledString } from "./shipOutcome.js";
+
 // Shared seam guards — single source of truth, also used by route(), so the
 // coder-output / commitsAdded rules can never drift.
 import {
@@ -461,6 +492,8 @@ function isBookkeepingEntry(entry: LedgerEntry): boolean {
 /**
  * #683 — latest durable marker is a quota wait park. Resume re-enters the
  * parked step (not S8(error)). Same family as `online_review_ci_pending` parks.
+ * #686 — a newer `relay_baton_handoff` also resumes the interrupted step so the
+ * next baton can continue from the preserved worktree.
  */
 function sliceQuotaWaitPending(
   ledger: ReadonlyArray<{
@@ -470,7 +503,10 @@ function sliceQuotaWaitPending(
 ): StepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
-    if (entry.event === "quota_wait_for_reset") {
+    if (
+      entry.event === "quota_wait_for_reset" ||
+      entry.event === "relay_baton_handoff"
+    ) {
       const step = entry.step;
       if (
         step === "S2" ||
@@ -507,10 +543,193 @@ function sliceQuotaWaitPending(
 }
 
 /**
+ * #683 park / #686 relay fork at the quota-wall disposition point.
+ * Within T or no live baton → existing park family (escalate + quota_wait marker).
+ * Beyond T + live baton → write relay_baton_handoff + .relay-focus.md and return
+ * the next baton for the caller to apply + re-dispatch.
+ */
+async function parkOrRelayQuotaWall(opts: {
+  readonly step: StepId;
+  readonly err: QuotaWaitForResetError;
+  readonly ledger: LedgerEntry[];
+  readonly stateDir: string | undefined;
+  readonly sessionId: string;
+  readonly backend: Backend;
+  readonly deferredFindings: ReadonlyArray<Finding>;
+  readonly resolveBranchHEAD: () => Promise<string>;
+  readonly hashPrompt: (
+    promptFile: string | undefined,
+    step: StepId,
+  ) => Promise<string>;
+  readonly worktreePath: string | undefined;
+  readonly currentModelId: string;
+  readonly currentPool: BillingPoolId;
+  readonly rosterOrder: ReadonlyArray<
+    import("./coderRoster.js").CoderRosterEntry
+  >;
+  readonly pools: ReadonlyArray<BillingPoolEntry>;
+  readonly reviewerSlugs?: ReadonlyArray<string>;
+  readonly parkThresholdMs?: number;
+  readonly now: Date;
+  readonly state_summary?: string;
+}): Promise<
+  | { readonly kind: "park"; readonly result: RunResult }
+  | {
+      readonly kind: "relay";
+      readonly nextBaton: NextRelayBaton;
+      readonly ledgerEntry: RelayHandoffLedgerEvent;
+      readonly focusPath: string | undefined;
+    }
+> {
+  const {
+    err,
+    step,
+    ledger,
+    stateDir,
+    sessionId,
+    backend,
+    deferredFindings,
+  } = opts;
+  const disposition = err.disposition;
+  if (disposition.kind !== "wait_for_reset") {
+    // Defensive: QuotaWaitForResetError constructor already requires this.
+    return {
+      kind: "park",
+      result: await parkQuotaWaitForResetLegacy({
+        step,
+        err,
+        ledger,
+        stateDir,
+        sessionId,
+        backend,
+        deferredFindings,
+        resolveBranchHEAD: opts.resolveBranchHEAD,
+        hashPrompt: opts.hashPrompt,
+      }),
+    };
+  }
+
+  const forked = forkQuotaWallAt683Point({
+    disposition,
+    now: opts.now,
+    parkThresholdMs: opts.parkThresholdMs ?? DEFAULT_PARK_THRESHOLD_MS,
+    currentModelId: opts.currentModelId,
+    currentPool: opts.currentPool,
+    rosterOrder: opts.rosterOrder,
+    pools: opts.pools,
+    reviewerSlugs: opts.reviewerSlugs,
+    state_summary:
+      opts.state_summary ??
+      `quota wall on ${opts.currentPool}; uncommitted drift preserved`,
+    step,
+  });
+
+  if (forked.tier === "relay" && forked.nextBaton && forked.ledgerEntry) {
+    const entry = forked.ledgerEntry;
+    // Stage the new brief while the previous durable baton remains consumable.
+    // Promote only after the matching ledger row commits.
+    const staged = tryStageRelayFocusFile(opts.worktreePath, entry);
+    if (!staged.ok) {
+      return {
+        kind: "park",
+        result: await parkQuotaWaitForResetLegacy({
+          step,
+          err,
+          ledger,
+          stateDir,
+          sessionId,
+          backend,
+          deferredFindings,
+          resolveBranchHEAD: opts.resolveBranchHEAD,
+          hashPrompt: opts.hashPrompt,
+        }),
+      };
+    }
+    const marker: LedgerEntry = {
+      step: entry.step ?? step,
+      event: "relay_baton_handoff",
+      trigger: entry.trigger,
+      state_summary: entry.state_summary,
+      ...(entry.remaining !== undefined ? { remaining: entry.remaining } : {}),
+      ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+      fromModelId: entry.fromModelId,
+      fromPool: entry.fromPool,
+      toModelId: entry.toModelId,
+      toPool: entry.toPool,
+      ts: entry.ts,
+    };
+    if (stateDir !== undefined) {
+      try {
+        await backend.writeLedger(
+          {
+            ...marker,
+            sessionId,
+            prompt_hash: await opts.hashPrompt(undefined, step),
+            branchHEAD: await opts.resolveBranchHEAD(),
+            ts: entry.ts,
+          },
+          stateDir,
+        );
+      } catch {
+        staged.focus.discard();
+        return {
+          kind: "park",
+          result: await parkQuotaWaitForResetLegacy({
+            step,
+            err,
+            ledger,
+            stateDir,
+            sessionId,
+            backend,
+            deferredFindings,
+            resolveBranchHEAD: opts.resolveBranchHEAD,
+            hashPrompt: opts.hashPrompt,
+          }),
+        };
+      }
+    }
+    try {
+      staged.focus.commit();
+    } catch {
+      return {
+        kind: "park",
+        result: await parkQuotaWaitForResetLegacy({
+          step, err, ledger, stateDir, sessionId, backend, deferredFindings,
+          resolveBranchHEAD: opts.resolveBranchHEAD, hashPrompt: opts.hashPrompt,
+        }),
+      };
+    }
+    ledger.push(marker);
+    return {
+      kind: "relay",
+      nextBaton: forked.nextBaton,
+      ledgerEntry: entry,
+      focusPath: staged.focus.path,
+    };
+  }
+
+  // park / park_fallback — identical to #683 park family.
+  return {
+    kind: "park",
+    result: await parkQuotaWaitForResetLegacy({
+      step,
+      err,
+      ledger,
+      stateDir,
+      sessionId,
+      backend,
+      deferredFindings,
+      resolveBranchHEAD: opts.resolveBranchHEAD,
+      hashPrompt: opts.hashPrompt,
+    }),
+  };
+}
+
+/**
  * #683 park: 429/quota wall → status escalate (resumable), not S8(error).
  * Mirror CI-pending park: ledger marker + stopSummary, no sticky failure.
  */
-async function parkQuotaWaitForReset(opts: {
+async function parkQuotaWaitForResetLegacy(opts: {
   readonly step: StepId;
   readonly err: QuotaWaitForResetError;
   readonly ledger: LedgerEntry[];
@@ -2311,6 +2530,8 @@ function isReviewerStructuredOutputError(err: unknown): boolean {
 
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
+  const relayNow = (): Date =>
+    input.now !== undefined ? input.now() : new Date();
   let modelRoute: ResolvedModelRoute;
   try {
     modelRoute = resolveActiveModelRoute();
@@ -2358,11 +2579,39 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   /** When true, ORCHESTRATOR_CODER_MODEL won — never re-apply Coder-Rec. */
   let coderRecEnvSkipped = false;
   let routeSmokeChecked = false;
+  /** #686 — last applied relay baton's billing pool (drives next exhaustion lookup). */
+  let currentBillingPool: BillingPoolId | undefined;
+  /**
+   * #686 — sticky resource-relay baton slug. Scopes stickiness to resource
+   * handoffs only: blocks Coder-Rec snap-back while nonConvergingRounds === 0,
+   * but clears so #767 quality advance (S6 rounds) still runs.
+   */
+  let stickyRelayCoderSlug: string | undefined;
+  /** #686 — last written relay focus path (forwarded on next dispatch). */
+  let activeRelayFocusPath: string | undefined;
+  /** The only step allowed to consume the current relay pool and focus baton. */
+  let activeRelayStep: StepId | undefined;
 
   const applyCoderRecSelection = async (
     nonConvergingRounds: number,
   ): Promise<ReturnType<typeof applyRuntimeTightRoutePolicy> | undefined> => {
     if (coderRecEnvSkipped) return undefined;
+    // Resource-relay stickiness: hold the baton until #767 quality advance
+    // would actually move (S6 rounds ≥ FALLBACK). Do NOT set coderRecEnvSkipped.
+    if (
+      stickyRelayCoderSlug !== undefined &&
+      nonConvergingRounds < CODER_REC_FALLBACK_AFTER_ROUNDS
+    ) {
+      if (modelRoute.slots.coder !== stickyRelayCoderSlug) {
+        modelRoute = withCoderSlot(modelRoute, stickyRelayCoderSlug);
+        stepSpecs = stepSpecsForRoute(modelRoute);
+        routeSmokeChecked = false;
+      }
+      return undefined;
+    }
+    if (stickyRelayCoderSlug !== undefined) {
+      stickyRelayCoderSlug = undefined;
+    }
     const applied = applyCoderRecToRoute(
       modelRoute,
       coderRecIssueBody,
@@ -2374,6 +2623,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
     if (applied.route === modelRoute) return undefined;
     modelRoute = applied.route;
+    // #686 P1: quality advance must not inherit the prior resource-relay pool —
+    // reselect from the new model's dispatch binding.
+    currentBillingPool = billingPoolFromQuotaPool(
+      poolForModelRef(modelRoute.slots.coder),
+    );
     stepSpecs = stepSpecsForRoute(modelRoute);
     // Clear so the caller re-runs ensureRouteSmoke for the new coder slug
     // before its first dispatch (top-of-loop OR the S2/S5 advance path).
@@ -2407,6 +2661,106 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       stopSummary,
       deferredFindings: [],
     };
+  };
+
+  /** #686 — apply a relay baton onto the wall-hit role slot (role-aware). */
+  const applyRelayBaton = (baton: NextRelayBaton, wallStep?: StepId): void => {
+    currentBillingPool = baton.pool;
+    activeRelayStep = wallStep ?? "S2";
+    const slots = { ...modelRoute.slots };
+    if (wallStep === "S3" || wallStep === "S6") {
+      slots.reviewer = baton.slug;
+    } else if (wallStep === "S7") {
+      slots.ship = baton.slug;
+    } else if (wallStep === "S9") {
+      slots.verify = baton.slug;
+    } else if (wallStep === "S10") {
+      slots.fixer = baton.slug;
+    } else if (wallStep === "S11") {
+      slots.cleanup = baton.slug;
+    } else if (wallStep === "S12") {
+      slots.docRelease = baton.slug;
+    } else {
+      // S2/S5/default — coder (+ coderFix) slot; sticky for resource relay only.
+      modelRoute = withCoderSlot(modelRoute, baton.slug);
+      stickyRelayCoderSlug = baton.slug;
+      stepSpecs = stepSpecsForRoute(modelRoute);
+      routeSmokeChecked = false;
+      console.info(
+        `[orchestrator] #686 relay baton → ${baton.modelId} (${baton.slug}) @ ${baton.pool}`,
+      );
+      return;
+    }
+    modelRoute = { ...modelRoute, slots };
+    stepSpecs = stepSpecsForRoute(modelRoute);
+    routeSmokeChecked = false;
+    console.info(
+      `[orchestrator] #686 relay baton → ${baton.modelId} (${baton.slug}) @ ${baton.pool}` +
+        (wallStep !== undefined ? ` (slot for ${wallStep})` : ""),
+    );
+  };
+
+  // #686 P1: count the chain from the FULL ledger (resume history + in-memory),
+  // so post-ship trim / re-feed cannot reset MAX_RELAY_HANDOFFS.
+  const canRelayInProcess = (): boolean =>
+    canRelayHandoff(mergeResumeLedgerHistory(resumeHistoryLedger, ledger));
+
+  const modelIdForWallStep = (wallStep: StepId): string => {
+    const slots = modelRoute.slots;
+    const slug =
+      wallStep === "S3" || wallStep === "S6"
+        ? slots.reviewer
+        : wallStep === "S7"
+          ? slots.ship
+          : wallStep === "S9"
+            ? slots.verify
+            : wallStep === "S10"
+              ? slots.fixer
+              : wallStep === "S11"
+                ? slots.cleanup
+                : wallStep === "S12"
+                  ? slots.docRelease
+                  : slots.coder;
+    return lookupCoderRosterEntry(slug)?.id ?? slug;
+  };
+
+  const resolveRelayPools = (
+    limitedPool: BillingPoolId,
+    resetAt: Date | undefined,
+  ): ReadonlyArray<BillingPoolEntry> => {
+    if (input.relayPools !== undefined) {
+      return input.relayPools.map((p) => ({
+        id: p.id as BillingPoolId,
+        status: p.status,
+        ...(p.resetAt !== undefined ? { resetAt: p.resetAt } : {}),
+        parkThresholdMs: p.parkThresholdMs,
+        models: p.models,
+      }));
+    }
+    return buildDefaultBillingPools({ limitedPool, resetAt });
+  };
+
+  const currentCoderModelId = (): string => {
+    const slug = modelRoute.slots.coder;
+    return lookupCoderRosterEntry(slug)?.id ?? slug;
+  };
+
+  const relayBillingPoolForDispatch = (
+    dispatchStep: StepId,
+  ): BillingPoolId | undefined =>
+    activeRelayStep === dispatchStep ? currentBillingPool : undefined;
+  const relayFocusForDispatch = (dispatchStep: StepId): string | undefined =>
+    activeRelayStep === dispatchStep ? activeRelayFocusPath : undefined;
+  const clearCompletedRelayState = (completedStep: StepId, completed: StepOutput | undefined): void => {
+    if (
+      activeRelayStep !== completedStep ||
+      completed === undefined ||
+      escalateOf(completed) !== undefined ||
+      (completed.kind === "coder" && !completed.committed)
+    ) return;
+    currentBillingPool = undefined;
+    activeRelayFocusPath = undefined;
+    activeRelayStep = undefined;
   };
 
   const coderRecRoundsFromLedger = (
@@ -3576,18 +3930,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
     }
 
-    // Continuing from a breakpoint: clean uncommitted residue before reuse
-    // (reset --hard / clean -fd / prune). Committed progress (the resident
-    // branch HEAD) is preserved; the ledger lives outside the worktree so
-    // `clean -fd` cannot touch the resume truth. A cleanResidue failure is a
-    // backend throw → S8(error) (consistent with #252), via errorTermination
-    // (base integ-cmr: records + best-effort persists the failing step + S8).
-    try {
-      await backend.cleanResidue(worktree);
-    } catch (err) {
-      return await errorTermination(plan.resumeStep, err);
-    }
-
+    // #661 / #686 P0: NEVER destroy the worker scene on resume. Reading/comparing
+    // HEADs is legal; reset/cleanResidue is not — uncommitted work + partial
+    // commits + `.relay-focus.md` are the payload. Relay state is read from the
+    // FULL resume ledger (not the post-ship display trim), so S9+/relay markers
+    // survive priorLedgerThroughLastShip.
     // ADR 0030: resume continues from the recorded runner-visible boundary. If
     // that boundary follows S4, the classification state was rebuilt above from
     // the persisted reviewer output.
@@ -3636,13 +3983,32 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (coderRecPolicy?.kind === "stop") {
       return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
     }
+    const relayResume = resumeRelayFromLedger(resumeLedger, plan.resumeStep);
+
+    // #686 — after #767 has rebuilt the base Coder-Rec route, resume from a
+    // recorded baton before re-entering the interrupted step.
+    if (relayResume !== undefined) {
+      const batonEntry = lookupCoderRosterEntry(relayResume.toModelId);
+      applyRelayBaton(
+        {
+          modelId: relayResume.toModelId,
+          slug: batonEntry?.slug ?? relayResume.toModelId,
+          pool: relayResume.toPool as BillingPoolId,
+        },
+        plan.resumeStep,
+      );
+      if (worktree.path !== undefined) {
+        const focus = join(worktree.path, RELAY_FOCUS_FILENAME);
+        if (existsSync(focus)) activeRelayFocusPath = focus;
+      }
+    }
   }
 
   // The step machine has no fixed bound: route() always terminates the run via a
   // handoff (success/escalate/error). ADR 0030 makes the per-slice review/fix
   // loop visible in S3/S4/S5/S6, but still rejects a blind round cap; a `for (;;)`
   // keeps the absence of any "数到 N 就停" cap explicit (US#18).
-  for (;;) {
+  orchestratorStepLoop: for (;;) {
     if (!routeSmokeChecked && step !== "S0") {
       const smokeResult = await ensureRouteSmoke();
       if (smokeResult !== undefined) return smokeResult;
@@ -3877,6 +4243,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 stepSpecs[step],
                 typeof resumeSessionId === "string" ? "resume" : "fresh",
               );
+              const focusPath = relayFocusForDispatch(step);
               const dispatchCtx = {
                 worktree,
                 stateDir,
@@ -3885,6 +4252,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ...(escalationAnswerForStep != null
                   ? { escalationAnswer: escalationAnswerForStep }
                   : {}),
+                ...(relayBillingPoolForDispatch(step) !== undefined
+                  ? { billingPool: relayBillingPoolForDispatch(step) }
+                  : {}),
+                ...(focusPath !== undefined ? { relayFocusPath: focusPath } : {}),
                 // 信封宪法 (ADR 0062): the dispatch structure carries only the
                 // identity keys + count; the rich finding content travels in the
                 // separate landing payload below.
@@ -3937,34 +4308,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               //    crash (connection drop / container start), recovering a transient one;
               //    a persistent crash is re-thrown so the reviewer loop surfaces it.
               //
-              // Idempotency (#598, from main): before any retry, reset the worktree's
-              // UNCOMMITTED git residue (`cleanResidue` = reset --hard HEAD + clean -fd)
-              // the crashed attempt may have left, so the fresh re-dispatch does not run
-              // on top of a dirty index / untracked junk. Committed progress on the
-              // resident branch HEAD is deliberately preserved (cleanResidue contract /
-              // ADR 0024 — it is the resume anchor). A worktree-less family worker has
-              // no local residue.
-              //
-              // DEFERRED (#661, needs-design): a coder that COMMITTED a partial attempt
-              // then crashed keeps that commit at HEAD, so the retry continues on it
-              // rather than a strict pre-attempt HEAD. Unlike the merge-resolver's
-              // committed-then-crashed case (data loss — fixed in this PR), a coder
-              // continuing on preserved progress is bounded (the reviewer catches broken
-              // partial work) and is what ADR 0024 intends; whether a mechanical retry
-              // should override that committed-preservation is a design decision.
+              // #661 owner ruling (2026-07-10): process-level retry CONTINUES on the
+              // current scene — do NOT pass cleanResidue into withMechanicalRetry.
+              // Uncommitted work + partial commits are the payload; reading/comparing
+              // HEADs is legal, destroying scenes is not. (resetBeforeRetry remains an
+              // optional hook for non-runner callers; this site intentionally omits it.)
               //
               // Note: S9 online-review verify uses a separate path with read-only
-              // contract_drift (no cleanResidue) — that intent is preserved there.
-              const worktreeForReset = worktree;
-              // #709 exemption: keep strict !== undefined (not != null) for reset wiring on retry path;
-              // worktree is | undefined (never null in this scope), and the sentinel/omission in opts must
-              // preserve the exact absent-vs-present for the mechanical retry layer's optional resetBeforeRetry.
-              const resetBeforeRetry =
-                worktreeForReset !== undefined
-                  ? () => backend.cleanResidue(worktreeForReset)
-                  : undefined;
-              const baseReset =
-                resetBeforeRetry !== undefined ? { resetBeforeRetry } : {};
+              // contract_drift — that intent is preserved there.
               const retryOpts: MechanicalRetryOptions =
                 expectedKind === "reviewer"
                   ? {
@@ -3973,9 +4324,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                           ? true
                           : isReviewerStructuredOutputError(o.error),
                       rethrowOnExhaustion: true,
-                      ...baseReset,
                     }
-                  : baseReset;
+                  : {};
               result = await withMechanicalRetry(
                 workerSpec,
                 dispatchCtx,
@@ -4078,6 +4428,104 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             }
 
             if (unwrapped === undefined) {
+              // #686 P2-b: mechanical-retry exhaustion is a relay candidate —
+              // hand off when a live baton exists; durable abort only when none.
+              if (
+                expectedKind === "coder" &&
+                isRelayCandidateExhaustion(reason) &&
+                canRelayInProcess()
+              ) {
+                const currentPool =
+                  currentBillingPool ??
+                  billingPoolFromQuotaPool(
+                    poolForModelRef(modelRoute.slots.coder),
+                  );
+                // Mark the wall-hit pool dead/limited so 换马甲 does not
+                // re-select the same model on a "different" pool forever when
+                // poolForModelRef disagrees with the baton's billing pool.
+                const pools = resolveRelayPools(currentPool, undefined).map(
+                  (p) =>
+                    p.id === currentPool
+                      ? { ...p, status: "dead" as const }
+                      : p,
+                );
+                const handoff = await applyResourceFailureHandoff({
+                  trigger: "mechanical_retry_exhausted",
+                  state_summary:
+                    reason ??
+                    `mechanical retry exhausted on ${step}; uncommitted drift preserved`,
+                  reason: reason ?? "mechanical retry exhausted",
+                  currentModelId: currentCoderModelId(),
+                  currentPool,
+                  rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+                  pools,
+                  reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+                  now: relayNow(),
+                  step,
+                });
+                if (handoff.kind === "relay" && handoff.ledgerEntry) {
+                  const entry = handoff.ledgerEntry;
+                  const staged = tryStageRelayFocusFile(worktree?.path, entry);
+                  if (!staged.ok) {
+                    return await errorTermination(
+                      step,
+                      new Error(staged.reason),
+                    );
+                  }
+                  const marker: LedgerEntry = {
+                    step: entry.step ?? step,
+                    event: "relay_baton_handoff",
+                    trigger: entry.trigger,
+                    state_summary: entry.state_summary,
+                    ...(entry.remaining !== undefined
+                      ? { remaining: entry.remaining }
+                      : {}),
+                    ...(entry.reason !== undefined
+                      ? { reason: entry.reason }
+                      : {}),
+                    fromModelId: entry.fromModelId,
+                    fromPool: entry.fromPool,
+                    toModelId: entry.toModelId,
+                    toPool: entry.toPool,
+                    ts: entry.ts,
+                  };
+                  if (stateDir !== undefined) {
+                    try {
+                      await backend.writeLedger(
+                        {
+                          ...marker,
+                          sessionId,
+                          prompt_hash: await hashPrompt(
+                            undefined,
+                            step,
+                            backend,
+                          ),
+                          branchHEAD: await resolveBranchHEAD(),
+                          ts: entry.ts,
+                        },
+                        stateDir,
+                      );
+                } catch {
+                  staged.focus.discard();
+                  return await errorTermination(
+                        step,
+                        new Error(
+                          `relay handoff ledger write failed after mechanical retry exhaustion`,
+                        ),
+                      );
+                    }
+                  }
+                  try {
+                    staged.focus.commit();
+                  } catch (focusErr) {
+                    return await errorTermination(step, focusErr);
+                  }
+                  ledger.push(marker);
+                  activeRelayFocusPath = staged.focus.path;
+                  applyRelayBaton(handoff.nextBaton, step);
+                  continue orchestratorStepLoop;
+                }
+              }
               return await errorTermination(
                 step,
                 new Error(
@@ -4094,9 +4542,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             break;
           }
         } catch (err) {
-          // #683: 429 quota wall → park step (existing park family), not S8(error).
+          // #683/#686: 429 quota wall → park within T / no baton; relay beyond T
+          // with a live baton (write handoff + focus, apply next baton, re-enter).
           if (isQuotaWaitForResetError(err)) {
-            return await parkQuotaWaitForReset({
+            const currentPool =
+              currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
+            if (!canRelayInProcess()) {
+              return await parkQuotaWaitForResetLegacy({
+                step,
+                err,
+                ledger,
+                stateDir,
+                sessionId,
+                backend,
+                deferredFindings,
+                resolveBranchHEAD,
+                hashPrompt: (promptFile, s) =>
+                  hashPrompt(promptFile, s, backend),
+              });
+            }
+            const outcome = await parkOrRelayQuotaWall({
               step,
               err,
               ledger,
@@ -4106,7 +4571,113 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               deferredFindings,
               resolveBranchHEAD,
               hashPrompt: (promptFile, s) => hashPrompt(promptFile, s, backend),
+              worktreePath: worktree?.path,
+              currentModelId: modelIdForWallStep(step),
+              currentPool,
+              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+              pools: resolveRelayPools(currentPool, err.disposition.resetAt),
+              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+              now: relayNow(),
             });
+            if (outcome.kind === "park") return outcome.result;
+            if (outcome.focusPath !== undefined) {
+              activeRelayFocusPath = outcome.focusPath;
+            }
+            applyRelayBaton(outcome.nextBaton, step);
+            continue orchestratorStepLoop;
+          }
+          // #686: hang-with-live-pool / self-reported blocked → resource relay
+          // (never mechanical-retry / never reset).
+          if (
+            (isHangWithLivePoolError(err) || isSelfReportedRelayError(err)) &&
+            canRelayInProcess()
+          ) {
+            const currentPool =
+              currentBillingPool ??
+              billingPoolFromQuotaPool(
+                isHangWithLivePoolError(err)
+                  ? err.poolId
+                  : poolForModelRef(modelRoute.slots.coder),
+              );
+            const pools = resolveRelayPools(currentPool, undefined).map((p) =>
+              p.id === currentPool ? { ...p, status: "dead" as const } : p,
+            );
+            const trigger = isHangWithLivePoolError(err)
+              ? ("hang_with_live_pool" as const)
+              : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
+                ? ("self_reported_blocked" as const)
+                : ("phase_complete" as const);
+            const stateSummary = isSelfReportedRelayError(err)
+              ? err.tag.state_summary
+              : "worker hang with live pool; pid tree killed; drift preserved";
+            const remaining =
+              isSelfReportedRelayError(err) && "remaining" in err.tag
+                ? err.tag.remaining
+                : undefined;
+            const handoff = await applyResourceFailureHandoff({
+              trigger,
+              state_summary: stateSummary,
+              ...(remaining !== undefined ? { remaining } : {}),
+              reason: err instanceof Error ? err.message : String(err),
+              currentModelId: modelIdForWallStep(step),
+              currentPool,
+              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+              pools,
+              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+              now: relayNow(),
+              step,
+            });
+            if (handoff.kind === "relay" && handoff.ledgerEntry) {
+              const entry = handoff.ledgerEntry;
+              const staged = tryStageRelayFocusFile(worktree?.path, entry);
+              if (!staged.ok) {
+                return await errorTermination(
+                  step,
+                  new Error(staged.reason),
+                );
+              }
+              const marker: LedgerEntry = {
+                step: entry.step ?? step,
+                event: "relay_baton_handoff",
+                trigger: entry.trigger,
+                state_summary: entry.state_summary,
+                ...(entry.remaining !== undefined
+                  ? { remaining: entry.remaining }
+                  : {}),
+                ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+                fromModelId: entry.fromModelId,
+                fromPool: entry.fromPool,
+                toModelId: entry.toModelId,
+                toPool: entry.toPool,
+                ts: entry.ts,
+              };
+              if (stateDir !== undefined) {
+                try {
+                  await backend.writeLedger(
+                    {
+                      ...marker,
+                      sessionId,
+                      prompt_hash: await hashPrompt(undefined, step, backend),
+                      branchHEAD: await resolveBranchHEAD(),
+                      ts: entry.ts,
+                    },
+                    stateDir,
+                  );
+                } catch {
+                  staged.focus.discard();
+                  return await errorTermination(step, err);
+                }
+              }
+              try {
+                staged.focus.commit();
+              } catch (focusErr) {
+                return await errorTermination(step, focusErr);
+              }
+              ledger.push(marker);
+              activeRelayFocusPath = staged.focus.path;
+              applyRelayBaton(handoff.nextBaton, step);
+              continue orchestratorStepLoop;
+            }
           }
           return await errorTermination(step, err);
         }
@@ -4219,7 +4790,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // contract, types.ts:"promptFile CONTENT is hashed into the ledger") — NOT
           // the degraded step-name hash (`name:<sha("S7")>`) the missing assignment
           // produced. The escalateTermination path below ALSO uses it (resume truth).
-          const shipSpec = shipWorkerSpec(routePolicy.route);
+          const shipSpec = shipWorkerSpec(modelRoute);
           promptFile = shipSpec.promptFile;
           const escalationAnswerForStep =
             resumedEscalationAnswer?.forStep === "S7"
@@ -4232,6 +4803,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             worktree,
             stateDir,
             modelRoute,
+            ...(relayBillingPoolForDispatch("S7") !== undefined
+              ? { billingPool: relayBillingPoolForDispatch("S7") }
+              : {}),
+            ...(relayFocusForDispatch("S7") !== undefined
+              ? { relayFocusPath: relayFocusForDispatch("S7") }
+              : {}),
             ...(escalationAnswerForStep != null
               ? { escalationAnswer: escalationAnswerForStep }
               : {}),
@@ -4246,19 +4823,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // — a decided delivery failure is never re-run. This is the SAME shared
           // `withMechanicalRetry` path the coder uses (#592 "no role treated specially"):
           // the structural no-output case retries, the judged-verdict case does not.
-          // The worktree's uncommitted residue is reset before each retry (idempotency);
-          // gstack-ship's re-runnable design keeps push/PR idempotent. (from main)
-          const shipWorktree = worktree;
-          // Mirror the coder/reviewer reset guard: only wire cleanResidue when a
-          // worktree exists (a worktree-less worker has no local residue), so a retry
-          // never calls cleanResidue(undefined). (gemini R1 — the coder path already
-          // guards; the ship path must match.)
-          // #709 exemption: strict !== undefined (not loose) — the resetBeforeRetry presence in
-          // MechanicalRetryOptions is load-bearing for whether retry path attempts reset on crash.
-          const shipResetOpt =
-            shipWorktree !== undefined
-              ? { resetBeforeRetry: () => backend.cleanResidue(shipWorktree) }
-              : {};
+          // #661: continue on the current scene — never resetBeforeRetry/cleanResidue.
+          // gstack-ship's re-runnable design keeps push/PR idempotent without a wipe.
           const shipResult = await withMechanicalRetry(
             shipSpec,
             shipCtx,
@@ -4287,7 +4853,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             },
             {
               callerOwns: (o) => "result" in o && o.result.kind === "failed",
-              ...shipResetOpt,
             },
           );
           // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
@@ -4365,9 +4930,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           lastShipOutput = shipWithHead;
           stepSessionId = shipResult.sessionId;
         } catch (err) {
-          // #683: ship idle 429 → park (same family as agent-step park).
+          // #683/#686: ship idle 429 → park or relay (same family as agent-step).
           if (isQuotaWaitForResetError(err)) {
-            return await parkQuotaWaitForReset({
+            const currentPool =
+              currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
+            if (!canRelayInProcess()) {
+              return await parkQuotaWaitForResetLegacy({
+                step: "S7",
+                err,
+                ledger,
+                stateDir,
+                sessionId,
+                backend,
+                deferredFindings,
+                resolveBranchHEAD,
+                hashPrompt: (promptFile, s) =>
+                  hashPrompt(promptFile, s, backend),
+              });
+            }
+            const outcome = await parkOrRelayQuotaWall({
               step: "S7",
               err,
               ledger,
@@ -4377,7 +4958,106 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               deferredFindings,
               resolveBranchHEAD,
               hashPrompt: (promptFile, s) => hashPrompt(promptFile, s, backend),
+              worktreePath: worktree?.path,
+              currentModelId: modelIdForWallStep("S7"),
+              currentPool,
+              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+              pools: resolveRelayPools(currentPool, err.disposition.resetAt),
+              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+              now: relayNow(),
             });
+            if (outcome.kind === "park") return outcome.result;
+            if (outcome.focusPath !== undefined) {
+              activeRelayFocusPath = outcome.focusPath;
+            }
+            applyRelayBaton(outcome.nextBaton, "S7");
+            continue orchestratorStepLoop;
+          }
+          // #686: a live-pool hang or a worker's blocked relay tag is a
+          // resource failure on ship too. Preserve the current scene and hand
+          // the S7 slot to the next baton; never fall through to S8.
+          if (
+            (isHangWithLivePoolError(err) || isSelfReportedRelayError(err)) &&
+            canRelayInProcess()
+          ) {
+            const currentPool =
+              currentBillingPool ??
+              billingPoolFromQuotaPool(
+                isHangWithLivePoolError(err)
+                  ? err.poolId
+                  : poolForModelRef(modelRoute.slots.ship),
+              );
+            const pools = resolveRelayPools(currentPool, undefined).map((p) =>
+              p.id === currentPool ? { ...p, status: "dead" as const } : p,
+            );
+            const trigger = isHangWithLivePoolError(err)
+              ? ("hang_with_live_pool" as const)
+              : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
+                ? ("self_reported_blocked" as const)
+                : ("phase_complete" as const);
+            const stateSummary = isSelfReportedRelayError(err)
+              ? err.tag.state_summary
+              : "worker hang with live pool; pid tree killed; drift preserved";
+            const remaining =
+              isSelfReportedRelayError(err) && "remaining" in err.tag
+                ? err.tag.remaining
+                : undefined;
+            const handoff = await applyResourceFailureHandoff({
+              trigger,
+              state_summary: stateSummary,
+              ...(remaining !== undefined ? { remaining } : {}),
+              reason: err instanceof Error ? err.message : String(err),
+              currentModelId: modelIdForWallStep("S7"),
+              currentPool,
+              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+              pools,
+              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+              now: relayNow(),
+              step: "S7",
+            });
+            if (handoff.kind === "relay" && handoff.ledgerEntry) {
+              const entry = handoff.ledgerEntry;
+              const staged = tryStageRelayFocusFile(worktree?.path, entry);
+              if (!staged.ok) {
+                return await errorTermination("S7", new Error(staged.reason));
+              }
+              const marker: LedgerEntry = {
+                step: entry.step ?? "S7",
+                event: "relay_baton_handoff",
+                trigger: entry.trigger,
+                state_summary: entry.state_summary,
+                ...(entry.remaining !== undefined ? { remaining: entry.remaining } : {}),
+                ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+                fromModelId: entry.fromModelId,
+                fromPool: entry.fromPool,
+                toModelId: entry.toModelId,
+                toPool: entry.toPool,
+                ts: entry.ts,
+              };
+              if (stateDir !== undefined) {
+                try {
+                  await backend.writeLedger({
+                    ...marker,
+                    sessionId,
+                    prompt_hash: await hashPrompt(undefined, "S7", backend),
+                    branchHEAD: await resolveBranchHEAD(),
+                    ts: entry.ts,
+                  }, stateDir);
+                } catch {
+                  staged.focus.discard();
+                  return await errorTermination("S7", err);
+                }
+              }
+              try {
+                staged.focus.commit();
+              } catch (focusErr) {
+                return await errorTermination("S7", focusErr);
+              }
+              ledger.push(marker);
+              activeRelayFocusPath = staged.focus.path;
+              applyRelayBaton(handoff.nextBaton, "S7");
+              continue orchestratorStepLoop;
+            }
           }
           // Push failure → S8(error) with branch head so dev can diagnose
           // without losing the commits already on the resident branch (#252).
@@ -4457,12 +5137,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
         const reviewLoopSpec =
           reviewStep === "S9"
-            ? verifyWorkerSpec(routePolicy.route)
+            ? verifyWorkerSpec(modelRoute)
             : reviewStep === "S10"
-              ? fixerWorkerSpec(routePolicy.route)
+              ? fixerWorkerSpec(modelRoute)
               : reviewStep === "S11"
-                ? cleanupWorkerSpec(routePolicy.route)
-                : docReleaseWorkerSpec(routePolicy.route);
+                ? cleanupWorkerSpec(modelRoute)
+                : docReleaseWorkerSpec(modelRoute);
         promptFile = reviewLoopSpec.promptFile;
         try {
           if (reviewStep === "S9") {
@@ -4523,6 +5203,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             prHead:
               onlineReviewLanding?.shipDelivery?.prHead ?? lastShipOutput.prHead,
             onlineReviewRound,
+            ...(relayBillingPoolForDispatch(reviewStep) !== undefined
+              ? { billingPool: relayBillingPoolForDispatch(reviewStep) }
+              : {}),
+            ...(relayFocusForDispatch(reviewStep) !== undefined
+              ? { relayFocusPath: relayFocusForDispatch(reviewStep) }
+              : {}),
           };
           const headBefore =
             reviewStep === "S9" ? await resolveBranchHEAD() : undefined;
@@ -5409,11 +6095,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           stepSessionId = result.sessionId;
           lastOutput = output;
         } catch (err) {
-          // #683: S9–S12 online-review legs hit the same 429 park family as
+          // #683/#686: S9–S12 online-review legs hit the same park/relay fork as
           // S2/S7 — do NOT fall into errorTermination (would sticky-fail a
           // quota wall and break sliceQuotaWaitPending resume).
           if (isQuotaWaitForResetError(err)) {
-            return await parkQuotaWaitForReset({
+            const currentPool =
+              currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
+            if (!canRelayInProcess()) {
+              return await parkQuotaWaitForResetLegacy({
+                step: reviewStep,
+                err,
+                ledger,
+                stateDir,
+                sessionId,
+                backend,
+                deferredFindings,
+                resolveBranchHEAD,
+                hashPrompt: (pf, s) => hashPrompt(pf, s, backend),
+              });
+            }
+            const outcome = await parkOrRelayQuotaWall({
               step: reviewStep,
               err,
               ledger,
@@ -5423,7 +6124,115 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               deferredFindings,
               resolveBranchHEAD,
               hashPrompt: (pf, s) => hashPrompt(pf, s, backend),
+              worktreePath: worktree?.path,
+              currentModelId: modelIdForWallStep(reviewStep),
+              currentPool,
+              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+              pools: resolveRelayPools(currentPool, err.disposition.resetAt),
+              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+              now: relayNow(),
             });
+            if (outcome.kind === "park") return outcome.result;
+            if (outcome.focusPath !== undefined) {
+              activeRelayFocusPath = outcome.focusPath;
+            }
+            applyRelayBaton(outcome.nextBaton, reviewStep);
+            step = reviewStep;
+            continue orchestratorStepLoop;
+          }
+          // #686: S9–S12 must treat the other two resource-failure signals
+          // exactly like S2/S3/S5/S6: hand off on the current scene, not S8.
+          if (
+            (isHangWithLivePoolError(err) || isSelfReportedRelayError(err)) &&
+            canRelayInProcess()
+          ) {
+            const currentPool =
+              currentBillingPool ??
+              billingPoolFromQuotaPool(
+                isHangWithLivePoolError(err)
+                  ? err.poolId
+                  : poolForModelRef(
+                      reviewStep === "S9"
+                        ? modelRoute.slots.verify
+                        : reviewStep === "S10"
+                          ? modelRoute.slots.fixer
+                          : reviewStep === "S11"
+                            ? modelRoute.slots.cleanup
+                            : modelRoute.slots.docRelease,
+                    ),
+              );
+            const pools = resolveRelayPools(currentPool, undefined).map((p) =>
+              p.id === currentPool ? { ...p, status: "dead" as const } : p,
+            );
+            const trigger = isHangWithLivePoolError(err)
+              ? ("hang_with_live_pool" as const)
+              : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
+                ? ("self_reported_blocked" as const)
+                : ("phase_complete" as const);
+            const stateSummary = isSelfReportedRelayError(err)
+              ? err.tag.state_summary
+              : "worker hang with live pool; pid tree killed; drift preserved";
+            const remaining =
+              isSelfReportedRelayError(err) && "remaining" in err.tag
+                ? err.tag.remaining
+                : undefined;
+            const handoff = await applyResourceFailureHandoff({
+              trigger,
+              state_summary: stateSummary,
+              ...(remaining !== undefined ? { remaining } : {}),
+              reason: err instanceof Error ? err.message : String(err),
+              currentModelId: modelIdForWallStep(reviewStep),
+              currentPool,
+              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+              pools,
+              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+              now: relayNow(),
+              step: reviewStep,
+            });
+            if (handoff.kind === "relay" && handoff.ledgerEntry) {
+              const entry = handoff.ledgerEntry;
+              const staged = tryStageRelayFocusFile(worktree?.path, entry);
+              if (!staged.ok) {
+                return await errorTermination(reviewStep, new Error(staged.reason));
+              }
+              const marker: LedgerEntry = {
+                step: entry.step ?? reviewStep,
+                event: "relay_baton_handoff",
+                trigger: entry.trigger,
+                state_summary: entry.state_summary,
+                ...(entry.remaining !== undefined ? { remaining: entry.remaining } : {}),
+                ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+                fromModelId: entry.fromModelId,
+                fromPool: entry.fromPool,
+                toModelId: entry.toModelId,
+                toPool: entry.toPool,
+                ts: entry.ts,
+              };
+              if (stateDir !== undefined) {
+                try {
+                  await backend.writeLedger({
+                    ...marker,
+                    sessionId,
+                    prompt_hash: await hashPrompt(undefined, reviewStep, backend),
+                    branchHEAD: await resolveBranchHEAD(),
+                    ts: entry.ts,
+                  }, stateDir);
+                } catch {
+                  staged.focus.discard();
+                  return await errorTermination(reviewStep, err);
+                }
+              }
+              try {
+                staged.focus.commit();
+              } catch (focusErr) {
+                return await errorTermination(reviewStep, focusErr);
+              }
+              ledger.push(marker);
+              activeRelayFocusPath = staged.focus.path;
+              applyRelayBaton(handoff.nextBaton, reviewStep);
+              step = reviewStep;
+              continue orchestratorStepLoop;
+            }
           }
           return await errorTermination(step, err);
         }
@@ -5516,6 +6325,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         repairMovementPaths: stepRepairMovementPaths,
       });
     }
+
+    // A relay baton is a step-local override. Once its relayed step has
+    // durably completed, normal downstream roles must reselect their own route.
+    clearCompletedRelayState(step, output);
 
     // The runner — not the agent — decides the next step.
     // The runner owns the review/fix loop, but termination is still not a blind

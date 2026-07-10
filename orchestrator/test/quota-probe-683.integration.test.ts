@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,7 @@ import {
   QuotaWaitForResetError,
   type QuotaProbeResult,
 } from "../src/quotaProbe.js";
+import { HangWithLivePoolError } from "../src/relayDispatch.js";
 import type {
   Backend,
   CliMonitorSpawnSpec,
@@ -65,7 +66,7 @@ function monitoredBackend(
     handleMonitoredWorkerIdle: async (
       handle: WorkerMonitorHandle,
       spec: WorkerSpec,
-    ): Promise<"hang" | "wait_for_reset"> => {
+    ): Promise<"hang" | "hang_with_live_pool" | "wait_for_reset"> => {
       const result = await handleIdleThreshold({
         modelRef: spec.model,
         worker: { pid: handle.pid, step: spec.id },
@@ -80,7 +81,7 @@ function monitoredBackend(
       if (result.disposition.kind === "wait_for_reset") {
         throw new QuotaWaitForResetError(result);
       }
-      return "hang";
+    return result.probe.kind === "ok" ? "hang_with_live_pool" : "hang";
     },
     awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
       kind: "completed",
@@ -136,53 +137,111 @@ describe("#683 integration at the real monitored dispatch path", () => {
     ]);
   });
 
-  it("probe pass uses the monitor's verified pid-tree kill disposition", async () => {
+  it("probe pass uses the monitor's verified pid-tree kill then surfaces HangWithLivePoolError (#686)", async () => {
     const ledger: unknown[] = [];
     const out = await runMonitored({ kind: "ok" }, ledger);
 
-    expect(out.error).toBeUndefined();
+    // #686: hang-with-live-pool kills the pid tree then throws a resource
+    // failure so the runner relays (never mechanical-retry / never reset).
+    expect(out.error).toBeInstanceOf(HangWithLivePoolError);
     expect(out.killed.some((pid) => pid > 0)).toBe(true);
     expect(ledger).toEqual([]);
   });
 
-  it("probe network error fails safe through the same hang disposition", async () => {
+  it("probe network error fails safe as a plain hang, never a live-pool relay", async () => {
     const ledger: unknown[] = [];
     const out = await runMonitored(
       { kind: "error", cause: "network unavailable" },
       ledger,
     );
 
-    expect(out.error).toBeUndefined();
+    expect(out.error).toBeInstanceOf(Error);
+    expect(out.error).not.toBeInstanceOf(HangWithLivePoolError);
     expect(out.killed.some((pid) => pid > 0)).toBe(true);
     expect(ledger).toEqual([]);
   });
 
-  it("exit-first race observes late monitor throw (no unhandledRejection)", async () => {
+  it("missing idle probe fails safe as a plain hang, never a live-pool relay", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "missing-probe-686-"));
+    tempDirs.push(dir);
+    const killed: number[] = [];
+    const backend = {
+      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => {}, 1000)"],
+        logDir: dir,
+        poolId: "zai",
+        completionSignal: "<coder>",
+        stepId: "S2",
+        readInstanceId: () => "test-instance",
+      }),
+      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      }),
+    } as unknown as Backend;
+
+    await expect(
+      dispatchWorkerWithMonitor(backend, workerSpec(), {}, undefined, {
+        idleThresholdMs: 0,
+        pollIntervalMs: 1,
+        monitorDeps: {
+          readInstanceId: () => "test-instance",
+          killPid: (pid) => killed.push(pid),
+          isPidAlive: (pid) => pid > 0 && !killed.includes(pid),
+          listChildPids: () => [],
+          readParentPid: () => undefined,
+          sleepMs: async () => {},
+        },
+      }),
+    ).rejects.not.toBeInstanceOf(HangWithLivePoolError);
+    expect(killed.some((pid) => pid > 0)).toBe(true);
+  });
+
+  it("only parses relay tags emitted after this dispatch began", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "relay-log-offset-686-"));
+    tempDirs.push(dir);
+    writeFileSync(
+      join(dir, "S2.log"),
+      '<relay>{"blocked":{"reason":"baton A","state_summary":"stale","remaining":"do not replay"}}</relay>\n',
+    );
+    const backend = {
+      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
+        command: process.platform === "win32" ? "cmd" : "true",
+        args: process.platform === "win32" ? ["/c", "exit", "0"] : [],
+        logDir: dir,
+        poolId: "zai",
+        completionSignal: "<coder>",
+        stepId: "S2",
+        readInstanceId: () => "test-instance",
+      }),
+      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      }),
+    } as unknown as Backend;
+
+    await expect(dispatchWorkerWithMonitor(backend, workerSpec(), {})).resolves.toMatchObject({
+      result: { kind: "completed" },
+    });
+  });
+
+  it("observes a late idle-handler throw after child exit", async () => {
     const dir = mkdtempSync(join(tmpdir(), "quota-probe-683-race-"));
     tempDirs.push(dir);
     const unhandled: unknown[] = [];
-    const onUnhandled = (reason: unknown) => {
-      unhandled.push(reason);
-    };
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
     process.on("unhandledRejection", onUnhandled);
-
     const warnings: string[] = [];
     const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => {
-      warnings.push(args.map(String).join(" "));
-    };
-
-    const resetAt = new Date("2026-07-10T02:00:00.000Z");
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
     let releaseThrow: (() => void) | undefined;
     const throwGate = new Promise<void>((resolve) => {
       releaseThrow = resolve;
     });
-
     const backend = {
       resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
         command: process.execPath,
-        // Stay alive until the idle handler kills us so exit can win the race
-        // while handleMonitoredWorkerIdle is still in flight.
         args: ["-e", "setTimeout(() => {}, 30_000)"],
         logDir: dir,
         poolId: "zai",
@@ -190,38 +249,24 @@ describe("#683 integration at the real monitored dispatch path", () => {
         stepId: "S2",
         readInstanceId: () => "test-instance",
       }),
-      handleMonitoredWorkerIdle: async (
-        handle: WorkerMonitorHandle,
-      ): Promise<"hang" | "wait_for_reset"> => {
+      handleMonitoredWorkerIdle: async (handle: WorkerMonitorHandle): Promise<"hang" | "wait_for_reset"> => {
         try {
           process.kill(handle.pid, "SIGTERM");
         } catch {
           // Child may already be gone.
         }
-        // Yield so Promise.race can settle on exitPromise before we throw.
         await new Promise<void>((resolve) => setTimeout(resolve, 30));
         await throwGate;
         throw new QuotaWaitForResetError({
           disposition: {
             kind: "wait_for_reset",
             pool: "zai",
-            resetAt,
+            resetAt: new Date("2026-07-10T02:00:00.000Z"),
             reason: "quota limited (429); wait for reset",
           },
-          applied: {
-            killed: false,
-            ledgerEntry: {
-              event: "quota_wait_for_reset",
-              pool: "zai",
-              resetAt: resetAt.toISOString(),
-              reason: "quota limited (429); wait for reset",
-              step: "S2",
-              workerPid: handle.pid,
-              ts: "2026-07-10T12:00:00.000Z",
-            },
-          },
+          applied: { killed: false, ledgerEntry: { event: "quota_wait_for_reset", pool: "zai", resetAt: "2026-07-10T02:00:00.000Z", reason: "quota limited (429); wait for reset", step: "S2", workerPid: handle.pid, ts: "2026-07-10T12:00:00.000Z" } },
           pool: "zai",
-          probe: { kind: "quota_limited", resetAt, detail: "429" },
+          probe: { kind: "quota_limited", resetAt: new Date("2026-07-10T02:00:00.000Z"), detail: "429" },
         });
       },
       awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
@@ -231,38 +276,25 @@ describe("#683 integration at the real monitored dispatch path", () => {
     } as unknown as Backend;
 
     try {
-      const outcomePromise = dispatchWorkerWithMonitor(
-        backend,
-        workerSpec(),
-        {},
-        undefined,
-        {
-          idleThresholdMs: 0,
-          pollIntervalMs: 1,
-          monitorDeps: {
-            readInstanceId: () => "test-instance",
-            listChildPids: () => [],
-            readParentPid: () => undefined,
-            sleepMs: async () => {},
-          },
+      const outcomePromise = dispatchWorkerWithMonitor(backend, workerSpec(), {}, undefined, {
+        idleThresholdMs: 0,
+        pollIntervalMs: 1,
+        monitorDeps: {
+          readInstanceId: () => "test-instance",
+          listChildPids: () => [],
+          readParentPid: () => undefined,
+          sleepMs: async () => {},
         },
-      );
-
-      // Let exit win the race and dispatch return, then release the late throw.
+      });
       await new Promise<void>((resolve) => setTimeout(resolve, 80));
       releaseThrow?.();
       const outcome = await outcomePromise;
-      // Allow a late rejection microtask to surface if the loser is unobserved.
       await new Promise<void>((resolve) => setImmediate(resolve));
       await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
       expect(outcome.result.kind).toBe("completed");
       expect(unhandled).toEqual([]);
-      expect(
-        warnings.some((w) =>
-          w.includes("monitored idle handler settled after child exit"),
-        ),
-      ).toBe(true);
+      expect(warnings.some((w) => w.includes("monitored idle handler settled after child exit"))).toBe(true);
     } finally {
       console.warn = originalWarn;
       process.off("unhandledRejection", onUnhandled);

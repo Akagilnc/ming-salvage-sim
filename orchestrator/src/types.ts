@@ -448,8 +448,9 @@ export interface OnlineReviewCiPendingEvent {
 
 /**
  * #683 — idle-threshold quota probe hit a 429/limit wall. Step is parked for
- * quota reset (runner status escalate, not S8(error)); auto re-dispatch after
- * reset is #686 (out of scope). Same park family as `online_review_ci_pending`.
+ * quota reset (runner status escalate, not S8(error)). #686 forks this
+ * disposition into park vs relay (three-tier rule, ADR 0125) when a live
+ * baton exists. Same park family as `online_review_ci_pending`.
  * Shape mirrors {@link import("./quotaProbe.js").QuotaWaitForResetLedgerEvent}.
  */
 export interface QuotaWaitForResetEvent {
@@ -461,6 +462,26 @@ export interface QuotaWaitForResetEvent {
   readonly reason: string;
   readonly step?: StepId;
   readonly workerPid?: number;
+  readonly ts: string;
+}
+
+/**
+ * #686 — baton handoff on a resource failure (quota wall / hang-with-live-pool /
+ * self-reported blocked). `state_summary` is forwarded as the next baton's
+ * parameter file (`.relay-focus.md`). Worktree drift is preserved (no reset).
+ * Shape mirrors {@link import("./relayDispatch.js").RelayHandoffLedgerEvent}.
+ */
+export interface RelayBatonHandoffEvent {
+  readonly event: "relay_baton_handoff";
+  readonly trigger: string;
+  readonly state_summary: string;
+  readonly remaining?: string;
+  readonly reason?: string;
+  readonly fromModelId: string;
+  readonly fromPool: string;
+  readonly toModelId: string;
+  readonly toPool: string;
+  readonly step?: StepId;
   readonly ts: string;
 }
 
@@ -482,6 +503,7 @@ export type LedgerBookkeepingEvent =
   | OnlineReviewCiFailedEvent
   | OnlineReviewCiPendingEvent
   | QuotaWaitForResetEvent
+  | RelayBatonHandoffEvent
   | WorkerMonitorSpawnedEvent;
 
 /**
@@ -928,6 +950,17 @@ export interface DispatchContext {
    * Runner-owned data — not used for routing decisions.
    */
   readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
+  /**
+   * #686 — billing pool for this dispatch (ADR 0124). Selects the real
+   * provider/CLI channel when the same model lives on multiple pools.
+   */
+  readonly billingPool?: string;
+  /**
+   * #686 — absolute path to `.relay-focus.md` when a baton handoff is in force.
+   * Mirrors `.cmr-focus.md` / `.ship-focus.md`: runner writes the parameter file;
+   * the worker prompt reads it when present.
+   */
+  readonly relayFocusPath?: string;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */
@@ -1275,6 +1308,17 @@ export interface LedgerEntry {
   readonly resetAt?: string;
   /** #683 — worker pid preserved while waiting for quota reset. */
   readonly workerPid?: number;
+  /** #686 — relay handoff state_summary (next baton parameter). */
+  readonly state_summary?: string;
+  /** #686 — relay handoff remaining work hint. */
+  readonly remaining?: string;
+  /** #686 — relay from/to model + pool (ledger-visible strings). */
+  readonly fromModelId?: string;
+  readonly fromPool?: string;
+  readonly toModelId?: string;
+  readonly toPool?: string;
+  /** #686 — relay handoff trigger discriminant. */
+  readonly trigger?: string;
   /** Step this answer reopens when `event === "escalation_answered"` (#439). */
   readonly forStep?: StepId;
   /** Human answer payload when `event === "escalation_answered"` (#439). */
@@ -1349,6 +1393,8 @@ export interface LedgerEntry {
 export interface WorkerMonitorHandle {
   readonly pid: number;
   readonly logPath: string;
+  /** Byte offset where this dispatch began appending to the shared step log. */
+  readonly logStartOffset?: number;
   /** Pool / route identity (e.g. `grok/composer`, `zai/glm-5.2`). */
   readonly poolId: string;
   readonly completionSignal: string;
@@ -1387,7 +1433,10 @@ export interface CliMonitorSpawnSpec {
 }
 
 /** #683: the monitor asks the backend to probe before it owns hang-kill. */
-export type MonitoredWorkerIdleDisposition = "hang" | "wait_for_reset";
+export type MonitoredWorkerIdleDisposition =
+  | "hang"
+  | "hang_with_live_pool"
+  | "wait_for_reset";
 
 /**
  * Full persisted ledger entry (#249). Extends {@link LedgerEntry} with the
@@ -1474,8 +1523,8 @@ export interface PersistentLedgerEntry extends LedgerEntry {
  * the recorded breakpoint instead of re-cutting from S0.
  *
  * Crash-resume and escalate-resume share ONE machine: both read this state,
- * reuse the worktree, clean uncommitted residue, and continue from the step
- * the ledger says is next (decided by `route()`, not LLM memory).
+ * reuse the worktree, preserve uncommitted residue as work product, and
+ * continue on the existing scene; only terminal-success GC removes worktrees.
  *
  * `ledger` is the persisted step ledger read from the sibling state dir
  * (`<stateDir>/steps.jsonl`) — the resume truth. The last entry's step + output
@@ -1521,19 +1570,14 @@ export interface Backend {
    */
   findResumeState(issueNumber: number): Promise<ResumeState | undefined>;
   /**
-   * #255: clean uncommitted residue on the resident worktree before reuse.
+   * #661 compatibility seam for a former residue-clean operation.
    *
-   * Real implementation: `git reset --hard HEAD` + `git clean -fd` ONLY —
-   * a per-worktree residue clean, scoped to the worktree path. Committed progress
-   * (the resident branch HEAD) is PRESERVED; only uncommitted/untracked residue
-   * from the interrupted run is discarded. The ledger lives in the sibling state
-   * dir (outside the worktree), so `clean -fd` cannot remove the resume truth.
+   * Real implementation is a no-op: a resident scene is work product, including
+   * uncommitted files and relay focus. Resume preserves it AS-IS; callers must
+   * never reintroduce reset/clean behavior here.
    *
-   * ADR 0024 decision 2: this does NOT run a repo-level `git worktree prune`.
-   * Worktree admin pruning is Sandcastle's responsibility (its per-acquire
-   * pruneStale); with each invocation owning a dedicated clone, that prune is
-   * scoped to the clone and can never reach another session's worktree admin
-   * namespace. `cleanResidue` must stay confined to the worktree path.
+   * The only removal authority is explicit terminal-success GC; it may reap the
+   * resident worktree after the run can no longer need resume.
    */
   cleanResidue(worktree: WorktreeHandle): Promise<void>;
   /**
@@ -1748,6 +1792,13 @@ export interface AgentStepRunOptions {
   readonly onlineReviewLanding?: FixFindingsLandingFile;
   readonly fixFocusLanding?: FixFindingsLandingFile;
   readonly outcomeLanding?: WorkerOutcomeLandingFile;
+  /**
+   * #686 / ADR 0124 — billing pool for this dispatch. Selects the real
+   * provider/CLI channel when the same model lives on multiple pools.
+   */
+  readonly billingPool?: string;
+  /** Durable relay brief for any baton role (coder, ship, or review). */
+  readonly relayFocusPath?: string;
 }
 
 // ──────────────────────────── run result ────────────────────────────
@@ -1808,6 +1859,25 @@ export interface RunInput {
    * run (the v0.1 behaviour — base=main, S7 pushes).
    */
   readonly family?: FamilyContext;
+  /**
+   * #686 — optional route pool table override for park-vs-relay at the #683
+   * disposition point. When absent, the runner builds a default table where the
+   * wall-hit pool is `limited` and every other pool is **not-live** until probed
+   * (unknown state must not fabricate live batons). Tests that need a live
+   * alternate baton pass an explicit probed table via this field.
+   */
+  readonly relayPools?: ReadonlyArray<{
+    readonly id: string;
+    readonly status: "live" | "limited" | "dead";
+    readonly resetAt?: Date;
+    readonly parkThresholdMs: number;
+    readonly models: ReadonlyArray<string>;
+  }>;
+  /**
+   * #686 — optional clock for park-vs-relay threshold tests (within T / beyond T).
+   * Production leaves this unset (wall clock).
+   */
+  readonly now?: () => Date;
 }
 
 /**

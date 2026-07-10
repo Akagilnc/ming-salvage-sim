@@ -180,6 +180,38 @@ export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
   }
 }
 
+/** #686 / ADR 0124 — billing pool → executable provider channel. */
+export type BillingPoolDispatchId =
+  | "grok-build"
+  | "cursor"
+  | "zai"
+  | "codex-5h";
+
+export const POOL_DISPATCH_BINDINGS: Readonly<
+  Record<BillingPoolDispatchId, ModelProviderFactory>
+> = {
+  "grok-build": "pi",
+  cursor: "cursor",
+  zai: "opencode",
+  "codex-5h": "codex",
+};
+
+export function isBillingPoolDispatchId(
+  value: string | undefined,
+): value is BillingPoolDispatchId {
+  return value === "grok-build" || value === "cursor" || value === "zai" || value === "codex-5h";
+}
+
+/** Resolve a pool-specific provider without changing the roster model id. */
+export function resolveModelSlugForPool(
+  slug: string,
+  pool?: BillingPoolDispatchId,
+): ModelSlugRegistryEntry {
+  const base = resolveModelSlug(slug);
+  if (pool === undefined || POOL_DISPATCH_BINDINGS[pool] === base.provider) return base;
+  return { provider: POOL_DISPATCH_BINDINGS[pool], model: base.model } as ModelSlugRegistryEntry;
+}
+
 export function modelFamilyForSlug(slug: string): ModelFamily {
   const entry = MODEL_SLUG_REGISTRY[slug];
   if (entry !== undefined) {
@@ -218,8 +250,9 @@ export function modelIdForSlug(slug: string): string {
 export function agentForSlug(
   slug: string,
   codexEffort?: NonNullable<sc.CodexOptions["effort"]>,
+  pool?: BillingPoolDispatchId,
 ): sc.AgentProvider {
-  const entry = resolveModelSlug(slug);
+  const entry = resolveModelSlugForPool(slug, pool);
   const options =
     entry.provider === "codex" && codexEffort !== undefined
       ? { ...(entry.options ?? {}), effort: codexEffort }

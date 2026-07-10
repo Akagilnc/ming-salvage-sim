@@ -12,10 +12,11 @@
  * Probes are STUBBED — no real network/CLI in unit tests.
  */
 
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import {
   RealBackend,
   type AgentSandboxRunOptions,
@@ -426,6 +427,8 @@ describe("#683 isAgentIdleTimeoutError", () => {
 });
 
 describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor path)", () => {
+  const testHome = mkdtempSync(join(tmpdir(), "orchestrator-auth-683-"));
+  afterAll(() => rmSync(testHome, { recursive: true, force: true }));
   /**
    * Fallback coverage only: runStep → runFreshAgentStep → runAgentSandbox →
    * post-sc.run AgentIdleTimeoutError + probe. Live production idle disposition
@@ -536,6 +539,7 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
       imageName: "ming-worker:test",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
+      home: testHome,
     });
   }
 
@@ -766,7 +770,21 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
 
   it("429 → run status escalate (parked), NOT error abort; ledger has quota_wait_for_reset", async () => {
     const backend = new QuotaParkBackend();
-    const result = await runOrchestrator({ issueNumber: 683, backend });
+    // #686: pin no-live-baton pools so this #683 park regression stays park-only
+    // (default pool table would otherwise relay beyond T).
+    const result = await runOrchestrator({
+      issueNumber: 683,
+      backend,
+      relayPools: [
+        {
+          id: "zai",
+          status: "limited",
+          resetAt: new Date("2026-07-08T16:10:00.000Z"),
+          parkThresholdMs: 30 * 60 * 1000,
+          models: ["grok-4.5"],
+        },
+      ],
+    });
 
     expect(result.status).toBe("escalate");
     expect(result.status).not.toBe("error");
@@ -983,7 +1001,19 @@ describe("#683 S9 online-review leg: 429 parks + re-feed re-fires verify (not em
 
   it("S9 429 → escalate park with quota_wait_for_reset (not errorTermination)", async () => {
     const backend = new S9QuotaParkBackend(priorThroughShip());
-    const result = await runOrchestrator({ issueNumber: 683, backend });
+    const result = await runOrchestrator({
+      issueNumber: 683,
+      backend,
+      relayPools: [
+        {
+          id: "zai",
+          status: "limited",
+          resetAt: new Date("2026-07-10T16:10:00.000Z"),
+          parkThresholdMs: 30 * 60 * 1000,
+          models: ["grok-4.5"],
+        },
+      ],
+    });
 
     expect(result.status).toBe("escalate");
     expect(result.status).not.toBe("error");
