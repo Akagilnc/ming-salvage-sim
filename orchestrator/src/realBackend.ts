@@ -74,6 +74,10 @@ import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
 import { findingIdentityKey } from "./findings.js";
 import {
+  attachSanitizedFindingFamilies,
+  normalizeFindingFamiliesWireAliases,
+} from "./findingFamilies.js";
+import {
   sourceAuthFailureStopSummary,
   type StopSummary,
 } from "./stopSummary.js";
@@ -624,6 +628,7 @@ export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
 export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
 /** S5 coder-fix worker path to runner-owned blocking findings JSON. */
 export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
+export const SANDBOX_FIX_FOCUS_PATH_ENV = "ORCHESTRATOR_FIX_FOCUS_PATH";
 /** S9/S10 online-review landing file path (bot snapshot + ship metadata). */
 export const SANDBOX_ONLINE_REVIEW_PATH_ENV = "ORCHESTRATOR_ONLINE_REVIEW_PATH";
 /** Worker path to the runner-owned machine outcome sidecar JSON. */
@@ -1951,20 +1956,29 @@ const onlineReviewThreadReplySchema = z
   })
   .strict();
 
-export const verifyOutputSchema = z
-  .object({
-    converged: z.boolean(),
-    findingDispositions: z.array(onlineReviewFindingDispositionSchema).optional(),
-    fixMarkedFindingIdentityKeys: z.array(z.string()).optional(),
-    threadReplies: z.array(onlineReviewThreadReplySchema).optional(),
-    threadsToResolve: z.array(z.string()).optional(),
-    deferredIssueUrls: z.array(z.string()).optional(),
-    terminalState: z
-      .enum(["mergeable", "round_budget_exhausted", "decision_gate_raised"])
-      .optional(),
-    isRecheck: z.boolean().optional(),
-  })
-  .strict();
+/** Verify wire schema — normalizes `finding_families` before strict key check. */
+export const verifyOutputSchema = z.preprocess(
+  normalizeFindingFamiliesWireAliases,
+  z
+    .object({
+      converged: z.boolean(),
+      findingDispositions: z
+        .array(onlineReviewFindingDispositionSchema)
+        .optional(),
+      fixMarkedFindingIdentityKeys: z.array(z.string()).optional(),
+      threadReplies: z.array(onlineReviewThreadReplySchema).optional(),
+      threadsToResolve: z.array(z.string()).optional(),
+      deferredIssueUrls: z.array(z.string()).optional(),
+      terminalState: z
+        .enum(["mergeable", "round_budget_exhausted", "decision_gate_raised"])
+        .optional(),
+      isRecheck: z.boolean().optional(),
+      // #711: malformed families degrade to no brief — never block the verify gate.
+      // Accepts camelCase + snake_case top-level via normalizeFindingFamiliesWireAliases.
+      findingFamilies: z.unknown().optional(),
+    })
+    .strict(),
+);
 export const fixerOutputSchema = z
   .object({
     committed: z.boolean(),
@@ -2666,6 +2680,9 @@ export class RealBackend implements Backend {
       env[SANDBOX_FIX_FINDINGS_PATH_ENV] =
         options.fixFindingsLanding.sandboxPath;
     }
+    if (options?.fixFocusLanding !== undefined) {
+      env[SANDBOX_FIX_FOCUS_PATH_ENV] = options.fixFocusLanding.sandboxPath;
+    }
     if (options?.onlineReviewLanding !== undefined) {
       env[SANDBOX_ONLINE_REVIEW_PATH_ENV] =
         options.onlineReviewLanding.sandboxPath;
@@ -2684,6 +2701,13 @@ export class RealBackend implements Backend {
       mounts.push({
         hostPath: options.fixFindingsLanding.path,
         sandboxPath: options.fixFindingsLanding.sandboxPath,
+        readonly: true,
+      });
+    }
+    if (options?.fixFocusLanding !== undefined) {
+      mounts.push({
+        hostPath: options.fixFocusLanding.path,
+        sandboxPath: options.fixFocusLanding.sandboxPath,
         readonly: true,
       });
     }
@@ -2857,22 +2881,27 @@ export class RealBackend implements Backend {
       const v = verifyOutputSchema.parse(raw);
       const candidate: VerifyResult = {
         kind: "verify",
-        converged: v.converged,
-        ...(v.findingDispositions !== undefined
-          ? { findingDispositions: v.findingDispositions }
-          : {}),
-        ...(v.fixMarkedFindingIdentityKeys !== undefined
-          ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
-          : {}),
-        ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
-        ...(v.threadsToResolve !== undefined
-          ? { threadsToResolve: v.threadsToResolve }
-          : {}),
-        ...(v.deferredIssueUrls !== undefined
-          ? { deferredIssueUrls: v.deferredIssueUrls }
-          : {}),
-        ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
-        ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
+        ...attachSanitizedFindingFamilies(
+          {
+            converged: v.converged,
+            ...(v.findingDispositions !== undefined
+              ? { findingDispositions: v.findingDispositions }
+              : {}),
+            ...(v.fixMarkedFindingIdentityKeys !== undefined
+              ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
+              : {}),
+            ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
+            ...(v.threadsToResolve !== undefined
+              ? { threadsToResolve: v.threadsToResolve }
+              : {}),
+            ...(v.deferredIssueUrls !== undefined
+              ? { deferredIssueUrls: v.deferredIssueUrls }
+              : {}),
+            ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
+            ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
+          },
+          v.findingFamilies,
+        ),
       };
       if (!isValidVerifyResult(candidate)) {
         const err = new Error(

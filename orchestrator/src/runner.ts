@@ -82,6 +82,7 @@ import {
   slicePrMergedRecordFromLedger,
   type PrMergedTerminalRecord,
 } from "./autoMerge.js";
+import { priorOnlineReviewFindingsFromLedger } from "./findingFamilies.js";
 import { shouldReclaimSliceHost } from "./hostReclaim.js";
 import { buildCleanupLanding } from "./postMergeCleanup.js";
 import {
@@ -177,6 +178,14 @@ import type {
   WorkerLandingPayload,
   WorktreeHandle,
 } from "./types.js";
+
+/** Merge resume history with the display-seeded ledger without replaying shared rows. */
+export function mergeResumeLedgerHistory(
+  resumeHistoryLedger: ReadonlyArray<LedgerEntry>,
+  ledger: ReadonlyArray<LedgerEntry>,
+): ReadonlyArray<LedgerEntry> {
+  return [...new Set([...resumeHistoryLedger, ...ledger])];
+}
 
 // ─── #256 seam-extension normalisation ───────────────────────────────────────
 //
@@ -285,6 +294,8 @@ function buildPersistentEntry(opts: {
   repairMovementPaths?: ReadonlyArray<string>;
   /** Terminal stop reason summary (#450). */
   stopSummary?: StopSummary;
+  /** S9 verify rows are keyed by their logical online-review round. */
+  onlineReviewRound?: number;
 }): PersistentLedgerEntry {
   let entry: PersistentLedgerEntry = {
     step: opts.step,
@@ -313,6 +324,9 @@ function buildPersistentEntry(opts: {
   }
   if (opts.stopSummary !== undefined) {
     entry = { ...entry, stopSummary: opts.stopSummary };
+  }
+  if (opts.onlineReviewRound !== undefined) {
+    entry = { ...entry, onlineReviewRound: opts.onlineReviewRound };
   }
   return entry;
 }
@@ -2114,6 +2128,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const noProgressByFindingIdentityKey = new Map<string, number>();
   let lastShipOutput: ShipResult | undefined;
   let onlineReviewRound = 1;
+  // Resume planning keeps a display-seeded ledger trimmed at S7. Preserve a
+  // separate full ledger for S9's cross-round history extraction.
+  let resumeHistoryLedger: ReadonlyArray<LedgerEntry> = [];
   let onlineReviewLanding: WorkerLandingPayload | undefined;
   let lastOnlineReviewFixCommitSha: string | undefined;
   let lastOnlineReviewRoundTrigger: RoundTrigger | undefined;
@@ -2561,6 +2578,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       findingDispositions,
       repairMovementPaths,
       stopSummary,
+      ...(s === "S9" ? { onlineReviewRound } : {}),
     });
 
     const mirrorInMemoryLedgerPersistedFields = (
@@ -2912,6 +2930,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         worktree,
         backend,
       )) ?? planResume(resumeLedger);
+    resumeHistoryLedger = resumeLedger;
 
     // Seed the in-memory ledger with prior progress so committed work is
     // preserved and the prior steps are NOT re-run.
@@ -3786,11 +3805,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             if (stateDir !== undefined) {
               writeOnlineReviewSnapshotFile(stateDir, snapshot);
             }
-            onlineReviewLanding = buildOnlineReviewLanding(
-              snapshot,
-              lastShipOutput,
+            const priorRoundFindings = priorOnlineReviewFindingsFromLedger(
+              mergeResumeLedgerHistory(resumeHistoryLedger, ledger),
               onlineReviewRound,
             );
+            onlineReviewLanding = {
+              ...buildOnlineReviewLanding(
+                snapshot,
+                lastShipOutput,
+                onlineReviewRound,
+              ),
+              ...(priorRoundFindings.length > 0
+                ? { priorRoundFindings }
+                : {}),
+            };
           }
           const reviewCtx = {
             worktree,
@@ -3870,6 +3898,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ...onlineReviewLanding,
                   fixMarkedFindingIdentityKeys:
                     onlineReviewLanding.fixMarkedFindingIdentityKeys ?? [],
+                  ...(onlineReviewLanding.findingFamilies !== undefined
+                    ? { findingFamilies: onlineReviewLanding.findingFamilies }
+                    : {}),
                 }
               : onlineReviewLanding;
           const convergedHeadForCleanup =
@@ -4181,6 +4212,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ledger.push({
                   step: "S9",
                   output: verifyOutput,
+                  onlineReviewRound,
                   ...(result.sessionId !== undefined
                     ? { sessionId: result.sessionId }
                     : {}),
@@ -4312,6 +4344,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               onlineReviewLanding = {
                 ...onlineReviewLanding,
                 fixMarkedFindingIdentityKeys: fixKeys,
+                ...(verifyOutput.findingFamilies !== undefined
+                  ? { findingFamilies: verifyOutput.findingFamilies }
+                  : {}),
               };
             }
             // Same-type as stage (R8 Gemini): CI red + no bot fix marks → park with
@@ -4330,6 +4365,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ledger.push({
                 step: "S9",
                 output: verifyOutput,
+                onlineReviewRound,
                 ...(result.sessionId !== undefined
                   ? { sessionId: result.sessionId }
                   : {}),
@@ -4643,6 +4679,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     ledger.push({
       step,
       ...(output !== undefined ? { output } : {}),
+      ...(step === "S9" ? { onlineReviewRound } : {}),
       // #604 correctness r5 (E2): carry the surfaced per-step session id on the
       // in-memory entry too. The persisted ledger (emitLedger below) already records
       // it, but RunResult.stepLedger (the in-memory ledger) previously dropped it —

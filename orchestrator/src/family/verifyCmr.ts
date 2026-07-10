@@ -97,6 +97,11 @@ import {
   waitForBotQuiescence,
   type OnlineReviewLoopStageResult,
 } from "../onlineReviewLoop.js";
+import {
+  mergePriorRoundFindings,
+  priorCmrFindingsFromFamilyLedger,
+  priorOnlineReviewFindingsFromFamilyLedger,
+} from "../findingFamilies.js";
 import { applyVerifySideEffects } from "../onlineReviewSideEffects.js";
 import {
   isValidCleanupResult,
@@ -128,8 +133,8 @@ import type {
   DispatchContext,
   EscalationAnswerPayload,
   FindingDisposition,
+  FindingFamily,
   ShipResult,
-  StepOutput,
   VerifyResult,
   WorkerLandingPayload,
   WorkerResult,
@@ -1055,6 +1060,7 @@ async function runCmrCoderFix(input: {
   readonly familyBase: string;
   readonly classification: CmrEnvelope;
   readonly blockingFindingIdentityKeys: readonly string[];
+  readonly findingFamilies?: ReadonlyArray<FindingFamily>;
   readonly familyHeadBefore?: string;
   readonly escalationAnswer?: EscalationAnswerPayload;
   readonly familyIssue?: number;
@@ -1066,6 +1072,7 @@ async function runCmrCoderFix(input: {
     familyBase,
     classification,
     blockingFindingIdentityKeys,
+    findingFamilies,
     familyHeadBefore,
     escalationAnswer,
     familyIssue,
@@ -1098,7 +1105,10 @@ async function runCmrCoderFix(input: {
         ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
         ...(familyIssue !== undefined ? { familyIssue } : {}),
       },
-      { blockingFindings: classification.blocking },
+      {
+        blockingFindings: classification.blocking,
+        ...(findingFamilies !== undefined ? { findingFamilies } : {}),
+      },
     );
     const familyHeadAfter = await readPostCmrFamilyHead(
       familyBackend,
@@ -1623,6 +1633,9 @@ export async function runFamilyOnlineReviewLoop(input: {
     };
   }
   let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
+  /** #711: last fixer landing's fix-marked keys for durable family ledger prior rounds. */
+  let lastFixMarkedFindingIdentityKeys: ReadonlyArray<string> = [];
+  let lastFixerOnlineReviewRound = loopState.round;
 
   try {
     return await runOnlineReviewLoopStage(
@@ -1749,6 +1762,9 @@ export async function runFamilyOnlineReviewLoop(input: {
     },
     dispatchFixer: async (landing: WorkerLandingPayload) => {
       const round = landing.onlineReviewRound ?? baseCtx.onlineReviewRound ?? 1;
+      lastFixMarkedFindingIdentityKeys =
+        landing.fixMarkedFindingIdentityKeys ?? [];
+      lastFixerOnlineReviewRound = round;
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
         fixerWorkerSpec(input.resolvedRoute),
@@ -1854,6 +1870,10 @@ export async function runFamilyOnlineReviewLoop(input: {
       await recordOnlineReviewFixCommitted(input.familyBackend, {
         familyHeadAfter: sha,
         pr: prUrl,
+        onlineReviewRound: lastFixerOnlineReviewRound,
+        ...(lastFixMarkedFindingIdentityKeys.length > 0
+          ? { fixMarkedFindingIdentityKeys: lastFixMarkedFindingIdentityKeys }
+          : {}),
       });
       return sha;
     },
@@ -1861,6 +1881,23 @@ export async function runFamilyOnlineReviewLoop(input: {
       {
         initialRound: loopState.round,
         initialFixCommitSha: loopState.lastFixSha,
+        enrichVerifyLanding: async (landing, round) => {
+          // Merge ledger history with in-process accumulation — never either/or.
+          // After mid-loop resume, in-process only has post-resume rounds; a
+          // non-empty array must not skip ledger enrichment or r3 loses r1.
+          const ledger = await input.familyBackend.readFamilyLedger();
+          const fromLedger = priorOnlineReviewFindingsFromFamilyLedger(
+            ledger,
+            round,
+          );
+          const priorRoundFindings = mergePriorRoundFindings(
+            fromLedger,
+            landing.priorRoundFindings ?? [],
+          );
+          return priorRoundFindings.length > 0
+            ? { ...landing, priorRoundFindings }
+            : landing;
+        },
       },
     );
   } catch (err) {
@@ -2034,6 +2071,8 @@ async function runIntegratedCmrPass(input: {
     };
   }
   const spec = cmrWorkerSpec("fresh", pass, resolvedRoute);
+  const familyLedger = await familyBackend.readFamilyLedger();
+  const priorRoundFindings = priorCmrFindingsFromFamilyLedger(familyLedger, pass);
   const dispatchCtx: DispatchContext = {
     familyBase,
     cmrPass: pass,
@@ -2045,6 +2084,7 @@ async function runIntegratedCmrPass(input: {
     ...(priorCmrFindingIdentityKeys !== undefined
       ? { priorCmrFindingIdentityKeys }
       : {}),
+    ...(priorRoundFindings.length > 0 ? { priorRoundFindings } : {}),
   };
   // #598: one "logical cmr attempt" = a fresh dispatch + the same-worker
   // `rewriteOutcomeProtocolFailure` counter (OUTCOME_REWRITE_RETRY_CAP). When that
@@ -2453,6 +2493,9 @@ async function runIntegratedCmrPass(input: {
           familyBase,
           classification: cmrFindingClassification,
           blockingFindingIdentityKeys,
+          ...(cmrResult.output.findingFamilies !== undefined
+            ? { findingFamilies: cmrResult.output.findingFamilies }
+            : {}),
           familyHeadBefore: postWorkerFamilyHead,
           escalationAnswer,
           familyIssue,
