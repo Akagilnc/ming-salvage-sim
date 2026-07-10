@@ -882,7 +882,7 @@ describe("realBackend promptsDirError (F4)", () => {
     expect(promptsDirError(abs, true, true, [])).toBeUndefined();
   });
 
-  it("REFERENCED_PROMPT_FILES covers every dispatched worker prompt incl. ship.md (integ-cmr int-r1 C-3)", () => {
+  it("REFERENCED_PROMPT_FILES covers every dispatched worker prompt incl. ship.md + review-loop (integ-cmr int-r1 C-3 / #739)", () => {
     const files = [...REFERENCED_PROMPT_FILES];
     expect(new Set(files)).toEqual(
       new Set([
@@ -890,12 +890,17 @@ describe("realBackend promptsDirError (F4)", () => {
         "coder_fix.md",
         "reviewer_review.md",
         "ship.md",
+        "verify.md",
+        "fixer.md",
+        "docRelease.md",
         "integrated_cmr_completeness.md",
         "integrated_cmr_correctness.md",
       ]),
     );
     // No duplicates.
     expect(new Set(files).size).toBe(files.length);
+    // #739: S12 real worker must fail-fast at construction if prompt missing.
+    expect(REFERENCED_PROMPT_FILES).toContain("docRelease.md");
   });
 
   it("prompt inventory is route-independent and does not call shipWorkerSpec during module setup", () => {
@@ -943,15 +948,29 @@ describe("realBackend soulsDirError (#372)", () => {
     expect(err).not.toMatch(/promptFile/); // distinct from prompts error
   });
 
-  it("accepts an absolute existing dir with zero missing (all 8 present)", () => {
+  it("accepts an absolute existing dir with zero missing (full souls set present)", () => {
     expect(soulsDirError(abs, true, true, [])).toBeUndefined();
   });
 
-  it("REQUIRED_SOUL_FILES lists exactly the 8 under image/souls", () => {
-    expect(new Set(REQUIRED_SOUL_FILES).size).toBe(8);
+  it("REQUIRED_SOUL_FILES lists every file under image/souls incl. docRelease (#739)", () => {
+    // Source of truth = orchestrator/image/souls/ (no stale hard-coded count alone).
+    expect(new Set(REQUIRED_SOUL_FILES).size).toBe(11);
     expect(REQUIRED_SOUL_FILES).toContain("output_protocol.md");
     expect(REQUIRED_SOUL_FILES).toContain("coder.md");
     expect(REQUIRED_SOUL_FILES).toContain("ship.md");
+    // #735 added S12 soul; #739 fail-fast inventory must list it (plus verify/fixer).
+    expect(REQUIRED_SOUL_FILES).toContain("docRelease.md");
+    expect(REQUIRED_SOUL_FILES).toContain("verify.md");
+    expect(REQUIRED_SOUL_FILES).toContain("fixer.md");
+    // No duplicates.
+    expect(new Set(REQUIRED_SOUL_FILES).size).toBe(REQUIRED_SOUL_FILES.length);
+  });
+
+  it("soulsDirError reports missing docRelease.md by name (#739 fail-fast)", () => {
+    const err = soulsDirError(abs, true, true, ["docRelease.md"]);
+    expect(err).toMatch(/missing required soul file\(s\)/);
+    expect(err).toMatch(/docRelease\.md/);
+    expect(err).toMatch(/All of \[/);
   });
 });
 
