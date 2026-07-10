@@ -198,6 +198,38 @@ describe("#745 Close Guard arm — success draft with open checkboxes", () => {
     }
   });
 
+  it("rejects a success draft with plus-bullet open items (+ [ ])", () => {
+    const run = runGuard(
+      baseSuccessDraft({
+        findings: [
+          {
+            severity: "low",
+            category: "clarity",
+            claim_quote: "plus bullet open item",
+            location: "docs/handoff.md",
+            suggested_fix: "+ [ ] still open via plus bullet",
+            action: "wont_fix",
+            disposition: {
+              kind: "accepted_suppressed",
+              source: "issue #745",
+              scope: "this slice only",
+              reason: "plus bullets count as open checklist items",
+              boundedReopen: "reopen if plus-bullet form is no longer recognized",
+            },
+          },
+        ],
+      }),
+    );
+
+    try {
+      expect(run.status).toBe(1);
+      expect(run.stdout).not.toContain("CMR_STEP_COMPLETE");
+      expect(run.sidecar).toBe("sentinel\n");
+    } finally {
+      rmSync(run.dir, { recursive: true, force: true });
+    }
+  });
+
   it("accepts a success draft whose checklist items are all closed ([x] / [~])", () => {
     const draft = baseSuccessDraft({
       findings: [
