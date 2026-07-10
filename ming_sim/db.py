@@ -557,7 +557,9 @@ class GameDB:
                 power_id TEXT NOT NULL DEFAULT 'ming',
                 location TEXT NOT NULL DEFAULT '',
                 transit_to TEXT NOT NULL DEFAULT '',
-                transit_start_turn INTEGER NOT NULL DEFAULT 0
+                transit_start_turn INTEGER NOT NULL DEFAULT 0,
+                identity INTEGER NOT NULL DEFAULT 50,
+                seed_guilt TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS character_offices (
@@ -1235,6 +1237,8 @@ class GameDB:
         self.ensure_column("characters", "court_role", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "summary", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "aliases", "TEXT NOT NULL DEFAULT '[]'")
+        self.ensure_column("characters", "identity", "INTEGER NOT NULL DEFAULT 50")
+        self.ensure_column("characters", "seed_guilt", "TEXT NOT NULL DEFAULT ''")
         self._backfill_person_core_character_static_fields()
         self._backfill_bandit_power_split()
         self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
@@ -2021,10 +2025,10 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO characters
-                    (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style,
+                    (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
                      birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
                      status, status_reason, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         character.name,
@@ -2038,6 +2042,8 @@ class GameDB:
                         character.integrity,
                         character.courage,
                         character.style,
+                        character.identity,
+                        character.seed_guilt,
                         character.birth_year,
                         character.historical_death_year,
                         character.historical_death_month,
@@ -4158,10 +4164,10 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO characters
-            (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style,
+            (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
              birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
              status, status_reason, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 character.name,
@@ -4175,6 +4181,8 @@ class GameDB:
                 character.integrity,
                 character.courage,
                 character.style,
+                character.identity,
+                character.seed_guilt,
                 character.birth_year,
                 character.historical_death_year,
                 character.historical_death_month,
