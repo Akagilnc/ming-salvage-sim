@@ -14,6 +14,11 @@
  * Unobtainable fields are `null` — never block the worker path.
  * Telemetry I/O is best-effort: callers must not let throws escape into
  * dispatch control flow.
+ *
+ * Time axes on a collect row (`dispatched_at` lives on the paired dispatch
+ * row): `first_output_at` is **first observed log growth at poll
+ * granularity**, not true first-byte / TTFB. See field JSDoc and
+ * `orchestrator/README.md` § first_output_at.
  */
 
 import {
@@ -151,6 +156,22 @@ export interface TelemetryDispatchRecord extends TelemetryRecordBase {
 export interface TelemetryCollectRecord extends TelemetryRecordBase {
   readonly phase: "collect";
   readonly legId: string;
+  /**
+   * ISO wall-clock when the orchestrator first **observed** worker log growth
+   * past the post-spawn marker. **Not** true first-byte / TTFB.
+   *
+   * Precision boundary (poll granularity):
+   * - Under a long-running worker the idle monitor polls the log; the stamp is
+   *   the wall-clock of the poll that first sees size growth past baseline.
+   *   Error upper bound ≈ `pollIntervalMs` (default 250ms in `dispatchWorker`).
+   * - Quick-exit: if the child exits before any poll observes growth, a
+   *   one-shot post-exit reconcile re-read stamps this at that moment
+   *   (≈ process exit time) so the field is not left null when bytes exist.
+   * - `null` only when no post-marker growth was observed by collect time.
+   *
+   * Monotonic with the paired dispatch row (when non-null):
+   * `dispatched_at ≤ first_output_at ≤ completed_at`.
+   */
   readonly first_output_at: string | null;
   readonly completed_at: string;
   readonly terminal: TelemetryTerminal;
@@ -562,6 +583,10 @@ export interface BuildCollectStampInput {
   readonly tokens: TelemetryTokenUsage | null;
   readonly sessionId: string | null;
   readonly logPath: string | null;
+  /**
+   * First-observed log growth timestamp (poll granularity — not true TTFB).
+   * See {@link TelemetryCollectRecord.first_output_at}.
+   */
   readonly firstOutputAt: string | null;
   readonly now?: () => string;
 }
