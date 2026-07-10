@@ -107,7 +107,8 @@ def test_minister_memorial_tools_show_commitment_fields_and_progress(game):
 
     for text in (listing, detail):
         assert "commitment_kind=until_stop" in text
-        assert 'stop_condition={"character.毛文龙.loyalty":">=65"}' in text
+        assert "stop_condition=毛文龙忠诚已达较高水准" in text
+        assert ">=65" not in text
         assert f"end_turn={state.turn + 3}" in text
         assert "progress=已履行0月" in text
 
@@ -252,6 +253,26 @@ def test_minister_tools_characterize_region_army_and_issue_progress(game):
     assert any(word in region for word in ("民心偏弱", "民心堪忧", "动乱升高", "动乱已炽"))
     assert any(word in army for word in ("火器：短缺", "火器：尚可", "火器：精良"))
     assert "进展" in memorial and "/100" not in memorial
+
+
+def test_minister_tools_characterize_building_and_metric_outputs(game):
+    db, _state, content = game
+    db.conn.execute(
+        "UPDATE buildings SET level=4, condition=22, risk=91, output_metric='民心', output_amount=37"
+    )
+    db.conn.commit()
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
+
+    listing = tools["list_buildings"]()
+    building_name = db.conn.execute("SELECT name FROM buildings LIMIT 1").fetchone()["name"]
+    detail = tools["inspect_building"](building_name)
+
+    for rendered in (listing, detail):
+        assert "民心37" not in rendered
+        assert "等级4" not in rendered and "完好22" not in rendered and "风险91" not in rendered
+        assert "民心" in rendered
+        assert any(word in rendered for word in ("宏整", "失修", "极高", "有显著裨益"))
 
 
 def test_minister_world_prompt_hides_abstract_scales(game):
