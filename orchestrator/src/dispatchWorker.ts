@@ -289,6 +289,13 @@ function writeFixFindingsLandingFile(
         // ADR 0062) — never from the runner's thin DispatchContext.
         blockingFindings: landing?.blockingFindings ?? [],
         blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
+        ...(ctx.preexistingAssertionTouched === true
+          ? { preexistingAssertionTouched: true }
+          : {}),
+        ...(ctx.refusedFindingIdentityKeys !== undefined &&
+        ctx.refusedFindingIdentityKeys.length > 0
+          ? { refusedFindingIdentityKeys: ctx.refusedFindingIdentityKeys }
+          : {}),
         ...(ctx.escalationAnswer !== undefined
           ? { escalationAnswer: ctx.escalationAnswer }
           : {}),

@@ -21,6 +21,11 @@ Before emitting your terminal verdict, read
 2. Invoke the **`ak-cmr-correctness`** skill scoped to that diff. Review real
    defects, broken invariants, spec-to-implementation contradictions, missing
    guards, security issues, and cross-slice seams.
+   **Ratified-assertion hunt:** trace every modified or deleted preexisting test
+   assertion to its issue AC, ADR, or prior CMR ruling. If that authority remains
+   and the change conflicts, report a blocking correctness finding (P1 minimum),
+   never a suppression. A `preexistingAssertionTouched` landing marker is a
+   mandatory item in this hunt, not a runner content decision.
 3. Stop at findings/outcome. If you find a blocking correctness defect, report
    structured findings, raw evidence paths, and relevant test logs, then return
    control to the runner. You must not repair the defect, edit tracked files as a

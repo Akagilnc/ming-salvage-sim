@@ -37,6 +37,10 @@
 import { execFileSync } from "node:child_process";
 
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
+import {
+  reviewFixAssertionSignal,
+  reviewFixDecisionGate,
+} from "./reviewFixAssertionGate.js";
 import { route } from "./route.js";
 import {
   adjudicatePriorClaimedFixedFindings,
@@ -988,6 +992,101 @@ function latestCoderRepair(ledger: ReadonlyArray<LedgerEntry>): LatestCoderRepai
     }
   }
   return { repairMovementPaths: [] };
+}
+
+/**
+ * #677: rebuild S5→S6 reverify locals from the persisted S5 ledger row.
+ *
+ * `preexistingAssertionTouchedForReverify` and
+ * `refusedFindingIdentityKeysForReverify` are process-local; a crash between
+ * S5 completing and S6 running would otherwise drop both. Prefer rebuild over
+ * new durable fields: refuse keys already live on the S5 coder output, and the
+ * assertion signal is recomputed from ledger branchHEADs + worktree git
+ * (same shape as #743 authorization rebuild / S4 adjudication replay).
+ */
+interface S5ReverifySignals {
+  readonly preexistingAssertionTouched: boolean;
+  readonly refusedFindingIdentityKeys: readonly string[];
+}
+
+function ledgerEntryBranchHead(entry: LedgerEntry): string | undefined {
+  const head = (entry as PersistentLedgerEntry).branchHEAD;
+  return isLikelyGitSha(head) ? head : undefined;
+}
+
+function refusedKeysFromCoderOutput(
+  output: Extract<StepOutput, { kind: "coder" }>,
+): readonly string[] {
+  const records = output.refuseRecords ?? [];
+  if (records.length > 0) {
+    return reviewFixDecisionGate({ records })?.refusedFindingIdentityKeys ?? [];
+  }
+  return output.refusedFindingIdentityKeys ?? [];
+}
+
+export function rebuildS5ReverifySignalsFromLedger(
+  ledger: ReadonlyArray<LedgerEntry>,
+  worktree: WorktreeHandle | undefined,
+): S5ReverifySignals {
+  let s5Index = -1;
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (isBookkeepingEntry(entry)) continue;
+    if (entry.step === "S5" && entry.output?.kind === "coder") {
+      s5Index = i;
+      break;
+    }
+  }
+  if (s5Index < 0) {
+    return {
+      preexistingAssertionTouched: false,
+      refusedFindingIdentityKeys: [],
+    };
+  }
+
+  const s5 = ledger[s5Index]!;
+  const output = s5.output as Extract<StepOutput, { kind: "coder" }>;
+  const refusedFindingIdentityKeys = refusedKeysFromCoderOutput(output);
+
+  let preexistingAssertionTouched = false;
+  if (worktree !== undefined) {
+    const afterFix = ledgerEntryBranchHead(s5);
+    let beforeFix: string | undefined;
+    for (let j = s5Index - 1; j >= 0; j--) {
+      const prev = ledger[j]!;
+      if (isBookkeepingEntry(prev)) continue;
+      const head = ledgerEntryBranchHead(prev);
+      if (head !== undefined) {
+        beforeFix = head;
+        break;
+      }
+    }
+    if (
+      afterFix !== undefined &&
+      beforeFix !== undefined &&
+      beforeFix !== afterFix
+    ) {
+      try {
+        preexistingAssertionTouched = reviewFixAssertionSignal({
+          worktreePath: worktree.path,
+          sliceBase: worktree.base,
+          beforeFix,
+          afterFix,
+        });
+      } catch {
+        // Live S5 remains fail-closed. Resume rebuild must not abort an
+        // otherwise-recoverable plan when HEADs are not locally resolvable
+        // (protocol-failure recovery fixtures / missing worktree). Refuse
+        // keys still restore from the S5 coder output below.
+        preexistingAssertionTouched = false;
+      }
+    }
+  }
+
+  return {
+    preexistingAssertionTouched,
+    refusedFindingIdentityKeys,
+  };
 }
 
 interface ContinueFixingRepair {
@@ -2273,6 +2372,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastReviewerStepId: StepId | undefined;
   let lastCoderRepairEvidence: RepairEvidence | undefined;
   let lastCoderActualRepairPaths: ReadonlyArray<string> = [];
+  let preexistingAssertionTouchedForReverify = false;
+  let refusedFindingIdentityKeysForReverify: readonly string[] = [];
   const noProgressByFindingIdentityKey = new Map<string, number>();
   let lastShipOutput: ShipResult | undefined;
   let onlineReviewRound = 1;
@@ -3305,6 +3406,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     lastCoderRepairEvidence = latestRepair.repairEvidence;
     lastCoderActualRepairPaths = latestRepair.repairMovementPaths;
 
+    // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
+    // the assertion-touch signal live only in process memory during a live run;
+    // resume recomputes them from the persisted S5 coder row + ledger HEADs.
+    const rebuilt = rebuildS5ReverifySignalsFromLedger(
+      plan.priorLedger,
+      worktree,
+    );
+    preexistingAssertionTouchedForReverify =
+      rebuilt.preexistingAssertionTouched;
+    refusedFindingIdentityKeysForReverify =
+      rebuilt.refusedFindingIdentityKeys;
+
     if (
       (plan.resumeStep === "S9" || plan.resumeStep === "S10") &&
       lastShipOutput !== undefined &&
@@ -3641,12 +3754,34 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       blockingFindingIdentityKeys:
                         pendingBlockingFindingIdentityKeys,
                       blockingFindingCount: pendingBlockingFindings.length,
+                      ...(step === "S6" && preexistingAssertionTouchedForReverify
+                        ? { preexistingAssertionTouched: true }
+                        : {}),
+                      ...(step === "S6" &&
+                      refusedFindingIdentityKeysForReverify.length > 0
+                        ? {
+                            refusedFindingIdentityKeys:
+                              refusedFindingIdentityKeysForReverify,
+                          }
+                        : {}),
                     }
                   : {}),
               };
               const landingPayload =
                 step === "S5" || step === "S6"
-                  ? { blockingFindings: pendingBlockingFindings }
+                  ? {
+                      blockingFindings: pendingBlockingFindings,
+                      ...(step === "S6" && preexistingAssertionTouchedForReverify
+                        ? { preexistingAssertionTouched: true }
+                        : {}),
+                      ...(step === "S6" &&
+                      refusedFindingIdentityKeysForReverify.length > 0
+                        ? {
+                            refusedFindingIdentityKeys:
+                              refusedFindingIdentityKeysForReverify,
+                          }
+                        : {}),
+                    }
                   : undefined;
               // #598: the generic mechanical retry re-dispatches a process-level
               // crash (failed/malformed/outcome_protocol_failure/throw) with a fresh
@@ -3860,6 +3995,37 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             worktree,
             coderHeadBeforeStep,
           );
+          if (step === "S5" && coderHeadBeforeStep !== undefined) {
+            try {
+              const afterFix = gitHead(worktree);
+              if (afterFix === undefined) {
+                throw new Error(
+                  "reviewFixAssertionSignal: unable to read HEAD after S5 (fail-closed)",
+                );
+              }
+              preexistingAssertionTouchedForReverify = reviewFixAssertionSignal({
+                worktreePath: worktree.path,
+                sliceBase: worktree.base,
+                beforeFix: coderHeadBeforeStep,
+                afterFix,
+              });
+            } catch (err) {
+              return await errorTermination(step, err);
+            }
+          }
+          // #677: legal refuse — wire decision gate on the real S5 path.
+          // Refused keys stay in the fix→fresh-re-review loop (never escalate/park).
+          if (step === "S5") {
+            const records = output.refuseRecords ?? [];
+            if (records.length > 0) {
+              const legal = reviewFixDecisionGate({ records });
+              refusedFindingIdentityKeysForReverify =
+                legal?.refusedFindingIdentityKeys ?? [];
+            } else {
+              refusedFindingIdentityKeysForReverify =
+                output.refusedFindingIdentityKeys ?? [];
+            }
+          }
         }
         if (step === "S3" || step === "S6") lastReviewerStepId = step;
         break;
