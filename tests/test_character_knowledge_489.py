@@ -46,3 +46,37 @@ def test_participation_survives_restore(game):
 
     assert before["events"] == after["events"]
     assert after["events"][0]["title"] == "召对议饷"
+
+
+def test_public_directive_remains_visible_on_a_later_turn(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    db.conn.execute(
+        "INSERT INTO turn_directives (turn, year, period, text, source, status) VALUES (?, ?, ?, ?, ?, 'issued')",
+        (state.turn, state.year, state.period, "奉天承运，明发清丈诏。", "test"),
+    )
+    db.conn.commit()
+
+    later = db.load_state()
+    later.turn += 1
+    view = db.get_character_knowledge(later, minister.name)
+
+    assert any("明发清丈诏" in item["body"] for item in view["public_events"])
+
+
+def test_excluded_participant_event_is_not_visible_to_excluded_character(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    db.record_character_participation(
+        state,
+        [minister.name],
+        "secret_order",
+        "密查亏空",
+        "查户部旧账",
+        source_id="secret_order:excluded",
+        excluded_names=[minister.name],
+    )
+
+    view = db.get_character_knowledge(state, minister.name)
+
+    assert not any(item["source_id"] == "secret_order:excluded" for item in view["events"])
