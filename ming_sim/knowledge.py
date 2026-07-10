@@ -47,6 +47,10 @@ def _world(
         return value
 
     public = "\n".join(fact(r.get("report")) for r in reports)
+    if office_type in (excluded_offices or set()) or office_name in (excluded_offices or set()):
+        # A direct office-level blackout removes the reader's public view too;
+        # cross-domain readers still retain their unrelated public layer.
+        public = ""
     result: Dict[str, str] = {"public": public or "登基伊始，朝廷暂无前回合奏报。"}
 
     # Keep each world fact tied to its domain.  A blacklist for 户部 therefore
@@ -75,8 +79,8 @@ def _world(
         # that title to its source type without turning the exclusion into a
         # global "clear every bucket" switch.
         characters = getattr(getattr(db, "content", None), "characters", {}) or {}
-        return any(
-            str(getattr(character, "office", "") or "") in targets
+        return office_name in targets and any(
+            str(getattr(character, "office", "") or "") == office_name
             and str(getattr(character, "office_type", "") or "") in fact_sources
             for character in characters.values()
         )
@@ -99,7 +103,19 @@ def _world(
         "内臣": {"treasury", "personnel"}, "内廷": {"treasury", "personnel"},
     }.get(office_type, {bucket})
     for domain in visible_domains:
-        if not blocked(domain):
+        if domain == "public":
+            # The public layer is already built from the turn reports above;
+            # generic offices must not treat it as a deterministic report
+            # source (there is no ``facts["public"]`` entry).
+            continue
+        if blocked(domain):
+            # Keep the domain addressable while making the secrecy boundary
+            # explicit.  A missing key is indistinguishable from an unmapped
+            # office/domain and lets callers accidentally fall back to it.
+            if office_type in {"内阁", "司礼监", "内臣", "内廷"}:
+                result[domain] = ""
+            continue
+        else:
             result[domain] = fact(facts[domain])
     return result
 

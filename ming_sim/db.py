@@ -9315,7 +9315,15 @@ class GameDB:
 
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
         source = str(source_id or "")
-        if not source.startswith("secret_order:"):
+        order_id = None
+        if source.startswith("secret_order:"):
+            try:
+                order_id = int(source.split(":", 1)[1])
+            except (TypeError, ValueError):
+                # ``secret_order:...`` is also a valid producer-defined source
+                # id for records that are not rows in secret_orders.
+                order_id = None
+        if order_id is None:
             row = self.conn.execute(
                 "SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?", (source,)
             ).fetchone()
@@ -9327,10 +9335,6 @@ class GameDB:
                 payload = {}
             return {"people": [str(x) for x in payload.get("people", [])],
                     "offices": [str(x) for x in payload.get("offices", [])]}
-        try:
-            order_id = int(str(source_id).split(":", 1)[1])
-        except (TypeError, ValueError):
-            return {"people": [], "offices": []}
         row = self.conn.execute("SELECT excluded_targets FROM secret_orders WHERE id=?", (order_id,)).fetchone()
         try:
             payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
@@ -9396,10 +9400,12 @@ class GameDB:
             "INSERT OR REPLACE INTO character_knowledge_sources "
             "(turn,year,period,kind,title,body,source_id,participant_roster,excluded_names,excluded_targets) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (state.turn, state.year, state.period, kind, title[:80], body[:400], source_id,
-             json.dumps(roster, ensure_ascii=False),
-             json.dumps(list(dict.fromkeys(str(x).strip() for x in (excluded_names or []) if str(x).strip())), ensure_ascii=False),
-             json.dumps({k: list(dict.fromkeys(str(x).strip() for x in values if str(x).strip())) for k, values in (excluded_targets or {}).items()}, ensure_ascii=False)),
+            (state.turn, state.year, state.period, sanitize_sqlite_text(kind),
+             sanitize_sqlite_text(title)[:80], sanitize_sqlite_text(body)[:400],
+             sanitize_sqlite_text(source_id),
+             safe_json_dumps(roster, ensure_ascii=False),
+             safe_json_dumps(list(dict.fromkeys(str(x).strip() for x in (excluded_names or []) if str(x).strip())), ensure_ascii=False),
+             safe_json_dumps({k: list(dict.fromkeys(str(x).strip() for x in values if str(x).strip())) for k, values in (excluded_targets or {}).items()}, ensure_ascii=False)),
         )
         if commit:
             self.conn.commit()
