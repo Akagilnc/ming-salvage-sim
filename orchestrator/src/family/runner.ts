@@ -1873,31 +1873,41 @@ export async function runFamily(
           : reviewLoop.terminalState === "contract_drift"
             ? "family online review verify worker moved HEAD during resume"
             : "family online review loop did not converge during resume");
-      await recordFamilyEscalated(familyBackend, {
-        escalationKind: "failure",
-        phase: "final",
-        reason: escalationReason,
-        familyHeadAfter: escalationFamilyHead,
-      });
+      // #744: decision_gate_raised is a human park (answerable + re-feedable), not
+      // an A-class infra dead-end. familyEscalationState only reopens
+      // escalationKind:"decision"; hard-writing "failure" made re-feed impossible.
+      // Reuse the existing decisionGatePark / familyStopSummary park semantics —
+      // do not invent a new state machine. True infra terminals stay "failure".
+      const isDecisionGatePark =
+        reviewLoop.terminalState === "decision_gate_raised";
       const ledgerMerged = await currentMerged(familyBackend);
       const children: FamilyChildResult[] = epic.children.map((c) =>
         ledgerMerged.has(c.issue)
           ? { issue: c.issue, status: "already_done" as const }
           : { issue: c.issue, status: "skipped" as const },
       );
+      const stopSummary =
+        reviewLoop.stopSummary ??
+        familyStopSummary({
+          status: "escalated",
+          familyBase,
+          familyHead: escalationFamilyHead ?? preFinalFamilyHead,
+          children,
+          escalationReason,
+          decisionGatePark: isDecisionGatePark,
+        });
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind: isDecisionGatePark ? "decision" : "failure",
+        phase: "final",
+        reason: escalationReason,
+        familyHeadAfter: escalationFamilyHead,
+        stopSummary,
+      });
       return {
         status: "escalated",
         familyBase,
         familyHead: escalationFamilyHead ?? preFinalFamilyHead,
-        stopSummary:
-          reviewLoop.stopSummary ??
-          familyStopSummary({
-            status: "escalated",
-            familyBase,
-            familyHead: escalationFamilyHead ?? preFinalFamilyHead,
-            children,
-            escalationReason,
-          }),
+        stopSummary,
         children,
       };
     }
