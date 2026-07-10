@@ -336,6 +336,51 @@ describe("#786 telemetry pure helpers", () => {
     ).toBe(false);
   });
 
+  it("tryAppendTelemetryRecord silently skips when ledger parent path does not exist (fake stateDir)", () => {
+    // Unit fixtures use opaque paths like /resident/worktrees/.ledger-N that
+    // must not be mkdir'd. Recursive create either spam-warns ENOENT or pollutes /.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fake = "/resident/worktrees/.ledger-600-telemetry-r5";
+    const envRecord: TelemetryEnvironmentRecord = {
+      v: 1,
+      phase: "environment",
+      stamped_at: "t",
+      runId: null,
+      imageTag: null,
+      routeName: null,
+      routeSlots: null,
+      routeCmrReviewLegs: null,
+      cliVersions: null,
+    };
+    expect(tryAppendTelemetryRecord(fake, envRecord)).toBe(false);
+    expect(ensureEnvironmentStamp(fake, {})).toBe(false);
+    expect(existsSync("/resident")).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("tryAppendTelemetryRecord creates leaf ledgerDir when parent already exists", () => {
+    const parent = tempDir("orch-786-parent-");
+    const ledgerDir = join(parent, ".ledger-leaf");
+    expect(
+      tryAppendTelemetryRecord(ledgerDir, {
+        v: 1,
+        phase: "environment",
+        stamped_at: "t",
+        runId: null,
+        imageTag: "img:leaf",
+        routeName: null,
+        routeSlots: null,
+        routeCmrReviewLegs: null,
+        cliVersions: null,
+      }),
+    ).toBe(true);
+    expect(existsSync(join(ledgerDir, TELEMETRY_FILENAME))).toBe(true);
+    const records = readTelemetryRecords(ledgerDir);
+    expect(records).toHaveLength(1);
+    expect((records[0] as TelemetryEnvironmentRecord).imageTag).toBe("img:leaf");
+  });
+
   it("buildDispatchStamp records Coder-Rec order from issue body when present", () => {
     const stamp = buildDispatchStamp({
       legId: "leg-1",
