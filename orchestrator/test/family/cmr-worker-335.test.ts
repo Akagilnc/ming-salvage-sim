@@ -1502,6 +1502,49 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
       { family: "agy", slug: "agy" },
     ]);
   });
+
+  // #768: baked skill `codex-review.sh` reads CMR_CODEX_MODEL (default gpt-5.5).
+  // Route labels alone are soft — sandbox must pin the executable model from the
+  // frozen cmrReview codex leg so leg execution ≡ route label.
+  it("#768 pins CMR_CODEX_MODEL from the route's cmrReview codex leg (sol)", () => {
+    const solLegs = [
+      { family: "codex", slug: "gpt-5.6-sol" },
+      { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy" },
+    ] as const;
+    const spec = {
+      ...cmrWorkerSpec("fresh", "correctness"),
+      cmrReviewLegs: solLegs,
+    };
+    const cfg = cfgBackend().config(auth, spec);
+    expect(cfg.env.CMR_CODEX_MODEL).toBe("gpt-5.6-sol");
+  });
+
+  it("#768 omits CMR_CODEX_MODEL when the frozen legs have no codex review leg", () => {
+    const noCodex = {
+      ...cmrWorkerSpec("fresh", "correctness"),
+      cmrReviewLegs: [
+        { family: "claude", slug: "opus" },
+        { family: "agy", slug: "agy" },
+      ],
+    };
+    const cfg = cfgBackend().config(auth, noCodex);
+    expect(cfg.env.CMR_CODEX_MODEL).toBeUndefined();
+  });
+
+  it("#768 drift guard: cmrSandboxConfig source must assign CMR_CODEX_MODEL from the review legs", () => {
+    // Behavioral pin above goes green only while injection works; this source
+    // guard REDS if the env key is deleted or replaced with a hardcoded slug.
+    const source = readFileSync(
+      join(here, "..", "..", "src", "family", "realFamilyBackend.ts"),
+      "utf8",
+    );
+    const fnStart = source.indexOf("protected cmrSandboxConfig(");
+    expect(fnStart).toBeGreaterThanOrEqual(0);
+    const fnBody = source.slice(fnStart, fnStart + 2500);
+    expect(fnBody).toMatch(/CMR_CODEX_MODEL/);
+    expect(fnBody).not.toMatch(/CMR_CODEX_MODEL:\s*["']gpt-5\./);
+  });
 });
 
 // ═══════════════════ 4b. mountCmrAuth — best-effort per leg (codex cmr R1) ═══════════════════
