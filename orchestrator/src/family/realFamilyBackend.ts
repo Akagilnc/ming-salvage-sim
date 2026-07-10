@@ -71,6 +71,7 @@ import {
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
 import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
+import { effortForLiveOfficer } from "../modelRegistry.js";
 import {
   agentForSlug,
   assertCompletionSignal,
@@ -547,7 +548,7 @@ export class RealFamilyBackend implements FamilyBackend {
    * without spinning a real `sc.run`.
    */
   protected agentForSpec(spec: WorkerSpec): sc.AgentProvider {
-    return agentForSlug(spec.model);
+    return agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec));
   }
 
   // ─────────────────────────── family ledger ───────────────────────────
@@ -2398,7 +2399,9 @@ export class RealFamilyBackend implements FamilyBackend {
    * there), and the claude OAuth token (env var). Without the agy mount the agy
    * cmr leg has no auth and the cmr degrades to codex-only. NO skills mount: the 2b
    * image BAKES ak-cross-m-review + its closure (#333) — a runtime mount would
-   * SHADOW the baked skill (#334). The dedicated `cmr` soul carries review/outcome
+   * SHADOW the baked skill (#334). Also injects `CMR_CODEX_MODEL` from the frozen
+   * cmrReview codex leg (#768) so the baked skill's executable model cannot drift
+   * from the route label. The dedicated `cmr` soul carries review/outcome
    * discipline only; persistent fixes route through the family coder-fix worker.
    */
   protected cmrSandboxConfig(
@@ -2416,12 +2419,20 @@ export class RealFamilyBackend implements FamilyBackend {
     // sourceRepo to the local repo) the container's git remote is the local path,
     // so gh's repo INFERENCE would target the wrong place — pass the slug explicitly
     // (codex #384). Mirrors ship/coder.
+    // #768: pin the baked skill's CMR_CODEX_MODEL to the frozen route's codex
+    // cmrReview leg. Without this, route labels (ORCHESTRATOR_CMR_REVIEW_LEGS /
+    // .cmr-route.json) can say sol while codex-review.sh still defaults to
+    // gpt-5.5 — leg execution ≠ route label. Derive from reviewLegs; never hardcode.
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
       [SANDBOX_SOUL_ENV]: CMR_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
       ORCHESTRATOR_CMR_REVIEW_LEGS: JSON.stringify(reviewLegs),
     };
+    const codexReviewLeg = reviewLegs.find((leg) => leg.family === "codex");
+    if (codexReviewLeg !== undefined) {
+      env.CMR_CODEX_MODEL = codexReviewLeg.slug;
+    }
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // The in-container completeness gate's `gh issue view` (the live issue body =
     // DELIVERED-vs-spec authority) reads GH_TOKEN. Inject only when present (mirrors

@@ -16,6 +16,7 @@
  * worker's self-reported content.
  */
 
+import { isQuotaWaitForResetError } from "./quotaProbe.js";
 import type { DispatchContext, WorkerResult, WorkerSpec } from "./types.js";
 
 /**
@@ -150,6 +151,9 @@ export async function withMechanicalRetry(
       result = await dispatch(useSpec, useCtx);
       lastAttemptThrew = false;
     } catch (err) {
+      // #683: 429 quota wall parks the step — never mechanical-retry a park
+      // (would thrash the same pool and burn the reset window).
+      if (isQuotaWaitForResetError(err)) throw err;
       // A thrown error the caller's semantic layer owns is re-thrown untouched —
       // the generic layer never retries it (no double-count).
       if (opts?.callerOwns?.({ kind: "thrown", error: err }) === true) throw err;
