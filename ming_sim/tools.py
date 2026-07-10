@@ -69,6 +69,51 @@ def _progress_band(value: object) -> str:
     return "未见起色" if n < 20 else "略有起色" if n < 40 else "进展过半" if n < 60 else "进展顺利" if n < 80 else "近于收束"
 
 
+_ABSTRACT_STOP_FIELDS = {
+    "loyalty": "忠诚",
+    "ability": "能力",
+    "integrity": "操守",
+    "courage": "胆略",
+    "leverage": "朝势",
+    "satisfaction": "态度",
+    "public_support": "民心",
+    "unrest": "动乱",
+    "gentry_resistance": "士绅阻力",
+    "military_pressure": "军事压力",
+    "morale": "士气",
+    "training": "训练",
+    "equipment": "装备",
+    "firearm_equipment": "火器",
+    "cannon_equipment": "炮械",
+    "mobility": "机动",
+    "cohesion": "凝聚",
+    "supply": "补给",
+    "bar_value": "进展",
+    "progress": "进展",
+    "皇威": "皇威",
+    "民心": "民心",
+    "动乱": "动乱",
+    "满意度": "态度",
+    "忠诚": "忠诚",
+    "能力": "能力",
+    "清廉": "操守",
+    "胆略": "胆略",
+    "进度": "进展",
+}
+
+
+def _qualitative_stop_field(key: str) -> str:
+    parts = key.split(".")
+    field = parts[-1]
+    label = _ABSTRACT_STOP_FIELDS.get(field)
+    if label is None:
+        label = next((value for name, value in _ABSTRACT_STOP_FIELDS.items() if name in key), "")
+    if not label:
+        return ""
+    subject = parts[-2] if len(parts) > 1 else ""
+    return f"{subject}{label}" if subject else label
+
+
 def _qualitative_stop_condition(raw: object) -> str:
     """把承诺停止条件转成大臣可读的定性提示，保留钱粮条件的可数性。"""
     try:
@@ -81,11 +126,10 @@ def _qualitative_stop_condition(raw: object) -> str:
     for key, condition in parsed.items():
         key_text = str(key)
         value_text = str(condition)
-        if key_text.startswith("character.") and key_text.endswith(".loyalty"):
-            name = key_text[len("character."):-len(".loyalty")]
-            parts.append(f"{name}忠诚已达较高水准")
-        elif any(metric in key_text for metric in ("民心", "皇威", "public_support", "unrest", "satisfaction")):
-            parts.append(f"{key_text}达到所定档位")
+        qualitative_field = _qualitative_stop_field(key_text)
+        if qualitative_field:
+            suffix = "已达较高水准" if key_text.split(".")[-1] == "loyalty" else "达到所定档位"
+            parts.append(f"{qualitative_field}{suffix}")
         else:
             parts.append(f"{key_text}{value_text}")
     return "、".join(parts) or "（条件未详）"

@@ -17,6 +17,12 @@ from agno.skills.loaders.local import LocalSkills
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.context import character_context_with_db
+from ming_sim.db import (
+    _building_condition_description,
+    _building_level_description,
+    _building_output_effect,
+    _building_risk_description,
+)
 from ming_sim.models import Character, CourtContext, LLMConfig, MINISTER_CHAT_CLI_TIMEOUT_SECONDS
 from ming_sim.llm_model import create_chat_model
 from ming_sim.token_stats import tlog
@@ -84,7 +90,6 @@ def build_court_brief(context: CourtContext) -> str:
         f"钱粮：{money_line}国势：{score_line}。"
         f"在办事项：{issues_brief}。"
         f"势力档料：{_power_brief(context)}。"
-        f"朝堂派系档料（以档案所述 agenda 和当前态势判断，不凭历史印象推断）：{_faction_brief(context)}。"
         f"地区/奏报/钱粮详情按需调工具查（list_regions/inspect_region/inspect_memorial/check_treasury 等）；人事与军队详情见下方固定名册。"
     )
 
@@ -101,21 +106,6 @@ def _minister_game_world_prompt(prompt: str) -> str:
             line = "- 军队盘面中驻地、统帅、兵种、人数、月饷与欠饷等可数物照实呈报；补给、士气、训练、装备、火器、机动、忠诚以定性描述呈报；随军大炮照门数呈报。"
         lines.append(line)
     return "\n".join(lines)
-
-
-def _faction_brief(context: CourtContext) -> str:
-    """给扮演大臣的派系档料：保留 agenda，态势只用定性词，不喂抽象分数。"""
-    rows = context.db.conn.execute(
-        "SELECT name, satisfaction, leverage, agenda FROM factions ORDER BY name"
-    ).fetchall()
-    if not rows:
-        return "派系未建档。"
-    from ming_sim.context import _faction_band
-    return "；".join(
-        f"{row['name']}（所求：{row['agenda']}；朝势{_faction_band('leverage', row['leverage'])}；"
-        f"态度{_faction_band('satisfaction', row['satisfaction'])}）"
-        for row in rows
-    )
 
 
 def _power_brief(context: CourtContext) -> str:
@@ -297,29 +287,13 @@ def build_building_brief(context: CourtContext) -> str:
     if not rows:
         return ""
 
-    def building_band(field: str, value: object) -> str:
-        try:
-            n = int(value or 0)
-        except (TypeError, ValueError):
-            n = 0
-        if field == "level":
-            return ("初设" if n <= 1 else "成形" if n == 2 else
-                    "完备" if n == 3 else "宏整" if n == 4 else "巨构")
-        return ("残损" if n < 20 else "失修" if n < 40 else
-                "尚可" if n < 60 else "完好" if n < 80 else "坚固")
-
     lines = []
     for r in rows:
         metric = str(r["output_metric"] or "")
-        if metric in ("民心", "皇威"):
-            amount = int(r["output_amount"] or 0)
-            effect = "略有裨益" if amount < 10 else "颇有裨益" if amount < 30 else "有显著裨益"
-            out = f"·对{metric}{effect}"
-        else:
-            out = f"·产{metric}{int(r['output_amount'] or 0)}" if metric else ""
+        out = _building_output_effect(metric, r["output_amount"], prefix="·")
         lines.append(
             f"{r['name']}（{r['category']}·{r['region_name']}）"
-            f"Lv档{building_band('level', r['level'])}，完好{building_band('condition', r['condition'])}{out}"
+            f"Lv档{_building_level_description(r['level'])}，完好{_building_condition_description(r['condition'])}{out}"
         )
     return "【现有建筑（名·类别·地区 规模/完好/产出；问营建/厂局/仓坞据此）】\n" + "；".join(lines)
 
