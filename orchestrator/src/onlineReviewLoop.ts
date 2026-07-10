@@ -1432,7 +1432,19 @@ export async function runOnlineReviewLoopStage(
     if (verify.converged && checkRunsConverged(checkRuns, emptyMeans)) {
       const released = await dispatch.dispatchDocRelease(landing);
       if (!released) {
-        return { ok: false, terminalState: "decision_gate_raised", round };
+        // #735: surface 文档发布 failure distinctly (not a silent empty gate).
+        return {
+          ok: false,
+          terminalState: "decision_gate_raised",
+          round,
+          stopSummary: {
+            reason: "infra_failure",
+            summary:
+              "文档发布 (S12) returned released:false — skill fail / hang / required push fail",
+            repairHint:
+              "fix the docRelease skill or push failure and re-feed — resume re-enters S12 文档发布",
+          },
+        };
       }
       return { ok: true, terminalState: "mergeable", round };
     }
