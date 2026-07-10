@@ -963,6 +963,11 @@ export async function recordOnlineReviewFixCommitted(
     readonly onlineReviewRound?: number;
     /** Fix-marked identity keys from the verify that drove this fix (#711). */
     readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+    /** Original thread binding for each fix-marked identity (#743 resume authority). */
+    readonly fixMarkedFindingThreads?: ReadonlyArray<{
+      readonly identityKey: string;
+      readonly threadId: string;
+    }>;
   },
 ): Promise<void> {
   const familyHeadAfter = record.familyHeadAfter.trim();
@@ -977,6 +982,14 @@ export async function recordOnlineReviewFixCommitted(
           (k) => typeof k === "string" && k.trim().length > 0,
         )
       : [];
+  const fixThreads = (record.fixMarkedFindingThreads ?? []).flatMap((binding) =>
+    typeof binding.identityKey === "string" &&
+    binding.identityKey.trim().length > 0 &&
+    typeof binding.threadId === "string" &&
+    binding.threadId.trim().length > 0
+      ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
+      : [],
+  );
   await backend.appendFamilyLedger(
     compact({
       status: "online_review_fix_committed",
@@ -993,6 +1006,9 @@ export async function recordOnlineReviewFixCommitted(
         : {}),
       ...(fixKeys.length > 0
         ? { fixMarkedFindingIdentityKeys: fixKeys }
+        : {}),
+      ...(fixThreads.length > 0
+        ? { fixMarkedFindingThreads: fixThreads }
         : {}),
       ts: new Date().toISOString(),
     }) as FamilyLedgerEntry,

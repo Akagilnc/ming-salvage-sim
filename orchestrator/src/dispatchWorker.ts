@@ -192,6 +192,7 @@ function writeOnlineReviewLandingFile(
           shipDelivery: landing.shipDelivery,
           onlineReviewRound: landing.onlineReviewRound ?? ctx.onlineReviewRound,
           fixMarkedFindingIdentityKeys: landing.fixMarkedFindingIdentityKeys ?? [],
+          fixMarkedFindingThreads: landing.fixMarkedFindingThreads ?? [],
           ...(landing.priorRoundFindings !== undefined &&
           landing.priorRoundFindings.length > 0
             ? { priorRoundFindings: landing.priorRoundFindings }

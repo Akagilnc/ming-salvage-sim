@@ -394,6 +394,13 @@ export interface OnlineReviewFixCommittedEvent {
   readonly event: "online_review_fix_committed";
   readonly fixCommitSha: string;
   readonly onlineReviewRound: number;
+  /** Fix-marked identity keys from the verify that drove this fix (#743). */
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /** Original thread binding for each fix-marked identity (#743 resume authority). */
+  readonly fixMarkedFindingThreads?: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
 }
 
 /**
@@ -726,6 +733,15 @@ export interface WorkerLandingPayload {
   readonly onlineReviewRound?: number;
   /** S10 fixer only: fix-marked finding identity keys from verify worker. */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /**
+   * S9/S10: the original review thread bound to each fixer-approved identity.
+   * A key alone is not authority to close another thread that happens to claim
+   * the same identity.
+   */
+  readonly fixMarkedFindingThreads?: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
   /** S9 verify: prior online-review rounds from ledger (#711). */
   readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
   /** S10 fixer / S5 coder-fix: pattern briefs from prior judge worker (#711). */
@@ -959,7 +975,11 @@ export interface VerifyResult {
   readonly converged: boolean;
   /** Per-finding dispositions judged by the verify worker. */
   readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
-  /** Identity keys the fixer may act on (fix-marked only). */
+  /**
+   * Identity keys the fixer may act on (fix-marked only). On a post-fixer
+   * recheck, this is the verifier's explicit confirmation set and must echo the
+   * keys supplied by the runner before convergence is accepted (#743).
+   */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
   /** Evidence-bearing replies for reject/defer/fixed outcomes (#600 AC6). */
   readonly threadReplies?: ReadonlyArray<OnlineReviewThreadReply>;
@@ -1230,6 +1250,21 @@ export interface LedgerEntry {
   readonly roundTriggerHeadOid?: string;
   /** Online review round re-trigger marker (#600 r25): ISO instant the round began. */
   readonly roundTriggerAt?: string;
+  /** Online review fix_committed marker (#600 r27): fixing commit SHA. */
+  readonly fixCommitSha?: string;
+  /**
+   * Online review fix_committed marker (#743): fix-marked identity keys from the
+   * verify that drove this fix — durable resume authority (family-parity).
+   */
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /**
+   * Online review fix_committed marker (#743): original thread binding for each
+   * fix-marked identity — resume must not depend on last-S9 shape alone.
+   */
+  readonly fixMarkedFindingThreads?: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
   /**
    * Monitor handle for an in-flight external CLI worker (#684). Persisted so a
    * resumed run can rebuild alive/idle/kill judgment without global pgrep.
