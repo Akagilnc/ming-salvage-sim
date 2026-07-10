@@ -34,6 +34,13 @@ export type DecisionRouteOutcome = {
   error: string | null;
 };
 
+export function replacePendingDecisionsOnRefresh(
+  _previous: PendingDecision[],
+  next: PendingDecision[] | null,
+): PendingDecision[] | null {
+  return next;
+}
+
 export function routeIssueDecisions(events: unknown[]): DecisionRouteOutcome {
   const decisions = pendingDecisionsFrom(events);
   if (decisions.length === 0) {
