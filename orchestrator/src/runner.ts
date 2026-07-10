@@ -172,9 +172,17 @@ import {
   RELAY_FOCUS_FILENAME,
   type RelayHandoffLedgerEvent,
 } from "./relayDispatch.js";
-import { existsSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { isFilledString } from "./shipOutcome.js";
+
+function removeRelayFocus(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // Best effort only: never hide the ledger persistence failure.
+  }
+}
 // Shared seam guards — single source of truth, also used by route(), so the
 // coder-output / commitsAdded rules can never drift.
 import {
@@ -618,8 +626,8 @@ async function parkOrRelayQuotaWall(opts: {
 
   if (forked.tier === "relay" && forked.nextBaton && forked.ledgerEntry) {
     const entry = forked.ledgerEntry;
-    // #686 P1: focus FIRST, then durable ledger row — a half-delivered handoff
-    // (ledger without focus) must never be consumable as a valid baton on resume.
+    // Write focus first, but remove it if durable ledger persistence fails: an
+    // orphan brief is never a consumable handoff.
     const focus = tryBuildRelayFocusFile(opts.worktreePath, entry);
     if (!focus.ok) {
       return {
@@ -663,6 +671,7 @@ async function parkOrRelayQuotaWall(opts: {
           stateDir,
         );
       } catch {
+        removeRelayFocus(focus.path);
         return {
           kind: "park",
           result: await parkQuotaWaitForResetLegacy({
@@ -2603,14 +2612,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     return lookupCoderRosterEntry(slug)?.id ?? slug;
   };
 
-  const relayFocusForDispatch = (): string | undefined => {
-    if (activeRelayFocusPath !== undefined) return activeRelayFocusPath;
-    if (worktree?.path !== undefined) {
-      const p = join(worktree.path, RELAY_FOCUS_FILENAME);
-      if (existsSync(p)) return p;
-    }
-    return undefined;
-  };
+  const relayFocusForDispatch = (): string | undefined => activeRelayFocusPath;
 
   const coderRecRoundsFromLedger = (
     entries: ReadonlyArray<LedgerEntry>,
@@ -3770,13 +3772,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // commits + `.relay-focus.md` are the payload. Relay state is read from the
     // FULL resume ledger (not the post-ship display trim), so S9+/relay markers
     // survive priorLedgerThroughLastShip.
-    const relayResume = resumeRelayFromLedger(
-      resumeLedger.filter(
-        (e): e is PersistentLedgerEntry & RelayHandoffLedgerEvent =>
-          e.event === "relay_baton_handoff",
-      ) as RelayHandoffLedgerEvent[],
-    );
-
     // ADR 0030: resume continues from the recorded runner-visible boundary. If
     // that boundary follows S4, the classification state was rebuilt above from
     // the persisted reviewer output.
@@ -3787,6 +3782,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       resumeFor = { step: plan.resumeStep, sessionId: plan.resumeSessionId };
     }
     resumedEscalationAnswer = plan.escalationAnswer;
+
+    const relayResume = resumeRelayFromLedger(resumeLedger, plan.resumeStep);
 
     // #686 — resume from relay_baton_handoff: apply the recorded next baton
     // before re-entering the interrupted step.
@@ -4267,8 +4264,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         },
                         stateDir,
                       );
-                    } catch {
-                      return await errorTermination(
+                } catch {
+                  removeRelayFocus(focus.path);
+                  return await errorTermination(
                         step,
                         new Error(
                           `relay handoff ledger write failed after mechanical retry exhaustion`,
@@ -4421,6 +4419,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     stateDir,
                   );
                 } catch {
+                  removeRelayFocus(focus.path);
                   return await errorTermination(step, err);
                 }
               }
@@ -4523,6 +4522,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             worktree,
             stateDir,
             modelRoute,
+            ...(currentBillingPool !== undefined
+              ? { billingPool: currentBillingPool }
+              : {}),
+            ...(relayFocusForDispatch() !== undefined
+              ? { relayFocusPath: relayFocusForDispatch() }
+              : {}),
             ...(escalationAnswerForStep != null
               ? { escalationAnswer: escalationAnswerForStep }
               : {}),
@@ -4758,6 +4763,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     ts: entry.ts,
                   }, stateDir);
                 } catch {
+                  removeRelayFocus(focus.path);
                   return await errorTermination("S7", err);
                 }
               }
@@ -4885,6 +4891,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             prHead:
               onlineReviewLanding?.shipDelivery?.prHead ?? lastShipOutput.prHead,
             onlineReviewRound,
+            ...(currentBillingPool !== undefined
+              ? { billingPool: currentBillingPool }
+              : {}),
+            ...(relayFocusForDispatch() !== undefined
+              ? { relayFocusPath: relayFocusForDispatch() }
+              : {}),
           };
           const headBefore =
             reviewStep === "S9" ? await resolveBranchHEAD() : undefined;
@@ -5839,6 +5851,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     ts: entry.ts,
                   }, stateDir);
                 } catch {
+                  removeRelayFocus(focus.path);
                   return await errorTermination(reviewStep, err);
                 }
               }

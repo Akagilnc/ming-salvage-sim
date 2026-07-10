@@ -588,12 +588,20 @@ describe("#686 state_summary ledger + next-baton parameter file", () => {
         now: new Date("2026-07-10T12:30:00.000Z"),
       }),
     ];
-    const resume = resumeRelayFromLedger(ledger);
+    const resume = resumeRelayFromLedger(ledger, "S2");
     expect(resume).toMatchObject({
       state_summary: "baton2 mid-clear",
       toModelId: "luna@med",
       remaining: "收口",
     });
+  });
+
+  it("does not replay an S2 baton while resuming a later S9 slot", () => {
+    const s2Relay = buildRelayHandoffLedgerEntry({
+      trigger: "quota_wall", state_summary: "S2 handoff", fromModelId: "a",
+      fromPool: "cursor", toModelId: "b", toPool: "codex-5h", step: "S2", now: new Date("2026-07-10T12:00:00.000Z"),
+    });
+    expect(resumeRelayFromLedger([s2Relay, { step: "S2" }, { step: "S9" }], "S9")).toBeUndefined();
   });
 });
 

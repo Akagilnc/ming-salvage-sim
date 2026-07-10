@@ -101,8 +101,8 @@ function newBackend(): RecordingBackend {
   });
 }
 
-describe("integ-cmr 256 r3 — prepareWorktree reuse is fail-closed (cleans residue)", () => {
-  it("reuses the existing worktree path but cleans residue first", async () => {
+describe("#661 — prepareWorktree reuse preserves the scene", () => {
+  it("reuses the existing worktree path without reset or clean", async () => {
     const backend = newBackend();
     const wt = await backend.prepareWorktree(ISSUE, "main");
 
@@ -111,42 +111,31 @@ describe("integ-cmr 256 r3 — prepareWorktree reuse is fail-closed (cleans resi
     expect(wt.branch).toBe(BRANCH);
 
     const ran = backend.gitCalls.map((c) => c.args.join(" "));
-    // ADR0017 residue-clean ran on reuse: reset --hard + clean -fd. (#292 ADR
-    // 0024 dec. 2: the repo-level prune is gone — pruning is Sandcastle's job.)
-    expect(ran).toContain("reset --hard HEAD");
-    expect(ran).toContain("clean -fd");
+    expect(ran).not.toContain("reset --hard HEAD");
+    expect(ran).not.toContain("clean -fd");
     expect(ran.some((r) => r.includes("worktree prune"))).toBe(false);
   });
 
-  it("the reset/clean run IN the reused worktree (and no prune at all)", async () => {
+  it("does not run destructive git commands in the reused worktree", async () => {
     const backend = newBackend();
     await backend.prepareWorktree(ISSUE, "main");
 
-    const reset = backend.gitCalls.find(
-      (c) => c.args.join(" ") === "reset --hard HEAD",
-    );
-    const clean = backend.gitCalls.find(
-      (c) => c.args.join(" ") === "clean -fd",
-    );
     const prune = backend.gitCalls.find(
       (c) => c.args.join(" ") === "worktree prune",
     );
-    expect(reset?.cwd).toBe(EXISTING_PATH);
-    expect(clean?.cwd).toBe(EXISTING_PATH);
+    expect(backend.gitCalls.some((c) => c.cwd === EXISTING_PATH && /^(reset --hard|clean -fd)/.test(c.args.join(" ")))).toBe(false);
     expect(prune).toBeUndefined();
   });
 
-  it("cleans BEFORE returning (no createWorktree / fetch on the reuse path)", async () => {
+  it("does not re-cut or fetch on the reuse path", async () => {
     const backend = newBackend();
     await backend.prepareWorktree(ISSUE, "main");
 
     const ran = backend.gitCalls.map((c) => c.args.join(" "));
-    // Reuse path must NOT fetch or re-cut — it only lists + cleans.
+    // Reuse path must NOT fetch or re-cut.
     expect(ran.some((r) => r.startsWith("fetch "))).toBe(false);
-    // The residue-clean must be present (the whole point of fail-closed reuse).
-    const resetIdx = ran.indexOf("reset --hard HEAD");
     const listIdx = ran.indexOf("worktree list --porcelain");
     expect(listIdx).toBeGreaterThanOrEqual(0);
-    expect(resetIdx).toBeGreaterThan(listIdx);
+    expect(ran).not.toContain("reset --hard HEAD");
   });
 });

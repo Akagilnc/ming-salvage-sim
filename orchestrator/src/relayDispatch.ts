@@ -367,13 +367,19 @@ export function tryParseActionableRelayTag(
   return undefined;
 }
 
-/** Resume from the latest relay handoff row in an append-only ledger. */
+/**
+ * Resume only a baton for the exact executable slot being re-entered. A later
+ * execution of that slot consumes/supersedes its earlier relay marker.
+ */
 export function resumeRelayFromLedger(
-  ledger: ReadonlyArray<RelayHandoffLedgerEvent>,
+  ledger: ReadonlyArray<{ readonly event?: string; readonly step?: StepId }>,
+  resumeStep: StepId,
 ): RelayHandoffLedgerEvent | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const row = ledger[i]!;
-    if (row.event === "relay_baton_handoff") return row;
+    if (row.step !== resumeStep) continue;
+    if (row.event === "relay_baton_handoff") return row as RelayHandoffLedgerEvent;
+    if (row.event === undefined) return undefined;
   }
   return undefined;
 }

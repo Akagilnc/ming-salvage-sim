@@ -2615,18 +2615,11 @@ export class RealBackend implements Backend {
     // Idempotent reuse: if the resident worktree exists, reuse it (the runner's
     // #255 resume path drives this); else cut a fresh one from `base` (main).
     //
-    // integ-cmr 256 r3 (idempotent_reuse_dirty): reuse is FAIL-CLOSED. The runner
-    // reaches this fresh path even for an existing worktree when the ledger is
-    // missing/unreadable (findResumeState → undefined ⇒ no resume ⇒ no
-    // cleanResidue). Returning the dir AS-IS would reuse a prior crash's
-    // uncommitted residue / stale commits as a "fresh" start (ADR0017: 复用前清
-    // 未提留残留). So clean residue (reset --hard HEAD → clean -fd) BEFORE
-    // returning, so a no-ledger old branch can never masquerade as a clean fresh
-    // cut and leak residue into the pushed branch. (Repo-level prune handed back
-    // to Sandcastle — ADR 0024 dec. 2.)
+    // #661: an existing scene is work product, even if its ledger is missing or
+    // unreadable. Reuse it AS-IS; a genuinely unusable scene must be escalated,
+    // never reset or cleaned.
     const existing = this.findExistingWorktree(issueNumber);
     if (existing !== undefined) {
-      this.cleanResidueAt(existing.path);
       return { branch: existing.branch, base, path: existing.path };
     }
     const branch = branchForIssue(issueNumber);
@@ -4158,9 +4151,9 @@ export class RealBackend implements Backend {
     );
   }
 
-  // ── #255: clean uncommitted residue before reuse ───────────────────────────
+  // #661: retained only as a compatibility seam. Scenes are never destroyed.
   async cleanResidue(worktree: WorktreeHandle): Promise<void> {
-    this.cleanResidueAt(worktree.path);
+    void worktree;
   }
 
   /**
@@ -4179,25 +4172,6 @@ export class RealBackend implements Backend {
         // Best-effort: a missing worktree is already reclaimed.
       }
     });
-  }
-
-  /**
-   * The ADR0017 residue-clean applied to a worktree path before it is reused:
-   * `git reset --hard HEAD` (drop uncommitted tracked changes) → `git clean -fd`
-   * (drop untracked files/dirs). Factored out so BOTH the #255 resume path
-   * (cleanResidue) and the r3 fail-closed reuse path (prepareWorktree, no-ledger
-   * reuse) share one sequence.
-   *
-   * ADR 0024 decision 2: the repo-level `git worktree prune` that used to run here
-   * is REMOVED. It both duplicated Sandcastle's own per-acquire `pruneStale` AND
-   * was the cross-session reaper of #292 — with a dedicated clone (decision 1)
-   * pruning is Sandcastle's job and physically can't reach another session's
-   * worktree admin namespace. This method now ONLY does the per-worktree residue
-   * clean; it must not touch repo-level admin state.
-   */
-  private cleanResidueAt(wtPath: string): void {
-    this.sh("git", ["reset", "--hard", "HEAD"], wtPath);
-    this.sh("git", ["clean", "-fd"], wtPath);
   }
 
   // ── #255: detect resume residue ────────────────────────────────────────────
