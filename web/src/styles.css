@@ -6732,30 +6732,47 @@ button:disabled {
 .hud2-cmd-caption b { font-size: 1.8cqh; }
 .hud2-cmd-caption small { font-size: 1.3cqh; color: #c9b48a; margin-top: 0.2em; }
 
-/* HITL 月末重大抉择弹窗 */
-.decision-modal {
+/* 月末批红：一疏一页，页面本身滚动，不以居中的浮窗承载。 */
+.decision-page {
   position: fixed;
   inset: 0;
   z-index: 9200;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(8, 6, 3, 0.82);
-  backdrop-filter: blur(5px);
-  padding: 20px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #261a0d;
+  padding: clamp(18px, 4vw, 58px) clamp(12px, 5vw, 86px);
+  box-sizing: border-box;
 }
 
-.decision-window {
-  width: min(640px, 94vw);
-  max-height: 90vh;
-  overflow-y: auto;
-  padding: 30px 36px 26px;
-  border: 1px solid rgba(214, 175, 89, 0.55);
-  border-radius: 10px;
-  background: linear-gradient(180deg, #2c2113 0%, #190f06 100%);
-  color: #f4e2b8;
-  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.65);
+.decision-document {
+  width: min(880px, 100%);
+  min-height: calc(100vh - clamp(36px, 8vw, 116px));
+  margin: 0 auto;
+  padding: clamp(30px, 6vw, 78px) clamp(24px, 7vw, 108px);
+  box-sizing: border-box;
+  background: #e6d5ae;
+  color: #342418;
+  border: 1px solid #9e783a;
+  border-radius: 0;
+  box-shadow: inset 0 0 0 5px rgba(92, 54, 20, 0.12), 0 2px 12px rgba(0, 0, 0, 0.25);
 }
+.decision-document .decision-kicker { color: #76521d; }
+.decision-document .decision-title { color: #3b1f16; text-align: center; font-family: serif; }
+.decision-document section { border: 1px solid rgba(87, 51, 18, 0.42); padding: clamp(18px, 4vw, 34px); background: rgba(255, 246, 218, 0.5); }
+.decision-document-section { padding: 4px 0 22px; border-bottom: 1px solid rgba(87, 51, 18, 0.25); }
+.decision-document-section + .decision-document-section { margin-top: 15px; }
+.decision-document-section h3 { margin: 4px 0 8px; font-family: serif; font-size: 22px; color: #3b1f16; }
+.decision-document-section p { margin: 0; line-height: 1.8; color: #4d3523; }
+.decision-section-label { display: block; color: #8f1d16; font-family: serif; font-weight: 700; letter-spacing: 2px; }
+.decision-document .decision-options { margin: 10px 0 0; }
+.decision-document .decision-option { border-color: rgba(113, 63, 24, 0.45); background: rgba(255, 250, 232, 0.5); color: #3d2a1d; }
+.decision-document .decision-option:hover, .decision-document .decision-option.is-picked { border-color: #9f211b; background: rgba(159, 33, 27, 0.1); }
+.decision-document .decision-option-label { color: #5a241d; }
+.decision-document .decision-option-hint { color: #70563c; }
+.decision-document .decision-note { margin-top: 10px; border-color: rgba(113, 63, 24, 0.45); background: rgba(255, 250, 232, 0.65); color: #3d2a1d; }
+.decision-seal { margin: 18px auto 2px; width: max-content; padding: 9px 13px; border: 3px double #9f211b; color: #9f211b; font-family: serif; font-weight: 700; transform: rotate(-5deg); }
+.decision-document .decision-confirm { border-color: #8f1d16; background: #a52b20; color: #fff0d2; }
+.decision-document .decision-hint-line { color: #765b3e; }
 
 .decision-head { margin-bottom: 14px; }
 
@@ -6896,4 +6913,9 @@ button:disabled {
   border: 1px solid #a4862f;
   border-radius: 8px;
   font-size: 14px;
+}
+
+.decision-recovery-banner {
+  border-color: #9b2c2c;
+  background: rgba(155, 44, 44, 0.12);
 }
