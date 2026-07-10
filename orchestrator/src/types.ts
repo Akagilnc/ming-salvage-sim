@@ -610,6 +610,22 @@ export interface WorkerSpec {
  * for a fate decision — it only搬运s them into the landing file the coder-fix
  * worker reads. DispatchContext keeps ONLY the identity keys + count.
  */
+/** Cross-round finding family synthesis (#711). */
+export interface FindingFamily {
+  readonly family: string;
+  readonly members: ReadonlyArray<string>;
+  readonly recurringFromRounds: ReadonlyArray<number>;
+  readonly brief: string;
+}
+
+/** Prior-round finding snapshot forwarded to judge workers (#711). */
+export interface PriorRoundFindingSnapshot {
+  readonly round: number;
+  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
+  readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
+  readonly blockingFindingIdentityKeys?: ReadonlyArray<string>;
+}
+
 /** Bot snapshot landing content for online review verify/fixer workers (#600). */
 /** Per-finding judgment from the verify worker (#600): fix / reject / defer. */
 export type OnlineReviewFindingAction = "fix" | "reject" | "defer";
@@ -700,6 +716,10 @@ export interface WorkerLandingPayload {
   readonly onlineReviewRound?: number;
   /** S10 fixer only: fix-marked finding identity keys from verify worker. */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /** S9 verify: prior online-review rounds from ledger (#711). */
+  readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
+  /** S10 fixer / S5 coder-fix: pattern briefs from prior judge worker (#711). */
+  readonly findingFamilies?: ReadonlyArray<FindingFamily>;
   /** S11 cleanup (#603): host-computed close set + durable pr_merged record. */
   readonly cleanupDispatch?: {
     readonly coveredIssues: ReadonlyArray<number>;
@@ -821,6 +841,11 @@ export interface DispatchContext {
   readonly repo?: string;
   /** 1-based online review round — runner enforces MAX_ONLINE_REVIEW_ROUNDS (#600). */
   readonly onlineReviewRound?: number;
+  /**
+   * Judge workers only: prior-round finding snapshots extracted from ledger (#711).
+   * Runner-owned data — not used for routing decisions.
+   */
+  readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */
@@ -858,6 +883,8 @@ export interface CmrResult {
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   /** Structured CMR findings for family-level suppression classification. */
   readonly findings?: readonly Finding[];
+  /** Cross-round grouped findings + recurring-class markers (#711). */
+  readonly findingFamilies?: readonly FindingFamily[];
   /** Worker outcome guard evidence artifacts referenced by this CMR verdict. */
   readonly evidencePaths?: readonly string[];
   // NOTE: a STUCK cmr worker is the WorkerResult-level `{kind:"escalated"}` case,
@@ -932,6 +959,8 @@ export interface VerifyResult {
   readonly terminalState?: VerifyWorkerTerminalState;
   /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
   readonly isRecheck?: boolean;
+  /** Cross-round grouped findings + recurring-class markers (#711). */
+  readonly findingFamilies?: ReadonlyArray<FindingFamily>;
 }
 
 /**
@@ -1507,6 +1536,7 @@ export interface WorkerOutcomeLandingFile {
 export interface AgentStepRunOptions {
   readonly fixFindingsLanding?: FixFindingsLandingFile;
   readonly onlineReviewLanding?: FixFindingsLandingFile;
+  readonly fixFocusLanding?: FixFindingsLandingFile;
   readonly outcomeLanding?: WorkerOutcomeLandingFile;
 }
 
