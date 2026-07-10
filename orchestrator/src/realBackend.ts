@@ -75,6 +75,11 @@ import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
 import { findingIdentityKey } from "./findings.js";
 import {
+  provisionRepoNodeModules,
+  runProvisionCommand,
+  type Sh as ProvisionSh,
+} from "./provisionNodeModules.js";
+import {
   attachSanitizedFindingFamilies,
   normalizeFindingFamiliesWireAliases,
 } from "./findingFamilies.js";
@@ -151,12 +156,16 @@ export {
   type ModelSlugRegistryEntry,
 };
 import {
-  DOCRELEASE_PROMPT_FILE,
-  FIXER_PROMPT_FILE,
-  legacyDispatchWorker,
-  SHIP_PROMPT_FILE,
-  VERIFY_PROMPT_FILE,
-} from "./dispatchWorker.js";
+  buildCliMonitorSpawnSpec,
+  workerResultFromMonitorSidecar,
+} from "./cliMonitorHooks.js";
+import {
+   DOCRELEASE_PROMPT_FILE,
+   FIXER_PROMPT_FILE,
+   legacyDispatchWorker,
+   SHIP_PROMPT_FILE,
+   VERIFY_PROMPT_FILE,
+ } from "./dispatchWorker.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
   shipOutcomeFromResult,
@@ -172,6 +181,7 @@ import {
 import type {
   AgentStepRunOptions,
   Backend,
+  CliMonitorSpawnSpec,
   DispatchContext,
   Finding,
   IssueMeta,
@@ -186,6 +196,7 @@ import type {
   StepSpec,
   RepairEvidence,
   WorkerLandingPayload,
+  WorkerMonitorHandle,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -2541,13 +2552,22 @@ export class RealBackend implements Backend {
     // the best-effort `git fetch`, the residue clean, and the `git worktree add`
     // cut all MUTATE the shared `.git` — concurrent ones race on `.git/index.lock`
     // / per-ref locks (distinct child BRANCHES isolate the logical work, NOT the
-    // git locks). So the whole git-mutating section runs under a per-clone mutex
-    // keyed on the working repo: same-clone children serialise their cuts, while a
-    // DIFFERENT clone (another run in the same process) never blocks. A standalone
-    // single-slice run is the degenerate single-holder case (no contention).
-    return runExclusive(this.workingRepo, () =>
+    // git locks). So the git-mutating section runs under a per-clone mutex keyed on
+    // the working repo: same-clone children serialise their cuts, while a DIFFERENT
+    // clone (another run in the same process) never blocks. A standalone single-slice
+    // run is the degenerate single-holder case (no contention).
+    //
+    // #746 R2: node_modules provisioning is NOT a git mutation — each worktree has
+    // its own directory; template reads are read-only. Keeping npm ci / clonefile
+    // inside the mutex serialises N wave children on ~90s cold installs (the issue's
+    // goal is the opposite). Mutex covers only the cut/reuse git section; provision
+    // runs after release. Residue clean still precedes provision (ordering: clean
+    // inside exclusive → return handle → provision that path).
+    const handle = await runExclusive(this.workingRepo, () =>
       this.prepareWorktreeLocked(issueNumber, base),
     );
+    await this.provisionWorktreeNodeModules(handle.path);
+    return handle;
   }
 
   /** The git-mutating body of {@link prepareWorktree}, run under the per-clone mutex. */
@@ -2611,6 +2631,36 @@ export class RealBackend implements Backend {
     // resident worktree is reaped only by an explicit terminal-success GC, never
     // by normal-path disposal.
     return { branch, base, path: wt.worktreePath };
+  }
+
+  /**
+   * #746 — host-side Node deps for a resident worktree. Uses the driver
+   * `sourceRepo` as the warm template monorepo. No package.json under the path
+   * (fake/stub worktrees in unit tests) ⇒ no-op. `protected` so a subclass can
+   * skip / spy without a real FS. May return a Promise (tests hold provision to
+   * prove it runs outside the git mutex); callers always await.
+   */
+  protected provisionWorktreeNodeModules(
+    worktreePath: string,
+  ): Promise<void> {
+    return provisionRepoNodeModules(worktreePath, {
+      templateRoot: this.opts.sourceRepo,
+      sh: (file, args, cwd) => this.provisionCommand(file, args, cwd ?? worktreePath),
+    }).then(() => undefined);
+  }
+
+  /** Provision-only async shell seam; ordinary git/gh commands remain synchronous. */
+  protected provisionCommand(
+    file: string,
+    args: string[],
+    cwd?: string,
+  ): string | Promise<string> {
+    // Test doubles override the synchronous general shell seam; preserve that
+    // seam for observability while the production implementation uses async I/O.
+    if (this.sh !== RealBackend.prototype.sh) {
+      return this.sh(file, args, cwd);
+    }
+    return (runProvisionCommand as ProvisionSh)(file, args, cwd);
   }
 
   /**
@@ -2722,7 +2772,9 @@ export class RealBackend implements Backend {
     authDir: string;
     claudeToken?: string;
   } {
-    const paths = buildAuthPaths(issueNumber, this.opts.home);
+    // #748: resolve home at this seam so tests can inject a tmpdir via opts.home;
+    // production keeps the os.homedir() default when opts.home is omitted.
+    const paths = buildAuthPaths(issueNumber, this.opts.home ?? homedir());
     rmSync(paths.hostCodexAuthDir, { recursive: true, force: true });
     // Owner-only dir: this holds copied credential material (auth.json /
     // config.toml). 0o700 keeps it off world-readable multi-user hosts
@@ -3471,6 +3523,43 @@ export class RealBackend implements Backend {
   }
 
   /**
+   * #684: production monitored-CLI spawn for productive workers.
+   *
+   * Returns a host-side bridge spawn so {@link dispatchWorkerWithMonitor} takes
+   * the monitored branch (handle atomic with real dispatch). The bridge child
+   * re-enters {@link dispatchWorker} with ORCHESTRATOR_CLI_MONITOR_CHILD=1 so
+   * these hooks short-circuit and the existing container seam does the work.
+   * Absent log sink / non-productive kind / already-in-child → undefined.
+   */
+  resolveCliMonitorDispatch(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): CliMonitorSpawnSpec | undefined {
+    return buildCliMonitorSpawnSpec({
+      backendKind: "real",
+      backendOpts: this.opts,
+      spec,
+      ctx,
+      landing,
+    });
+  }
+
+  /**
+   * #684: map a finished monitored CLI bridge child into a WorkerResult by
+   * reading the result sidecar the child wrote.
+   */
+  async awaitMonitoredCliWorker(
+    handle: WorkerMonitorHandle,
+    exitCode: number | null,
+    _spec: WorkerSpec,
+    _ctx: DispatchContext,
+    _landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    return workerResultFromMonitorSidecar(handle, exitCode);
+  }
+
+  /**
    * Run the ship WORKER: ONE `sc.run` of the 2b container's route-selected agent
    * invoking `gstack-ship` over the resident slice worktree (#336). `protected` so
    * a unit test fixtures the outcome without a real container (the real container
@@ -3683,7 +3772,8 @@ export class RealBackend implements Backend {
    * the gh CLI (it lives in the OS keyring, not a portable file).
    */
   protected mountShipAuth(issueNumber: number): ShipAuth {
-    const paths = buildAuthPaths(issueNumber, this.opts.home);
+    // #748: same injectable-home seam as mountAuth (opts.home ?? os.homedir()).
+    const paths = buildAuthPaths(issueNumber, this.opts.home ?? homedir());
     let codexAuthDir: string | undefined;
     let tempCodexDir: string | undefined;
     try {

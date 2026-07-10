@@ -19,7 +19,14 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,15 +53,41 @@ afterEach(() => {
   }
 });
 
+function copyLiveAuthFile(e2eHome: string, relativePath: string): void {
+  const source = join(homedir(), relativePath);
+  const target = join(e2eHome, relativePath);
+  try {
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(source, target);
+    chmodSync(target, 0o600);
+  } catch {
+    // Keep the production CMR auth semantics: an unavailable leg degrades, while
+    // the top-level worker's own Claude preflight still escalates when required.
+  }
+}
+
+function createCmrE2eHome(): string {
+  // Colima/Docker shares the host $HOME into its VM, but commonly does not share
+  // macOS tmpdir(). Keep the disposable home under $HOME without ever using the
+  // real ~/.sc-orchestrator root (#748).
+  const e2eHome = mkdtempSync(join(homedir(), ".sc-orchestrator-e2e-"));
+  cleanups.push(e2eHome);
+  copyLiveAuthFile(e2eHome, ".codex/auth.json");
+  copyLiveAuthFile(e2eHome, ".sc-agy-oauth-token");
+  copyLiveAuthFile(e2eHome, ".sc-claude-token");
+  return e2eHome;
+}
+
 describe.skipIf(!RUN)("#335 cmr worker e2e — real 2b container fan-out", () => {
   it(
     "invokes ak-cross-m-review in-container and returns a structured verdict",
     async () => {
       // ── a real repo with main + a family base carrying an injected cross-slice bug ──
-      // MUST live under $HOME: colima shares $HOME into the Docker VM, $TMPDIR is
-      // NOT shared (the same spike constraint codex auth hit) — a repo under
-      // $TMPDIR mounts EMPTY in the container → "not a git repository".
-      const e2eRoot = join(homedir(), ".sc-orchestrator", "cmr-e2e");
+      // Keep this in a disposable injected HOME so the e2e path cannot touch the
+      // real ~/.sc-orchestrator auth root (#748). The container-backed test is
+      // explicitly opt-in and must not create host files under the real HOME.
+      const e2eHome = createCmrE2eHome();
+      const e2eRoot = join(e2eHome, ".sc-orchestrator", "cmr-e2e");
       mkdirSync(e2eRoot, { recursive: true });
       const repo = mkdtempSync(join(e2eRoot, "repo-"));
       cleanups.push(repo);
@@ -94,6 +127,7 @@ describe.skipIf(!RUN)("#335 cmr worker e2e — real 2b container fan-out", () =>
         soulsDir,
         imageName: "ming-orchestrator-coder:latest",
         familyBaseStartHead: startHead,
+        home: e2eHome,
       });
 
       const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase });

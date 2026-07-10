@@ -23,9 +23,17 @@
  * payload), NOT `failed`.
  */
 
+import type { ChildProcess } from "node:child_process";
+
+import {
+  dispatchMonitoredCliWorker,
+  killWorkerTree,
+  type MonitoredCliDispatchInput,
+} from "../workerMonitor.js";
 import type {
   DispatchContext,
   WorkerLandingPayload,
+  WorkerMonitorHandle,
   WorkerResult,
   WorkerSessionMode,
   WorkerSpec,
@@ -173,6 +181,105 @@ export async function dispatchFamilyWorker(
     return familyBackend.dispatchWorker(spec, ctx, landing);
   }
   return legacyDispatchFamilyWorker(familyBackend, spec, ctx);
+}
+
+export interface DispatchFamilyWorkerWithMonitorOutcome {
+  readonly result: WorkerResult;
+  readonly monitorHandle?: WorkerMonitorHandle;
+}
+
+export interface DispatchFamilyWorkerWithMonitorOptions {
+  readonly onMonitorHandleSpawned?: (
+    handle: WorkerMonitorHandle,
+  ) => void | Promise<void>;
+}
+
+function waitForChildExit(child: ChildProcess): Promise<number | null> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(child.exitCode);
+  }
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => resolve(code));
+  });
+}
+
+/**
+ * #684 production family dispatch path — parallel to single-slice
+ * `dispatchWorkerWithMonitor`. When the family backend supplies a CLI spawn via
+ * {@link FamilyBackend.resolveCliMonitorDispatch}, the monitor handle is
+ * generated atomically at spawn (and optionally persisted via
+ * `onMonitorHandleSpawned` before wait).
+ */
+export async function dispatchFamilyWorkerWithMonitor(
+  familyBackend: FamilyBackend,
+  spec: WorkerSpec,
+  ctx: DispatchContext,
+  landing?: WorkerLandingPayload,
+  opts?: DispatchFamilyWorkerWithMonitorOptions,
+): Promise<DispatchFamilyWorkerWithMonitorOutcome> {
+  const cliSpec = familyBackend.resolveCliMonitorDispatch?.(spec, ctx, landing);
+  if (cliSpec !== undefined) {
+    const input: MonitoredCliDispatchInput = {
+      command: cliSpec.command,
+      args: cliSpec.args,
+      logDir: cliSpec.logDir,
+      poolId: cliSpec.poolId,
+      completionSignal: cliSpec.completionSignal,
+      stepId: cliSpec.stepId,
+      ...(cliSpec.cwd !== undefined ? { cwd: cliSpec.cwd } : {}),
+      ...(cliSpec.env !== undefined ? { env: cliSpec.env } : {}),
+      ...(cliSpec.logBasename !== undefined
+        ? { logBasename: cliSpec.logBasename }
+        : {}),
+      ...(cliSpec.readInstanceId !== undefined
+        ? { readInstanceId: cliSpec.readInstanceId }
+        : {}),
+      ...(cliSpec.resultPath !== undefined
+        ? { resultPath: cliSpec.resultPath }
+        : {}),
+    };
+    const { handle, child } = await dispatchMonitoredCliWorker(input);
+    const exitPromise = waitForChildExit(child);
+    if (opts?.onMonitorHandleSpawned !== undefined) {
+      try {
+        await opts.onMonitorHandleSpawned(handle);
+      } catch (error) {
+        // Cleanup remains scoped to the verified monitor handle; never signal
+        // an unverified PID or process group on callback failure.
+        await killWorkerTree(handle);
+        try {
+          await exitPromise;
+        } catch {
+          // Preserve the original spawn-persist error if child cleanup fails.
+        }
+        throw error;
+      }
+    }
+    const exitCode = await exitPromise;
+    if (familyBackend.awaitMonitoredCliWorker === undefined) {
+      return {
+        result: {
+          kind: "failed",
+          reason:
+            `family CLI worker ${spec.id} finished (exit ${exitCode}) but backend ` +
+            `has no awaitMonitoredCliWorker to map the process into a WorkerResult`,
+        },
+        monitorHandle: handle,
+      };
+    }
+    const result = await familyBackend.awaitMonitoredCliWorker(
+      handle,
+      exitCode,
+      spec,
+      ctx,
+      landing,
+    );
+    return { result, monitorHandle: handle };
+  }
+  return {
+    result: await dispatchFamilyWorker(familyBackend, spec, ctx, landing),
+  };
 }
 
 /**
