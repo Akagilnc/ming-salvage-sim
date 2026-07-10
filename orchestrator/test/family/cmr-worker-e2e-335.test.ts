@@ -19,8 +19,15 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {
+  copyFileSync,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -46,6 +53,30 @@ afterEach(() => {
   }
 });
 
+function copyLiveAuthFile(e2eHome: string, relativePath: string): void {
+  const source = join(homedir(), relativePath);
+  const target = join(e2eHome, relativePath);
+  try {
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(source, target);
+    chmodSync(target, 0o600);
+  } catch {
+    // Keep the production CMR auth semantics: an unavailable leg degrades, while
+    // the top-level worker's own Claude preflight still escalates when required.
+  }
+}
+
+function createCmrE2eHome(): string {
+  // Colima/Docker shares the host $HOME into its VM, but commonly does not share
+  // macOS tmpdir(). Keep the disposable home under $HOME without ever using the
+  // real ~/.sc-orchestrator root (#748).
+  const e2eHome = mkdtempSync(join(homedir(), ".sc-orchestrator-e2e-"));
+  copyLiveAuthFile(e2eHome, ".codex/auth.json");
+  copyLiveAuthFile(e2eHome, ".sc-agy-oauth-token");
+  copyLiveAuthFile(e2eHome, ".sc-claude-token");
+  return e2eHome;
+}
+
 describe.skipIf(!RUN)("#335 cmr worker e2e — real 2b container fan-out", () => {
   it(
     "invokes ak-cross-m-review in-container and returns a structured verdict",
@@ -54,7 +85,7 @@ describe.skipIf(!RUN)("#335 cmr worker e2e — real 2b container fan-out", () =>
       // Keep this in a disposable injected HOME so the e2e path cannot touch the
       // real ~/.sc-orchestrator auth root (#748). The container-backed test is
       // explicitly opt-in and must not create host files under the real HOME.
-      const e2eHome = mkdtempSync(join(tmpdir(), "sc-orchestrator-e2e-home-"));
+      const e2eHome = createCmrE2eHome();
       cleanups.push(e2eHome);
       const e2eRoot = join(e2eHome, ".sc-orchestrator", "cmr-e2e");
       mkdirSync(e2eRoot, { recursive: true });
