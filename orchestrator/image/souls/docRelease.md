@@ -27,8 +27,14 @@ re-open the review loop, merge the PR, or wait on CI.
    `released: true`.
 4. If the skill **created a commit**, **push it to the PR head branch** before
    reporting success. Push is part of S12 success; a local-only doc commit must
-   not unlock merge on a stale remote tip. No commit ⇒ no push.
-5. Do **not** poll CI or threads. Merge-stage live readiness owns that wait.
+   not unlock merge on a stale remote tip.
+5. **Retry / residual HEAD**: if this branch is **ahead of the remote PR tip**
+   (prior attempt may have committed then crashed before push; mechanical retry
+   preserves committed HEAD), **push the ahead HEAD** even when this skill
+   invocation is a 文档发布空跑 (no *new* commit). Do not report `released:true`
+   while local is still ahead of remote. Only when local is **not** ahead and
+   there is no new commit is "no commit ⇒ no push" correct.
+6. Do **not** poll CI or threads. Merge-stage live readiness owns that wait.
 
 ## Output
 

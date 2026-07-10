@@ -1726,10 +1726,16 @@ function planResume(
       }
       reopenIdx--;
     }
+    // Gemini R2 high: reopenIdx < 0 must not slice(0,0) and wipe the ledger.
+    if (reopenIdx < 0) {
+      throw new Error(
+        "planResume: expected non-terminal S11 ledger row but none found",
+      );
+    }
     return {
       resumeStep: "S11",
       lastOutput: undefined,
-      priorLedger: ledger.slice(0, Math.max(0, reopenIdx)) as ReadonlyArray<LedgerEntry>,
+      priorLedger: ledger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
     };
   }
   // #735 US13: S12 released:false parks resumable — re-feed re-dispatches
@@ -1747,10 +1753,16 @@ function planResume(
       }
       reopenIdx--;
     }
+    // Gemini R2 high: reopenIdx < 0 must not slice(0,0) and wipe the ledger.
+    if (reopenIdx < 0) {
+      throw new Error(
+        "planResume: expected released:false S12 ledger row but none found",
+      );
+    }
     return {
       resumeStep: "S12",
       lastOutput: undefined,
-      priorLedger: ledger.slice(0, Math.max(0, reopenIdx)) as ReadonlyArray<LedgerEntry>,
+      priorLedger: ledger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
     };
   }
   if (decision.kind === "handoff") {
@@ -2288,6 +2300,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     convergedHeadOid: string,
   ): Promise<
     | { readonly kind: "ok"; readonly record: PrMergedTerminalRecord }
+    /** Transient post-doc CI pending — no sticky S8; re-feed re-enters auto-merge. */
+    | { readonly kind: "park_not_ready"; readonly stopSummary: StopSummary }
     | { readonly kind: "escalate"; readonly stopSummary: StopSummary }
   > {
     const prUrl = ship.pr;
@@ -2345,15 +2359,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       },
     });
     if (!mergeResult.ok || mergeResult.record === undefined) {
-      return {
-        kind: "escalate",
-        stopSummary:
-          mergeResult.stopSummary ?? {
-            reason: "decision_gate_park",
-            summary: `auto-merge did not complete (${mergeResult.terminalState})`,
-            repairHint: "resolve merge blockers or answer the decision gate, then re-feed",
-          },
-      };
+      const stopSummary =
+        mergeResult.stopSummary ?? {
+          reason: "decision_gate_park" as const,
+          summary: `auto-merge did not complete (${mergeResult.terminalState})`,
+          repairHint: "resolve merge blockers or answer the decision gate, then re-feed",
+        };
+      // #735 Codex P1: ci_pending/not_ready must not sticky-S8(escalate).
+      // Leave ledger at successful S12 so re-feed routes S12→S11 and re-polls.
+      if (mergeResult.terminalState === "not_ready") {
+        return { kind: "park_not_ready", stopSummary };
+      }
+      return { kind: "escalate", stopSummary };
     }
     if (mergeResult.terminalState !== "already_recorded") {
       try {
@@ -3076,7 +3093,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           lastShipOutput,
           resumeConvergedHead,
         );
-        if (autoMerge.kind === "escalate") {
+        if (
+          autoMerge.kind === "escalate" ||
+          autoMerge.kind === "park_not_ready"
+        ) {
           return {
             status: "escalate",
             stepLedger: ledger,
@@ -3879,6 +3899,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 lastShipOutput,
                 convergedHeadForCleanup,
               );
+              // #735 Codex P1: post-doc CI pending → park without sticky S8 so
+              // re-feed routes from last S12(released) → S11 and re-polls merge.
+              if (autoMerge.kind === "park_not_ready") {
+                return {
+                  status: "escalate",
+                  stepLedger: ledger,
+                  stopSummary: autoMerge.stopSummary,
+                  deferredFindings,
+                };
+              }
               if (autoMerge.kind === "escalate") {
                 ledger.push({ step: "S8", stopSummary: autoMerge.stopSummary });
                 try {
