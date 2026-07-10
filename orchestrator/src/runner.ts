@@ -102,6 +102,7 @@ import {
   resolveOnlineReviewRoundTrigger,
   realBotPollClock,
   reconstructOnlineReviewLandingForResume,
+  fixMarkedFindingAuthorizationForResume,
   ensureOnlineReviewRetriggerAfterFixGap,
   retriggerBotsAndPoll,
   shipLedgerTriggeredAtFromSliceLedger,
@@ -3800,10 +3801,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         promptFile = reviewLoopSpec.promptFile;
         try {
           if (reviewStep === "S9") {
-            const recheckFixMarkedFindingIdentityKeys =
+            let recheckFixMarkedFindingIdentityKeys =
               onlineReviewLanding?.fixMarkedFindingIdentityKeys;
-            const recheckFixMarkedFindingThreads =
+            let recheckFixMarkedFindingThreads =
               onlineReviewLanding?.fixMarkedFindingThreads;
+            // Resume without a snapshot still owes the recheck its durable
+            // authorization — rebuild from fix_committed / last S9 (#743 R6).
+            if (
+              onlineReviewRound > 1 &&
+              (recheckFixMarkedFindingIdentityKeys === undefined ||
+                recheckFixMarkedFindingIdentityKeys.length === 0)
+            ) {
+              const auth = fixMarkedFindingAuthorizationForResume(
+                mergeResumeLedgerHistory(resumeHistoryLedger, ledger),
+              );
+              recheckFixMarkedFindingIdentityKeys =
+                auth.fixMarkedFindingIdentityKeys;
+              recheckFixMarkedFindingThreads = auth.fixMarkedFindingThreads;
+            }
             const snapshot = await pollOnlineReviewForShip(
               lastShipOutput,
               onlineReviewRound,
@@ -3824,16 +3839,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ...(priorRoundFindings.length > 0
                 ? { priorRoundFindings }
                 : {}),
-              ...(onlineReviewRound > 1 &&
-              recheckFixMarkedFindingIdentityKeys !== undefined
+              ...(onlineReviewRound > 1
                 ? {
                     fixMarkedFindingIdentityKeys:
-                      recheckFixMarkedFindingIdentityKeys,
+                      recheckFixMarkedFindingIdentityKeys ?? [],
+                    fixMarkedFindingThreads:
+                      recheckFixMarkedFindingThreads ?? [],
                   }
-                : {}),
-              ...(onlineReviewRound > 1 &&
-              recheckFixMarkedFindingThreads !== undefined
-                ? { fixMarkedFindingThreads: recheckFixMarkedFindingThreads }
                 : {}),
             };
           }
@@ -4529,11 +4541,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
             ) {
               const nextRound = onlineReviewRound + 1;
+              const fixAuthKeys = (
+                onlineReviewLanding?.fixMarkedFindingIdentityKeys ?? []
+              ).filter((key) => typeof key === "string" && key.trim().length > 0);
+              const fixAuthThreads = (
+                onlineReviewLanding?.fixMarkedFindingThreads ?? []
+              ).flatMap((binding) =>
+                typeof binding.identityKey === "string" &&
+                binding.identityKey.trim().length > 0 &&
+                typeof binding.threadId === "string" &&
+                binding.threadId.trim().length > 0
+                  ? [
+                      {
+                        identityKey: binding.identityKey,
+                        threadId: binding.threadId,
+                      },
+                    ]
+                  : [],
+              );
               const fixCommittedMarker = {
                 step: "S10" as const,
                 event: "online_review_fix_committed" as const,
                 fixCommitSha: lastOnlineReviewFixCommitSha!,
                 onlineReviewRound,
+                ...(fixAuthKeys.length > 0
+                  ? { fixMarkedFindingIdentityKeys: fixAuthKeys }
+                  : {}),
+                ...(fixAuthThreads.length > 0
+                  ? { fixMarkedFindingThreads: fixAuthThreads }
+                  : {}),
               };
               ledger.push(fixCommittedMarker);
               if (stateDir !== undefined) {

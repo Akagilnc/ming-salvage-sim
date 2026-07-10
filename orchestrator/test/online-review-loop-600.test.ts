@@ -93,6 +93,7 @@ import {
   retriggerBotsAndPoll,
   familyPendingRoundTriggerFromFixGap,
   resolveOnlineReviewRoundTrigger,
+  recheckConvergenceConfirmsFixMarkedKeys,
   sliceOnlineReviewCiFailedPending,
   slicePendingRoundTriggerFromFixGap,
   slicePostFixVerifyPendingFromMarkerGap,
@@ -896,6 +897,30 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
         isRecheck: true,
         fixMarkedFindingIdentityKeys: ["t:1"],
       }),
+    ).toBe(true);
+  });
+
+  it("#743 R6: empty authorization on a post-fixer recheck rejects bare converge", () => {
+    expect(
+      recheckConvergenceConfirmsFixMarkedKeys(
+        { kind: "verify", converged: true, isRecheck: true },
+        { fixMarkedFindingIdentityKeys: [], fixMarkedFindingThreads: [] },
+      ),
+    ).toBe(false);
+    expect(
+      recheckConvergenceConfirmsFixMarkedKeys(
+        { kind: "verify", converged: true, isRecheck: true },
+        {},
+      ),
+    ).toBe(false);
+  });
+
+  it("#743 R6: round-1 non-recheck bare converge stays legal", () => {
+    expect(
+      recheckConvergenceConfirmsFixMarkedKeys(
+        { kind: "verify", converged: true },
+        {},
+      ),
     ).toBe(true);
   });
 
@@ -4203,6 +4228,7 @@ describe("#600 r26 runner-owned isRecheck", () => {
 
   it("pin r26: stage post-fixer verify omitting isRecheck still applies fixing SHA", async () => {
     let fixingSha: string | undefined;
+    const pinKey = "pin:r26";
     const result = await runOnlineReviewLoopStage(
       {
         kind: "ship",
@@ -4231,12 +4257,18 @@ describe("#600 r26 runner-owned isRecheck", () => {
         }),
         dispatchVerify: async (_landing, round) => {
           if (round === 1) {
-            return { kind: "verify", converged: false };
+            return {
+              kind: "verify",
+              converged: false,
+              findingDispositions: [
+                { identityKey: pinKey, threadId: "1", action: "fix" },
+              ],
+            };
           }
           return {
             kind: "verify",
             converged: true,
-            fixMarkedFindingIdentityKeys: [],
+            fixMarkedFindingIdentityKeys: [pinKey],
           };
         },
         dispatchFixer: async () => fixerCommitted(),
@@ -4491,6 +4523,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     let roundSeen = 0;
     let fixerCalls = 0;
     let verifyCalls = 0;
+    const budgetKey = "budget:1";
     const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async (round) => {
         roundSeen = round;
@@ -4498,12 +4531,19 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchVerify: async (_landing, round) => {
         verifyCalls += 1;
+        if (round > MAX_ONLINE_REVIEW_ROUNDS) {
+          return {
+            kind: "verify",
+            converged: true,
+            fixMarkedFindingIdentityKeys: [budgetKey],
+          } satisfies VerifyResult;
+        }
         return {
           kind: "verify",
-          converged: round > MAX_ONLINE_REVIEW_ROUNDS,
-          ...(round > MAX_ONLINE_REVIEW_ROUNDS
-            ? { fixMarkedFindingIdentityKeys: [] }
-            : {}),
+          converged: false,
+          findingDispositions: [
+            { identityKey: budgetKey, threadId: "1", action: "fix" },
+          ],
         } satisfies VerifyResult;
       },
       dispatchFixer: async () => {
@@ -4732,17 +4772,24 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     let resolveFixCalls = 0;
     let retriggerCalls = 0;
     let fixingSha: string | undefined;
+    const pinKey = "pin:r33";
     const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
       dispatchVerify: async (_landing, round) => {
         if (round === 1) {
-          return { kind: "verify", converged: false };
+          return {
+            kind: "verify",
+            converged: false,
+            findingDispositions: [
+              { identityKey: pinKey, threadId: "1", action: "fix" },
+            ],
+          };
         }
         return {
           kind: "verify",
           converged: true,
           isRecheck: true,
-          fixMarkedFindingIdentityKeys: [],
+          fixMarkedFindingIdentityKeys: [pinKey],
         };
       },
       dispatchFixer: async () => fixerAlreadySatisfied("crash-landed-sha"),
@@ -4772,17 +4819,24 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     const driftHeadOid = "live-head-would-be-wrong-if-read";
     let resolveFixCalls = 0;
     let fixingSha: string | undefined;
+    const pinKey = "pin:r39";
     const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => ({ ...baseSnapshot, headOid: driftHeadOid }),
       dispatchVerify: async (_landing, round) => {
         if (round === 1) {
-          return { kind: "verify", converged: false };
+          return {
+            kind: "verify",
+            converged: false,
+            findingDispositions: [
+              { identityKey: pinKey, threadId: "1", action: "fix" },
+            ],
+          };
         }
         return {
           kind: "verify",
           converged: true,
           isRecheck: true,
-          fixMarkedFindingIdentityKeys: [],
+          fixMarkedFindingIdentityKeys: [pinKey],
         };
       },
       dispatchFixer: async () => fixerCommitted(envelopeSha),
@@ -4954,17 +5008,24 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
 
   it("pin r33 family: fixer alreadySatisfied records fix marker path via envelope SHA", async () => {
     let recordedSha: string | undefined;
+    const pinKey = "pin:r33-family";
     const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
       dispatchVerify: async (_landing, round) => {
         if (round === 1) {
-          return { kind: "verify", converged: false };
+          return {
+            kind: "verify",
+            converged: false,
+            findingDispositions: [
+              { identityKey: pinKey, threadId: "1", action: "fix" },
+            ],
+          };
         }
         return {
           kind: "verify",
           converged: true,
           isRecheck: true,
-          fixMarkedFindingIdentityKeys: [],
+          fixMarkedFindingIdentityKeys: [pinKey],
         };
       },
       dispatchFixer: async () => fixerAlreadySatisfied("family-landed-sha"),
@@ -5930,6 +5991,142 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         "finding:r3",
       ]);
       expect(backend.verifyLandings[0]?.fixMarkedFindingThreads).toEqual([]);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("#743 R6: family resume fails closed when an all-empty marker admits bare converge", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    const fixSha = "fixsha2222222222222222222222222222222222";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    try {
+      class EmptyAuthFamilyBackend extends ReviewLoopFamilyBackend {
+        readonly verifyLandings: WorkerLandingPayload[] = [];
+        override async dispatchWorker(
+          spec: WorkerSpec,
+          ctx: DispatchContext,
+          landing?: WorkerLandingPayload,
+        ): Promise<WorkerResult> {
+          if (spec.kind === "verify") {
+            if (landing !== undefined) this.verifyLandings.push(landing);
+            return {
+              kind: "completed",
+              output: { kind: "verify", converged: true, isRecheck: true },
+            };
+          }
+          const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+          return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
+        }
+      }
+      const backend = new EmptyAuthFamilyBackend();
+      backend.ledger.push(
+        {
+          status: "online_review_round_retrigger",
+          event: "online_review_round_retrigger",
+          phase: "final",
+          roundTriggerHeadOid: fixSha,
+          roundTriggerAt: retriggerTs,
+          onlineReviewRound: 2,
+          pr: offlineShip.pr,
+        },
+        {
+          status: "online_review_fix_committed",
+          event: "online_review_fix_committed",
+          phase: "final",
+          familyHeadAfter: fixSha,
+          pr: offlineShip.pr,
+        },
+      );
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+      expect(result).toEqual({
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round: 2,
+        stopSummary: expect.objectContaining({ reason: "contract_drift" }),
+      });
+      expect(backend.verifyLandings[0]?.fixMarkedFindingIdentityKeys).toEqual([]);
+      expect(backend.verifyLandings[0]?.fixMarkedFindingThreads).toEqual([]);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("#743 R6: family resume with complete thread bindings echoes and merges", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    const fixSha = "fixsha3333333333333333333333333333333333";
+    const retriggerTs = "2026-07-08T13:00:00.000Z";
+    const authKey = "finding:r6-success";
+    const authThread = "4242";
+    try {
+      class SuccessFamilyBackend extends ReviewLoopFamilyBackend {
+        readonly verifyLandings: WorkerLandingPayload[] = [];
+        override async dispatchWorker(
+          spec: WorkerSpec,
+          ctx: DispatchContext,
+          landing?: WorkerLandingPayload,
+        ): Promise<WorkerResult> {
+          if (spec.kind === "verify") {
+            if (landing !== undefined) this.verifyLandings.push(landing);
+            return {
+              kind: "completed",
+              output: {
+                kind: "verify",
+                converged: true,
+                isRecheck: true,
+                fixMarkedFindingIdentityKeys: [...(landing?.fixMarkedFindingIdentityKeys ?? [])],
+              },
+            };
+          }
+          const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+          return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
+        }
+      }
+      const backend = new SuccessFamilyBackend();
+      backend.ledger.push(
+        {
+          status: "online_review_round_retrigger",
+          event: "online_review_round_retrigger",
+          phase: "final",
+          roundTriggerHeadOid: fixSha,
+          roundTriggerAt: retriggerTs,
+          onlineReviewRound: 2,
+          pr: offlineShip.pr,
+        },
+        {
+          status: "online_review_fix_committed",
+          event: "online_review_fix_committed",
+          phase: "final",
+          familyHeadAfter: fixSha,
+          pr: offlineShip.pr,
+          fixMarkedFindingIdentityKeys: [authKey],
+          fixMarkedFindingThreads: [{ identityKey: authKey, threadId: authThread }],
+        },
+      );
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+      expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
+      expect(backend.verifyLandings[0]?.fixMarkedFindingIdentityKeys).toEqual([authKey]);
+      expect(backend.verifyLandings[0]?.fixMarkedFindingThreads).toEqual([
+        { identityKey: authKey, threadId: authThread },
+      ]);
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

@@ -1443,7 +1443,13 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
         status: "pr_opened",
         pr: "pr://slice/offline-255",
       }),
-      entry("S9", { kind: "verify", converged: false }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
       entry("S10", {
         kind: "fixer",
         committed: true,
@@ -1452,7 +1458,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       // truncated before fresh re-verify / S11; no S8 yet — S9 false → S10 is the
       // legal loop-back topology (not converged:true then fixer).
     ];
-    const backend = new DispatchRecordingResumeBackend({
+    const backend = new ReviewLoopResumeBackend({
       worktree: WORKTREE,
       stateDir: STATE_DIR,
       ledger: prior,
@@ -1682,6 +1688,201 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       expect.objectContaining({ reason: "contract_drift" }),
     );
     expect(backend.dispatchSpecs.filter((s) => s.id === "S11")).toHaveLength(0);
+  });
+
+  it("#743 R6: single-slice resume with empty last-S9 rebuild fails closed on bare converge", async () => {
+    const fixSha = "fixsha4444444444444444444444444444444444";
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-r6-empty-auth-"));
+    writeResumeOnlineReviewSnapshot(stateDir);
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+      }),
+      {
+        step: "S10" as const,
+        event: "online_review_fix_committed" as const,
+        fixCommitSha: fixSha,
+        onlineReviewRound: 1,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: "2026-07-08T12:30:00.000Z",
+      },
+    ];
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.stopSummary).toEqual(
+      expect.objectContaining({ reason: "contract_drift" }),
+    );
+    expect(backend.dispatchSpecs.filter((s) => s.id === "S11")).toHaveLength(0);
+  });
+
+  it("#743 R6: single-slice fix_committed authorization pairs survive key-only last-S9 resume", async () => {
+    const fixSha = "fixsha5555555555555555555555555555555555";
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-r6-marker-auth-"));
+    writeResumeOnlineReviewSnapshot(stateDir);
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        // Key-only recheck shape — threads must come from the fix_committed marker.
+        isRecheck: true,
+        fixMarkedFindingIdentityKeys: ["f:1"],
+      }),
+      {
+        step: "S10" as const,
+        event: "online_review_fix_committed" as const,
+        fixCommitSha: fixSha,
+        onlineReviewRound: 1,
+        fixMarkedFindingIdentityKeys: ["f:1"],
+        fixMarkedFindingThreads: [{ identityKey: "f:1", threadId: "100" }],
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: "2026-07-08T12:30:00.000Z",
+      },
+    ];
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    const verifyIdx = backend.dispatchSpecs.findIndex((s) => s.id === "S9");
+    expect(verifyIdx).toBeGreaterThanOrEqual(0);
+    expect(backend.dispatchLandings[verifyIdx]?.fixMarkedFindingIdentityKeys).toEqual([
+      "f:1",
+    ]);
+    expect(backend.dispatchLandings[verifyIdx]?.fixMarkedFindingThreads).toEqual([
+      { identityKey: "f:1", threadId: "100" },
+    ]);
+  });
+
+  it("#743 R6: single-slice continuous path persists (key,thread) on fix_committed", async () => {
+    const livePr = "https://github.com/o/r/pull/255";
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-r6-persist-auth-"));
+    writeResumeOnlineReviewSnapshot(stateDir);
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: livePr,
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "f:1", threadId: "100", action: "fix" },
+        ],
+      }),
+    ];
+
+    const pollSpy = vi
+      .spyOn(onlineReviewLoop, "waitForBotQuiescence")
+      .mockImplementation(async (_sh, input) => ({
+        repo: "o/r",
+        prNumber: 255,
+        prUrl: input.prUrl,
+        headOid: input.roundTrigger.headOid,
+        pollCount: 1,
+        bots: {
+          coderabbit: { state: "complete", findingCount: 0 },
+          sourcery: { state: "complete", findingCount: 0 },
+          codex: { state: "complete", findingCount: 0 },
+          gemini: { state: "complete", findingCount: 0 },
+        },
+        threads: [],
+        checkRuns: [],
+        totalFindingCount: 0,
+        quiescent: true,
+      }));
+    const retriggerSpy = vi
+      .spyOn(onlineReviewLoop, "retriggerBotsAndPoll")
+      .mockImplementation(() => {
+        throw new Error("retriggerBotsAndPoll: gh api failed");
+      });
+
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
+    vi.stubEnv("ORCHESTRATOR_REPO", "o/r");
+
+    try {
+      const backend = new ReviewLoopResumeBackend({
+        worktree: WORKTREE,
+        stateDir,
+        ledger: prior,
+      });
+      backend.verifyDispatchCount = 0;
+      const origDispatch = backend.dispatchWorker.bind(backend);
+      backend.dispatchWorker = async (spec, ctx, landing) => {
+        if (spec.kind === "fixer") {
+          backend.dispatchSpecs.push(spec);
+          backend.dispatchContexts.push(ctx);
+          backend.dispatchLandings.push(landing);
+          return {
+            kind: "completed",
+            output: {
+              kind: "fixer",
+              committed: true,
+              fixCommitSha: "fixsha1111111111111111111111111111111111",
+            },
+          };
+        }
+        return origDispatch(spec, ctx, landing);
+      };
+
+      await runOrchestrator({ issueNumber: 255, backend });
+
+      const marker = backend.ledgerWrites.find(
+        (e) => e.event === "online_review_fix_committed",
+      );
+      expect(marker).toMatchObject({
+        fixMarkedFindingIdentityKeys: ["f:1"],
+        fixMarkedFindingThreads: [{ identityKey: "f:1", threadId: "100" }],
+      });
+    } finally {
+      retriggerSpy.mockRestore();
+      pollSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("pin online R3 Codex P1: retrigger fail after fix_committed parks escalate (not S8 error)", async () => {
