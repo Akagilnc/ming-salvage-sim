@@ -416,7 +416,7 @@ function loginMatchesBot(login: string, bot: OnlineReviewBotId): boolean {
   if (!login) return false;
   const lower = login.toLowerCase();
   return ONLINE_REVIEW_BOT_LOGINS[bot].some(
-    (known) => known.toLowerCase() === lower,
+    (known) => known === lower,
   );
 }
 
