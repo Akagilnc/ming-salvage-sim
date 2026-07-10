@@ -3,7 +3,14 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -263,6 +270,80 @@ describe("#684 worker monitor handles", () => {
     expect(result.unverifiedPids).toEqual([101]);
   });
 
+  it.skipIf(process.platform === "win32")(
+    "default deps report an orphaned child as unverified without signalling it",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "orch-684-default-reparent-"));
+      const originalPath = process.env.PATH;
+      let orphanPid: number | undefined;
+      try {
+        const pidFile = join(dir, "orphan.pid");
+        const root = spawn(
+          "bash",
+          [
+            "-c",
+            'sleep 30 & child=$!; echo "$child" > "$1"',
+            "orphan-root",
+            pidFile,
+          ],
+          { stdio: "ignore" },
+        );
+        expect(root.pid).toBeDefined();
+        await new Promise<void>((resolve, reject) => {
+          root.once("exit", () => resolve());
+          root.once("error", reject);
+        });
+        orphanPid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+        expect(orphanPid).toBeGreaterThan(0);
+
+        const psShim = join(dir, "ps");
+        writeFileSync(
+          psShim,
+          `#!/bin/sh
+if [ "$1" = "-o" ] && [ "$2" = "pid=" ] && [ "$4" = "${root.pid}" ]; then
+  echo "${orphanPid}"
+  exit 0
+fi
+if [ "$1" = "-o" ] && [ "$2" = "ppid=" ]; then
+  echo "1"
+  exit 0
+fi
+if [ "$1" = "-p" ]; then
+  echo "same-instance"
+  exit 0
+fi
+exit 0
+`,
+          "utf8",
+        );
+        chmodSync(psShim, 0o755);
+        process.env.PATH = `${dir}:${originalPath ?? ""}`;
+
+        const handle = baseHandle({
+          pid: root.pid!,
+          logPath: "/tmp/unused.log",
+          instanceId: "same-instance",
+        });
+        const result = await killWorkerTree(handle);
+
+        expect(result.unverifiedPids).toContain(orphanPid);
+        expect(result.killedPids).not.toContain(orphanPid);
+        expect(() => process.kill(orphanPid!, 0)).not.toThrow();
+      } finally {
+        if (originalPath === undefined) delete process.env.PATH;
+        else process.env.PATH = originalPath;
+        if (orphanPid !== undefined) {
+          try {
+            process.kill(orphanPid, "SIGKILL");
+          } catch {
+            // The child may have exited during the assertion or cleanup.
+          }
+        }
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("accepts an injected instance reader for restricted dispatch tests", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orch-684-injected-id-"));
     try {
@@ -332,6 +413,7 @@ describe("#684 worker monitor handles", () => {
         listWaves += 1;
         return children.get(pid) ?? [];
       },
+      readParentPid: (pid) => (pid === 101 || pid === 102 ? 100 : undefined),
       readInstanceId: (pid) => (alive.has(pid) ? "same" : undefined),
       killPid: (pid, _signal) => {
         if (pid === 100) {

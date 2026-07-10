@@ -203,8 +203,8 @@ export async function dispatchMonitoredCliWorker(
   const logFd = openSync(logPath, "a");
   const dispatchedAt = new Date().toISOString();
 
-  // detached:true → new process group leader so kill can signal the whole group
-  // (mitigates re-parent-to-init orphans that a pure PPID walk would miss, #684 R2).
+  // detached:true gives the worker its own process-group boundary; termination
+  // still goes through individually verified killPid calls, #684 R2.
   const child = spawn(input.command, [...input.args], {
     cwd: input.cwd,
     env: input.env,
@@ -379,10 +379,6 @@ export function pidSafeToSignal(
   // Parentage re-verify: the live parent must still be in the trusted tree
   // (or be the handle root that still matches). Re-parent-to-init fails this
   // check — those orphans are reported as an unverified boundary instead.
-  // A caller that injects only the identity seam (the restricted-sandbox test
-  // case) still gets the required per-pid identity guard. Production defaults
-  // include parentage verification for re-parented children.
-  if (deps?.readParentPid === undefined) return true;
   const parent = d.readParentPid(pid);
   if (parent === undefined) return false;
   if (parent === handle.pid) {
