@@ -323,12 +323,28 @@ export function labelClass(key: string): string {
   return `${key.slice(0, at)}（${labelRegion(key.slice(at + 1))}）`;
 }
 export const stripOrganicMarkdown = (text: string): string => {
-  return text
-    .replace(/`([^`\n]*)`/g, "$1")
+  const codeSpans: string[] = [];
+  const protectedText = text.replace(/`([^`\n]*)`/g, (_match, code: string) => {
+    const index = codeSpans.push(code) - 1;
+    return `\uE000${index}\uE001`;
+  });
+  const withoutBlockPrefixes = protectedText.split("\n").map((line) => {
+    let current = line;
+    let next: string;
+    do {
+      next = current
+        .replace(/^[ \t]{0,3}#{1,6}[ \t]+/, "")
+        .replace(/^[ \t]{0,3}>[ \t]?/, "")
+        .replace(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/, "");
+      if (next === current) break;
+      current = next;
+    } while (true);
+    return current;
+  }).join("\n");
+
+  return withoutBlockPrefixes
     .replace(/\[([^\]\n]+)\]\([^)]+\)/g, "$1")
-    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
-    .replace(/^[ \t]{0,3}>[ \t]?/gm, "")
-    .replace(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/gm, "")
     .replace(/(?<!\w)(\*\*|__)(?=\S)([^\n]*?\S)\1(?!\w)/g, "$2")
-    .replace(/(?<!\w)(\*|_)(?=\S)([^\n]*?\S)\1(?!\w)/g, "$2");
+    .replace(/(?<!\w)(\*|_)(?=\S)([^\n]*?\S)\1(?!\w)/g, "$2")
+    .replace(/\uE000(\d+)\uE001/g, (_match, index: string) => codeSpans[Number(index)]);
 };

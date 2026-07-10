@@ -23,6 +23,16 @@ describe("stripOrganicMarkdown", () => {
       .toBe("标题\n引文\n正文\n代码");
   });
 
+  it("preserves markdown-looking content inside inline code spans", () => {
+    expect(stripOrganicMarkdown("`**原样**`\n`- 原样`"))
+      .toBe("**原样**\n- 原样");
+  });
+
+  it("strips nested block prefixes until the line is plain", () => {
+    expect(stripOrganicMarkdown("> # 标题\n- > 引文"))
+      .toBe("标题\n引文");
+  });
+
   it("does not strip underscores inside words or multiplication asterisks", () => {
     expect(stripOrganicMarkdown("snake_case_value\n2 * 3 * 4")).toBe("snake_case_value\n2 * 3 * 4");
   });
