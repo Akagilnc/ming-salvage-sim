@@ -1,11 +1,18 @@
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import type * as sc from "@ai-hero/sandcastle";
 import { runOrchestrator } from "../src/runner.js";
 import {
   resolveRouteModels,
   routeSmokeFailure,
+  routeSmokeEntries,
   smokeRouteModels,
 } from "../src/modelRoutes.js";
 import {
+  RealBackend,
   resolveRouteSmokeIdleTimeoutSeconds,
 } from "../src/realBackend.js";
 import type {
@@ -18,6 +25,13 @@ import type {
   StepSpec,
   WorktreeHandle,
 } from "../src/types.js";
+
+const { runSpy } = vi.hoisted(() => ({ runSpy: vi.fn() }));
+
+vi.mock("@ai-hero/sandcastle", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@ai-hero/sandcastle")>();
+  return { ...actual, run: runSpy };
+});
 
 class MissingSmokeBackend implements Backend {
   async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) { return route; }
@@ -77,6 +91,39 @@ class TerminalResumeSmokeBackend extends MissingSmokeBackend {
     this.calls.push("smokeModelRoute");
     throw new Error("smoke must not run for a terminal resume");
   }
+}
+
+class ProductionSmokeBackend extends RealBackend {
+  protected override cloneDirExists(): boolean {
+    return true;
+  }
+
+  protected override sh(file: string, args: string[]): string {
+    if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+      return ".git";
+    }
+    return "";
+  }
+}
+
+const smokeFixtureDir = dirname(fileURLToPath(import.meta.url));
+const smokePromptsDir = join(smokeFixtureDir, "..", "prompts");
+const smokeSoulsDir = join(smokeFixtureDir, "..", "image", "souls");
+
+function productionSmokeBackend(home: string): ProductionSmokeBackend {
+  mkdirSync(join(home, ".codex"), { recursive: true });
+  writeFileSync(join(home, ".codex", "auth.json"), "{}\n");
+  writeFileSync(join(home, ".sc-claude-token"), "test-token\n");
+  return new ProductionSmokeBackend({
+    sourceRepo: "/tmp/route-smoke-source",
+    remote: "https://github.com/owner/route-smoke.git",
+    runKey: 685,
+    repo: "owner/route-smoke",
+    imageName: "route-smoke-test-image",
+    promptsDir: smokePromptsDir,
+    soulsDir: smokeSoulsDir,
+    home,
+  });
 }
 
 describe("#685 route tool smoke", () => {
@@ -217,8 +264,11 @@ describe("#685 route tool smoke", () => {
       expect(
         resolveRouteSmokeIdleTimeoutSeconds(String(Number.MAX_SAFE_INTEGER)),
       ).toBe(60);
-      // the bound itself (2_147_483) is still accepted: value*1000 == INT32_MAX
+      // the bound itself (2_147_483) is still accepted: the largest whole-second
+      // value whose milliseconds remain <= INT32_MAX
       expect(resolveRouteSmokeIdleTimeoutSeconds("2147483")).toBe(2147483);
+      // the first integer above the bound is rejected exactly
+      expect(resolveRouteSmokeIdleTimeoutSeconds("2147484")).toBe(60);
     } finally {
       if (saved === undefined) {
         delete process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
@@ -254,6 +304,54 @@ describe("#685 route tool smoke", () => {
         resolveRouteSmokeIdleTimeoutSeconds(process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS),
       ).toBe(60);
     } finally {
+      if (saved === undefined) {
+        delete process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
+      } else {
+        process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = saved;
+      }
+    }
+  });
+
+  it("wires ORCHESTRATOR_SMOKE_IDLE_SECONDS into every production smoke run per call", async () => {
+    const saved = process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
+    const home = mkdtempSync(join(tmpdir(), "route-smoke-production-"));
+    const route = resolveRouteModels("normal", {});
+    const smokeRunCount = new Set(routeSmokeEntries(route).map(({ slug }) => slug)).size;
+    runSpy.mockImplementation(async (options: Parameters<typeof sc.run>[0]) => {
+      if (options.logging?.type === "file") {
+        options.logging.onAgentStreamEvent?.({
+          type: "toolCall",
+          name: "bash",
+          formattedArgs: "echo OK",
+          iteration: 1,
+          timestamp: new Date(),
+        });
+      }
+      return { completionSignal: "ROUTE_SMOKE_COMPLETE" } as Awaited<ReturnType<typeof sc.run>>;
+    });
+    try {
+      const backend = productionSmokeBackend(home);
+
+      process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = "42";
+      await backend.smokeModelRoute(route);
+      expect(runSpy).toHaveBeenCalledTimes(smokeRunCount);
+      expect(runSpy.mock.calls.map(([options]) => options.idleTimeoutSeconds)).toEqual(
+        Array(smokeRunCount).fill(42),
+      );
+
+      runSpy.mockClear();
+      process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = "7";
+      await backend.smokeModelRoute(
+        route,
+        Object.fromEntries(routeSmokeEntries(route).map(({ slug }) => [slug, "changed-cli-version"])),
+      );
+      expect(runSpy).toHaveBeenCalledTimes(smokeRunCount);
+      expect(runSpy.mock.calls.map(([options]) => options.idleTimeoutSeconds)).toEqual(
+        Array(smokeRunCount).fill(7),
+      );
+    } finally {
+      runSpy.mockReset();
+      rmSync(home, { recursive: true, force: true });
       if (saved === undefined) {
         delete process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
       } else {
