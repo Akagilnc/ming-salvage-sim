@@ -161,7 +161,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
     expect(result.status).toBe("escalated");
     expect(result.familyHead).toBe("head-after-cmr-pause");
     expect(result.children).toEqual([
-      { issue: 10, status: "merged" },
+      { issue: 10, status: "already_done" },
       { issue: 11, status: "skipped" },
     ]);
     expect(childBackend.ran).toEqual([]);

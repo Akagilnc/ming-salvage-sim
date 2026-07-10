@@ -504,7 +504,7 @@ class CmrClosureVersionSkewFamilyBackend implements FamilyBackend {
       const cmrOutput: CmrResult = {
         kind: "cmr",
         converged: true,
-        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         evidencePaths: ["cmr/review-summary.json"],
@@ -680,7 +680,7 @@ function cmrClosureWithMissingSuppressionFields(): CmrResult {
   return {
     kind: "cmr",
     converged: true,
-    successfulLegs: ["opus", "gpt-5.5", "agy"],
+    successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
     claimedFixedFindingIdentityKeys: [],
     priorFindingDispositions: [
       {
@@ -804,7 +804,7 @@ describe("#601 AC#4 — dogfoodReplay-pattern regression: dogfood-362, family-40
       output: {
         kind: "cmr",
         converged: true,
-        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         evidencePaths: ["cmr/review-summary.json"],

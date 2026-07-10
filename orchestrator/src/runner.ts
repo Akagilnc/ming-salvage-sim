@@ -2002,7 +2002,7 @@ export function stepSpecsForRoute(
       role: "coder",
       promptFile: "coder_implement.md",
       // The whole-slice build worker's model is env-switchable (default Codex
-      // gpt-5.5; was Sonnet 4.6). The slug is resolved to the baked CLI by
+      // gpt-5.6-terra; was Sonnet 4.6). The slug is resolved to the baked CLI by
       // agentForSlug (realBackend); switching the model is `ORCHESTRATOR_CODER_MODEL`
       // alone — no image rebuild, no StepSpec shape change.
       model: route.slots.coder,
