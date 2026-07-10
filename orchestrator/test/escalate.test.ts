@@ -43,6 +43,10 @@ const WORKTREE: WorktreeHandle = {
  * sane default (coder committed:true, reviewer clean).
  */
 class ConfigurableBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly calls: string[] = [];
   readonly runStepIds: string[] = [];
   pushCount = 0;

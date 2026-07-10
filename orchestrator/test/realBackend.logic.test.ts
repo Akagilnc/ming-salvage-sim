@@ -14,10 +14,18 @@
  */
 
 import { dirname, join } from "node:path";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import {
   agentForSlug,
   assertCompletionSignal,
@@ -59,6 +67,8 @@ import {
   soulForStep,
   REFERENCED_PROMPT_FILES,
   RealBackend,
+  routeSmokeCacheKey,
+  routeSmokeToolCallIsEchoOk,
   SANDBOX_CODEX_DIR,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
@@ -69,9 +79,63 @@ import {
 } from "../src/realBackend.js";
 import type { RepairEvidence, StepSpec } from "../src/types.js";
 import type * as sc from "@ai-hero/sandcastle";
+import { resolveRouteModels } from "../src/modelRoutes.js";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
 // brief); S1's `extractAgentBrief` is the surviving brief reader.
 import { StructuredOutputError } from "@ai-hero/sandcastle";
+
+/** #748: per-test $HOME so RealBackend never reads/writes real ~/.sc-orchestrator. */
+const tempHomes: string[] = [];
+
+function tempHome(prefix = "rb-home-748-"): string {
+  const home = mkdtempSync(join(tmpdir(), prefix));
+  tempHomes.push(home);
+  return home;
+}
+
+function cleanupTempHomes(): void {
+  while (tempHomes.length > 0) {
+    const home = tempHomes.pop();
+    if (home !== undefined) rmSync(home, { recursive: true, force: true });
+  }
+}
+
+afterEach(cleanupTempHomes);
+afterAll(cleanupTempHomes);
+
+describe("#685 route smoke hardening", () => {
+  it("accepts the quoted echo form emitted by a shell tool call", () => {
+    expect(
+      routeSmokeToolCallIsEchoOk({
+        type: "toolCall",
+        name: "bash",
+        formattedArgs: 'echo "OK"',
+      }),
+    ).toBe(true);
+  });
+
+  it("changes the cache key when the sandbox fingerprint changes", () => {
+    const route = resolveRouteModels("normal", {});
+    expect(routeSmokeCacheKey(route, "image-a")).not.toBe(
+      routeSmokeCacheKey(route, "image-b"),
+    );
+  });
+
+  it("turns a missing host CLI into an unknown version instead of throwing", () => {
+    const backend = {
+      sh: () => {
+        throw new Error("host CLI missing");
+      },
+    };
+    const cliVersionForSlug = (
+      RealBackend.prototype as unknown as {
+        cliVersionForSlug(this: typeof backend, slug: string): string;
+      }
+    ).cliVersionForSlug;
+
+    expect(cliVersionForSlug.call(backend, "sonnet")).toBe("unknown");
+  });
+});
 
 // ─── gh JSON → IssueMeta / IssueSnapshot ─────────────────────────────────────
 
@@ -555,6 +619,58 @@ describe("realBackend auth mount paths", () => {
       buildAuthPaths(257, "/h").hostCodexAuthDir,
     );
   });
+
+  it("defaults home to os.homedir() when omitted (production default unchanged)", () => {
+    // Pure path construction only — no file I/O.
+    const p = buildAuthPaths(748);
+    expect(p.hostCodexAuthDir).toBe(
+      join(homedir(), ".sc-orchestrator", "auth-748"),
+    );
+  });
+});
+
+// ─── #748: injectable home keeps auth I/O off real ~/.sc-orchestrator ────────
+
+describe("#748 RealBackend home injection (auth mount stays off real $HOME)", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+
+  /** Expose mountAuth over the production seam with clone/git stubbed. */
+  class MountProbeBackend extends RealBackend {
+    protected override cloneDirExists(): boolean {
+      return true;
+    }
+    protected override sh(file: string, args: string[]): string {
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+        return ".git";
+      }
+      return "";
+    }
+    public mount(issueNumber: number): { authDir: string; claudeToken?: string } {
+      return this.mountAuth(issueNumber);
+    }
+  }
+
+  it("mountAuth with opts.home writes only under the injected home, never real ~/.sc-orchestrator", () => {
+    const injected = tempHome("rb-home-748-mount-");
+    const issue = 748;
+
+    const backend = new MountProbeBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 748,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
+      home: injected,
+    });
+
+    const { authDir } = backend.mount(issue);
+    expect(authDir).toBe(join(injected, ".sc-orchestrator", `auth-${issue}`));
+    expect(existsSync(join(authDir, "config.toml"))).toBe(true);
+    // The only filesystem path asserted by this isolation test is the injected
+    // sentinel home; it never probes the real user's auth root.
+  });
 });
 
 // ─── model slug → CLI (role decides soul/model) ──────────────────────────────
@@ -575,7 +691,8 @@ describe("realBackend WORKER_IDLE_TIMEOUT_SECONDS (idle-timeout disable)", () =>
 
 describe("realBackend modelIdForSlug", () => {
   it("maps supported slugs to baked CLI model ids through the registry", () => {
-    expect(modelIdForSlug("gpt-5.5")).toBe("gpt-5.5");
+    expect(modelIdForSlug("gpt-5.6-terra")).toBe("gpt-5.6-terra");
+    expect(modelIdForSlug("gpt-5.6-sol")).toBe("gpt-5.6-sol");
     expect(modelIdForSlug("sonnet")).toBe("claude-sonnet-4-6");
     expect(modelIdForSlug("opus")).toBe("claude-opus-4-8");
   });
@@ -600,10 +717,15 @@ describe("realBackend resolveModelSlug", () => {
   });
 
   it("resolves existing slugs to the same provider/model/options as the pre-registry mapping", () => {
-    expect(resolveModelSlug("gpt-5.5")).toEqual({
+    expect(resolveModelSlug("gpt-5.6-terra")).toEqual({
       provider: "codex",
-      model: "gpt-5.5",
-      options: { effort: "high" },
+      model: "gpt-5.6-terra",
+      options: { effort: "low" },
+    });
+    expect(resolveModelSlug("gpt-5.6-sol")).toEqual({
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      options: { effort: "medium" },
     });
     expect(resolveModelSlug("sonnet")).toEqual({
       provider: "claudeCode",
@@ -613,10 +735,11 @@ describe("realBackend resolveModelSlug", () => {
       provider: "claudeCode",
       model: "claude-opus-4-8",
     });
-    expect(modelFamilyForSlug("gpt-5.5")).toBe("codex");
+    expect(modelFamilyForSlug("gpt-5.6-terra")).toBe("codex");
     expect(modelFamilyForSlug("sonnet")).toBe("claude");
     expect(modelFamilyForSlug("opus")).toBe("claude");
-    expect(modelIsStrongLeg("gpt-5.5")).toBe(true);
+    expect(modelIsStrongLeg("gpt-5.6-terra")).toBe(true);
+    expect(modelIsStrongLeg("gpt-5.6-sol")).toBe(true);
     expect(modelIsStrongLeg("sonnet")).toBe(false);
     expect(modelIsStrongLeg("opus")).toBe(true);
   });
@@ -629,11 +752,11 @@ describe("realBackend resolveModelSlug", () => {
 // ─── agentForSlug (model slug → baked-in CLI provider) ────────────────────────
 
 describe("realBackend agentForSlug", () => {
-  it("resolves the codex coder slug to the codex provider (gpt-5.5)", () => {
-    // The S2 build worker (coder) runs on Codex gpt-5.5 — agentForSlug returns the
+  it("resolves each ratified 5.6 officer through the Codex provider", () => {
+    // The S2 build worker (coder) runs on Codex gpt-5.6-terra — agentForSlug returns the
     // sandcastle codex provider (`.name === "codex"`), NOT claudeCode.
-    const provider = agentForSlug("gpt-5.5");
-    expect(provider.name).toBe("codex");
+    expect(agentForSlug("gpt-5.6-terra").name).toBe("codex");
+    expect(agentForSlug("gpt-5.6-sol").name).toBe("codex");
   });
   it("resolves the claude slugs to the claudeCode provider (reviewer/ship)", () => {
     // opus (reviewer / per-slice review subagent) and sonnet (the ship worker) stay
@@ -1010,7 +1133,21 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     imageName: "img",
     soulsDir: realSoulsDir,
     skillsMount: "/tmp/skills",
+    // #748: construction still resolves clone paths under home. Create it on
+    // access because each test's cleanup removes the previous temp home.
+    get home() {
+      return tempHome("rb-home-prompts-");
+    },
   };
+
+  it("allocates a fresh home for each base option access", () => {
+    const firstHome = baseOpts.home;
+    const secondHome = baseOpts.home;
+
+    expect(secondHome).not.toBe(firstHome);
+    expect(existsSync(firstHome)).toBe(true);
+    expect(existsSync(secondHome)).toBe(true);
+  });
 
   it("constructs successfully against the checked-in absolute prompts/ dir", () => {
     expect(
@@ -1078,7 +1215,7 @@ describe("RealBackend reviewer output contract", () => {
     id: "S6",
     role: "reviewer",
     promptFile: "reviewer_review.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     completionSignal: "REVIEWER_STEP_COMPLETE",
     maxIter: 1,
     soul: "READ-ONLY",
@@ -1105,6 +1242,7 @@ describe("RealBackend reviewer output contract", () => {
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
       soulsDir: join(here, "..", "image", "souls"),
+      home: tempHome("rb-home-reviewer-"),
     });
 
     expect(() =>
@@ -1141,6 +1279,7 @@ describe("RealBackend reviewer output contract", () => {
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
       soulsDir: join(here, "..", "image", "souls"),
+      home: tempHome("rb-home-reviewer-"),
     });
 
     const decoded = (
@@ -1194,6 +1333,7 @@ describe("RealBackend reviewer output contract", () => {
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
       soulsDir: join(here, "..", "image", "souls"),
+      home: tempHome("rb-home-reviewer-"),
     });
 
     expect(() =>
@@ -1240,6 +1380,7 @@ describe("RealBackend reviewer output contract", () => {
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
       soulsDir: join(here, "..", "image", "souls"),
+      home: tempHome("rb-home-reviewer-"),
     });
 
     expect(() =>
@@ -1290,6 +1431,7 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
       soulsDir: join(here, "..", "image", "souls"),
+      home: tempHome("rb-home-596-"),
     });
   }
 
@@ -1297,7 +1439,7 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     id: "S9",
     role: "verify",
     promptFile: "dummy.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     completionSignal: "VERIFY_COMPLETE",
     maxIter: 1,
     soul: "READ-ONLY",
@@ -1307,7 +1449,7 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     id: "S10",
     role: "fixer",
     promptFile: "dummy.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     completionSignal: "FIXER_COMPLETE",
     maxIter: 1,
     soul: "coder",
@@ -1317,7 +1459,7 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     id: "S11",
     role: "cleanup",
     promptFile: "dummy.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     completionSignal: "CLEANUP_COMPLETE",
     maxIter: 1,
     soul: "READ-ONLY",
@@ -1327,7 +1469,7 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     id: "S12",
     role: "docRelease",
     promptFile: "dummy.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     completionSignal: "DOCRELEASE_COMPLETE",
     maxIter: 1,
     soul: "READ-ONLY",
@@ -1480,7 +1622,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     id: "S2",
     role: "coder",
     promptFile: "coder_implement.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     completionSignal: "CODER_STEP_COMPLETE",
     maxIter: 5,
     soul: "coder",
@@ -1490,7 +1632,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     id: "S3",
     role: "reviewer",
     promptFile: "reviewer_review.md",
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     completionSignal: "REVIEWER_STEP_COMPLETE",
     maxIter: 1,
     soul: "READ-ONLY",
@@ -1541,6 +1683,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       imageName: "ming-worker:bad",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
+      // #748: runStep → box → mountAuth must not touch real ~/.sc-orchestrator.
+      home: tempHome("rb-home-286-"),
     });
   }
 
@@ -1973,6 +2117,7 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
       skillsMount: "/tmp/skills",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
+      home: tempHome("rb-home-329-"),
     });
   }
 
@@ -2317,6 +2462,7 @@ describe("realBackend resume coder commit truth", () => {
       imageName: "img",
       promptsDir: join(here, "..", "prompts"),
       soulsDir: join(here, "..", "image", "souls"),
+      home: tempHome("rb-home-285-"),
     });
 
     expect(() =>

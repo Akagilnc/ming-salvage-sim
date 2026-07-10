@@ -41,14 +41,14 @@ describe("#422 model route presets", () => {
       [...MODEL_ROUTE_SLOTS].sort(),
     );
     expect(resolved.slots).toEqual({
-      coder: "sonnet",
-      reviewer: "gpt-5.5",
-      coderFix: "sonnet",
+      coder: "gpt-5.6-terra",
+      reviewer: "gpt-5.6-sol",
+      coderFix: "gpt-5.6-terra",
       ship: "sonnet",
       merger: "sonnet",
-      cmrCompleteness: "opus",
-      cmrCorrectness: "opus",
-      verify: "opus",
+      cmrCompleteness: "gpt-5.6-terra",
+      cmrCorrectness: "gpt-5.6-terra",
+      verify: "gpt-5.6-terra",
       fixer: "sonnet",
       cleanup: "sonnet",
       docRelease: "sonnet",
@@ -56,18 +56,18 @@ describe("#422 model route presets", () => {
     expect(printableRouteLineup(resolved)).toEqual(
       [
         "route=normal",
-        "coder=sonnet",
-        "reviewer=gpt-5.5",
-        "coderFix=sonnet",
+        "coder=gpt-5.6-terra",
+        "reviewer=gpt-5.6-sol",
+        "coderFix=gpt-5.6-terra",
         "ship=sonnet",
         "merger=sonnet",
-        "cmrCompleteness=opus",
-        "cmrCorrectness=opus",
-        "verify=opus",
+        "cmrCompleteness=gpt-5.6-terra",
+        "cmrCorrectness=gpt-5.6-terra",
+        "verify=gpt-5.6-terra",
         "fixer=sonnet",
         "cleanup=sonnet",
         "docRelease=sonnet",
-        "cmrReview=[codex:gpt-5.5,claude:opus,agy:agy]",
+        "cmrReview=[codex:gpt-5.6-sol,claude:opus,agy:agy]",
       ].join("\n"),
     );
   });
@@ -75,12 +75,27 @@ describe("#422 model route presets", () => {
   it("single-slot overrides win over the selected base route", () => {
     const resolved = resolveRouteModels("normal", {
       reviewer: "opus",
-      ship: "gpt-5.5",
+      ship: "gpt-5.6-terra",
     });
 
     expect(resolved.slots.reviewer).toBe("opus");
-    expect(resolved.slots.ship).toBe("gpt-5.5");
-    expect(resolved.slots.coder).toBe("sonnet");
+    expect(resolved.slots.ship).toBe("gpt-5.6-terra");
+    expect(resolved.slots.coder).toBe("gpt-5.6-terra");
+  });
+
+  it("rejects retired 5.5 from every live route surface", () => {
+    expect(() => resolveRouteModels("normal", { ship: "gpt-5.5" })).toThrow(
+      /unknown model slug/i,
+    );
+    expect(() =>
+      resolveRouteModels("normal", {}, { cmrReview: ["gpt-5.5", "agy"] }),
+    ).toThrow(/unknown cmr review leg slug/i);
+    expect(() =>
+      activeModelRoute({
+        ORCHESTRATOR_ROUTE: "normal",
+        ORCHESTRATOR_REVIEWER_MODEL: "gpt-5.5",
+      }),
+    ).toThrow(/unknown model slug/i);
   });
 
   it("cheap routes keep only the pressured family's CMR strong leg", () => {
@@ -91,20 +106,22 @@ describe("#422 model route presets", () => {
 
     expect(claudeCheap.slots).toEqual(claudeTight.slots);
     expect(claudeCheap.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
-      "gpt-5.5",
+      "gpt-5.6-sol",
       "agy",
       "opus",
     ]);
     expect(claudeTight.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
-      "gpt-5.5",
+      "gpt-5.6-sol",
       "agy",
     ]);
 
-    expect(codexCheap.slots).toEqual(codexTight.slots);
+    expect(codexCheap.slots.coder).toBe("gpt-5.6-terra");
+    expect(codexCheap.slots.reviewer).toBe("gpt-5.6-sol");
+    expect(codexCheap.slots.verify).toBe("gpt-5.6-terra");
     expect(codexCheap.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
       "opus",
       "agy",
-      "gpt-5.5",
+      "gpt-5.6-sol",
     ]);
     expect(codexTight.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
       "opus",
@@ -115,7 +132,7 @@ describe("#422 model route presets", () => {
   it("fails closed for unknown routes, slots, and slugs", () => {
     expect(() => resolveRouteModels("missing", {})).toThrow(/unknown route/i);
     expect(() =>
-      resolveRouteModels("normal", { nope: "gpt-5.5" }),
+      resolveRouteModels("normal", { nope: "gpt-5.6-sol" }),
     ).toThrow(/unknown model slot/i);
     expect(() =>
       resolveRouteModels("normal", { coder: "does-not-exist" }),
@@ -126,9 +143,9 @@ describe("#422 model route presets", () => {
     expect(() =>
       resolveRouteModels("normal", { verify: "does-not-exist" }),
     ).toThrow(/unknown model slug/i);
-    // default preset for verify on "normal" is "opus" (no env read in resolveRouteModels)
+    // default preset for verify on "normal" is the ratified xhigh terra officer.
     const resolved = resolveRouteModels("normal", {});
-    expect(resolved.slots.verify).toBe("opus");
+    expect(resolved.slots.verify).toBe("gpt-5.6-terra");
     // bad explicit still caught above; the targeted proves verify slot participates in fail-closed
   });
 
@@ -136,7 +153,7 @@ describe("#422 model route presets", () => {
     const resolved = resolveRouteModels("claude-tight", {});
 
     expect(resolved.tightFamilyViolations).toEqual([]);
-    expect(new Set(Object.values(resolved.slots))).toEqual(new Set(["gpt-5.5"]));
+    expect(new Set(Object.values(resolved.slots))).toEqual(new Set(["gpt-5.6-terra", "gpt-5.6-sol"]));
     expect(resolved.legCollections.cmrReview.map((leg) => leg.family)).not.toContain(
       "claude",
     );
@@ -149,11 +166,7 @@ describe("#422 model route presets", () => {
       { slot: "merger", slug: "opus", family: "claude" },
     ]);
 
-    const badLeg = resolveRouteModels(
-      "claude-tight",
-      {},
-      { cmrReview: ["gpt-5.5", "opus"] },
-    );
+    const badLeg = resolveRouteModels("claude-tight", {}, { cmrReview: ["gpt-5.6-sol", "opus"] });
 
     expect(badLeg.tightFamilyViolations).toEqual([
       { slot: "cmrReview", slug: "opus", family: "claude" },
@@ -165,7 +178,7 @@ describe("#422 model route presets", () => {
       activeModelRoute({
         ORCHESTRATOR_ROUTE: "claude-tight",
       }).slots.coder,
-    ).toBe("gpt-5.5");
+    ).toBe("gpt-5.6-terra");
 
     expect(() =>
       activeModelRoute({
@@ -177,14 +190,14 @@ describe("#422 model route presets", () => {
     expect(
       modelForSlot("ship", {
         ORCHESTRATOR_ROUTE: "normal",
-        ORCHESTRATOR_SHIP_MODEL: "gpt-5.5",
+        ORCHESTRATOR_SHIP_MODEL: "gpt-5.6-terra",
       }),
-    ).toBe("gpt-5.5");
+    ).toBe("gpt-5.6-terra");
 
     expect(() =>
       activeModelRoute({
         ORCHESTRATOR_ROUTE: "claude-tight",
-        ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: "gpt-5.5,opus",
+        ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: "gpt-5.6-sol,opus",
       }),
     ).toThrow(/tight route violation/i);
   });
@@ -198,17 +211,17 @@ describe("#422 model route presets", () => {
     });
 
     expect(route.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
-      "gpt-5.5",
+      "gpt-5.6-sol",
       "agy",
     ]);
 
     const overridden = activeModelRoute({
       ORCHESTRATOR_ROUTE: "normal",
-      ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: '"gpt-5.5", \'opus\'',
+      ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: '"gpt-5.6-sol", \'opus\'',
     });
 
     expect(overridden.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
-      "gpt-5.5",
+      "gpt-5.6-sol",
       "opus",
     ]);
   });
@@ -219,25 +232,36 @@ describe("#422 model route presets", () => {
     ).toThrow(/unknown cmr review leg slug/i);
 
     expect(
-      resolveRouteModels("normal", {}, { cmrReview: ["gpt-5.5", "agy"] })
+      resolveRouteModels("normal", {}, { cmrReview: ["gpt-5.6-sol", "agy"] })
         .legCollections.cmrReview,
     ).toEqual([
-      { family: "codex", slug: "gpt-5.5" },
+      { family: "codex", slug: "gpt-5.6-sol" },
       { family: "agy", slug: "agy" },
     ]);
+  });
+
+  it("does not rewrite a historical 5.5 result as the live Sol leg", () => {
+    const liveRoute = resolveRouteModels("normal", {});
+
+    expect(
+      cmrLegAccountingFailure(
+        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        liveRoute,
+      ),
+    ).toMatch(/successful legs that were not declared.*gpt-5\.5/i);
   });
 
   it("rejects duplicate CMR leg accounting entries before set-based reconciliation", () => {
     expect(
       cmrLegAccountingFailure({
-        successfulLegs: ["gpt-5.5", "gpt-5.5", "opus"],
+        successfulLegs: ["gpt-5.6-sol", "gpt-5.6-sol", "opus"],
         skippedLegs: [{ slug: "agy", reason: "quota" }],
       }),
-    ).toMatch(/duplicate successful legs.*gpt-5\.5/i);
+    ).toMatch(/duplicate successful legs.*gpt-5\.6-sol/i);
 
     expect(
       cmrLegAccountingFailure({
-        successfulLegs: ["gpt-5.5", "opus"],
+        successfulLegs: ["gpt-5.6-sol", "opus"],
         skippedLegs: [
           { slug: "agy", reason: "quota" },
           { slug: "agy", reason: "quota again" },
@@ -249,13 +273,13 @@ describe("#422 model route presets", () => {
   it("does not treat shallow route-shaped objects as resolved routes", () => {
     const malformedRoute = {
       slots: {},
-      legCollections: { cmrReview: "gpt-5.5,opus,agy" },
+      legCollections: { cmrReview: "gpt-5.6-sol,opus,agy" },
       tightFamilyViolations: "none",
     };
 
     expect(
       cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
         malformedRoute as never,
       ),
     ).toBeUndefined();
@@ -270,13 +294,13 @@ describe("#422 model route presets", () => {
 
     expect(() =>
       cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
         malformedRoute as never,
       ),
     ).not.toThrow();
     expect(
       cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
         malformedRoute as never,
       ),
     ).toBeUndefined();
@@ -287,13 +311,13 @@ describe("#422 model route presets", () => {
 
     expect(() =>
       cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
         null as never,
       ),
     ).not.toThrow();
     expect(
       cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
         null as never,
       ),
     ).toBeUndefined();
@@ -311,15 +335,15 @@ describe("#422 model route presets", () => {
     const { mergerModel } = await import("../src/family/realFamilyBackend.js");
 
     const stepSpecs = stepSpecsForEnv();
-    expect(stepSpecs.S2.model).toBe("gpt-5.5");
-    expect(stepSpecs.S3.model).toBe("gpt-5.5");
-    expect(stepSpecs.S5.model).toBe("gpt-5.5");
-    expect(stepSpecs.S6.model).toBe("gpt-5.5");
-    expect(shipWorkerSpec().model).toBe("gpt-5.5");
-    expect(cmrWorkerSpec("fresh", "completeness").model).toBe("gpt-5.5");
-    expect(cmrWorkerSpec("fresh", "correctness").model).toBe("gpt-5.5");
-    expect(familyShipWorkerSpec().model).toBe("gpt-5.5");
-    expect(mergerModel()).toBe("gpt-5.5");
+    expect(stepSpecs.S2.model).toBe("gpt-5.6-terra");
+    expect(stepSpecs.S3.model).toBe("gpt-5.6-sol");
+    expect(stepSpecs.S5.model).toBe("gpt-5.6-terra");
+    expect(stepSpecs.S6.model).toBe("gpt-5.6-sol");
+    expect(shipWorkerSpec().model).toBe("gpt-5.6-terra");
+    expect(cmrWorkerSpec("fresh", "completeness").model).toBe("gpt-5.6-terra");
+    expect(cmrWorkerSpec("fresh", "correctness").model).toBe("gpt-5.6-terra");
+    expect(familyShipWorkerSpec().model).toBe("gpt-5.6-terra");
+    expect(mergerModel()).toBe("gpt-5.6-terra");
   });
 
   it("dispatches worker specs from the per-run route, not the route at module import time", async () => {
@@ -329,6 +353,10 @@ describe("#422 model route presets", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
 
     class RecordingBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
       readonly specs: WorkerSpec[] = [];
       async findResumeState(): Promise<undefined> {
         return undefined;
@@ -389,7 +417,7 @@ describe("#422 model route presets", () => {
 
     expect(result.status).toBe("success");
     expect(backend.specs.filter((spec) => spec.id === "S2").map((spec) => spec.model)).toEqual([
-      "gpt-5.5",
+      "gpt-5.6-terra",
     ]);
   });
 
@@ -441,6 +469,10 @@ describe("#422 model route presets", () => {
     vi.resetModules();
 
     class BackendShouldNotRun implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
       async findResumeState(): Promise<undefined> {
         throw new Error("backend should not run");
       }

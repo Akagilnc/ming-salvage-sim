@@ -10,6 +10,7 @@ import {
   stepSpecToWorkerSpec,
 } from "../src/dispatchWorker.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
+import { resolveRouteModels, routeSmokeEntries } from "../src/modelRoutes.js";
 import type {
   Backend,
   DispatchContext,
@@ -27,6 +28,17 @@ import type {
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
 } as const;
+const SMOKED_ROUTE = resolveRouteModels(
+  "normal",
+  {},
+  {},
+  Object.fromEntries(
+    routeSmokeEntries(resolveRouteModels("normal", {})).map((entry) => [
+      entry.key,
+      { state: "passed", at: new Date().toISOString(), cliVersion: "test" },
+    ]),
+  ),
+);
 
 /**
  * #331 — the unified worker-dispatch seam.
@@ -37,6 +49,10 @@ const CMR_EVIDENCE = {
  * old per-method (runStep/push) assertions (PRD #330 Testing Decisions).
  */
 class DispatchBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   /** Ordered log of every worker dispatched: "id:kind:role:session:skill". */
   readonly dispatched: string[] = [];
   /** The full WorkerSpec of each dispatch, in order. */
@@ -281,7 +297,7 @@ describe("#331 the S7 ship worker must return a SHIP payload (codex R2 guard)", 
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
       };
@@ -680,7 +696,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
         };
       },
     };
-    await dispatchWorker(be as Backend, coderWorker, {});
+    await dispatchWorker(be as Backend, coderWorker, { modelRoute: SMOKED_ROUTE });
     expect(used).toBe(true);
   });
 });

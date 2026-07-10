@@ -281,7 +281,7 @@ describe("#711 findingFamilies contract", () => {
     const raw = {
       converged: false,
       reason: "blocking findings remain",
-      successfulLegs: ["gpt-5.5"],
+      successfulLegs: ["gpt-5.6-sol"],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
       findings: [
@@ -307,7 +307,7 @@ describe("#711 findingFamilies contract", () => {
       evidencePaths: ["cmr/review.json"],
     };
     const parsed = parseCmrOutcome(`<cmr>${JSON.stringify(raw)}</cmr>`, [
-      { slug: "gpt-5.5" },
+      { slug: "gpt-5.6-sol" },
     ]);
     expect(parsed).toMatchObject({
       kind: "verdict",
@@ -332,7 +332,7 @@ describe("#711 outcome-guard allowlist", () => {
       const outcome = {
         converged: false,
         reason: "blocking findings remain",
-        successfulLegs: ["gpt-5.5"],
+        successfulLegs: ["gpt-5.6-sol"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         findings: [

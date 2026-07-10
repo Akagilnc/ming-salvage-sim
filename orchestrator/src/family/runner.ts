@@ -28,6 +28,7 @@ import {
   applyRuntimeTightRoutePolicy,
   printableRouteLineup,
   resolveActiveModelRoute,
+  routeSmokeFailure,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
 import type {
@@ -763,6 +764,7 @@ async function llmResolvedChildren(
 export async function runFamily(
   input: FamilyRunInput,
 ): Promise<FamilyRunResult> {
+  const { familyBackend, singleSliceBackend, familyBase } = input;
   let modelRoute: ResolvedModelRoute;
   try {
     modelRoute = resolveActiveModelRoute();
@@ -788,7 +790,7 @@ export async function runFamily(
       ...(input.epic.admissionSkipped !== undefined &&
       input.epic.admissionSkipped.length > 0
         ? { admissionSkipped: input.epic.admissionSkipped }
-        : {}),
+      : {}),
     };
   }
   const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
@@ -813,10 +815,68 @@ export async function runFamily(
       children,
     };
   }
+  if (typeof singleSliceBackend.smokeModelRoute !== "function") {
+    const reason =
+      "route smoke executor is required before family dispatch; backend did not provide smokeModelRoute";
+    const children = input.epic.children.map((child) => ({
+      issue: child.issue,
+      status: "skipped" as const,
+    }));
+    return {
+      status: "escalated",
+      familyBase,
+      escalation: { reason: "startup route smoke failure", diagnosis: reason },
+      stopSummary: infraFailureStopSummary({
+        summary: reason,
+        repairHint: "provide a real model×pipe smoke executor before dispatching family workers",
+      }),
+      children,
+    };
+  }
+  let currentCliVersions: Readonly<Record<string, string | undefined>>;
+  try {
+    currentCliVersions = singleSliceBackend.currentCliVersions
+      ? await singleSliceBackend.currentCliVersions(modelRoute)
+      : {};
+    modelRoute = await singleSliceBackend.smokeModelRoute(modelRoute, currentCliVersions);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    const children = input.epic.children.map((child) => ({
+      issue: child.issue,
+      status: "skipped" as const,
+    }));
+    return {
+      status: "escalated",
+      familyBase,
+      escalation: { reason: "startup route smoke failure", diagnosis: `route smoke failed: ${reason}` },
+      stopSummary: infraFailureStopSummary({
+        summary: `route smoke failed: ${reason}`,
+        repairHint: "repair the selected model×pipe tool smoke before dispatching family workers",
+      }),
+      children,
+    };
+  }
+  const smokeFailure = routeSmokeFailure(modelRoute, Date.now(), undefined, currentCliVersions);
+  if (smokeFailure !== undefined) {
+    const children = input.epic.children.map((child) => ({
+      issue: child.issue,
+      status: "skipped" as const,
+    }));
+    return {
+      status: "escalated",
+      familyBase,
+      escalation: { reason: "startup route smoke failure", diagnosis: smokeFailure },
+      stopSummary: infraFailureStopSummary({
+        summary: smokeFailure,
+        repairHint: "rerun the route smoke or repair the selected model×pipe",
+      }),
+      children,
+    };
+  }
+  const activeRoutePolicy = { ...routePolicy, route: modelRoute };
   console.info(
-    `[orchestrator:family] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
+    `[orchestrator:family] model route lineup\n${printableRouteLineup(activeRoutePolicy.route)}`,
   );
-  const { familyBackend, singleSliceBackend, familyBase } = input;
   let initialFamilyLedger = await familyBackend.readFamilyLedger();
   for (const skipped of input.epic.admissionSkipped ?? []) {
     const alreadyRecorded = initialFamilyLedger.some(
@@ -867,7 +927,7 @@ export async function runFamily(
               : undefined,
           children: input.epic.children.map((child) => ({
             issue: child.issue,
-            status: ledgerMerged.has(child.issue) ? "merged" : "skipped",
+            status: ledgerMerged.has(child.issue) ? "already_done" : "skipped",
           })),
           escalationReason:
             typeof escalation.reason === "string" && escalation.reason.trim().length > 0
@@ -881,7 +941,7 @@ export async function runFamily(
         }),
         children: input.epic.children.map((child) => ({
           issue: child.issue,
-          status: ledgerMerged.has(child.issue) ? "merged" : "skipped",
+          status: ledgerMerged.has(child.issue) ? "already_done" : "skipped",
         })),
       };
     }
@@ -985,7 +1045,7 @@ export async function runFamily(
       }
       const children: FamilyChildResult[] = epic.children.map((c) => {
         if (ledgerMerged.has(c.issue)) {
-          return { issue: c.issue, status: "merged" as const };
+          return { issue: c.issue, status: "already_done" as const };
         }
         const escalation = parkedByIssue.get(c.issue);
         if (escalation !== undefined) {
@@ -1047,9 +1107,10 @@ export async function runFamily(
   //
   //   - every epic child gets a record. A child not run this invocation is
   //     LEDGER-AWARE: if it has a `merged` ledger entry (e.g. merged in a prior
-  //     invocation — #298's resume truth), it is `"merged"` (per the
-  //     FamilyChildStatus contract: "merged" ⇔ a merged ledger entry exists), NOT
-  //     `"skipped"`. Only a child absent from BOTH this run's results AND the
+  //     invocation — #298's resume truth), it is `"already_done"` (per the
+  //     FamilyChildStatus contract: "merged" ⇔ merged this invocation;
+  //     "already_done" ⇔ an earlier run's ledger truth), NOT `"skipped"`. Only a
+  //     child absent from BOTH this run's results AND the
   //     merged ledger (a blocker never merged / a fail-fast wave aborted before
   //     it ran) is `"skipped"`.
   //   - `status` is the verify outcome ONLY when a barrier was red
@@ -1172,13 +1233,14 @@ export async function runFamily(
     const recorded = new Map(recordedResults.map((c) => [c.issue, c]));
     // LEDGER-AWARE (不静默吞, runner.ts ~958-968): a child MERGED in a prior
     // invocation is skipped by `selectWave`, so it is absent from this run's
-    // `recordedResults`. It must still report "merged" (the durable ledger truth),
-    // not "skipped" — mirroring the early-exit park path (~900) and finalize().
+    // `recordedResults`. It must report "already_done": the durable ledger truth
+    // is present, but this invocation did not merge it. It must not be "skipped"
+    // — mirroring the early-exit park path (~900) and finalize().
     const ledgerMerged = await currentMerged(familyBackend);
     const children: FamilyChildResult[] = epic.children.map((c) => {
       const rec = recorded.get(c.issue);
       if (rec !== undefined) return rec;
-      if (ledgerMerged.has(c.issue)) return { issue: c.issue, status: "merged" as const };
+      if (ledgerMerged.has(c.issue)) return { issue: c.issue, status: "already_done" as const };
       return { issue: c.issue, status: "skipped" as const };
     });
     const escalationReason = `child #${parked.issue} escalated a decision: ${parked.escalation.reason}`;
@@ -1232,7 +1294,7 @@ export async function runFamily(
       // the run is observably `escalated`, NOT a fabricated success.
       const children: FamilyChildResult[] = epic.children.map((c) =>
         plan.merged.has(c.issue)
-          ? { issue: c.issue, status: "merged" as const }
+          ? { issue: c.issue, status: "already_done" as const }
           : { issue: c.issue, status: "skipped" as const },
       );
       await recordFamilyEscalated(familyBackend, {
@@ -1438,6 +1500,7 @@ export async function runFamily(
       phase: "wave",
       familyBase,
       familyBackend,
+      modelRoute: activeRoutePolicy.route,
       // #291 缺口 2: hand the abort-time family head to the hook so a RED wave verify
       // records it on the PHASE-LEVEL durable aborted entry's `familyHeadAfter`
       // (reconcile's baseline read covers the abort). `familyHead` is the head after
@@ -1527,7 +1590,7 @@ export async function runFamily(
         familyHeadAfter: preFinalFamilyHead!,
         prUrl: priorPrMerged.pr,
         familyIssue: epic.issue,
-        resolvedRoute: routePolicy.route,
+        resolvedRoute: activeRoutePolicy.route,
         children,
         ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
           ? { admissionSkipped: epic.admissionSkipped }
@@ -1587,7 +1650,7 @@ export async function runFamily(
           familyHeadAfter: preFinalFamilyHead,
           prUrl: convergedRecord.pr,
           familyIssue: epic.issue,
-          resolvedRoute: routePolicy.route,
+        resolvedRoute: activeRoutePolicy.route,
           children,
           ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
             ? { admissionSkipped: epic.admissionSkipped }
@@ -1725,7 +1788,7 @@ export async function runFamily(
       familyHeadAfter: preFinalFamilyHead!,
       prUrl: convergedRecord.pr,
       familyIssue: epic.issue,
-      resolvedRoute: routePolicy.route,
+      resolvedRoute: activeRoutePolicy.route,
       children,
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
@@ -1846,6 +1909,7 @@ export async function runFamily(
     const reviewLoop = await runFamilyOnlineReviewLoop({
       familyBackend,
       familyBase,
+      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
       ship: {
         kind: "ship",
         branch: familyBase,
@@ -1873,31 +1937,43 @@ export async function runFamily(
           : reviewLoop.terminalState === "contract_drift"
             ? "family online review verify worker moved HEAD during resume"
             : "family online review loop did not converge during resume");
-      await recordFamilyEscalated(familyBackend, {
-        escalationKind: "failure",
-        phase: "final",
-        reason: escalationReason,
-        familyHeadAfter: escalationFamilyHead,
-      });
+      // #744: a true human park is answerable + re-feedable (escalationKind
+      // "decision"); hard-writing "failure" made re-feed impossible.
+      // R1: terminalState "decision_gate_raised" is overloaded — onlineReviewLoop
+      // returns it for both B-class parks (stopSummary.reason decision_gate_park)
+      // and A-class infra failures (stopSummary.reason infra_failure). Key
+      // escalationKind off verifiable park semantics (StopSummary reason), not
+      // terminalState alone. decision_gate_raised + infra_failure stays failure.
+      const isDecisionGatePark =
+        reviewLoop.stopSummary?.reason === "decision_gate_park";
       const ledgerMerged = await currentMerged(familyBackend);
       const children: FamilyChildResult[] = epic.children.map((c) =>
         ledgerMerged.has(c.issue)
           ? { issue: c.issue, status: "already_done" as const }
           : { issue: c.issue, status: "skipped" as const },
       );
+      const stopSummary =
+        reviewLoop.stopSummary ??
+        familyStopSummary({
+          status: "escalated",
+          familyBase,
+          familyHead: escalationFamilyHead ?? preFinalFamilyHead,
+          children,
+          escalationReason,
+          decisionGatePark: isDecisionGatePark,
+        });
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind: isDecisionGatePark ? "decision" : "failure",
+        phase: "final",
+        reason: escalationReason,
+        familyHeadAfter: escalationFamilyHead,
+        stopSummary,
+      });
       return {
         status: "escalated",
         familyBase,
         familyHead: escalationFamilyHead ?? preFinalFamilyHead,
-        stopSummary:
-          reviewLoop.stopSummary ??
-          familyStopSummary({
-            status: "escalated",
-            familyBase,
-            familyHead: escalationFamilyHead ?? preFinalFamilyHead,
-            children,
-            escalationReason,
-          }),
+        stopSummary,
         children,
       };
     }
@@ -1984,7 +2060,7 @@ export async function runFamily(
       familyHeadAfter: convergedFamilyHead,
       prUrl: shippedRecord.pr,
       familyIssue: epic.issue,
-      resolvedRoute: routePolicy.route,
+      resolvedRoute: activeRoutePolicy.route,
       children,
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
@@ -2032,7 +2108,7 @@ export async function runFamily(
     const ledgerMerged = await currentMerged(familyBackend);
     const children: FamilyChildResult[] = epic.children.map((c) =>
       ledgerMerged.has(c.issue)
-        ? { issue: c.issue, status: "merged" as const }
+        ? { issue: c.issue, status: "already_done" as const }
         : { issue: c.issue, status: "skipped" as const },
     );
     await recordFamilyEscalated(familyBackend, {
@@ -2070,6 +2146,7 @@ export async function runFamily(
     phase: "final",
     familyBase,
     familyBackend,
+    modelRoute: activeRoutePolicy.route,
     // #291 缺口 1: derive the LLM-resolved children from the durable ledger and
     // hand them to the final-phase integrated cmr 承重闸 (via runVerifyCmr →
     // IntegratedCmrRequest.llmResolvedChildren), so it sees which merges a machine

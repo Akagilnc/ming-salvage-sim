@@ -14,6 +14,7 @@
  */
 
 import type { FamilyModuleContext } from "./family/moduleDeclaration.js";
+import type { ResolvedModelRoute } from "./modelRoutes.js";
 import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
 
 // ───────────────────────────── step identifiers ─────────────────────────────
@@ -424,6 +425,14 @@ export interface OnlineReviewCiPendingEvent {
   readonly onlineReviewRound: number;
 }
 
+/**
+ * #684 R2: spawn-time monitor handle bookkeeping — persisted AT SPAWN so hang
+ * judge/kill/resume can rebuild the handle before the step completes.
+ */
+export interface WorkerMonitorSpawnedEvent {
+  readonly event: "worker_monitor_spawned";
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
@@ -432,7 +441,8 @@ export type LedgerBookkeepingEvent =
   | OnlineReviewRoundRetriggerEvent
   | OnlineReviewFixCommittedEvent
   | OnlineReviewCiFailedEvent
-  | OnlineReviewCiPendingEvent;
+  | OnlineReviewCiPendingEvent
+  | WorkerMonitorSpawnedEvent;
 
 /**
  * The structured output of any worker step.
@@ -756,6 +766,8 @@ export interface WorkerLandingPayload {
  * (human answer, runner-observed gate failures) — never finding free-text content.
  */
 export interface DispatchContext {
+  /** The immutable route selected for this run, including its smoke records. */
+  readonly modelRoute?: ResolvedModelRoute;
   /**
    * The resident slice worktree (ADR 0017 commit truth). MANDATORY for
    * single-slice workers (coder/reviewer/ship S7); OPTIONAL for family-level
@@ -1253,6 +1265,55 @@ export interface LedgerEntry {
     readonly identityKey: string;
     readonly threadId: string;
   }>;
+  /**
+   * Monitor handle for an in-flight external CLI worker (#684). Persisted so a
+   * resumed run can rebuild alive/idle/kill judgment without global pgrep.
+   */
+  readonly monitorHandle?: WorkerMonitorHandle;
+}
+
+/**
+ * Structured monitor handle produced atomically at CLI worker dispatch (#684).
+ * Alive/idle/kill operations must use this handle — never global process-name matching.
+ */
+export interface WorkerMonitorHandle {
+  readonly pid: number;
+  readonly logPath: string;
+  /** Pool / route identity (e.g. `grok/composer`, `zai/glm-5.2`). */
+  readonly poolId: string;
+  readonly completionSignal: string;
+  readonly stepId: string;
+  readonly dispatchedAt: string;
+  /**
+   * OS-level process start identity (e.g. `ps -o lstart=`) captured at spawn.
+   * Resume/kill must verify the live PID still matches this identity before any
+   * signal — otherwise a recycled PID would kill an unrelated process (#684 R1).
+   */
+  readonly instanceId: string;
+  /** Dispatch-scoped result sidecar; absent only on legacy persisted handles. */
+  readonly resultPath?: string;
+}
+
+/**
+ * Host-side CLI spawn input for the production monitored-dispatch path (#684).
+ * When a backend returns this from {@link Backend.resolveCliMonitorDispatch},
+ * the runner free function {@link dispatchWorkerWithMonitor} spawns via
+ * `dispatchMonitoredCliWorker` so the monitor handle is atomic with dispatch.
+ */
+export interface CliMonitorSpawnSpec {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly logDir: string;
+  readonly poolId: string;
+  readonly completionSignal: string;
+  readonly stepId: string;
+  readonly cwd?: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly logBasename?: string;
+  /** Dispatch-scoped result sidecar written by the host bridge. */
+  readonly resultPath?: string;
+  /** Injectable process identity reader for restricted/test environments. */
+  readonly readInstanceId?: (pid: number) => string | undefined;
 }
 
 /**
@@ -1369,6 +1430,12 @@ export interface ResumeState {
  * separately. Keep this minimal and stable — 9 slices layer on it.
  */
 export interface Backend {
+  /** Run the real model×pipe bash smoke and return the route with fresh records. */
+  smokeModelRoute(
+    route: ResolvedModelRoute,
+    currentCliVersions?: Readonly<Record<string, string | undefined>>,
+  ): Promise<ResolvedModelRoute>;
+  currentCliVersions?(route: ResolvedModelRoute): Promise<Readonly<Record<string, string | undefined>>>;
   /**
    * #255: detect resume residue for this issue at the very start of a run.
    *
@@ -1478,6 +1545,31 @@ export interface Backend {
    * dispatch SEQUENCE + each {@link WorkerSpec} (the #331 acceptance criterion).
    */
   dispatchWorker?(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult>;
+  /**
+   * #684 optional: when a worker runs as a host-side CLI process (opencode /
+   * grok / …), return the spawn input. The production
+   * {@link dispatchWorkerWithMonitor} path then uses `dispatchMonitoredCliWorker`
+   * so the monitor handle is generated atomically with real dispatch and can be
+   * persisted on the ledger for resume rebuild.
+   *
+   * Absent / returns undefined ⇒ container/legacy path (no CLI monitor handle).
+   */
+  resolveCliMonitorDispatch?(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): CliMonitorSpawnSpec | undefined;
+  /**
+   * #684: map a finished monitored CLI child into a {@link WorkerResult}.
+   * Required when {@link resolveCliMonitorDispatch} returns a spawn spec.
+   */
+  awaitMonitoredCliWorker?(
+    handle: WorkerMonitorHandle,
+    exitCode: number | null,
     spec: WorkerSpec,
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,

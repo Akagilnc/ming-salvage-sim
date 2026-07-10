@@ -452,7 +452,7 @@ describe("#451 dogfood replay fixture", () => {
       seam: "family_verify_cmr",
       helperSeam: "family_cmr_accounting",
       routeName: "claude-tight",
-      declaredLegs: ["gpt-5.5", "agy"],
+      declaredLegs: ["gpt-5.6-sol", "agy"],
       rejectedDefaultLeg: "opus",
       dispatches: ["cmr:completeness"],
     });

@@ -11,7 +11,7 @@
  * pins the S2 coder contract plus common agent StepSpec shape.
  *
  * Covered acceptance criteria:
- *   AC-1  coder step (S2): role=coder, model=gpt-5.5, soul=coder
+ *   AC-1  coder step (S2): role=coder, model=gpt-5.6-terra, soul=coder
  *   AC-3  changing model only changes runtime CLI selection, not StepSpec shape
  *   AC-4  versioned promptFile on the agent step; no ad-hoc inline prompt
  *   AC-6  tool-chain declaration contains Python + frontend stack
@@ -31,6 +31,10 @@ import type {
 
 /** Minimal fake backend that records every StepSpec passed to runStep. */
 class RecordingBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly capturedSpecs: StepSpec[] = [];
 
   readonly worktree: WorktreeHandle = {
@@ -118,7 +122,7 @@ describe("StepSpec role contract + soul injection (#253)", () => {
 
   // ── AC-1: coder step (S2) carries role=coder + route-selected model + soul=coder ──
 
-  it("S2 coder step: role=coder, normal-route model=sonnet, soul=coder", async () => {
+  it("S2 coder step: role=coder, normal-route model=gpt-5.6-terra, soul=coder", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const specs = await runAndCapture();
     const s2 = specs.find((s) => s.id === "S2");
@@ -126,7 +130,7 @@ describe("StepSpec role contract + soul injection (#253)", () => {
     expect(s2!.role).toBe("coder");
     // The normal route follows the parent #376 route table; env overrides can still
     // switch this slot without changing StepSpec wiring.
-    expect(s2!.model).toBe("sonnet");
+    expect(s2!.model).toBe("gpt-5.6-terra");
     expect(s2!.soul).toBe("coder");
   });
 
