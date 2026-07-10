@@ -60,6 +60,13 @@ export function normalizeFindingFamilyEntry(entry: unknown): unknown {
 export function normalizeFindingFamiliesWireAliases(raw: unknown): unknown {
   if (!isJsonRecord(raw)) return raw;
   const out: Record<string, unknown> = { ...raw };
+  // Both wire spellings are ambiguous.  Drop the accelerator entirely before
+  // the strict verdict schema sees the duplicate key; a malformed brief must
+  // never reject an otherwise usable verify verdict.
+  if (out.findingFamilies !== undefined && out.finding_families !== undefined) {
+    delete out.findingFamilies;
+    delete out.finding_families;
+  }
   if (out.findingFamilies === undefined && out.finding_families !== undefined) {
     out.findingFamilies = out.finding_families;
     delete out.finding_families;

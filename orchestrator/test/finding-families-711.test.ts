@@ -178,6 +178,42 @@ describe("#711 findingFamilies contract", () => {
     expect(isValidVerifyResult(parsed as VerifyResult)).toBe(true);
   });
 
+  it("duplicate camelCase and snake_case family keys degrade to no briefing", () => {
+    const raw = {
+      converged: false,
+      findingDispositions: [
+        { identityKey: "t:1", threadId: "thread-1", action: "fix" as const },
+      ],
+      findingFamilies: [
+        {
+          family: "camel",
+          members: ["t:1"],
+          recurringFromRounds: [],
+          brief: "camel",
+        },
+      ],
+      finding_families: [
+        {
+          family: "snake",
+          members: ["t:1"],
+          recurring_from_rounds: [],
+          brief: "snake",
+        },
+      ],
+    };
+
+    const parsed = parseVerifyOutcome(`<verify>${JSON.stringify(raw)}</verify>`);
+    expect(parsed).toMatchObject({ kind: "verify", converged: false });
+    expect((parsed as VerifyResult).findingFamilies).toBeUndefined();
+    expect(isValidVerifyResult(parsed as VerifyResult)).toBe(true);
+  });
+
+  it("verify prompt contains only the data and output contract", () => {
+    const prompt = readFileSync(resolve(process.cwd(), "prompts/verify.md"), "utf8");
+    expect(prompt).not.toContain("use it to mark recurringFromRounds");
+    expect(prompt).not.toContain("When `priorRoundFindings` is in the landing file");
+  });
+
   it("verify output stays valid when findingFamilies is entirely malformed (degrade, never reject verdict)", () => {
     const raw = {
       converged: false,
@@ -636,16 +672,21 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
     quiescent: true,
   };
 
-  /**
-   * Fix coverage model for the acceptance bite:
-   * - with briefing: fixer sees family members and "covers" every site
-   * - without briefing: only the single fixMarked key is covered
-   */
-  function coverageFromFixerLanding(landing: WorkerLandingPayload): string[] {
-    if (landing.findingFamilies !== undefined && landing.findingFamilies.length > 0) {
-      return landing.findingFamilies.flatMap((f) => [...f.members]);
+  function mutateFixturesFromFixerLanding(
+    landing: WorkerLandingPayload,
+    fixtures: Map<string, boolean>,
+  ): void {
+    const sites = new Set(landing.fixMarkedFindingIdentityKeys ?? []);
+    for (const family of landing.findingFamilies ?? []) {
+      for (const member of family.members) sites.add(member);
     }
-    return [...(landing.fixMarkedFindingIdentityKeys ?? [])];
+    for (const site of sites) {
+      if (fixtures.has(site)) fixtures.set(site, true);
+    }
+  }
+
+  function coverageFromFixtures(fixtures: Map<string, boolean>): string[] {
+    return [...fixtures].filter(([, fixed]) => fixed).map(([site]) => site);
   }
 
   function mergeEnrichFromLedger(
@@ -677,6 +718,7 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
     const verifyLandings: WorkerLandingPayload[] = [];
     const fixerLandings: WorkerLandingPayload[] = [];
     const fixerCoverage: string[][] = [];
+    const fixtures = new Map(FAMILY_SITES.map((site) => [site, false]));
     const familyLedger: Array<{
       event: string;
       onlineReviewRound?: number;
@@ -721,7 +763,8 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
       },
       dispatchFixer: async (landing) => {
         fixerLandings.push(landing);
-        fixerCoverage.push(coverageFromFixerLanding(landing));
+        mutateFixturesFromFixerLanding(landing, fixtures);
+        fixerCoverage.push(coverageFromFixtures(fixtures));
         const n = fixerLandings.length;
         return {
           kind: "fixer",
@@ -899,6 +942,7 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
   it("no-briefing baseline: without findingFamilies, coverage stays single-site", async () => {
     const fixerLandings: WorkerLandingPayload[] = [];
     const fixerCoverage: string[][] = [];
+    const fixtures = new Map(FAMILY_SITES.map((site) => [site, false]));
     let verifyCalls = 0;
 
     const result = await runOnlineReviewLoopStage(stageShip, {
@@ -924,7 +968,8 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
       },
       dispatchFixer: async (landing) => {
         fixerLandings.push(landing);
-        fixerCoverage.push(coverageFromFixerLanding(landing));
+        mutateFixturesFromFixerLanding(landing, fixtures);
+        fixerCoverage.push(coverageFromFixtures(fixtures));
         return {
           kind: "fixer",
           committed: true,

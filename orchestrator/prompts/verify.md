@@ -34,8 +34,7 @@ or, when findings remain:
 }
 ```
 
-`findingFamilies` is optional. When `priorRoundFindings` is in the landing
-file, use it to mark `recurringFromRounds`. Malformed families are dropped by
-the host — they never block your verdict.
+`findingFamilies` is optional. Malformed families are dropped by the host —
+they never block your verdict.
 
 On a post-fixer fresh re-check include `isRecheck: true`.
