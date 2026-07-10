@@ -581,8 +581,8 @@
     },
     {
       "name": "徐应秋",
-      "office": "工部右侍郎",
-      "office_type": "工部",
+      "office": "礼部仪制司主事",
+      "office_type": "礼部",
       "faction": "中立",
       "aliases": [
         "徐应秋",
@@ -590,8 +590,7 @@
       ],
       "personal_skills": [
         "经史考据",
-        "典章议论",
-        "工部实务"
+        "典章议论"
       ],
       "loyalty": 50,
       "ability": 64,
@@ -606,8 +605,8 @@
         "severity": "无"
       },
       "identity": 50,
-      "status": "offstage",
-      "debut_year": 1628,
+      "status": "active",
+      "debut_year": 1627,
       "debut_month": 0,
       "power_id": "ming"
     },

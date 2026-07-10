@@ -1,10 +1,10 @@
 # 依赖注记：`identity` / `seed_guilt` 的运行时持久化闭环由家族切片 #488（485·S2）负责，本票不修。
 
-# #484 R5 史实依据草稿
+# #484 R6 史实依据草稿
 
 供 owner 逐字段亲核；这里记录本轮六名原有人物、补入徐应秋及扫描清单。`office_type` 取仓库 `content/offices.json` 的 `allowed_types`，`location` 取 `content/regions.json` 的 `id`，不是自由文本。人物画像字段若没有本轮现有史料直接支持，明确标为“推断——待 owner 拍”，不伪装成史实定论。
 
-## R5 六人画像与生卒字段补全
+## R6 六人画像与生卒字段补全
 
 下表把郭允厚、李从心、胡廷宴、张缙彦、汤若望、李之藻的 `loyalty` / `ability` / `integrity` / `courage` / `style` / 生卒字段全部列出；画像分数和无法可靠核到的生卒均不冒充史实，标为推断值。
 
@@ -17,7 +17,7 @@
 | 汤若望 | 64 / 82 / 72 / 50 | 严谨传习 | 1592 / 1666 / 0 | 故宫博物院《西洋新法历书》及中国新闻网资料支持其历算、修历经历；画像为推断值——待 owner 拍；死月未核，故为 0。 |
 | 李之藻 | 68 / 78 / 74 / 55 | 笃学务实 | 1565 / 1630 / 0 | 中国哲学书电子化计划及李之藻资料支持其历法、水利经历；画像为推断值——待 owner 拍；死月未核，故为 0。 |
 
-## R5 北极星 / prompts 点名人物扫描全集
+## R6 北极星 / prompts 点名人物扫描全集
 
 扫描范围：`docs/AUDIENCE_NORTH_STAR.md` 与 `content/prompts/` 全集。除下表最后一项外，命中人物均已在 `content/characters.json` 入册；角色头衔（“首辅”“次辅”“司礼监”“皇后”“锦衣卫”）和“徐阁老”等称谓不另造人物。
 
@@ -49,6 +49,7 @@
 | 李自成 | 已入册。 |
 | 张献忠 | 已入册。 |
 | 高迎祥 | 已入册。 |
+| 袁可立 | 已入册；本轮补回扫描清单，北极星正文明确点名其“罢居睢州、须起复”。 |
 | 徐应秋 | 已入册；R5 按 schema 补入，画像字段待 owner 拍。 |
 | 倪黄 | 不补独立人物：北极星文案中的并称/路线 shorthand，未点名可入册的单一人物；保留原叙事用词。 |
 
@@ -96,10 +97,10 @@
 | 李之藻 | `personal_skills` | 西学译述、历法算学、水利舆地 | 推断——待 owner 拍：由现有李之藻资料及历局工作口径归纳。 |
 | 李之藻 | `identity` | 72 | 推断——待 owner 拍：人物画像先验，不是史料量化值。 |
 | 李之藻 | `debut_month` | 0（null/不限月） | 中国哲学书电子化计划及李之藻资料支持 1629 年起复修历，但未给可靠月份，故不填 1。 |
-| 李之藻 | `office` / `office_type` | 历局修历起复 / 礼部 | 1629 年起复负责修订历法：[李之藻资料](https://zh.wikipedia.org/wiki/%E6%9D%8E%E4%B9%8B藻)、[中国哲学书电子化计划](https://ctext.org/datawiki.pl?if=gb&remap=gb&res=213600)；“历局”无独立 office_type，按礼部系统取 `礼部`，避免把旧 `工部` 粗类带入。 |
+| 李之藻 | `office` / `office_type` | 历局修历起复 / 礼部 | 故宫博物院人物页明确记载：崇祯元年徐光启督领修历，李之藻经推荐奉旨到历局参与编译历书；“历局”无独立 office_type，按礼部系统取 `礼部`，避免把旧 `工部` 粗类带入：[故宫博物院·李之藻](https://www.dpm.org.cn/court/figure/104041.html)。 |
 | 李之藻 | `status` / `debut_year` / `location` | offstage / 1629 / beizhili | 1623 去职、1629 起复修历；起复地点按北京历局取合法 `beizhili`。 |
-| 徐应秋 | `office` / `office_type` / `status` / `debut_year` / `debut_month` | 工部右侍郎 / 工部 / offstage / 1628 / 0 | 按 R5 指定的崇祯朝任官口径入册；月份未核，明确为 0（null/不限月）。 |
-| 徐应秋 | `loyalty` / `ability` / `integrity` / `courage` / `style` | 50 / 64 / 58 / 46 / 博学持论 | 推断值——待 owner 拍；现有来源可核其万历四十四年进士及崇祯朝仕历，但未提供可直接映射到本 schema 的画像量化值。 |
+| 徐应秋 | `office` / `office_type` / `status` / `debut_year` / `debut_month` / `location` | 礼部仪制司主事 / 礼部 / active / 1627 / 0 / 空 | 万历四十四年丙辰进士履历载：天启二年升礼部主事，天启六年削籍，崇祯元年起仪制司主事；崇祯二年再升祠祭司员外郎。故开局年已在任，不能沿用“工部右侍郎”或 `offstage/1628`。出处：[徐应秋](https://zh.wikipedia.org/wiki/徐應秋_%28萬曆進士%29)、[万历四十四年进士题名碑录](https://www.shidianguji.com/mid-page/7464335073724284947)。具体月份、任所未核，分别以 0 / 空表示待 owner 拍。 |
+| 徐应秋 | `loyalty` / `ability` / `integrity` / `courage` / `style` / `faction` | 50 / 64 / 58 / 46 / 博学持论 / 中立 | 画像与派系均为推断值——待 owner 拍；史料只支持进士、礼部仕历、削籍与著述/藏书经历，不把这些事实硬映射成数值或固定党籍。 |
 | 徐应秋 | 生卒 | 0 / 0 / 0 | 现有可核资料未给可靠生卒年月，按 schema 的未知值 0 入册。 |
 
 ## 合同依据
@@ -107,6 +108,7 @@
 - `docs/adr/0011-4-ceiling-and-seed-roster.md`：seed guilt 的 `severity` 罪谱采用 `无/轻/中/重`，并以重/中/轻分层。
 - `content/offices.json`：`allowed_types` 与职名词干分类；`知县` 属 `地方`，历局修历暂无专门类型，保守落礼部系统。
 - `content/regions.json`：陕西=`shaanxi`，京畿/京师=`beizhili`。
+- 徐应秋的礼部仕历：万历四十四年进士题名碑录与其履历支持天启、崇祯年间的礼部线；未核到开局所需的具体月份和任所，故不填。
 
 ## 待核标记
 
