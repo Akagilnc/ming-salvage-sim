@@ -47,7 +47,6 @@ import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type { VerifyCmrInput, VerifyCmrResult } from "../../src/family/verifyCmr.js";
 import type { FindingDisposition } from "../../src/types.js";
-import type { StopSummary } from "../../src/stopSummary.js";
 
 /** A single-slice Backend that drives every child to S8(success). */
 class ChildBackend implements Backend {
@@ -84,6 +83,25 @@ class ChildBackend implements Backend {
   }
   async push(): Promise<void> {}
   async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
+}
+
+/** Models an old persisted ledger row whose invalid stop reason bypassed today's schema. */
+function readMalformedPersistedCmrAbort(): FamilyLedgerEntry {
+  return JSON.parse(
+    JSON.stringify({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "correctness",
+      familyHeadAfter: "head-after-coder-fix",
+      blockingFindingIdentityKeys: [],
+      reason: "integrated cmr correctness did not converge",
+      stopSummary: {
+        reason: "not_converged",
+        summary: "integrated CMR correctness did not converge after coder-fix",
+      },
+    }),
+  );
 }
 
 class FakeFamilyBackend implements FamilyBackend {
@@ -1540,21 +1558,8 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             familyHeadAfter: "head-after-coder-fix",
             blockingFindingIdentityKeys: [blockerKey],
           } satisfies FamilyLedgerEntry,
-          {
-            // not_converged sentinel: a CLASSIFIED abort carrying an EMPTY envelope.
-            status: "aborted",
-            event: "aborted",
-            phase: "final",
-            cmrPass: "correctness",
-            familyHeadAfter: "head-after-coder-fix",
-            blockingFindingIdentityKeys: [],
-            reason: "integrated cmr correctness did not converge",
-            // Deliberately malformed persisted stop reason exercises legacy-ledger recovery.
-            stopSummary: {
-              reason: "not_converged",
-              summary: "integrated CMR correctness did not converge after coder-fix",
-            } as unknown as StopSummary,
-          } satisfies FamilyLedgerEntry,
+          // not_converged sentinel: a CLASSIFIED abort carrying an EMPTY envelope.
+          readMalformedPersistedCmrAbort(),
         ],
         "head-after-coder-fix",
       );
