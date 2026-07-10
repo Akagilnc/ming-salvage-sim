@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -61,6 +62,18 @@ def test_building_brief_uses_chinese_region_not_pinyin(game):
     assert "北直隶" in b                          # 中文地区名出现
     for pinyin in ("beizhili", "shaanxi", "liaodong", "shandong", "nanzhili"):
         assert pinyin not in b                    # 拼音 region_id 不泄漏进大臣上下文
+
+
+def test_building_brief_characterizes_injected_abstract_values(game):
+    db, _state, _content = game
+    db.conn.execute("UPDATE buildings SET level=41, condition=73")
+    db.conn.commit()
+
+    rendered = build_building_brief(_ctx(game))
+
+    assert not re.search(r"Lv(?:档)?41|完好(?:度)?73", rendered)
+    assert "Lv档" in rendered and any(word in rendered for word in ("初设", "成形", "完备", "宏整", "巨构"))
+    assert any(word in rendered for word in ("残损", "失修", "尚可", "完好", "坚固"))
 
 
 def test_minister_memorial_tools_show_commitment_fields_and_progress(game):
@@ -158,8 +171,8 @@ def test_identity_bucket_selects_objective_faction_dossier(game):
 def test_final_minister_context_rejects_injected_abstract_values(game):
     """最终 instructions seam 不得把抽象分数重新带回上下文。"""
     db, _state, content = game
-    db.conn.execute("UPDATE regions SET public_support=13, unrest=87")
-    db.conn.execute("UPDATE armies SET firearm_equipment=30 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE regions SET public_support=41, unrest=73")
+    db.conn.execute("UPDATE armies SET firearm_equipment=58 WHERE owner_power='ming'")
     db.conn.commit()
     minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
     captured = {}
@@ -178,9 +191,36 @@ def test_final_minister_context_rejects_injected_abstract_values(game):
         create_minister_agent(minister, cfg, ctx, db)
 
     rendered = "\n".join(captured["instructions"])
-    for pattern in ("民心13", "动乱87", "火器30", "皇威13", "进度13/100"):
+    for pattern in ("民心41", "动乱73", "火器58", "皇威41", "进度41/100"):
         assert pattern not in rendered
     assert "火器" in rendered and any(word in rendered for word in ("短缺", "尚可", "精良"))
+
+
+def test_final_minister_context_rejects_any_injected_abstract_value_shape(game):
+    """负面 seam 按字段+数字识别裸值，不能只对固定 mutation 数字敏感。"""
+    db, _state, content = game
+    db.conn.execute("UPDATE regions SET public_support=29, unrest=64")
+    db.conn.execute("UPDATE armies SET firearm_equipment=91 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE buildings SET level=4, condition=22")
+    db.conn.commit()
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    ctx = _ctx(game)
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
+         patch("ming_sim.registry._ctx", return_value=content), \
+         patch("ming_sim.registry._skills_for", return_value=None), \
+         patch("ming_sim.registry.build_minister_tools", return_value=[]):
+        create_minister_agent(minister, cfg, ctx, db)
+
+    rendered = "\n".join(captured["instructions"])
+    assert not re.search(r"(?:民心|动乱|皇威|火器|完好|进度)\s*[:：]?\s*\d+", rendered)
 
 
 def test_north_star_sample_is_reviewable():

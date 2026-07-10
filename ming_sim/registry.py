@@ -265,7 +265,7 @@ def build_region_brief(context: CourtContext) -> str:
 
 
 def build_building_brief(context: CourtContext) -> str:
-    """现有建筑紧凑表（名·类·省 等级/完好/产出）——省去叙述控 token。
+    """现有建筑紧凑表（名·类·省 规模/完好/产出）——省去叙述控 token。
     CLI 后端无 list_buildings 工具，靠此让大臣知国家有哪些厂局仓坞。"""
     try:
         # 用中文地区名（LEFT JOIN regions），不漏拼音 region_id（beizhili 等英文进 system
@@ -282,13 +282,26 @@ def build_building_brief(context: CourtContext) -> str:
         return ""
     if not rows:
         return ""
+
+    def building_band(field: str, value: object) -> str:
+        try:
+            n = int(value or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if field == "level":
+            return ("初设" if n <= 1 else "成形" if n == 2 else
+                    "完备" if n == 3 else "宏整" if n == 4 else "巨构")
+        return ("残损" if n < 20 else "失修" if n < 40 else
+                "尚可" if n < 60 else "完好" if n < 80 else "坚固")
+
     lines = []
     for r in rows:
         out = f"·产{r['output_metric']}{int(r['output_amount'] or 0)}" if r["output_metric"] else ""
         lines.append(
-            f"{r['name']}（{r['category']}·{r['region_name']}）Lv{r['level']}完好{r['condition']}{out}"
+            f"{r['name']}（{r['category']}·{r['region_name']}）"
+            f"Lv档{building_band('level', r['level'])}，完好{building_band('condition', r['condition'])}{out}"
         )
-    return "【现有建筑（名·类别·地区 等级/完好/产出；问营建/厂局/仓坞据此）】\n" + "；".join(lines)
+    return "【现有建筑（名·类别·地区 规模/完好/产出；问营建/厂局/仓坞据此）】\n" + "；".join(lines)
 
 
 def _make_cultivate_tool(character: Character, context: CourtContext):
