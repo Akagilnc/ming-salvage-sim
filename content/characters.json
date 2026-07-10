@@ -284,11 +284,6 @@
       "birth_year": 0,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "seed_guilt": {
-        "crime": "",
-        "severity": "无"
-      },
-      "identity": 45,
       "power_id": "ming"
     },
     {
@@ -314,11 +309,6 @@
       "birth_year": 0,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "seed_guilt": {
-        "crime": "",
-        "severity": "无"
-      },
-      "identity": 70,
       "power_id": "ming"
     },
     {
@@ -650,11 +640,6 @@
       "birth_year": 1565,
       "historical_death_year": 1630,
       "historical_death_month": 0,
-      "seed_guilt": {
-        "crime": "",
-        "severity": "无"
-      },
-      "identity": 72,
       "power_id": "ming"
     },
     {
@@ -680,11 +665,6 @@
       "birth_year": 1592,
       "historical_death_year": 1666,
       "historical_death_month": 0,
-      "seed_guilt": {
-        "crime": "",
-        "severity": "无"
-      },
-      "identity": 66,
       "power_id": "ming"
     },
     {
@@ -1381,11 +1361,6 @@
       "historical_death_month": 0,
       "status": "dismissed",
       "status_reason": "延绥兵变弹压不力，革职候勘",
-      "seed_guilt": {
-        "crime": "",
-        "severity": "无"
-      },
-      "identity": 50,
       "power_id": "ming"
     },
     {
@@ -1411,11 +1386,6 @@
       "birth_year": 0,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "seed_guilt": {
-        "crime": "",
-        "severity": "无"
-      },
-      "identity": 42,
       "power_id": "ming"
     },
     {
