@@ -119,7 +119,9 @@ import {
 import {
   applyVerifySideEffects,
   createDeferredTrackingIssue,
+  deferredTrackingIssueTitle,
   fixMarkedKeysFromVerify,
+  hostSideDeferredIdentityKey,
   replyToReviewThread,
   resolveReviewThread,
 } from "../src/onlineReviewSideEffects.js";
@@ -995,21 +997,31 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       if (cmd.includes("state=open")) {
         return "[]";
       }
-      return "https://github.com/o/r/issues/99";
+      if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
+        return "https://github.com/o/r/issues/99";
+      }
+      return "[]";
     };
     const url = createDeferredTrackingIssue(sh, "o/r", "defer finding", "reason text");
     expect(url).toBe("https://github.com/o/r/issues/99");
-    expect(calls).toEqual([
-      "gh api repos/o/r/issues?state=open&per_page=100&page=1",
-      "gh api repos/o/r/issues -f title=defer finding -f body=reason text --jq .html_url",
-    ]);
+    // #742 R1: list (pre) + re-query immediately before POST + create + post-create converge list
+    expect(calls.filter((c) => c.includes("state=open"))).toHaveLength(3);
+    expect(
+      calls.some((c) =>
+        c.includes("gh api repos/o/r/issues -f title=defer finding -f body=reason text --jq .html_url"),
+      ),
+    ).toBe(true);
   });
 
   it("createDeferredTrackingIssue fails closed on empty or malformed gh create output", () => {
     const emptyCreate: Sh = (_file, args) =>
       args.join(" ").includes("state=open") ? "[]" : "";
     const junkCreate: Sh = (_file, args) =>
-      args.join(" ").includes("state=open") ? "[]" : "not-a-github-url";
+      args.join(" ").includes("state=open")
+        ? "[]"
+        : args.join(" ").includes("-f title=")
+          ? "not-a-github-url"
+          : "[]";
     expect(() =>
       createDeferredTrackingIssue(emptyCreate, "o/r", "t", "b"),
     ).toThrow(/invalid issue URL/);
@@ -1018,14 +1030,41 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     ).toThrow(/invalid issue URL/);
   });
 
-  it("#742 applyVerifySideEffects is idempotent for deferred tracking issues (no duplicate on re-run)", () => {
-    // Production seam: crash after create + before ledger → resume re-applies
-    // side effects for the same finding identity. Must not open a second issue.
+  it("#742 R1 hostSideDeferredIdentityKey uses GitHub thread/comment id, not worker text", () => {
+    expect(hostSideDeferredIdentityKey("3", undefined)).toBe("3");
+    expect(hostSideDeferredIdentityKey("PRRT_abc", undefined)).toBe("PRRT_abc");
+    expect(
+      hostSideDeferredIdentityKey("3", [
+        { id: "3", threadNodeId: "PRRT_stable_thread" },
+      ]),
+    ).toBe("PRRT_stable_thread");
+    // worker may re-key identityKey text; host key stays anchored to landing REST/node ids
+    expect(
+      hostSideDeferredIdentityKey("99", [
+        { id: "99", threadNodeId: "PRRT_stable_thread" },
+      ]),
+    ).toBe("PRRT_stable_thread");
+    expect(
+      hostSideDeferredIdentityKey("PRRT_stable_thread", [
+        { id: "99", threadNodeId: "PRRT_stable_thread" },
+      ]),
+    ).toBe("PRRT_stable_thread");
+    // REST-only landing (no GraphQL node) falls back to comment id
+    expect(hostSideDeferredIdentityKey("42", [{ id: "42" }])).toBe("42");
+  });
+
+  it("#742 R1 deferred title ignores worker identityKey re-keying across rounds", () => {
     let createCount = 0;
     const openIssues: Array<{
+      number: number;
       title: string;
       html_url: string;
-      state: string;
+      created_at: string;
+    }> = [];
+    const reviewComments: Array<{
+      id: number;
+      body: string;
+      in_reply_to_id?: number;
     }> = [];
     const sh: Sh = (_file, args) => {
       const cmd = args.join(" ");
@@ -1036,11 +1075,133 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
         createCount += 1;
         const titleField = args.find((a) => a.startsWith("title="));
         const title = titleField?.slice("title=".length) ?? "";
-        const url = `https://github.com/o/r/issues/${100 + createCount}`;
-        openIssues.push({ title, html_url: url, state: "open" });
+        const number = 100 + createCount;
+        const url = `https://github.com/o/r/issues/${number}`;
+        openIssues.push({
+          number,
+          title,
+          html_url: url,
+          created_at: `2026-01-01T00:00:0${createCount}.000Z`,
+        });
         return url;
       }
+      if (
+        cmd.includes("pulls/42/comments") &&
+        !cmd.includes("/replies") &&
+        !cmd.includes("-f body=")
+      ) {
+        return JSON.stringify(reviewComments);
+      }
       if (cmd.includes("/replies")) {
+        const bodyField = args.find((a) => a.startsWith("body="));
+        const body = bodyField?.slice("body=".length) ?? "";
+        reviewComments.push({
+          id: 9000 + reviewComments.length,
+          body,
+          in_reply_to_id: 3,
+        });
+        return JSON.stringify(GITHUB_REPLY_SHAPE);
+      }
+      return "[]";
+    };
+    const landingThreads = [{ id: "3", threadNodeId: "PRRT_thread_3" }];
+    const first = applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      landingThreads,
+      verify: {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          {
+            identityKey: "worker-key-round-1",
+            threadId: "3",
+            action: "defer",
+            reason: "needs design",
+          },
+        ],
+      },
+    });
+    // Next round: verify worker re-keys identityKey string arbitrarily.
+    const second = applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      landingThreads,
+      verify: {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          {
+            identityKey: "worker-key-round-2-REKEYED",
+            threadId: "3",
+            action: "defer",
+            reason: "needs design",
+          },
+        ],
+      },
+    });
+    expect(first.deferredIssueUrls).toEqual(["https://github.com/o/r/issues/101"]);
+    expect(second.deferredIssueUrls).toEqual(["https://github.com/o/r/issues/101"]);
+    expect(createCount).toBe(1);
+    expect(openIssues).toHaveLength(1);
+    expect(openIssues[0]?.title).toBe(
+      deferredTrackingIssueTitle("PRRT_thread_3"),
+    );
+  });
+
+  it("#742 applyVerifySideEffects is idempotent for deferred tracking issues (no duplicate on re-run)", () => {
+    // Production seam: crash after create + before ledger → resume re-applies
+    // side effects for the same finding identity. Must not open a second issue.
+    let createCount = 0;
+    let replyCount = 0;
+    const openIssues: Array<{
+      number: number;
+      title: string;
+      html_url: string;
+      created_at: string;
+    }> = [];
+    const reviewComments: Array<{
+      id: number;
+      body: string;
+      in_reply_to_id?: number;
+    }> = [];
+    const sh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      if (cmd.includes("repos/o/r/issues?") && cmd.includes("state=open")) {
+        return JSON.stringify(openIssues);
+      }
+      if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
+        createCount += 1;
+        const titleField = args.find((a) => a.startsWith("title="));
+        const title = titleField?.slice("title=".length) ?? "";
+        const number = 100 + createCount;
+        const url = `https://github.com/o/r/issues/${number}`;
+        openIssues.push({
+          number,
+          title,
+          html_url: url,
+          created_at: `2026-01-01T00:00:0${createCount}.000Z`,
+        });
+        return url;
+      }
+      if (
+        cmd.includes("pulls/42/comments") &&
+        !cmd.includes("/replies") &&
+        !cmd.includes("-f body=")
+      ) {
+        return JSON.stringify(reviewComments);
+      }
+      if (cmd.includes("/replies")) {
+        replyCount += 1;
+        const bodyField = args.find((a) => a.startsWith("body="));
+        const body = bodyField?.slice("body=".length) ?? "";
+        reviewComments.push({
+          id: 9000 + replyCount,
+          body,
+          in_reply_to_id: 3,
+        });
         return JSON.stringify(GITHUB_REPLY_SHAPE);
       }
       return "[]";
@@ -1070,7 +1231,135 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     expect(second.deferredIssueUrls).toEqual(["https://github.com/o/r/issues/101"]);
     expect(createCount).toBe(1);
     expect(openIssues).toHaveLength(1);
-    expect(openIssues[0]?.title).toBe("Deferred online review finding: t:3");
+    // Host-side identity = REST comment id when no landing GraphQL node.
+    expect(openIssues[0]?.title).toBe("Deferred online review finding: 3");
+    // #742 R1 P1-3: thread reply is also idempotent — one Tracked issue reply only.
+    expect(replyCount).toBe(1);
+  });
+
+  it("#742 R1 createDeferredTrackingIssue re-queries before POST and adopts oldest on TOCTOU race", () => {
+    // both-queried-before-either-created: two overlapping S9 runs both saw no
+    // existing issue and both POSTed. Later convergence adopts oldest + closes dups.
+    const title = deferredTrackingIssueTitle("3");
+    const openIssues: Array<{
+      number: number;
+      title: string;
+      html_url: string;
+      created_at: string;
+      state: string;
+    }> = [
+      {
+        number: 101,
+        title,
+        html_url: "https://github.com/o/r/issues/101",
+        created_at: "2026-01-01T00:00:00.000Z",
+        state: "open",
+      },
+      {
+        number: 102,
+        title,
+        html_url: "https://github.com/o/r/issues/102",
+        created_at: "2026-01-01T00:00:01.000Z",
+        state: "open",
+      },
+    ];
+    const closed: number[] = [];
+    let createCount = 0;
+    const sh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      if (cmd.includes("repos/o/r/issues?") && cmd.includes("state=open")) {
+        return JSON.stringify(openIssues.filter((i) => i.state === "open"));
+      }
+      if (cmd.includes("repos/o/r/issues/") && cmd.includes("PATCH") && cmd.includes("state=closed")) {
+        const m = cmd.match(/issues\/(\d+)/);
+        const n = Number(m?.[1]);
+        if (Number.isFinite(n)) {
+          closed.push(n);
+          const hit = openIssues.find((i) => i.number === n);
+          if (hit) hit.state = "closed";
+        }
+        return JSON.stringify({ state: "closed" });
+      }
+      if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
+        createCount += 1;
+        return "https://github.com/o/r/issues/999";
+      }
+      return "[]";
+    };
+    const url = createDeferredTrackingIssue(sh, "o/r", title, "body");
+    expect(url).toBe("https://github.com/o/r/issues/101");
+    expect(createCount).toBe(0);
+    expect(closed).toEqual([102]);
+    expect(openIssues.filter((i) => i.state === "open")).toHaveLength(1);
+  });
+
+  it("#742 R1 both-queried-before-either-created interleaving converges via post-create adopt-oldest", () => {
+    // Sequential simulation of the race window: each create path re-queries
+    // before POST and still sees empty (sibling not yet visible), both POST,
+    // then post-create re-query + adopt-oldest leaves a single open issue.
+    const title = deferredTrackingIssueTitle("anchor-cmt-7");
+    const openIssues: Array<{
+      number: number;
+      title: string;
+      html_url: string;
+      created_at: string;
+      state: string;
+    }> = [];
+    const closed: number[] = [];
+    let nextNumber = 200;
+    // list calls that still return empty even after a create — models the
+    // both-queried-before-either-created window across two overlapping runs.
+    let emptyListBudget = 5; // runA: pre+requery+post; runB: pre+requery
+    const sh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      if (cmd.includes("repos/o/r/issues?") && cmd.includes("state=open")) {
+        if (emptyListBudget > 0) {
+          emptyListBudget -= 1;
+          return "[]";
+        }
+        return JSON.stringify(openIssues.filter((i) => i.state === "open"));
+      }
+      if (cmd.includes("repos/o/r/issues/") && cmd.includes("PATCH") && cmd.includes("state=closed")) {
+        const m = cmd.match(/issues\/(\d+)/);
+        const n = Number(m?.[1]);
+        if (Number.isFinite(n)) {
+          closed.push(n);
+          const hit = openIssues.find((i) => i.number === n);
+          if (hit) hit.state = "closed";
+        }
+        return JSON.stringify({ state: "closed" });
+      }
+      if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
+        nextNumber += 1;
+        const number = nextNumber;
+        const url = `https://github.com/o/r/issues/${number}`;
+        openIssues.push({
+          number,
+          title,
+          html_url: url,
+          created_at: `2026-02-01T00:00:${String(number - 200).padStart(2, "0")}.000Z`,
+          state: "open",
+        });
+        return url;
+      }
+      return "[]";
+    };
+    const first = createDeferredTrackingIssue(sh, "o/r", title, "body-a");
+    const second = createDeferredTrackingIssue(sh, "o/r", title, "body-b");
+    // Both created (race). Post-create / later list adopts oldest.
+    expect(openIssues.map((i) => i.number).sort((a, b) => a - b)).toEqual([
+      201, 202,
+    ]);
+    // After both paths finish, only the oldest remains open.
+    expect(openIssues.filter((i) => i.state === "open").map((i) => i.number)).toEqual([
+      201,
+    ]);
+    expect(closed).toContain(202);
+    expect(first === "https://github.com/o/r/issues/201" || first === "https://github.com/o/r/issues/202").toBe(
+      true,
+    );
+    // Second call's post-create converge (or pre-list after budget) returns oldest.
+    expect(second).toBe("https://github.com/o/r/issues/201");
   });
 
   it("applyVerifySideEffects appends tracked issue URL to pre-supplied defer reply", () => {
@@ -1083,6 +1372,13 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       }
       if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
         return "https://github.com/o/r/issues/88";
+      }
+      if (
+        cmd.includes("pulls/42/comments") &&
+        !cmd.includes("/replies") &&
+        !cmd.includes("-f body=")
+      ) {
+        return "[]";
       }
       if (cmd.includes("/replies")) {
         return JSON.stringify(GITHUB_REPLY_SHAPE);
@@ -1182,6 +1478,13 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
         return "https://github.com/o/r/issues/77";
       }
+      if (
+        cmd.includes("pulls/42/comments") &&
+        !cmd.includes("/replies") &&
+        !cmd.includes("-f body=")
+      ) {
+        return "[]";
+      }
       if (cmd.includes("/replies")) {
         return JSON.stringify(GITHUB_REPLY_SHAPE);
       }
@@ -1211,11 +1514,13 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     expect(result.repliesPosted.some((r) => r.body.includes("rejected:"))).toBe(true);
     expect(result.repliesPosted.some((r) => r.body.includes("Tracked issue:"))).toBe(true);
     expect(
-      calls.filter((c) => c.startsWith("gh api repos/o/r/issues")),
-    ).toEqual([
-      "gh api repos/o/r/issues?state=open&per_page=100&page=1",
-      "gh api repos/o/r/issues -f title=Deferred online review finding: t:3 -f body=needs design --jq .html_url",
-    ]);
+      calls.filter((c) =>
+        c.includes(
+          "gh api repos/o/r/issues -f title=Deferred online review finding: 3 -f body=needs design --jq .html_url",
+        ),
+      ),
+    ).toHaveLength(1);
+    expect(calls.filter((c) => c.includes("state=open")).length).toBeGreaterThanOrEqual(2);
     expect(
       calls.filter((c) => c.includes("repos/o/r/pulls/42/comments/2/replies")),
     ).toHaveLength(1);
@@ -1432,6 +1737,13 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       }
       if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
         return "https://github.com/o/r/issues/55";
+      }
+      if (
+        cmd.includes("pulls/42/comments") &&
+        !cmd.includes("/replies") &&
+        !cmd.includes("-f body=")
+      ) {
+        return "[]";
       }
       if (cmd.includes("/replies")) {
         return JSON.stringify(GITHUB_REPLY_SHAPE);
