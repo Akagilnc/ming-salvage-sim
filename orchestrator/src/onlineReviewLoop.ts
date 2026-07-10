@@ -845,7 +845,8 @@ export function enforceRunnerOwnedRecheck(
 
 /**
  * A post-fixer convergence is admissible only when the verifier explicitly
- * echoes the entire fix-marked identity set supplied in its landing (#743).
+ * echoes the entire fix-marked identity set supplied in its landing (#743),
+ * and that set has a complete one-to-one original-thread authorization.
  * This makes a bare `converged:true` fail closed instead of silently closing
  * findings the fixer merely claimed to have repaired.
  */
@@ -855,9 +856,10 @@ export function recheckConvergenceConfirmsFixMarkedKeys(
 ): boolean {
   if (verify.isRecheck !== true || verify.converged !== true) return true;
   const expected = landing.fixMarkedFindingIdentityKeys;
+  const expectedThreads = landing.fixMarkedFindingThreads;
   const confirmed = verify.fixMarkedFindingIdentityKeys;
-  if (expected === undefined) return false;
-  if (expected.length === 0) return true;
+  if (expected === undefined || expectedThreads === undefined) return false;
+  if (expected.length === 0) return expectedThreads.length === 0;
   if (confirmed === undefined) return false;
   if (expected.length !== confirmed.length) return false;
   const expectedKeys = new Set(expected);
@@ -869,7 +871,24 @@ export function recheckConvergenceConfirmsFixMarkedKeys(
   ) {
     return false;
   }
-  return [...expectedKeys].every((key) => confirmedKeys.has(key));
+  if (expectedThreads.length !== expectedKeys.size) return false;
+  const boundKeys = new Set<string>();
+  const boundThreads = new Set<string>();
+  for (const binding of expectedThreads) {
+    if (
+      !expectedKeys.has(binding.identityKey) ||
+      boundKeys.has(binding.identityKey) ||
+      boundThreads.has(binding.threadId)
+    ) {
+      return false;
+    }
+    boundKeys.add(binding.identityKey);
+    boundThreads.add(binding.threadId);
+  }
+  return (
+    boundKeys.size === expectedKeys.size &&
+    [...expectedKeys].every((key) => confirmedKeys.has(key) && boundKeys.has(key))
+  );
 }
 
 /** Family `shipped` ledger `ts` for the PR — round-1 freshness anchor (#600 r9). */
