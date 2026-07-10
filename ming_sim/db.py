@@ -34,6 +34,7 @@ from ming_sim.models import (
 from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
+    city_defense_description,
     qualitative_band,
 )
 from ming_sim.token_stats import tlog
@@ -4806,7 +4807,7 @@ class GameDB:
                 f"账面税收{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，"
                 f"士绅阻力{qualitative_band(row['gentry_resistance'], ('极弱', '偏弱', '中等', '偏强', '强'))}，"
                 f"军事压力{qualitative_band(row['military_pressure'], ('极低', '偏低', '中等', '偏高', '极高'))}，"
-                f"城防{qualitative_band(row['city_level'], ('初设', '简陋', '成形', '坚固', '重镇'))}，"
+                f"城防{city_defense_description(row['city_level'])}，"
                 f"城防大炮{int(row['cannon'])}门。天灾：{row['natural_disaster']}；"
                 f"人祸：{row['human_disaster']}；状态：{row['status']}"
             )

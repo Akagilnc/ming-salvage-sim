@@ -38,6 +38,16 @@ def building_risk_description(value: object) -> str:
     return ("低", "中", "偏高", "极高")[risk]
 
 
+def city_defense_description(value: object) -> str:
+    """Describe the discrete 0–5 city-defense level without exposing its score."""
+    try:
+        level = int(0 if value is None else value)
+    except (TypeError, ValueError):
+        level = 0
+    level = max(0, min(level, 5))
+    return ("初设", "简陋", "成形", "坚固", "重镇", "雄城")[level]
+
+
 def building_qualitative_fields(row: object) -> tuple[str, str, str]:
     """Shared building scale, condition, and risk presentation."""
     return (
