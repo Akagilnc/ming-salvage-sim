@@ -374,6 +374,7 @@ export interface AutoMergeStageInput {
   /**
    * Deprecated no-op under ADR 0123 (path allowlist removed). Retained so callers
    * that still pass the field keep type-compatible; merge ignores it.
+   * @deprecated Deprecated no-op retained only for caller type compatibility. Do not introduce new usages.
    */
   readonly allowUnverifiedDocReleasePaths?: boolean;
 }
