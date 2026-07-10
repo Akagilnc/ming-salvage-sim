@@ -97,6 +97,11 @@ import {
   waitForBotQuiescence,
   type OnlineReviewLoopStageResult,
 } from "../onlineReviewLoop.js";
+import {
+  mergePriorRoundFindings,
+  priorCmrFindingsFromFamilyLedger,
+  priorOnlineReviewFindingsFromFamilyLedger,
+} from "../findingFamilies.js";
 import { applyVerifySideEffects } from "../onlineReviewSideEffects.js";
 import {
   isValidCleanupResult,
@@ -119,6 +124,7 @@ import {
   cmrLegAccountingFailure,
   modelRouteFingerprint,
   resolveActiveModelRoute,
+  smokeRouteModels,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
 import { hasAcceptedSuppressionAuthority } from "../acceptedSuppression.js";
@@ -128,8 +134,8 @@ import type {
   DispatchContext,
   EscalationAnswerPayload,
   FindingDisposition,
+  FindingFamily,
   ShipResult,
-  StepOutput,
   VerifyResult,
   WorkerLandingPayload,
   WorkerResult,
@@ -195,6 +201,8 @@ export interface VerifyCmrInput {
    * `recordAborted` / `escalateFamily`.
    */
   readonly familyBackend: FamilyBackend;
+  /** The family-startup-smoked route carried into every family worker dispatch. */
+  readonly modelRoute?: ResolvedModelRoute;
   /**
    * The child issue numbers whose merge into the family base was LLM-resolved
    * (#295), derived by the spine from the durable family ledger (#291 缺口 1). The
@@ -1055,6 +1063,7 @@ async function runCmrCoderFix(input: {
   readonly familyBase: string;
   readonly classification: CmrEnvelope;
   readonly blockingFindingIdentityKeys: readonly string[];
+  readonly findingFamilies?: ReadonlyArray<FindingFamily>;
   readonly familyHeadBefore?: string;
   readonly escalationAnswer?: EscalationAnswerPayload;
   readonly familyIssue?: number;
@@ -1066,6 +1075,7 @@ async function runCmrCoderFix(input: {
     familyBase,
     classification,
     blockingFindingIdentityKeys,
+    findingFamilies,
     familyHeadBefore,
     escalationAnswer,
     familyIssue,
@@ -1088,6 +1098,7 @@ async function runCmrCoderFix(input: {
       familyCoderFixWorkerSpec(resolvedRoute),
       {
         familyBase,
+        modelRoute: resolvedRoute,
         // 信封宪法 (ADR 0062): only identity keys + count on the dispatch structure;
         // rich finding content travels in the separate landing payload below.
         blockingFindingIdentityKeys,
@@ -1098,7 +1109,10 @@ async function runCmrCoderFix(input: {
         ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
         ...(familyIssue !== undefined ? { familyIssue } : {}),
       },
-      { blockingFindings: classification.blocking },
+      {
+        blockingFindings: classification.blocking,
+        ...(findingFamilies !== undefined ? { findingFamilies } : {}),
+      },
     );
     const familyHeadAfter = await readPostCmrFamilyHead(
       familyBackend,
@@ -1555,8 +1569,29 @@ export async function runFamilyOnlineReviewLoop(input: {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
+  let modelRoute: ResolvedModelRoute;
+  try {
+    modelRoute =
+      input.resolvedRoute ??
+      (await smokeRouteModels(
+        resolveActiveModelRoute(),
+        async () => ({ cliVersion: "standalone-online-review-test" }),
+      ));
+  } catch (err) {
+    return {
+      ok: false,
+      terminalState: "decision_gate_raised",
+      round: 1,
+      stopSummary: {
+        reason: "infra_failure",
+        summary: `family online-review route smoke failed: ${err instanceof Error ? err.message : String(err)}`,
+        repairHint: "provide the family startup-smoked model route before dispatching online review workers",
+      },
+    };
+  }
   const baseCtx: DispatchContext = {
     familyBase: input.familyBase,
+    modelRoute,
     repo,
     prUrl,
     prHead: input.ship.prHead,
@@ -1623,6 +1658,9 @@ export async function runFamilyOnlineReviewLoop(input: {
     };
   }
   let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
+  /** #711: last fixer landing's fix-marked keys for durable family ledger prior rounds. */
+  let lastFixMarkedFindingIdentityKeys: ReadonlyArray<string> = [];
+  let lastFixerOnlineReviewRound = loopState.round;
 
   try {
     return await runOnlineReviewLoopStage(
@@ -1749,6 +1787,9 @@ export async function runFamilyOnlineReviewLoop(input: {
     },
     dispatchFixer: async (landing: WorkerLandingPayload) => {
       const round = landing.onlineReviewRound ?? baseCtx.onlineReviewRound ?? 1;
+      lastFixMarkedFindingIdentityKeys =
+        landing.fixMarkedFindingIdentityKeys ?? [];
+      lastFixerOnlineReviewRound = round;
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
         fixerWorkerSpec(input.resolvedRoute),
@@ -1785,6 +1826,9 @@ export async function runFamilyOnlineReviewLoop(input: {
       }
       return result.output;
     },
+    // #740: family + single-slice S12 crash-retry both continue-as-is (no
+    // scoped cleanResidue / resetBeforeRetry). Do not reintroduce a one-sided
+    // reset on either path — same user override as #600 / 21906adf.
     dispatchDocRelease: async (landing: WorkerLandingPayload) => {
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
@@ -1851,6 +1895,10 @@ export async function runFamilyOnlineReviewLoop(input: {
       await recordOnlineReviewFixCommitted(input.familyBackend, {
         familyHeadAfter: sha,
         pr: prUrl,
+        onlineReviewRound: lastFixerOnlineReviewRound,
+        ...(lastFixMarkedFindingIdentityKeys.length > 0
+          ? { fixMarkedFindingIdentityKeys: lastFixMarkedFindingIdentityKeys }
+          : {}),
       });
       return sha;
     },
@@ -1858,6 +1906,23 @@ export async function runFamilyOnlineReviewLoop(input: {
       {
         initialRound: loopState.round,
         initialFixCommitSha: loopState.lastFixSha,
+        enrichVerifyLanding: async (landing, round) => {
+          // Merge ledger history with in-process accumulation — never either/or.
+          // After mid-loop resume, in-process only has post-resume rounds; a
+          // non-empty array must not skip ledger enrichment or r3 loses r1.
+          const ledger = await input.familyBackend.readFamilyLedger();
+          const fromLedger = priorOnlineReviewFindingsFromFamilyLedger(
+            ledger,
+            round,
+          );
+          const priorRoundFindings = mergePriorRoundFindings(
+            fromLedger,
+            landing.priorRoundFindings ?? [],
+          );
+          return priorRoundFindings.length > 0
+            ? { ...landing, priorRoundFindings }
+            : landing;
+        },
       },
     );
   } catch (err) {
@@ -2031,8 +2096,11 @@ async function runIntegratedCmrPass(input: {
     };
   }
   const spec = cmrWorkerSpec("fresh", pass, resolvedRoute);
+  const familyLedger = await familyBackend.readFamilyLedger();
+  const priorRoundFindings = priorCmrFindingsFromFamilyLedger(familyLedger, pass);
   const dispatchCtx: DispatchContext = {
     familyBase,
+    modelRoute: resolvedRoute,
     cmrPass: pass,
     ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
       ? { llmResolvedChildren }
@@ -2042,6 +2110,7 @@ async function runIntegratedCmrPass(input: {
     ...(priorCmrFindingIdentityKeys !== undefined
       ? { priorCmrFindingIdentityKeys }
       : {}),
+    ...(priorRoundFindings.length > 0 ? { priorRoundFindings } : {}),
   };
   // #598: one "logical cmr attempt" = a fresh dispatch + the same-worker
   // `rewriteOutcomeProtocolFailure` counter (OUTCOME_REWRITE_RETRY_CAP). When that
@@ -2450,6 +2519,9 @@ async function runIntegratedCmrPass(input: {
           familyBase,
           classification: cmrFindingClassification,
           blockingFindingIdentityKeys,
+          ...(cmrResult.output.findingFamilies !== undefined
+            ? { findingFamilies: cmrResult.output.findingFamilies }
+            : {}),
           familyHeadBefore: postWorkerFamilyHead,
           escalationAnswer,
           familyIssue,
@@ -2574,6 +2646,7 @@ export async function runVerifyCmr(
     moduleContext,
     priorCmrFindingIdentityKeys,
     priorCmrFindingIdentityKeysByPass,
+    modelRoute,
   } = input;
 
   // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
@@ -2615,7 +2688,17 @@ export async function runVerifyCmr(
   }
   let resolvedRoute: ResolvedModelRoute;
   try {
-    resolvedRoute = resolveActiveModelRoute();
+    resolvedRoute = modelRoute ?? resolveActiveModelRoute();
+    // Direct verify-hook unit tests predate the family startup envelope and call
+    // this hook without a runner-owned route. Keep those standalone tests on a
+    // smoked route; production family runs always pass the real startup-smoked
+    // route from runFamily above.
+    if (modelRoute === undefined) {
+      resolvedRoute = await smokeRouteModels(
+        resolvedRoute,
+        async () => ({ cliVersion: "standalone-verify-test" }),
+      );
+    }
   } catch (err) {
     const reason =
       err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
@@ -2676,6 +2759,7 @@ export async function runVerifyCmr(
       phase: "final",
       familyBackend,
       familyBase,
+      modelRoute,
       llmResolvedChildren,
       escalationAnswer,
       familyHeadAfter: completeness.restartFinalBarrier.familyHeadAfter,
@@ -2784,6 +2868,7 @@ export async function runVerifyCmr(
     familyShipWorkerSpec(resolvedRoute),
     {
       familyBase,
+      modelRoute: resolvedRoute,
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     },
     undefined,
@@ -3238,6 +3323,7 @@ export async function ensureFamilyPostMergeCleanup(input: {
     cleanupWorkerSpec(resolvedRoute),
     {
       familyBase,
+      modelRoute: resolvedRoute,
       repo: familyRepo,
       prUrl,
     },

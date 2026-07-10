@@ -5,6 +5,7 @@ Soul: `fixer` (`/home/agent/.orchestrator/souls/fixer.md`)
 ## Params
 
 - `.orchestrator-online-review.json` — bot snapshot + `fixMarkedFindingIdentityKeys` from the prior verify worker.
+- `.fix-focus.md` (when present) — pattern-level `findingFamilies` briefs from the prior verify worker (#711).
 
 ## Output
 

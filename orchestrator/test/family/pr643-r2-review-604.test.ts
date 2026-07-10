@@ -37,6 +37,10 @@ import type {
 // A single-slice backend that is NEVER exercised: the family prior-escalation
 // early return fires before the wave loop, so no child ever runs.
 class UnusedChildBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   async findResumeState(): Promise<ResumeState | undefined> {
     return undefined;
   }

@@ -26,6 +26,10 @@ import type {
  *   - S7 ship succeeds → S8 handoff(status=success)
  */
 class HappyPathBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   /** Ordered log of every Backend method invoked (the call timeline). */
   readonly calls: string[] = [];
   /** Ordered log of every agent step actually dispatched to a sandbox. */

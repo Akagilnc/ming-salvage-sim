@@ -54,6 +54,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  renameSync,
   readFileSync,
   rmSync,
   statSync,
@@ -74,6 +75,10 @@ import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
 import { findingIdentityKey } from "./findings.js";
 import {
+  attachSanitizedFindingFamilies,
+  normalizeFindingFamiliesWireAliases,
+} from "./findingFamilies.js";
+import {
   sourceAuthFailureStopSummary,
   type StopSummary,
 } from "./stopSummary.js";
@@ -89,6 +94,36 @@ import {
   type ModelProviderFactory,
   type ModelSlugRegistryEntry,
 } from "./modelRegistry.js";
+import {
+  modelRouteFingerprint,
+  routeSmokeEntries,
+  routeSmokeFailure,
+  smokeRouteModels,
+  withRouteSmoke,
+  type ResolvedModelRoute,
+  type RouteSmokeStatus,
+} from "./modelRoutes.js";
+
+export function routeSmokeCacheKey(
+  route: ResolvedModelRoute,
+  sandboxFingerprint: string,
+): string {
+  return `${modelRouteFingerprint(route)}\0${sandboxFingerprint}`;
+}
+
+export function routeSmokeToolCallIsEchoOk(event: {
+  readonly type?: unknown;
+  readonly name?: unknown;
+  readonly formattedArgs?: unknown;
+}): boolean {
+  return (
+    event.type === "toolCall" &&
+    typeof event.name === "string" &&
+    /^(bash|shell)$/i.test(event.name) &&
+    typeof event.formattedArgs === "string" &&
+    /echo\s+(?:"OK"|'OK'|OK)/i.test(event.formattedArgs)
+  );
+}
 export {
   agentForSlug,
   CODER_CODEX_SLUG,
@@ -101,7 +136,13 @@ export {
   type ModelProviderFactory,
   type ModelSlugRegistryEntry,
 };
-import { legacyDispatchWorker, SHIP_PROMPT_FILE } from "./dispatchWorker.js";
+import {
+  DOCRELEASE_PROMPT_FILE,
+  FIXER_PROMPT_FILE,
+  legacyDispatchWorker,
+  SHIP_PROMPT_FILE,
+  VERIFY_PROMPT_FILE,
+} from "./dispatchWorker.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
   shipOutcomeFromResult,
@@ -618,6 +659,7 @@ export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
 export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
 /** S5 coder-fix worker path to runner-owned blocking findings JSON. */
 export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
+export const SANDBOX_FIX_FOCUS_PATH_ENV = "ORCHESTRATOR_FIX_FOCUS_PATH";
 /** S9/S10 online-review landing file path (bot snapshot + ship metadata). */
 export const SANDBOX_ONLINE_REVIEW_PATH_ENV = "ORCHESTRATOR_ONLINE_REVIEW_PATH";
 /** Worker path to the runner-owned machine outcome sidecar JSON. */
@@ -1514,12 +1556,17 @@ export function attributeFailure(
  *
  * Route-independent prompt inventory: prompt validation must not import a
  * route-bearing StepSpec snapshot, because model routes are resolved per run.
- * Keep this derived from the worker prompt-file constants plus the S7 ship spec.
+ * Keep this derived from the worker prompt-file constants plus the S7 ship
+ * spec and real review-loop agent prompts (verify/fixer/docRelease — #739).
+ * cleanup stays out: it is not a runStep agent path and has no checked-in prompt.
  */
 export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set([
     ...Object.values(WORKER_PROMPT_FILES),
     SHIP_PROMPT_FILE,
+    VERIFY_PROMPT_FILE,
+    FIXER_PROMPT_FILE,
+    DOCRELEASE_PROMPT_FILE,
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
   ]),
@@ -1567,20 +1614,24 @@ export function promptsDirError(
 
 /**
  * The complete set of soul files that must exist under soulsDir.
- * These are the 8 files under orchestrator/image/souls (no longer baked into
- * the image post #372; the ctor must verify presence so an incomplete/wrong
+ * Source of truth = every file under orchestrator/image/souls (no longer baked
+ * into the image post #372; the ctor must verify presence so an incomplete/wrong
  * dir (e.g. pointing at image/ or a partial checkout) fails fast with names,
- * mirroring promptsDir validation.
+ * mirroring promptsDir validation. Includes S12 docRelease + verify/fixer (#739).
+ * cleanup has no soul file (deterministic path, not a runStep agent).
  */
 export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
   "cmr.md",
   "cmr_completeness.md",
   "cmr_correctness.md",
   "coder.md",
+  "docRelease.md",
+  "fixer.md",
   "merger.md",
   "output_protocol.md",
   "reviewer.md",
   "ship.md",
+  "verify.md",
 ];
 
 /**
@@ -1588,9 +1639,9 @@ export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
  * `undefined` when the dir is valid (#372).
  *
  * soulsDir MUST be absolute + exist + be a directory + contain every
- * {@link REQUIRED_SOUL_FILES} (the 8 souls). Pure so the message logic is
- * unit-testable without I/O; the validate* wrapper supplies the fs verdicts.
- * Mirrors {@link promptsDirError}.
+ * {@link REQUIRED_SOUL_FILES} (all files under image/souls). Pure so the message
+ * logic is unit-testable without I/O; the validate* wrapper supplies the fs
+ * verdicts. Mirrors {@link promptsDirError}.
  */
 export function soulsDirError(
   soulsDir: string,
@@ -1614,7 +1665,7 @@ export function soulsDirError(
     return (
       `RealBackend: soulsDir "${soulsDir}" is missing required soul file(s): ` +
       `${missingFiles.join(", ")}. All of [${REQUIRED_SOUL_FILES.join(", ")}] ` +
-      `must be present (the 8 files under image/souls, incl. output_protocol.md).`
+      `must be present (every file under image/souls, incl. output_protocol.md and docRelease.md).`
     );
   }
   return undefined;
@@ -1631,6 +1682,8 @@ function toolchainVersionCommand(tool: string): string[] {
 
 /** Tunables for the real Backend (host paths + the profile image). */
 export interface RealBackendOptions {
+  /** Enable Codex priority processing for every in-container Codex leg. */
+  readonly codexFast?: boolean;
   /**
    * The SOURCE repo the orchestrator clones from (ADR 0024 decision 1). The
    * driver feeds the source — NOT a ready-made working repo. RealBackend builds
@@ -1936,20 +1989,29 @@ const onlineReviewThreadReplySchema = z
   })
   .strict();
 
-export const verifyOutputSchema = z
-  .object({
-    converged: z.boolean(),
-    findingDispositions: z.array(onlineReviewFindingDispositionSchema).optional(),
-    fixMarkedFindingIdentityKeys: z.array(z.string()).optional(),
-    threadReplies: z.array(onlineReviewThreadReplySchema).optional(),
-    threadsToResolve: z.array(z.string()).optional(),
-    deferredIssueUrls: z.array(z.string()).optional(),
-    terminalState: z
-      .enum(["mergeable", "round_budget_exhausted", "decision_gate_raised"])
-      .optional(),
-    isRecheck: z.boolean().optional(),
-  })
-  .strict();
+/** Verify wire schema — normalizes `finding_families` before strict key check. */
+export const verifyOutputSchema = z.preprocess(
+  normalizeFindingFamiliesWireAliases,
+  z
+    .object({
+      converged: z.boolean(),
+      findingDispositions: z
+        .array(onlineReviewFindingDispositionSchema)
+        .optional(),
+      fixMarkedFindingIdentityKeys: z.array(z.string()).optional(),
+      threadReplies: z.array(onlineReviewThreadReplySchema).optional(),
+      threadsToResolve: z.array(z.string()).optional(),
+      deferredIssueUrls: z.array(z.string()).optional(),
+      terminalState: z
+        .enum(["mergeable", "round_budget_exhausted", "decision_gate_raised"])
+        .optional(),
+      isRecheck: z.boolean().optional(),
+      // #711: malformed families degrade to no brief — never block the verify gate.
+      // Accepts camelCase + snake_case top-level via normalizeFindingFamiliesWireAliases.
+      findingFamilies: z.unknown().optional(),
+    })
+    .strict(),
+);
 export const fixerOutputSchema = z
   .object({
     committed: z.boolean(),
@@ -2049,6 +2111,166 @@ export class RealBackend implements Backend {
    */
   workingRepoPath(): string {
     return this.workingRepo;
+  }
+
+  /**
+   * #685: prove every selected model×pipe can actually invoke bash before the
+   * runner spends a productive dispatch on it. This deliberately uses the
+   * selected Sandcastle provider, not a generic shell or a silent fallback.
+   */
+  async currentCliVersions(
+    route: ResolvedModelRoute,
+  ): Promise<Readonly<Record<string, string | undefined>>> {
+    const versions: Record<string, string | undefined> = {};
+    for (const entry of routeSmokeEntries(route)) {
+      if (versions[entry.slug] === undefined) {
+        versions[entry.slug] = this.cliVersionForSlug(entry.slug);
+      }
+    }
+    return versions;
+  }
+
+  async smokeModelRoute(
+    route: ResolvedModelRoute,
+    currentCliVersions: Readonly<Record<string, string | undefined>> = {},
+  ): Promise<ResolvedModelRoute> {
+    const sandboxFingerprint = this.routeSmokeSandboxFingerprint();
+    const persisted = this.readRouteSmokeState(route, sandboxFingerprint);
+    if (persisted !== undefined) {
+      const hydrated = withRouteSmoke(route, persisted);
+      if (routeSmokeFailure(hydrated, Date.now(), undefined, currentCliVersions) === undefined) {
+        return hydrated;
+      }
+    }
+    const smoked = await smokeRouteModels(route, async (entry) => {
+      let sawBash = false;
+      const logDir = mkdtempSync(join(this.opts.home ?? homedir(), "route-smoke-"));
+      try {
+        const result = await sc.run({
+          agent: agentForSlug(entry.slug),
+          sandbox: this.routeSmokeSandbox(),
+          cwd: this.workingRepo,
+          promptFile: join(this.opts.promptsDir, "route-smoke.md"),
+          maxIterations: 1,
+          idleTimeoutSeconds: 10,
+          completionSignal: "ROUTE_SMOKE_COMPLETE",
+          logging: {
+            type: "file",
+            path: join(logDir, "run.log"),
+            onAgentStreamEvent: (event) => {
+              if (
+                routeSmokeToolCallIsEchoOk(event)
+              ) {
+                sawBash = true;
+              }
+            },
+          },
+        });
+        if (result.completionSignal !== "ROUTE_SMOKE_COMPLETE" || !sawBash) {
+          throw new Error(
+            `model did not complete an observable bash smoke for ${entry.slug}`,
+          );
+        }
+        return { cliVersion: this.cliVersionForSlug(entry.slug) };
+      } finally {
+        rmSync(logDir, { recursive: true, force: true });
+      }
+    });
+    this.writeRouteSmokeState(smoked, sandboxFingerprint);
+    return smoked;
+  }
+
+  private routeSmokeStatePath(): string {
+    return join(this.opts.home ?? homedir(), ".sc-orchestrator", "route-smoke-state.json");
+  }
+
+  private readRouteSmokeState(
+    route: ResolvedModelRoute,
+    sandboxFingerprint: string,
+  ): Readonly<Record<string, RouteSmokeStatus>> | undefined {
+    try {
+      const raw = JSON.parse(readFileSync(this.routeSmokeStatePath(), "utf8")) as unknown;
+      if (raw === null || typeof raw !== "object") return undefined;
+      const state = (raw as Record<string, unknown>)[routeSmokeCacheKey(route, sandboxFingerprint)];
+      if (state === null || typeof state !== "object") return undefined;
+      return state as Readonly<Record<string, RouteSmokeStatus>>;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private writeRouteSmokeState(route: ResolvedModelRoute, sandboxFingerprint: string): void {
+    const path = this.routeSmokeStatePath();
+    let all: Record<string, unknown> = {};
+    try {
+      const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+      if (raw !== null && typeof raw === "object") all = raw as Record<string, unknown>;
+    } catch {
+      // Missing or malformed state is treated as empty; the fresh smoke result
+      // below becomes the new durable source of truth.
+    }
+    all[routeSmokeCacheKey(route, sandboxFingerprint)] = route.smoke;
+    mkdirSync(join(this.opts.home ?? homedir(), ".sc-orchestrator"), { recursive: true });
+    const tempPath = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+    try {
+      writeFileSync(tempPath, JSON.stringify(all, null, 2) + "\n", "utf8");
+      renameSync(tempPath, path);
+    } finally {
+      if (existsSync(tempPath)) rmSync(tempPath, { force: true });
+    }
+  }
+
+  private cliVersionForSlug(slug: string): string {
+    const provider = resolveModelSlug(slug).provider;
+    const command = provider === "claudeCode" ? "claude" : provider;
+    try {
+      return this.sh(command, ["--version"]).trim() || "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+
+  private routeSmokeSandboxFingerprint(): string {
+    const hash = createHash("sha256");
+    hash.update(`image:${this.opts.imageName}\n`);
+    try {
+      hash.update(`image-id:${this.sh("docker", ["image", "inspect", "--format", "{{.Id}}", this.opts.imageName]).trim()}\n`);
+    } catch {
+      hash.update("image-id:unknown\n");
+    }
+    const auth = buildAuthPaths(this.opts.runKey, this.opts.home);
+    const files = [
+      join(this.opts.promptsDir, "route-smoke.md"),
+      ...REQUIRED_SOUL_FILES.map((file) => join(this.opts.soulsDir, file)),
+      auth.srcCodexAuth,
+      auth.srcCodexConfig,
+      auth.claudeTokenFile,
+    ];
+    for (const file of files) {
+      hash.update(`file:${file}\0`);
+      try {
+        hash.update(readFileSync(file));
+      } catch {
+        hash.update("missing");
+      }
+    }
+    try {
+      hash.update(`gh:${this.sh("gh", ["auth", "token"]).trim()}\n`);
+    } catch {
+      hash.update("gh:missing\n");
+    }
+    return hash.digest("hex");
+  }
+
+  /** Route smoke must exercise the same image, auth, and soul mounts as workers. */
+  private routeSmokeSandbox(): sc.SandboxProvider {
+    const auth = this.mountAuth(this.opts.runKey);
+    return docker(
+      this.boxConfig(
+        { ...auth, ghToken: this.readGhToken() },
+        { role: "reviewer", soul: "READ-ONLY" },
+      ),
+    );
   }
 
   /**
@@ -2512,7 +2734,7 @@ export class RealBackend implements Backend {
     // workspace-write) and irrelevant here — only auth.json crosses. Write the
     // minimal container config instead of copying the host's (#378). Always written
     // so the dir is a valid mount even when codex auth was absent.
-    writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"));
+    writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"), this.opts.codexFast);
     // The Claude token is BEST-EFFORT (#384 codex P2). The coder step now runs
     // Codex (model gpt-5.5), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
     // with Codex auth but no `~/.sc-claude-token` must still start the worker — a
@@ -2530,7 +2752,7 @@ export class RealBackend implements Backend {
 
   private box(
     issueNumber: number,
-    spec: StepSpec,
+    spec: Pick<StepSpec, "role" | "soul">,
     options?: AgentStepRunOptions,
   ): sc.SandboxProvider {
     const auth = this.mountAuth(issueNumber);
@@ -2621,7 +2843,7 @@ export class RealBackend implements Backend {
    */
   protected boxConfig(
     auth: { authDir: string; claudeToken?: string; ghToken?: string },
-    spec: StepSpec,
+    spec: Pick<StepSpec, "role" | "soul">,
     issueNumber?: number,
     options?: AgentStepRunOptions,
   ): {
@@ -2653,6 +2875,9 @@ export class RealBackend implements Backend {
       env[SANDBOX_FIX_FINDINGS_PATH_ENV] =
         options.fixFindingsLanding.sandboxPath;
     }
+    if (options?.fixFocusLanding !== undefined) {
+      env[SANDBOX_FIX_FOCUS_PATH_ENV] = options.fixFocusLanding.sandboxPath;
+    }
     if (options?.onlineReviewLanding !== undefined) {
       env[SANDBOX_ONLINE_REVIEW_PATH_ENV] =
         options.onlineReviewLanding.sandboxPath;
@@ -2671,6 +2896,13 @@ export class RealBackend implements Backend {
       mounts.push({
         hostPath: options.fixFindingsLanding.path,
         sandboxPath: options.fixFindingsLanding.sandboxPath,
+        readonly: true,
+      });
+    }
+    if (options?.fixFocusLanding !== undefined) {
+      mounts.push({
+        hostPath: options.fixFocusLanding.path,
+        sandboxPath: options.fixFocusLanding.sandboxPath,
         readonly: true,
       });
     }
@@ -2844,22 +3076,27 @@ export class RealBackend implements Backend {
       const v = verifyOutputSchema.parse(raw);
       const candidate: VerifyResult = {
         kind: "verify",
-        converged: v.converged,
-        ...(v.findingDispositions !== undefined
-          ? { findingDispositions: v.findingDispositions }
-          : {}),
-        ...(v.fixMarkedFindingIdentityKeys !== undefined
-          ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
-          : {}),
-        ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
-        ...(v.threadsToResolve !== undefined
-          ? { threadsToResolve: v.threadsToResolve }
-          : {}),
-        ...(v.deferredIssueUrls !== undefined
-          ? { deferredIssueUrls: v.deferredIssueUrls }
-          : {}),
-        ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
-        ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
+        ...attachSanitizedFindingFamilies(
+          {
+            converged: v.converged,
+            ...(v.findingDispositions !== undefined
+              ? { findingDispositions: v.findingDispositions }
+              : {}),
+            ...(v.fixMarkedFindingIdentityKeys !== undefined
+              ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
+              : {}),
+            ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
+            ...(v.threadsToResolve !== undefined
+              ? { threadsToResolve: v.threadsToResolve }
+              : {}),
+            ...(v.deferredIssueUrls !== undefined
+              ? { deferredIssueUrls: v.deferredIssueUrls }
+              : {}),
+            ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
+            ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
+          },
+          v.findingFamilies,
+        ),
       };
       if (!isValidVerifyResult(candidate)) {
         const err = new Error(
@@ -3447,7 +3684,7 @@ export class RealBackend implements Backend {
       // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
       // bwrap is impossible). The host config.toml is host-personal and irrelevant
       // — only auth.json crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount), no crash. gh is NOT
