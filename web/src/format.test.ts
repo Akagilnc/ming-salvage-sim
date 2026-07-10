@@ -33,6 +33,11 @@ describe("stripOrganicMarkdown", () => {
       .toBe("  a  \na\nb");
   });
 
+  it("preserves code content when a link destination contains a backtick", () => {
+    expect(stripOrganicMarkdown("[甲](u`v`) `  a  `"))
+      .toBe("甲   a  ");
+  });
+
   it("keeps image alt text while stripping images and thematic breaks", () => {
     expect(stripOrganicMarkdown("甲 ![军报](https://example.com/report.png) 乙\n\n---\n\n丙"))
       .toBe("甲 军报 乙\n\n丙");
