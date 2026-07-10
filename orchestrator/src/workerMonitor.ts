@@ -37,6 +37,7 @@ export interface MonitoredCliDispatchInput {
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly logBasename?: string;
+  readonly resultPath?: string;
   /**
    * Optional identity reader at spawn (#684 R2). Tests inject this so the
    * dispatch path does not require a real `ps` in restricted sandboxes.
@@ -252,6 +253,7 @@ export async function dispatchMonitoredCliWorker(
     stepId: input.stepId,
     dispatchedAt,
     instanceId,
+    ...(input.resultPath !== undefined ? { resultPath: input.resultPath } : {}),
   };
 
   if (!validateMonitorHandle(handle)) {

@@ -1901,11 +1901,16 @@ async function dispatchOrAbort(
               onMonitorHandleSpawned: async (handle: WorkerMonitorHandle) => {
                 // Persist before waiting for the child: a hung family worker
                 // must be resumable/judgable from the durable family ledger.
-                await familyBackend.appendFamilyLedger({
-                  status: "worker_dispatched",
-                  event: "worker_dispatched",
-                  monitorHandle: handle,
-                });
+                try {
+                  await familyBackend.appendFamilyLedger({
+                    status: "worker_dispatched",
+                    event: "worker_dispatched",
+                    monitorHandle: handle,
+                  });
+                } catch {
+                  // Best-effort, matching the single-slice path. The spawned
+                  // worker remains governed by its verified monitor handle.
+                }
               },
             },
           );

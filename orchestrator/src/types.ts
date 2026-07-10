@@ -1223,6 +1223,8 @@ export interface WorkerMonitorHandle {
    * signal — otherwise a recycled PID would kill an unrelated process (#684 R1).
    */
   readonly instanceId: string;
+  /** Dispatch-scoped result sidecar; absent only on legacy persisted handles. */
+  readonly resultPath?: string;
 }
 
 /**
@@ -1241,6 +1243,8 @@ export interface CliMonitorSpawnSpec {
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly logBasename?: string;
+  /** Dispatch-scoped result sidecar written by the host bridge. */
+  readonly resultPath?: string;
   /** Injectable process identity reader for restricted/test environments. */
   readonly readInstanceId?: (pid: number) => string | undefined;
 }

@@ -1179,11 +1179,23 @@ export class RealFamilyBackend implements FamilyBackend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): CliMonitorSpawnSpec | undefined {
+    // Container-free test/integration subclasses intentionally replace the
+    // family review worker seam; preserve that seam instead of launching the
+    // host bridge and bypassing the override.
+    if (
+      this.runFamilyReviewLoopWorker !==
+      RealFamilyBackend.prototype.runFamilyReviewLoopWorker
+    ) {
+      return undefined;
+    }
     return buildCliMonitorSpawnSpec({
       backendKind: "realFamily",
       backendOpts: this.opts,
       spec,
-      ctx,
+      ctx: {
+        ...ctx,
+        stateDir: ctx.stateDir ?? this.opts.ledgerDir,
+      },
       landing,
     });
   }

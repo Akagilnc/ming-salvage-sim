@@ -13,6 +13,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
 import { poolIdForWorker } from "./workerMonitor.js";
 import type {
@@ -73,8 +74,17 @@ export function monitorJobPath(logDir: string, stepId: string): string {
   return join(logDir, `${stepId}.job.json`);
 }
 
-export function monitorResultPath(logDir: string, stepId: string): string {
-  return join(logDir, `${stepId}.result.json`);
+export function monitorResultPath(
+  logDir: string,
+  stepId: string,
+  dispatchId?: string,
+): string {
+  return join(
+    logDir,
+    dispatchId === undefined
+      ? `${stepId}.result.json`
+      : `${stepId}.${dispatchId}.result.json`,
+  );
 }
 
 /** Resolve the compiled (or same-dir) host CLI bridge runner path. */
@@ -103,7 +113,7 @@ export function buildCliMonitorSpawnSpec(input: {
   if (logDir === undefined) return undefined;
 
   mkdirSync(logDir, { recursive: true });
-  const resultPath = monitorResultPath(logDir, input.spec.id);
+  const resultPath = monitorResultPath(logDir, input.spec.id, randomUUID());
   const jobPath = monitorJobPath(logDir, input.spec.id);
   const job: CliMonitorJobFile = {
     backendKind: input.backendKind,
@@ -133,6 +143,7 @@ export function buildCliMonitorSpawnSpec(input: {
       : {}),
     env,
     logBasename: `${input.spec.id}.log`,
+    resultPath,
   };
 }
 
@@ -144,17 +155,12 @@ export function workerResultFromMonitorSidecar(
   handle: WorkerMonitorHandle,
   exitCode: number | null,
 ): WorkerResult {
-  const resultPath = monitorResultPath(
-    dirname(handle.logPath),
-    handle.stepId,
-  );
-  // Also accept sibling naming from buildCliMonitorSpawnSpec (same logDir).
-  const altPath = join(dirname(handle.logPath), `${handle.stepId}.result.json`);
-  const path = existsSync(resultPath)
-    ? resultPath
-    : existsSync(altPath)
-      ? altPath
-      : undefined;
+  const resultPath = handle.resultPath;
+  const legacyPath = monitorResultPath(dirname(handle.logPath), handle.stepId);
+  const expectedPath = resultPath ?? legacyPath;
+  const path = resultPath !== undefined
+    ? (existsSync(resultPath) ? resultPath : undefined)
+    : (existsSync(legacyPath) ? legacyPath : undefined);
 
   if (path !== undefined) {
     try {
@@ -177,7 +183,7 @@ export function workerResultFromMonitorSidecar(
       kind: "malformed",
       reason:
         `monitored CLI worker ${handle.stepId} exited 0 but wrote no usable ` +
-        `WorkerResult sidecar at ${resultPath}`,
+        `WorkerResult sidecar at ${expectedPath}`,
     };
   }
   return {
