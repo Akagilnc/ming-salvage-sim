@@ -9,6 +9,27 @@ const CODER_CODEX_EFFORT: NonNullable<sc.CodexOptions["effort"]> = "low";
 export const REVIEWER_CODEX_SLUG = "gpt-5.6-sol";
 export const VERIFY_CODEX_SLUG = "gpt-5.6-terra";
 
+/**
+ * Live-officer reasoning effort for verify / CMR workers on the verify Codex
+ * slug. Shared by single-slice (`realBackend`) and family (`realFamilyBackend`)
+ * so the two paths cannot drift.
+ *
+ * Returns `"xhigh"` when the slug is {@link VERIFY_CODEX_SLUG} and the context
+ * is a verify role, a CMR soul, or a route-smoke key prefixed `verify`/`cmr`.
+ */
+export function effortForLiveOfficer(
+  slug: string,
+  context: { readonly role?: string; readonly soul?: string; readonly smokeKey?: string },
+): "xhigh" | undefined {
+  if (
+    slug === VERIFY_CODEX_SLUG &&
+    (context.role === "verify" || context.soul === "cmr" || /^(verify|cmr)/.test(context.smokeKey ?? ""))
+  ) {
+    return "xhigh";
+  }
+  return undefined;
+}
+
 export type ModelFamily = "claude" | "codex" | "agy" | "opencode" | "other";
 
 export type ModelProviderFactory =
