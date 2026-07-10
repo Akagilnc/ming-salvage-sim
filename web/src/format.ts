@@ -322,13 +322,8 @@ export function labelClass(key: string): string {
   if (at < 0) return key;
   return `${key.slice(0, at)}（${labelRegion(key.slice(at + 1))}）`;
 }
-export const stripOrganicMarkdown = (text: string): string => {
-  const codeSpans: string[] = [];
-  const protectedText = text.replace(/`([^`\n]*)`/g, (_match, code: string) => {
-    const index = codeSpans.push(code) - 1;
-    return `\uE000${index}\uE001`;
-  });
-  const withoutBlockPrefixes = protectedText.split("\n").map((line) => {
+const stripOrganicMarkdownFromPlainText = (text: string): string => {
+  const withoutBlockPrefixes = text.split("\n").map((line) => {
     let current = line;
     let next: string;
     do {
@@ -342,9 +337,65 @@ export const stripOrganicMarkdown = (text: string): string => {
     return current;
   }).join("\n");
 
-  return withoutBlockPrefixes
-    .replace(/\[([^\]\n]+)\]\([^)]+\)/g, "$1")
-    .replace(/(?<!\w)(\*\*|__)(?=\S)([^\n]*?\S)\1(?!\w)/g, "$2")
-    .replace(/(?<!\w)(\*|_)(?=\S)([^\n]*?\S)\1(?!\w)/g, "$2")
-    .replace(/\uE000(\d+)\uE001/g, (_match, index: string) => codeSpans[Number(index)]);
+  let withoutLinks = "";
+  let linkTextStart = 0;
+  for (let index = 0; index < withoutBlockPrefixes.length; index += 1) {
+    if (withoutBlockPrefixes[index] !== "[") continue;
+    const labelEnd = withoutBlockPrefixes.indexOf("](", index + 1);
+    if (labelEnd < 0) continue;
+    let depth = 1;
+    let urlEnd = labelEnd + 2;
+    while (urlEnd < withoutBlockPrefixes.length && depth > 0) {
+      if (withoutBlockPrefixes[urlEnd] === "(") depth += 1;
+      if (withoutBlockPrefixes[urlEnd] === ")") depth -= 1;
+      urlEnd += 1;
+    }
+    if (depth !== 0) continue;
+    withoutLinks += withoutBlockPrefixes.slice(linkTextStart, index);
+    withoutLinks += withoutBlockPrefixes.slice(index + 1, labelEnd);
+    linkTextStart = urlEnd;
+    index = urlEnd - 1;
+  }
+  withoutLinks += withoutBlockPrefixes.slice(linkTextStart);
+
+  return withoutLinks
+    .replace(/(?<![\p{L}\p{N}_])(\*\*|__)(?=\S)([^\n]*?\S)\1(?![\p{L}\p{N}_])/gu, "$2")
+    .replace(/(?<![\p{L}\p{N}_])(\*|_)(?=\S)([^\n]*?\S)\1(?![\p{L}\p{N}_])/gu, "$2");
+};
+
+export const stripOrganicMarkdown = (text: string): string => {
+  let result = "";
+  let plainStart = 0;
+  let index = 0;
+  while (index < text.length) {
+    if (text[index] !== "`") {
+      index += 1;
+      continue;
+    }
+
+    let delimiterLength = 1;
+    while (text[index + delimiterLength] === "`") delimiterLength += 1;
+    let closingStart = index + delimiterLength;
+    while (closingStart < text.length) {
+      if (text[closingStart] !== "`") {
+        closingStart += 1;
+        continue;
+      }
+      let closingLength = 1;
+      while (text[closingStart + closingLength] === "`") closingLength += 1;
+      if (closingLength === delimiterLength) break;
+      closingStart += closingLength;
+    }
+    if (closingStart >= text.length) {
+      index += delimiterLength;
+      continue;
+    }
+
+    result += stripOrganicMarkdownFromPlainText(text.slice(plainStart, index));
+    result += text.slice(index + delimiterLength, closingStart);
+    index = closingStart + delimiterLength;
+    plainStart = index;
+  }
+
+  return result + stripOrganicMarkdownFromPlainText(text.slice(plainStart));
 };
