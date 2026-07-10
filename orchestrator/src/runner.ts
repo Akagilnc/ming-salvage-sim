@@ -3224,10 +3224,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // ledger so resume can rebuild alive/idle/kill judgment without global pgrep.
     // Seed from resume rebuild (monitorHandleFromLedger) until a fresh spawn
     // overwrites via onMonitorHandleSpawned.
-    let stepMonitorHandle: import("./types.js").WorkerMonitorHandle | undefined =
-      resumeMonitorHandle?.stepId === step ? resumeMonitorHandle : undefined;
-    // Consume resume handle once so a later step does not inherit a stale one.
-    resumeMonitorHandle = undefined;
+    let stepMonitorHandle: import("./types.js").WorkerMonitorHandle | undefined;
+    if (resumeMonitorHandle?.stepId === step) {
+      stepMonitorHandle = resumeMonitorHandle;
+      // Consume resume handle once so a later step does not inherit a stale one.
+      resumeMonitorHandle = undefined;
+    }
 
     switch (step) {
       case "S0": {

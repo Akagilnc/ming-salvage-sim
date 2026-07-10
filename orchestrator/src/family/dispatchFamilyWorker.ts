@@ -239,8 +239,12 @@ export async function dispatchFamilyWorkerWithMonitor(
       } catch (error) {
         // Cleanup remains scoped to the verified monitor handle; never signal
         // an unverified PID or process group on callback failure.
-        const cleanup = await killWorkerTree(handle);
-        if (!cleanup.skippedDueToPidReuse) await exitPromise;
+        await killWorkerTree(handle);
+        try {
+          await exitPromise;
+        } catch {
+          // Preserve the original spawn-persist error if child cleanup fails.
+        }
         throw error;
       }
     }

@@ -676,7 +676,7 @@ exit 0
       "utf8",
     );
     expect(runnerSrc).toMatch(
-      /resumeMonitorHandle\?\.stepId === step \? resumeMonitorHandle : undefined/,
+      /if \(resumeMonitorHandle\?\.stepId === step\) \{[\s\S]*?stepMonitorHandle = resumeMonitorHandle;[\s\S]*?resumeMonitorHandle = undefined;/,
     );
   });
 

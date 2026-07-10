@@ -706,8 +706,12 @@ export async function dispatchWorkerWithMonitor(
       try {
         await opts.onMonitorHandleSpawned(handle);
       } catch (error) {
-        const cleanup = await killWorkerTree(handle);
-        if (!cleanup.skippedDueToPidReuse) await exitPromise;
+        await killWorkerTree(handle);
+        try {
+          await exitPromise;
+        } catch {
+          // Preserve the original spawn-persist error if child cleanup fails.
+        }
         throw error;
       }
     }
