@@ -17,6 +17,10 @@
  */
 
 import { isQuotaWaitForResetError } from "./quotaProbe.js";
+import {
+  isHangWithLivePoolError,
+  isSelfReportedRelayError,
+} from "./relayDispatch.js";
 import type { DispatchContext, WorkerResult, WorkerSpec } from "./types.js";
 
 /**
@@ -158,9 +162,11 @@ export async function withMechanicalRetry(
       result = await dispatch(useSpec, useCtx);
       lastAttemptThrew = false;
     } catch (err) {
-      // #683/#686: 429 quota wall parks/relays the step — never mechanical-retry
-      // a resource failure (would thrash the same pool / destroy uncommitted drift).
+      // #683/#686: resource failures park/relay — never mechanical-retry
+      // (would thrash the same pool / destroy uncommitted drift via reset).
       if (isQuotaWaitForResetError(err)) throw err;
+      if (isHangWithLivePoolError(err)) throw err;
+      if (isSelfReportedRelayError(err)) throw err;
       // A thrown error the caller's semantic layer owns is re-thrown untouched —
       // the generic layer never retries it (no double-count).
       if (opts?.callerOwns?.({ kind: "thrown", error: err }) === true) throw err;

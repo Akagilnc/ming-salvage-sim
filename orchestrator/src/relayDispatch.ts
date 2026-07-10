@@ -230,6 +230,143 @@ export function buildRelayFocusFile(
   return path;
 }
 
+/**
+ * Fail-closed focus write: returns the path on success, or `{ ok:false }` when
+ * the worktree is missing / write throws. Callers must park (not relay) on failure.
+ */
+export function tryBuildRelayFocusFile(
+  worktreePath: string | undefined,
+  entry: RelayHandoffLedgerEvent,
+): { readonly ok: true; readonly path: string } | { readonly ok: false; readonly reason: string } {
+  if (worktreePath === undefined || worktreePath.trim().length === 0) {
+    return {
+      ok: false,
+      reason: "relay handoff requires a worktree to write .relay-focus.md",
+    };
+  }
+  try {
+    return { ok: true, path: buildRelayFocusFile(worktreePath, entry) };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `relay focus write failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    };
+  }
+}
+
+/** Count relay_baton_handoff rows in an append-only ledger (chain length). */
+export function countRelayHandoffsInLedger(
+  ledger: ReadonlyArray<{ readonly event?: string }>,
+): number {
+  return ledger.reduce(
+    (n, e) => (e.event === "relay_baton_handoff" ? n + 1 : n),
+    0,
+  );
+}
+
+export const MAX_RELAY_HANDOFFS = 8;
+
+export function canRelayHandoff(
+  ledger: ReadonlyArray<{ readonly event?: string }>,
+  max = MAX_RELAY_HANDOFFS,
+): boolean {
+  return countRelayHandoffsInLedger(ledger) < max;
+}
+
+/**
+ * #686 — hang-with-live-pool resource failure. Thrown AFTER the monitor kills
+ * the pid tree so the runner can relay (never mechanical-retry / never reset).
+ */
+export class HangWithLivePoolError extends Error {
+  readonly workerPid: number;
+  readonly poolId: string;
+  readonly step?: StepId;
+
+  constructor(input: {
+    readonly workerPid: number;
+    readonly poolId: string;
+    readonly step?: StepId;
+  }) {
+    super(
+      `hang with live pool (pid=${input.workerPid}, pool=${input.poolId})` +
+        (input.step !== undefined ? ` on ${input.step}` : ""),
+    );
+    this.name = "HangWithLivePoolError";
+    this.workerPid = input.workerPid;
+    this.poolId = input.poolId;
+    if (input.step !== undefined) this.step = input.step;
+  }
+}
+
+export function isHangWithLivePoolError(
+  err: unknown,
+): err is HangWithLivePoolError {
+  return (
+    err instanceof HangWithLivePoolError ||
+    (typeof err === "object" &&
+      err !== null &&
+      (err as { readonly name?: unknown }).name === "HangWithLivePoolError")
+  );
+}
+
+/**
+ * #686 — worker self-reported `<relay>{"blocked":…}` (or phase_complete).
+ * Resource failure: preserve drift, hand off — never reset.
+ */
+export class SelfReportedRelayError extends Error {
+  readonly tag: Extract<
+    RelayTagOutcome,
+    { kind: "blocked" } | { kind: "phase_complete" }
+  >;
+  readonly step?: StepId;
+
+  constructor(
+    tag: Extract<
+      RelayTagOutcome,
+      { kind: "blocked" } | { kind: "phase_complete" }
+    >,
+    step?: StepId,
+  ) {
+    const label =
+      tag.kind === "blocked"
+        ? `self-reported blocked: ${tag.reason}`
+        : `phase_complete:${tag.phase}`;
+    super(label);
+    this.name = "SelfReportedRelayError";
+    this.tag = tag;
+    if (step !== undefined) this.step = step;
+  }
+}
+
+export function isSelfReportedRelayError(
+  err: unknown,
+): err is SelfReportedRelayError {
+  return (
+    err instanceof SelfReportedRelayError ||
+    (typeof err === "object" &&
+      err !== null &&
+      (err as { readonly name?: unknown }).name === "SelfReportedRelayError")
+  );
+}
+
+/**
+ * Inspect worker stdout / log for a voluntary or blocked `<relay>` tag.
+ * Returns undefined when no actionable tag is present (malformed / absent).
+ */
+export function tryParseActionableRelayTag(
+  stdout: string,
+):
+  | Extract<RelayTagOutcome, { kind: "blocked" } | { kind: "phase_complete" }>
+  | undefined {
+  const parsed = parseRelayTag(stdout);
+  if (parsed.kind === "blocked" || parsed.kind === "phase_complete") {
+    return parsed;
+  }
+  return undefined;
+}
+
 /** Resume from the latest relay handoff row in an append-only ledger. */
 export function resumeRelayFromLedger(
   ledger: ReadonlyArray<RelayHandoffLedgerEvent>,

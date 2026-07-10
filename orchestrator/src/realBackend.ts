@@ -91,6 +91,7 @@ import {
   agentForSlug,
   CODER_CODEX_SLUG,
   effortForLiveOfficer,
+  isBillingPoolDispatchId,
   modelFamilyForSlug,
   modelIdForSlug,
   modelIsStrongLeg,
@@ -3346,8 +3347,15 @@ export class RealBackend implements Backend {
       sandbox: this.box(issueNumber, spec, options),
       // The build worker's CLI is the spec's model slug → provider (the S2 coder
       // runs on Codex gpt-5.6-terra; a claude slug stays claudeCode). agentForSlug keeps
-      // the "model slug → baked CLI" #244 mapping unit-testable.
-      agent: agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec)),
+      // the "model slug → baked CLI" #244 mapping unit-testable. #686: billing pool
+      // overrides the channel when the same model lives on multiple pools.
+      agent: agentForSlug(
+        spec.model,
+        effortForLiveOfficer(spec.model, spec),
+        isBillingPoolDispatchId(options?.billingPool)
+          ? options.billingPool
+          : undefined,
+      ),
       // #7 maxIter: enforce the WITHIN-STEP Ralph retry budget = StepSpec.maxIter
       // (reviewer = 1 single pass; coder/fix > 1). Hitting it ends THE STEP
       // normally — route() continues — it is NEVER the orchestrator giving up
@@ -3412,8 +3420,15 @@ export class RealBackend implements Backend {
         cwd: worktree.path,
         sandbox: this.box(issueNumber, spec, options),
         // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
-        // codex for the gpt-5.6-terra coder, claudeCode for a claude slug).
-        agent: agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec)),
+        // codex for the gpt-5.6-terra coder, claudeCode for a claude slug). #686 pool
+        // channel must match the fresh dispatch.
+        agent: agentForSlug(
+          spec.model,
+          effortForLiveOfficer(spec.model, spec),
+          isBillingPoolDispatchId(options?.billingPool)
+            ? options.billingPool
+            : undefined,
+        ),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
         completionSignal: spec.completionSignal,
@@ -3863,7 +3878,13 @@ export class RealBackend implements Backend {
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: worktree.path,
           sandbox: this.shipSandbox(auth, outcomeLanding),
-          agent: agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec)),
+          agent: agentForSlug(
+            spec.model,
+            effortForLiveOfficer(spec.model, spec),
+            isBillingPoolDispatchId(ctx.billingPool)
+              ? ctx.billingPool
+              : undefined,
+          ),
           // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
           // container (用户 note); maxIter is the within-worker budget. A genuine block
           // is the worker's `<ship>` escalate verdict, not the iteration limit.

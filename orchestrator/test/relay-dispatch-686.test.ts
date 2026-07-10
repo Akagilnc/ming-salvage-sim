@@ -11,7 +11,7 @@
  *   7. next baton = #767 roster + pool-orthogonal lookup (换马甲 then 顺位)
  *   8. R1: REAL runner park sites (S9/S2) wire the fork — not a parallel dead seam
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,7 +22,9 @@ import {
 } from "../src/coderRoster.js";
 import {
   DEFAULT_PARK_THRESHOLD_MS,
+  buildDefaultBillingPools,
   decideParkOrRelay,
+  hasLiveRelayBaton,
   selectNextRelayBaton,
   type BillingPoolEntry,
   type BillingPoolId,
@@ -30,15 +32,22 @@ import {
 } from "../src/quotaPoolTable.js";
 import {
   RELAY_FOCUS_FILENAME,
+  MAX_RELAY_HANDOFFS,
   applyResourceFailureHandoff,
   buildRelayFocusFile,
   buildRelayHandoffLedgerEntry,
+  canRelayHandoff,
   classifyFailureForRetryOrRelay,
+  countRelayHandoffsInLedger,
   decideRelayAfterIdle,
   forkQuotaWallAt683Point,
+  HangWithLivePoolError,
+  isHangWithLivePoolError,
   isRelayChainReadyForReviewGate,
   parseRelayTag,
   resumeRelayFromLedger,
+  tryBuildRelayFocusFile,
+  tryParseActionableRelayTag,
   type RelayHandoffLedgerEvent,
 } from "../src/relayDispatch.js";
 import { decideIdleAfterProbe, QuotaWaitForResetError } from "../src/quotaProbe.js";
@@ -922,14 +931,15 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     expect(handoff).toMatchObject({
       event: "relay_baton_handoff",
       trigger: "quota_wall",
-      fromModelId: "grok-4.5",
-      toModelId: "grok-4.5",
-      toPool: "cursor",
+      // S9 wall hits the verify slot (role-aware), not the coder.
+      fromModelId: "terra@med",
+      toModelId: "terra@med",
+      toPool: "codex-5h",
       step: "S9",
     });
     const focusPath = join(tmp, RELAY_FOCUS_FILENAME);
     expect(existsSync(focusPath)).toBe(true);
-    expect(readFileSync(focusPath, "utf8")).toContain("cursor");
+    expect(readFileSync(focusPath, "utf8")).toContain("codex-5h");
     // Next baton re-dispatched S9 verify (in-process continue after relay).
     expect(backend.verifyDispatches).toBeGreaterThanOrEqual(2);
     expect(result.stepLedger.some((e) => e.event === "quota_wait_for_reset")).toBe(
@@ -1131,5 +1141,350 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     // Relayed baton was actually dispatched (terra slug).
     expect(coderModels).toContain("gpt-5.6-terra");
     expect(result.status).not.toBe("error");
+  });
+});
+
+/**
+ * #686 R2 — production-seam fixes from fresh reviewer (P0–P3).
+ */
+describe("#686 R2 production seams", () => {
+  const NOW = new Date("2026-07-10T12:00:00.000Z");
+
+  it("P0: resume with pending relay_baton_handoff skips cleanResidue", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "relay-686-r2-p0-"));
+    try {
+      const worktree: WorktreeHandle = {
+        branch: "feat/686-r2-p0",
+        base: "main",
+        path: tmp,
+      };
+      // Seed a focus file that cleanResidue would destroy.
+      writeFileSync(
+        join(tmp, RELAY_FOCUS_FILENAME),
+        "# Relay baton handoff\n\n## state_summary\n\npreserve me\n",
+        "utf8",
+      );
+      writeFileSync(join(tmp, "uncommitted-baton.txt"), "drift payload\n", "utf8");
+
+      let cleanCount = 0;
+      const handoffTs = "2026-07-10T11:00:00.000Z";
+      const prior: PersistentLedgerEntry[] = [
+        {
+          step: "S0",
+          sessionId: "s",
+          prompt_hash: "h",
+          branchHEAD: "deadbeef",
+          ts: handoffTs,
+        },
+        {
+          step: "S1",
+          sessionId: "s",
+          prompt_hash: "h",
+          branchHEAD: "deadbeef",
+          ts: handoffTs,
+        },
+        {
+          step: "S2",
+          sessionId: "s",
+          prompt_hash: "h",
+          branchHEAD: "deadbeef",
+          ts: handoffTs,
+          event: "relay_baton_handoff",
+          trigger: "quota_wall",
+          state_summary: "preserve me",
+          fromModelId: "grok-4.5",
+          fromPool: "grok-build",
+          toModelId: "terra@med",
+          toPool: "codex-5h",
+        },
+      ];
+
+      class ResumeBackend implements Backend {
+        async smokeModelRoute(route: any): Promise<any> {
+          const { smokeRouteModels } = await import("../src/modelRoutes.js");
+          return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+        }
+        async findResumeState(): Promise<ResumeState> {
+          return {
+            worktree,
+            stateDir: join(tmp, "..", ".ledger-r2-p0"),
+            ledger: prior,
+          };
+        }
+        async cleanResidue(): Promise<void> {
+          cleanCount += 1;
+          // Simulate destructive clean — if called, focus file dies.
+          try {
+            rmSync(join(tmp, RELAY_FOCUS_FILENAME), { force: true });
+            rmSync(join(tmp, "uncommitted-baton.txt"), { force: true });
+          } catch {
+            /* ignore */
+          }
+        }
+        async resumeSession(): Promise<StepOutput> {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        async fetchIssueMeta(n: number): Promise<IssueMeta> {
+          return {
+            number: n,
+            isReadyForAgent: true,
+            hasSubIssues: false,
+            isClosed: false,
+            openBlockedBy: [],
+            body: "Coder-Rec: grok-4.5 → terra@med",
+          };
+        }
+        async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+          return {
+            number: n,
+            body: "Coder-Rec: grok-4.5 → terra@med",
+            comments: [],
+            agentBrief: "",
+          };
+        }
+        async prepareWorktree(): Promise<WorktreeHandle> {
+          return worktree;
+        }
+        async writeSnapshot(): Promise<void> {}
+        async runStep(): Promise<StepOutput> {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        async push(): Promise<void> {}
+        async writeLedger(): Promise<void> {}
+        async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+          if (spec.kind === "coder") {
+            // Prove baton applied (terra slug) and focus survived.
+            expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(true);
+            expect(existsSync(join(tmp, "uncommitted-baton.txt"))).toBe(true);
+            expect(spec.model).toBe("gpt-5.6-terra");
+            return {
+              kind: "completed",
+              output: { kind: "coder", committed: true, commitsAdded: 1 },
+            };
+          }
+          if (spec.kind === "reviewer") {
+            return {
+              kind: "completed",
+              output: { kind: "reviewer", findings: [] },
+            };
+          }
+          const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+          if (skeleton !== undefined) return skeleton;
+          if (spec.kind === "ship") {
+            return {
+              kind: "completed",
+              output: {
+                kind: "ship",
+                branch: worktree.branch,
+                status: "pr_opened",
+                pr: "pr://r2-p0",
+                prHead: "deadbeef",
+              },
+            };
+          }
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+      }
+
+      const prev = process.env.ORCHESTRATOR_CODER_MODEL;
+      process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
+      try {
+        await runOrchestrator({
+          issueNumber: 686,
+          backend: new ResumeBackend(),
+          now: () => NOW,
+        });
+      } finally {
+        if (prev === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
+        else process.env.ORCHESTRATOR_CODER_MODEL = prev;
+      }
+      expect(cleanCount).toBe(0);
+      expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("P1-3: same-model pool switch changes execution provider channel", async () => {
+    const {
+      resolveModelSlugForPool,
+      POOL_DISPATCH_BINDINGS,
+    } = await import("../src/modelRegistry.js");
+    expect(POOL_DISPATCH_BINDINGS["grok-build"]).toBe("pi");
+    expect(POOL_DISPATCH_BINDINGS.cursor).toBe("cursor");
+    expect(resolveModelSlugForPool("grok-4.5", "grok-build").provider).toBe(
+      "pi",
+    );
+    expect(resolveModelSlugForPool("grok-4.5", "cursor").provider).toBe(
+      "cursor",
+    );
+    // Default registry alone is cursor — pool override is what makes 换马甲 real.
+    expect(resolveModelSlugForPool("grok-4.5").provider).toBe("cursor");
+  });
+
+  it("P2: buildDefaultBillingPools does not fabricate live alternate pools", () => {
+    const pools = buildDefaultBillingPools({
+      limitedPool: "grok-build",
+      resetAt: new Date(NOW.getTime() + 45 * 60 * 1000),
+    });
+    expect(pools.find((p) => p.id === "grok-build")?.status).toBe("limited");
+    expect(pools.filter((p) => p.status === "live")).toEqual([]);
+    expect(
+      hasLiveRelayBaton({
+        currentModelId: "grok-4.5",
+        currentPool: "grok-build",
+        rosterOrder: resolveCoderRecOrder(
+          "Coder-Rec: grok-4.5 → terra@med",
+        ),
+        pools,
+      }),
+    ).toBe(false);
+  });
+
+  it("P2: MAX_RELAY_HANDOFFS counts chain from ledger history", () => {
+    const ledger = Array.from({ length: MAX_RELAY_HANDOFFS }, (_, i) => ({
+      event: "relay_baton_handoff" as const,
+      ts: `2026-07-10T0${i}:00:00.000Z`,
+    }));
+    expect(countRelayHandoffsInLedger(ledger)).toBe(MAX_RELAY_HANDOFFS);
+    expect(canRelayHandoff(ledger)).toBe(false);
+    expect(canRelayHandoff(ledger.slice(0, 3))).toBe(true);
+  });
+
+  it("P1-5: tryBuildRelayFocusFile fails closed without worktree", () => {
+    const entry = buildRelayHandoffLedgerEntry({
+      trigger: "quota_wall",
+      state_summary: "x",
+      fromModelId: "grok-4.5",
+      fromPool: "grok-build",
+      toModelId: "grok-4.5",
+      toPool: "cursor",
+      now: NOW,
+    });
+    expect(tryBuildRelayFocusFile(undefined, entry).ok).toBe(false);
+  });
+
+  it("P1-2: HangWithLivePoolError is a resource failure (never reset class)", () => {
+    expect(
+      classifyFailureForRetryOrRelay({ kind: "hang_with_live_pool" }),
+    ).toBe("resource");
+    expect(
+      classifyFailureForRetryOrRelay({ kind: "self_reported_blocked" }),
+    ).toBe("resource");
+    const err = new HangWithLivePoolError({
+      workerPid: 42,
+      poolId: "grok-build",
+      step: "S2",
+    });
+    expect(isHangWithLivePoolError(err)).toBe(true);
+  });
+
+  it("P1-2: self-reported blocked tag is actionable for production parse", () => {
+    const tag = tryParseActionableRelayTag(
+      `<relay>{"blocked":{"reason":"design gap","state_summary":"half wired","remaining":"ADR"}}</relay>`,
+    );
+    expect(tag).toMatchObject({
+      kind: "blocked",
+      reason: "design gap",
+      state_summary: "half wired",
+    });
+    expect(tryParseActionableRelayTag("no tag")).toBeUndefined();
+  });
+
+  it("P3: no-baton park repairHint is byte-identical to #683", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "relay-686-r2-p3-"));
+    try {
+      const worktree: WorktreeHandle = {
+        branch: "feat/686-r2-p3",
+        base: "main",
+        path: tmp,
+      };
+      const resetAt = new Date(NOW.getTime() + 45 * 60 * 1000);
+      class ParkBackend implements Backend {
+        async smokeModelRoute(route: any): Promise<any> {
+          const { smokeRouteModels } = await import("../src/modelRoutes.js");
+          return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+        }
+        async findResumeState(): Promise<undefined> {
+          return undefined;
+        }
+        async cleanResidue(): Promise<void> {}
+        async resumeSession(): Promise<StepOutput> {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        async fetchIssueMeta(n: number): Promise<IssueMeta> {
+          return {
+            number: n,
+            isReadyForAgent: true,
+            hasSubIssues: false,
+            isClosed: false,
+            openBlockedBy: [],
+            body: "Coder-Rec: grok-4.5",
+          };
+        }
+        async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+          return {
+            number: n,
+            body: "Coder-Rec: grok-4.5",
+            comments: [],
+            agentBrief: "",
+          };
+        }
+        async prepareWorktree(): Promise<WorktreeHandle> {
+          return worktree;
+        }
+        async writeSnapshot(): Promise<void> {}
+        async runStep(): Promise<StepOutput> {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        async push(): Promise<void> {}
+        async writeLedger(): Promise<void> {}
+        async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+          if (spec.kind === "coder" && spec.id === "S2") {
+            throw new QuotaWaitForResetError({
+              disposition: {
+                kind: "wait_for_reset",
+                pool: "grok",
+                resetAt,
+                reason: "quota limited (429); wait for reset",
+              },
+              applied: {
+                killed: false,
+                ledgerEntry: {
+                  event: "quota_wait_for_reset",
+                  pool: "grok",
+                  resetAt: resetAt.toISOString(),
+                  reason: "quota limited (429); wait for reset",
+                  step: "S2",
+                  workerPid: 1,
+                  ts: NOW.toISOString(),
+                },
+              },
+              pool: "grok",
+              probe: { kind: "quota_limited", resetAt, detail: "429" },
+            });
+          }
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+      }
+      // No relayPools → default table has no live batons → park.
+      const result = await runOrchestrator({
+        issueNumber: 686,
+        backend: new ParkBackend(),
+        now: () => NOW,
+      });
+      expect(result.status).toBe("escalate");
+      expect(result.stopSummary?.repairHint).toBe(
+        "wait for the provider quota to reset, then re-feed — resume re-enters the parked step (auto re-dispatch is #686)",
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
