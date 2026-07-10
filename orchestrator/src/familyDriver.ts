@@ -632,6 +632,11 @@ export interface FamilyDriverOptions {
   ) => FamilyBackend & { reconcileGit(): ReconcileGit };
 }
 
+/** Resolve the run-level Codex fast switch once, honoring an explicit option. */
+export function resolveCodexFast(options: Pick<FamilyDriverOptions, "codexFast">): boolean {
+  return options.codexFast ?? process.env.ORCHESTRATOR_CODEX_FAST === "1";
+}
+
 /** Stable run-level attribution line for post-run pool accounting. */
 export function codexFastRunLog(codexFast: boolean): string {
   return `[orchestrator] run fast=${codexFast ? "on" : "off"}`;
@@ -654,7 +659,7 @@ export async function runFamilyDriver(
   options: FamilyDriverOptions,
 ): Promise<FamilyRunResult> {
   const sh = options.sh ?? defaultSh;
-  const codexFast = options.codexFast ?? process.env.ORCHESTRATOR_CODEX_FAST === "1";
+  const codexFast = resolveCodexFast(options);
   console.log(codexFastRunLog(codexFast));
 
   // 1. Read the already-cut children from live GitHub (the explicit dependency
