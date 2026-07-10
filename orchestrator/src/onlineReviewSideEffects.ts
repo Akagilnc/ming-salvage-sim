@@ -6,7 +6,11 @@
  * post-recheck thread resolution. No LLM calls.
  */
 
-import { paginateReviewThreadNodes, parsePrRef } from "./botPolling.js";
+import {
+  paginateGhApi,
+  paginateReviewThreadNodes,
+  parsePrRef,
+} from "./botPolling.js";
 import type { Sh } from "./familyDriver.js";
 import type {
   OnlineReviewFindingDisposition,
@@ -36,6 +40,14 @@ export interface ApplyVerifySideEffectsResult {
   readonly threadsResolved: ReadonlyArray<string>;
 }
 
+/** Stable title for a deferred online-review tracking issue (#600 / #742). */
+export const DEFERRED_TRACKING_ISSUE_TITLE_PREFIX =
+  "Deferred online review finding: ";
+
+export function deferredTrackingIssueTitle(identityKey: string): string {
+  return `${DEFERRED_TRACKING_ISSUE_TITLE_PREFIX}${identityKey}`;
+}
+
 /** GitHub issue URL shape returned by `gh api repos/{repo}/issues --jq .html_url`. */
 export function isValidGithubIssueUrl(url: string): boolean {
   const trimmed = url.trim();
@@ -47,13 +59,49 @@ export function isValidGithubIssueUrl(url: string): boolean {
   );
 }
 
-/** Create a tracked deferral issue via `gh api repos/{repo}/issues` (#600 AC5). */
+/**
+ * Find an open tracking issue with the exact title (stable finding identity).
+ * GitHub's issues list also returns PRs — those are skipped (#742).
+ */
+export function findOpenDeferredTrackingIssueUrl(
+  sh: Sh,
+  repo: string,
+  title: string,
+): string | undefined {
+  const items = paginateGhApi(sh, `repos/${repo}/issues?state=open`);
+  for (const item of items) {
+    if (item === null || typeof item !== "object") continue;
+    const obj = item as {
+      title?: unknown;
+      html_url?: unknown;
+      pull_request?: unknown;
+    };
+    // REST /issues includes pull requests; only real issues are tracking targets.
+    if (obj.pull_request !== undefined) continue;
+    if (typeof obj.title !== "string" || obj.title !== title) continue;
+    if (typeof obj.html_url !== "string") continue;
+    const url = obj.html_url.trim();
+    if (isValidGithubIssueUrl(url)) return url;
+  }
+  return undefined;
+}
+
+/**
+ * Create a tracked deferral issue via `gh api repos/{repo}/issues` (#600 AC5).
+ * Idempotent (#742): reuses an existing open issue with the same title before
+ * creating, so crash-resume / repeated rounds do not open duplicates for the
+ * same finding identity key (embedded in the stable title).
+ */
 export function createDeferredTrackingIssue(
   sh: Sh,
   repo: string,
   title: string,
   body: string,
 ): string {
+  const existing = findOpenDeferredTrackingIssueUrl(sh, repo, title);
+  if (existing !== undefined) {
+    return existing;
+  }
   const url = sh("gh", [
     "api",
     `repos/${repo}/issues`,
@@ -397,7 +445,7 @@ export function planVerifySideEffects(
     )?.body;
     deferred.push({
       disposition,
-      title: `Deferred online review finding: ${disposition.identityKey}`,
+      title: deferredTrackingIssueTitle(disposition.identityKey),
       issueBody,
       replyBodyTemplate: existingReplyBody ?? "",
       commentId,

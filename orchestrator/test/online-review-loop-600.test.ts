@@ -991,24 +991,86 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     const calls: string[] = [];
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
+      const cmd = args.join(" ");
+      if (cmd.includes("state=open")) {
+        return "[]";
+      }
       return "https://github.com/o/r/issues/99";
     };
     const url = createDeferredTrackingIssue(sh, "o/r", "defer finding", "reason text");
     expect(url).toBe("https://github.com/o/r/issues/99");
     expect(calls).toEqual([
+      "gh api repos/o/r/issues?state=open&per_page=100&page=1",
       "gh api repos/o/r/issues -f title=defer finding -f body=reason text --jq .html_url",
     ]);
   });
 
-  it("createDeferredTrackingIssue fails closed on empty or malformed gh output", () => {
-    const emptySh: Sh = () => "";
-    const junkSh: Sh = () => "not-a-github-url";
+  it("createDeferredTrackingIssue fails closed on empty or malformed gh create output", () => {
+    const emptyCreate: Sh = (_file, args) =>
+      args.join(" ").includes("state=open") ? "[]" : "";
+    const junkCreate: Sh = (_file, args) =>
+      args.join(" ").includes("state=open") ? "[]" : "not-a-github-url";
     expect(() =>
-      createDeferredTrackingIssue(emptySh, "o/r", "t", "b"),
+      createDeferredTrackingIssue(emptyCreate, "o/r", "t", "b"),
     ).toThrow(/invalid issue URL/);
     expect(() =>
-      createDeferredTrackingIssue(junkSh, "o/r", "t", "b"),
+      createDeferredTrackingIssue(junkCreate, "o/r", "t", "b"),
     ).toThrow(/invalid issue URL/);
+  });
+
+  it("#742 applyVerifySideEffects is idempotent for deferred tracking issues (no duplicate on re-run)", () => {
+    // Production seam: crash after create + before ledger → resume re-applies
+    // side effects for the same finding identity. Must not open a second issue.
+    let createCount = 0;
+    const openIssues: Array<{
+      title: string;
+      html_url: string;
+      state: string;
+    }> = [];
+    const sh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      if (cmd.includes("repos/o/r/issues?") && cmd.includes("state=open")) {
+        return JSON.stringify(openIssues);
+      }
+      if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
+        createCount += 1;
+        const titleField = args.find((a) => a.startsWith("title="));
+        const title = titleField?.slice("title=".length) ?? "";
+        const url = `https://github.com/o/r/issues/${100 + createCount}`;
+        openIssues.push({ title, html_url: url, state: "open" });
+        return url;
+      }
+      if (cmd.includes("/replies")) {
+        return JSON.stringify(GITHUB_REPLY_SHAPE);
+      }
+      return "[]";
+    };
+    const verify: VerifyResult = {
+      kind: "verify",
+      converged: false,
+      findingDispositions: [
+        {
+          identityKey: "t:3",
+          threadId: "3",
+          action: "defer",
+          reason: "needs design",
+        },
+      ],
+    };
+    const input = {
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      verify,
+    };
+    const first = applyVerifySideEffects(input);
+    // Simulated crash resume / repeated round with the same deferred finding.
+    const second = applyVerifySideEffects(input);
+    expect(first.deferredIssueUrls).toEqual(["https://github.com/o/r/issues/101"]);
+    expect(second.deferredIssueUrls).toEqual(["https://github.com/o/r/issues/101"]);
+    expect(createCount).toBe(1);
+    expect(openIssues).toHaveLength(1);
+    expect(openIssues[0]?.title).toBe("Deferred online review finding: t:3");
   });
 
   it("applyVerifySideEffects appends tracked issue URL to pre-supplied defer reply", () => {
@@ -1016,6 +1078,9 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
       const cmd = args.join(" ");
+      if (cmd.includes("state=open")) {
+        return "[]";
+      }
       if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
         return "https://github.com/o/r/issues/88";
       }
@@ -1111,6 +1176,9 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
       const cmd = args.join(" ");
+      if (cmd.includes("state=open")) {
+        return "[]";
+      }
       if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
         return "https://github.com/o/r/issues/77";
       }
@@ -1145,6 +1213,7 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     expect(
       calls.filter((c) => c.startsWith("gh api repos/o/r/issues")),
     ).toEqual([
+      "gh api repos/o/r/issues?state=open&per_page=100&page=1",
       "gh api repos/o/r/issues -f title=Deferred online review finding: t:3 -f body=needs design --jq .html_url",
     ]);
     expect(
@@ -1358,6 +1427,9 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
       const cmd = args.join(" ");
+      if (cmd.includes("state=open")) {
+        return "[]";
+      }
       if (cmd.includes("repos/o/r/issues") && cmd.includes("-f title=")) {
         return "https://github.com/o/r/issues/55";
       }
