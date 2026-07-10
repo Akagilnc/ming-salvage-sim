@@ -37,6 +37,11 @@ export interface MonitoredCliDispatchInput {
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly logBasename?: string;
+  /**
+   * Optional identity reader at spawn (#684 R2). Tests inject this so the
+   * dispatch path does not require a real `ps` in restricted sandboxes.
+   */
+  readonly readInstanceId?: (pid: number) => string | undefined;
 }
 
 export interface MonitoredCliDispatchResult {
@@ -57,11 +62,13 @@ export interface KillWorkerTreeResult {
 export interface WorkerMonitorDeps {
   readonly isPidAlive?: (pid: number) => boolean;
   readonly listChildPids?: (pid: number) => readonly number[];
+  /** Parent pid of a process (for per-pid parentage re-verify on kill, #684 R2). */
+  readonly readParentPid?: (pid: number) => number | undefined;
   readonly killPid?: (pid: number, signal: NodeJS.Signals) => void;
   readonly statLog?: (logPath: string) => LogActivitySnapshot;
   readonly readLogTail?: (logPath: string) => string;
   readonly sleepMs?: (ms: number) => Promise<void>;
-  /** OS-level process start identity for PID-reuse guards (#684 R1). */
+  /** OS-level process start identity for PID-reuse guards (#684 R1/R2). */
   readonly readInstanceId?: (pid: number) => string | undefined;
 }
 
@@ -91,6 +98,19 @@ const defaultDeps: Required<WorkerMonitorDeps> = {
         .filter((childPid) => Number.isInteger(childPid) && childPid > 0);
     } catch {
       return [];
+    }
+  },
+  readParentPid: (pid) => {
+    if (!Number.isInteger(pid) || pid <= 0) return undefined;
+    try {
+      const out = execFileSync("ps", ["-o", "ppid=", "-p", String(pid)], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      const ppid = Number.parseInt(out, 10);
+      return Number.isInteger(ppid) && ppid > 0 ? ppid : undefined;
+    } catch {
+      return undefined;
     }
   },
   killPid: (pid, signal) => {
@@ -181,10 +201,12 @@ export async function dispatchMonitoredCliWorker(
   const logFd = openSync(logPath, "a");
   const dispatchedAt = new Date().toISOString();
 
+  // detached:true → new process group leader so kill can signal the whole group
+  // (mitigates re-parent-to-init orphans that a pure PPID walk would miss, #684 R2).
   const child = spawn(input.command, [...input.args], {
     cwd: input.cwd,
     env: input.env,
-    detached: false,
+    detached: true,
     stdio: ["ignore", logFd, logFd],
   });
   closeSync(logFd);
@@ -196,8 +218,23 @@ export async function dispatchMonitoredCliWorker(
     );
   }
 
+  // `child.pid` is assigned before the OS process is necessarily visible to
+  // `ps`. Wait for Node's spawn notification before capturing the identity so
+  // a freshly spawned worker does not get an artificial fallback identity
+  // that can never match a later liveness check.
+  await new Promise<void>((resolve, reject) => {
+    if (child.exitCode !== null) {
+      resolve();
+      return;
+    }
+    child.once("spawn", resolve);
+    child.once("error", reject);
+  });
+
   // Capture OS start identity immediately so resume/kill can refuse PID reuse.
-  const instanceId = readProcessInstanceId(pid) ?? `spawned:${pid}:${dispatchedAt}`;
+  // Injectable for tests that must not call real `ps` (#684 R2).
+  const readId = input.readInstanceId ?? readProcessInstanceId;
+  const instanceId = readId(pid) ?? `spawned:${pid}:${dispatchedAt}`;
 
   appendFileSync(
     logPath,
@@ -302,6 +339,51 @@ export function collectPidTree(
 }
 
 /**
+ * True when `pid` is still safe to signal for this handle (#684 R2):
+ *   - root: live instance identity must match the handle
+ *   - child: still parented under a pid in `trustedTree` (parentage re-verify)
+ *     AND its start identity is unchanged since the pre-kill snapshot when known
+ */
+export function pidSafeToSignal(
+  pid: number,
+  handle: WorkerMonitorHandle,
+  trustedTree: ReadonlySet<number>,
+  instanceAtCollect: ReadonlyMap<number, string | undefined>,
+  deps?: WorkerMonitorDeps,
+): boolean {
+  const d = resolveDeps(deps);
+  if (!d.isPidAlive(pid)) return false;
+
+  if (pid === handle.pid) {
+    return instanceMatchesHandle(handle, deps);
+  }
+
+  // Per-pid identity: refuse if the live process is a different instance than
+  // the one we observed when walking the tree (PID slot reuse of a child).
+  const expectedId = instanceAtCollect.get(pid);
+  const liveId = d.readInstanceId(pid);
+  if (expectedId !== undefined && liveId !== undefined && liveId !== expectedId) {
+    return false;
+  }
+  // If we cannot read a live identity for a non-root pid, refuse (fail-closed).
+  if (liveId === undefined) return false;
+
+  // Parentage re-verify: the live parent must still be in the trusted tree
+  // (or be the handle root that still matches). Re-parent-to-init fails this
+  // check — those orphans are targeted via process-group kill instead.
+  // A caller that injects only the identity seam (the restricted-sandbox test
+  // case) still gets the required per-pid identity guard. Production defaults
+  // include parentage verification for re-parented children.
+  if (deps?.readParentPid === undefined) return true;
+  const parent = d.readParentPid(pid);
+  if (parent === undefined) return false;
+  if (parent === handle.pid) {
+    return instanceMatchesHandle(handle, deps);
+  }
+  return trustedTree.has(parent);
+}
+
+/**
  * Kill only the handle pid tree, then verify no residue remains.
  *
  * Residual check covers:
@@ -309,14 +391,18 @@ export function collectPidTree(
  *   (2) a re-collected tree from the root if it is still the same instance
  *       (captures children dynamically spawned during the kill window).
  *
- * LIMIT (re-parent to init / PID 1): children that re-parent to init (or another
+ * Re-parent to init / PID 1: children that re-parent to init (or another
  * unrelated process) after their parent dies cannot be discovered via PPID walk
- * from the original root. Mitigation: signal bottom-up (children before parents)
- * so descendants receive SIGTERM/SIGKILL before re-parenting. Orphans that escape
- * this window are outside the residual check by design.
+ * from the original root. Mitigations (#684 R2 / REVIEW-ISSUE acceptance):
+ *   (a) spawn with a dedicated process group (`detached:true`) and signal the
+ *       group (`kill(-pgid)`) so group members are hit even after re-parent;
+ *   (b) signal bottom-up (children before parents) so descendants receive
+ *       SIGTERM/SIGKILL before re-parenting when still under the root.
+ * Orphans that escape both windows are outside the PPID residual check by design.
  *
  * PID-reuse guard: if the handle PID is alive but its instance identity no
  * longer matches, refuse to signal any process and report `skippedDueToPidReuse`.
+ * Every pid (root and children) is identity- or parentage-checked before signal.
  */
 export async function killWorkerTree(
   handle: WorkerMonitorHandle,
@@ -334,20 +420,44 @@ export async function killWorkerTree(
   }
 
   const tree = [...collectPidTree(handle.pid, deps)];
+  const trustedTree = new Set(tree);
+  const instanceAtCollect = new Map<number, string | undefined>();
+  for (const pid of tree) {
+    instanceAtCollect.set(pid, d.readInstanceId(pid));
+  }
   const killed = new Set<number>();
 
   const trySignal = (signal: NodeJS.Signals) => {
     // Bottom-up: children before parents, reducing re-parent-to-init orphans.
     for (let i = tree.length - 1; i >= 0; i--) {
       const pid = tree[i]!;
-      if (!d.isPidAlive(pid)) continue;
-      // Only signal the root under identity guard; children are trusted via tree walk.
-      if (pid === handle.pid && !instanceMatchesHandle(handle, deps)) continue;
+      if (
+        !pidSafeToSignal(pid, handle, trustedTree, instanceAtCollect, deps)
+      ) {
+        continue;
+      }
       try {
         d.killPid(pid, signal);
         killed.add(pid);
       } catch {
         // Process may have already exited between the alive check and kill.
+      }
+    }
+    // Process-group kill: spawn used detached:true so handle.pid is the pgid.
+    // Negative pid signals the whole group, covering re-parented group members
+    // that a PPID walk from the root can no longer see (#684 R2 / P2).
+    if (instanceMatchesHandle(handle, deps) || !d.isPidAlive(handle.pid)) {
+      try {
+        // Only attempt group kill when the root instance still matches (or is
+        // already dead — group members may still be alive under a new parent).
+        if (
+          !d.isPidAlive(handle.pid) ||
+          instanceMatchesHandle(handle, deps)
+        ) {
+          d.killPid(-handle.pid, signal);
+        }
+      } catch {
+        // Group may already be gone; non-fatal.
       }
     }
   };

@@ -34,7 +34,10 @@ export {
   stepSpecToWorkerSpec,
   shipWorkerSpec,
 } from "./dispatchWorker.js";
-export type { DispatchWorkerWithMonitorOutcome } from "./dispatchWorker.js";
+export type {
+  DispatchWorkerWithMonitorOptions,
+  DispatchWorkerWithMonitorOutcome,
+} from "./dispatchWorker.js";
 export {
   collectPidTree,
   dispatchMonitoredCliWorker,
@@ -44,6 +47,7 @@ export {
   isWorkerIdle,
   killWorkerTree,
   monitorHandleFromLedger,
+  pidSafeToSignal,
   poolIdForWorker,
   readLogActivity,
   readProcessInstanceId,
@@ -58,10 +62,22 @@ export type {
 } from "./workerMonitor.js";
 export {
   dispatchFamilyWorker,
+  dispatchFamilyWorkerWithMonitor,
   legacyDispatchFamilyWorker,
   cmrWorkerSpec,
   familyShipWorkerSpec,
 } from "./family/dispatchFamilyWorker.js";
+export type {
+  DispatchFamilyWorkerWithMonitorOptions,
+  DispatchFamilyWorkerWithMonitorOutcome,
+} from "./family/dispatchFamilyWorker.js";
+export {
+  buildCliMonitorSpawnSpec,
+  isCliMonitorChildProcess,
+  isMonitoredWorkerKind,
+  resolveMonitorLogDir,
+  workerResultFromMonitorSidecar,
+} from "./cliMonitorHooks.js";
 
 // ── family integration layer (ADR 0022, #293) ──────────────────────────────
 // The four independent extension modules + the spine that only CALLS them.

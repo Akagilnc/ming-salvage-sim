@@ -11,6 +11,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   dispatchWorkerWithMonitor,
 } from "../src/dispatchWorker.js";
+import { RealBackend } from "../src/realBackend.js";
+import { RealFamilyBackend } from "../src/family/realFamilyBackend.js";
 import {
   collectPidTree,
   dispatchMonitoredCliWorker,
@@ -188,6 +190,62 @@ describe("#684 worker monitor handles", () => {
     expect(result.killedPids).toEqual([]);
     expect(result.residualPids).toEqual([]);
     expect(result.skippedDueToPidReuse).toBe(true);
+  });
+
+  it("checks every child identity before signalling, not only the root", async () => {
+    const killPid = vi.fn();
+    let childIdentityReads = 0;
+    const deps: WorkerMonitorDeps = {
+      isPidAlive: () => true,
+      listChildPids: (pid) => (pid === 100 ? [101] : []),
+      readParentPid: (pid) => (pid === 101 ? 100 : undefined),
+      readInstanceId: (pid) => {
+        if (pid === 100) return "root";
+        childIdentityReads += 1;
+        return childIdentityReads === 1 ? "original-child" : "reused-child";
+      },
+      killPid,
+      sleepMs: async () => {},
+    };
+    const handle = baseHandle({
+      pid: 100,
+      logPath: "/tmp/unused.log",
+      instanceId: "root",
+    });
+
+    await killWorkerTree(handle, deps);
+
+    expect(killPid.mock.calls.some(([pid]) => pid === 101)).toBe(false);
+    expect(killPid.mock.calls.some(([pid]) => pid === 100)).toBe(true);
+  });
+
+  it("accepts an injected instance reader for restricted dispatch tests", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "orch-684-injected-id-"));
+    try {
+      const { handle, child } = await dispatchMonitoredCliWorker({
+        command: process.platform === "win32" ? "cmd" : "sleep",
+        args: process.platform === "win32" ? ["/c", "ping", "-n", "2", "127.0.0.1"] : ["2"],
+        logDir: dir,
+        poolId: "test/injected",
+        completionSignal: "TEST_DONE",
+        stepId: "injected",
+        readInstanceId: () => "injected-instance",
+      });
+      expect(handle.instanceId).toBe("injected-instance");
+      expect(isWorkerAlive(handle, {
+        isPidAlive: () => true,
+        readInstanceId: () => "injected-instance",
+      })).toBe(true);
+      await killWorkerTree(handle, {
+        isPidAlive: (pid) => pid === child.pid,
+        listChildPids: () => [],
+        readInstanceId: () => "injected-instance",
+        killPid: () => {},
+        sleepMs: async () => {},
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("collectPidTree walks only the rooted pid subtree", async () => {
@@ -374,6 +432,58 @@ describe("#684 worker monitor handles", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("persists the monitor callback before awaiting the monitored child", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "orch-684-spawn-callback-"));
+    try {
+      const events: string[] = [];
+      const backend = {
+        resolveCliMonitorDispatch: (spec: WorkerSpec) => ({
+          command: process.platform === "win32" ? "cmd" : "sleep",
+          args: process.platform === "win32" ? ["/c", "ping", "-n", "2", "127.0.0.1"] : ["0.2"],
+          logDir: dir,
+          poolId: poolIdForWorker(spec),
+          completionSignal: spec.completionSignal,
+          stepId: spec.id,
+        }),
+        awaitMonitoredCliWorker: async () => {
+          events.push("awaited");
+          return { kind: "completed", output: { kind: "coder", committed: true, commitCount: 1 } } as WorkerResult;
+        },
+      } as unknown as Backend;
+      const spec = {
+        id: "S2",
+        kind: "coder",
+        role: "coder",
+        host: "claude",
+        session: "fresh",
+        contextRetention: "retain",
+        promptFile: "coder.md",
+        completionSignal: "CODER_STEP_COMPLETE",
+        maxIter: 5,
+        model: "sonnet",
+        soul: "coder",
+        toolchain: [],
+      } satisfies WorkerSpec;
+
+      await dispatchWorkerWithMonitor(backend, spec, { stateDir: dir }, undefined, {
+        onMonitorHandleSpawned: async () => {
+          events.push("spawned");
+        },
+      });
+
+      expect(events).toEqual(["spawned", "awaited"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("exposes monitored hooks on both real backend implementations", () => {
+    expect(typeof RealBackend.prototype.resolveCliMonitorDispatch).toBe("function");
+    expect(typeof RealBackend.prototype.awaitMonitoredCliWorker).toBe("function");
+    expect(typeof RealFamilyBackend.prototype.resolveCliMonitorDispatch).toBe("function");
+    expect(typeof RealFamilyBackend.prototype.awaitMonitoredCliWorker).toBe("function");
   });
 
   it("production dispatch source wires dispatchMonitoredCliWorker (not test-only)", () => {

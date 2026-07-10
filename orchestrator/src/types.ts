@@ -417,6 +417,14 @@ export interface OnlineReviewCiPendingEvent {
   readonly onlineReviewRound: number;
 }
 
+/**
+ * #684 R2: spawn-time monitor handle bookkeeping — persisted AT SPAWN so hang
+ * judge/kill/resume can rebuild the handle before the step completes.
+ */
+export interface WorkerMonitorSpawnedEvent {
+  readonly event: "worker_monitor_spawned";
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
@@ -425,7 +433,8 @@ export type LedgerBookkeepingEvent =
   | OnlineReviewRoundRetriggerEvent
   | OnlineReviewFixCommittedEvent
   | OnlineReviewCiFailedEvent
-  | OnlineReviewCiPendingEvent;
+  | OnlineReviewCiPendingEvent
+  | WorkerMonitorSpawnedEvent;
 
 /**
  * The structured output of any worker step.
