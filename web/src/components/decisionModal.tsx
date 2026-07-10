@@ -29,7 +29,7 @@ export function DecisionModal({
   };
 
   return (
-    <main className="decision-page" aria-label="月末批红">
+    <section className="decision-page" aria-label="月末批红">
       <article className="decision-document">
         <div className="decision-head">
           <span className="decision-kicker">月末批红 · 第 {cursor + 1} / {decisions.length} 疏</span>
@@ -64,6 +64,6 @@ export function DecisionModal({
           <button className="decision-confirm" disabled={!decided} onClick={next}>{last ? "批红落印，续推时局" : "批下一疏"}</button>
         </div>
       </article>
-    </main>
+    </section>
   );
 }
