@@ -790,6 +790,33 @@ export function enforceRunnerOwnedRecheck(
   return verify;
 }
 
+/**
+ * A post-fixer convergence is admissible only when the verifier explicitly
+ * echoes the entire fix-marked identity set supplied in its landing (#743).
+ * This makes a bare `converged:true` fail closed instead of silently closing
+ * findings the fixer merely claimed to have repaired.
+ */
+export function recheckConvergenceConfirmsFixMarkedKeys(
+  verify: VerifyResult,
+  landing: WorkerLandingPayload,
+): boolean {
+  if (verify.isRecheck !== true || verify.converged !== true) return true;
+  const expected = landing.fixMarkedFindingIdentityKeys;
+  const confirmed = verify.fixMarkedFindingIdentityKeys;
+  if (expected === undefined || confirmed === undefined) return false;
+  if (expected.length !== confirmed.length) return false;
+  const expectedKeys = new Set(expected);
+  const confirmedKeys = new Set(confirmed);
+  if (
+    expectedKeys.size !== expected.length ||
+    confirmedKeys.size !== confirmed.length ||
+    expectedKeys.size !== confirmedKeys.size
+  ) {
+    return false;
+  }
+  return [...expectedKeys].every((key) => confirmedKeys.has(key));
+}
+
 /** Family `shipped` ledger `ts` for the PR — round-1 freshness anchor (#600 r9). */
 export function shipLedgerTriggeredAtFromFamilyLedger(
   entries: ReadonlyArray<{
@@ -1345,6 +1372,8 @@ export async function runOnlineReviewLoopStage(
   let lastFixCommitSha = opts?.initialFixCommitSha;
   /** Consecutive poll cycles blocked only on pending CI (not fixer rounds). */
   let pendingCiPolls = 0;
+  /** The previous fixer assignment, required as the next verify's recheck contract. */
+  let recheckFixMarkedFindingIdentityKeys: ReadonlyArray<string> | undefined;
   /**
    * In-loop prior-round findings (#711). Family ledgers only persist
    * fix/retrigger markers — not S9 verify outputs — so the continuous multi-round
@@ -1367,6 +1396,13 @@ export async function runOnlineReviewLoopStage(
       landing = {
         ...landing,
         priorRoundFindings: priorRoundFindingsAccum.map((s) => ({ ...s })),
+      };
+    }
+    if (round > 1) {
+      landing = {
+        ...landing,
+        fixMarkedFindingIdentityKeys:
+          recheckFixMarkedFindingIdentityKeys ?? [],
       };
     }
     if (opts?.enrichVerifyLanding !== undefined) {
@@ -1401,6 +1437,19 @@ export async function runOnlineReviewLoopStage(
       };
     }
     verify = recheckOutcome;
+    if (!recheckConvergenceConfirmsFixMarkedKeys(verify, landing)) {
+      return {
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round,
+        stopSummary: contractDriftStopSummary({
+          summary:
+            "post-fixer verify converged without confirming every fix-marked finding identity key",
+          repairHint:
+            "echo the landing fixMarkedFindingIdentityKeys exactly on a converged post-fixer recheck, or report unresolved findings",
+        }),
+      };
+    }
     // Pending CI only: re-poll — do not apply "all clear" side effects, do not fixer
     // (online R2 Codex P2: empty fix list → decision_gate park).
     if (
@@ -1504,6 +1553,8 @@ export async function runOnlineReviewLoopStage(
     if (round > MAX_ONLINE_REVIEW_ROUNDS) {
       return { ok: false, terminalState: "round_budget_exhausted", round };
     }
+
+    recheckFixMarkedFindingIdentityKeys = fixKeys;
 
     let fixerOutput: FixerResult;
     try {

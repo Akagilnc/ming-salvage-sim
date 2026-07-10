@@ -524,7 +524,11 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         verifyRounds.push(ctx?.onlineReviewRound ?? 0);
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: {
+            kind: "verify",
+            converged: true,
+            fixMarkedFindingIdentityKeys: [],
+          },
         };
       }
       const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
@@ -572,7 +576,11 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         verifyPass += 1;
         return {
           kind: "completed",
-          output: { kind: "verify", converged: verifyPass >= 2 },
+          output: {
+            kind: "verify",
+            converged: verifyPass >= 2,
+            ...(verifyPass >= 2 ? { fixMarkedFindingIdentityKeys: [] } : {}),
+          },
         };
       }
       if (spec.kind === "fixer") {
@@ -694,7 +702,11 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
           kind: "completed",
           output:
             spec.kind === "verify"
-              ? { kind: "verify", converged: true }
+              ? {
+                  kind: "verify",
+                  converged: true,
+                  fixMarkedFindingIdentityKeys: [],
+                }
               : spec.kind === "fixer"
                 ? {
                   kind: "fixer",

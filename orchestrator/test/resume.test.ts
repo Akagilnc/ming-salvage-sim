@@ -416,7 +416,12 @@ class ReviewLoopResumeBackend extends DispatchRecordingResumeBackend {
       if (this.verifyDispatchCount === 1) {
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true } satisfies VerifyResult,
+          output: {
+            kind: "verify",
+            converged: true,
+            fixMarkedFindingIdentityKeys:
+              landing?.fixMarkedFindingIdentityKeys ?? [],
+          } satisfies VerifyResult,
         };
       }
       return {
@@ -425,6 +430,8 @@ class ReviewLoopResumeBackend extends DispatchRecordingResumeBackend {
           kind: "verify",
           converged: true,
           isRecheck: true,
+          fixMarkedFindingIdentityKeys:
+            landing?.fixMarkedFindingIdentityKeys ?? [],
           threadsToResolve: ["100"],
         } satisfies VerifyResult,
       };

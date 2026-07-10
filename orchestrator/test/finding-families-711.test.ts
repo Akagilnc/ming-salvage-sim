@@ -818,7 +818,13 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
       dispatchVerify: async (landing, round) => {
         verifyLandings.push(landing);
         if (round >= 4) {
-          return { kind: "verify", converged: true, isRecheck: true } satisfies VerifyResult;
+          return {
+            kind: "verify",
+            converged: true,
+            isRecheck: true,
+            fixMarkedFindingIdentityKeys:
+              landing.fixMarkedFindingIdentityKeys ?? [],
+          } satisfies VerifyResult;
         }
         const key = `silence:r${round}`;
         const priorRounds = (landing.priorRoundFindings ?? []).map((p) => p.round);
@@ -951,6 +957,8 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
               kind: "verify",
               converged: true,
               isRecheck: true,
+              fixMarkedFindingIdentityKeys:
+                landing.fixMarkedFindingIdentityKeys ?? [],
             } satisfies VerifyResult;
           }
           const key = `silence:r${round}`;
@@ -1034,10 +1042,16 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
 
     const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
-      dispatchVerify: async (_landing, round) => {
+      dispatchVerify: async (landing, round) => {
         verifyCalls += 1;
         if (round >= 2) {
-          return { kind: "verify", converged: true, isRecheck: true } satisfies VerifyResult;
+          return {
+            kind: "verify",
+            converged: true,
+            isRecheck: true,
+            fixMarkedFindingIdentityKeys:
+              landing.fixMarkedFindingIdentityKeys ?? [],
+          } satisfies VerifyResult;
         }
         return {
           kind: "verify",
