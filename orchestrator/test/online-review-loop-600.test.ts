@@ -25,7 +25,6 @@ import type {
   IssueMeta,
   IssueSnapshot,
   OnlineReviewLandingSnapshot,
-  PrReviewSnapshot,
   StepOutput,
   VerifyResult,
   WorkerKind,
@@ -33,6 +32,33 @@ import type {
   WorkerSpec,
   WorktreeHandle,
 } from "../src/types.js";
+import type { PrReviewSnapshot } from "../src/botPolling.js";
+
+type OnlineLedgerFixture = {
+  readonly step?: string;
+  readonly event?: string;
+  readonly ts?: string;
+  readonly branchHEAD?: string;
+  readonly prHead?: string;
+  readonly roundTriggerHeadOid?: string;
+  readonly roundTriggerAt?: string;
+  readonly onlineReviewRound?: number;
+  readonly fixCommitSha?: string;
+  readonly output?: {
+    readonly kind?: string;
+    readonly status?: string;
+    readonly converged?: boolean;
+    readonly committed?: boolean;
+    readonly alreadySatisfied?: boolean;
+    readonly fixCommitSha?: string;
+    readonly fixMarkedFindingIdentityKeys?: readonly string[];
+    readonly dispositions?: readonly { readonly action?: string }[];
+  };
+};
+
+function onlineLedger(entries: readonly OnlineLedgerFixture[]): readonly OnlineLedgerFixture[] {
+  return entries;
+}
 
 const FIXER_ENVELOPE_SHA = "fixsha1111111111111111111111111111111111";
 const fixerCommitted = (fixCommitSha = FIXER_ENVELOPE_SHA): FixerResult => ({
@@ -872,7 +898,7 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
 
   it("S11 ok:false → error (success-flag branch)", () => {
     expect(
-      route({ from: "S11", output: { kind: "cleanup", ok: false } }),
+      route({ from: "S11", output: { kind: "cleanup", ok: false, terminal: true } }),
     ).toEqual({ kind: "handoff", status: "error" });
   });
 
@@ -1029,6 +1055,7 @@ describe("#600 stale head + artifact bot freshness (#600 AC3)", () => {
   it("stale prior-head thread is not counted fresh", () => {
     const stale = {
       id: "9",
+      threadNodeId: "PRRT_stale",
       body: "old nit",
       authorLogin: "bot",
       isResolved: false,
@@ -3127,7 +3154,7 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
     ];
     const reviewHead = onlineReviewResumeHeadKeyFromLedger(ledger);
     expect(reviewHead).toBe(shipHead);
-    expect(onlineReviewConvergedForHead(ledger, reviewHead)).toBe(false);
+    expect(onlineReviewConvergedForHead(onlineLedger(ledger), reviewHead)).toBe(false);
   });
 
   it("pin r26: OnlineReviewConvergedEvent decodes persisted onlineReviewRound field", () => {
@@ -3158,6 +3185,8 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
         },
         threads: [],
         checkRuns: [],
+        roundTriggerUsed: TEST_ROUND_TRIGGER,
+        checkRunsEmptyMeans: "converged",
         totalFindingCount: 0,
         quiescent: true,
       },
@@ -3274,7 +3303,7 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
       },
       {
         callerOwns: (o) =>
-          o.kind === "thrown" && o.error instanceof VerifyWorkerHeadMovedError,
+          "kind" in o && o.kind === "thrown" && o.error instanceof VerifyWorkerHeadMovedError,
         rethrowOnExhaustion: true,
       },
     ).catch((err) => err);
@@ -3295,8 +3324,10 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
       },
     );
     expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
-    expect(result.kind).toBe("failed");
-    expect(result.reason).toContain("after 3 dispatch attempts");
+    expect(result).toMatchObject({
+      kind: "failed",
+      reason: expect.stringContaining("after 3 dispatch attempts"),
+    });
   });
 
   it("pin r10: verify that mutates HEAD then throws surfaces contract_drift (no retry on dirty tree)", async () => {
@@ -3325,7 +3356,7 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
       },
       assertContract,
       (o) =>
-        o.kind === "thrown" && o.error instanceof VerifyWorkerHeadMovedError,
+        "kind" in o && o.kind === "thrown" && o.error instanceof VerifyWorkerHeadMovedError,
     ).catch((err) => err);
     expect(attempts).toBe(1);
     expect(head).toBe("head-after-mutation");
@@ -3357,7 +3388,7 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
       },
       assertContract,
       (o) =>
-        o.kind === "thrown" &&
+        "kind" in o && o.kind === "thrown" &&
         o.error instanceof VerifyWorkerWorktreeDirtyError,
     ).catch((err) => err);
     expect(attempts).toBe(1);
@@ -3394,7 +3425,7 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
       },
       assertContract,
       (o) =>
-        o.kind === "thrown" &&
+        "kind" in o && o.kind === "thrown" &&
         (o.error instanceof VerifyWorkerHeadMovedError ||
           o.error instanceof VerifyWorkerWorktreeDirtyError),
     );
@@ -3431,6 +3462,8 @@ describe("#600 onlineReviewLoop helpers", () => {
             conclusion: "success",
           },
         ],
+        roundTriggerUsed: TEST_ROUND_TRIGGER,
+        checkRunsEmptyMeans: "converged",
         totalFindingCount: 0,
         quiescent: true,
       },
@@ -4323,15 +4356,13 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
 
   it("pin r25: resume mid-round-2 restores persisted retrigger anchor (pre-fix evidence stale)", () => {
     const betweenShipAndRetrigger = "2026-07-08T11:30:00.000Z";
-    const resumedTrigger = onlineReviewRoundTriggerFromLedger([
-      {
+    const resumedTrigger = onlineReviewRoundTriggerFromLedger(onlineLedger([{
         step: "S10",
         event: "online_review_round_retrigger",
         roundTriggerHeadOid: "fixsha1111111111111111111111111111111111",
         roundTriggerAt: RETRIGGER_TS,
         onlineReviewRound: 2,
-      },
-    ]);
+      }]));
     expect(resumedTrigger).toEqual(
       buildRoundTrigger(
         "fixsha1111111111111111111111111111111111",
@@ -4542,7 +4573,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     expect(slicePostFixVerifyPendingFromMarkerGap(ledger)).toBe(true);
     expect(onlineReviewRoundFromLedger(ledger)).toBe(2);
     expect(lastOnlineReviewFixCommitShaFromLedger(ledger)).toBeUndefined();
-    expect(onlineReviewRoundTriggerFromLedger(ledger)).toEqual(
+    expect(onlineReviewRoundTriggerFromLedger(onlineLedger(ledger))).toEqual(
       buildRoundTrigger(fixSha, RETRIGGER_TS),
     );
 
@@ -4600,7 +4631,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     expect(sliceOnlineReviewCiFailedPending([s9Red, ciFailed])).toBe(true);
     // Later green S9 clears the park.
     expect(
-      sliceOnlineReviewCiFailedPending([
+      sliceOnlineReviewCiFailedPending(onlineLedger([
         s9Red,
         ciFailed,
         {
@@ -4608,11 +4639,11 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
           output: { kind: "verify", converged: true },
           ts: "2026-07-09T13:00:00.000Z",
         },
-      ]),
+      ])),
     ).toBe(false);
     // Stray S10 after CI park also clears (progressed past park).
     expect(
-      sliceOnlineReviewCiFailedPending([
+      sliceOnlineReviewCiFailedPending(onlineLedger([
         s9Red,
         ciFailed,
         {
@@ -4623,11 +4654,11 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
             alreadySatisfied: true,
           },
         },
-      ]),
+      ])),
     ).toBe(false);
     // R19: later S9 with fix marks must clear park so resume routes to S10.
     expect(
-      sliceOnlineReviewCiFailedPending([
+      sliceOnlineReviewCiFailedPending(onlineLedger([
         s9Red,
         ciFailed,
         {
@@ -4638,11 +4669,11 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
             fixMarkedFindingIdentityKeys: ["t:1"],
           },
         },
-      ]),
+      ])),
     ).toBe(false);
     // R20: pending-CI park uses same resume-to-S9 predicate.
     expect(
-      sliceOnlineReviewCiFailedPending([
+      sliceOnlineReviewCiFailedPending(onlineLedger([
         {
           step: "S9",
           output: { kind: "verify", converged: true },
@@ -4652,7 +4683,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
           event: "online_review_ci_pending",
           prHead: "headsha1",
         },
-      ]),
+      ])),
     ).toBe(true);
   });
 
@@ -4708,6 +4739,8 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
         },
         threads: [],
         checkRuns: [],
+        roundTriggerUsed: TEST_ROUND_TRIGGER,
+        checkRunsEmptyMeans: "converged",
         totalFindingCount: 0,
         quiescent: true,
       },
@@ -4811,13 +4844,13 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
 
     // crash after retrigger network, before retrigger marker → same gap recovery ACTION
     expect(slicePostFixVerifyPendingFromMarkerGap(afterFixCommitted)).toBe(true);
-    expect(onlineReviewRoundTriggerFromLedger(afterFixCommitted)).toBeUndefined();
+    expect(onlineReviewRoundTriggerFromLedger(onlineLedger(afterFixCommitted))).toBeUndefined();
 
     // happy path: both markers persisted
     const happy = [s9False, fixCommittedOnly, retrigger, s10Row];
     expect(slicePostFixVerifyPendingFromMarkerGap(happy)).toBe(false);
     expect(onlineReviewRoundFromLedger(happy)).toBe(2);
-    expect(onlineReviewRoundTriggerFromLedger(happy)).toEqual(
+    expect(onlineReviewRoundTriggerFromLedger(onlineLedger(happy))).toEqual(
       buildRoundTrigger(fixSha, retriggerTs),
     );
 
@@ -4826,7 +4859,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     expect(slicePostFixVerifyPendingFromMarkerGap(retriggerOnly)).toBe(true);
     expect(onlineReviewRoundFromLedger(retriggerOnly)).toBe(2);
     expect(lastOnlineReviewFixCommitShaFromLedger(retriggerOnly)).toBeUndefined();
-    expect(onlineReviewRoundTriggerFromLedger(retriggerOnly)).toEqual(
+    expect(onlineReviewRoundTriggerFromLedger(onlineLedger(retriggerOnly))).toEqual(
       buildRoundTrigger(fixSha, retriggerTs),
     );
   });
@@ -5105,6 +5138,8 @@ describe("#600 r26 runner-owned isRecheck", () => {
           },
           threads: [],
           checkRuns: [],
+          roundTriggerUsed: TEST_ROUND_TRIGGER,
+          checkRunsEmptyMeans: "converged",
           totalFindingCount: 0,
           quiescent: true,
         }),
@@ -5166,6 +5201,8 @@ describe("#600 r26 runner-owned isRecheck", () => {
           },
           threads: [],
           checkRuns: [],
+          roundTriggerUsed: TEST_ROUND_TRIGGER,
+          checkRunsEmptyMeans: "converged",
           totalFindingCount: 0,
           quiescent: true,
         }),
@@ -5229,6 +5266,8 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     checkRuns: [],
     totalFindingCount: 0,
     quiescent: true,
+    roundTriggerUsed: TEST_ROUND_TRIGGER,
+    checkRunsEmptyMeans: "converged",
   };
 
   it("happy path: converged verify → cleanup → docRelease terminates mergeable", async () => {
@@ -6126,7 +6165,7 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
   });
 
   class HookPollBackend implements Backend {
-  async smokeModelRoute(route: any) {
+  async smokeModelRoute(route: import("../src/modelRoutes.js").ResolvedModelRoute) {
     const { smokeRouteModels } = await import("../src/modelRoutes.js");
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
   }
@@ -6136,11 +6175,15 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
       return undefined;
     }
     async cleanResidue(): Promise<void> {}
+    async resumeSession(): Promise<StepOutput> {
+      throw new Error("resumeSession should not be called");
+    }
     async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
       return {
         number: issueNumber,
         isReadyForAgent: true,
         hasSubIssues: false,
+        isClosed: false,
         openBlockedBy: [],
       };
     }
@@ -6169,7 +6212,11 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
       this.hookCalls.push(input.prUrl);
       return greenHookSnapshot();
     }
-    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+    async dispatchWorker(
+      spec: WorkerSpec,
+      _ctx: DispatchContext,
+      _landing?: WorkerLandingPayload,
+    ): Promise<WorkerResult> {
       if (spec.kind === "coder") {
         return {
           kind: "completed",
@@ -6262,7 +6309,7 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
         }
         override async dispatchWorker(
           spec: WorkerSpec,
-          _ctx?: DispatchContext,
+          ctx: DispatchContext,
           landing?: WorkerLandingPayload,
         ): Promise<WorkerResult> {
           if (spec.kind === "verify" && landing !== undefined) {
@@ -6279,7 +6326,7 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
               },
             };
           }
-          return super.dispatchWorker(spec);
+          return super.dispatchWorker(spec, ctx, landing);
         }
       }
       const backend = new OfflineHookBackend();
@@ -6310,13 +6357,15 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
       class RebuildGuardBackend extends HookPollBackend {
         verifyCount = 0;
 
-        override async pollOnlineReviewState(): Promise<OnlineReviewLandingSnapshot> {
+        override async pollOnlineReviewState(
+          _input: { repo: string; prUrl: string; pollCount: number },
+        ): Promise<OnlineReviewLandingSnapshot> {
           return { ...greenHookSnapshot(), prUrl: offlinePr };
         }
 
         override async dispatchWorker(
           spec: WorkerSpec,
-          ctx?: DispatchContext,
+          ctx: DispatchContext,
           landing?: WorkerLandingPayload,
         ): Promise<WorkerResult> {
           if (spec.kind === "ship") {
@@ -6369,6 +6418,8 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
   class ReviewLoopFamilyBackend implements FamilyBackend {
     readonly reviewLoopLandings: WorkerLandingPayload[] = [];
     readonly ledger: FamilyLedgerEntry[] = [];
+    readFamilyHead?: (familyBase: string) => Promise<string>;
+    readFamilyTrackedStatus?: (familyBase: string) => Promise<readonly string[]>;
 
     async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
       return { familyHead: "fb-head" };

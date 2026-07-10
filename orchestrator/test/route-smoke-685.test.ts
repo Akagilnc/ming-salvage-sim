@@ -17,7 +17,8 @@ import type {
 } from "../src/types.js";
 
 class MissingSmokeBackend implements Backend {
-  async findResumeState() { return undefined; }
+  async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) { return route; }
+  async findResumeState(): Promise<ResumeState | undefined> { return undefined; }
   async cleanResidue() {}
   async resumeSession(_spec: StepSpec): Promise<StepOutput> { return { kind: "coder", committed: true, commitsAdded: 1 }; }
   async fetchIssueMeta(_issueNumber: number): Promise<IssueMeta> {
@@ -38,7 +39,7 @@ class MissingSmokeBackend implements Backend {
 class RoutePolicyOrderingBackend extends MissingSmokeBackend {
   readonly calls: string[] = [];
 
-  override async currentCliVersions() {
+  async currentCliVersions() {
     this.calls.push("currentCliVersions");
     return {};
   }

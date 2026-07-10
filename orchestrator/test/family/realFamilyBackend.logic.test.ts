@@ -135,7 +135,7 @@ describe("RealFamilyBackend live officer effort", () => {
   it("passes xhigh through the family CMR and verify dispatch agent", () => {
     const backend = new Probe(opts(trackRepo()));
     const commandFor = (spec: WorkerSpec) =>
-      backend.agentForLiveSpec(spec).buildPrintCommand({ prompt: "test" }).command;
+      backend.agentForLiveSpec(spec).buildPrintCommand({ prompt: "test", dangerouslySkipPermissions: false }).command;
 
     expect(commandFor(liveSpec({ soul: "cmr" }))).toContain(
       'model_reasoning_effort="xhigh"',
@@ -717,7 +717,7 @@ class FakeSeamsBackend extends RealFamilyBackend {
     }
     return this.mergerOutcome;
   }
-  protected override runVerifyCommands(req: FamilyVerifyRequest): void {
+  protected override async runVerifyCommands(req: FamilyVerifyRequest): Promise<void> {
     this.verifyCalls.push(req);
     if (this.verifyOutcome === "red") {
       throw new Error("Command failed: npx vitest run\n 3 failed | 507 passed");
@@ -854,7 +854,7 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
   it("#598 a merger agent that CRASHES (throws) once then resolves is retried fresh on current state", async () => {
     class CrashOnceBackend extends FakeSeamsBackend {
       crashesLeft = 1;
-      protected override async runMergerAgent(req: ConflictResolveRequest) {
+      protected override async runMergerAgent(req: ConflictResolveRequest): Promise<{ resolved: boolean; reason?: string }> {
         if (this.crashesLeft > 0) {
           this.crashesLeft -= 1;
           this.mergerCalls.push(req);
@@ -884,7 +884,7 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
 
   it("#598 a persistently CRASHING merger agent re-throws after the bounded attempts", async () => {
     class AlwaysCrashBackend extends FakeSeamsBackend {
-      protected override async runMergerAgent(req: ConflictResolveRequest) {
+      protected override async runMergerAgent(req: ConflictResolveRequest): Promise<{ resolved: boolean; reason?: string }> {
         this.mergerCalls.push(req);
         throw new Error("merger keeps crashing");
       }
@@ -1184,9 +1184,9 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       stdout: "<cmr>not json</cmr>\nCMR_STEP_COMPLETE",
       outcomePath,
       cmrReviewLegs: [
-        { family: "claude", slug: "opus" },
-        { family: "codex", slug: "gpt-5.6-sol" },
-        { family: "gemini", slug: "agy" },
+        { slug: "opus" },
+        { slug: "gpt-5.6-sol" },
+        { slug: "agy" },
       ],
     });
 
@@ -1233,9 +1233,9 @@ describe("parseCmrOutcome accepted suppression contract", () => {
         "Reached max iterations (1).\n",
       outcomePath,
       cmrReviewLegs: [
-        { family: "claude", slug: "opus" },
-        { family: "codex", slug: "gpt-5.6-sol" },
-        { family: "gemini", slug: "agy" },
+        { slug: "opus" },
+        { slug: "gpt-5.6-sol" },
+        { slug: "agy" },
       ],
     });
 
@@ -1284,7 +1284,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       stdout:
         '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>',
       outcomePath,
-      cmrReviewLegs: [{ family: "codex", slug: "gpt-5.6-sol" }],
+      cmrReviewLegs: [{ slug: "gpt-5.6-sol" }],
     });
 
     expect(outcome.kind).toBe("malformed");
@@ -1302,9 +1302,9 @@ describe("parseCmrOutcome accepted suppression contract", () => {
         '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       outcomePath,
       cmrReviewLegs: [
-        { family: "claude", slug: "opus" },
-        { family: "codex", slug: "gpt-5.6-sol" },
-        { family: "gemini", slug: "agy" },
+        { slug: "opus" },
+        { slug: "gpt-5.6-sol" },
+        { slug: "agy" },
       ],
     });
 
@@ -1318,9 +1318,9 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       stdout:
         '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       cmrReviewLegs: [
-        { family: "claude", slug: "opus" },
-        { family: "codex", slug: "gpt-5.6-sol" },
-        { family: "gemini", slug: "agy" },
+        { slug: "opus" },
+        { slug: "gpt-5.6-sol" },
+        { slug: "agy" },
       ],
     });
 
@@ -1341,7 +1341,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       stdout:
         '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>',
       outcomePath,
-      cmrReviewLegs: [{ family: "codex", slug: "gpt-5.6-sol" }],
+      cmrReviewLegs: [{ slug: "gpt-5.6-sol" }],
     });
 
     expect(outcome.kind).toBe("escalate");
@@ -1428,7 +1428,8 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       ],
     })}</cmr>\nCMR_STEP_COMPLETE`);
 
-    expect(outcome.findings?.[0]?.disposition_reason).toBe(
+    expect(outcome.kind).toBe("verdict");
+    expect(outcome.kind === "verdict" ? outcome.findings?.[0]?.disposition_reason : undefined).toBe(
       "Owner accepted this bounded risk.",
     );
   });
@@ -1714,7 +1715,7 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
     // is on `.stderr` (string or Buffer). Reading only `.message` would drop the
     // locatable reason from the ledger (agy R1). summarizeError must append it.
     class StderrRed extends FakeSeamsBackend {
-      protected override runVerifyCommands(): void {
+      protected override async runVerifyCommands(): Promise<void> {
         const e = new Error("Command failed: npx tsc --noEmit") as Error & {
           stderr?: Buffer;
         };
@@ -1734,7 +1735,7 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
     // prints the failing assertions to stdout). Taking stderr-OR-stdout would drop
     // the stdout reason; summarizeError must append both.
     class BothStreamsRed extends FakeSeamsBackend {
-      protected override runVerifyCommands(): void {
+      protected override async runVerifyCommands(): Promise<void> {
         const e = new Error("Command failed: npx vitest run") as Error & {
           stderr?: string;
           stdout?: string;

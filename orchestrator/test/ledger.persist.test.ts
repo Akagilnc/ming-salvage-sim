@@ -295,7 +295,7 @@ describe("persisted step ledger (#249)", () => {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       },
       async fetchIssueMeta(n) {
-        return { number: n, isReadyForAgent: true, hasSubIssues: false, openBlockedBy: [] };
+      return { number: n, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
       },
       async fetchIssueSnapshot(n) {
         return { number: n, body: "b", comments: [], agentBrief: "brief" };
@@ -364,7 +364,7 @@ describe("persisted step ledger (#249)", () => {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       },
       async fetchIssueMeta(n) {
-        return { number: n, isReadyForAgent: true, hasSubIssues: false, openBlockedBy: [] };
+      return { number: n, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
       },
       async fetchIssueSnapshot(n) {
         return { number: n, body: "b", comments: [], agentBrief: "brief" };
