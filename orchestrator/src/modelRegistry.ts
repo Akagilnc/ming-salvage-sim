@@ -1,4 +1,5 @@
 import * as sc from "@ai-hero/sandcastle";
+import type { BillingPoolId } from "./quotaPoolTable.js";
 
 /**
  * The codex coder slug + its effort. The model id is the bare CLI model string
@@ -189,11 +190,7 @@ export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
 }
 
 /** #686 / ADR 0124 — billing pool → executable provider channel. */
-export type BillingPoolDispatchId =
-  | "grok-build"
-  | "cursor"
-  | "zai"
-  | "codex-5h";
+export type BillingPoolDispatchId = BillingPoolId;
 
 export const POOL_DISPATCH_BINDINGS: Readonly<
   Record<BillingPoolDispatchId, ModelProviderFactory>
@@ -202,12 +199,19 @@ export const POOL_DISPATCH_BINDINGS: Readonly<
   cursor: "cursor",
   zai: "opencode",
   "codex-5h": "codex",
+  claude: "claudeCode",
 };
 
 export function isBillingPoolDispatchId(
   value: string | undefined,
 ): value is BillingPoolDispatchId {
-  return value === "grok-build" || value === "cursor" || value === "zai" || value === "codex-5h";
+  return (
+    value === "grok-build" ||
+    value === "cursor" ||
+    value === "zai" ||
+    value === "codex-5h" ||
+    value === "claude"
+  );
 }
 
 /** Resolve a pool-specific provider without changing the roster model id. */

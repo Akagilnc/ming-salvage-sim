@@ -45,7 +45,8 @@ import {
   routeSmokeFailure,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
-import { modelFamilyForSlug } from "./modelRegistry.js";
+import { resolveModelSlugForPool } from "./modelRegistry.js";
+import type { BillingPoolId } from "./quotaPoolTable.js";
 import {
   HangWithLivePoolError,
   SelfReportedRelayError,
@@ -86,6 +87,7 @@ import type {
   WorkerMonitorHandle,
   WorkerResult,
   WorkerSessionMode,
+  WorkerHost,
   WorkerSpec,
 } from "./types.js";
 
@@ -94,11 +96,16 @@ const FIX_FINDINGS_LANDING_FILE = ".orchestrator-fix-findings.json";
 const pendingTelemetryEnvironmentStamps = new Set<string>();
 
 /**
- * The worker host controls how the host CLI feeds a selected Coder-Rec baton.
- * Claude models use the Claude host; every other selected baton uses Codex.
+ * The worker host follows the executable provider selected by the registry.
+ * `claudeCode` retains the historical `claude` host spelling; every other
+ * provider is already the corresponding host CLI name.
  */
-function workerHostForModel(model: string): "claude" | "codex" {
-  return modelFamilyForSlug(model) === "claude" ? "claude" : "codex";
+export function workerHostForModel(
+  model: string,
+  billingPool?: BillingPoolId,
+): WorkerHost {
+  const provider = resolveModelSlugForPool(model, billingPool).provider;
+  return provider === "claudeCode" ? "claude" : provider;
 }
 
 function scheduleTelemetryEnvironmentStamp(
@@ -410,13 +417,14 @@ function writeWorkerOutcomeLandingFile(
 export function stepSpecToWorkerSpec(
   spec: StepSpec,
   session: WorkerSessionMode = "fresh",
+  billingPool?: BillingPoolId,
 ): WorkerSpec {
   const kind = workerKindForRole(spec.role);
   return {
     id: spec.id,
     kind,
     role: spec.role,
-    host: workerHostForModel(spec.model),
+    host: workerHostForModel(spec.model, billingPool),
     session,
     contextRetention: retentionForKind(kind),
     skill: SKILL_FOR_KIND[kind],
@@ -436,12 +444,16 @@ export function stepSpecToWorkerSpec(
  */
 export const SHIP_PROMPT_FILE = "ship.md";
 
-export function shipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
+export function shipWorkerSpec(
+  route?: ResolvedModelRoute,
+  billingPool?: BillingPoolId,
+): WorkerSpec {
+  const model = route?.slots.ship ?? modelForSlot("ship");
   return {
     id: "S7",
     kind: "ship",
     role: "coder",
-    host: "claude",
+    host: workerHostForModel(model, billingPool),
     session: "fresh",
     contextRetention: "clean",
     skill: SKILL_FOR_KIND.ship,
@@ -452,7 +464,7 @@ export function shipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
     // runner worker specs use 5), NOT a single-pass reviewer's 1 (#336 cmr r6). The completion
     // signal stops the loop early on a clean ship; the <ship> parser reads the LAST tag.
     maxIter: 5,
-    model: route?.slots.ship ?? modelForSlot("ship"),
+    model,
     soul: "coder",
     toolchain: [],
   };
@@ -466,38 +478,46 @@ export const CLEANUP_PROMPT_FILE = "cleanup.md";
 export const DOCRELEASE_PROMPT_FILE = "docRelease.md";
 
 /** S9 online-review / PR-check worker spec (#600 real prompt). */
-export function verifyWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
+export function verifyWorkerSpec(
+  route?: ResolvedModelRoute,
+  billingPool?: BillingPoolId,
+): WorkerSpec {
+  const model = route?.slots.verify ?? modelForSlot("verify");
   return {
     id: "S9",
     kind: "verify",
     role: "verify",
-    host: "claude",
+    host: workerHostForModel(model, billingPool),
     session: "fresh",
     contextRetention: "clean",
     skill: SKILL_FOR_KIND.verify,
     promptFile: VERIFY_PROMPT_FILE,
     completionSignal: "VERIFY_STEP_COMPLETE",
     maxIter: 1,
-    model: route?.slots.verify ?? modelForSlot("verify"),
+    model,
     soul: "verify",
     toolchain: [],
   };
 }
 
 /** S10 post-review fixer worker spec (#600 real prompt). */
-export function fixerWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
+export function fixerWorkerSpec(
+  route?: ResolvedModelRoute,
+  billingPool?: BillingPoolId,
+): WorkerSpec {
+  const model = route?.slots.fixer ?? modelForSlot("fixer");
   return {
     id: "S10",
     kind: "fixer",
     role: "fixer",
-    host: "claude",
+    host: workerHostForModel(model, billingPool),
     session: "fresh",
     contextRetention: "retain",
     skill: SKILL_FOR_KIND.fixer,
     promptFile: FIXER_PROMPT_FILE,
     completionSignal: "FIXER_STEP_COMPLETE",
     maxIter: 5,
-    model: route?.slots.fixer ?? modelForSlot("fixer"),
+    model,
     soul: "fixer",
     toolchain: [],
   };
@@ -505,19 +525,23 @@ export function fixerWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
 
 /** S11 cleanup worker spec (#596 skeleton; real host path is #603). */
 // TODO(#603): cleanup skill/prompt wiring is still skeleton here.
-export function cleanupWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
+export function cleanupWorkerSpec(
+  route?: ResolvedModelRoute,
+  billingPool?: BillingPoolId,
+): WorkerSpec {
+  const model = route?.slots.cleanup ?? modelForSlot("cleanup");
   return {
     id: "S11",
     kind: "cleanup",
     role: "cleanup",
-    host: "claude",
+    host: workerHostForModel(model, billingPool),
     session: "fresh",
     contextRetention: "clean",
     skill: SKILL_FOR_KIND.cleanup,
     promptFile: CLEANUP_PROMPT_FILE,
     completionSignal: "CLEANUP_STEP_COMPLETE",
     maxIter: 1,
-    model: route?.slots.cleanup ?? modelForSlot("cleanup"),
+    model,
     soul: "cleanup",
     toolchain: [],
   };
@@ -529,19 +553,23 @@ export function cleanupWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
  * skill crash / hang / explicit fail / required push fail → not released.
  * Offline/test may still synthesize via the offline hatch only.
  */
-export function docReleaseWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
+export function docReleaseWorkerSpec(
+  route?: ResolvedModelRoute,
+  billingPool?: BillingPoolId,
+): WorkerSpec {
+  const model = route?.slots.docRelease ?? modelForSlot("docRelease");
   return {
     id: "S12",
     kind: "docRelease",
     role: "docRelease",
-    host: "claude",
+    host: workerHostForModel(model, billingPool),
     session: "fresh",
     contextRetention: "clean",
     skill: SKILL_FOR_KIND.docRelease,
     promptFile: DOCRELEASE_PROMPT_FILE,
     completionSignal: "DOCRELEASE_STEP_COMPLETE",
     maxIter: 1,
-    model: route?.slots.docRelease ?? modelForSlot("docRelease"),
+    model,
     soul: "docRelease",
     toolchain: [],
   };
