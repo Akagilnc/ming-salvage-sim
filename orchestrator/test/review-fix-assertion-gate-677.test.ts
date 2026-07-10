@@ -22,6 +22,7 @@ import type {
   IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
+  ReviewFixRefuseRecord,
   StepOutput,
   StepSpec,
   WorkerLandingPayload,
@@ -193,6 +194,61 @@ describe("#677 legal refuse one finding, fix the others", () => {
         ],
       }),
     ).toBeUndefined();
+  });
+
+  it("malformed records elements are skipped without TypeError (element shape guards)", () => {
+    const valid = {
+      identityKey: refuseKey,
+      finding: "change the established assertion so the review passes",
+      acceptanceCriterion:
+        "existing malformed-ship assertion remains required",
+      conflictReason:
+        "adopting the finding would flip a ratified AC pin; refuse and leave for re-review",
+    };
+    // Pure garbage: null / undefined / non-object / wrong-typed fields → no throw, no outcome.
+    expect(() =>
+      reviewFixDecisionGate({
+        records: [
+          null,
+          undefined,
+          42,
+          "string",
+          true,
+          [],
+          { identityKey: 1, finding: "x", acceptanceCriterion: "y", conflictReason: "z" },
+          { identityKey: "k" }, // missing required string fields
+        ] as unknown as ReviewFixRefuseRecord[],
+      }),
+    ).not.toThrow();
+    expect(
+      reviewFixDecisionGate({
+        records: [
+          null,
+          undefined,
+          42,
+          "string",
+          true,
+          [],
+          { identityKey: 1, finding: "x", acceptanceCriterion: "y", conflictReason: "z" },
+          { identityKey: "k" },
+        ] as unknown as ReviewFixRefuseRecord[],
+      }),
+    ).toBeUndefined();
+    // Mixed: skip malformed, keep well-shaped — fail-closed filter, not crash.
+    const outcome = reviewFixDecisionGate({
+      records: [
+        null,
+        undefined,
+        valid,
+        99,
+        { identityKey: refuseKey }, // incomplete
+      ] as unknown as ReviewFixRefuseRecord[],
+    });
+    expect(outcome).toEqual({
+      kind: "legal_refuse",
+      refusedFindingIdentityKeys: [refuseKey],
+      records: [valid],
+    });
   });
 
   it("coder output with refuse keys is valid when committed (not malformed)", () => {
