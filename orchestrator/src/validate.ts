@@ -432,7 +432,7 @@ export function isValidCoderOutput(o: StepOutput | undefined): o is CoderOutput 
 }
 
 function isValidRefuseRecord(r: unknown): r is ReviewFixRefuseRecord {
-  if (r == null || typeof r !== "object") return false;
+  if (r === null || r === undefined || typeof r !== "object") return false;
   const rec = r as ReviewFixRefuseRecord;
   return (
     typeof rec.identityKey === "string" &&
