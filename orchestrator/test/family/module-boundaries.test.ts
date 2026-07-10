@@ -49,6 +49,10 @@ import type {
 // ─── fakes ────────────────────────────────────────────────────────────────────
 
 class ChildBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly markRunStep = vi.fn();
 
   async findResumeState(): Promise<undefined> {

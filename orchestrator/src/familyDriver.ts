@@ -36,9 +36,12 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { RealBackend } from "./realBackend.js";
+import { RealBackend, type RealBackendOptions } from "./realBackend.js";
 import { parseBlockedBy, type GhBlockedBy } from "./realBackend.js";
-import { RealFamilyBackend } from "./family/realFamilyBackend.js";
+import {
+  RealFamilyBackend,
+  type RealFamilyBackendOptions,
+} from "./family/realFamilyBackend.js";
 import { runFamily } from "./family/runner.js";
 import {
   parseModuleDeclaration,
@@ -570,6 +573,8 @@ function admissionSkippedChildren(
 
 /** Tunables for {@link runFamilyDriver}. */
 export interface FamilyDriverOptions {
+  /** Resolved once per run from ORCHESTRATOR_CODEX_FAST (or an explicit option). */
+  readonly codexFast?: boolean;
   /** The PARENT EPIC issue number — the family run key (ADR 0024). */
   readonly epicIssue: number;
   /** The SOURCE repo to clone (path or URL) — the family clone is cut from it. */
@@ -628,6 +633,30 @@ export interface FamilyDriverOptions {
     workingRepo: string,
     familyBaseStartHead: string,
   ) => FamilyBackend & { reconcileGit(): ReconcileGit };
+  /**
+   * Override construction of the production single-slice backend. The driver
+   * passes the complete resolved options so tests can exercise the production
+   * assembly without starting a container.
+   */
+  readonly realBackendFactory?: (options: RealBackendOptions) => RealBackend;
+  /**
+   * Override construction of the production family backend. The driver passes
+   * the complete resolved options so tests can exercise the production assembly
+   * without starting a container.
+   */
+  readonly realFamilyBackendFactory?: (
+    options: RealFamilyBackendOptions,
+  ) => FamilyBackend & { reconcileGit(): ReconcileGit };
+}
+
+/** Resolve the run-level Codex fast switch once, honoring an explicit option. */
+export function resolveCodexFast(options: Pick<FamilyDriverOptions, "codexFast">): boolean {
+  return options.codexFast ?? process.env.ORCHESTRATOR_CODEX_FAST === "1";
+}
+
+/** Stable run-level attribution line for post-run pool accounting. */
+export function codexFastRunLog(codexFast: boolean): string {
+  return `[orchestrator] run fast=${codexFast ? "on" : "off"}`;
 }
 
 
@@ -647,6 +676,8 @@ export async function runFamilyDriver(
   options: FamilyDriverOptions,
 ): Promise<FamilyRunResult> {
   const sh = options.sh ?? defaultSh;
+  const codexFast = resolveCodexFast(options);
+  console.log(codexFastRunLog(codexFast));
 
   // 1. Read the already-cut children from live GitHub (the explicit dependency
   //    edges a `to-issues` step wrote — decision 1, no LLM inference).
@@ -656,7 +687,8 @@ export async function runFamilyDriver(
   //    share ONE family clone (ADR 0024). Constructing it CLONES the source (pure
   //    git, no container) — that clone is the family clone every git op anchors on.
   //    `familyBase` makes a child cut from the LOCAL family base (decision 7).
-  const realSingleSlice = new RealBackend({
+  const realBackendOptions: RealBackendOptions = {
+    codexFast,
     sourceRepo: options.sourceRepo,
     remote: options.remote,
     runKey: options.epicIssue,
@@ -667,7 +699,9 @@ export async function runFamilyDriver(
     soulsDir: options.soulsDir,
     home: options.home,
     familyBase: options.familyBase,
-  });
+  };
+  const realSingleSlice =
+    options.realBackendFactory?.(realBackendOptions) ?? new RealBackend(realBackendOptions);
   const workingRepo = realSingleSlice.workingRepoPath();
 
   // 3. Cut the LOCAL family base branch from main on the family clone, recording
@@ -698,36 +732,40 @@ export async function runFamilyDriver(
   //    RealFamilyBackend's unified worker seam runs the real `ak-cross-m-review`
   //    container worker. The e2e may inject the whole family backend (controlled
   //    verify/cmr/PR, real merge/ledger/reconcile).
+  const familyBackendOptions: RealFamilyBackendOptions = {
+    codexFast,
+    workingRepo,
+    // #4: verify the project the change ACTUALLY landed in, not a hardcoded
+    // `orchestrator/`. Precedence: an explicit per-run `verifyCwd` wins;
+    // otherwise infer LAZILY at verify time from the family diff (the
+    // dominant changed subproject), falling back to the clone root. The
+    // dogfood verified orchestrator/ while the change was in web/ — verifying
+    // the WRONG project. (The inference is lazy because at construction the
+    // family base is freshly cut → an empty diff; the change exists only once
+    // children have merged.)
+    verifyCwd: options.verifyCwd,
+    // #746: clonefile node_modules from the source monorepo when lockfiles match.
+    depsTemplateRoot: options.sourceRepo,
+    resolveVerifyCwd: () =>
+      inferVerifyCwd(
+        familyDiffFiles(workingRepo, familyBaseStartHead, options.familyBase, sh),
+        discoverSubprojects(workingRepo),
+        workingRepo,
+      ),
+    familyBase: options.familyBase,
+    ledgerDir: options.ledgerDir,
+    repo: options.repo,
+    base: options.base,
+    promptsDir: options.familyPromptsDir,
+    soulsDir: options.soulsDir,
+    imageName: options.imageName,
+    familyBaseStartHead,
+    home: options.home,
+  };
   const familyBackend =
-    options.familyBackendFactory !== undefined
-      ? options.familyBackendFactory(workingRepo, familyBaseStartHead)
-      : new RealFamilyBackend({
-          workingRepo,
-          // #4: verify the project the change ACTUALLY landed in, not a hardcoded
-          // `orchestrator/`. Precedence: an explicit per-run `verifyCwd` wins;
-          // otherwise infer LAZILY at verify time from the family diff (the
-          // dominant changed subproject), falling back to the clone root. The
-          // dogfood verified orchestrator/ while the change was in web/ — verifying
-          // the WRONG project. (The inference is lazy because at construction the
-          // family base is freshly cut → an empty diff; the change exists only once
-          // children have merged.)
-          verifyCwd: options.verifyCwd,
-          resolveVerifyCwd: () =>
-            inferVerifyCwd(
-              familyDiffFiles(workingRepo, familyBaseStartHead, options.familyBase, sh),
-              discoverSubprojects(workingRepo),
-              workingRepo,
-            ),
-          familyBase: options.familyBase,
-          ledgerDir: options.ledgerDir,
-          repo: options.repo,
-          base: options.base,
-          promptsDir: options.familyPromptsDir,
-          soulsDir: options.soulsDir,
-          imageName: options.imageName,
-          familyBaseStartHead,
-          home: options.home,
-        });
+    options.familyBackendFactory?.(workingRepo, familyBaseStartHead) ??
+    options.realFamilyBackendFactory?.(familyBackendOptions) ??
+    new RealFamilyBackend(familyBackendOptions);
 
   // 6. Assemble the run input + the resume seams, and run the spine.
   const input: FamilyRunInput = {

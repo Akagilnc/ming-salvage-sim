@@ -102,6 +102,7 @@ import {
   fixerOutputSchema,
   cleanupOutputSchema,
   docReleaseOutputSchema,
+  SANDBOX_FIX_FOCUS_PATH_ENV,
 } from "../realBackend.js";
 import {
   isValidCleanupResult,
@@ -110,7 +111,18 @@ import {
   isValidVerifyResult,
   skeletonReviewLoopWorkerResult,
 } from "../reviewLoopOutcome.js";
+import {
+  FIX_FOCUS_LANDING_FILE,
+  attachSanitizedFindingFamilies,
+  formatFixFocusMarkdown,
+  normalizeFindingFamiliesWireAliases,
+} from "../findingFamilies.js";
 import { ONLINE_REVIEW_LANDING_FILE } from "../onlineReviewLoop.js";
+import {
+  provisionNodeModules,
+  resolveTemplateProjectDir,
+  runProvisionCommand,
+} from "../provisionNodeModules.js";
 import {
   WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
@@ -121,8 +133,17 @@ import {
   modelForSlot,
   type CmrLegAccountingRoute,
 } from "../modelRoutes.js";
+import {
+  buildCliMonitorSpawnSpec,
+  workerResultFromMonitorSidecar,
+} from "../cliMonitorHooks.js";
 import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import { retryProcessCrash } from "../dispatchRetry.js";
+import {
+  DOCRELEASE_PROMPT_FILE,
+  FIXER_PROMPT_FILE,
+  VERIFY_PROMPT_FILE,
+} from "../dispatchWorker.js";
 import { dispatchPostMergeCleanup } from "../postMergeCleanup.js";
 import type { Sh } from "../familyDriver.js";
 import { recordFamilyEscalated } from "./ledger.js";
@@ -134,10 +155,13 @@ import {
 
 import type {
   CleanupResult,
+  CliMonitorSpawnSpec,
   CoderResult,
   DispatchContext,
   DocReleaseResult,
+  WorkerMonitorHandle,
   Finding,
+  FindingFamily,
   FixerResult,
   PriorFindingDisposition,
   StepSoul,
@@ -234,6 +258,8 @@ export interface FamilyEscalationRecord extends FamilyEscalation {
 
 /** Options for {@link RealFamilyBackend}. */
 export interface RealFamilyBackendOptions {
+  /** Enable Codex priority processing for every in-container Codex leg. */
+  readonly codexFast?: boolean;
   /**
    * The dedicated clone the family run owns (ADR 0024) — the family base branch
    * + every child branch live here, and every git op anchors on it. In production
@@ -256,6 +282,13 @@ export interface RealFamilyBackendOptions {
    * family run always returns verify_failed). Defaults to `workingRepo`.
    */
   readonly verifyCwd?: string;
+  /**
+   * #746 — monorepo root whose warm `node_modules` trees are the clonefile
+   * template for verify installs (typically the driver `sourceRepo`). Not a
+   * user-facing config surface: familyDriver wires it from sourceRepo. When
+   * absent, installDeps falls back to full npm ci/install (pre-#746 behaviour).
+   */
+  readonly depsTemplateRoot?: string;
   /**
    * LAZY verify-cwd resolver (#4): when `verifyCwd` is not set, this is called at
    * verify TIME (after the children have merged onto the family base) to infer the
@@ -321,6 +354,9 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
     OUTCOME_REWRITE_PROMPT,
     "family_ship.md",
     MERGER_CONFLICT_PROMPT,
+    VERIFY_PROMPT_FILE,
+    FIXER_PROMPT_FILE,
+    DOCRELEASE_PROMPT_FILE,
   ]),
 ];
 /** The merger agent's completion signal (matches prompts/merger_resolve_conflict.md). */
@@ -856,7 +892,7 @@ export class RealFamilyBackend implements FamilyBackend {
       tempCodexDir = mkdtempSync(join(root, "merger-codex-auth-"));
       copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
       chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ no codex mount. Reclaim the mkdtemp dir if it was
@@ -962,7 +998,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // be GREEN end-to-end before the integrated cmr / PR either way).
     this.sh("git", ["checkout", request.familyBase], repo);
     try {
-      this.runVerifyCommands(request);
+      await this.runVerifyCommands(request);
     } catch (err) {
       return {
         ok: false,
@@ -977,7 +1013,7 @@ export class RealFamilyBackend implements FamilyBackend {
    * clone. `protected` so a unit test drives the green/red branch without a real
    * `npx tsc` / `npx vitest` run. A non-zero exit throws (the caller packages it).
    */
-  protected runVerifyCommands(_request: FamilyVerifyRequest): void {
+  protected async runVerifyCommands(_request: FamilyVerifyRequest): Promise<void> {
     // Run where the Node project lives, NOT the clone root — else npx finds no
     // package.json/config (online R2 Codex P1). Precedence (#4): explicit verifyCwd
     // > the lazy diff-inferred cwd (the dominant changed subproject) > the clone root.
@@ -1018,7 +1054,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // package.json/package-lock.json; the launcher unconditional rebuild only
     // covers the *orchestrator* dist/image, not the family clone's project deps.
     // Therefore verify path must unconditionally ensure the cwd's deps.
-    this.installDeps(cwd);
+    await this.installDeps(cwd);
     // #5 (dogfood): run the PROJECT'S OWN package.json scripts, NOT a hardcoded
     // `npx tsc`/`npx vitest`. web/'s test script is `vitest run --environment jsdom`
     // — a bare `npx vitest run` DROPS `--environment jsdom`, so every jsdom render
@@ -1034,12 +1070,12 @@ export class RealFamilyBackend implements FamilyBackend {
     // long as Vitest passed. Precedence: dedicated `typecheck` > `build` (the project's
     // real type-checking build) > nothing. So types are NEVER silently skipped.
     if (scripts.includes("typecheck")) {
-      this.sh("npm", ["run", "typecheck"], cwd);
+      await this.sh("npm", ["run", "typecheck"], cwd);
     } else if (scripts.includes("build")) {
-      this.sh("npm", ["run", "build"], cwd);
+      await this.sh("npm", ["run", "build"], cwd);
     }
     if (scripts.includes("test")) {
-      this.sh("npm", ["test"], cwd);
+      await this.sh("npm", ["test"], cwd);
     }
   }
 
@@ -1072,14 +1108,38 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Install the Node project's deps in `cwd` before verify (#3). Prefer `npm ci`
-   * (a lockfile-exact, reproducible install) when a `package-lock.json` is
-   * present; fall back to `npm install` when it is not (`npm ci` REQUIRES a
-   * lockfile). `protected` for test seam (used by verify tests).
+   * Install the Node project's deps in `cwd` before verify (#3 + #746).
+   *
+   * Prefer APFS clonefile of a lockfile-matching template `node_modules` from
+   * {@link RealFamilyBackendOptions.depsTemplateRoot} (source monorepo) over a
+   * full `npm ci`. Lockfile hash mismatch / missing template / clonefile failure
+   * → real `npm ci` (or `npm install` without a lock). Still unconditional in the
+   * #372 sense: we always re-ensure deps; the fast path is clonefile, not a
+   * presence/mtime skip. `protected` for test seam (used by verify tests).
    */
-  protected installDeps(cwd: string): void {
-    const hasLock = existsSync(join(cwd, "package-lock.json"));
-    this.sh("npm", [hasLock ? "ci" : "install"], cwd);
+  protected async installDeps(cwd: string): Promise<void> {
+    const templateProjectDir = resolveTemplateProjectDir(cwd, {
+      templateRoot: this.opts.depsTemplateRoot,
+      targetRoot: this.opts.workingRepo,
+    });
+    await provisionNodeModules(cwd, {
+      templateProjectDir,
+      sh: (file, args, c) => this.provisionCommand(file, args, c),
+    });
+  }
+
+  /** Provision-only async shell seam; ordinary git/gh commands remain synchronous. */
+  protected provisionCommand(
+    file: string,
+    args: string[],
+    cwd?: string,
+  ): string | Promise<string> {
+    // Test doubles override the synchronous general shell seam; preserve that
+    // seam for observability while the production implementation uses async I/O.
+    if (this.sh !== RealFamilyBackend.prototype.sh) {
+      return this.sh(file, args, cwd);
+    }
+    return runProvisionCommand(file, args, cwd);
   }
 
   // ─────────────────────── unified worker dispatch (#335) ───────────────────────
@@ -1164,6 +1224,49 @@ export class RealFamilyBackend implements FamilyBackend {
     return this.cmrOutcomeToWorkerResult(outcome, ctx);
   }
 
+  /**
+   * #684: production monitored-CLI spawn for family productive workers.
+   * Same bridge pattern as {@link RealBackend.resolveCliMonitorDispatch}.
+   */
+  resolveCliMonitorDispatch(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): CliMonitorSpawnSpec | undefined {
+    // Container-free test/integration subclasses intentionally replace the
+    // family review worker seam; preserve that seam instead of launching the
+    // host bridge and bypassing the override.
+    if (
+      this.runFamilyReviewLoopWorker !==
+      RealFamilyBackend.prototype.runFamilyReviewLoopWorker
+    ) {
+      return undefined;
+    }
+    return buildCliMonitorSpawnSpec({
+      backendKind: "realFamily",
+      backendOpts: this.opts,
+      spec,
+      ctx: {
+        ...ctx,
+        stateDir: ctx.stateDir ?? this.opts.ledgerDir,
+      },
+      landing,
+    });
+  }
+
+  /**
+   * #684: map a finished monitored family CLI bridge child into a WorkerResult.
+   */
+  async awaitMonitoredCliWorker(
+    handle: WorkerMonitorHandle,
+    exitCode: number | null,
+    _spec: WorkerSpec,
+    _ctx: DispatchContext,
+    _landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    return workerResultFromMonitorSidecar(handle, exitCode);
+  }
+
   async rewriteWorkerOutcome(
     spec: WorkerSpec,
     ctx: DispatchContext,
@@ -1231,6 +1334,9 @@ export class RealFamilyBackend implements FamilyBackend {
           ? { priorFindingDispositions: outcome.priorFindingDispositions }
           : {}),
         ...(outcome.findings !== undefined ? { findings: outcome.findings } : {}),
+        ...(outcome.findingFamilies !== undefined
+          ? { findingFamilies: outcome.findingFamilies }
+          : {}),
         evidencePaths: outcome.evidencePaths,
       },
       ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
@@ -1526,6 +1632,7 @@ export class RealFamilyBackend implements FamilyBackend {
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
       const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx, landing);
+      const fixFocusLanding = this.writeFamilyFixFocusFile(landing);
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
         try {
@@ -1533,7 +1640,7 @@ export class RealFamilyBackend implements FamilyBackend {
             name: "family-coder-fix",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
             cwd: this.opts.workingRepo,
-            sandbox: this.familyCoderSandbox(auth, ctx, outcomeLanding),
+            sandbox: this.familyCoderSandbox(auth, ctx, outcomeLanding, fixFocusLanding),
             agent: this.agentForSpec(spec),
             maxIterations: spec.maxIter,
             completionSignal: spec.completionSignal,
@@ -1546,6 +1653,9 @@ export class RealFamilyBackend implements FamilyBackend {
         }
       } finally {
         rmSync(fixFindingsLanding.path, { force: true });
+        if (fixFocusLanding !== undefined) {
+          rmSync(fixFocusLanding.path, { force: true });
+        }
       }
     } finally {
       this.cleanupTempAuthDirs([auth.codexAuthDir]);
@@ -1583,6 +1693,20 @@ export class RealFamilyBackend implements FamilyBackend {
     return { path, sandboxPath: FAMILY_FIX_FINDINGS_FILENAME };
   }
 
+  /** Runner-owned pattern briefs for family coder-fix / online fixer (#711). */
+  protected writeFamilyFixFocusFile(
+    landing?: WorkerLandingPayload,
+  ): { path: string; sandboxPath: string } | undefined {
+    if (landing?.findingFamilies === undefined || landing.findingFamilies.length === 0) {
+      rmSync(join(this.opts.workingRepo, FIX_FOCUS_LANDING_FILE), { force: true });
+      return undefined;
+    }
+    this.excludeOptionalRuntimeFileFromGit(FIX_FOCUS_LANDING_FILE);
+    const path = join(this.opts.workingRepo, FIX_FOCUS_LANDING_FILE);
+    writeFileSync(path, `${formatFixFocusMarkdown(landing.findingFamilies)}\n`, "utf8");
+    return { path, sandboxPath: FIX_FOCUS_LANDING_FILE };
+  }
+
   protected prepareFamilyCoderOutcomeLanding(): { path: string; sandboxPath: string } {
     mkdirSync(this.opts.ledgerDir, { recursive: true });
     const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-family-coder-fix-"));
@@ -1604,14 +1728,18 @@ export class RealFamilyBackend implements FamilyBackend {
     auth: ShipAuth,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
+    fixFocusLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
-    return docker(this.familyCoderSandboxConfig(auth, ctx, outcomeLanding));
+    return docker(
+      this.familyCoderSandboxConfig(auth, ctx, outcomeLanding, fixFocusLanding),
+    );
   }
 
   protected familyCoderSandboxConfig(
     auth: ShipAuth,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
+    fixFocusLanding?: { path: string; sandboxPath: string },
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -1624,6 +1752,9 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_FIX_FINDINGS_PATH_ENV]: FAMILY_FIX_FINDINGS_FILENAME,
       [SANDBOX_OUTCOME_PATH_ENV]: outcomeLanding.sandboxPath,
     };
+    if (fixFocusLanding !== undefined) {
+      env[SANDBOX_FIX_FOCUS_PATH_ENV] = fixFocusLanding.sandboxPath;
+    }
     if (ctx.familyIssue !== undefined) {
       const issue = String(ctx.familyIssue);
       env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
@@ -1631,9 +1762,16 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
-    const mounts: { hostPath: string; sandboxPath: string }[] = [
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
       { hostPath: outcomeLanding.path, sandboxPath: outcomeLanding.sandboxPath },
     ];
+    if (fixFocusLanding !== undefined) {
+      mounts.push({
+        hostPath: fixFocusLanding.path,
+        sandboxPath: fixFocusLanding.sandboxPath,
+        readonly: true,
+      });
+    }
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
@@ -1709,6 +1847,7 @@ export class RealFamilyBackend implements FamilyBackend {
               `the family ${spec.kind} worker is a top-level Claude worker when the ` +
               "active route selects a Claude-family model; provide " +
               "CLAUDE_CODE_OAUTH_TOKEN / ~/.sc-claude-token or select a non-Claude route.",
+            synthesizedFailure: true,
           },
         };
       }
@@ -1719,6 +1858,8 @@ export class RealFamilyBackend implements FamilyBackend {
         spec.kind === "docRelease"
           ? undefined
           : this.writeFamilyOnlineReviewLandingFile(ctx, landing);
+      const fixFocusLanding =
+        spec.kind === "fixer" ? this.writeFamilyFixFocusFile(landing) : undefined;
       try {
         const result = await this.runAgentSandbox({
           name: `family-${spec.kind}`,
@@ -1729,6 +1870,7 @@ export class RealFamilyBackend implements FamilyBackend {
             spec,
             ctx,
             onlineReviewLanding,
+            fixFocusLanding,
           ),
           agent: this.agentForSpec(spec),
           maxIterations: spec.maxIter,
@@ -1740,6 +1882,9 @@ export class RealFamilyBackend implements FamilyBackend {
       } finally {
         if (onlineReviewLanding !== undefined) {
           rmSync(onlineReviewLanding.path, { force: true });
+        }
+        if (fixFocusLanding !== undefined) {
+          rmSync(fixFocusLanding.path, { force: true });
         }
       }
     } finally {
@@ -1766,6 +1911,13 @@ export class RealFamilyBackend implements FamilyBackend {
           shipDelivery: landing.shipDelivery,
           onlineReviewRound: landing.onlineReviewRound ?? ctx.onlineReviewRound,
           fixMarkedFindingIdentityKeys: landing.fixMarkedFindingIdentityKeys ?? [],
+          ...(ctx.escalationAnswer !== undefined
+            ? { escalationAnswer: ctx.escalationAnswer }
+            : {}),
+          ...(landing.priorRoundFindings !== undefined &&
+          landing.priorRoundFindings.length > 0
+            ? { priorRoundFindings: landing.priorRoundFindings }
+            : {}),
         },
         null,
         2,
@@ -1780,9 +1932,16 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
     onlineReviewLanding?: { path: string; sandboxPath: string },
+    fixFocusLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
     return docker(
-      this.familyReviewLoopSandboxConfig(auth, spec, ctx, onlineReviewLanding),
+      this.familyReviewLoopSandboxConfig(
+        auth,
+        spec,
+        ctx,
+        onlineReviewLanding,
+        fixFocusLanding,
+      ),
     );
   }
 
@@ -1791,6 +1950,7 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
     onlineReviewLanding?: { path: string; sandboxPath: string },
+    fixFocusLanding?: { path: string; sandboxPath: string },
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -1808,6 +1968,9 @@ export class RealFamilyBackend implements FamilyBackend {
     if (onlineReviewLanding !== undefined) {
       env[SANDBOX_ONLINE_REVIEW_PATH_ENV] = onlineReviewLanding.sandboxPath;
     }
+    if (fixFocusLanding !== undefined) {
+      env[SANDBOX_FIX_FOCUS_PATH_ENV] = fixFocusLanding.sandboxPath;
+    }
     if (ctx.familyIssue !== undefined) {
       const issue = String(ctx.familyIssue);
       env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
@@ -1820,6 +1983,13 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts.push({
         hostPath: onlineReviewLanding.path,
         sandboxPath: onlineReviewLanding.sandboxPath,
+        readonly: true,
+      });
+    }
+    if (fixFocusLanding !== undefined) {
+      mounts.push({
+        hostPath: fixFocusLanding.path,
+        sandboxPath: fixFocusLanding.sandboxPath,
         readonly: true,
       });
     }
@@ -1989,13 +2159,23 @@ export class RealFamilyBackend implements FamilyBackend {
             2,
           )}\n\`\`\`\n\nDo not invent claimed-fixed identity keys outside this list. If the list is empty, emit empty closure arrays unless this pass reports new findings.`
         : "\n\nRunner-owned prior CMR finding identity keys (#450 closure context): none supplied. Do not claim fixed prior findings; emit empty closure arrays unless this pass reports new findings.";
+    // #711: runner only carries prior-round data — method for synthesis lives in
+    // versioned cmr souls (cmr_completeness / cmr_correctness).
+    const priorRoundBlock =
+      ctx.priorRoundFindings !== undefined && ctx.priorRoundFindings.length > 0
+        ? `\n\nPrior integrated-CMR rounds from the family ledger (#711):\n\n\`\`\`json\n${JSON.stringify(
+            ctx.priorRoundFindings,
+            null,
+            2,
+          )}\n\`\`\``
+        : "";
     // The focus file is pass-scoped: it pins only the exact review scope and the
     // machine-resolved-child focus. Cross-pass accounting lives in the durable
     // ledger / worker verdict fields, not in this transient prompt file.
     const body =
       `# Integrated cmr — review scope + focus (machine-generated; #335)\n\n` +
       `Review THIS exact family-base diff (the commits the family base added since it\n` +
-      `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}${moduleBlock}${closureBlock}${answerBlock}\n`;
+      `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}${moduleBlock}${closureBlock}${priorRoundBlock}${answerBlock}\n`;
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
     this.excludeFromGit(CMR_FOCUS_FILENAME);
@@ -2125,7 +2305,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // bwrap is impossible — the failure that degrades cmr legs to static-only).
       // The host config.toml is host-personal and irrelevant — only auth.json
       // crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). Reclaim the
@@ -2571,7 +2751,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
       // bwrap is impossible). The host config.toml is host-personal and irrelevant
       // — only auth.json crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). gh is NOT here — it is
@@ -2859,6 +3039,7 @@ export type CmrWorkerOutcome =
       readonly claimedFixedFindingIdentityKeys?: readonly string[];
       readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
       readonly findings?: readonly Finding[];
+      readonly findingFamilies?: readonly FindingFamily[];
       readonly evidencePaths: readonly string[];
       readonly sessionId?: string;
     }
@@ -3189,6 +3370,8 @@ function normalizeCmrReviewerFinding(
 }
 const cmrFindingsSchema = {
   findings: z.array(cmrReviewerFindingSchema).optional(),
+  // #711: malformed families degrade to no brief — never block the CMR gate.
+  findingFamilies: z.unknown().optional(),
 } as const;
 const cmrEvidenceSchema = {
   evidencePaths: z.array(nonEmpty).min(1),
@@ -3233,10 +3416,14 @@ function isJsonRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<string, unknown> {
-  const dispositions = parsed.priorFindingDispositions;
-  if (!Array.isArray(dispositions)) return parsed;
+  // #711: accept finding_families / recurring_from_rounds wire aliases (spec)
+  // before .strict() schemas reject them as extra keys.
+  const withFamilies = normalizeFindingFamiliesWireAliases(parsed);
+  const base = isJsonRecord(withFamilies) ? withFamilies : parsed;
+  const dispositions = base.priorFindingDispositions;
+  if (!Array.isArray(dispositions)) return base;
   return {
-    ...parsed,
+    ...base,
     priorFindingDispositions: dispositions.map((rawDisposition) => {
       if (
         !isJsonRecord(rawDisposition) ||
@@ -3339,6 +3526,7 @@ function classifyCmrOutcomePayload(
       ...(converged.findings !== undefined
         ? { findings: converged.findings.map(normalizeCmrReviewerFinding) }
         : {}),
+      ...attachSanitizedFindingFamilies({}, converged.findingFamilies),
       evidencePaths: converged.evidencePaths,
     };
   }
@@ -3368,6 +3556,7 @@ function classifyCmrOutcomePayload(
       ...(red.data.findings !== undefined
         ? { findings: red.data.findings.map(normalizeCmrReviewerFinding) }
         : {}),
+      ...attachSanitizedFindingFamilies({}, red.data.findingFamilies),
       evidencePaths: red.data.evidencePaths,
     };
   }
@@ -3640,22 +3829,27 @@ export function parseVerifyOutcome(
   const v = shape.data;
   const candidate: VerifyResult = {
     kind: "verify",
-    converged: v.converged,
-    ...(v.findingDispositions !== undefined
-      ? { findingDispositions: v.findingDispositions }
-      : {}),
-    ...(v.fixMarkedFindingIdentityKeys !== undefined
-      ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
-      : {}),
-    ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
-    ...(v.threadsToResolve !== undefined
-      ? { threadsToResolve: v.threadsToResolve }
-      : {}),
-    ...(v.deferredIssueUrls !== undefined
-      ? { deferredIssueUrls: v.deferredIssueUrls }
-      : {}),
-    ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
-    ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
+    ...attachSanitizedFindingFamilies(
+      {
+        converged: v.converged,
+        ...(v.findingDispositions !== undefined
+          ? { findingDispositions: v.findingDispositions }
+          : {}),
+        ...(v.fixMarkedFindingIdentityKeys !== undefined
+          ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
+          : {}),
+        ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
+        ...(v.threadsToResolve !== undefined
+          ? { threadsToResolve: v.threadsToResolve }
+          : {}),
+        ...(v.deferredIssueUrls !== undefined
+          ? { deferredIssueUrls: v.deferredIssueUrls }
+          : {}),
+        ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
+        ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
+      },
+      v.findingFamilies,
+    ),
   };
   if (!isValidVerifyResult(candidate)) {
     return { kind: "malformed", reason: "verify worker <verify> tag did not satisfy isValidVerifyResult guard" };

@@ -14,6 +14,7 @@
  */
 
 import type { FamilyModuleContext } from "./family/moduleDeclaration.js";
+import type { ResolvedModelRoute } from "./modelRoutes.js";
 import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
 
 // ───────────────────────────── step identifiers ─────────────────────────────
@@ -435,6 +436,14 @@ export interface QuotaWaitForResetEvent {
   readonly ts: string;
 }
 
+/**
+ * #684 R2: spawn-time monitor handle bookkeeping — persisted AT SPAWN so hang
+ * judge/kill/resume can rebuild the handle before the step completes.
+ */
+export interface WorkerMonitorSpawnedEvent {
+  readonly event: "worker_monitor_spawned";
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
@@ -444,7 +453,8 @@ export type LedgerBookkeepingEvent =
   | OnlineReviewFixCommittedEvent
   | OnlineReviewCiFailedEvent
   | OnlineReviewCiPendingEvent
-  | QuotaWaitForResetEvent;
+  | QuotaWaitForResetEvent
+  | WorkerMonitorSpawnedEvent;
 
 /**
  * The structured output of any worker step.
@@ -629,6 +639,22 @@ export interface WorkerSpec {
  * for a fate decision — it only搬运s them into the landing file the coder-fix
  * worker reads. DispatchContext keeps ONLY the identity keys + count.
  */
+/** Cross-round finding family synthesis (#711). */
+export interface FindingFamily {
+  readonly family: string;
+  readonly members: ReadonlyArray<string>;
+  readonly recurringFromRounds: ReadonlyArray<number>;
+  readonly brief: string;
+}
+
+/** Prior-round finding snapshot forwarded to judge workers (#711). */
+export interface PriorRoundFindingSnapshot {
+  readonly round: number;
+  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
+  readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
+  readonly blockingFindingIdentityKeys?: ReadonlyArray<string>;
+}
+
 /** Bot snapshot landing content for online review verify/fixer workers (#600). */
 /** Per-finding judgment from the verify worker (#600): fix / reject / defer. */
 export type OnlineReviewFindingAction = "fix" | "reject" | "defer";
@@ -719,6 +745,10 @@ export interface WorkerLandingPayload {
   readonly onlineReviewRound?: number;
   /** S10 fixer only: fix-marked finding identity keys from verify worker. */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /** S9 verify: prior online-review rounds from ledger (#711). */
+  readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
+  /** S10 fixer / S5 coder-fix: pattern briefs from prior judge worker (#711). */
+  readonly findingFamilies?: ReadonlyArray<FindingFamily>;
   /** S11 cleanup (#603): host-computed close set + durable pr_merged record. */
   readonly cleanupDispatch?: {
     readonly coveredIssues: ReadonlyArray<number>;
@@ -739,6 +769,8 @@ export interface WorkerLandingPayload {
  * (human answer, runner-observed gate failures) — never finding free-text content.
  */
 export interface DispatchContext {
+  /** The immutable route selected for this run, including its smoke records. */
+  readonly modelRoute?: ResolvedModelRoute;
   /**
    * The resident slice worktree (ADR 0017 commit truth). MANDATORY for
    * single-slice workers (coder/reviewer/ship S7); OPTIONAL for family-level
@@ -840,6 +872,11 @@ export interface DispatchContext {
   readonly repo?: string;
   /** 1-based online review round — runner enforces MAX_ONLINE_REVIEW_ROUNDS (#600). */
   readonly onlineReviewRound?: number;
+  /**
+   * Judge workers only: prior-round finding snapshots extracted from ledger (#711).
+   * Runner-owned data — not used for routing decisions.
+   */
+  readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */
@@ -877,6 +914,8 @@ export interface CmrResult {
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   /** Structured CMR findings for family-level suppression classification. */
   readonly findings?: readonly Finding[];
+  /** Cross-round grouped findings + recurring-class markers (#711). */
+  readonly findingFamilies?: readonly FindingFamily[];
   /** Worker outcome guard evidence artifacts referenced by this CMR verdict. */
   readonly evidencePaths?: readonly string[];
   // NOTE: a STUCK cmr worker is the WorkerResult-level `{kind:"escalated"}` case,
@@ -951,6 +990,8 @@ export interface VerifyResult {
   readonly terminalState?: VerifyWorkerTerminalState;
   /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
   readonly isRecheck?: boolean;
+  /** Cross-round grouped findings + recurring-class markers (#711). */
+  readonly findingFamilies?: ReadonlyArray<FindingFamily>;
 }
 
 /**
@@ -1218,6 +1259,55 @@ export interface LedgerEntry {
   readonly roundTriggerHeadOid?: string;
   /** Online review round re-trigger marker (#600 r25): ISO instant the round began. */
   readonly roundTriggerAt?: string;
+  /**
+   * Monitor handle for an in-flight external CLI worker (#684). Persisted so a
+   * resumed run can rebuild alive/idle/kill judgment without global pgrep.
+   */
+  readonly monitorHandle?: WorkerMonitorHandle;
+}
+
+/**
+ * Structured monitor handle produced atomically at CLI worker dispatch (#684).
+ * Alive/idle/kill operations must use this handle — never global process-name matching.
+ */
+export interface WorkerMonitorHandle {
+  readonly pid: number;
+  readonly logPath: string;
+  /** Pool / route identity (e.g. `grok/composer`, `zai/glm-5.2`). */
+  readonly poolId: string;
+  readonly completionSignal: string;
+  readonly stepId: string;
+  readonly dispatchedAt: string;
+  /**
+   * OS-level process start identity (e.g. `ps -o lstart=`) captured at spawn.
+   * Resume/kill must verify the live PID still matches this identity before any
+   * signal — otherwise a recycled PID would kill an unrelated process (#684 R1).
+   */
+  readonly instanceId: string;
+  /** Dispatch-scoped result sidecar; absent only on legacy persisted handles. */
+  readonly resultPath?: string;
+}
+
+/**
+ * Host-side CLI spawn input for the production monitored-dispatch path (#684).
+ * When a backend returns this from {@link Backend.resolveCliMonitorDispatch},
+ * the runner free function {@link dispatchWorkerWithMonitor} spawns via
+ * `dispatchMonitoredCliWorker` so the monitor handle is atomic with dispatch.
+ */
+export interface CliMonitorSpawnSpec {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly logDir: string;
+  readonly poolId: string;
+  readonly completionSignal: string;
+  readonly stepId: string;
+  readonly cwd?: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly logBasename?: string;
+  /** Dispatch-scoped result sidecar written by the host bridge. */
+  readonly resultPath?: string;
+  /** Injectable process identity reader for restricted/test environments. */
+  readonly readInstanceId?: (pid: number) => string | undefined;
 }
 
 /**
@@ -1334,6 +1424,12 @@ export interface ResumeState {
  * separately. Keep this minimal and stable — 9 slices layer on it.
  */
 export interface Backend {
+  /** Run the real model×pipe bash smoke and return the route with fresh records. */
+  smokeModelRoute(
+    route: ResolvedModelRoute,
+    currentCliVersions?: Readonly<Record<string, string | undefined>>,
+  ): Promise<ResolvedModelRoute>;
+  currentCliVersions?(route: ResolvedModelRoute): Promise<Readonly<Record<string, string | undefined>>>;
   /**
    * #255: detect resume residue for this issue at the very start of a run.
    *
@@ -1447,6 +1543,31 @@ export interface Backend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
+  /**
+   * #684 optional: when a worker runs as a host-side CLI process (opencode /
+   * grok / …), return the spawn input. The production
+   * {@link dispatchWorkerWithMonitor} path then uses `dispatchMonitoredCliWorker`
+   * so the monitor handle is generated atomically with real dispatch and can be
+   * persisted on the ledger for resume rebuild.
+   *
+   * Absent / returns undefined ⇒ container/legacy path (no CLI monitor handle).
+   */
+  resolveCliMonitorDispatch?(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): CliMonitorSpawnSpec | undefined;
+  /**
+   * #684: map a finished monitored CLI child into a {@link WorkerResult}.
+   * Required when {@link resolveCliMonitorDispatch} returns a spawn spec.
+   */
+  awaitMonitoredCliWorker?(
+    handle: WorkerMonitorHandle,
+    exitCode: number | null,
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult>;
   /** S7: push the resident slice branch (no PR, no merge). */
   push(worktree: WorktreeHandle): Promise<void>;
   /**
@@ -1536,6 +1657,7 @@ export interface WorkerOutcomeLandingFile {
 export interface AgentStepRunOptions {
   readonly fixFindingsLanding?: FixFindingsLandingFile;
   readonly onlineReviewLanding?: FixFindingsLandingFile;
+  readonly fixFocusLanding?: FixFindingsLandingFile;
   readonly outcomeLanding?: WorkerOutcomeLandingFile;
 }
 

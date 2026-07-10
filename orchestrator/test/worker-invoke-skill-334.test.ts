@@ -23,7 +23,8 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 // vi.mock hoisted. Literal key avoids TDZ/eval order issues with vitest transform.
 // Only mock child_process (this file never calls it directly); for launcher smoke
@@ -32,7 +33,7 @@ vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(() => ""),
 }));
 
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import {
@@ -67,6 +68,18 @@ const here = dirname(fileURLToPath(import.meta.url));
 const promptsDir = join(here, "..", "prompts");
 const imageDir = join(here, "..", "image");
 const soulsDir = join(here, "..", "image", "souls");
+
+const tempHomes: string[] = [];
+
+function cleanupTempHomes(): void {
+  while (tempHomes.length > 0) {
+    const home = tempHomes.pop();
+    if (home !== undefined) rmSync(home, { recursive: true, force: true });
+  }
+}
+
+afterEach(cleanupTempHomes);
+afterAll(cleanupTempHomes);
 
 // ─── (1) RealBackend.boxConfig drops the runtime skillsMount (#334) ───────────
 
@@ -113,6 +126,8 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
   };
 
   function makeBackend(): StubBackend {
+    const home = mkdtempSync(join(tmpdir(), "rb-home-334-"));
+    tempHomes.push(home);
     return new StubBackend({
       sourceRepo: "/tmp/source",
       remote: "https://github.com/owner/name.git",
@@ -121,6 +136,8 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
       imageName: "ming-orchestrator-coder:latest",
       promptsDir,
       soulsDir,
+      // #748: construction resolves paths under home; keep off real $HOME.
+      home,
     });
   }
 
@@ -472,6 +489,10 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
 
 /** A fake backend that records dispatch + drives a one-round fix loop. */
 class ReviewWorkerBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly dispatched: string[] = [];
   readonly specs: WorkerSpec[] = [];
   readonly ctxs: DispatchContext[] = [];

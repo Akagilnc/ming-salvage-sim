@@ -44,6 +44,10 @@ const WORKTREE: WorktreeHandle = {
 
 /** Base Backend that satisfies all methods with happy defaults (override per test). */
 class BaseBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   // #255: fresh-run defaults (this suite tests error edges, not resume).
   async findResumeState(): Promise<undefined> {
     return undefined;

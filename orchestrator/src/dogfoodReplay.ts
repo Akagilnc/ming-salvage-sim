@@ -24,6 +24,7 @@ import {
   applyTightRoutePolicy,
   cmrLegAccountingFailure,
   resolveRouteModels,
+  smokeRouteModels,
   type ModelRouteEnv,
 } from "./modelRoutes.js";
 import { runOrchestrator } from "./runner.js";
@@ -416,6 +417,10 @@ class DogfoodSingleSliceBackend implements Backend {
     private readonly reviewerOutputs: ReadonlyArray<StepOutput> = [],
     private readonly coderOutputs: ReadonlyArray<StepOutput> = [],
   ) {}
+
+  async smokeModelRoute(route: import("./modelRoutes.js").ResolvedModelRoute) {
+    return smokeRouteModels(route, async () => ({ cliVersion: "dogfood" }));
+  }
 
   async findResumeState(): Promise<ResumeState | undefined> {
     return this.resumeState;
