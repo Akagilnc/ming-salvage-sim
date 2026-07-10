@@ -6163,7 +6163,7 @@ class GameDB:
             self.conn.commit()
         return changes
 
-    def buildings_report(self, region_id: str = "") -> str:
+    def buildings_report(self, region_id: str = "", qualitative: bool = False) -> str:
         """月末奏报 / web 用建筑盘面摘要。region_id 为空取全国。"""
         if region_id:
             rows = self.conn.execute(
@@ -6178,10 +6178,26 @@ class GameDB:
         lines: List[str] = []
         for r in rows:
             metric = str(r["output_metric"])
-            if metric:
+            if metric in ("民心", "皇威") and qualitative:
+                amount = int(r["output_amount"] or 0)
+                effect = "略有裨益" if amount < 10 else "颇有裨益" if amount < 30 else "有显著裨益"
+                out = f"对{metric}{effect}"
+            elif metric:
                 out = f"产出{metric}{r['output_amount']}"
             else:
                 out = "无结算产出"
+            if qualitative:
+                level = ("初设" if int(r["level"]) <= 1 else "成形" if int(r["level"]) == 2 else
+                         "完备" if int(r["level"]) == 3 else "宏整" if int(r["level"]) == 4 else "巨构")
+                condition = ("残损" if int(r["condition"]) < 20 else "失修" if int(r["condition"]) < 40 else
+                             "尚可" if int(r["condition"]) < 60 else "完好" if int(r["condition"]) < 80 else "坚固")
+                risk = ("低" if int(r["risk"]) < 20 else "中" if int(r["risk"]) < 50 else
+                        "偏高" if int(r["risk"]) < 80 else "极高")
+                lines.append(
+                    f"{r['name']}（{r['category']}·{r['region_id']}）规模{level}，"
+                    f"{condition}，维护{r['maintenance']}{MONEY_UNIT}/{TURN_UNIT}，风险{risk}，{out}。{r['status']}"
+                )
+                continue
             lines.append(
                 f"{r['name']}（{r['category']}·{r['region_id']}）等级{r['level']}，"
                 f"完好{r['condition']}，维护{r['maintenance']}{MONEY_UNIT}/{TURN_UNIT}，"
@@ -6217,7 +6233,7 @@ class GameDB:
             for r in rows
         ]
 
-    def building_detail(self, name_or_id: str) -> str:
+    def building_detail(self, name_or_id: str, qualitative: bool = False) -> str:
         key = (name_or_id or "").strip()
         row = self.conn.execute(
             "SELECT * FROM buildings WHERE id = ? OR name = ?", (key, key)
@@ -6229,7 +6245,24 @@ class GameDB:
         if row is None:
             raise ValueError(f"未找到建筑 '{name_or_id}'")
         metric = str(row["output_metric"])
-        out = f"产出{metric}{row['output_amount']}/{TURN_UNIT}" if metric else "无结算产出"
+        if metric in ("民心", "皇威") and qualitative:
+            amount = int(row["output_amount"] or 0)
+            effect = "略有裨益" if amount < 10 else "颇有裨益" if amount < 30 else "有显著裨益"
+            out = f"对{metric}{effect}"
+        else:
+            out = f"产出{metric}{row['output_amount']}/{TURN_UNIT}" if metric else "无结算产出"
+        if qualitative:
+            level = ("初设" if int(row["level"]) <= 1 else "成形" if int(row["level"]) == 2 else
+                     "完备" if int(row["level"]) == 3 else "宏整" if int(row["level"]) == 4 else "巨构")
+            condition = ("残损" if int(row["condition"]) < 20 else "失修" if int(row["condition"]) < 40 else
+                         "尚可" if int(row["condition"]) < 60 else "完好" if int(row["condition"]) < 80 else "坚固")
+            risk = ("低" if int(row["risk"]) < 20 else "中" if int(row["risk"]) < 50 else
+                    "偏高" if int(row["risk"]) < 80 else "极高")
+            return (
+                f"{row['name']}（{row['category']}，{row['region_id']}，{row['origin']}）："
+                f"规模{level}，{condition}，维护{row['maintenance']}{MONEY_UNIT}/{TURN_UNIT}，风险{risk}，{out}。\n"
+                f"{row['status']}"
+            )
         return (
             f"{row['name']}（{row['category']}，{row['region_id']}，{row['origin']}）："
             f"等级{row['level']}，完好{row['condition']}，"

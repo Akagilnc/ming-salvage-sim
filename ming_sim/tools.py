@@ -69,6 +69,28 @@ def _progress_band(value: object) -> str:
     return "未见起色" if n < 20 else "略有起色" if n < 40 else "进展过半" if n < 60 else "进展顺利" if n < 80 else "近于收束"
 
 
+def _qualitative_stop_condition(raw: object) -> str:
+    """把承诺停止条件转成大臣可读的定性提示，保留钱粮条件的可数性。"""
+    try:
+        parsed = json.loads(str(raw or "")) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        parsed = {}
+    if not isinstance(parsed, dict):
+        return "（条件已存档）"
+    parts = []
+    for key, condition in parsed.items():
+        key_text = str(key)
+        value_text = str(condition)
+        if key_text.startswith("character.") and key_text.endswith(".loyalty"):
+            name = key_text[len("character."):-len(".loyalty")]
+            parts.append(f"{name}忠诚已达较高水准")
+        elif any(metric in key_text for metric in ("民心", "皇威", "public_support", "unrest", "satisfaction")):
+            parts.append(f"{key_text}达到所定档位")
+        else:
+            parts.append(f"{key_text}{value_text}")
+    return "、".join(parts) or "（条件未详）"
+
+
 def _commitment_tool_fields(db, state, row) -> str:
     keys = row.keys() if hasattr(row, "keys") else []
     commitment_kind = str(row["commitment_kind"] if "commitment_kind" in keys else "").strip()
@@ -78,7 +100,7 @@ def _commitment_tool_fields(db, state, row) -> str:
 
     progress = commitment_progress_payload(db, state, row) or {}
     progress_text = commitment_display_text(progress, row) if progress else "（暂无进展）"
-    stop_condition = _compact_json_text(row["stop_condition"] if "stop_condition" in keys else "")
+    stop_condition = _qualitative_stop_condition(row["stop_condition"] if "stop_condition" in keys else "")
     try:
         end_turn = int(row["end_turn"] if "end_turn" in keys else 0)
     except (TypeError, ValueError):
@@ -177,12 +199,12 @@ def build_minister_tools(character: Character, context: CourtContext,
 
     def list_buildings() -> str:
         """查看全国在册建筑（火炮厂、矿厂、常平仓、边堡、织造局等）的等级、完好、维护费与产出。"""
-        return context.db.buildings_report()
+        return context.db.buildings_report(qualitative=True)
 
     def inspect_building(building_name: str) -> str:
         """查看某座建筑的类别、等级、完好、维护费、风险与产出。"""
         try:
-            return context.db.building_detail(building_name)
+            return context.db.building_detail(building_name, qualitative=True)
         except ValueError as e:
             return f"未找到建筑 '{building_name}'。可先调 list_buildings 看建筑列表。错误：{e}"
 

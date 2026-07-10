@@ -310,7 +310,13 @@ def build_building_brief(context: CourtContext) -> str:
 
     lines = []
     for r in rows:
-        out = f"·产{r['output_metric']}{int(r['output_amount'] or 0)}" if r["output_metric"] else ""
+        metric = str(r["output_metric"] or "")
+        if metric in ("民心", "皇威"):
+            amount = int(r["output_amount"] or 0)
+            effect = "略有裨益" if amount < 10 else "颇有裨益" if amount < 30 else "有显著裨益"
+            out = f"·对{metric}{effect}"
+        else:
+            out = f"·产{metric}{int(r['output_amount'] or 0)}" if metric else ""
         lines.append(
             f"{r['name']}（{r['category']}·{r['region_name']}）"
             f"Lv档{building_band('level', r['level'])}，完好{building_band('condition', r['condition'])}{out}"
