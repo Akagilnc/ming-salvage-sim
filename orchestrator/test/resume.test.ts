@@ -2519,11 +2519,8 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(parked.status).toBe("escalate");
     expect(parked.status).not.toBe("error");
     expect(backend.dispatchSpecs.map((s) => s.id)).toEqual(["S12"]);
-    expect(
-      parked.stepLedger.some(
-        (e) => e.step === "S8" && (e as { handoffStatus?: string }).handoffStatus === "error",
-      ),
-    ).toBe(false);
+    // CodeRabbit R3: in-memory S8 rows may omit handoffStatus — assert no S8 at all.
+    expect(parked.stepLedger.some((e) => e.step === "S8")).toBe(false);
     expect(
       parked.stepLedger.some(
         (e) =>
@@ -2681,13 +2678,8 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
       const parked = await runOrchestrator({ issueNumber: 255, backend });
       expect(parked.status).toBe("escalate");
       expect(parked.stopSummary?.summary ?? "").toMatch(/ci_pending/);
-      expect(
-        parked.stepLedger.some(
-          (e) =>
-            e.step === "S8" &&
-            (e as { handoffStatus?: string }).handoffStatus === "escalate",
-        ),
-      ).toBe(false);
+      // CodeRabbit R3: park must leave no S8 row (not just no tagged escalate).
+      expect(parked.stepLedger.some((e) => e.step === "S8")).toBe(false);
       expect(
         parked.stepLedger.some(
           (e) =>
