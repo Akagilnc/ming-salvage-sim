@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { runFamily } from "../../src/family/runner.js";
 import { recordFamilyEscalationAnswered } from "../../src/family/ledger.js";
+import { smokeRouteModels } from "../../src/modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   Backend,
@@ -59,6 +60,9 @@ afterEach(() => {
 });
 
 class UnusedChildBackend implements Backend {
+  async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
