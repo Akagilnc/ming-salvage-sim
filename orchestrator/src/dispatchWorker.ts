@@ -45,6 +45,7 @@ import {
   routeSmokeFailure,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
+import { modelFamilyForSlug } from "./modelRegistry.js";
 import {
   HangWithLivePoolError,
   SelfReportedRelayError,
@@ -91,6 +92,14 @@ import type {
 const FIX_FINDINGS_LANDING_FILE = ".orchestrator-fix-findings.json";
 
 const pendingTelemetryEnvironmentStamps = new Set<string>();
+
+/**
+ * The worker host controls how the host CLI feeds a selected Coder-Rec baton.
+ * Claude models use the Claude host; every other selected baton uses Codex.
+ */
+function workerHostForModel(model: string): "claude" | "codex" {
+  return modelFamilyForSlug(model) === "claude" ? "claude" : "codex";
+}
 
 function scheduleTelemetryEnvironmentStamp(
   ledgerDir: string | undefined,
@@ -407,8 +416,7 @@ export function stepSpecToWorkerSpec(
     id: spec.id,
     kind,
     role: spec.role,
-    // v0.1 single image, Claude host (its sub Agents do the cross-model fan-out).
-    host: "claude",
+    host: workerHostForModel(spec.model),
     session,
     contextRetention: retentionForKind(kind),
     skill: SKILL_FOR_KIND[kind],
