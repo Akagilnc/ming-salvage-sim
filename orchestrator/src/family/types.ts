@@ -183,7 +183,8 @@ export interface FamilyLedgerEntry {
     | "escalation_answered"
     | "admission_skipped"
     | "online_review_fix_committed"
-    | "online_review_round_retrigger";
+    | "online_review_round_retrigger"
+    | "worker_dispatched";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -235,7 +236,10 @@ export interface FamilyLedgerEntry {
     | "escalation_answered"
     | "admission_skipped"
     | "online_review_fix_committed"
-    | "online_review_round_retrigger";
+    | "online_review_round_retrigger"
+    | "worker_dispatched";
+  /** Monitor handle persisted at family-worker spawn time (#684). */
+  readonly monitorHandle?: WorkerMonitorHandle;
   /**
    * Which phase this PHASE-LEVEL event belongs to. Set on `aborted` entries and
    * on `cmr_passed` audit entries; `merged` / `reconciled` entries omit it because
