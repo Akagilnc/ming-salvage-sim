@@ -46,6 +46,28 @@ _ARMY_PAY_SOURCE_DELTA_FIELDS = frozenset((
 _COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
 
 
+def _public_support_description(value: object) -> str:
+    try:
+        score = int(value or 0)
+    except (TypeError, ValueError):
+        score = 0
+    return (
+        "民心稳固" if score >= 80 else "民心尚可" if score >= 60 else
+        "民心起伏" if score >= 40 else "民心偏弱" if score >= 20 else "民心堪忧"
+    )
+
+
+def _unrest_description(value: object) -> str:
+    try:
+        score = int(value or 0)
+    except (TypeError, ValueError):
+        score = 0
+    return (
+        "动乱已炽" if score >= 80 else "动乱升高" if score >= 60 else
+        "动乱不安" if score >= 40 else "动乱有患" if score >= 20 else "动乱平静"
+    )
+
+
 class ProvinceFiscalTickOutcome(NamedTuple):
     region_id: str
     result: Any
@@ -4768,7 +4790,8 @@ class GameDB:
                 held = f"【已为{self.power_display_name(row['controlled_by'])}所据】"
             defense = f"、城防炮{int(row['cannon'])}门" if int(row["cannon"] or 0) > 0 else ""
             parts.append(
-                f"{row['name']}{held}：民心{row['public_support']}、动乱{row['unrest']}、"
+                f"{row['name']}{held}：{_public_support_description(row['public_support'])}、"
+                f"{_unrest_description(row['unrest'])}、"
                 f"粮食{row['grain_security']}万石、税{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}{defense}，{row['status']}"
             )
         return f"地区警讯：{'；'.join(parts)}。两京十三省账面{TURN_UNIT}税合计{format_money(monthly_amount(total_tax_value))}。"

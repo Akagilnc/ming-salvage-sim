@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from ming_sim.models import CourtContext
 from ming_sim.context import character_context_with_db
@@ -26,6 +27,21 @@ def test_region_brief_has_content(game):
     b = build_region_brief(_ctx(game))
     assert b                                    # 非空
     assert ("民心" in b or "动乱" in b)          # 含地区危情字段
+
+
+def test_region_brief_characterizes_abstract_scores_and_rejects_injected_values(game):
+    db, _state, _content = game
+    db.conn.execute(
+        "UPDATE regions SET public_support=13, unrest=87"
+    )
+    db.conn.commit()
+
+    rendered = build_region_brief(_ctx(game))
+
+    assert "民心13" not in rendered
+    assert "动乱87" not in rendered
+    assert any(label in rendered for label in ("民心低", "民心堪忧", "民心尚可", "民心稳固"))
+    assert any(label in rendered for label in ("动乱高", "动乱已炽", "动乱中等", "动乱低"))
 
 
 def test_building_brief_has_content(game):
@@ -109,6 +125,36 @@ def test_minister_context_falls_back_for_character_without_dossier(game):
     assert "通用特征" in rendered
     assert minister.office in rendered
     assert minister.office_type in rendered
+
+
+def test_identity_bucket_selects_objective_faction_dossier(game):
+    db, _state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    faction = minister.faction
+    db.conn.execute(
+        "UPDATE factions SET agenda='守住漕运与军饷', satisfaction=90, leverage=90 WHERE name=?",
+        (faction,),
+    )
+    db.conn.commit()
+
+    minister.identity = 80
+    high = character_context_with_db(minister, db)
+    minister.identity = 40
+    middle = character_context_with_db(minister, db)
+    minister.identity = 10
+    low = character_context_with_db(minister, db)
+
+    assert "守住漕运与军饷" in high
+    assert "守住漕运与军饷" in middle
+    assert "守住漕运与军饷" not in low
+    assert "行为" not in low
+
+
+def test_north_star_sample_is_reviewable():
+    sample = Path("docs/minister-context-north-star-sample.md").read_text()
+    assert "同一问题" in sample
+    assert "改前" in sample and "改后" in sample
+    assert "对照结论" in sample
 
 
 def test_court_brief_keeps_countable_money_but_hides_abstract_scores(game):
