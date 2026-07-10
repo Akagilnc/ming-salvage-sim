@@ -2147,23 +2147,35 @@ export function parseCoderSelfReport(raw: unknown): SelfReportedCoder {
 const DEFAULT_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS = 60;
 
 /**
+ * Hard upper bound the resolver enforces. Sandcastle multiplies the idle
+ * seconds by 1e3 before feeding a signed 32-bit timer (see the
+ * WORKER_IDLE_TIMEOUT_SECONDS note above), so any override above 2_147_483
+ * would overflow that timer; the resolver treats such values as illegal and
+ * falls back to the default instead of relying on the operator to stay under
+ * the bound.
+ */
+const MAX_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS = 2_147_483;
+
+/**
  * #685 route-smoke idle budget — the per-model `sc.run` that proves a route can
  * invoke bash before a productive dispatch is spent on it.
  *
- * WHY 10s WAS NOT ENOUGH: the smoke drives the selected Sandcastle provider's
- * `codex exec` inside the container, and the FIRST token from that model has a
- * measured latency of 8–11s on a warm container (longer still under load). The
- * old hard-coded `idleTimeoutSeconds: 10` killed two consecutive W1-family runs
- * with a spurious "Agent idle for 10 seconds" before the model could emit
- * anything.
+ * The smoke covers EVERY route leg (codex, claude, opencode, …), not just one:
+ * each unique model×pipe entry gets its own smoke run, and the resolved budget
+ * is applied as the `idleTimeoutSeconds` ceiling for all of them. The
+ * first-token latency evidence was measured on container `codex exec` — the
+ * worst case observed (8–11s to first token on a warm container, longer under
+ * load) — which is the motivating example, not a special case. The old
+ * hard-coded `idleTimeoutSeconds: 10` killed two consecutive W1-family runs
+ * with a spurious "Agent idle for 10 seconds" before that model could emit
+ * anything; the same ceiling guards the claude/opencode/… legs too.
  *
  * COST IS ONE-TIME: a passed smoke is cached by sandbox fingerprint and reused
  * for the whole run, so a generous one-time wait beats re-failing the run.
  *
- * Tunable via `ORCHESTRATOR_SMOKE_IDLE_SECONDS` (positive integer); illegal or
- * missing values fall back to the default. Keep any override well under
- * 2_147_483 so `value * 1000` stays inside a signed 32-bit timer (see the
- * WORKER_IDLE_TIMEOUT_SECONDS note above — Sandcastle multiplies by 1e3).
+ * Tunable via `ORCHESTRATOR_SMOKE_IDLE_SECONDS` (a positive integer within the
+ * 32-bit-safe bound above); illegal, missing, blank, non-integer, or
+ * out-of-range values all fall back to the default.
  */
 export function resolveRouteSmokeIdleTimeoutSeconds(
   envValue: string | undefined,
@@ -2172,19 +2184,15 @@ export function resolveRouteSmokeIdleTimeoutSeconds(
   const trimmed = envValue.trim();
   if (trimmed === "") return DEFAULT_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS;
   const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 1) {
+  if (
+    !Number.isInteger(parsed) ||
+    parsed < 1 ||
+    parsed > MAX_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS
+  ) {
     return DEFAULT_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS;
   }
   return parsed;
 }
-
-/**
- * Resolved once at module load from `ORCHESTRATOR_SMOKE_IDLE_SECONDS`; consumed
- * by {@link RealBackend.smokeModelRoute} as the `sc.run` idle budget.
- */
-export const ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS = resolveRouteSmokeIdleTimeoutSeconds(
-  process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
-);
 
 export class RealBackend implements Backend {
   private readonly opts: RealBackendOptions;
@@ -2257,7 +2265,12 @@ export class RealBackend implements Backend {
           cwd: this.workingRepo,
           promptFile: join(this.opts.promptsDir, "route-smoke.md"),
           maxIterations: 1,
-          idleTimeoutSeconds: ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS,
+          // Resolved per smokeModelRoute call (NOT cached at module load) so an
+          // in-process ORCHESTRATOR_SMOKE_IDLE_SECONDS change takes effect
+          // without a module reload.
+          idleTimeoutSeconds: resolveRouteSmokeIdleTimeoutSeconds(
+            process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
+          ),
           completionSignal: "ROUTE_SMOKE_COMPLETE",
           logging: {
             type: "file",

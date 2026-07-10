@@ -6,7 +6,6 @@ import {
   smokeRouteModels,
 } from "../src/modelRoutes.js";
 import {
-  ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS,
   resolveRouteSmokeIdleTimeoutSeconds,
 } from "../src/realBackend.js";
 import type {
@@ -189,23 +188,77 @@ describe("#685 route tool smoke", () => {
     expect(backend.calls).toEqual(["findResumeState"]);
   });
 
-  it("uses a 60s default idle budget for the route smoke when the env override is unset", () => {
-    expect(resolveRouteSmokeIdleTimeoutSeconds(undefined)).toBe(60);
-    expect(resolveRouteSmokeIdleTimeoutSeconds("")).toBe(60);
-    expect(resolveRouteSmokeIdleTimeoutSeconds("   ")).toBe(60);
-    // The exported constant is exactly the resolver applied to the live env, so
-    // whatever ambient value is present, default-or-override is honored.
-    expect(ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS).toBe(
-      resolveRouteSmokeIdleTimeoutSeconds(process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS),
-    );
+  it("resolves the idle budget through resolveRouteSmokeIdleTimeoutSeconds across every input branch", () => {
+    // Guard against external env pollution: the default branch is only honest
+    // if it holds even when the ambient env happens to carry the var. Save,
+    // unset, and restore around the whole matrix.
+    const saved = process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
+    delete process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
+    try {
+      // undefined / missing → default 60s
+      expect(resolveRouteSmokeIdleTimeoutSeconds(undefined)).toBe(60);
+      // blank / whitespace-only → default
+      expect(resolveRouteSmokeIdleTimeoutSeconds("")).toBe(60);
+      expect(resolveRouteSmokeIdleTimeoutSeconds("   ")).toBe(60);
+      // legal positive integers honored verbatim
+      expect(resolveRouteSmokeIdleTimeoutSeconds("1")).toBe(1);
+      expect(resolveRouteSmokeIdleTimeoutSeconds("25")).toBe(25);
+      expect(resolveRouteSmokeIdleTimeoutSeconds("120")).toBe(120);
+      // zero / negative → default (must be >= 1)
+      expect(resolveRouteSmokeIdleTimeoutSeconds("0")).toBe(60);
+      expect(resolveRouteSmokeIdleTimeoutSeconds("-5")).toBe(60);
+      // non-numeric → default
+      expect(resolveRouteSmokeIdleTimeoutSeconds("not-a-number")).toBe(60);
+      // decimal / non-integer → default
+      expect(resolveRouteSmokeIdleTimeoutSeconds("3.5")).toBe(60);
+      // super-large value above the 32-bit-safe bound → default (would overflow
+      // Sandcastle's value*1000 signed timer)
+      expect(resolveRouteSmokeIdleTimeoutSeconds("3000000")).toBe(60);
+      expect(
+        resolveRouteSmokeIdleTimeoutSeconds(String(Number.MAX_SAFE_INTEGER)),
+      ).toBe(60);
+      // the bound itself (2_147_483) is still accepted: value*1000 == INT32_MAX
+      expect(resolveRouteSmokeIdleTimeoutSeconds("2147483")).toBe(2147483);
+    } finally {
+      if (saved === undefined) {
+        delete process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
+      } else {
+        process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = saved;
+      }
+    }
   });
 
-  it("honors ORCHESTRATOR_SMOKE_IDLE_SECONDS and falls back to 60 on illegal values", () => {
-    expect(resolveRouteSmokeIdleTimeoutSeconds("25")).toBe(25);
-    expect(resolveRouteSmokeIdleTimeoutSeconds("120")).toBe(120);
-    expect(resolveRouteSmokeIdleTimeoutSeconds("0")).toBe(60);
-    expect(resolveRouteSmokeIdleTimeoutSeconds("-5")).toBe(60);
-    expect(resolveRouteSmokeIdleTimeoutSeconds("3.5")).toBe(60);
-    expect(resolveRouteSmokeIdleTimeoutSeconds("not-a-number")).toBe(60);
+  it("resolves ORCHESTRATOR_SMOKE_IDLE_SECONDS per call, not once at module load", () => {
+    // Locks the per-call resolution semantic: changing the env WITHIN the
+    // process and resolving again must reflect the new value. A module-load
+    // constant would freeze the first reading and fail this.
+    const saved = process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
+    try {
+      delete process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
+      expect(
+        resolveRouteSmokeIdleTimeoutSeconds(process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS),
+      ).toBe(60);
+
+      process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = "42";
+      expect(
+        resolveRouteSmokeIdleTimeoutSeconds(process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS),
+      ).toBe(42);
+
+      process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = "7";
+      expect(
+        resolveRouteSmokeIdleTimeoutSeconds(process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS),
+      ).toBe(7);
+
+      delete process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
+      expect(
+        resolveRouteSmokeIdleTimeoutSeconds(process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS),
+      ).toBe(60);
+    } finally {
+      if (saved === undefined) {
+        delete process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
+      } else {
+        process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = saved;
+      }
+    }
   });
 });
