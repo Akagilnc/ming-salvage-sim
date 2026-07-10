@@ -6,17 +6,17 @@ describe("#441 test route isolation", () => {
     expect(activeModelRoute()).toMatchObject({
       routeName: "normal",
       slots: {
-        coder: "sonnet",
-        reviewer: "gpt-5.5",
-        coderFix: "sonnet",
+        coder: "gpt-5.6-terra",
+        reviewer: "gpt-5.6-sol",
+        coderFix: "gpt-5.6-terra",
         ship: "sonnet",
         merger: "sonnet",
-        cmrCompleteness: "opus",
-        cmrCorrectness: "opus",
+        cmrCompleteness: "gpt-5.6-terra",
+        cmrCorrectness: "gpt-5.6-terra",
       },
       legCollections: {
         cmrReview: [
-          { family: "codex", slug: "gpt-5.5" },
+          { family: "codex", slug: "gpt-5.6-sol" },
           { family: "claude", slug: "opus" },
           { family: "agy", slug: "agy" },
         ],
@@ -28,14 +28,14 @@ describe("#441 test route isolation", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
 
     expect(activeModelRoute().legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
-      "gpt-5.5",
+      "gpt-5.6-sol",
       "agy",
     ]);
     expect(
-      cmrLegAccountingFailure({ successfulLegs: ["gpt-5.5", "agy"] }),
+      cmrLegAccountingFailure({ successfulLegs: ["gpt-5.6-sol", "agy"] }),
     ).toBeUndefined();
     expect(
-      cmrLegAccountingFailure({ successfulLegs: ["gpt-5.5", "agy", "opus"] }),
+      cmrLegAccountingFailure({ successfulLegs: ["gpt-5.6-sol", "agy", "opus"] }),
     ).toMatch(/not declared.*opus/i);
   });
 });

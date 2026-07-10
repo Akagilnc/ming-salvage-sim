@@ -88,7 +88,7 @@ describe("#685 route tool smoke", () => {
 
     expect(Object.values(smoked.smoke).every((status) => status.state === "passed")).toBe(true);
     expect(routeSmokeFailure(smoked)).toBeUndefined();
-    expect(smoked.smoke["coder:sonnet"]).toMatchObject({
+    expect(smoked.smoke["coder:gpt-5.6-terra"]).toMatchObject({
       state: "passed",
       cliVersion: "cli-1",
     });
@@ -164,7 +164,7 @@ describe("#685 route tool smoke", () => {
 
   it("rejects tight-route violations before querying versions or starting smoke", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "codex-tight");
-    vi.stubEnv("ORCHESTRATOR_REVIEWER_MODEL", "gpt-5.5");
+    vi.stubEnv("ORCHESTRATOR_REVIEWER_MODEL", "gpt-5.6-sol");
     const backend = new RoutePolicyOrderingBackend();
 
     const result = await runOrchestrator({ issueNumber: 685, backend });
