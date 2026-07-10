@@ -1,4 +1,5 @@
 import React from "react";
+import { marked, type Token } from "marked";
 import { ExtractionView } from "./components/extraction";
 import type { Army, GameState, LegacyEffect, MapNode } from "./types";
 
@@ -322,105 +323,62 @@ export function labelClass(key: string): string {
   if (at < 0) return key;
   return `${key.slice(0, at)}（${labelRegion(key.slice(at + 1))}）`;
 }
-const markdownEscapablePunctuation = new Set([...`!"#$%&'()*+,-./:;<=>?@[\\]^_\`{|}~`]);
-
-const unescapeMarkdownPunctuation = (text: string): string => {
-  let result = "";
-  for (let index = 0; index < text.length; index += 1) {
-    const character = text[index];
-    const escapedCharacter = text[index + 1];
-    if (character === "\\" && escapedCharacter !== undefined && markdownEscapablePunctuation.has(escapedCharacter)) {
-      result += escapedCharacter;
-      index += 1;
-      continue;
-    }
-    result += character;
-  }
-  return result;
+const inlineTokens = (tokens: Token[]): string => {
+  let previousRaw = "";
+  return tokens.map((token) => {
+    const sharesAnOpeningDelimiter = (token.type === "em" || token.type === "strong")
+      && token.raw.startsWith(token.raw[0])
+      && previousRaw.endsWith(token.raw[0]);
+    const underscoreInsideAWord = (token.type === "em" || token.type === "strong")
+      && token.raw.startsWith("_")
+      && /[\p{L}\p{N}\p{M}_]$/u.test(previousRaw);
+    const rendered = sharesAnOpeningDelimiter || underscoreInsideAWord ? token.raw : tokenText(token);
+    previousRaw = token.raw;
+    return rendered;
+  }).join("");
 };
 
-const stripOrganicMarkdownFromPlainText = (text: string): string => {
-  const withoutBlockPrefixes = text.split("\n").map((line) => {
-    let current = line;
-    let next: string;
-    do {
-      next = current
-        .replace(/^[ \t]{0,3}#{1,6}[ \t]+/, "")
-        .replace(/^[ \t]{0,3}>[ \t]?/, "")
-        .replace(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/, "");
-      if (next === current) break;
-      current = next;
-    } while (true);
-    return current;
-  }).join("\n");
+const terminalNewlines = (raw: string) => raw.match(/\n+$/)?.[0] || "";
 
-  let withoutLinks = "";
-  let linkTextStart = 0;
-  for (let index = 0; index < withoutBlockPrefixes.length; index += 1) {
-    if (withoutBlockPrefixes[index] !== "[") continue;
-    const labelEnd = withoutBlockPrefixes.indexOf("](", index + 1);
-    if (labelEnd < 0) continue;
-    let depth = 1;
-    let urlEnd = labelEnd + 2;
-    while (urlEnd < withoutBlockPrefixes.length && depth > 0) {
-      if (withoutBlockPrefixes[urlEnd] === "\\") {
-        urlEnd += 2;
-        continue;
-      }
-      if (withoutBlockPrefixes[urlEnd] === "(") depth += 1;
-      if (withoutBlockPrefixes[urlEnd] === ")") depth -= 1;
-      urlEnd += 1;
+const blockTokens = (tokens: Token[]): string => tokens.map((token) => (
+  token.type === "space" ? tokenText(token) : `${tokenText(token)}${terminalNewlines(token.raw)}`
+)).join("");
+
+const tokenText = (token: Token): string => {
+  switch (token.type) {
+    case "space":
+      return token.raw;
+    case "codespan":
+    case "code":
+    case "escape":
+    case "text":
+    case "html":
+      return token.text;
+    case "br":
+      return "\n";
+    case "strong":
+    case "em":
+    case "del":
+    case "link":
+    case "image":
+    case "paragraph":
+    case "heading":
+      return inlineTokens(token.tokens || []);
+    case "blockquote":
+      return blockTokens(token.tokens || []);
+    case "list":
+      return token.items.map((item: { tokens: Token[] }) => blockTokens(item.tokens)).join("\n");
+    case "list_item":
+      return blockTokens(token.tokens || []);
+    case "table": {
+      const table = token as { header: { tokens: Token[] }[]; rows: { tokens: Token[] }[][] };
+      return [table.header, ...table.rows]
+        .map((row) => row.map((cell) => inlineTokens(cell.tokens)).join(" "))
+        .join("\n");
     }
-    if (depth !== 0) continue;
-    withoutLinks += withoutBlockPrefixes.slice(linkTextStart, index);
-    withoutLinks += withoutBlockPrefixes.slice(index + 1, labelEnd);
-    linkTextStart = urlEnd;
-    index = urlEnd - 1;
+    default:
+      return "text" in token ? String(token.text) : token.raw;
   }
-  withoutLinks += withoutBlockPrefixes.slice(linkTextStart);
-
-  const withoutEmphasis = withoutLinks
-    .replace(/(?<!\\)(\*\*)(?=\S)([^\n]*?\S)(?<!\\)\1/gu, "$2")
-    .replace(/(?<![\\\p{L}\p{N}\p{M}_])(__)(?=\S)([^\n]*?\S)(?<!\\)\1(?![\p{L}\p{N}\p{M}_])/gu, "$2")
-    .replace(/(?<!\\)(\*)(?=\S)([^\n]*?\S)(?<!\\)\1/gu, "$2")
-    .replace(/(?<![\\\p{L}\p{N}\p{M}_])(_)(?=\S)([^\n]*?\S)(?<!\\)\1(?![\p{L}\p{N}\p{M}_])/gu, "$2");
-
-  return unescapeMarkdownPunctuation(withoutEmphasis);
 };
 
-export const stripOrganicMarkdown = (text: string): string => {
-  let result = "";
-  let plainStart = 0;
-  let index = 0;
-  while (index < text.length) {
-    if (text[index] !== "`") {
-      index += 1;
-      continue;
-    }
-
-    let delimiterLength = 1;
-    while (text[index + delimiterLength] === "`") delimiterLength += 1;
-    let closingStart = index + delimiterLength;
-    while (closingStart < text.length) {
-      if (text[closingStart] !== "`") {
-        closingStart += 1;
-        continue;
-      }
-      let closingLength = 1;
-      while (text[closingStart + closingLength] === "`") closingLength += 1;
-      if (closingLength === delimiterLength) break;
-      closingStart += closingLength;
-    }
-    if (closingStart >= text.length) {
-      index += delimiterLength;
-      continue;
-    }
-
-    result += stripOrganicMarkdownFromPlainText(text.slice(plainStart, index));
-    result += text.slice(index + delimiterLength, closingStart);
-    index = closingStart + delimiterLength;
-    plainStart = index;
-  }
-
-  return result + stripOrganicMarkdownFromPlainText(text.slice(plainStart));
-};
+export const stripOrganicMarkdown = (text: string): string => blockTokens(marked.lexer(text));
