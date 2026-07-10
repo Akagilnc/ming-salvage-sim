@@ -606,13 +606,13 @@ export function classifyWorkerTerminal(
 }
 
 /**
- * True when free text mentions HTTP 429 as a status/code token — not GitHub
- * issue `#429` or path segments like `/429/foo`.
+ * True when free text names 429 in an HTTP-status context, not merely as an
+ * unrelated number such as a GitHub issue, path segment, or item identifier.
  */
 export function mentionsHttp429(reasonLower: string): boolean {
-  // Reject #429 (issue refs) and /429/ (path segments). Accept "429", " 429",
-  // "error:429", "(429)", "status=429", etc.
-  return /(?:^|[^#\w/])429(?:[^0-9]|$)/.test(reasonLower);
+  return /\b(?:http(?:\/\d+(?:\.\d+)?)?(?:\s+status(?:\s+code)?)?|status(?:\s+code)?|response\s+status)\s*(?:code\s*)?(?:is\s*)?(?:=|:)?\s*429\b/.test(
+    reasonLower,
+  );
 }
 
 /**
@@ -644,7 +644,7 @@ export function categoryFromReason(reason: string): TelemetryErrorCategory {
 
   // ── 429 / quota (QuotaWaitForResetError message: "quota wait for reset…") ─
   // Prefer explicit quota phrases; bare "limit" is too broad (iteration limit).
-  // Bare digit "429" must NOT match issue refs (#429) or path segments (/429/).
+  // A numeric 429 counts only when it is explicitly an HTTP-status token.
   if (
     mentionsHttp429(lower) ||
     lower.includes("quota wait for reset") ||

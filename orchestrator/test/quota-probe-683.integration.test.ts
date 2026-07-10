@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { dispatchWorkerWithMonitor } from "../src/dispatchWorker.js";
+import { workerResultFromMonitorSidecar } from "../src/cliMonitorHooks.js";
 import {
   handleIdleThreshold,
   QuotaWaitForResetError,
@@ -271,11 +272,10 @@ describe("#683 integration at the real monitored dispatch path", () => {
       },
       // No usable sidecar after mid-flight SIGTERM → empty-fallback, rewritten
       // to killed-by-signal. (A real completed sidecar would still win.)
-      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
-        kind: "failed",
-        reason:
-          "monitored CLI worker S2 exited null without a WorkerResult sidecar (pool=zai)",
-      }),
+      awaitMonitoredCliWorker: async (
+        handle: WorkerMonitorHandle,
+        exitCode: number | null,
+      ): Promise<WorkerResult> => workerResultFromMonitorSidecar(handle, exitCode),
     } as unknown as Backend;
 
     try {

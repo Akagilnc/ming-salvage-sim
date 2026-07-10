@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { dispatchWorkerWithMonitor } from "../src/dispatchWorker.js";
+import { workerResultFromMonitorSidecar } from "../src/cliMonitorHooks.js";
 import { resolveRouteModels, routeSmokeEntries } from "../src/modelRoutes.js";
 import {
   appendTelemetryRecord,
@@ -44,6 +45,7 @@ import type {
   Backend,
   CliMonitorSpawnSpec,
   DispatchContext,
+  WorkerMonitorHandle,
   WorkerResult,
   WorkerSpec,
 } from "../src/types.js";
@@ -310,6 +312,9 @@ describe("#786 telemetry pure helpers", () => {
     expect(
       categoryFromReason("failed reading /tmp/runs/429/ledger.json"),
     ).toBe("unclassified");
+    expect(categoryFromReason("processed item 429 of 500")).toBe(
+      "unclassified",
+    );
     // Real quota shapes still match.
     expect(categoryFromReason("rate limit 429 from provider")).toBe(
       "429-quota",
@@ -775,13 +780,12 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       }),
       // Correct semantics: mapper ALWAYS runs on signal exit. Empty-sidecar
       // fallback is rewritten to killed-by-signal for telemetry clustering.
-      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => {
+      awaitMonitoredCliWorker: async (
+        handle: WorkerMonitorHandle,
+        exitCode: number | null,
+      ): Promise<WorkerResult> => {
         mapperCalls += 1;
-        return {
-          kind: "failed",
-          reason:
-            "monitored CLI worker S2 exited null without a WorkerResult sidecar (pool=codex-5h)",
-        };
+        return workerResultFromMonitorSidecar(handle, exitCode);
       },
     } as unknown as Backend;
 
