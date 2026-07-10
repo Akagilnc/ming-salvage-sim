@@ -47,10 +47,10 @@ function materializeResumeState(fixture: ResumeStateFixture): ResumeState {
     ...fixture,
     ledger: fixture.ledger.map((entry) => ({
       ...entry,
-      sessionId: "fixture-session",
-      prompt_hash: "fixture-prompt",
-      branchHEAD: "fixture-head",
-      ts: "2026-07-01T00:00:00.000Z",
+      sessionId: entry.sessionId ?? "fixture-session",
+      prompt_hash: entry.prompt_hash ?? "fixture-prompt",
+      branchHEAD: entry.branchHEAD ?? "fixture-head",
+      ts: entry.ts ?? "2026-07-01T00:00:00.000Z",
     })),
   };
 }
