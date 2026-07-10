@@ -653,7 +653,7 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
 // derive the model from the spec via the SAME validated `modelIdForSlug` mapping the
 // single-slice ship path uses, NOT a hardcoded id. The pre-fix family ship path pinned
 // `claude-sonnet-4-5` (a hardcoded constant), bypassing modelIdForSlug AND diverging
-// from the verified `sonnet → claude-sonnet-4-6` mapping `familyShipWorkerSpec().model`
+// from the verified `sonnet → claude-sonnet-5` mapping `familyShipWorkerSpec().model`
 // resolves to. The pure `agentForSpec` seam is the load-bearing point both runs build
 // their agent through — assert it directly (mirrors how modelIdForSlug/soulForStep are
 // the testable seams on the single-slice path).
@@ -676,13 +676,13 @@ describe("#336 family workers — model id is spec-derived via modelIdForSlug (c
     });
   }
 
-  it("the family SHIP worker resolves to claude-sonnet-4-6 (the 'sonnet' slug), NOT a hardcoded claude-sonnet-4-5", () => {
+  it("the family SHIP worker resolves to claude-sonnet-5 (the 'sonnet' slug), NOT a hardcoded claude-sonnet-4-5", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const spec = familyShipWorkerSpec();
     expect(spec.model).toBe("sonnet");
     const model = modelOfAgent(seam().agent(spec));
     expect(model).toBe(modelIdForSlug("sonnet"));
-    expect(model).toBe("claude-sonnet-4-6");
+    expect(model).toBe("claude-sonnet-5");
     // Regression guard for the r7 bug: never the old hardcoded id.
     expect(model).not.toBe("claude-sonnet-4-5");
   });

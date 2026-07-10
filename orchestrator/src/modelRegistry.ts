@@ -111,7 +111,15 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
   },
   sonnet: {
     provider: "claudeCode",
-    model: "claude-sonnet-4-6",
+    // #789: roster coder id `sonnet-5` → slug `sonnet` must resolve to Sonnet 5
+    // (claude-sonnet-5), matching docs/CODER_ROSTER.md — not the prior 4.6 pin.
+    model: "claude-sonnet-5",
+    family: "claude",
+  },
+  // #789 Coder-Rec roster: Claude-pool small-fix backup (same claudeCode pipe).
+  haiku: {
+    provider: "claudeCode",
+    model: "claude-haiku-4-5",
     family: "claude",
   },
   opus: {
