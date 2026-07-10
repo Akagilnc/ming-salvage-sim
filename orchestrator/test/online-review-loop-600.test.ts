@@ -5863,7 +5863,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("#743 R3: family resume fails closed when a bare recheck omits persisted fixer authorization", async () => {
+  it("#743 R4: family resume fails closed when a legacy key-only marker is echoed without thread authorization", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     const fixSha = "fixsha1111111111111111111111111111111111";
@@ -5885,7 +5885,8 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
               output: {
                 kind: "verify",
                 converged: true,
-                fixMarkedFindingIdentityKeys: [],
+                isRecheck: true,
+                fixMarkedFindingIdentityKeys: ["finding:r3"],
               },
             };
           }
@@ -5911,9 +5912,6 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
           familyHeadAfter: fixSha,
           pr: offlineShip.pr,
           fixMarkedFindingIdentityKeys: ["finding:r3"],
-          fixMarkedFindingThreads: [
-            { identityKey: "finding:r3", threadId: "thread:r3" },
-          ],
         },
       );
       const result = await runFamilyOnlineReviewLoop({
@@ -5931,9 +5929,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
       expect(backend.verifyLandings[0]?.fixMarkedFindingIdentityKeys).toEqual([
         "finding:r3",
       ]);
-      expect(backend.verifyLandings[0]?.fixMarkedFindingThreads).toEqual([
-        { identityKey: "finding:r3", threadId: "thread:r3" },
-      ]);
+      expect(backend.verifyLandings[0]?.fixMarkedFindingThreads).toEqual([]);
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
