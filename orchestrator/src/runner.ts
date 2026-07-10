@@ -77,6 +77,11 @@ import {
 } from "./botPolling.js";
 import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetry.js";
 import {
+  isQuotaWaitForResetError,
+  QuotaWaitForResetError,
+  type QuotaWaitForResetLedgerEvent,
+} from "./quotaProbe.js";
+import {
   docReleasePathsFromCommit,
   isPrMergedMarker,
   offlineAutoMergeAllowUnverifiedDocPaths,
@@ -446,6 +451,130 @@ function answerPayload(
 
 function isBookkeepingEntry(entry: LedgerEntry): boolean {
   return entry.event != null;
+}
+
+/**
+ * #683 — latest durable marker is a quota wait park. Resume re-enters the
+ * parked step (not S8(error)). Same family as `online_review_ci_pending` parks.
+ */
+function sliceQuotaWaitPending(
+  ledger: ReadonlyArray<{
+    readonly step?: string;
+    readonly event?: string;
+  }>,
+): StepId | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.event === "quota_wait_for_reset") {
+      const step = entry.step;
+      if (
+        step === "S2" ||
+        step === "S3" ||
+        step === "S5" ||
+        step === "S6" ||
+        step === "S7" ||
+        step === "S9" ||
+        step === "S10" ||
+        step === "S11" ||
+        step === "S12"
+      ) {
+        return step;
+      }
+      return "S2";
+    }
+    // Any newer executable agent/ship progress clears the park.
+    if (
+      entry.event === undefined &&
+      (entry.step === "S2" ||
+        entry.step === "S3" ||
+        entry.step === "S5" ||
+        entry.step === "S6" ||
+        entry.step === "S7" ||
+        entry.step === "S9" ||
+        entry.step === "S10" ||
+        entry.step === "S11" ||
+        entry.step === "S12")
+    ) {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * #683 park: 429/quota wall → status escalate (resumable), not S8(error).
+ * Mirror CI-pending park: ledger marker + stopSummary, no sticky failure.
+ */
+async function parkQuotaWaitForReset(opts: {
+  readonly step: StepId;
+  readonly err: QuotaWaitForResetError;
+  readonly ledger: LedgerEntry[];
+  readonly stateDir: string | undefined;
+  readonly sessionId: string;
+  readonly backend: Backend;
+  readonly deferredFindings: ReadonlyArray<Finding>;
+  readonly resolveBranchHEAD: () => Promise<string>;
+  readonly hashPrompt: (
+    promptFile: string | undefined,
+    step: StepId,
+  ) => Promise<string>;
+}): Promise<RunResult> {
+  const { err, step, ledger, stateDir, sessionId, backend, deferredFindings } =
+    opts;
+  const ledgerEntry: QuotaWaitForResetLedgerEvent =
+    err.applied.ledgerEntry ?? {
+      event: "quota_wait_for_reset",
+      pool: err.pool,
+      reason: err.disposition.reason,
+      step,
+      ts: new Date().toISOString(),
+      ...(err.disposition.resetAt !== undefined
+        ? { resetAt: err.disposition.resetAt.toISOString() }
+        : {}),
+    };
+  const marker: LedgerEntry = {
+    step: ledgerEntry.step ?? step,
+    event: "quota_wait_for_reset",
+    pool: ledgerEntry.pool,
+    reason: ledgerEntry.reason,
+    ts: ledgerEntry.ts,
+    ...(ledgerEntry.resetAt !== undefined ? { resetAt: ledgerEntry.resetAt } : {}),
+    ...(ledgerEntry.workerPid !== undefined
+      ? { workerPid: ledgerEntry.workerPid }
+      : {}),
+  };
+  ledger.push(marker);
+  if (stateDir !== undefined) {
+    try {
+      await backend.writeLedger(
+        {
+          ...marker,
+          sessionId,
+          prompt_hash: await opts.hashPrompt(undefined, step),
+          branchHEAD: await opts.resolveBranchHEAD(),
+          ts: ledgerEntry.ts,
+        },
+        stateDir,
+      );
+    } catch {
+      // Best-effort durable park marker — in-memory ledger still holds it.
+    }
+  }
+  const resetHint =
+    ledgerEntry.resetAt !== undefined
+      ? ` (resetAt ${ledgerEntry.resetAt})`
+      : "";
+  return {
+    status: "escalate",
+    stepLedger: ledger,
+    stopSummary: {
+      reason: "provider_degraded",
+      summary: `quota wait for reset on pool ${ledgerEntry.pool}${resetHint}`,
+      repairHint:
+        "wait for the provider quota to reset, then re-feed — resume re-enters the parked step (auto re-dispatch is #686)",
+    },
+    deferredFindings,
+  };
 }
 
 function executableLedgerEntries(
@@ -1716,6 +1845,15 @@ function planResume(
   if (sliceOnlineReviewCiFailedPending(ledger)) {
     return {
       resumeStep: "S9",
+      lastOutput: undefined,
+      priorLedger: priorForResume,
+    };
+  }
+  // #683: quota wait park → re-enter the parked step (not S8(error)).
+  const quotaWaitStep = sliceQuotaWaitPending(ledger);
+  if (quotaWaitStep !== undefined) {
+    return {
+      resumeStep: quotaWaitStep,
       lastOutput: undefined,
       priorLedger: priorForResume,
     };
@@ -3682,6 +3820,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             break;
           }
         } catch (err) {
+          // #683: 429 quota wall → park step (existing park family), not S8(error).
+          if (isQuotaWaitForResetError(err)) {
+            return await parkQuotaWaitForReset({
+              step,
+              err,
+              ledger,
+              stateDir,
+              sessionId,
+              backend,
+              deferredFindings,
+              resolveBranchHEAD,
+              hashPrompt: (promptFile, s) => hashPrompt(promptFile, s, backend),
+            });
+          }
           return await errorTermination(step, err);
         }
 
@@ -3908,6 +4060,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           lastShipOutput = shipWithHead;
           stepSessionId = shipResult.sessionId;
         } catch (err) {
+          // #683: ship idle 429 → park (same family as agent-step park).
+          if (isQuotaWaitForResetError(err)) {
+            return await parkQuotaWaitForReset({
+              step: "S7",
+              err,
+              ledger,
+              stateDir,
+              sessionId,
+              backend,
+              deferredFindings,
+              resolveBranchHEAD,
+              hashPrompt: (promptFile, s) => hashPrompt(promptFile, s, backend),
+            });
+          }
           // Push failure → S8(error) with branch head so dev can diagnose
           // without losing the commits already on the resident branch (#252).
           // errorTermination records + persists both the S7 and S8 entries (#3).
@@ -4938,6 +5104,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           stepSessionId = result.sessionId;
           lastOutput = output;
         } catch (err) {
+          // #683: S9–S12 online-review legs hit the same 429 park family as
+          // S2/S7 — do NOT fall into errorTermination (would sticky-fail a
+          // quota wall and break sliceQuotaWaitPending resume).
+          if (isQuotaWaitForResetError(err)) {
+            return await parkQuotaWaitForReset({
+              step: reviewStep,
+              err,
+              ledger,
+              stateDir,
+              sessionId,
+              backend,
+              deferredFindings,
+              resolveBranchHEAD,
+              hashPrompt: (pf, s) => hashPrompt(pf, s, backend),
+            });
+          }
           return await errorTermination(step, err);
         }
         break;
