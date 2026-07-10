@@ -713,6 +713,8 @@ export interface WorkerLandingPayload {
    * them to the landing file; the runner does not read them.
    */
   readonly blockingFindings?: ReadonlyArray<Finding>;
+  /** #677 mechanical signal; reviewer must trace the assertion to authority. */
+  readonly preexistingAssertionTouched?: boolean;
   /** S9/S10 online review workers: paginated bot/thread snapshot (#600). */
   readonly onlineReviewSnapshot?: OnlineReviewLandingSnapshot;
   /** S9/S10: ship delivery metadata threaded from S7 (pr URL/head). */
@@ -799,6 +801,8 @@ export interface DispatchContext {
    * separate {@link WorkerLandingPayload}, never on this dispatch structure.
    */
   readonly blockingFindingCount?: number;
+  /** #677 runner fact only, never a content verdict. */
+  readonly preexistingAssertionTouched?: boolean;
   /**
    * FAMILY CMR coder-fix retry only: runner-observed repair-evidence gate failures
    * from earlier attempts for the SAME blocking finding set. Fresh retry workers

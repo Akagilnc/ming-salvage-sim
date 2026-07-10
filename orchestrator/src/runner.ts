@@ -37,6 +37,7 @@
 import { execFileSync } from "node:child_process";
 
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
+import { reviewFixAssertionSignal } from "./reviewFixAssertionGate.js";
 import { route } from "./route.js";
 import {
   adjudicatePriorClaimedFixedFindings,
@@ -2132,6 +2133,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastReviewerStepId: StepId | undefined;
   let lastCoderRepairEvidence: RepairEvidence | undefined;
   let lastCoderActualRepairPaths: ReadonlyArray<string> = [];
+  let preexistingAssertionTouchedForReverify = false;
   const noProgressByFindingIdentityKey = new Map<string, number>();
   let lastShipOutput: ShipResult | undefined;
   let onlineReviewRound = 1;
@@ -3500,6 +3502,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       blockingFindingIdentityKeys:
                         pendingBlockingFindingIdentityKeys,
                       blockingFindingCount: pendingBlockingFindings.length,
+                      ...(step === "S6" && preexistingAssertionTouchedForReverify
+                        ? { preexistingAssertionTouched: true }
+                        : {}),
                     }
                   : {}),
               };
@@ -3705,6 +3710,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             worktree,
             coderHeadBeforeStep,
           );
+          if (step === "S5" && coderHeadBeforeStep !== undefined) {
+            const afterFix = gitHead(worktree);
+            preexistingAssertionTouchedForReverify =
+              afterFix !== undefined &&
+              reviewFixAssertionSignal({
+                worktreePath: worktree.path,
+                sliceBase: worktree.base,
+                beforeFix: coderHeadBeforeStep,
+                afterFix,
+              });
+          }
         }
         if (step === "S3" || step === "S6") lastReviewerStepId = step;
         break;
