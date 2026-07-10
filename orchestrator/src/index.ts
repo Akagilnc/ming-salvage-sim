@@ -38,6 +38,46 @@ export type {
   DispatchWorkerWithMonitorOptions,
   DispatchWorkerWithMonitorOutcome,
 } from "./dispatchWorker.js";
+// ── #786 telemetry sidecar (append-only JSONL; stats deferred) ──────────────
+export {
+  TELEMETRY_FILENAME,
+  TELEMETRY_SCHEMA_VERSION,
+  appendTelemetryRecord,
+  buildCollectStamp,
+  buildDispatchStamp,
+  buildEnvironmentStamp,
+  categoryFromReason,
+  classifyWorkerTerminal,
+  clearTelemetryRunEnvironment,
+  computeSandboxFingerprint,
+  configureTelemetryFromWorkerImage,
+  configureTelemetryRunEnvironment,
+  ensureEnvironmentStamp,
+  mentionsHttp429,
+  extractClaudeTokens,
+  extractCodexTokens,
+  extractTokensFromLog,
+  getTelemetryRunEnvironment,
+  hashDirectoryContents,
+  newLegId,
+  readDispatchLogSlice,
+  readTelemetryRecords,
+  resolveDockerImageDigest,
+  telemetryPath,
+  tryAppendTelemetryRecord,
+} from "./telemetry.js";
+export type {
+  TelemetryCollectRecord,
+  TelemetryCoderRecProvenance,
+  TelemetryDispatchRecord,
+  TelemetryEnvironmentRecord,
+  TelemetryErrorCategory,
+  TelemetryModelStamp,
+  TelemetryRecord,
+  TelemetryRunEnvironment,
+  TelemetryTerminal,
+  TelemetryTokenUsage,
+} from "./telemetry.js";
 export {
   collectPidTree,
   dispatchMonitoredCliWorker,
@@ -76,6 +116,7 @@ export {
   isCliMonitorChildProcess,
   isMonitoredWorkerKind,
   resolveMonitorLogDir,
+  isMissingMonitorSidecarResult,
   workerResultFromMonitorSidecar,
 } from "./cliMonitorHooks.js";
 

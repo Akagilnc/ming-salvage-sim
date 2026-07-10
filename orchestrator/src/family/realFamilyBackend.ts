@@ -153,6 +153,7 @@ import {
   shipOutcomeFromResult,
   type ShipWorkerOutcome,
 } from "../shipOutcome.js";
+import { configureTelemetryFromWorkerImage } from "../telemetry.js";
 
 import type {
   CleanupResult,
@@ -391,6 +392,20 @@ export class RealFamilyBackend implements FamilyBackend {
     this.opts = opts;
     this.validateFamilyPromptsDir();
     this.validateSoulsDir();
+  }
+
+  /**
+   * #786: install this family backend's fingerprints immediately before an absent
+   * environment stamp is written. Deliberately not called from the constructor:
+   * image inspection and directory hashing must never block backend creation.
+   */
+  async installTelemetryRunEnvironment(): Promise<void> {
+    await configureTelemetryFromWorkerImage({
+      imageName: this.opts.imageName,
+      codexFast: this.opts.codexFast,
+      soulsDir: this.opts.soulsDir,
+      promptsDir: this.opts.promptsDir,
+    });
   }
 
   /**

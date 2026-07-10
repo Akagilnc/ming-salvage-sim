@@ -1667,6 +1667,16 @@ export interface Backend {
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
   /**
+   * #786 optional: reinstall this backend's image / souls / prompts fingerprints
+   * into the process-level telemetry run environment immediately before a
+   * dispatch stamps its once-per-ledger environment row. Required when more than
+   * one backend is constructed in-process (familyDriver: RealBackend then
+   * RealFamilyBackend) so child legs do not inherit the later family promptHash.
+   *
+   * Fail-open at the call site — must not throw into dispatch control flow.
+   */
+  installTelemetryRunEnvironment?(): void | Promise<void>;
+  /**
    * #684 optional: when a worker runs as a host-side CLI process (opencode /
    * grok / …), return the spawn input. The production
    * {@link dispatchWorkerWithMonitor} path then uses `dispatchMonitoredCliWorker`
