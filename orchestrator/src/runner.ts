@@ -3321,6 +3321,32 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       resumeFor = { step: plan.resumeStep, sessionId: plan.resumeSessionId };
     }
     resumedEscalationAnswer = plan.escalationAnswer;
+
+    // #767: resume skips S0/S1, so re-fetch the issue body and apply Coder-Rec
+    // (including the S6-count advance position from the restored ledger) before
+    // the first dispatch / top-of-loop smoke. Without this, applyCoderRecToRoute
+    // sees undefined body → skippedForMissingMarking → silent preset revert.
+    try {
+      const meta = await backend.fetchIssueMeta(issueNumber);
+      if (typeof meta.body === "string" && meta.body.length > 0) {
+        coderRecIssueBody = meta.body;
+      }
+    } catch (err) {
+      return await errorTermination(plan.resumeStep, err);
+    }
+    if (
+      (coderRecIssueBody === undefined || coderRecIssueBody.length === 0)
+    ) {
+      try {
+        const snapshot = await backend.fetchIssueSnapshot(issueNumber);
+        if (snapshot.body.length > 0) {
+          coderRecIssueBody = snapshot.body;
+        }
+      } catch (err) {
+        return await errorTermination(plan.resumeStep, err);
+      }
+    }
+    applyCoderRecSelection(coderRecRoundsFromLedger(ledger));
   }
 
   // The step machine has no fixed bound: route() always terminates the run via a
@@ -3429,13 +3455,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           ));
         }
 
-        const smokeResult = await ensureRouteSmoke();
-        if (smokeResult !== undefined) return smokeResult;
-
-        // #767: parse Coder-Rec from the issue body (S0 now fetches body) and
-        // override the coder slot before the first worker dispatch.
+        // #767: apply Coder-Rec BEFORE the S0 smoke so we smoke the final
+        // route once (not the preset, then a full re-smoke after mutation).
+        // Mid-loop advance still re-smokes via the S2/S5 path below.
         coderRecIssueBody = meta.body;
         applyCoderRecSelection(0);
+
+        const smokeResult = await ensureRouteSmoke();
+        if (smokeResult !== undefined) return smokeResult;
 
         break;
       }
