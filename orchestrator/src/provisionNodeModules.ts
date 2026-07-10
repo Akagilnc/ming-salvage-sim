@@ -202,6 +202,9 @@ export function provisionNodeModules(
       sh("cp", ["-cR", src, dest]);
       return { method: "clonefile", elapsedMs: Date.now() - started };
     } catch {
+      // A failed recursive clone may have left a corrupt partial target behind.
+      // Remove it so npm starts from an empty node_modules directory.
+      rmSync(dest, { recursive: true, force: true });
       // Non-APFS host, missing cp -c, or I/O fault → real install below.
     }
   }
