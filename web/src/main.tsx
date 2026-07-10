@@ -12,6 +12,7 @@ import { MenuPage } from "./components/menuPage";
 import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
 import { SituationPanel } from "./components/situation";
 import { DecisionModal } from "./components/decisionModal";
+import { pendingDecisionsFrom } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
@@ -215,7 +216,7 @@ function App() {
   React.useEffect(() => {
     if (!state) return;
     if (state.turn.phase !== "awaiting_decision") return;
-    const decisions = state.pending_decisions || [];
+    const decisions = pendingDecisionsFrom(state.pending_decisions || []);
     if (decisions.length === 0) return;
     setPendingDecisions((prev) => (prev.length ? prev : decisions));
   }, [state]);
@@ -848,7 +849,7 @@ function App() {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
         const failures = outcome.data?.pending_action_failures || [];
         setDecisionFailures(failures);
-        setPendingDecisions(outcome.data.decisions || []);
+        setPendingDecisions(pendingDecisionsFrom(outcome.data.decisions || []));
         setBusy("");
         return;
       }
