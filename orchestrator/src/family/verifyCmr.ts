@@ -113,6 +113,7 @@ import {
   familyCoderFixWorkerSpec,
   cmrWorkerSpec,
   dispatchFamilyWorker,
+  dispatchFamilyWorkerWithMonitor,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
 import {
@@ -138,6 +139,7 @@ import type {
   ShipResult,
   VerifyResult,
   WorkerLandingPayload,
+  WorkerMonitorHandle,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -1955,12 +1957,29 @@ async function dispatchOrAbort(
         let dispatchError: unknown | undefined;
         let workerResult: Awaited<ReturnType<typeof dispatchFamilyWorker>>;
         try {
-          workerResult = await dispatchFamilyWorker(
+          const monitored = await dispatchFamilyWorkerWithMonitor(
             familyBackend,
             s,
             c,
             landing,
+            {
+              onMonitorHandleSpawned: async (handle: WorkerMonitorHandle) => {
+                // Persist before waiting for the child: a hung family worker
+                // must be resumable/judgable from the durable family ledger.
+                try {
+                  await familyBackend.appendFamilyLedger({
+                    status: "worker_dispatched",
+                    event: "worker_dispatched",
+                    monitorHandle: handle,
+                  });
+                } catch {
+                  // Best-effort, matching the single-slice path. The spawned
+                  // worker remains governed by its verified monitor handle.
+                }
+              },
+            },
           );
+          workerResult = monitored.result;
         } catch (err) {
           dispatchError = err;
         }
