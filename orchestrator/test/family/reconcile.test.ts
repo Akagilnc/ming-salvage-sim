@@ -480,6 +480,50 @@ describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
     expect(plan.reconciled).toEqual([]);
   });
 
+  it("accepts a real child decision park head, skips its headless answer, and rejects malformed park baselines", async () => {
+    // Production family-485 ledger shape: a decision park advances the recorded
+    // family head; the later human answer deliberately carries no head and must
+    // not hide that baseline on re-entry.
+    const parked = {
+      childIssue: 494,
+      status: "child_decision_parked",
+      event: "child_decision_parked",
+      phase: "wave",
+      escalationKind: "decision",
+      familyHeadAfter: "3fcc526f",
+    } as const;
+    const answered = {
+      status: "escalation_answered",
+      event: "escalation_answered",
+      phase: "final",
+      childIssue: 494,
+      answer: "the dependency is present; resume in place",
+      source: "human",
+    } as const;
+    const git = new FakeReconcileGit("3fcc526f", {}, new Set(), "base0");
+
+    const resumed = await reconcileFamilyLedger(
+      [parked, answered] as FamilyLedgerEntry[],
+      children,
+      git,
+    );
+    expect(resumed.escalate).toBe(false);
+
+    for (const malformed of [
+      { ...parked, event: "escalated" },
+      { ...parked, phase: "final" },
+      { ...parked, escalationKind: "failure" },
+      { ...parked, childIssue: 0 },
+    ]) {
+      const plan = await reconcileFamilyLedger(
+        [malformed] as unknown as FamilyLedgerEntry[],
+        children,
+        git,
+      );
+      expect(plan.escalate).toBe(true);
+    }
+  });
+
   it("does not trust a malformed headless merged tail after a valid baseline", async () => {
     const ledger = [
       {
