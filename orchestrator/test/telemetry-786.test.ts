@@ -20,6 +20,7 @@ import {
   buildCollectStamp,
   buildDispatchStamp,
   buildEnvironmentStamp,
+  categoryFromReason,
   classifyWorkerTerminal,
   ensureEnvironmentStamp,
   extractClaudeTokens,
@@ -152,6 +153,7 @@ describe("#786 telemetry pure helpers", () => {
     ).toEqual({
       terminal: "completed",
       errorCategory: null,
+      errorMessage: null,
       sessionId: "sess-1",
     });
 
@@ -175,6 +177,57 @@ describe("#786 telemetry pure helpers", () => {
         error: new Error("stream disconnect mid-response"),
       }).errorCategory,
     ).toBe("stream-disconnect");
+  });
+
+  it("categoryFromReason maps realBackend max-iteration completion-signal text to honest-incomplete", () => {
+    // Exact shape from realBackend.assertCompletionSignal (realBackend.ts:~1095).
+    const realMaxIter =
+      'realBackend: step S2 did not fire its required completion ' +
+      'signal — expected "<coder>", got none (no signal fired before the ' +
+      "iteration limit). The agent must emit the completion signal to advance " +
+      'the step (#244 "agent emit completionSignal 才进下一步"); a ' +
+      "complete-but-unsignaled run (e.g. maxIter hit mid-work) does NOT advance.";
+    expect(categoryFromReason(realMaxIter)).toBe("honest-incomplete");
+
+    // ship / cmr / merger gate reasons (shipOutcome / realFamilyBackend).
+    expect(
+      categoryFromReason("ship worker did not fire its completion signal"),
+    ).toBe("honest-incomplete");
+    expect(
+      categoryFromReason("cmr worker did not fire its completion signal"),
+    ).toBe("honest-incomplete");
+    expect(
+      categoryFromReason(
+        'merger agent did not fire its completion signal — expected ' +
+          '"<merger_resolved>", got none (no signal fired before the iteration limit)',
+      ),
+    ).toBe("honest-incomplete");
+
+    // Fragment alone (embedded in diagnosis text).
+    expect(
+      categoryFromReason("none (no signal fired before the iteration limit)"),
+    ).toBe("honest-incomplete");
+
+    // Must not classify as 429-quota via bare "limit" / must preserve message.
+    const classified = classifyWorkerTerminal({
+      kind: "thrown",
+      error: new Error(realMaxIter),
+    });
+    expect(classified.terminal).toBe("thrown");
+    expect(classified.errorCategory).toBe("honest-incomplete");
+    expect(classified.errorMessage).toBe(realMaxIter);
+  });
+
+  it("categoryFromReason returns unclassified (not null) for unknown failures and keeps message", () => {
+    expect(categoryFromReason("totally novel backend boom XYZ")).toBe(
+      "unclassified",
+    );
+    const classified = classifyWorkerTerminal({
+      kind: "result",
+      result: { kind: "failed", reason: "weird provider glitch code 0xdead" },
+    });
+    expect(classified.errorCategory).toBe("unclassified");
+    expect(classified.errorMessage).toBe("weird provider glitch code 0xdead");
   });
 
   it("appendTelemetryRecord writes atomic JSONL lines under ledgerDir", () => {
@@ -206,6 +259,7 @@ describe("#786 telemetry pure helpers", () => {
         completedAt: "2026-07-11T00:00:10.000Z",
         terminal: "completed",
         errorCategory: null,
+        errorMessage: null,
         tokens: { input: null, output: null, cached: null, total: 99 },
         sessionId: "s1",
         logPath: join(dir, "S2.log"),
@@ -451,6 +505,116 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     );
     expect((collect as TelemetryCollectRecord).terminal).toBe("thrown");
     expect((collect as TelemetryCollectRecord).errorCategory).toBe("hang-idle");
+  });
+
+  it("signal-killed CLI leg stamps killed collect row (not silent drop)", async () => {
+    const dir = tempDir("orch-786-kill-");
+    const ledgerDir = join(dir, ".ledger-786");
+
+    const backend = {
+      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
+        command: process.execPath,
+        // Sleep forever until external signal; we SIGTERM after spawn.
+        args: ["-e", "setTimeout(() => {}, 60_000)"],
+        logDir: dir,
+        poolId: "codex-5h",
+        completionSignal: "<coder>",
+        stepId: "S2",
+        readInstanceId: () => "test-instance-kill",
+      }),
+      // If the kill path wrongly falls through, await would fabricate success —
+      // fail the test loudly in that case.
+      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => {
+        throw new Error(
+          "awaitMonitoredCliWorker must not run on signal-killed legs",
+        );
+      },
+    } as unknown as Backend;
+
+    const outcome = await dispatchWorkerWithMonitor(
+      backend,
+      workerSpec(),
+      { stateDir: ledgerDir },
+      undefined,
+      {
+        idleThresholdMs: 60_000,
+        pollIntervalMs: 20,
+        monitorDeps: {
+          readInstanceId: () => "test-instance-kill",
+          sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),
+        },
+        onMonitorHandleSpawned: async (handle) => {
+          // External signal kill (simulates OS/orchestrator SIGTERM of the leg).
+          process.kill(handle.pid, "SIGTERM");
+        },
+      },
+    );
+
+    expect(outcome.result.kind).toBe("failed");
+    if (outcome.result.kind === "failed") {
+      expect(outcome.result.reason).toMatch(/killed by signal/i);
+    }
+
+    const records = readTelemetryRecords(ledgerDir);
+    const collect = records.find((r) => r.phase === "collect") as
+      | TelemetryCollectRecord
+      | undefined;
+    expect(collect).toBeDefined();
+    expect(collect?.terminal).toBe("failed");
+    expect(collect?.errorCategory).toBe("killed");
+    expect(collect?.errorMessage).toMatch(/killed by signal/i);
+    // Pair still present — not silently dropped.
+    const dispatch = records.find((r) => r.phase === "dispatch");
+    expect(dispatch).toBeDefined();
+    expect((dispatch as TelemetryDispatchRecord).legId).toBe(collect?.legId);
+  });
+
+  it("dispatch half-row uses handle.dispatchedAt (post-spawn), not a pre-parse guess", async () => {
+    const dir = tempDir("orch-786-dispatched-at-");
+    const ledgerDir = join(dir, ".ledger-786");
+    let handleDispatchedAt: string | undefined;
+
+    const backend = {
+      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
+        command: process.execPath,
+        args: ["-e", "process.exit(0)"],
+        logDir: dir,
+        poolId: "codex-5h",
+        completionSignal: "<coder>",
+        stepId: "S2",
+        readInstanceId: () => "test-instance-ts",
+      }),
+      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      }),
+    } as unknown as Backend;
+
+    await dispatchWorkerWithMonitor(
+      backend,
+      workerSpec(),
+      { stateDir: ledgerDir },
+      undefined,
+      {
+        idleThresholdMs: 60_000,
+        pollIntervalMs: 20,
+        monitorDeps: {
+          readInstanceId: () => "test-instance-ts",
+          sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),
+        },
+        onMonitorHandleSpawned: (handle) => {
+          handleDispatchedAt = handle.dispatchedAt;
+        },
+      },
+    );
+
+    expect(handleDispatchedAt).toBeDefined();
+    const records = readTelemetryRecords(ledgerDir);
+    const dispatch = records.find((r) => r.phase === "dispatch") as
+      | TelemetryDispatchRecord
+      | undefined;
+    expect(dispatch).toBeDefined();
+    expect(dispatch?.dispatched_at).toBe(handleDispatchedAt);
   });
 
   it("container/legacy path (no CLI monitor) still stamps dispatch+collect", async () => {

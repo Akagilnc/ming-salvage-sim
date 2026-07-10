@@ -54,6 +54,8 @@ export const TELEMETRY_SCHEMA_VERSION = 1 as const;
 /**
  * Error categories for failed/aborted legs (issue #786).
  * Distinct: at-capacity ≠ 429-quota ≠ hang-idle ≠ stream-disconnect.
+ * Unknown failures map to `unclassified` (never silent null) so raw
+ * `errorMessage` stays available for post-hoc taxonomy expansion.
  */
 export type TelemetryErrorCategory =
   | "at-capacity"
@@ -62,7 +64,8 @@ export type TelemetryErrorCategory =
   | "stream-disconnect"
   | "honest-incomplete"
   | "relay-out"
-  | "killed";
+  | "killed"
+  | "unclassified";
 
 /** Terminal discriminant recorded on the collect half-row. */
 export type TelemetryTerminal =
@@ -148,7 +151,16 @@ export interface TelemetryCollectRecord extends TelemetryRecordBase {
   readonly first_output_at: string | null;
   readonly completed_at: string;
   readonly terminal: TelemetryTerminal;
+  /**
+   * Category for non-success terminals. `null` only on completed/escalated.
+   * Failures that do not match a known pattern are `"unclassified"` (not null).
+   */
   readonly errorCategory: TelemetryErrorCategory | null;
+  /**
+   * Raw failure/throw message for post-hoc reclassification. `null` when the
+   * terminal has no message (completed / escalated without reason).
+   */
+  readonly errorMessage: string | null;
   readonly tokens: TelemetryTokenUsage | null;
   readonly sessionId: string | null;
   readonly logPath: string | null;
@@ -256,6 +268,11 @@ export function extractTokensFromLog(
 /**
  * Classify a finished worker result or a thrown error into terminal + category.
  * Pure: no I/O.
+ *
+ * Failure categories are aligned to the real throw/return strings produced by
+ * realBackend / realFamilyBackend / shipOutcome / dispatch monitor — not to
+ * invented telemetry-only phrases. Unmatched failures are `"unclassified"`
+ * (never silent `null`) and the raw message is always preserved.
  */
 export function classifyWorkerTerminal(
   outcome:
@@ -264,6 +281,7 @@ export function classifyWorkerTerminal(
 ): {
   readonly terminal: TelemetryTerminal;
   readonly errorCategory: TelemetryErrorCategory | null;
+  readonly errorMessage: string | null;
   readonly sessionId: string | null;
 } {
   if (outcome.kind === "result") {
@@ -271,15 +289,29 @@ export function classifyWorkerTerminal(
     const sessionId =
       "sessionId" in r && typeof r.sessionId === "string" ? r.sessionId : null;
     if (r.kind === "completed") {
-      return { terminal: "completed", errorCategory: null, sessionId };
+      return {
+        terminal: "completed",
+        errorCategory: null,
+        errorMessage: null,
+        sessionId,
+      };
     }
     if (r.kind === "escalated") {
-      return { terminal: "escalated", errorCategory: null, sessionId };
+      // Decision escalate is not a failure category; still keep the raw reason
+      // (e.g. ship/cmr "did not fire its completion signal") for post-hoc stats.
+      const reason = r.escalation.reason;
+      return {
+        terminal: "escalated",
+        errorCategory: null,
+        errorMessage: reason.length > 0 ? reason : null,
+        sessionId,
+      };
     }
     if (r.kind === "malformed") {
       return {
         terminal: "malformed",
         errorCategory: categoryFromReason(r.reason),
+        errorMessage: r.reason,
         sessionId,
       };
     }
@@ -287,6 +319,7 @@ export function classifyWorkerTerminal(
       return {
         terminal: "outcome_protocol_failure",
         errorCategory: categoryFromReason(r.reason),
+        errorMessage: r.reason,
         sessionId,
       };
     }
@@ -294,30 +327,64 @@ export function classifyWorkerTerminal(
     return {
       terminal: "failed",
       errorCategory: categoryFromReason(r.reason),
+      errorMessage: r.reason,
       sessionId,
     };
   }
 
   const err = outcome.error;
+  const msg = err instanceof Error ? err.message : String(err);
   if (isQuotaWaitForResetError(err)) {
-    return { terminal: "thrown", errorCategory: "429-quota", sessionId: null };
+    return {
+      terminal: "thrown",
+      errorCategory: "429-quota",
+      errorMessage: msg,
+      sessionId: null,
+    };
   }
   if (isSelfReportedRelayError(err)) {
-    return { terminal: "thrown", errorCategory: "relay-out", sessionId: null };
+    return {
+      terminal: "thrown",
+      errorCategory: "relay-out",
+      errorMessage: msg,
+      sessionId: null,
+    };
   }
   if (isHangWithLivePoolError(err)) {
-    return { terminal: "thrown", errorCategory: "hang-idle", sessionId: null };
+    return {
+      terminal: "thrown",
+      errorCategory: "hang-idle",
+      errorMessage: msg,
+      sessionId: null,
+    };
   }
-  const msg = err instanceof Error ? err.message : String(err);
   return {
     terminal: "thrown",
     errorCategory: categoryFromReason(msg),
+    errorMessage: msg,
     sessionId: null,
   };
 }
 
-function categoryFromReason(reason: string): TelemetryErrorCategory | null {
+/**
+ * Map a free-text failure reason onto a telemetry category.
+ *
+ * Patterns below are taken from the actual throw/return sites (not invented):
+ * - realBackend.assertCompletionSignal — "did not fire its required completion
+ *   signal" / "no signal fired before the iteration limit"
+ * - shipOutcome / realFamilyBackend cmr+merger — "… did not fire its completion signal"
+ * - HangWithLivePoolError — "hang with live pool"
+ * - dispatchWorker idle monitor — "monitored worker idle hang"
+ * - QuotaWaitForResetError — "quota wait for reset"
+ * - SelfReportedRelayError — "self-reported blocked" / "phase_complete:"
+ * - signal-kill stamp — "killed by signal" / SIGTERM / SIGKILL
+ *
+ * Anything unmatched → `"unclassified"` (raw message kept on the collect row).
+ */
+export function categoryFromReason(reason: string): TelemetryErrorCategory {
   const lower = reason.toLowerCase();
+
+  // ── at-capacity ──────────────────────────────────────────────────────────
   if (
     lower.includes("at-capacity") ||
     lower.includes("at capacity") ||
@@ -325,48 +392,86 @@ function categoryFromReason(reason: string): TelemetryErrorCategory | null {
   ) {
     return "at-capacity";
   }
+
+  // ── 429 / quota (QuotaWaitForResetError message: "quota wait for reset…") ─
+  // Prefer explicit quota phrases; bare "limit" is too broad (iteration limit).
   if (
     lower.includes("429") ||
-    lower.includes("quota") ||
+    lower.includes("quota wait for reset") ||
     lower.includes("rate limit") ||
-    lower.includes("rate_limit")
+    lower.includes("rate_limit") ||
+    // Standalone "quota" but not "iteration" context handled below first.
+    (lower.includes("quota") && !lower.includes("iteration limit"))
   ) {
     return "429-quota";
   }
+
+  // ── hang-idle (HangWithLivePoolError + monitored idle hang throw) ────────
   if (
     lower.includes("idle hang") ||
     lower.includes("hang-idle") ||
     lower.includes("worker idle") ||
+    lower.includes("monitored worker idle hang") ||
     lower.includes("hang with live pool")
   ) {
     return "hang-idle";
   }
+
+  // ── stream-disconnect ────────────────────────────────────────────────────
   if (
     lower.includes("stream disconnect") ||
     lower.includes("stream-disconnect") ||
-    lower.includes("disconnected") ||
-    lower.includes("econnreset")
+    lower.includes("econnreset") ||
+    lower.includes("socket hang up")
   ) {
     return "stream-disconnect";
   }
+
+  // ── honest-incomplete (maxIter / missing completion signal) ──────────────
+  // Real sources (must match first; "iteration limit" must not fall into quota):
+  //   realBackend.ts assertCompletionSignal:
+  //     `… did not fire its required completion signal — expected "…", got
+  //      none (no signal fired before the iteration limit). …`
+  //   shipOutcome / cmr / merger:
+  //     `… did not fire its completion signal`
+  //   also: "none (no signal fired before the iteration limit)" fragment alone
   if (
     lower.includes("honest-incomplete") ||
     lower.includes("honest incomplete") ||
-    lower.includes("incomplete response")
+    lower.includes("incomplete response") ||
+    lower.includes("did not fire its required completion") ||
+    lower.includes("did not fire its completion signal") ||
+    lower.includes("no signal fired before the iteration limit") ||
+    (lower.includes("completion signal") &&
+      (lower.includes("did not fire") || lower.includes("iteration limit")))
   ) {
     return "honest-incomplete";
   }
-  if (lower.includes("relay") || lower.includes("phase_complete")) {
+
+  // ── relay-out (SelfReportedRelayError + relay tag text) ──────────────────
+  if (
+    lower.includes("self-reported blocked") ||
+    lower.includes("phase_complete") ||
+    lower.includes("relay-out") ||
+    // Avoid matching "relay" inside unrelated words; keep common explicit forms.
+    lower.includes("resource relay") ||
+    /(^|[\s([{])relay([\s)\]}:.,]|$)/.test(lower)
+  ) {
     return "relay-out";
   }
+
+  // ── killed (OS signal / explicit kill stamp) ─────────────────────────────
   if (
+    lower.includes("killed by signal") ||
     lower.includes("killed") ||
     lower.includes("sigkill") ||
-    lower.includes("sigterm")
+    lower.includes("sigterm") ||
+    lower.includes("signal sig")
   ) {
     return "killed";
   }
-  return null;
+
+  return "unclassified";
 }
 
 function parseTokenInt(raw: string): number | null {
@@ -434,6 +539,8 @@ export interface BuildCollectStampInput {
   readonly completedAt: string;
   readonly terminal: TelemetryTerminal;
   readonly errorCategory: TelemetryErrorCategory | null;
+  /** Raw failure message; null when terminal has no message. */
+  readonly errorMessage?: string | null;
   readonly tokens: TelemetryTokenUsage | null;
   readonly sessionId: string | null;
   readonly logPath: string | null;
@@ -455,6 +562,7 @@ export function buildCollectStamp(
     completed_at: input.completedAt,
     terminal: input.terminal,
     errorCategory: input.errorCategory,
+    errorMessage: input.errorMessage ?? null,
     tokens: input.tokens,
     sessionId: input.sessionId,
     logPath: input.logPath,

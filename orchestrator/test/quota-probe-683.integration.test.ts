@@ -292,7 +292,13 @@ describe("#683 integration at the real monitored dispatch path", () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
       await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
-      expect(outcome.result.kind).toBe("completed");
+      // Child was SIGTERM'd inside the idle handler → signal-kill terminal wins
+      // the race (not a fabricated completed). Late QuotaWaitForResetError must
+      // still be observed (warn) without becoming an unhandledRejection.
+      expect(outcome.result.kind).toBe("failed");
+      if (outcome.result.kind === "failed") {
+        expect(outcome.result.reason).toMatch(/killed by signal/i);
+      }
       expect(unhandled).toEqual([]);
       expect(warnings.some((w) => w.includes("monitored idle handler settled after child exit"))).toBe(true);
     } finally {
