@@ -965,6 +965,8 @@ describe("realBackend soulsDirError (#372)", () => {
       .sort();
     const required = [...REQUIRED_SOUL_FILES].sort();
     expect(required).toEqual(onDisk);
+    expect(onDisk).toContain("docRelease.md");
+    expect(REQUIRED_SOUL_FILES).toContain("docRelease.md");
     // No duplicates in the constant (sort hides them in the equality above).
     expect(new Set(REQUIRED_SOUL_FILES).size).toBe(REQUIRED_SOUL_FILES.length);
   });
