@@ -236,6 +236,33 @@ describe("provisionNodeModules", () => {
     expect(calls[1]).toEqual({ file: "npm", args: ["ci"], cwd: target });
   });
 
+  it("cleans a partial clonefile target before starting npm fallback", () => {
+    const target = mkDir("prov-partial-fail-t-");
+    const tpl = mkDir("prov-partial-fail-p-");
+    writeProject(target, { lock: LOCK_A });
+    writeProject(tpl, { lock: LOCK_A, withModules: true });
+
+    let targetWasCleanAtNpmStart: boolean | undefined;
+    const result = provisionNodeModules(target, {
+      templateProjectDir: tpl,
+      sh: (file, _args, cwd) => {
+        if (file === "cp") {
+          mkdirSync(join(target, "node_modules"), { recursive: true });
+          writeFileSync(join(target, "node_modules", ".partial"), "incomplete");
+          throw new Error("clonefile failed midway");
+        }
+        if (file === "npm") {
+          targetWasCleanAtNpmStart = !existsSync(join(cwd ?? target, "node_modules"));
+          return "";
+        }
+        throw new Error(`unexpected ${file}`);
+      },
+    });
+
+    expect(result.method).toBe("npm-ci");
+    expect(targetWasCleanAtNpmStart).toBe(true);
+  });
+
   it("falls back to npm ci when no template is provided", () => {
     const target = mkDir("prov-notpl-");
     writeProject(target, { lock: LOCK_A });

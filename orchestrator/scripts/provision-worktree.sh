@@ -91,6 +91,9 @@ provision_project() {
       return 0
     fi
     echo "[provision] $label: clonefile failed; falling back to npm" >&2
+    # A failed recursive clone may have left a corrupt partial target behind.
+    # Remove it so npm starts from an empty node_modules directory.
+    rm -rf "$target/node_modules"
   fi
   if [[ -f "$t_lock" ]]; then
     (cd "$target" && npm ci)
