@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
 import {
   resolveRouteModels,
@@ -31,6 +31,20 @@ class MissingSmokeBackend implements Backend {
   async runStep(_spec: StepSpec): Promise<StepOutput> { return { kind: "coder", committed: true, commitsAdded: 1 }; }
   async push() {}
   async writeLedger() {}
+}
+
+class RoutePolicyOrderingBackend extends MissingSmokeBackend {
+  readonly calls: string[] = [];
+
+  override async currentCliVersions() {
+    this.calls.push("currentCliVersions");
+    return {};
+  }
+
+  override async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
+    this.calls.push("smokeModelRoute");
+    return route;
+  }
 }
 
 describe("#685 route tool smoke", () => {
@@ -90,5 +104,17 @@ describe("#685 route tool smoke", () => {
     expect(result.status).toBe("error");
     expect(result.errorPackage?.failedStep).toBe("S0");
     expect(result.errorPackage?.reason).toMatch(/smoke/i);
+  });
+
+  it("rejects tight-route violations before querying versions or starting smoke", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "codex-tight");
+    vi.stubEnv("ORCHESTRATOR_REVIEWER_MODEL", "gpt-5.5");
+    const backend = new RoutePolicyOrderingBackend();
+
+    const result = await runOrchestrator({ issueNumber: 685, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(result.errorPackage?.reason).toMatch(/tight route violation/i);
+    expect(backend.calls).toEqual([]);
   });
 });

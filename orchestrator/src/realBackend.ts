@@ -2108,14 +2108,14 @@ export class RealBackend implements Backend {
               if (
                 event.type === "toolCall" &&
                 /^(bash|shell)$/i.test(event.name) &&
-                /echo\s+OK/.test(event.formattedArgs)
+                /echo\s+OK/.test(event.formattedArgs ?? "")
               ) {
                 sawBash = true;
               }
             },
           },
         });
-        if (result.completionSignal === undefined || !sawBash) {
+        if (result.completionSignal !== "ROUTE_SMOKE_COMPLETE" || !sawBash) {
           throw new Error(
             `model did not complete an observable bash smoke for ${entry.slug}`,
           );

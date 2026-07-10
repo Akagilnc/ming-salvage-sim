@@ -2081,6 +2081,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       deferredFindings: [],
     };
   }
+  const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
+    interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+    warn: (message) => console.warn(`[orchestrator] ${message}`),
+  });
+  if (routePolicy.kind === "stop") {
+    const stopSummary = stopSummaryForStartupRouteFailure(routePolicy.escalation);
+    return {
+      status: "escalate",
+      errorPackage: {
+        failedStep: "S0",
+        reason: `${routePolicy.escalation.reason}: ${routePolicy.escalation.diagnosis}`,
+      },
+      stepLedger: [{ step: "S8", stopSummary }],
+      stopSummary,
+      deferredFindings: [],
+    };
+  }
   let currentCliVersions: Readonly<Record<string, string | undefined>>;
   try {
     currentCliVersions = backend.currentCliVersions
@@ -2115,23 +2132,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         summary: smokeFailure,
         repairHint: "rerun the route smoke or repair the selected model×pipe",
       }),
-      deferredFindings: [],
-    };
-  }
-  const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
-    interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
-    warn: (message) => console.warn(`[orchestrator] ${message}`),
-  });
-  if (routePolicy.kind === "stop") {
-    const stopSummary = stopSummaryForStartupRouteFailure(routePolicy.escalation);
-    return {
-      status: "escalate",
-      errorPackage: {
-        failedStep: "S0",
-        reason: `${routePolicy.escalation.reason}: ${routePolicy.escalation.diagnosis}`,
-      },
-      stepLedger: [{ step: "S8", stopSummary }],
-      stopSummary,
       deferredFindings: [],
     };
   }
