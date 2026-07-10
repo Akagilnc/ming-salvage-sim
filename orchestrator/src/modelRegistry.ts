@@ -114,6 +114,12 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     model: "claude-sonnet-4-6",
     family: "claude",
   },
+  // #789 Coder-Rec roster: Claude-pool small-fix backup (same claudeCode pipe).
+  haiku: {
+    provider: "claudeCode",
+    model: "claude-haiku-4-5",
+    family: "claude",
+  },
   opus: {
     provider: "claudeCode",
     model: "claude-opus-4-8",
