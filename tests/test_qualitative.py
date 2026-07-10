@@ -19,6 +19,8 @@ def test_safe_historical_text_rejects_adjacent_abstract_values():
         "能力评分98",
         "民心值73",
         "进度评分73/100",
+        "清廉98",
+        "清廉值：98",
     ):
         rendered = safe_historical_text(injected)
         assert "已略去" in rendered, injected
@@ -34,6 +36,8 @@ def test_safe_historical_text_rejects_common_labeled_value_forms():
         "能力评分：98",
         "民心数值：73",
         "进度指标：41/100",
+        "清廉98",
+        "清廉值：98",
     ):
         assert "已略去" in safe_historical_text(injected), injected
 
