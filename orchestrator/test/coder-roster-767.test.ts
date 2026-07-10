@@ -277,6 +277,37 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     expect(applied.skippedForEnvOverride).toBe(true);
     expect(applied.route.slots.coder).toBe("sonnet");
   });
+
+  it("preserves an explicit coderFix env override while applying Coder-Rec to coder", () => {
+    const base = resolveRouteModels("normal", { coderFix: "opus" });
+    const applied = applyCoderRecToRoute(
+      base,
+      "Coder-Rec: grok-4.5 → terra@med",
+      0,
+      { ORCHESTRATOR_CODER_FIX_MODEL: "opus" },
+    );
+
+    expect(applied.skippedForEnvOverride).toBe(false);
+    expect(applied.route.slots.coder).toBe("grok-4.5");
+    expect(applied.route.slots.coderFix).toBe("opus");
+  });
+
+  it("recomputes tight-family violations after Coder-Rec substitutes a tight-family coder", () => {
+    const base = resolveRouteModels("codex-tight", {});
+    expect(base.tightFamilyViolations).toEqual([]);
+
+    const applied = applyCoderRecToRoute(
+      base,
+      "Coder-Rec: terra@med",
+      0,
+      {},
+    );
+
+    expect(applied.route.tightFamilyViolations).toEqual([
+      { slot: "coder", slug: "gpt-5.6-terra", family: "codex" },
+      { slot: "coderFix", slug: "gpt-5.6-terra", family: "codex" },
+    ]);
+  });
 });
 
 describe("#767 Coder-Rec — runner dispatches the selected coder model", () => {
@@ -505,6 +536,27 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
     expect(backend.coderModels).toEqual(["grok-4.5"]);
+  });
+
+  it("escalates at S0 instead of dispatching a Coder-Rec slug that violates a tight route", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "codex-tight");
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    class TightRouteBackend extends CoderRecBackend {
+      override async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+        return {
+          ...(await super.fetchIssueMeta(issueNumber)),
+          body: "Coder-Rec: terra@med",
+        };
+      }
+    }
+
+    const backend = new TightRouteBackend();
+    const result = await runOrchestrator({ issueNumber: 767, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(result.errorPackage?.failedStep).toBe("S0");
+    expect(result.errorPackage?.reason).toMatch(/tight route violation.*coder=.*gpt-5\.6-terra/i);
+    expect(backend.coderModels).toEqual([]);
   });
 
   it("S0 smokes the Coder-Rec final route once, not the preset then the override", async () => {

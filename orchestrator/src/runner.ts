@@ -2119,8 +2119,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let coderRecEnvSkipped = false;
   let routeSmokeChecked = false;
 
-  const applyCoderRecSelection = (nonConvergingRounds: number): void => {
-    if (coderRecEnvSkipped) return;
+  const applyCoderRecSelection = async (
+    nonConvergingRounds: number,
+  ): Promise<ReturnType<typeof applyRuntimeTightRoutePolicy> | undefined> => {
+    if (coderRecEnvSkipped) return undefined;
     const applied = applyCoderRecToRoute(
       modelRoute,
       coderRecIssueBody,
@@ -2128,9 +2130,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     );
     if (applied.skippedForEnvOverride) {
       coderRecEnvSkipped = true;
-      return;
+      return undefined;
     }
-    if (applied.route === modelRoute) return;
+    if (applied.route === modelRoute) return undefined;
     modelRoute = applied.route;
     stepSpecs = stepSpecsForRoute(modelRoute);
     // Clear so the caller re-runs ensureRouteSmoke for the new coder slug
@@ -2144,6 +2146,27 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             : ""),
       );
     }
+    return applyRuntimeTightRoutePolicy(modelRoute, {
+      interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+      warn: (message) => console.warn(`[orchestrator] ${message}`),
+    });
+  };
+
+  const stopForCoderRecTightRoutePolicy = (escalation: {
+    readonly reason: string;
+    readonly diagnosis: string;
+  }): RunResult => {
+    const stopSummary = stopSummaryForStartupRouteFailure(escalation);
+    return {
+      status: "escalate",
+      errorPackage: {
+        failedStep: "S0",
+        reason: `${escalation.reason}: ${escalation.diagnosis}`,
+      },
+      stepLedger: [{ step: "S8", stopSummary }],
+      stopSummary,
+      deferredFindings: [],
+    };
   };
 
   const coderRecRoundsFromLedger = (
@@ -3353,7 +3376,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         "[orchestrator] Coder-Rec resume re-fetch failed; continuing with route preset",
       );
     }
-    applyCoderRecSelection(coderRecRoundsFromLedger(ledger));
+    const coderRecPolicy = await applyCoderRecSelection(
+      coderRecRoundsFromLedger(ledger),
+    );
+    if (coderRecPolicy?.kind === "stop") {
+      return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+    }
   }
 
   // The step machine has no fixed bound: route() always terminates the run via a
@@ -3466,7 +3494,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // route once (not the preset, then a full re-smoke after mutation).
         // Mid-loop advance still re-smokes via the S2/S5 path below.
         coderRecIssueBody = meta.body;
-        applyCoderRecSelection(0);
+        const coderRecPolicy = await applyCoderRecSelection(0);
+        if (coderRecPolicy?.kind === "stop") {
+          return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+        }
 
         const smokeResult = await ensureRouteSmoke();
         if (smokeResult !== undefined) return smokeResult;
@@ -3522,7 +3553,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           snapshot.body.length > 0
         ) {
           coderRecIssueBody = snapshot.body;
-          applyCoderRecSelection(coderRecRoundsFromLedger(ledger));
+          const coderRecPolicy = await applyCoderRecSelection(
+            coderRecRoundsFromLedger(ledger),
+          );
+          if (coderRecPolicy?.kind === "stop") {
+            return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+          }
         }
         break;
       }
@@ -3545,7 +3581,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // Mid-loop advance clears routeSmokeChecked — re-smoke here because the
         // top-of-loop check already ran for this iteration.
         if (step === "S2" || step === "S5") {
-          applyCoderRecSelection(coderRecRoundsFromLedger(ledger));
+          const coderRecPolicy = await applyCoderRecSelection(
+            coderRecRoundsFromLedger(ledger),
+          );
+          if (coderRecPolicy?.kind === "stop") {
+            return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+          }
           if (!routeSmokeChecked) {
             const smokeResult = await ensureRouteSmoke();
             if (smokeResult !== undefined) return smokeResult;
