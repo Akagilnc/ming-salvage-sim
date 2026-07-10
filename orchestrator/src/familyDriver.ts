@@ -570,6 +570,8 @@ function admissionSkippedChildren(
 
 /** Tunables for {@link runFamilyDriver}. */
 export interface FamilyDriverOptions {
+  /** Resolved once per run from ORCHESTRATOR_CODEX_FAST (or an explicit option). */
+  readonly codexFast?: boolean;
   /** The PARENT EPIC issue number — the family run key (ADR 0024). */
   readonly epicIssue: number;
   /** The SOURCE repo to clone (path or URL) — the family clone is cut from it. */
@@ -630,6 +632,11 @@ export interface FamilyDriverOptions {
   ) => FamilyBackend & { reconcileGit(): ReconcileGit };
 }
 
+/** Stable run-level attribution line for post-run pool accounting. */
+export function codexFastRunLog(codexFast: boolean): string {
+  return `[orchestrator] run fast=${codexFast ? "on" : "off"}`;
+}
+
 
 /**
  * Run one family orchestration end-to-end (#291 Unit B).
@@ -647,6 +654,8 @@ export async function runFamilyDriver(
   options: FamilyDriverOptions,
 ): Promise<FamilyRunResult> {
   const sh = options.sh ?? defaultSh;
+  const codexFast = options.codexFast ?? process.env.ORCHESTRATOR_CODEX_FAST === "1";
+  console.log(codexFastRunLog(codexFast));
 
   // 1. Read the already-cut children from live GitHub (the explicit dependency
   //    edges a `to-issues` step wrote — decision 1, no LLM inference).
@@ -657,6 +666,7 @@ export async function runFamilyDriver(
   //    git, no container) — that clone is the family clone every git op anchors on.
   //    `familyBase` makes a child cut from the LOCAL family base (decision 7).
   const realSingleSlice = new RealBackend({
+    codexFast,
     sourceRepo: options.sourceRepo,
     remote: options.remote,
     runKey: options.epicIssue,
@@ -702,6 +712,7 @@ export async function runFamilyDriver(
     options.familyBackendFactory !== undefined
       ? options.familyBackendFactory(workingRepo, familyBaseStartHead)
       : new RealFamilyBackend({
+          codexFast,
           workingRepo,
           // #4: verify the project the change ACTUALLY landed in, not a hardcoded
           // `orchestrator/`. Precedence: an explicit per-run `verifyCwd` wins;

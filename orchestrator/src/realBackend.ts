@@ -1631,6 +1631,8 @@ function toolchainVersionCommand(tool: string): string[] {
 
 /** Tunables for the real Backend (host paths + the profile image). */
 export interface RealBackendOptions {
+  /** Enable Codex priority processing for every in-container Codex leg. */
+  readonly codexFast?: boolean;
   /**
    * The SOURCE repo the orchestrator clones from (ADR 0024 decision 1). The
    * driver feeds the source — NOT a ready-made working repo. RealBackend builds
@@ -2510,7 +2512,7 @@ export class RealBackend implements Backend {
     // workspace-write) and irrelevant here — only auth.json crosses. Write the
     // minimal container config instead of copying the host's (#378). Always written
     // so the dir is a valid mount even when codex auth was absent.
-    writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"));
+    writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"), this.opts.codexFast);
     // The Claude token is BEST-EFFORT (#384 codex P2). The coder step now runs
     // Codex (model gpt-5.5), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
     // with Codex auth but no `~/.sc-claude-token` must still start the worker — a
@@ -3444,7 +3446,7 @@ export class RealBackend implements Backend {
       // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
       // bwrap is impossible). The host config.toml is host-personal and irrelevant
       // — only auth.json crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount), no crash. gh is NOT
