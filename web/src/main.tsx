@@ -11,6 +11,9 @@ import { GrandMap, NodeIntel } from "./components/map";
 import { MenuPage } from "./components/menuPage";
 import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
 import { SituationPanel } from "./components/situation";
+import { DecisionModal } from "./components/decisionModal";
+import { DecisionRecoveryPanel } from "./components/decisionRecovery";
+import { replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
@@ -86,6 +89,7 @@ function App() {
   // HITL 决策点：颁诏推演若出重大抉择，暂停弹窗逐个亲裁，裁完续跑结算。
   const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
   const [decisionFailures, setDecisionFailures] = React.useState<PendingActionFailure[]>([]);
+  const [pausedDecisionError, setPausedDecisionError] = React.useState("");
   const [failureRecoveryMode, setFailureRecoveryMode] = React.useState(false);
 
   // Tracks the current selected minister across async boundaries.
@@ -102,6 +106,7 @@ function App() {
     setSelectedNodeId((current) => current || data.map_nodes[0]?.id || "");
     setDecree(data.last_decree || "");
     setReport(data.last_report || "");
+    return data;
   }, [selectedMinister]);
 
   const loadMinisterChat = React.useCallback(async (ministerName: string, options?: { mergeFailures?: boolean }) => {
@@ -213,10 +218,12 @@ function App() {
   // 刷新恢复：若回合停在 awaiting_decision 且有未裁决策点，自动重弹决策弹窗。
   React.useEffect(() => {
     if (!state) return;
-    if (state.turn.phase !== "awaiting_decision") return;
-    const decisions = state.pending_decisions || [];
-    if (decisions.length === 0) return;
-    setPendingDecisions((prev) => (prev.length ? prev : decisions));
+    const route = routeRefreshDecisions(state.turn.phase, state.pending_decisions || []);
+    if (route.pendingDecisions !== null) {
+      const next = route.pendingDecisions;
+      setPendingDecisions((prev) => replacePendingDecisionsOnRefresh(prev, next) || []);
+    }
+    if (route.error !== null) setPausedDecisionError(route.error);
   }, [state]);
 
   // 每次进入页面/换回合都弹上回合邸报。不持久化记录——刷新即重新弹。
@@ -847,7 +854,9 @@ function App() {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
         const failures = outcome.data?.pending_action_failures || [];
         setDecisionFailures(failures);
-        setPendingDecisions(outcome.data.decisions || []);
+        const route = routeIssueDecisions(outcome.data.decisions || []);
+        if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
+        if (route.error !== null) setPausedDecisionError(route.error);
         setBusy("");
         return;
       }
@@ -860,6 +869,21 @@ function App() {
       return;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setBusy("");
+    }
+  };
+
+  const retryPendingDecisions = async () => {
+    setBusy("重新拉取批红");
+    setPausedDecisionError("");
+    try {
+      const freshState = await loadState();
+      const route = routeRetryDecisions(freshState.turn.phase, freshState.pending_decisions || []);
+      if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
+      if (route.error !== null) setPausedDecisionError(route.error);
+    } catch (err) {
+      setPausedDecisionError(`重新拉取待批决策失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
       setBusy("");
     }
   };
@@ -1247,6 +1271,14 @@ function App() {
         </div>
       ) : null}
 
+      {!settling && pausedDecisionError ? (
+        <DecisionRecoveryPanel
+          message={pausedDecisionError}
+          busy={busy}
+          onRetry={retryPendingDecisions}
+        />
+      ) : null}
+
       {cheatOpen ? (
         <CheatConsole
           directive={cheatDirective}
@@ -1299,86 +1331,6 @@ function PendingFailureRecoveryPanel({
 
 // HITL 重大抉择弹窗：逐个亲裁本回合决策点，全部选完一次提交续跑结算。
 // 每个决策：标题 + 背景 + 2-3 预设选项（点选）+ 朱批输入框（可补自由旨意）。
-function DecisionModal({
-  decisions,
-  failures = [],
-  onResolve,
-}: {
-  decisions: PendingDecision[];
-  failures?: PendingActionFailure[];
-  onResolve: (choices: { label?: string; hint?: string; note?: string }[]) => void;
-}) {
-  const [cursor, setCursor] = React.useState(0);
-  const [picks, setPicks] = React.useState<{ label?: string; hint?: string; note?: string }[]>(
-    () => decisions.map(() => ({}))
-  );
-  const total = decisions.length;
-  const cur = decisions[cursor];
-  const pick = picks[cursor] || {};
-
-  const setOption = (label: string, hint: string) =>
-    setPicks((p) => p.map((x, i) => (i === cursor ? { ...x, label, hint } : x)));
-  const setNote = (note: string) =>
-    setPicks((p) => p.map((x, i) => (i === cursor ? { ...x, note } : x)));
-
-  const decided = !!(pick.label || (pick.note || "").trim());
-  const last = cursor >= total - 1;
-
-  const next = () => {
-    if (!decided) return;
-    if (last) onResolve(picks);
-    else setCursor((c) => c + 1);
-  };
-
-  return (
-    <div className="decision-modal" role="dialog" aria-modal="true" aria-label="月末重大抉择">
-      <div className="decision-window">
-        <div className="decision-head">
-          <span className="decision-kicker">月末亲裁 · {cursor + 1}/{total}</span>
-          <h2 className="decision-title">{cur.title}</h2>
-        </div>
-        {failures.length ? (
-          <div className="decision-failure-list" role="alert">
-            {failures.map((failure) => (
-              <div className="decision-failure-item" key={failure.id}>
-                {failure.message}
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {cur.context ? <p className="decision-context">{cur.context}</p> : null}
-        <div className="decision-options">
-          {cur.options.map((o, i) => (
-            <button
-              key={i}
-              className={"decision-option" + (pick.label === o.label ? " is-picked" : "")}
-              onClick={() => setOption(o.label, o.hint)}
-            >
-              <span className="decision-option-label">{o.label}</span>
-              {o.hint ? <span className="decision-option-hint">{o.hint}</span> : null}
-            </button>
-          ))}
-        </div>
-        <textarea
-          className="decision-note"
-          placeholder="朱批（可选）：另有旨意可亲笔补写，将与所选一并定夺。"
-          value={pick.note || ""}
-          onChange={(e) => setNote(e.target.value)}
-        />
-        <div className="decision-actions">
-          <span className="decision-hint-line">
-            {decided ? "" : "请择一选项或亲笔朱批，方可下一步。"}
-          </span>
-          <button className="decision-confirm" disabled={!decided} onClick={next}>
-            {last ? "御笔亲断，续推时局" : "下一桩抉择"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
 // 作弊控制台：terminal UI。强制结算唯一入口（Ctrl+~ 唤出）。输入的指令暂存于
 // cheatDirective，下次颁诏时随结算穿入 extractor 当既成事实落库。
 function CheatConsole({
