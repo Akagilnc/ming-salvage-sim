@@ -30,6 +30,10 @@ def test_safe_historical_text_rejects_common_labeled_value_forms():
         "能力评分为98",
         "民心数值达73",
         "进度指标至41/100",
+        "忠诚值：88",
+        "能力评分：98",
+        "民心数值：73",
+        "进度指标：41/100",
     ):
         assert "已略去" in safe_historical_text(injected), injected
 
