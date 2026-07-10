@@ -2143,7 +2143,7 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
     });
   }
 
-  it("S0 issue-view requests only the gate fields — no body/comments", async () => {
+  it("S0 issue-view requests gate fields + body — still no comments (#329/#767)", async () => {
     const backend = makeBackend();
     await backend.fetchIssueMeta(329);
 
@@ -2157,12 +2157,11 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
     );
     expect(issueView).toBeDefined();
     const fields = issueView![issueView!.indexOf("--json") + 1] ?? "";
-    // The S0 gate only reads labels (rfa) — sub-issues + blocked_by come from
-    // dedicated queries. Pulling `comments` triggers gh's paginated
-    // preloadIssueComments; `body` is dead weight too now that the Agent Brief
-    // is no longer an S0 gate (#328/#329). S1's full snapshot still fetches both.
+    // #329: pulling `comments` triggers gh's paginated preloadIssueComments —
+    // still forbidden at S0. #767: `body` is now fetched so Coder-Rec can be
+    // parsed before the first worker dispatch (body alone is cheap).
     expect(fields).not.toContain("comments");
-    expect(fields).not.toContain("body");
+    expect(fields).toContain("body");
     expect(fields).toContain("labels");
   });
 
@@ -2194,6 +2193,7 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
       hasSubIssues: false,
       isClosed: false,
       openBlockedBy: [],
+      body: "## Agent Brief\nbody brief",
     });
   });
 });

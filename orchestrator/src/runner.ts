@@ -143,6 +143,7 @@ import {
   fixMarkedKeysFromVerify,
 } from "./onlineReviewSideEffects.js";
 import {
+  applyCoderRecToRoute,
   applyRuntimeTightRoutePolicy,
   modelForSlot,
   printableRouteLineup,
@@ -2348,7 +2349,69 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   console.info(
     `[orchestrator] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
   );
-  const stepSpecs = stepSpecsForRoute(routePolicy.route);
+  // #767: modelRoute / stepSpecs stay mutable so Coder-Rec can override the
+  // coder (+ coderFix) slot at S0 and advance it after non-converging fix rounds.
+  modelRoute = routePolicy.route;
+  let stepSpecs = stepSpecsForRoute(modelRoute);
+  /** Issue body used for Coder-Rec parse (S0 meta.body, else S1 snapshot.body). */
+  let coderRecIssueBody: string | undefined;
+  /** When true, ORCHESTRATOR_CODER_MODEL won — never re-apply Coder-Rec. */
+  let coderRecEnvSkipped = false;
+  let routeSmokeChecked = false;
+
+  const applyCoderRecSelection = async (
+    nonConvergingRounds: number,
+  ): Promise<ReturnType<typeof applyRuntimeTightRoutePolicy> | undefined> => {
+    if (coderRecEnvSkipped) return undefined;
+    const applied = applyCoderRecToRoute(
+      modelRoute,
+      coderRecIssueBody,
+      nonConvergingRounds,
+    );
+    if (applied.skippedForEnvOverride) {
+      coderRecEnvSkipped = true;
+      return undefined;
+    }
+    if (applied.route === modelRoute) return undefined;
+    modelRoute = applied.route;
+    stepSpecs = stepSpecsForRoute(modelRoute);
+    // Clear so the caller re-runs ensureRouteSmoke for the new coder slug
+    // before its first dispatch (top-of-loop OR the S2/S5 advance path).
+    routeSmokeChecked = false;
+    if (applied.entry !== undefined) {
+      console.info(
+        `[orchestrator] Coder-Rec → ${applied.entry.id} (${applied.entry.slug})` +
+          (nonConvergingRounds > 0
+            ? ` after ${nonConvergingRounds} non-converging review round(s)`
+            : ""),
+      );
+    }
+    return applyRuntimeTightRoutePolicy(modelRoute, {
+      interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+      warn: (message) => console.warn(`[orchestrator] ${message}`),
+    });
+  };
+
+  const stopForCoderRecTightRoutePolicy = (escalation: {
+    readonly reason: string;
+    readonly diagnosis: string;
+  }): RunResult => {
+    const stopSummary = stopSummaryForStartupRouteFailure(escalation);
+    return {
+      status: "escalate",
+      errorPackage: {
+        failedStep: "S0",
+        reason: `${escalation.reason}: ${escalation.diagnosis}`,
+      },
+      stepLedger: [{ step: "S8", stopSummary }],
+      stopSummary,
+      deferredFindings: [],
+    };
+  };
+
+  const coderRecRoundsFromLedger = (
+    entries: ReadonlyArray<LedgerEntry>,
+  ): number => entries.reduce((n, e) => (e.step === "S6" ? n + 1 : n), 0);
   // Family-run context (ADR 0022 decision 2). When present this is a CHILD slice
   // of a family run: cut from the family base (decision 7) and S7 push is a local
   // no-op (decision 2). Absent ⇒ the v0.1 standalone behaviour (base=main, push).
@@ -3175,7 +3238,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let resumeMonitorHandle:
     | import("./types.js").WorkerMonitorHandle
     | undefined;
-  let routeSmokeChecked = false;
 
   const ensureRouteSmoke = async (): Promise<RunResult | undefined> => {
     if (typeof backend.smokeModelRoute !== "function") {
@@ -3536,6 +3598,44 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       resumeFor = { step: plan.resumeStep, sessionId: plan.resumeSessionId };
     }
     resumedEscalationAnswer = plan.escalationAnswer;
+
+    // #767: resume skips S0/S1, so re-fetch the issue body and apply Coder-Rec
+    // (including the S6-count advance position from the restored ledger) before
+    // the first dispatch / top-of-loop smoke. Without this, applyCoderRecToRoute
+    // sees undefined body → skippedForMissingMarking → silent preset revert.
+    // Coder-Rec is OPTIONAL: re-fetch failures must degrade safely (try meta,
+    // then snapshot) — never errorTerminate / poison the resume terminal state.
+    try {
+      const meta = await backend.fetchIssueMeta(issueNumber);
+      if (typeof meta.body === "string" && meta.body.length > 0) {
+        coderRecIssueBody = meta.body;
+      }
+    } catch {
+      // fall through to snapshot
+    }
+    if (
+      (coderRecIssueBody === undefined || coderRecIssueBody.length === 0)
+    ) {
+      try {
+        const snapshot = await backend.fetchIssueSnapshot(issueNumber);
+        if (snapshot.body.length > 0) {
+          coderRecIssueBody = snapshot.body;
+        }
+      } catch {
+        // fall through — continue with route preset
+      }
+    }
+    if (coderRecIssueBody === undefined || coderRecIssueBody.length === 0) {
+      console.info(
+        "[orchestrator] Coder-Rec resume re-fetch failed; continuing with route preset",
+      );
+    }
+    const coderRecPolicy = await applyCoderRecSelection(
+      coderRecRoundsFromLedger(ledger),
+    );
+    if (coderRecPolicy?.kind === "stop") {
+      return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+    }
   }
 
   // The step machine has no fixed bound: route() always terminates the run via a
@@ -3644,6 +3744,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           ));
         }
 
+        // #767: apply Coder-Rec BEFORE the S0 smoke so we smoke the final
+        // route once (not the preset, then a full re-smoke after mutation).
+        // Mid-loop advance still re-smokes via the S2/S5 path below.
+        coderRecIssueBody = meta.body;
+        const coderRecPolicy = await applyCoderRecSelection(0);
+        if (coderRecPolicy?.kind === "stop") {
+          return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+        }
+
         const smokeResult = await ensureRouteSmoke();
         if (smokeResult !== undefined) return smokeResult;
 
@@ -3691,6 +3800,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         } catch (err) {
           return await errorTermination("S1", err);
         }
+        // #767: if S0 lacked a body (lightweight fake / older meta), take it
+        // from the S1 snapshot and apply Coder-Rec before S2.
+        if (
+          (coderRecIssueBody === undefined || coderRecIssueBody.length === 0) &&
+          snapshot.body.length > 0
+        ) {
+          coderRecIssueBody = snapshot.body;
+          const coderRecPolicy = await applyCoderRecSelection(
+            coderRecRoundsFromLedger(ledger),
+          );
+          if (coderRecPolicy?.kind === "stop") {
+            return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+          }
+        }
         break;
       }
 
@@ -3706,6 +3829,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // path when `resumeFor` carries a recorded session id.
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
+        }
+        // #767: before each coder dispatch, re-select from Coder-Rec using the
+        // number of completed S6 fix rounds as the non-convergence counter.
+        // Mid-loop advance clears routeSmokeChecked — re-smoke here because the
+        // top-of-loop check already ran for this iteration.
+        if (step === "S2" || step === "S5") {
+          const coderRecPolicy = await applyCoderRecSelection(
+            coderRecRoundsFromLedger(ledger),
+          );
+          if (coderRecPolicy?.kind === "stop") {
+            return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+          }
+          if (!routeSmokeChecked) {
+            const smokeResult = await ensureRouteSmoke();
+            if (smokeResult !== undefined) return smokeResult;
+          }
         }
         promptFile = stepSpecs[step].promptFile;
         const expectedKind = stepSpecs[step].role as "coder" | "reviewer";
