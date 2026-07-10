@@ -712,6 +712,8 @@ export async function runFamilyDriver(
           // family base is freshly cut → an empty diff; the change exists only once
           // children have merged.)
           verifyCwd: options.verifyCwd,
+          // #746: clonefile node_modules from the source monorepo when lockfiles match.
+          depsTemplateRoot: options.sourceRepo,
           resolveVerifyCwd: () =>
             inferVerifyCwd(
               familyDiffFiles(workingRepo, familyBaseStartHead, options.familyBase, sh),
