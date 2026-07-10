@@ -67,9 +67,14 @@ next fresh reviewer worker verifies closure over the current full diff.
 **Ratified-acceptance gate (coder-fix).** Never adopt a review finding by flipping
 or deleting an assertion that existed at the slice base, or by contradicting a
 written issue acceptance criterion. Find another repair. If no repair preserves
-both, emit an output-protocol escalation (not a commit) with the assertion/AC,
-finding text, and conflict reason. `preexistingAssertionTouched: true` in the
-landing file is a mandatory re-review item, never authority to change the test.
+both, **legal refuse** that one finding: fix the others, commit, and emit a
+normal coder completion that includes `refusedFindingIdentityKeys` +
+`refuseRecords` (identity key, finding text, acceptance criterion, conflict
+reason). That is a legal completion — the runner routes to **fresh re-review**,
+not a global escalate and not a decision-gate park. Rise/上提 to a human only
+when the conflict is a true top-dead / major product decision. 
+`preexistingAssertionTouched: true` in the landing file is a mandatory re-review
+item, never authority to change the test.
 
 When `.fix-focus.md` is present (#711), the members listed in each supplied
 family are explicitly in scope in addition to the marked finding identities.

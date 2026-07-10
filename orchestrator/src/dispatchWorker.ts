@@ -287,6 +287,10 @@ function writeFixFindingsLandingFile(
         ...(ctx.preexistingAssertionTouched === true
           ? { preexistingAssertionTouched: true }
           : {}),
+        ...(ctx.refusedFindingIdentityKeys !== undefined &&
+        ctx.refusedFindingIdentityKeys.length > 0
+          ? { refusedFindingIdentityKeys: ctx.refusedFindingIdentityKeys }
+          : {}),
         ...(ctx.escalationAnswer !== undefined
           ? { escalationAnswer: ctx.escalationAnswer }
           : {}),
