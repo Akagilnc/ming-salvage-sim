@@ -888,6 +888,17 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toBe(false);
   });
 
+  it("#743: accepts an explicit fix-marked confirmation set only on a recheck", () => {
+    expect(
+      isValidVerifyResult({
+        kind: "verify",
+        converged: true,
+        isRecheck: true,
+        fixMarkedFindingIdentityKeys: ["t:1"],
+      }),
+    ).toBe(true);
+  });
+
   it("pin r24: rejects contradictory converged:false when fixMarked keys disagree with dispositions", () => {
     expect(
       isValidVerifyResult({
@@ -4107,7 +4118,11 @@ describe("#600 r26 runner-owned isRecheck", () => {
           if (round === 1) {
             return { kind: "verify", converged: false };
           }
-          return { kind: "verify", converged: true };
+          return {
+            kind: "verify",
+            converged: true,
+            fixMarkedFindingIdentityKeys: [],
+          };
         },
         dispatchFixer: async () => fixerCommitted(),
         dispatchCleanup: async () => true,
@@ -4123,6 +4138,67 @@ describe("#600 r26 runner-owned isRecheck", () => {
     );
     expect(result.ok).toBe(true);
     expect(fixingSha).toBe("fix-sha-round1");
+  });
+
+  it("#743: post-fixer recheck receives and must echo every fix-marked identity key before it can converge", async () => {
+    const expectedKey = "thread:fixer-claimed";
+    let recheckLanding: WorkerLandingPayload | undefined;
+    const result = await runOnlineReviewLoopStage(
+      {
+        kind: "ship",
+        branch: "feat/x",
+        status: "pr_opened",
+        pr: "pr://x",
+        prHead: "head-1",
+      },
+      {
+        poll: async () => ({
+          repo: "o/r",
+          prNumber: 1,
+          prUrl: "pr://x",
+          headOid: "head-1",
+          pollCount: 2,
+          bots: {
+            coderabbit: { state: "complete", findingCount: 0 },
+            sourcery: { state: "complete", findingCount: 0 },
+            codex: { state: "complete", findingCount: 0 },
+            gemini: { state: "complete", findingCount: 0 },
+          },
+          threads: [],
+          checkRuns: [],
+          totalFindingCount: 0,
+          quiescent: true,
+        }),
+        dispatchVerify: async (landing, round) => {
+          if (round === 1) {
+            return {
+              kind: "verify",
+              converged: false,
+              findingDispositions: [
+                { identityKey: expectedKey, threadId: "1", action: "fix" },
+              ],
+            };
+          }
+          recheckLanding = landing;
+          // A fixer can claim success without repairing anything. Bare convergence
+          // does not prove that this specific finding was actually rechecked.
+          return { kind: "verify", converged: true };
+        },
+        dispatchFixer: async () => fixerCommitted(),
+        dispatchCleanup: async () => true,
+        dispatchDocRelease: async () => true,
+        applySideEffects: (_landing, verify) => verify,
+        retriggerAfterFix: () => {},
+      },
+    );
+
+    expect(recheckLanding?.fixMarkedFindingIdentityKeys).toEqual([expectedKey]);
+    expect(result).toEqual({
+      ok: false,
+      terminalState: "decision_gate_raised",
+      round: 2,
+      stopSummary: expect.objectContaining({ reason: "contract_drift" }),
+    });
   });
 });
 
@@ -4307,6 +4383,9 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return {
           kind: "verify",
           converged: round > MAX_ONLINE_REVIEW_ROUNDS,
+          ...(round > MAX_ONLINE_REVIEW_ROUNDS
+            ? { fixMarkedFindingIdentityKeys: [] }
+            : {}),
         } satisfies VerifyResult;
       },
       dispatchFixer: async () => {
@@ -4410,6 +4489,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
           kind: "verify",
           converged: true,
           isRecheck: true,
+          fixMarkedFindingIdentityKeys: [],
           threadsToResolve: ["PRRT_kwDOExampleThread"],
         };
       },
@@ -4522,7 +4602,12 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         if (round === 1) {
           return { kind: "verify", converged: false };
         }
-        return { kind: "verify", converged: true, isRecheck: true };
+        return {
+          kind: "verify",
+          converged: true,
+          isRecheck: true,
+          fixMarkedFindingIdentityKeys: [],
+        };
       },
       dispatchFixer: async () => fixerAlreadySatisfied("crash-landed-sha"),
       dispatchCleanup: async () => true,
@@ -4557,7 +4642,12 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         if (round === 1) {
           return { kind: "verify", converged: false };
         }
-        return { kind: "verify", converged: true, isRecheck: true };
+        return {
+          kind: "verify",
+          converged: true,
+          isRecheck: true,
+          fixMarkedFindingIdentityKeys: [],
+        };
       },
       dispatchFixer: async () => fixerCommitted(envelopeSha),
       dispatchCleanup: async () => true,
@@ -4734,7 +4824,12 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         if (round === 1) {
           return { kind: "verify", converged: false };
         }
-        return { kind: "verify", converged: true, isRecheck: true };
+        return {
+          kind: "verify",
+          converged: true,
+          isRecheck: true,
+          fixMarkedFindingIdentityKeys: [],
+        };
       },
       dispatchFixer: async () => fixerAlreadySatisfied("family-landed-sha"),
       dispatchCleanup: async () => true,
@@ -5588,7 +5683,11 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
             this.verifyRounds.push(ctx.onlineReviewRound ?? landing?.onlineReviewRound ?? 0);
             return {
               kind: "completed",
-              output: { kind: "verify", converged: true },
+              output: {
+                kind: "verify",
+                converged: true,
+                fixMarkedFindingIdentityKeys: [],
+              },
             };
           }
           const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
