@@ -1542,8 +1542,11 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     const fnStart = source.indexOf("protected cmrSandboxConfig(");
     expect(fnStart).toBeGreaterThanOrEqual(0);
     const fnBody = source.slice(fnStart, fnStart + 2500);
-    expect(fnBody).toMatch(/CMR_CODEX_MODEL/);
+    // Must match the real assignment/derivation line, not a comment mention alone.
+    expect(fnBody).toMatch(/env\.CMR_CODEX_MODEL\s*=\s*codexReviewLeg\.slug/);
+    // Object-literal hardcode OR assignment-form hardcode both RED.
     expect(fnBody).not.toMatch(/CMR_CODEX_MODEL:\s*["']gpt-5\./);
+    expect(fnBody).not.toMatch(/env\.CMR_CODEX_MODEL\s*=\s*["']gpt-5/);
   });
 });
 
