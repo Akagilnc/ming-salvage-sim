@@ -21,9 +21,11 @@ import type {
   PriorFindingDisposition,
   RepairEvidence,
   ReviewerOutput,
+  ReviewFixRefuseRecord,
   StepOutput,
 } from "./types.js";
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
+import { reviewFixDecisionGate } from "./reviewFixAssertionGate.js";
 
 /** Exact severity enum (no whitespace / case drift tolerated). */
 const SEVERITIES: ReadonlySet<string> = new Set([
@@ -424,8 +426,41 @@ export function isValidCoderOutput(o: StepOutput | undefined): o is CoderOutput 
   ) {
     return false;
   }
+  if (!isValidLegalRefuseFields(c)) return false;
   // Consistency: committed iff at least one commit was added.
   return c.committed ? c.commitsAdded >= 1 : c.commitsAdded === 0;
+}
+
+function isValidRefuseRecord(r: unknown): r is ReviewFixRefuseRecord {
+  if (r == null || typeof r !== "object") return false;
+  const rec = r as ReviewFixRefuseRecord;
+  return (
+    typeof rec.identityKey === "string" &&
+    rec.identityKey.trim().length > 0 &&
+    typeof rec.finding === "string" &&
+    rec.finding.trim().length > 0 &&
+    typeof rec.acceptanceCriterion === "string" &&
+    rec.acceptanceCriterion.trim().length > 0 &&
+    typeof rec.conflictReason === "string" &&
+    rec.conflictReason.trim().length > 0
+  );
+}
+
+/** #677: refuse keys + records must be absent together, or gate-valid together. */
+function isValidLegalRefuseFields(c: CoderOutput): boolean {
+  const keys = c.refusedFindingIdentityKeys;
+  const records = c.refuseRecords;
+  if (keys === undefined && records === undefined) return true;
+  if (!Array.isArray(keys) || !Array.isArray(records)) return false;
+  if (keys.length === 0 && records.length === 0) return true;
+  if (!keys.every((k) => typeof k === "string" && k.trim().length > 0)) {
+    return false;
+  }
+  if (!records.every(isValidRefuseRecord)) return false;
+  const legal = reviewFixDecisionGate({ records });
+  if (legal === undefined) return false;
+  if (legal.refusedFindingIdentityKeys.length !== keys.length) return false;
+  return keys.every((k, i) => k === legal.refusedFindingIdentityKeys[i]);
 }
 
 /**

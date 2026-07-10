@@ -37,7 +37,10 @@
 import { execFileSync } from "node:child_process";
 
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
-import { reviewFixAssertionSignal } from "./reviewFixAssertionGate.js";
+import {
+  reviewFixAssertionSignal,
+  reviewFixDecisionGate,
+} from "./reviewFixAssertionGate.js";
 import { route } from "./route.js";
 import {
   adjudicatePriorClaimedFixedFindings,
@@ -2134,6 +2137,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastCoderRepairEvidence: RepairEvidence | undefined;
   let lastCoderActualRepairPaths: ReadonlyArray<string> = [];
   let preexistingAssertionTouchedForReverify = false;
+  let refusedFindingIdentityKeysForReverify: readonly string[] = [];
   const noProgressByFindingIdentityKey = new Map<string, number>();
   let lastShipOutput: ShipResult | undefined;
   let onlineReviewRound = 1;
@@ -3505,12 +3509,31 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       ...(step === "S6" && preexistingAssertionTouchedForReverify
                         ? { preexistingAssertionTouched: true }
                         : {}),
+                      ...(step === "S6" &&
+                      refusedFindingIdentityKeysForReverify.length > 0
+                        ? {
+                            refusedFindingIdentityKeys:
+                              refusedFindingIdentityKeysForReverify,
+                          }
+                        : {}),
                     }
                   : {}),
               };
               const landingPayload =
                 step === "S5" || step === "S6"
-                  ? { blockingFindings: pendingBlockingFindings }
+                  ? {
+                      blockingFindings: pendingBlockingFindings,
+                      ...(step === "S6" && preexistingAssertionTouchedForReverify
+                        ? { preexistingAssertionTouched: true }
+                        : {}),
+                      ...(step === "S6" &&
+                      refusedFindingIdentityKeysForReverify.length > 0
+                        ? {
+                            refusedFindingIdentityKeys:
+                              refusedFindingIdentityKeysForReverify,
+                          }
+                        : {}),
+                    }
                   : undefined;
               // #598: the generic mechanical retry re-dispatches a process-level
               // crash (failed/malformed/outcome_protocol_failure/throw) with a fresh
@@ -3711,15 +3734,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             coderHeadBeforeStep,
           );
           if (step === "S5" && coderHeadBeforeStep !== undefined) {
-            const afterFix = gitHead(worktree);
-            preexistingAssertionTouchedForReverify =
-              afterFix !== undefined &&
-              reviewFixAssertionSignal({
+            try {
+              const afterFix = gitHead(worktree);
+              if (afterFix === undefined) {
+                throw new Error(
+                  "reviewFixAssertionSignal: unable to read HEAD after S5 (fail-closed)",
+                );
+              }
+              preexistingAssertionTouchedForReverify = reviewFixAssertionSignal({
                 worktreePath: worktree.path,
                 sliceBase: worktree.base,
                 beforeFix: coderHeadBeforeStep,
                 afterFix,
               });
+            } catch (err) {
+              return await errorTermination(step, err);
+            }
+          }
+          // #677: legal refuse — wire decision gate on the real S5 path.
+          // Refused keys stay in the fix→fresh-re-review loop (never escalate/park).
+          if (step === "S5") {
+            const records = output.refuseRecords ?? [];
+            if (records.length > 0) {
+              const legal = reviewFixDecisionGate({ records });
+              refusedFindingIdentityKeysForReverify =
+                legal?.refusedFindingIdentityKeys ?? [];
+            } else {
+              refusedFindingIdentityKeysForReverify =
+                output.refusedFindingIdentityKeys ?? [];
+            }
           }
         }
         if (step === "S3" || step === "S6") lastReviewerStepId = step;

@@ -1680,6 +1680,10 @@ export class RealFamilyBackend implements FamilyBackend {
           ...(ctx.preexistingAssertionTouched === true
             ? { preexistingAssertionTouched: true }
             : {}),
+          ...(ctx.refusedFindingIdentityKeys !== undefined &&
+          ctx.refusedFindingIdentityKeys.length > 0
+            ? { refusedFindingIdentityKeys: ctx.refusedFindingIdentityKeys }
+            : {}),
           ...(ctx.repairAttemptFailures !== undefined &&
           ctx.repairAttemptFailures.length > 0
             ? { repairAttemptFailures: ctx.repairAttemptFailures }
