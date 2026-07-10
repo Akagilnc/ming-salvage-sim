@@ -14,7 +14,7 @@
  */
 
 import { dirname, join } from "node:path";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -953,16 +953,19 @@ describe("realBackend soulsDirError (#372)", () => {
   });
 
   it("REQUIRED_SOUL_FILES lists every file under image/souls incl. docRelease (#739)", () => {
-    // Source of truth = orchestrator/image/souls/ (no stale hard-coded count alone).
-    expect(new Set(REQUIRED_SOUL_FILES).size).toBe(11);
-    expect(REQUIRED_SOUL_FILES).toContain("output_protocol.md");
-    expect(REQUIRED_SOUL_FILES).toContain("coder.md");
-    expect(REQUIRED_SOUL_FILES).toContain("ship.md");
-    // #735 added S12 soul; #739 fail-fast inventory must list it (plus verify/fixer).
-    expect(REQUIRED_SOUL_FILES).toContain("docRelease.md");
-    expect(REQUIRED_SOUL_FILES).toContain("verify.md");
-    expect(REQUIRED_SOUL_FILES).toContain("fixer.md");
-    // No duplicates.
+    // Source of truth = orchestrator/image/souls/ directory listing via readdirSync.
+    // Spot-checks + hard-coded count (e.g. size===11) still pass when a new soul
+    // lands on disk but is missing from REQUIRED_SOUL_FILES — that is the #739
+    // fail-late regression. Exact set equality catches both directions:
+    // constant missing a dir file, or constant listing a file that is gone.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const realSoulsDir = join(here, "..", "image", "souls");
+    const onDisk = readdirSync(realSoulsDir)
+      .filter((name) => !name.startsWith("."))
+      .sort();
+    const required = [...REQUIRED_SOUL_FILES].sort();
+    expect(required).toEqual(onDisk);
+    // No duplicates in the constant (sort hides them in the equality above).
     expect(new Set(REQUIRED_SOUL_FILES).size).toBe(REQUIRED_SOUL_FILES.length);
   });
 
