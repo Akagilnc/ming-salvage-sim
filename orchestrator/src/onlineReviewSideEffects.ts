@@ -196,16 +196,6 @@ export function createDeferredTrackingIssue(
   );
   if (existing !== undefined) return existing;
 
-  // Narrow the check/create window. This cannot make GitHub issue creation an
-  // atomic compare-and-create, so the post-create convergence below remains
-  // required for overlapping runners.
-  const beforeCreate = adoptOldestDeferredIssue(
-    sh,
-    repo,
-    listOpenDeferredTrackingIssues(sh, repo, title),
-  );
-  if (beforeCreate !== undefined) return beforeCreate;
-
   const url = sh("gh", [
     "api",
     `repos/${repo}/issues`,
@@ -227,7 +217,12 @@ export function createDeferredTrackingIssue(
     repo,
     listOpenDeferredTrackingIssues(sh, repo, title),
   );
-  return afterCreate ?? trimmed;
+  if (afterCreate === undefined) {
+    throw new Error(
+      `createDeferredTrackingIssue: issue ${trimmed} did not converge to a canonical issue`,
+    );
+  }
+  return afterCreate;
 }
 
 /** Post an evidence-bearing reply on a PR review thread (#600 AC6). */
