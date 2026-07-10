@@ -100,13 +100,18 @@ export {
   applyIdleDisposition,
   buildQuotaWaitForResetLedgerEntry,
   decideIdleAfterProbe,
+  handleIdleThreshold,
+  isAgentIdleTimeoutError,
   parseZaiResetAt,
   poolForModelRef,
   probeConfigForPool,
+  QuotaWaitForResetError,
   runPoolProbe,
 } from "./quotaProbe.js";
 export type {
   ApplyIdleDispositionResult,
+  HandleIdleThresholdInput,
+  HandleIdleThresholdResult,
   IdleDisposition,
   IdleHangActions,
   IdleWorkerHandle,

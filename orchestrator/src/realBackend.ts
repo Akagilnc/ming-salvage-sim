@@ -102,6 +102,16 @@ export {
   type ModelSlugRegistryEntry,
 };
 import { legacyDispatchWorker, SHIP_PROMPT_FILE } from "./dispatchWorker.js";
+import {
+  handleIdleThreshold,
+  isAgentIdleTimeoutError,
+  QuotaWaitForResetError,
+  runPoolProbe,
+  type HandleIdleThresholdResult,
+  type QuotaPoolId,
+  type QuotaProbeResult,
+  type QuotaWaitForResetLedgerEvent,
+} from "./quotaProbe.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
   shipOutcomeFromResult,
@@ -651,8 +661,33 @@ export const SANDBOX_GH_TOKEN_ENV = "GH_TOKEN";
  * IMMEDIATELY instead of waiting (gemini #384 R2: a 1-year value = 31_536_000_000
  * ms OVERFLOWED int32 → the idle timer fired at once, the opposite of "never
  * fires"). 604_800 * 1000 = 604_800_000 ms ≪ 2**31-1, no overflow.
+ *
+ * #683: when this timer DOES fire (or an external monitor hits idle first),
+ * {@link RealBackend.runAgentSandbox} routes through {@link handleIdleThreshold}
+ * — probe the worker's pool before hang kill (429 → wait-for-reset, not hang).
  */
 export const WORKER_IDLE_TIMEOUT_SECONDS = 604_800;
+
+/**
+ * #683 context threaded beside Sandcastle run options so idle timeout can probe
+ * the correct pool and land a wait-for-reset ledger row without killing the
+ * worker. Stripped before `sc.run` (Sandcastle does not know this field).
+ */
+export interface QuotaProbeRunContext {
+  /** Model/route slug → {@link import("./quotaProbe.js").poolForModelRef}. */
+  readonly modelRef: string;
+  readonly step?: StepId;
+  /** OS pid of the worker process when known (#684 monitor handle). */
+  readonly workerPid?: number;
+  /** Resident worktree path — used to derive sibling `.ledger-<n>` for wait rows. */
+  readonly worktreePath?: string;
+  readonly issueNumber?: number;
+}
+
+/** Sandcastle run options + optional #683 idle quota-probe context. */
+export type AgentSandboxRunOptions = Parameters<typeof sc.run>[0] & {
+  readonly quotaProbe?: QuotaProbeRunContext;
+};
 
 /**
  * Marks the container as an orchestrator-spawned, non-interactive session.
@@ -3022,6 +3057,13 @@ export class RealBackend implements Backend {
       // would throw on a bad/missing compatibility tag before the backend can
       // read the sidecar machine protocol.
       ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
+      // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
+      quotaProbe: {
+        modelRef: spec.model,
+        step: spec.id,
+        worktreePath: worktree.path,
+        issueNumber,
+      },
     });
     // #244 step-advance gate: the step only advances if the agent fired its
     // declared completionSignal. A complete-but-unsignaled run (e.g. maxIter hit
@@ -3078,6 +3120,13 @@ export class RealBackend implements Backend {
         // pre-parsing the compatibility tag before rawOutputFor can read the
         // runner-owned file.
         ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
+        // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
+        quotaProbe: {
+          modelRef: spec.model,
+          step: spec.id,
+          worktreePath: worktree.path,
+          issueNumber,
+        },
       });
       // #244 step-advance gate (resume path): a resumed step still only advances
       // on its declared completionSignal — an unsignaled resume throws → S8(error).
@@ -3127,10 +3176,125 @@ export class RealBackend implements Backend {
     }
   }
 
-  protected async runAgentSandbox(
+  /**
+   * Thin Sandcastle `sc.run` seam. Unit tests that need a fake container result
+   * override THIS method (or {@link runAgentSandbox}). Production idle/quota
+   * disposition lives in {@link runAgentSandbox} so a full override of that
+   * method intentionally bypasses #683 only when the test owns the whole path.
+   */
+  protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     return await sc.run(options);
+  }
+
+  /**
+   * Production agent-sandbox entry (#683). Runs Sandcastle, and on idle timeout
+   * probes the worker's quota pool BEFORE hang disposition:
+   *   - 429/limit → {@link QuotaWaitForResetError} (process not killed by us;
+   *     ledger row recorded)
+   *   - probe ok / network error → fail-safe hang (kill only this pid tree) then
+   *     rethrow the idle error
+   */
+  protected async runAgentSandbox(
+    options: AgentSandboxRunOptions,
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    const { quotaProbe, ...scOptions } = options;
+    try {
+      return await this.invokeSandcastleRun(scOptions);
+    } catch (err) {
+      if (!isAgentIdleTimeoutError(err) || quotaProbe === undefined) {
+        throw err;
+      }
+      const result = await this.resolveIdleAfterQuotaProbe(quotaProbe);
+      if (result.disposition.kind === "wait_for_reset") {
+        throw new QuotaWaitForResetError(result);
+      }
+      // hang path already applied killPidTree via handleIdleThreshold
+      throw err;
+    }
+  }
+
+  /**
+   * #683 production idle disposition entry. Callable from runAgentSandbox (on
+   * Sandcastle idle timeout) and from any external monitor that owns the idle
+   * threshold. Overridable only for host I/O seams (probe / kill / ledger).
+   */
+  protected async resolveIdleAfterQuotaProbe(
+    ctx: QuotaProbeRunContext,
+  ): Promise<HandleIdleThresholdResult> {
+    return handleIdleThreshold({
+      modelRef: ctx.modelRef,
+      worker: {
+        pid: ctx.workerPid !== undefined && ctx.workerPid > 0 ? ctx.workerPid : 0,
+        ...(ctx.step !== undefined ? { step: ctx.step } : {}),
+      },
+      actions: {
+        killPidTree: (pid) => this.killWorkerPidTree(pid),
+        recordLedger: (entry) => this.recordQuotaWaitLedger(entry, ctx),
+        now: () => this.idleNow(),
+      },
+      probe: (pool) => this.runQuotaProbe(pool),
+    });
+  }
+
+  /** Clock for wait-for-reset ledger `ts` (injectable via override in tests). */
+  protected idleNow(): Date {
+    return new Date();
+  }
+
+  /**
+   * Pool probe used after idle threshold (#683). Default = real
+   * {@link runPoolProbe}; tests stub three outcomes.
+   */
+  protected async runQuotaProbe(pool: QuotaPoolId): Promise<QuotaProbeResult> {
+    return runPoolProbe(pool);
+  }
+
+  /**
+   * Kill only this worker's pid tree (never global pgrep/pkill -f). No-op for
+   * unknown/invalid pids (Sandcastle may already have interrupted the process).
+   */
+  protected killWorkerPidTree(pid: number): void {
+    if (!Number.isInteger(pid) || pid <= 0) return;
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // already dead / not ours
+    }
+    try {
+      execFileSync("pkill", ["-P", String(pid)], { stdio: "ignore" });
+    } catch {
+      // no children or pkill unavailable
+    }
+  }
+
+  /**
+   * Persist a `quota_wait_for_reset` ledger row to the sibling state dir when
+   * known. Tests override to capture without touching disk.
+   */
+  protected async recordQuotaWaitLedger(
+    entry: QuotaWaitForResetLedgerEvent,
+    ctx: QuotaProbeRunContext,
+  ): Promise<void> {
+    if (ctx.worktreePath === undefined || ctx.issueNumber === undefined) {
+      // No durable landing spot — still surface via QuotaWaitForResetError.applied
+      return;
+    }
+    const stateDir = this.stateDirFor(ctx.worktreePath, ctx.issueNumber);
+    const persistent: PersistentLedgerEntry = {
+      step: entry.step ?? ctx.step ?? "S2",
+      event: "quota_wait_for_reset",
+      pool: entry.pool,
+      ...(entry.resetAt !== undefined ? { resetAt: entry.resetAt } : {}),
+      reason: entry.reason,
+      ...(entry.workerPid !== undefined ? { workerPid: entry.workerPid } : {}),
+      ts: entry.ts,
+      sessionId: "quota-wait-for-reset",
+      prompt_hash: "quota-wait-for-reset",
+      branchHEAD: "quota-wait-for-reset",
+    };
+    await this.writeLedger(persistent, stateDir);
   }
 
   // ── S7: ship WORKER (invoke gstack-ship) ────────────────────────────────────
@@ -3303,6 +3467,13 @@ export class RealBackend implements Backend {
           // Commit the VERSION/CHANGELOG bump + push on the resident branch in place.
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
+          // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
+          quotaProbe: {
+            modelRef: spec.model,
+            step: spec.id,
+            worktreePath: worktree.path,
+            issueNumber: this.issueOf(worktree),
+          },
         });
         return shipOutcomeFromResult({
           ...result,
