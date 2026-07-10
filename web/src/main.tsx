@@ -20,6 +20,8 @@ import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
 import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
 
+const PAUSED_DECISION_MSG = "本回合仍在等待批红，但待批决策无法校验。请重新拉取后重试。";
+
 function App() {
   const [appView, setAppView] = React.useState<AppView>("menu");
   const [menuStatus, setMenuStatus] = React.useState<MenuStatus | null>(null);
@@ -222,7 +224,7 @@ function App() {
     const decisions = pendingDecisionsFrom(state.pending_decisions || []);
     if (decisions.length === 0) {
       setPendingDecisions([]);
-      setPausedDecisionError("本回合仍在等待批红，但待批决策无法校验。请重新拉取后重试。");
+      setPausedDecisionError(PAUSED_DECISION_MSG);
       return;
     }
     setPausedDecisionError("");
@@ -860,7 +862,7 @@ function App() {
         setDecisionFailures(failures);
         if (decisions.length === 0) {
           setPendingDecisions([]);
-          setPausedDecisionError("本回合仍在等待批红，但待批决策无法校验。请重新拉取后重试。");
+          setPausedDecisionError(PAUSED_DECISION_MSG);
           setBusy("");
           return;
         }
@@ -888,9 +890,14 @@ function App() {
     try {
       const freshState = await loadState();
       const decisions = pendingDecisionsFrom(freshState.pending_decisions || []);
-      if (freshState.turn.phase !== "awaiting_decision" || decisions.length === 0) {
+      if (freshState.turn.phase !== "awaiting_decision") {
         setPendingDecisions([]);
-        setPausedDecisionError("本回合仍未恢复批红。请再次重新拉取待批决策。");
+        setPausedDecisionError("");
+        return;
+      }
+      if (decisions.length === 0) {
+        setPendingDecisions([]);
+        setPausedDecisionError(PAUSED_DECISION_MSG);
         return;
       }
       setPendingDecisions(decisions);
