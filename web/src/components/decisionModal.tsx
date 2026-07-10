@@ -14,7 +14,7 @@ export function DecisionModal({
 }) {
   const [cursor, setCursor] = React.useState(0);
   const [picks, setPicks] = React.useState<Choice[]>(() => decisions.map(() => ({})));
-  if (decisions.length === 0) return null;
+  const pageRef = React.useRef<HTMLElement>(null);
 
   const cur = decisions[cursor];
   const pick = picks[cursor] || {};
@@ -28,12 +28,66 @@ export function DecisionModal({
     else setCursor((value) => value + 1);
   };
 
+  React.useEffect(() => {
+    const page = pageRef.current;
+    if (!page) return;
+
+    const focusableSelector = [
+      "button:not([disabled])",
+      "textarea:not([disabled])",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "a[href]",
+      "[tabindex]:not([tabindex='-1'])",
+    ].join(",");
+    const focusables = () => Array.from(page.querySelectorAll<HTMLElement>(focusableSelector));
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    (focusables()[0] || page).focus();
+
+    const keepFocusInPage = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const elements = focusables();
+      if (!elements.length) {
+        event.preventDefault();
+        page.focus();
+        return;
+      }
+
+      const activeIndex = elements.indexOf(document.activeElement as HTMLElement);
+      if (activeIndex === -1) {
+        event.preventDefault();
+        elements[event.shiftKey ? elements.length - 1 : 0].focus();
+      } else if (event.shiftKey && activeIndex === 0) {
+        event.preventDefault();
+        elements[elements.length - 1].focus();
+      } else if (!event.shiftKey && activeIndex === elements.length - 1) {
+        event.preventDefault();
+        elements[0].focus();
+      }
+    };
+
+    document.addEventListener("keydown", keepFocusInPage, true);
+    return () => {
+      document.removeEventListener("keydown", keepFocusInPage, true);
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [decisions.length]);
+
+  if (decisions.length === 0) return null;
+
   return (
-    <section className="decision-page" aria-label="月末批红">
+    <section
+      ref={pageRef}
+      className="decision-page"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="decision-page-title"
+      tabIndex={-1}
+    >
       <article className="decision-document">
         <div className="decision-head">
           <span className="decision-kicker">月末批红 · 第 {cursor + 1} / {decisions.length} 疏</span>
-          <h2 className="decision-title">奏疏批红</h2>
+          <h2 id="decision-page-title" className="decision-title">奏疏批红</h2>
         </div>
         {failures.length ? <div className="decision-failure-list" role="alert">
           {failures.map((failure) => <div className="decision-failure-item" key={failure.id}>{failure.message}</div>)}

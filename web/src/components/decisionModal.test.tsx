@@ -45,6 +45,49 @@ describe("DecisionModal", () => {
     cleanup();
   });
 
+  it("exposes a modal dialog and keeps keyboard focus inside the red-seal page", () => {
+    const background = document.createElement("button");
+    background.textContent = "底层 HUD 控件";
+    document.body.appendChild(background);
+    background.focus();
+
+    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
+    const page = document.querySelector<HTMLElement>(".decision-page");
+    const options = document.querySelectorAll<HTMLButtonElement>(".decision-option");
+    const option = options[0];
+    const note = document.querySelector<HTMLTextAreaElement>(".decision-note");
+    const confirm = document.querySelector<HTMLButtonElement>(".decision-confirm");
+
+    expect(page?.getAttribute("role")).toBe("dialog");
+    expect(page?.getAttribute("aria-modal")).toBe("true");
+    expect(page?.getAttribute("aria-labelledby")).toBe("decision-page-title");
+    expect(document.activeElement).toBe(option);
+
+    act(() => background.focus());
+    act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })));
+    expect(document.activeElement).toBe(option);
+
+    act(() => note!.focus());
+    act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })));
+    expect(document.activeElement).toBe(option);
+
+    act(() => option!.focus());
+    act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true })));
+    expect(document.activeElement).toBe(note);
+
+    act(() => option!.click());
+    act(() => confirm!.focus());
+    act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })));
+    expect(document.activeElement).toBe(option);
+
+    act(() => option!.focus());
+    act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true })));
+    expect(document.activeElement).toBe(confirm);
+
+    cleanup();
+    expect(document.activeElement).toBe(background);
+  });
+
   it("assembles each decision as ordered sections of one red-seal document", () => {
     const cleanup = render(<DecisionModal decisions={decisions} onResolve={vi.fn()} />);
     const documentPage = document.querySelector<HTMLElement>(".decision-document");
