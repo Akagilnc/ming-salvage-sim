@@ -131,6 +131,7 @@ import {
   fixMarkedKeysFromVerify,
 } from "./onlineReviewSideEffects.js";
 import {
+  applyCoderRecToRoute,
   applyRuntimeTightRoutePolicy,
   modelForSlot,
   printableRouteLineup,
@@ -2108,7 +2109,45 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   console.info(
     `[orchestrator] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
   );
-  const stepSpecs = stepSpecsForRoute(routePolicy.route);
+  // #767: modelRoute / stepSpecs stay mutable so Coder-Rec can override the
+  // coder (+ coderFix) slot at S0 and advance it after non-converging fix rounds.
+  modelRoute = routePolicy.route;
+  let stepSpecs = stepSpecsForRoute(modelRoute);
+  /** Issue body used for Coder-Rec parse (S0 meta.body, else S1 snapshot.body). */
+  let coderRecIssueBody: string | undefined;
+  /** When true, ORCHESTRATOR_CODER_MODEL won — never re-apply Coder-Rec. */
+  let coderRecEnvSkipped = false;
+  let routeSmokeChecked = false;
+
+  const applyCoderRecSelection = (nonConvergingRounds: number): void => {
+    if (coderRecEnvSkipped) return;
+    const applied = applyCoderRecToRoute(
+      modelRoute,
+      coderRecIssueBody,
+      nonConvergingRounds,
+    );
+    if (applied.skippedForEnvOverride) {
+      coderRecEnvSkipped = true;
+      return;
+    }
+    if (applied.route === modelRoute) return;
+    modelRoute = applied.route;
+    stepSpecs = stepSpecsForRoute(modelRoute);
+    // New coder slug may lack a smoke record — re-check before the next worker.
+    routeSmokeChecked = false;
+    if (applied.entry !== undefined) {
+      console.info(
+        `[orchestrator] Coder-Rec → ${applied.entry.id} (${applied.entry.slug})` +
+          (nonConvergingRounds > 0
+            ? ` after ${nonConvergingRounds} non-converging review round(s)`
+            : ""),
+      );
+    }
+  };
+
+  const coderRecRoundsFromLedger = (
+    entries: ReadonlyArray<LedgerEntry>,
+  ): number => entries.reduce((n, e) => (e.step === "S6" ? n + 1 : n), 0);
   // Family-run context (ADR 0022 decision 2). When present this is a CHILD slice
   // of a family run: cut from the family base (decision 7) and S7 push is a local
   // no-op (decision 2). Absent ⇒ the v0.1 standalone behaviour (base=main, push).
@@ -2933,7 +2972,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let resumeMonitorHandle:
     | import("./types.js").WorkerMonitorHandle
     | undefined;
-  let routeSmokeChecked = false;
 
   const ensureRouteSmoke = async (): Promise<RunResult | undefined> => {
     if (typeof backend.smokeModelRoute !== "function") {
@@ -3393,6 +3431,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const smokeResult = await ensureRouteSmoke();
         if (smokeResult !== undefined) return smokeResult;
 
+        // #767: parse Coder-Rec from the issue body (S0 now fetches body) and
+        // override the coder slot before the first worker dispatch.
+        coderRecIssueBody = meta.body;
+        applyCoderRecSelection(0);
+
         break;
       }
 
@@ -3437,6 +3480,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         } catch (err) {
           return await errorTermination("S1", err);
         }
+        // #767: if S0 lacked a body (lightweight fake / older meta), take it
+        // from the S1 snapshot and apply Coder-Rec before S2.
+        if (
+          (coderRecIssueBody === undefined || coderRecIssueBody.length === 0) &&
+          snapshot.body.length > 0
+        ) {
+          coderRecIssueBody = snapshot.body;
+          applyCoderRecSelection(coderRecRoundsFromLedger(ledger));
+        }
         break;
       }
 
@@ -3452,6 +3504,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // path when `resumeFor` carries a recorded session id.
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
+        }
+        // #767: before each coder dispatch, re-select from Coder-Rec using the
+        // number of completed S6 fix rounds as the non-convergence counter.
+        if (step === "S2" || step === "S5") {
+          applyCoderRecSelection(coderRecRoundsFromLedger(ledger));
         }
         promptFile = stepSpecs[step].promptFile;
         const expectedKind = stepSpecs[step].role as "coder" | "reviewer";
