@@ -27,6 +27,7 @@ import type { ChildProcess } from "node:child_process";
 
 import {
   dispatchMonitoredCliWorker,
+  killWorkerTree,
   type MonitoredCliDispatchInput,
 } from "../workerMonitor.js";
 import type {
@@ -186,10 +187,12 @@ export interface DispatchFamilyWorkerWithMonitorOptions {
 }
 
 function waitForChildExit(child: ChildProcess): Promise<number | null> {
-  if (child.exitCode !== null) return Promise.resolve(child.exitCode);
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(child.exitCode);
+  }
   return new Promise((resolve, reject) => {
     child.once("error", reject);
-    child.once("close", (code) => resolve(code));
+    child.once("exit", (code) => resolve(code));
   });
 }
 
@@ -221,12 +224,27 @@ export async function dispatchFamilyWorkerWithMonitor(
       ...(cliSpec.logBasename !== undefined
         ? { logBasename: cliSpec.logBasename }
         : {}),
+      ...(cliSpec.readInstanceId !== undefined
+        ? { readInstanceId: cliSpec.readInstanceId }
+        : {}),
+      ...(cliSpec.resultPath !== undefined
+        ? { resultPath: cliSpec.resultPath }
+        : {}),
     };
     const { handle, child } = await dispatchMonitoredCliWorker(input);
+    const exitPromise = waitForChildExit(child);
     if (opts?.onMonitorHandleSpawned !== undefined) {
-      await opts.onMonitorHandleSpawned(handle);
+      try {
+        await opts.onMonitorHandleSpawned(handle);
+      } catch (error) {
+        // Cleanup remains scoped to the verified monitor handle; never signal
+        // an unverified PID or process group on callback failure.
+        const cleanup = await killWorkerTree(handle);
+        if (!cleanup.skippedDueToPidReuse) await exitPromise;
+        throw error;
+      }
     }
-    const exitCode = await waitForChildExit(child);
+    const exitCode = await exitPromise;
     if (familyBackend.awaitMonitoredCliWorker === undefined) {
       return {
         result: {

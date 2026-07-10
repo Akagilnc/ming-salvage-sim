@@ -18,6 +18,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   dispatchWorkerWithMonitor,
 } from "../src/dispatchWorker.js";
+import { buildCliMonitorSpawnSpec } from "../src/cliMonitorHooks.js";
 import { RealBackend } from "../src/realBackend.js";
 import { RealFamilyBackend } from "../src/family/realFamilyBackend.js";
 import {
@@ -656,5 +657,44 @@ exit 0
     );
     expect(source).toMatch(/re-parent/i);
     expect(source).toMatch(/PID 1|init/i);
+  });
+
+  it("allocates a distinct result sidecar for each dispatch of the same step", () => {
+    const dir = mkdtempSync(join(tmpdir(), "orch-684-sidecar-"));
+    try {
+      const spec = {
+        id: "S9",
+        kind: "reviewer",
+        role: "reviewer",
+        host: "claude",
+        session: "fresh",
+        contextRetention: "retain",
+        promptFile: "reviewer.md",
+        completionSignal: "REVIEW_STEP_COMPLETE",
+        maxIter: 1,
+        model: "sonnet",
+        soul: "reviewer",
+        toolchain: [],
+      } satisfies WorkerSpec;
+      const first = buildCliMonitorSpawnSpec({
+        backendKind: "real",
+        backendOpts: {},
+        spec,
+        ctx: { stateDir: dir },
+        runnerPath: "/tmp/runner.js",
+      });
+      const second = buildCliMonitorSpawnSpec({
+        backendKind: "real",
+        backendOpts: {},
+        spec,
+        ctx: { stateDir: dir },
+        runnerPath: "/tmp/runner.js",
+      });
+      expect(first?.resultPath).toBeDefined();
+      expect(second?.resultPath).toBeDefined();
+      expect(first?.resultPath).not.toBe(second?.resultPath);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
