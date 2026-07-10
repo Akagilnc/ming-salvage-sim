@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DecisionModal } from "./decisionModal";
+import { pendingDecisionsFrom } from "../decisionRouting";
 import type { PendingDecision } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -35,14 +36,16 @@ function render(element: React.ReactNode) {
 afterEach(() => { document.body.innerHTML = ""; });
 
 describe("DecisionModal", () => {
-  it("renders each decision as a four-part red-seal document", () => {
+  it("assembles each decision as ordered sections of one red-seal document", () => {
     const cleanup = render(<DecisionModal decisions={decisions} onResolve={vi.fn()} />);
-    expect(document.querySelectorAll(".decision-document")).toHaveLength(1);
-    expect(document.body.textContent).toContain("疏文");
-    expect(document.body.textContent).toContain("内阁票拟");
-    expect(document.body.textContent).toContain("朱笔亲批");
-    expect(document.body.textContent).toContain("批红落印");
-    expect(document.body.textContent).toContain("关宁军饷");
+    const documentPage = document.querySelector<HTMLElement>(".decision-document");
+    expect(documentPage).not.toBeNull();
+    expect(documentPage!.querySelector(".decision-document-section:nth-of-type(1) .decision-section-label")?.textContent).toBe("疏文");
+    expect(documentPage!.querySelector(".decision-document-section:nth-of-type(1) h3")?.textContent).toBe("关宁军饷");
+    expect(documentPage!.querySelector(".decision-document-section:nth-of-type(2) .decision-section-label")?.textContent).toBe("内阁票拟");
+    expect(documentPage!.querySelector(".decision-document-section:nth-of-type(2) .decision-option-label")?.textContent).toBe("拟批：拨帑速发");
+    expect(documentPage!.querySelector(".decision-document-section:nth-of-type(3) label")?.textContent).toBe("朱笔亲批");
+    expect(documentPage!.querySelector(".decision-seal")?.getAttribute("aria-label")).toBe("批红落印");
     act(() => document.querySelector<HTMLButtonElement>(".decision-option")!.click());
     act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
     expect(document.body.textContent).toContain("河工修治");
@@ -51,7 +54,7 @@ describe("DecisionModal", () => {
 
   it("renders no page for a month with no decisions", () => {
     const cleanup = render(<DecisionModal decisions={[]} onResolve={vi.fn()} />);
-    expect(document.querySelector(".decision-modal")).toBeNull();
+    expect(document.querySelector(".decision-page")).toBeNull();
     cleanup();
   });
 
@@ -66,6 +69,27 @@ describe("DecisionModal", () => {
     });
     act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
     expect(onResolve).toHaveBeenCalledWith([{ note: "着即办理，不得有误。" }]);
+    cleanup();
+  });
+
+  it("keeps the selected memorial's label and hint in the existing resolve payload", () => {
+    const onResolve = vi.fn();
+    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={onResolve} />);
+    act(() => document.querySelector<HTMLButtonElement>(".decision-option")!.click());
+    act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
+    expect(onResolve).toHaveBeenCalledWith([{ label: "拨帑速发", hint: "先解燃眉之急。" }]);
+    cleanup();
+  });
+
+  it("renders only settlement PendingDecisions from a mixed App event stream", () => {
+    const mixedEventStream = [
+      decisions[0],
+      { id: 17, text: "着户部核拨军饷", status: "approved", source: "proactive" },
+    ];
+    const cleanup = render(<DecisionModal decisions={pendingDecisionsFrom(mixedEventStream)} onResolve={vi.fn()} />);
+    expect(document.querySelector(".decision-kicker")?.textContent).toContain("第 1 / 1 疏");
+    expect(document.querySelector(".decision-document h3")?.textContent).toBe("关宁军饷");
+    expect(document.body.textContent).not.toContain("着户部核拨军饷");
     cleanup();
   });
 });

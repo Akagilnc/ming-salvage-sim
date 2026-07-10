@@ -29,8 +29,8 @@ export function DecisionModal({
   };
 
   return (
-    <div className="decision-modal" role="dialog" aria-modal="true" aria-label="月末批红">
-      <div className="decision-window decision-paper">
+    <main className="decision-page" aria-label="月末批红">
+      <article className="decision-document">
         <div className="decision-head">
           <span className="decision-kicker">月末批红 · 第 {cursor + 1} / {decisions.length} 疏</span>
           <h2 className="decision-title">奏疏批红</h2>
@@ -38,7 +38,7 @@ export function DecisionModal({
         {failures.length ? <div className="decision-failure-list" role="alert">
           {failures.map((failure) => <div className="decision-failure-item" key={failure.id}>{failure.message}</div>)}
         </div> : null}
-        <section className="decision-document" aria-labelledby="decision-document-title">
+        <section aria-labelledby="decision-document-title">
           <div className="decision-document-section">
             <span className="decision-section-label">疏文</span>
             <h3 id="decision-document-title">{cur.title}</h3>
@@ -63,7 +63,7 @@ export function DecisionModal({
           <span className="decision-hint-line">{decided ? "" : "请择一票拟，或亲笔批示。"}</span>
           <button className="decision-confirm" disabled={!decided} onClick={next}>{last ? "批红落印，续推时局" : "批下一疏"}</button>
         </div>
-      </div>
-    </div>
+      </article>
+    </main>
   );
 }
