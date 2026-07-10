@@ -1772,7 +1772,8 @@ def _extract_secret_order(
         "  \"承办人\": \"实际承办此密令的人名；皇帝或大臣指明谁就填谁，没指明就填 "
         + (default_assignee or "") + "\",\n"
         "  \"期限月数\": 整数，皇帝限了期就填月数（如『三月内结案』填3），没限填0,\n"
-        "  \"标签\": [\"相关人名/地区/事项关键词\"]\n"
+        "  \"标签\": [\"相关人名/地区/事项关键词\"],\n"
+        "  \"排除名单\": [\"明确说要瞒住的人名\"]\n"
         "}\n\n"
         "【皇帝密令】" + (player_command or "（无）") + "\n"
         "【大臣回话】" + (minister_reply or "（无）") + "\n"
@@ -1835,13 +1836,15 @@ def _extract_secret_order(
         deadline = 0
     tags = obj.get("标签")
     tags = [str(t).strip() for t in tags if str(t).strip()] if isinstance(tags, list) else []
+    excluded_names = obj.get("排除名单")
+    excluded_names = [str(t).strip() for t in excluded_names if str(t).strip()] if isinstance(excluded_names, list) else []
     fallback_tags, fallback_deadline = _secret_metadata_from_command(player_command)
     if not tags:
         tags = fallback_tags
     if not deadline and not explicit_zero_deadline:
         deadline = fallback_deadline
     return {"title": title, "content": content, "assignee": assignee,
-            "deadline_months": deadline, "tags": tags}
+            "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names}
 
 
 def resolve_minister_actions(
