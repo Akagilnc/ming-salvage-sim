@@ -293,6 +293,59 @@ describe("#745 Close Guard arm — success draft with open checkboxes", () => {
     }
   });
 
+  it("keeps governance metadata fields out of the close-guard scan", () => {
+    const draft = baseSuccessDraft({
+      findings: [
+        {
+          severity: "low",
+          category: "clarity",
+          claim_quote: "governance metadata may quote a checklist",
+          location: "orchestrator/image/bin/orchestrator-outcome-guard",
+          suggested_fix: "no code change",
+          action: "wont_fix",
+          disposition_reason: "accepted because the quoted record says:\n- [ ] follow up later",
+          disposition: {
+            kind: "accepted_suppressed",
+            source: "issue #745 review record",
+            scope: "this slice only",
+            reason: "the source rationale includes:\n- [ ] preserve the historical wording",
+            boundedReopen: "reopen if:\n- [ ] the bounded condition changes",
+            findingIdentity: "finding text:\n- [ ] exact identity is preserved",
+          },
+        },
+      ],
+    });
+    const run = runGuard(draft);
+
+    try {
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain("CMR_STEP_COMPLETE");
+      expect(JSON.parse(run.sidecar)).toEqual(draft);
+    } finally {
+      rmSync(run.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps nested skipped-leg governance reasons out of the close-guard scan", () => {
+    const draft = baseSuccessDraft({
+      skippedLegs: [
+        {
+          slug: "agy",
+          reason: "quota unavailable; record the deferred work:\n- [ ] retry agy when quota refreshes",
+        },
+      ],
+    });
+    const run = runGuard(draft);
+
+    try {
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain("CMR_STEP_COMPLETE");
+      expect(JSON.parse(run.sidecar)).toEqual(draft);
+    } finally {
+      rmSync(run.dir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps a line continuation out of the rejected checklist preview", () => {
     const run = runGuard(
       baseSuccessDraft({
