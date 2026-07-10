@@ -12,6 +12,8 @@
  *   8. runner ledger wiring — 2 completed S6 rounds advance the DISPATCHED coder
  *   9. resume re-fetches issue body so Coder-Rec (+ advance position) survives
  *  10. S0 smokes the final Coder-Rec route once (not preset-then-override)
+ *  11. resume Coder-Rec re-fetch degrades safely (meta throw → snapshot;
+ *      both throw → route preset + diagnostic, no error termination)
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -532,6 +534,60 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     // not the route preset (sonnet) and not the first Coder-Rec entry.
     expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
     expect(backend.coderModels).not.toContain("sonnet");
+  });
+
+  it("resume: fetchIssueMeta throw falls back to snapshot for Coder-Rec", async () => {
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    class MetaThrowSnapshotOkBackend extends CoderRecResumeAfterS5Backend {
+      override async fetchIssueMeta(_issueNumber: number): Promise<IssueMeta> {
+        throw new Error("meta unavailable");
+      }
+      override async fetchIssueSnapshot(
+        issueNumber: number,
+      ): Promise<IssueSnapshot> {
+        return {
+          number: issueNumber,
+          body: CODER_REC_BODY,
+          comments: [],
+          agentBrief: "",
+        };
+      }
+    }
+    const backend = new MetaThrowSnapshotOkBackend();
+    const result = await runOrchestrator({ issueNumber: 767, backend });
+    expect(result.status).toBe("success");
+    // Snapshot body supplies Coder-Rec; 2 S6 rounds → terra@med, not preset.
+    expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
+    expect(backend.coderModels).not.toContain("sonnet");
+  });
+
+  it("resume: both re-fetch throws degrade to route preset without error termination", async () => {
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    class BothRefetchThrowBackend extends CoderRecResumeAfterS5Backend {
+      override async fetchIssueMeta(_issueNumber: number): Promise<IssueMeta> {
+        throw new Error("meta unavailable");
+      }
+      override async fetchIssueSnapshot(
+        _issueNumber: number,
+      ): Promise<IssueSnapshot> {
+        throw new Error("snapshot unavailable");
+      }
+    }
+    try {
+      const backend = new BothRefetchThrowBackend();
+      const result = await runOrchestrator({ issueNumber: 767, backend });
+      expect(result.status).toBe("success");
+      // Coder-Rec is optional: continue with the route preset coder.
+      expect(backend.coderModels[0]).toBe("sonnet");
+      expect(info).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /Coder-Rec.*(?:re-?fetch|resume).*(?:fail|degrad|unavailable|preset)/i,
+        ),
+      );
+    } finally {
+      info.mockRestore();
+    }
   });
 
   it("re-smokes the advanced coder slug before its first mid-loop S5 dispatch", async () => {
