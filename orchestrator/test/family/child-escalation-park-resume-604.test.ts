@@ -44,6 +44,7 @@ import type {
   FamilyEpic,
   FamilyLedgerEntry,
   MergeRequest,
+  ReconcileGit,
 } from "../../src/family/types.js";
 
 const STUCK: Escalation = {
@@ -218,6 +219,22 @@ class FakeFamilyBackend implements FamilyBackend {
   // fully-merged family run reaches "success" (the spine.test.ts happy-path form).
 }
 
+class FakeReconcileGit implements ReconcileGit {
+  constructor(private readonly live: string) {}
+  async liveFamilyHead(): Promise<string> {
+    return this.live;
+  }
+  async familyBaseStartHead(): Promise<string> {
+    return this.live;
+  }
+  async childHeadExists(): Promise<{ exists: false }> {
+    return { exists: false };
+  }
+  async isAncestor(): Promise<boolean> {
+    return false;
+  }
+}
+
 function epicWith(...childIssues: number[]): FamilyEpic {
   return {
     issue: 604,
@@ -331,6 +348,62 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
     ]);
     // And it merged into the family base.
     expect(familyBackend.merges.some((m) => m.childIssue === 11)).toBe(true);
+  });
+
+  it("park → answer → reconcile at the parked head → resumes in place without an infra failure", async () => {
+    const singleSliceBackend = new EscalatingChildBackend(11, true);
+    const familyBackend = new FakeFamilyBackend();
+
+    const first = await runFamily({
+      epic: epicWith(11),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/604-base",
+    });
+    expect(first.status).toBe("escalated");
+
+    const parkedIndex = familyBackend.ledger.findIndex(
+      (entry) => entry.status === "child_decision_parked",
+    );
+    // The production family-485 record includes the then-live family head.
+    // Model that real persisted row before the re-entry invocation.
+    const parked = {
+      ...familyBackend.ledger[parkedIndex]!,
+      familyHeadAfter: "family-base-0",
+    } as FamilyLedgerEntry;
+    familyBackend.ledger[parkedIndex] = parked;
+    expect(parked).toMatchObject({
+      event: "child_decision_parked",
+      phase: "wave",
+      escalationKind: "decision",
+      childIssue: 11,
+      familyHeadAfter: "family-base-0",
+    });
+
+    await recordFamilyEscalationAnswered(familyBackend, {
+      childIssue: 11,
+      answer: "the decision is answered; resume in place",
+      source: "human",
+    });
+    expect(familyBackend.ledger.at(-1)).not.toHaveProperty("familyHeadAfter");
+
+    const second = await runFamily({
+      epic: epicWith(11),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/604-base",
+      reconcileGit: new FakeReconcileGit(parked?.familyHeadAfter ?? "wrong-head"),
+    });
+
+    expect(second.status).toBe("success");
+    expect(singleSliceBackend.resumeSessionCalls.some(([issue]) => issue === 11)).toBe(true);
+    expect(familyBackend.merges.some((merge) => merge.childIssue === 11)).toBe(true);
+    expect(
+      familyBackend.ledger.some(
+        (entry) =>
+          entry.status === "escalated" && entry.escalationKind === "failure",
+      ),
+    ).toBe(false);
   });
 });
 
