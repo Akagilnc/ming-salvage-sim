@@ -322,6 +322,23 @@ export function labelClass(key: string): string {
   if (at < 0) return key;
   return `${key.slice(0, at)}（${labelRegion(key.slice(at + 1))}）`;
 }
+const markdownEscapablePunctuation = new Set([...`!"#$%&'()*+,-./:;<=>?@[\\]^_\`{|}~`]);
+
+const unescapeMarkdownPunctuation = (text: string): string => {
+  let result = "";
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    const escapedCharacter = text[index + 1];
+    if (character === "\\" && escapedCharacter !== undefined && markdownEscapablePunctuation.has(escapedCharacter)) {
+      result += escapedCharacter;
+      index += 1;
+      continue;
+    }
+    result += character;
+  }
+  return result;
+};
+
 const stripOrganicMarkdownFromPlainText = (text: string): string => {
   const withoutBlockPrefixes = text.split("\n").map((line) => {
     let current = line;
@@ -362,11 +379,13 @@ const stripOrganicMarkdownFromPlainText = (text: string): string => {
   }
   withoutLinks += withoutBlockPrefixes.slice(linkTextStart);
 
-  return withoutLinks
-    .replace(/(\*\*)(?=\S)([^\n]*?\S)\1/gu, "$2")
-    .replace(/(?<![\p{L}\p{N}\p{M}_])(__)(?=\S)([^\n]*?\S)\1(?![\p{L}\p{N}\p{M}_])/gu, "$2")
-    .replace(/(\*)(?=\S)([^\n]*?\S)\1/gu, "$2")
-    .replace(/(?<![\p{L}\p{N}\p{M}_])(_)(?=\S)([^\n]*?\S)\1(?![\p{L}\p{N}\p{M}_])/gu, "$2");
+  const withoutEmphasis = withoutLinks
+    .replace(/(?<!\\)(\*\*)(?=\S)([^\n]*?\S)(?<!\\)\1/gu, "$2")
+    .replace(/(?<![\\\p{L}\p{N}\p{M}_])(__)(?=\S)([^\n]*?\S)(?<!\\)\1(?![\p{L}\p{N}\p{M}_])/gu, "$2")
+    .replace(/(?<!\\)(\*)(?=\S)([^\n]*?\S)(?<!\\)\1/gu, "$2")
+    .replace(/(?<![\\\p{L}\p{N}\p{M}_])(_)(?=\S)([^\n]*?\S)(?<!\\)\1(?![\p{L}\p{N}\p{M}_])/gu, "$2");
+
+  return unescapeMarkdownPunctuation(withoutEmphasis);
 };
 
 export const stripOrganicMarkdown = (text: string): string => {

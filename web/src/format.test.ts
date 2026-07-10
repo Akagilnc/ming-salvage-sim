@@ -45,6 +45,11 @@ describe("stripOrganicMarkdown", () => {
     expect(stripOrganicMarkdown("甲**乙**丙")).toBe("甲乙丙");
   });
 
+  it("renders escaped emphasis delimiters as literal punctuation, not emphasis", () => {
+    expect(stripOrganicMarkdown("\\*原样\\*")).toBe("*原样*");
+    expect(stripOrganicMarkdown("\\_下划线\\_")).toBe("_下划线_");
+  });
+
   it("keeps underscores next to combining marks", () => {
     expect(stripOrganicMarkdown("e\u0301_x_!")).toBe("e\u0301_x_!");
   });
