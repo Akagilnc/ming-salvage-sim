@@ -8,6 +8,7 @@ CLI 和 Web 各自只做 I/O 包装。
 from __future__ import annotations
 
 import json
+import inspect
 import re
 import time
 import uuid
@@ -901,7 +902,22 @@ class GameSession:
         # 控制指令（退下/换人/技能）由 CLI 层 parse_court_command 处理；
         # GameSession.chat 只负责与 agent 对话与 tool 截获。
         agent = self.registry.get(character)
-        augmented = self._audience_prompt_for_message(message, character)
+        # Keep the public seam compatible with lightweight web/test session
+        # doubles that predate the optional character-aware audience context.
+        audience_prompt = self._audience_prompt_for_message
+        try:
+            accepts_character = any(
+                parameter.kind is inspect.Parameter.VAR_POSITIONAL
+                or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                or parameter.name == "character"
+                for parameter in inspect.signature(audience_prompt).parameters.values()
+            )
+        except (TypeError, ValueError):
+            accepts_character = True
+        augmented = (
+            audience_prompt(message, character)
+            if accepts_character else audience_prompt(message)
+        )
         action_intent_future = self._start_cli_action_intent(character, message)
         run_output = agent.run(augmented)
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")

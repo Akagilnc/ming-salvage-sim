@@ -80,3 +80,58 @@ def test_excluded_participant_event_is_not_visible_to_excluded_character(game):
     view = db.get_character_knowledge(state, minister.name)
 
     assert not any(item["source_id"] == "secret_order:excluded" for item in view["events"])
+
+
+def test_secret_blacklist_survives_later_public_projection(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    order = db.create_secret_order(
+        state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_names=[minister.name]
+    )
+    db.record_public_knowledge_event(
+        state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
+    )
+
+    view = db.get_character_knowledge(db.load_state(), minister.name)
+
+    assert not any(item["source_id"] == f"secret_order:{order}" for item in view["public_events"])
+
+
+def test_public_reports_accumulate_across_turns(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    db.save_turn_report(state, "第一回合：清丈已明发。")
+    later = db.load_state()
+    later.turn += 2
+    db.save_turn_report(later, "第三回合：军务有变。")
+
+    view = db.get_character_knowledge(later, minister.name)
+
+    bodies = [item["body"] for item in view["public_events"]]
+    assert "第一回合：清丈已明发。" in bodies
+    assert "第三回合：军务有变。" in bodies
+
+
+def test_participation_record_adapter_covers_assignment_shape(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    db.record_participation_record(
+        state,
+        {"participants": [minister.name], "title": "清丈差事", "body": "奉命督办"},
+        kind="assignment",
+        source_id="assignment:1",
+    )
+
+    view = db.get_character_knowledge(state, minister.name)
+
+    assert any(item["source_id"] == "assignment:1" for item in view["events"])
+
+
+def test_knowledge_world_is_qualitative_not_numeric(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "户部")
+
+    view = db.get_character_knowledge(state, minister.name)
+
+    assert "treasury" in view["world"]
+    assert not any(char.isdigit() for char in view["world"]["treasury"])
