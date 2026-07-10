@@ -1019,7 +1019,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
       familyHeadAfter: "ship-head",
     }));
     expect(result.status).toBe("escalated");
-    expect(result.children.every((c) => c.status === "merged")).toBe(true);
+    expect(result.children.every((c) => c.status === "already_done")).toBe(true);
   });
 
   it("a legacy headless shipped marker also fails closed when no reconcile seam is active", async () => {

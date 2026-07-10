@@ -927,7 +927,7 @@ export async function runFamily(
               : undefined,
           children: input.epic.children.map((child) => ({
             issue: child.issue,
-            status: ledgerMerged.has(child.issue) ? "merged" : "skipped",
+            status: ledgerMerged.has(child.issue) ? "already_done" : "skipped",
           })),
           escalationReason:
             typeof escalation.reason === "string" && escalation.reason.trim().length > 0
@@ -941,7 +941,7 @@ export async function runFamily(
         }),
         children: input.epic.children.map((child) => ({
           issue: child.issue,
-          status: ledgerMerged.has(child.issue) ? "merged" : "skipped",
+          status: ledgerMerged.has(child.issue) ? "already_done" : "skipped",
         })),
       };
     }
@@ -1045,7 +1045,7 @@ export async function runFamily(
       }
       const children: FamilyChildResult[] = epic.children.map((c) => {
         if (ledgerMerged.has(c.issue)) {
-          return { issue: c.issue, status: "merged" as const };
+          return { issue: c.issue, status: "already_done" as const };
         }
         const escalation = parkedByIssue.get(c.issue);
         if (escalation !== undefined) {
@@ -1107,9 +1107,10 @@ export async function runFamily(
   //
   //   - every epic child gets a record. A child not run this invocation is
   //     LEDGER-AWARE: if it has a `merged` ledger entry (e.g. merged in a prior
-  //     invocation — #298's resume truth), it is `"merged"` (per the
-  //     FamilyChildStatus contract: "merged" ⇔ a merged ledger entry exists), NOT
-  //     `"skipped"`. Only a child absent from BOTH this run's results AND the
+  //     invocation — #298's resume truth), it is `"already_done"` (per the
+  //     FamilyChildStatus contract: "merged" ⇔ merged this invocation;
+  //     "already_done" ⇔ an earlier run's ledger truth), NOT `"skipped"`. Only a
+  //     child absent from BOTH this run's results AND the
   //     merged ledger (a blocker never merged / a fail-fast wave aborted before
   //     it ran) is `"skipped"`.
   //   - `status` is the verify outcome ONLY when a barrier was red
@@ -1232,13 +1233,14 @@ export async function runFamily(
     const recorded = new Map(recordedResults.map((c) => [c.issue, c]));
     // LEDGER-AWARE (不静默吞, runner.ts ~958-968): a child MERGED in a prior
     // invocation is skipped by `selectWave`, so it is absent from this run's
-    // `recordedResults`. It must still report "merged" (the durable ledger truth),
-    // not "skipped" — mirroring the early-exit park path (~900) and finalize().
+    // `recordedResults`. It must report "already_done": the durable ledger truth
+    // is present, but this invocation did not merge it. It must not be "skipped"
+    // — mirroring the early-exit park path (~900) and finalize().
     const ledgerMerged = await currentMerged(familyBackend);
     const children: FamilyChildResult[] = epic.children.map((c) => {
       const rec = recorded.get(c.issue);
       if (rec !== undefined) return rec;
-      if (ledgerMerged.has(c.issue)) return { issue: c.issue, status: "merged" as const };
+      if (ledgerMerged.has(c.issue)) return { issue: c.issue, status: "already_done" as const };
       return { issue: c.issue, status: "skipped" as const };
     });
     const escalationReason = `child #${parked.issue} escalated a decision: ${parked.escalation.reason}`;
@@ -1292,7 +1294,7 @@ export async function runFamily(
       // the run is observably `escalated`, NOT a fabricated success.
       const children: FamilyChildResult[] = epic.children.map((c) =>
         plan.merged.has(c.issue)
-          ? { issue: c.issue, status: "merged" as const }
+          ? { issue: c.issue, status: "already_done" as const }
           : { issue: c.issue, status: "skipped" as const },
       );
       await recordFamilyEscalated(familyBackend, {
@@ -2106,7 +2108,7 @@ export async function runFamily(
     const ledgerMerged = await currentMerged(familyBackend);
     const children: FamilyChildResult[] = epic.children.map((c) =>
       ledgerMerged.has(c.issue)
-        ? { issue: c.issue, status: "merged" as const }
+        ? { issue: c.issue, status: "already_done" as const }
         : { issue: c.issue, status: "skipped" as const },
     );
     await recordFamilyEscalated(familyBackend, {
