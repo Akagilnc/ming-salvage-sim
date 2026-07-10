@@ -29,18 +29,21 @@ _OFFICE_BUCKETS = {
 # public layer.  These are the closest existing reports for social/roster
 # roles whose dedicated rail is not yet modeled.
 _OFFICE_VISIBLE_DOMAINS = {
-    "户部": {"treasury"}, "兵部": {"military", "regional"},
-    "吏部": {"personnel"}, "工部": {"construction"},
-    "礼部": {"personnel"}, "刑部": {"security"},
-    "翰林院": {"personnel"}, "都察院": {"personnel", "security"},
-    "内阁": {"court", "treasury", "personnel"}, "督抚": {"regional"},
-    "司礼监": {"court", "treasury", "personnel"}, "内臣": {"court", "treasury", "personnel"},
-    "锦衣卫": {"security"}, "东厂": {"security"},
-    "边镇": {"military", "regional"}, "地方": {"regional"},
-    "外臣": {"regional"}, "内廷": {"court", "treasury", "personnel"},
-    "后宫": {"personnel"}, "宗藩": {"regional"}, "未仕": {"personnel"},
-    "生员": {"personnel"}, "乡绅": {"regional"}, "富商": {"treasury"},
-    "布衣": {"regional"}, "流寇": {"military", "regional"}, "待铨": {"personnel"},
+    # Tuples make prompt field order stable; every entry deliberately contains
+    # its _OFFICE_BUCKETS rail, so adding a role cannot silently produce a
+    # public-only or unrelated current-state view.
+    "户部": ("treasury",), "兵部": ("military", "regional"),
+    "吏部": ("personnel",), "工部": ("construction",),
+    "礼部": ("personnel",), "刑部": ("security",),
+    "翰林院": ("personnel",), "都察院": ("personnel", "security"),
+    "内阁": ("court", "treasury", "personnel"), "督抚": ("regional",),
+    "司礼监": ("court", "treasury", "personnel"), "内臣": ("court", "treasury", "personnel"),
+    "锦衣卫": ("security",), "东厂": ("security",),
+    "边镇": ("military", "regional"), "地方": ("regional",),
+    "外臣": ("regional",), "内廷": ("court", "treasury", "personnel"),
+    "后宫": ("personnel",), "宗藩": ("regional",), "未仕": ("personnel",),
+    "生员": ("personnel",), "乡绅": ("regional",), "富商": ("treasury",),
+    "布衣": ("regional",), "流寇": ("military", "regional"), "待铨": ("personnel",),
 }
 
 # A persisted character can temporarily carry a newly introduced or malformed
@@ -48,7 +51,18 @@ _OFFICE_VISIBLE_DOMAINS = {
 # useful current-state rail; falling back to ``public`` would recreate a
 # one-world view for precisely the characters this projection is meant to
 # differentiate.
-_DEFAULT_VISIBLE_DOMAINS = {"personnel"}
+_DEFAULT_VISIBLE_DOMAINS = ("personnel",)
+
+
+def _visible_domains(office_type: str) -> tuple[str, ...]:
+    """Return a deterministic role slice whose primary bucket is always present."""
+    bucket = _OFFICE_BUCKETS.get(office_type, "personnel")
+    configured = _OFFICE_VISIBLE_DOMAINS.get(office_type, _DEFAULT_VISIBLE_DOMAINS)
+    if bucket in configured:
+        return configured
+    # Keep old saves with a newly introduced/malformed role useful even when
+    # its mapping was not deployed alongside the bucket table.
+    return (bucket, *configured)
 
 
 def _qualitative(text: object) -> str:
@@ -62,7 +76,6 @@ def _qualitative(text: object) -> str:
 def _world(
     db: Any, state: Any, office_type: str,
 ) -> Dict[str, str]:
-    bucket = _OFFICE_BUCKETS.get(office_type, "personnel")
     reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
     def fact(text: object) -> str:
         return _qualitative(text)
@@ -79,9 +92,7 @@ def _world(
         "security": db.power_report(exclude_self=True),
         "court": "\n".join((db.faction_report(), db.power_report(exclude_self=True))),
     }
-    visible_domains = _OFFICE_VISIBLE_DOMAINS.get(
-        office_type, _DEFAULT_VISIBLE_DOMAINS
-    )
+    visible_domains = _visible_domains(office_type)
     for domain in visible_domains:
         if domain == "public":
             # The public layer is already built from the turn reports above;
