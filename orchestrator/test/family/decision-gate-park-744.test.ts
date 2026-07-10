@@ -11,8 +11,8 @@
  * helper), so a bypass of that seam fails review acceptance.
  */
 
-import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -35,8 +35,11 @@ import type {
   MergeRequest,
 } from "../../src/family/types.js";
 
+const createdTempDirs: string[] = [];
+
 function makeFamilyDocReleaseRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "family-744-doc-"));
+  createdTempDirs.push(dir);
   const git = (args: string[]) =>
     execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
   git(["init"]);
@@ -47,6 +50,13 @@ function makeFamilyDocReleaseRepo(): string {
   git(["commit", "-m", "doc-release"]);
   return dir;
 }
+
+afterEach(() => {
+  for (const dir of createdTempDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  createdTempDirs.length = 0;
+});
 
 class UnusedChildBackend implements Backend {
   async findResumeState(): Promise<undefined> {
@@ -175,9 +185,11 @@ describe("#744 family decision_gate parks for human (production seam)", () => {
     const familyBackend = new FakeFamilyBackend();
     seedShippedOnly(familyBackend);
     let verifyPass = 0;
-    familyBackend.dispatchWorker = async (spec) => {
+    const receivedAnswers: unknown[] = [];
+    familyBackend.dispatchWorker = async (spec, ctx) => {
       if (spec.kind === "verify") {
         verifyPass += 1;
+        receivedAnswers.push(ctx.escalationAnswer);
         if (verifyPass === 1) {
           return {
             kind: "escalated",
@@ -239,6 +251,14 @@ describe("#744 family decision_gate parks for human (production seam)", () => {
     // Re-feed reopened the decision park and continued past it.
     expect(second.status).toBe("success");
     expect(verifyPass).toBe(2);
+    expect(receivedAnswers).toEqual([
+      undefined,
+      {
+        answer: "defer F1; proceed with merge once review converges",
+        event: "escalation_answered",
+        source: "human",
+      },
+    ]);
     expect(
       familyBackend.ledger.some((e) => e.status === "review_loop_converged"),
     ).toBe(true);

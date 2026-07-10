@@ -1543,6 +1543,7 @@ export async function runFamilyOnlineReviewLoop(input: {
   readonly familyBase: string;
   readonly ship: ShipResult;
   readonly resolvedRoute?: ResolvedModelRoute;
+  readonly escalationAnswer?: EscalationAnswerPayload;
 }): Promise<OnlineReviewLoopStageResult> {
   const repo =
     process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
@@ -1560,6 +1561,9 @@ export async function runFamilyOnlineReviewLoop(input: {
     repo,
     prUrl,
     prHead: input.ship.prHead,
+    ...(input.escalationAnswer !== undefined
+      ? { escalationAnswer: input.escalationAnswer }
+      : {}),
   };
 
   const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
