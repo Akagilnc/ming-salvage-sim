@@ -8,6 +8,7 @@ import { legacyDispatchWorker } from "../src/dispatchWorker.js";
 import {
   FIX_FOCUS_LANDING_FILE,
   formatFixFocusMarkdown,
+  mergePriorRoundFindings,
   priorOnlineReviewFindingsFromFamilyLedger,
   priorOnlineReviewFindingsFromLedger,
   sanitizeFindingFamilies,
@@ -357,6 +358,102 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
     ]);
   });
 
+  it("keys S9 rows by round number, not array position (CI-pending timeouts do not shift rounds)", () => {
+    // runner.ts parks CI-pending by persisting an S9 verify row without
+    // incrementing onlineReviewRound — so a later real re-verify shares the
+    // same round. Position-based slice(0, priorCount) would keep the stale
+    // pending row and drop the real fix-marked findings.
+    const ledger = [
+      {
+        step: "S9",
+        output: {
+          kind: "verify",
+          converged: false,
+          fixMarkedFindingIdentityKeys: ["t:r1"],
+        } satisfies VerifyResult,
+      },
+      {
+        step: "S10",
+        output: { kind: "fixer", committed: true, fixCommitSha: "fix-1" },
+      },
+      // r2 CI-pending timeout: extra S9 row, same logical round, stale keys
+      {
+        step: "S9",
+        output: {
+          kind: "verify",
+          converged: false,
+          fixMarkedFindingIdentityKeys: ["stale-pending"],
+        } satisfies VerifyResult,
+      },
+      // r2 real re-verify after resume / CI completes
+      {
+        step: "S9",
+        output: {
+          kind: "verify",
+          converged: false,
+          fixMarkedFindingIdentityKeys: ["t:r2-real"],
+        } satisfies VerifyResult,
+      },
+    ];
+    expect(priorOnlineReviewFindingsFromLedger(ledger, 3)).toEqual([
+      { round: 1, fixMarkedFindingIdentityKeys: ["t:r1"] },
+      { round: 2, fixMarkedFindingIdentityKeys: ["t:r2-real"] },
+    ]);
+  });
+
+  it("prefers non-empty fix-marked keys when a later pending row would overwrite", () => {
+    const ledger = [
+      {
+        step: "S9",
+        output: {
+          kind: "verify",
+          converged: false,
+          fixMarkedFindingIdentityKeys: ["t:r1-real"],
+        } satisfies VerifyResult,
+      },
+      // Same round, empty pending re-poll must not erase r1
+      {
+        step: "S9",
+        output: {
+          kind: "verify",
+          converged: false,
+          fixMarkedFindingIdentityKeys: [],
+        } satisfies VerifyResult,
+      },
+      {
+        step: "S10",
+        output: { kind: "fixer", committed: true, fixCommitSha: "fix-1" },
+      },
+      {
+        step: "S9",
+        output: {
+          kind: "verify",
+          converged: false,
+          fixMarkedFindingIdentityKeys: ["t:r2"],
+        } satisfies VerifyResult,
+      },
+    ];
+    expect(priorOnlineReviewFindingsFromLedger(ledger, 3)).toEqual([
+      { round: 1, fixMarkedFindingIdentityKeys: ["t:r1-real"] },
+      { round: 2, fixMarkedFindingIdentityKeys: ["t:r2"] },
+    ]);
+  });
+
+  it("mergePriorRoundFindings unions by round (later source wins same round)", () => {
+    expect(
+      mergePriorRoundFindings(
+        [
+          { round: 1, fixMarkedFindingIdentityKeys: ["ledger:r1"] },
+          { round: 2, fixMarkedFindingIdentityKeys: ["ledger:r2-stale"] },
+        ],
+        [{ round: 2, fixMarkedFindingIdentityKeys: ["process:r2"] }],
+      ),
+    ).toEqual([
+      { round: 1, fixMarkedFindingIdentityKeys: ["ledger:r1"] },
+      { round: 2, fixMarkedFindingIdentityKeys: ["process:r2"] },
+    ]);
+  });
+
   it("priorOnlineReviewFindingsFromFamilyLedger reads fix_committed markers (not S9 rows)", () => {
     const familyLedger = [
       {
@@ -403,6 +500,25 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
     expect(md).toContain("Silence must not count as green.");
     // Method belongs in versioned souls — runner only serializes data.
     expect(md.toLowerCase()).not.toMatch(/same-type sweep|run same-type|per family/);
+  });
+
+  it("coder_fix prompt is pure data; same-type sweep method lives in coder soul", () => {
+    const prompt = readFileSync(
+      resolve(process.cwd(), "prompts/coder_fix.md"),
+      "utf8",
+    );
+    const soul = readFileSync(
+      resolve(process.cwd(), "image/souls/coder.md"),
+      "utf8",
+    );
+    // Runner-owned prompt file must not carry workflow method (#711 R2).
+    expect(prompt.toLowerCase()).not.toMatch(
+      /same-type sweep|run same-type|per family/,
+    );
+    // Online fixer already has this in souls/fixer.md; per-slice coder-fix
+    // mirrors it in the coder soul.
+    expect(soul).toMatch(/same-type sweeps?\s+\*\*per family\*\*/i);
+    expect(soul).toMatch(/\.fix-focus\.md/);
   });
 
   it("r3 fixer dispatch writes .fix-focus.md with recurring markers (runner pure IO)", async () => {
@@ -485,6 +601,13 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
     prHead: "head-1",
   };
 
+  /** Multi-site silence-as-green class — briefing must expand fix coverage. */
+  const FAMILY_SITES = [
+    "silence:site-a",
+    "silence:site-b",
+    "silence:site-c",
+  ] as const;
+
   const baseSnapshot: PrReviewSnapshot = {
     repo: "o/r",
     prNumber: 711,
@@ -513,9 +636,47 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
     quiescent: true,
   };
 
-  it("three-round path: r3 verify sees prior rounds; r3 fixer receives recurring families", async () => {
+  /**
+   * Fix coverage model for the acceptance bite:
+   * - with briefing: fixer sees family members and "covers" every site
+   * - without briefing: only the single fixMarked key is covered
+   */
+  function coverageFromFixerLanding(landing: WorkerLandingPayload): string[] {
+    if (landing.findingFamilies !== undefined && landing.findingFamilies.length > 0) {
+      return landing.findingFamilies.flatMap((f) => [...f.members]);
+    }
+    return [...(landing.fixMarkedFindingIdentityKeys ?? [])];
+  }
+
+  function mergeEnrichFromLedger(
+    familyLedger: ReadonlyArray<{
+      readonly event: string;
+      readonly onlineReviewRound?: number;
+      readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+    }>,
+  ) {
+    return async (
+      landing: WorkerLandingPayload,
+      round: number,
+    ): Promise<WorkerLandingPayload> => {
+      const fromLedger = priorOnlineReviewFindingsFromFamilyLedger(
+        familyLedger,
+        round,
+      );
+      const merged = mergePriorRoundFindings(
+        fromLedger,
+        landing.priorRoundFindings ?? [],
+      );
+      return merged.length > 0
+        ? { ...landing, priorRoundFindings: merged }
+        : landing;
+    };
+  }
+
+  it("three-round path: r3 fixer sees recurring marker and covers all family sites", async () => {
     const verifyLandings: WorkerLandingPayload[] = [];
     const fixerLandings: WorkerLandingPayload[] = [];
+    const fixerCoverage: string[][] = [];
     const familyLedger: Array<{
       event: string;
       onlineReviewRound?: number;
@@ -532,6 +693,9 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
         }
         const key = `silence:r${round}`;
         const priorRounds = (landing.priorRoundFindings ?? []).map((p) => p.round);
+        // At r3 the class has recurred — synthesise multi-site family brief.
+        const members =
+          priorRounds.length >= 2 ? [...FAMILY_SITES] : [key];
         return {
           kind: "verify",
           converged: false,
@@ -546,7 +710,7 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
           ],
           findingFamilies: [
             silenceFamily(
-              [key],
+              members,
               priorRounds,
               priorRounds.length > 0
                 ? "Same silence-as-green class recurred — sweep all sites."
@@ -557,6 +721,7 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
       },
       dispatchFixer: async (landing) => {
         fixerLandings.push(landing);
+        fixerCoverage.push(coverageFromFixerLanding(landing));
         const n = fixerLandings.length;
         return {
           kind: "fixer",
@@ -578,17 +743,7 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
       },
       retriggerAfterFix: () => {},
     }, {
-      // Family resume path: when in-loop accum is empty, seed from family ledger markers.
-      enrichVerifyLanding: async (landing, round) => {
-        if (
-          landing.priorRoundFindings !== undefined &&
-          landing.priorRoundFindings.length > 0
-        ) {
-          return landing;
-        }
-        const prior = priorOnlineReviewFindingsFromFamilyLedger(familyLedger, round);
-        return prior.length > 0 ? { ...landing, priorRoundFindings: prior } : landing;
-      },
+      enrichVerifyLanding: mergeEnrichFromLedger(familyLedger),
     });
 
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 4 });
@@ -609,11 +764,11 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
       { round: 2, fixMarkedFindingIdentityKeys: ["silence:r2"] },
     ]);
 
-    // r3 fixer receives families with recurring markers from r3 verify synthesis
+    // r3 fixer input must show recurring marker + multi-site family
     const r3Fixer = fixerLandings[2]!;
     expect(r3Fixer.findingFamilies).toEqual([
       silenceFamily(
-        ["silence:r3"],
+        [...FAMILY_SITES],
         [1, 2],
         "Same silence-as-green class recurred — sweep all sites.",
       ),
@@ -621,6 +776,13 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
     const fixFocus = formatFixFocusMarkdown(r3Fixer.findingFamilies!);
     expect(fixFocus).toContain("Recurring from rounds: 1, 2");
     expect(fixFocus).toContain("silence-not-green");
+    expect(fixFocus).toContain("silence:site-a");
+    expect(fixFocus).toContain("silence:site-b");
+    expect(fixFocus).toContain("silence:site-c");
+
+    // Acceptance bite: briefing expands coverage to all family sites
+    expect(fixerCoverage[2]).toEqual([...FAMILY_SITES]);
+    expect(new Set(fixerCoverage[2]).size).toBe(FAMILY_SITES.length);
 
     // Family ledger received fix markers with keys (resume source)
     expect(familyLedger).toHaveLength(3);
@@ -630,8 +792,113 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
     ]);
   });
 
-  it("no-briefing baseline: without findingFamilies, fixer landing has no family brief", async () => {
+  it("resume mid-loop merges ledger history with in-process rounds so r3 sees r1+r2", async () => {
+    // Simulate crash after r1 fix: ledger has r1 marker; process restarts at r2.
+    const familyLedger: Array<{
+      event: string;
+      onlineReviewRound?: number;
+      fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+      familyHeadAfter?: string;
+    }> = [
+      {
+        event: "online_review_fix_committed",
+        onlineReviewRound: 1,
+        fixMarkedFindingIdentityKeys: ["silence:r1"],
+        familyHeadAfter: "sha-r1",
+      },
+    ];
+    const verifyLandings: WorkerLandingPayload[] = [];
     const fixerLandings: WorkerLandingPayload[] = [];
+
+    const result = await runOnlineReviewLoopStage(
+      stageShip,
+      {
+        poll: async () => baseSnapshot,
+        dispatchVerify: async (landing, round) => {
+          verifyLandings.push(landing);
+          if (round >= 4) {
+            return {
+              kind: "verify",
+              converged: true,
+              isRecheck: true,
+            } satisfies VerifyResult;
+          }
+          const key = `silence:r${round}`;
+          return {
+            kind: "verify",
+            converged: false,
+            isRecheck: true,
+            fixMarkedFindingIdentityKeys: [key],
+            findingDispositions: [
+              {
+                identityKey: key,
+                threadId: "thread-silence",
+                action: "fix",
+              },
+            ],
+            findingFamilies: [
+              silenceFamily(
+                [key],
+                (landing.priorRoundFindings ?? []).map((p) => p.round),
+                "Recurring class.",
+              ),
+            ],
+          } satisfies VerifyResult;
+        },
+        dispatchFixer: async (landing) => {
+          fixerLandings.push(landing);
+          return {
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: `resume-fix-${landing.onlineReviewRound ?? "?"}`,
+          };
+        },
+        dispatchDocRelease: async () => true,
+        applySideEffects: (_landing, verify) => verify,
+        resolveFixCommitSha: async (sha) => {
+          const lastFixer = fixerLandings[fixerLandings.length - 1]!;
+          familyLedger.push({
+            event: "online_review_fix_committed",
+            onlineReviewRound:
+              lastFixer.onlineReviewRound ?? fixerLandings.length + 1,
+            fixMarkedFindingIdentityKeys:
+              lastFixer.fixMarkedFindingIdentityKeys ?? [],
+            familyHeadAfter: sha,
+          });
+          return sha;
+        },
+        retriggerAfterFix: () => {},
+      },
+      {
+        initialRound: 2,
+        initialFixCommitSha: "sha-r1",
+        // MERGE ledger + in-process — either/or loses pre-resume history.
+        enrichVerifyLanding: mergeEnrichFromLedger(familyLedger),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    // Resumed at r2: r2 verify, r2 fix, r3 verify, r3 fix, r4 converged
+    expect(verifyLandings.length).toBeGreaterThanOrEqual(3);
+
+    // First verify after resume is r2 — must already see r1 from ledger
+    expect(verifyLandings[0]!.onlineReviewRound).toBe(2);
+    expect(verifyLandings[0]!.priorRoundFindings).toMatchObject([
+      { round: 1, fixMarkedFindingIdentityKeys: ["silence:r1"] },
+    ]);
+
+    // r3 verify must see r1 (ledger) + r2 (this-process after r2 fix) — not only r2
+    const r3Verify = verifyLandings.find((l) => l.onlineReviewRound === 3);
+    expect(r3Verify).toBeDefined();
+    expect(r3Verify!.priorRoundFindings).toMatchObject([
+      { round: 1, fixMarkedFindingIdentityKeys: ["silence:r1"] },
+      { round: 2, fixMarkedFindingIdentityKeys: ["silence:r2"] },
+    ]);
+  });
+
+  it("no-briefing baseline: without findingFamilies, coverage stays single-site", async () => {
+    const fixerLandings: WorkerLandingPayload[] = [];
+    const fixerCoverage: string[][] = [];
     let verifyCalls = 0;
 
     const result = await runOnlineReviewLoopStage(stageShip, {
@@ -644,10 +911,10 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
         return {
           kind: "verify",
           converged: false,
-          fixMarkedFindingIdentityKeys: ["t:only"],
+          fixMarkedFindingIdentityKeys: ["silence:site-a"],
           findingDispositions: [
             {
-              identityKey: "t:only",
+              identityKey: "silence:site-a",
               threadId: "thread-silence",
               action: "fix",
             },
@@ -657,6 +924,7 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
       },
       dispatchFixer: async (landing) => {
         fixerLandings.push(landing);
+        fixerCoverage.push(coverageFromFixerLanding(landing));
         return {
           kind: "fixer",
           committed: true,
@@ -672,6 +940,12 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
     expect(verifyCalls).toBeGreaterThanOrEqual(2);
     expect(fixerLandings).toHaveLength(1);
     expect(fixerLandings[0]!.findingFamilies).toBeUndefined();
-    expect(fixerLandings[0]!.fixMarkedFindingIdentityKeys).toEqual(["t:only"]);
+    expect(fixerLandings[0]!.fixMarkedFindingIdentityKeys).toEqual([
+      "silence:site-a",
+    ]);
+    // Baseline bite: no family brief ⇒ only the single marked site, not full class
+    expect(fixerCoverage[0]).toEqual(["silence:site-a"]);
+    expect(fixerCoverage[0]).not.toEqual([...FAMILY_SITES]);
+    expect(fixerCoverage[0]!.length).toBeLessThan(FAMILY_SITES.length);
   });
 });

@@ -11,6 +11,7 @@
 import { z } from "zod";
 
 import { fixMarkedKeysFromVerify } from "./onlineReviewSideEffects.js";
+import { fixerLedgerOutputProceeds } from "./reviewLoopOutcome.js";
 import type {
   Finding,
   FindingFamily,
@@ -123,29 +124,96 @@ export function formatFixFocusMarkdown(
   return "# Fix focus — pattern-level briefs (#711)\n\n" + sections.join("\n");
 }
 
-/** Prior S9 verify rounds for the current online-review round (1-based). */
+/**
+ * Merge prior-round snapshots from multiple sources by round number.
+ * Later sources win for the same round (e.g. in-process over ledger).
+ */
+export function mergePriorRoundFindings(
+  ...sources: ReadonlyArray<ReadonlyArray<PriorRoundFindingSnapshot>>
+): ReadonlyArray<PriorRoundFindingSnapshot> {
+  const byRound = new Map<number, PriorRoundFindingSnapshot>();
+  for (const source of sources) {
+    for (const snap of source) {
+      byRound.set(snap.round, {
+        round: snap.round,
+        fixMarkedFindingIdentityKeys: [...snap.fixMarkedFindingIdentityKeys],
+        ...(snap.findingDispositions !== undefined
+          ? { findingDispositions: snap.findingDispositions }
+          : {}),
+        ...(snap.blockingFindingIdentityKeys !== undefined
+          ? {
+              blockingFindingIdentityKeys: [
+                ...snap.blockingFindingIdentityKeys,
+              ],
+            }
+          : {}),
+      });
+    }
+  }
+  return [...byRound.values()].sort((a, b) => a.round - b.round);
+}
+
+/**
+ * Prior S9 verify rounds for the current online-review round (1-based).
+ *
+ * Key by logical round, not array position. CI-pending timeouts persist extra
+ * S9 verify rows without incrementing the round (runner.ts), so position-based
+ * `slice(0, priorCount)` would keep stale pending rows and drop later real
+ * fix-marked findings. Prefer non-empty fix keys when a later empty pending
+ * re-poll would overwrite.
+ */
 export function priorOnlineReviewFindingsFromLedger(
   ledger: ReadonlyArray<{
     readonly step?: string;
     readonly output?: StepOutput;
+    readonly onlineReviewRound?: number;
   }>,
   currentRound: number,
 ): ReadonlyArray<PriorRoundFindingSnapshot> {
   if (currentRound <= 1) return [];
-  const priorCount = currentRound - 1;
-  const s9Outputs: VerifyResult[] = [];
+  const byRound = new Map<number, PriorRoundFindingSnapshot>();
+  let inferredRound = 1;
+
   for (const entry of ledger) {
-    if (entry.step === "S9" && entry.output?.kind === "verify") {
-      s9Outputs.push(entry.output);
+    if (entry.step === "S10" && fixerLedgerOutputProceeds(entry.output)) {
+      inferredRound += 1;
+      continue;
     }
+    if (entry.step !== "S9" || entry.output?.kind !== "verify") {
+      continue;
+    }
+    const verify = entry.output;
+    const round =
+      typeof entry.onlineReviewRound === "number" &&
+      Number.isSafeInteger(entry.onlineReviewRound) &&
+      entry.onlineReviewRound >= 1
+        ? entry.onlineReviewRound
+        : inferredRound;
+    if (round >= currentRound) continue;
+
+    const keys = fixMarkedKeysFromVerify(verify);
+    const existing = byRound.get(round);
+    // Empty pending re-poll must not erase a prior non-empty snapshot for the
+    // same round; a later non-empty re-verify may still overwrite.
+    if (
+      existing !== undefined &&
+      keys.length === 0 &&
+      existing.fixMarkedFindingIdentityKeys.length > 0
+    ) {
+      continue;
+    }
+    byRound.set(round, {
+      round,
+      fixMarkedFindingIdentityKeys: keys,
+      ...(verify.findingDispositions !== undefined
+        ? { findingDispositions: verify.findingDispositions }
+        : {}),
+    });
   }
-  return s9Outputs.slice(0, priorCount).map((verify, index) => ({
-    round: index + 1,
-    fixMarkedFindingIdentityKeys: fixMarkedKeysFromVerify(verify),
-    ...(verify.findingDispositions !== undefined
-      ? { findingDispositions: verify.findingDispositions }
-      : {}),
-  }));
+
+  return [...byRound.values()]
+    .filter((s) => s.round < currentRound)
+    .sort((a, b) => a.round - b.round);
 }
 
 type FamilyOnlineReviewLedgerEntry = {

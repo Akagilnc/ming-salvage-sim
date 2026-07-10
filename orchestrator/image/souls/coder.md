@@ -64,6 +64,10 @@ answer leaves a concrete blocker unresolved. Fix only the supplied findings, run
 the relevant tests and self-check 二连, then commit a new review-fix commit. The
 next fresh reviewer worker verifies closure over the current full diff.
 
+When `.fix-focus.md` is present (#711), run same-type sweeps **per family** in
+that file (not per isolated finding) before committing — the brief describes the
+pattern class, not a single call site.
+
 Commit one coherent change per commit; never `git commit --amend`. Do not push; the
 orchestrator's ship worker owns delivery.
 
