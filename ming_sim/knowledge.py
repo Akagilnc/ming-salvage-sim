@@ -42,22 +42,26 @@ def _world(db: Any, state: Any, office_type: str, excluded_offices: set[str] | N
     # Office exclusions are evaluated against the current office at projection
     # time, so a later appointment cannot resurrect a fact blacklisted by a
     # secret order.
-    if office_type in (excluded_offices or set()):
-        return {"public": ""}
-    if bucket in {"treasury", "court"}:
+    # An institutional blacklist removes only the sensitive office fact.  It
+    # must not erase the public layer (or turn an entire role into a vacuum).
+    office_excluded = office_type in (excluded_offices or set())
+    if bucket in {"treasury", "court"} and not office_excluded:
         values["treasury"] = _qualitative(db.treasury_report(state))
-    if bucket in {"military", "regional", "security"}:
+    if bucket in {"military", "regional", "security"} and not office_excluded:
         values["military"] = _qualitative(db.army_report(limit=10))
         values["regional"] = _qualitative(db.region_report(limit=10))
-    if bucket in {"personnel", "court"}:
+    if bucket in {"personnel", "court"} and not office_excluded:
         values["personnel"] = _qualitative(db.faction_report())
-    if bucket == "construction":
+    if bucket == "construction" and not office_excluded:
         values["construction"] = _qualitative(db.buildings_report())
-    if bucket == "security":
+    if bucket == "security" and not office_excluded:
         values["security"] = _qualitative(db.power_report(exclude_self=True))
     # Every office type has a deterministic bucket; generic offices get the
     # public layer plus their own domain rather than an empty/undefined view.
-    return {"public": values["public"], bucket: values.get(bucket, values["public"])}
+    result = {"public": values["public"]}
+    if not office_excluded:
+        result[bucket] = values.get(bucket, values["public"])
+    return result
 
 
 def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[str, object]:

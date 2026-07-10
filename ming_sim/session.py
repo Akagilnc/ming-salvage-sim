@@ -1056,7 +1056,11 @@ class GameSession:
         return result
 
     def _audience_prompt_for_message(self, message: str, character: Character) -> str:
-        augmented = self._retrieve_memories_for_message(message)
+        # Chapter summaries are a global narrative cache and may contain secret
+        # or off-stage facts.  Character knowledge is the only audience input
+        # allowed to cross this boundary; public reports are projected there
+        # with their source-level exclusions applied.
+        augmented = message
         try:
             knowledge = self.db.get_character_knowledge(self.state, character.name)
             world = knowledge.get("world") or {}
