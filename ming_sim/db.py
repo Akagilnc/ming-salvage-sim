@@ -9208,34 +9208,74 @@ class GameDB:
                 item["excluded_names"] = row["excluded_names"] or "[]"
             result.append(item)
             known_sources.add(str(row["source_id"]))
-        # The source table is the preferred normalized registry, but the
-        # projection must also cover durable records written by an older/newer
-        # producer that has a participant_roster and has not installed an
-        # adapter hook yet.  Keep this fallback data-driven and source-id based;
-        # adding another record kind must not require a branch here.
-        for row in self.conn.execute(
-            "SELECT id, kind, title, origin_turn, stage_text, participant_roster "
-            "FROM issues WHERE participant_roster <> '[]' ORDER BY origin_turn, id"
-        ).fetchall():
-            source_id = f"issue:{int(row['id'])}"
-            if source_id in known_sources:
+        # Durable records are discovered by their participant_roster column,
+        # not by record kind.  This keeps a new producer from needing a reader
+        # branch (or a second adapter call) merely to become knowable.
+        for table, columns in self._participant_roster_tables():
+            quoted = '"' + table.replace('"', '""') + '"'
+            selected = {name: name for name in columns}
+            id_expr = selected.get("id", "rowid")
+            source_expr = selected.get("source_id")
+            # Legacy tables without source_id retain the conventional singular
+            # table prefix (issues -> issue); newer records should persist the
+            # explicit source_id in their own table.
+            fallback_prefix = table[:-1] if table.endswith("s") else table
+            source_sql = source_expr if source_expr else f"'{fallback_prefix}:' || {id_expr}"
+            turn_expr = selected.get("turn") or selected.get("origin_turn") or "0"
+            year_expr = selected.get("year") or "0"
+            period_expr = selected.get("period") or "0"
+            kind_expr = selected.get("kind") or "'assignment'"
+            title_expr = selected.get("title") or "''"
+            body_expr = selected.get("body") or selected.get("stage_text") or selected.get("content") or "''"
+            query = (
+                f"SELECT {turn_expr} AS turn, {year_expr} AS year, {period_expr} AS period, "
+                f"{kind_expr} AS kind, {title_expr} AS title, {body_expr} AS body, "
+                f"{source_sql} AS source_id, participant_roster "
+                f"FROM {quoted} WHERE participant_roster <> '[]' ORDER BY turn, {id_expr}"
+            )
+            for row in self.conn.execute(query).fetchall():
+                source_id = str(row["source_id"])
+                if source_id in known_sources:
+                    continue
+                try:
+                    roster = json.loads(row["participant_roster"] or "[]")
+                except (TypeError, ValueError):
+                    roster = []
+                names = {
+                    str(item.get("character_id") or item.get("name"))
+                    for item in roster if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
+                }
+                if str(character_name) not in names:
+                    continue
+                result.append({
+                    "turn": int(row["turn"] or 0), "year": int(row["year"] or 0),
+                    "period": int(row["period"] or 0),
+                    "kind": row["kind"] or "assignment", "title": row["title"],
+                    "body": row["body"] or "", "source_id": source_id,
+                    **({"excluded_names": "[]"} if include_exclusions else {}),
+                })
+                known_sources.add(source_id)
+        return result
+
+    def _participant_roster_tables(self) -> List[tuple[str, set[str]]]:
+        """List durable user tables that expose the common roster column."""
+        tables = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') "
+            "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+        result: List[tuple[str, set[str]]] = []
+        for row in tables:
+            table = str(row["name"])
+            if table == "character_knowledge_sources":
                 continue
-            try:
-                roster = json.loads(row["participant_roster"] or "[]")
-            except (TypeError, ValueError):
-                roster = []
-            names = {
-                str(item.get("character_id") or item.get("name"))
-                for item in roster if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
+            columns = {
+                str(column["name"])
+                for column in self.conn.execute(
+                    "PRAGMA table_info(\"" + table.replace('"', '""') + "\")"
+                ).fetchall()
             }
-            if str(character_name) not in names:
-                continue
-            result.append({
-                "turn": int(row["origin_turn"]), "year": 0, "period": 0,
-                "kind": row["kind"] or "assignment", "title": row["title"],
-                "body": row["stage_text"] or "", "source_id": source_id,
-                **({"excluded_names": "[]"} if include_exclusions else {}),
-            })
+            if "participant_roster" in columns:
+                result.append((table, columns))
         return result
 
     def knowledge_exclusions_for_source(self, source_id: str) -> List[str]:
