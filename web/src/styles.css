@@ -4466,11 +4466,10 @@ button:disabled {
   .chat-full-grid {
     /* 400px 级窄屏仍保留立绘栏 + 对话栏，避免立绘把聊天内容推到屏外。 */
     grid-template-columns: minmax(120px, 38%) minmax(0, 1fr);
-    overflow: hidden;
   }
 
   .minister-side {
-    overflow: hidden;
+    overflow-y: auto;
   }
 
   .chat-portrait-wrap {
