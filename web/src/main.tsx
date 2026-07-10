@@ -11,6 +11,7 @@ import { GrandMap, NodeIntel } from "./components/map";
 import { MenuPage } from "./components/menuPage";
 import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
 import { SituationPanel } from "./components/situation";
+import { DecisionModal } from "./components/decisionModal";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
@@ -1299,86 +1300,6 @@ function PendingFailureRecoveryPanel({
 
 // HITL 重大抉择弹窗：逐个亲裁本回合决策点，全部选完一次提交续跑结算。
 // 每个决策：标题 + 背景 + 2-3 预设选项（点选）+ 朱批输入框（可补自由旨意）。
-function DecisionModal({
-  decisions,
-  failures = [],
-  onResolve,
-}: {
-  decisions: PendingDecision[];
-  failures?: PendingActionFailure[];
-  onResolve: (choices: { label?: string; hint?: string; note?: string }[]) => void;
-}) {
-  const [cursor, setCursor] = React.useState(0);
-  const [picks, setPicks] = React.useState<{ label?: string; hint?: string; note?: string }[]>(
-    () => decisions.map(() => ({}))
-  );
-  const total = decisions.length;
-  const cur = decisions[cursor];
-  const pick = picks[cursor] || {};
-
-  const setOption = (label: string, hint: string) =>
-    setPicks((p) => p.map((x, i) => (i === cursor ? { ...x, label, hint } : x)));
-  const setNote = (note: string) =>
-    setPicks((p) => p.map((x, i) => (i === cursor ? { ...x, note } : x)));
-
-  const decided = !!(pick.label || (pick.note || "").trim());
-  const last = cursor >= total - 1;
-
-  const next = () => {
-    if (!decided) return;
-    if (last) onResolve(picks);
-    else setCursor((c) => c + 1);
-  };
-
-  return (
-    <div className="decision-modal" role="dialog" aria-modal="true" aria-label="月末重大抉择">
-      <div className="decision-window">
-        <div className="decision-head">
-          <span className="decision-kicker">月末亲裁 · {cursor + 1}/{total}</span>
-          <h2 className="decision-title">{cur.title}</h2>
-        </div>
-        {failures.length ? (
-          <div className="decision-failure-list" role="alert">
-            {failures.map((failure) => (
-              <div className="decision-failure-item" key={failure.id}>
-                {failure.message}
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {cur.context ? <p className="decision-context">{cur.context}</p> : null}
-        <div className="decision-options">
-          {cur.options.map((o, i) => (
-            <button
-              key={i}
-              className={"decision-option" + (pick.label === o.label ? " is-picked" : "")}
-              onClick={() => setOption(o.label, o.hint)}
-            >
-              <span className="decision-option-label">{o.label}</span>
-              {o.hint ? <span className="decision-option-hint">{o.hint}</span> : null}
-            </button>
-          ))}
-        </div>
-        <textarea
-          className="decision-note"
-          placeholder="朱批（可选）：另有旨意可亲笔补写，将与所选一并定夺。"
-          value={pick.note || ""}
-          onChange={(e) => setNote(e.target.value)}
-        />
-        <div className="decision-actions">
-          <span className="decision-hint-line">
-            {decided ? "" : "请择一选项或亲笔朱批，方可下一步。"}
-          </span>
-          <button className="decision-confirm" disabled={!decided} onClick={next}>
-            {last ? "御笔亲断，续推时局" : "下一桩抉择"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
 // 作弊控制台：terminal UI。强制结算唯一入口（Ctrl+~ 唤出）。输入的指令暂存于
 // cheatDirective，下次颁诏时随结算穿入 extractor 当既成事实落库。
 function CheatConsole({
