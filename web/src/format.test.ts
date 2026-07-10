@@ -28,6 +28,23 @@ describe("stripOrganicMarkdown", () => {
       .toBe("**原样**\n- 原样");
   });
 
+  it("does not treat user text that resembles an internal code placeholder as a code span", () => {
+    expect(stripOrganicMarkdown("正文\uE0000\uE001尾")).toBe("正文\uE0000\uE001尾");
+  });
+
+  it("preserves code spans delimited by repeated backticks", () => {
+    expect(stripOrganicMarkdown("``**code**``\n```- code```"))
+      .toBe("**code**\n- code");
+  });
+
+  it("treats Chinese letters as word characters around emphasis markers", () => {
+    expect(stripOrganicMarkdown("字段_税率_值")).toBe("字段_税率_值");
+  });
+
+  it("strips links whose URLs contain nested parentheses", () => {
+    expect(stripOrganicMarkdown("[正文](https://example.com/a_(b))")).toBe("正文");
+  });
+
   it("strips nested block prefixes until the line is plain", () => {
     expect(stripOrganicMarkdown("> # 标题\n- > 引文"))
       .toBe("标题\n引文");
