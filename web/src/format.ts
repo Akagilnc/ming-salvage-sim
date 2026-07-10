@@ -1,6 +1,7 @@
 import React from "react";
 import MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token.mjs";
+import type StateInline from "markdown-it/lib/rules_inline/state_inline.mjs";
 import { ExtractionView } from "./components/extraction";
 import type { Army, GameState, LegacyEffect, MapNode } from "./types";
 
@@ -326,43 +327,37 @@ export function labelClass(key: string): string {
 }
 const markdown = new MarkdownIt({ html: false, linkify: false, typographer: false });
 
-const rawCodeContents = (source: string): string[] => {
-  const contents: string[] = [];
-  for (let start = 0; start < source.length; start += 1) {
-    let precedingBackslashes = 0;
-    for (let index = start - 1; index >= 0 && source[index] === "\\"; index -= 1) precedingBackslashes += 1;
-    if (source[start] !== "`" || precedingBackslashes % 2 === 1) continue;
-    let delimiterEnd = start;
-    while (source[delimiterEnd] === "`") delimiterEnd += 1;
-    const delimiter = source.slice(start, delimiterEnd);
-    let end = delimiterEnd;
-    while (end < source.length) {
-      end = source.indexOf("`", end);
-      if (end === -1) break;
-      let closingDelimiterEnd = end;
-      while (source[closingDelimiterEnd] === "`") closingDelimiterEnd += 1;
-      if (closingDelimiterEnd - end === delimiter.length) break;
-      end = closingDelimiterEnd;
-    }
-    if (end === -1) {
-      start = delimiterEnd - 1;
-      continue;
-    }
-    contents.push(source.slice(delimiterEnd, end));
-    start = end + delimiter.length - 1;
-  }
-  return contents;
-};
+type InlineRule = (state: StateInline, silent: boolean) => boolean;
 
-const inlineText = (tokens: Token[], codeContents: string[]): string => {
-  let codeIndex = 0;
+const markdownBacktickRule = (markdown.inline.ruler as unknown as {
+  __rules__: Array<{ name: string; fn: InlineRule }>;
+}).__rules__.find((rule) => rule.name === "backticks")?.fn;
+
+if (!markdownBacktickRule) throw new Error("markdown-it backticks rule is unavailable");
+
+markdown.inline.ruler.at("backticks", (state, silent) => {
+  const start = state.pos;
+  const tokenCount = state.tokens.length;
+  const parsed = markdownBacktickRule(state, silent);
+  if (!parsed || silent) return parsed;
+
+  const token = state.tokens.slice(tokenCount).find((candidate) => candidate.type === "code_inline");
+  if (token) {
+    const contentStart = start + token.markup.length;
+    const contentEnd = state.pos - token.markup.length;
+    token.meta = { ...token.meta, literalContent: state.src.slice(contentStart, contentEnd) };
+  }
+  return parsed;
+});
+
+const inlineText = (tokens: Token[]): string => {
   const render = (token: Token): string => {
     switch (token.type) {
       case "text":
       case "html_inline":
         return token.content;
       case "code_inline":
-        return codeContents[codeIndex++] ?? token.content;
+        return token.meta?.literalContent ?? token.content;
       case "image":
         return (token.children || []).map(render).join("");
       case "softbreak":
@@ -393,7 +388,7 @@ export const stripOrganicMarkdown = (text: string): string => {
     switch (token.type) {
       case "inline":
         result = appendBlockSeparator(result, previousEndLine, startLine);
-        result += inlineText(token.children || [], rawCodeContents(token.content));
+        result += inlineText(token.children || []);
         if (endLine !== undefined) previousEndLine = endLine;
         break;
       case "fence":
