@@ -76,7 +76,10 @@ describe("family worker smoke route envelope (#685)", () => {
         ctx: DispatchContext,
       ): Promise<WorkerResult> {
         received = ctx;
-        return { kind: "completed", output: { kind: "ship", pr: "pr://family" } };
+        return {
+          kind: "completed",
+          output: { kind: "ship", pr: "pr://family", branch: "family/685", status: "opened" },
+        };
       },
     };
 

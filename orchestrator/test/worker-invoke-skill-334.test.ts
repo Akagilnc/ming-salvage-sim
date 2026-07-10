@@ -176,12 +176,7 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     const cfg = makeBackend().config(
       {
         id: "S9",
-        kind: "verify",
         role: "verify",
-        host: "claude",
-        session: "fresh",
-        contextRetention: "clean",
-        skill: "verify",
         promptFile: "verify.md",
         completionSignal: "VERIFY_STEP_COMPLETE",
         maxIter: 1,
@@ -512,7 +507,13 @@ class ReviewWorkerBackend implements Backend {
     throw new Error("resumeSession should not be called directly (#334)");
   }
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
-    return { number: issueNumber, isReadyForAgent: true, hasSubIssues: false, openBlockedBy: [] };
+    return {
+      number: issueNumber,
+      isReadyForAgent: true,
+      hasSubIssues: false,
+      isClosed: false,
+      openBlockedBy: [],
+    };
   }
   async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
     return { number: issueNumber, body: "b", comments: [], agentBrief: "" };
@@ -532,7 +533,7 @@ class ReviewWorkerBackend implements Backend {
     repo: string;
     prUrl: string;
     pollCount: number;
-  }) {
+  }): Promise<import("../src/types.js").OnlineReviewLandingSnapshot> {
     void input;
     return {
       prUrl: "pr://slice/offline-334",

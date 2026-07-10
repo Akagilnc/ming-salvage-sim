@@ -19,6 +19,10 @@ import type { RealFamilyBackendOptions } from "./family/realFamilyBackend.js";
 import { RealBackend } from "./realBackend.js";
 import type { RealBackendOptions } from "./realBackend.js";
 import type { CliMonitorJobFile } from "./cliMonitorHooks.js";
+import {
+  isQuotaWaitForResetError,
+  serializeQuotaWaitForResetBridge,
+} from "./quotaProbe.js";
 import type { WorkerResult } from "./types.js";
 
 async function main(): Promise<void> {
@@ -71,12 +75,22 @@ async function main(): Promise<void> {
       };
     }
   } catch (err) {
-    result = {
-      kind: "failed",
-      reason: `hostCliWorkerRunner: worker threw: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    };
+    // #683: Sandcastle-fallback 429 inside the bridge child must still park —
+    // serialize so the parent can re-throw QuotaWaitForResetError (not a bare
+    // failed WorkerResult that collapses into errorTermination).
+    if (isQuotaWaitForResetError(err)) {
+      result = {
+        kind: "failed",
+        reason: serializeQuotaWaitForResetBridge(err),
+      };
+    } else {
+      result = {
+        kind: "failed",
+        reason: `hostCliWorkerRunner: worker threw: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
   }
 
   try {

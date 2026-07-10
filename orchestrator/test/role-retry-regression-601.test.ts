@@ -154,9 +154,9 @@ function cleanSuccessTail(spec: WorkerSpec): WorkerResult {
  */
 function cmrClosureSpec(): WorkerSpec {
   return {
-    id: "cmr-completeness",
+    id: "S3",
     kind: "cmr",
-    role: "cmr",
+    role: "reviewer",
     host: "claude",
     session: "fresh",
     contextRetention: "retain",
@@ -176,9 +176,9 @@ function cmrClosureSpec(): WorkerSpec {
  */
 function familyShipSpec(): WorkerSpec {
   return {
-    id: "family-ship",
+    id: "S7",
     kind: "ship",
-    role: "ship",
+    role: "coder",
     host: "claude",
     session: "fresh",
     contextRetention: "retain",
@@ -504,7 +504,7 @@ class CmrClosureVersionSkewFamilyBackend implements FamilyBackend {
       const cmrOutput: CmrResult = {
         kind: "cmr",
         converged: true,
-        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         evidencePaths: ["cmr/review-summary.json"],
@@ -680,7 +680,7 @@ function cmrClosureWithMissingSuppressionFields(): CmrResult {
   return {
     kind: "cmr",
     converged: true,
-    successfulLegs: ["opus", "gpt-5.5", "agy"],
+    successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
     claimedFixedFindingIdentityKeys: [],
     priorFindingDispositions: [
       {
@@ -804,7 +804,7 @@ describe("#601 AC#4 — dogfoodReplay-pattern regression: dogfood-362, family-40
       output: {
         kind: "cmr",
         converged: true,
-        successfulLegs: ["opus", "gpt-5.5", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         evidencePaths: ["cmr/review-summary.json"],

@@ -223,6 +223,7 @@ describe("#684 worker monitor handles", () => {
   it("accepts the documented spawned identity when the platform cannot read a live instance id", () => {
     const handle = baseHandle({
       pid: 100,
+      logPath: "/tmp/worker-100.log",
       instanceId: "spawned:100:2026-07-10T07:00:00.000Z",
     });
     const deps: WorkerMonitorDeps = {
@@ -520,7 +521,7 @@ exit 0
     try {
       const completed: WorkerResult = {
         kind: "completed",
-        output: { kind: "coder", committed: true, commitCount: 1 },
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
         sessionId: "cli-session",
       };
       const backend = {
@@ -618,7 +619,7 @@ exit 0
         }),
         awaitMonitoredCliWorker: async () => {
           events.push("awaited");
-          return { kind: "completed", output: { kind: "coder", committed: true, commitCount: 1 } } as WorkerResult;
+          return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } } as WorkerResult;
         },
       } as unknown as Backend;
       const spec = {
@@ -703,7 +704,7 @@ exit 0
         completionSignal: "REVIEW_STEP_COMPLETE",
         maxIter: 1,
         model: "sonnet",
-        soul: "reviewer",
+        soul: "READ-ONLY",
         toolchain: [],
       } satisfies WorkerSpec;
       const first = buildCliMonitorSpawnSpec({

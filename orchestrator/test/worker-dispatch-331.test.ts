@@ -17,6 +17,7 @@ import type {
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
+  OnlineReviewLandingSnapshot,
   StepOutput,
   StepSpec,
   WorkerOutcomeLandingFile,
@@ -111,7 +112,7 @@ class DispatchBackend implements Backend {
     repo: string;
     prUrl: string;
     pollCount: number;
-  }) {
+  }): Promise<OnlineReviewLandingSnapshot> {
     void input;
     return {
       prUrl: "pr://slice/offline-331",
@@ -297,7 +298,7 @@ describe("#331 the S7 ship worker must return a SHIP payload (codex R2 guard)", 
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.5", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
       };
