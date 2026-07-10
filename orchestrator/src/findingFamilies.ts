@@ -1,10 +1,11 @@
 /**
  * Cross-round finding family synthesis (#711).
  *
- * Verify / integrated-CMR judge workers may emit `findingFamilies` — grouped
- * findings with recurring-class markers. Malformed families degrade to no brief
- * (accelerator, not a gate). The runner forwards sanitized families to fixer
- * workers as `.fix-focus.md` without interpreting them.
+ * Verify / integrated-CMR judge workers may emit `findingFamilies` (or wire
+ * alias `finding_families`) — grouped findings with recurring-class markers.
+ * Malformed families degrade to no brief (accelerator, not a gate). The runner
+ * forwards sanitized families to fixer workers as `.fix-focus.md` without
+ * interpreting them — pure data serialization only.
  */
 
 import { z } from "zod";
@@ -32,9 +33,46 @@ const findingFamilySchema = z
   })
   .strict();
 
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Normalize one family entry from snake_case wire aliases to camelCase. */
+export function normalizeFindingFamilyEntry(entry: unknown): unknown {
+  if (!isJsonRecord(entry)) return entry;
+  const out: Record<string, unknown> = { ...entry };
+  if (
+    out.recurringFromRounds === undefined &&
+    out.recurring_from_rounds !== undefined
+  ) {
+    out.recurringFromRounds = out.recurring_from_rounds;
+    delete out.recurring_from_rounds;
+  }
+  return out;
+}
+
+/**
+ * Normalize top-level + nested finding-family wire aliases so both
+ * `finding_families` / `recurring_from_rounds` (spec) and camelCase work.
+ * Extra/snake keys are rewritten before `.strict()` schemas run.
+ */
+export function normalizeFindingFamiliesWireAliases(raw: unknown): unknown {
+  if (!isJsonRecord(raw)) return raw;
+  const out: Record<string, unknown> = { ...raw };
+  if (out.findingFamilies === undefined && out.finding_families !== undefined) {
+    out.findingFamilies = out.finding_families;
+    delete out.finding_families;
+  }
+  if (Array.isArray(out.findingFamilies)) {
+    out.findingFamilies = out.findingFamilies.map(normalizeFindingFamilyEntry);
+  }
+  return out;
+}
+
 /**
  * Shape-check and normalize `findingFamilies`. Invalid top-level values or
  * entries are dropped; an empty result becomes `undefined` (no brief).
+ * Accepts snake_case wire fields (`recurring_from_rounds`).
  */
 export function sanitizeFindingFamilies(
   raw: unknown,
@@ -43,7 +81,9 @@ export function sanitizeFindingFamilies(
   if (!Array.isArray(raw)) return undefined;
   const families: FindingFamily[] = [];
   for (const entry of raw) {
-    const parsed = findingFamilySchema.safeParse(entry);
+    const parsed = findingFamilySchema.safeParse(
+      normalizeFindingFamilyEntry(entry),
+    );
     if (parsed.success) {
       families.push(parsed.data);
     }
@@ -58,7 +98,10 @@ export function isFindingFamilyArray(
   return sanitized !== undefined && sanitized.length === (value as unknown[]).length;
 }
 
-/** Runner-owned markdown param file — mechanical serialization, no judgment. */
+/**
+ * Runner-owned markdown param file — mechanical serialization of family data
+ * only. Method instructions live in versioned fixer/coder-fix souls.
+ */
 export function formatFixFocusMarkdown(
   families: ReadonlyArray<FindingFamily>,
 ): string {
@@ -77,11 +120,7 @@ export function formatFixFocusMarkdown(
       "",
     ].join("\n");
   });
-  return (
-    "# Fix focus — pattern-level briefs (#711)\n\n" +
-    "When present, run same-type sweeps per family (not per isolated finding).\n\n" +
-    sections.join("\n")
-  );
+  return "# Fix focus — pattern-level briefs (#711)\n\n" + sections.join("\n");
 }
 
 /** Prior S9 verify rounds for the current online-review round (1-based). */
@@ -107,6 +146,44 @@ export function priorOnlineReviewFindingsFromLedger(
       ? { findingDispositions: verify.findingDispositions }
       : {}),
   }));
+}
+
+type FamilyOnlineReviewLedgerEntry = {
+  readonly event?: string;
+  readonly onlineReviewRound?: number;
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+};
+
+/**
+ * Prior online-review rounds from the family ledger (#711).
+ *
+ * Family loop only persists fix/retrigger markers (not S9 verify outputs).
+ * Prefer `online_review_fix_committed` rows that carry
+ * `fixMarkedFindingIdentityKeys` + `onlineReviewRound`.
+ */
+export function priorOnlineReviewFindingsFromFamilyLedger(
+  ledger: ReadonlyArray<FamilyOnlineReviewLedgerEntry>,
+  currentRound: number,
+): ReadonlyArray<PriorRoundFindingSnapshot> {
+  if (currentRound <= 1) return [];
+  const byRound = new Map<number, PriorRoundFindingSnapshot>();
+  for (const entry of ledger) {
+    if (entry.event !== "online_review_fix_committed") continue;
+    const keys = entry.fixMarkedFindingIdentityKeys;
+    if (!Array.isArray(keys) || keys.length === 0) continue;
+    const round =
+      typeof entry.onlineReviewRound === "number" &&
+      Number.isSafeInteger(entry.onlineReviewRound) &&
+      entry.onlineReviewRound >= 1
+        ? entry.onlineReviewRound
+        : undefined;
+    if (round === undefined || round >= currentRound) continue;
+    byRound.set(round, {
+      round,
+      fixMarkedFindingIdentityKeys: [...keys],
+    });
+  }
+  return [...byRound.values()].sort((a, b) => a.round - b.round);
 }
 
 type CmrLedgerEntry = {

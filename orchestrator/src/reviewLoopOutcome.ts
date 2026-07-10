@@ -10,7 +10,6 @@
  * reject an off-contract output instead of silently advancing.
  */
 
-import { isFindingFamilyArray } from "./findingFamilies.js";
 import { isValidGithubIssueUrl } from "./onlineReviewSideEffects.js";
 import type {
   CleanupResult,
@@ -148,12 +147,8 @@ export function isValidVerifyResult(
   if (obj.isRecheck !== undefined && typeof obj.isRecheck !== "boolean") {
     return false;
   }
-  if (
-    obj.findingFamilies !== undefined &&
-    !isFindingFamilyArray(obj.findingFamilies)
-  ) {
-    return false;
-  }
+  // #711: findingFamilies is an accelerator, not a gate. Malformed values must
+  // not fail the whole verify verdict — callers sanitize/drop them to no-brief.
   return true;
 }
 
