@@ -34,9 +34,17 @@ import {
 import { join, resolve } from "node:path";
 
 import { offlineReviewLoopDispatchAdmissible } from "./evidenceAdmissibility.js";
+import {
+  FIX_FOCUS_LANDING_FILE,
+  formatFixFocusMarkdown,
+} from "./findingFamilies.js";
 import { dispatchPostMergeCleanup } from "./postMergeCleanup.js";
 import type { Sh } from "./familyDriver.js";
-import { modelForSlot, type ResolvedModelRoute } from "./modelRoutes.js";
+import {
+  modelForSlot,
+  routeSmokeFailure,
+  type ResolvedModelRoute,
+} from "./modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
 import type {
   Backend,
@@ -178,6 +186,10 @@ function writeOnlineReviewLandingFile(
           shipDelivery: landing.shipDelivery,
           onlineReviewRound: landing.onlineReviewRound ?? ctx.onlineReviewRound,
           fixMarkedFindingIdentityKeys: landing.fixMarkedFindingIdentityKeys ?? [],
+          ...(landing.priorRoundFindings !== undefined &&
+          landing.priorRoundFindings.length > 0
+            ? { priorRoundFindings: landing.priorRoundFindings }
+            : {}),
         },
         null,
         2,
@@ -194,6 +206,43 @@ function writeOnlineReviewLandingFile(
   return {
     path: landingPath,
     sandboxPath: ONLINE_REVIEW_LANDING_FILE,
+    cleanup: ctx.stateDir === undefined,
+  };
+}
+
+function writeFixFocusLandingFile(
+  spec: WorkerSpec,
+  ctx: DispatchContext,
+  landing?: WorkerLandingPayload,
+): (FixFindingsLandingFile & { cleanup: boolean }) | undefined {
+  const needsFixFocus =
+    landing?.findingFamilies !== undefined &&
+    landing.findingFamilies.length > 0 &&
+    (spec.kind === "fixer" ||
+      (spec.kind === "coder" &&
+        (spec.id === "S5" || ctx.blockingFindingIdentityKeys !== undefined)));
+  if (!needsFixFocus || ctx.worktree === undefined) {
+    return undefined;
+  }
+  if (!existsSync(ctx.worktree.path)) return undefined;
+
+  const landingPath =
+    ctx.stateDir !== undefined
+      ? join(ctx.stateDir, "fix-focus.md")
+      : join(ctx.worktree.path, FIX_FOCUS_LANDING_FILE);
+  if (ctx.stateDir !== undefined) {
+    mkdirSync(ctx.stateDir, { recursive: true });
+  } else {
+    ensureGitExcluded(ctx.worktree.path, FIX_FOCUS_LANDING_FILE);
+  }
+  writeFileSync(
+    landingPath,
+    `${formatFixFocusMarkdown(landing.findingFamilies!)}\n`,
+    "utf8",
+  );
+  return {
+    path: landingPath,
+    sandboxPath: FIX_FOCUS_LANDING_FILE,
     cleanup: ctx.stateDir === undefined,
   };
 }
@@ -329,15 +378,14 @@ export function shipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   };
 }
 
-// TODO(#600/#603): placeholder prompts for verify/fixer remain skeleton-adjacent;
-// cleanup real path is #603; docRelease real path is #735.
+// Prompt status: verify.md / fixer.md real paths shipped in #600;
+// docRelease.md real path shipped in #735; cleanup real host path remains #603.
 export const VERIFY_PROMPT_FILE = "verify.md";
 export const FIXER_PROMPT_FILE = "fixer.md";
 export const CLEANUP_PROMPT_FILE = "cleanup.md";
 export const DOCRELEASE_PROMPT_FILE = "docRelease.md";
 
-/** S9 online-review / PR-check worker spec (#596 skeleton). */
-// TODO(#600/#603): skill/prompt wiring is inert placeholder here.
+/** S9 online-review / PR-check worker spec (#600 real prompt). */
 export function verifyWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S9",
@@ -356,8 +404,7 @@ export function verifyWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   };
 }
 
-/** S10 post-review fixer worker spec (#596 skeleton). */
-// TODO(#600/#603): skill/prompt wiring is inert placeholder here.
+/** S10 post-review fixer worker spec (#600 real prompt). */
 export function fixerWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S10",
@@ -376,8 +423,8 @@ export function fixerWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   };
 }
 
-/** S11 cleanup worker spec (#596 skeleton). */
-// TODO(#600/#603): skill/prompt wiring is inert placeholder here.
+/** S11 cleanup worker spec (#596 skeleton; real host path is #603). */
+// TODO(#603): cleanup skill/prompt wiring is still skeleton here.
 export function cleanupWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
   return {
     id: "S11",
@@ -520,12 +567,16 @@ export async function legacyDispatchWorker(
   const stepSpec = workerSpecToStepSpec(spec);
   let ret: StepOutput | StepResult;
   const fixFindingsLanding = writeFixFindingsLandingFile(spec, ctx, landing);
+  const fixFocusLanding = writeFixFocusLandingFile(spec, ctx, landing);
   let onlineReviewLanding;
   try {
     onlineReviewLanding = writeOnlineReviewLandingFile(spec, ctx, landing);
   } catch (err) {
     if (fixFindingsLanding?.cleanup) {
       rmSync(fixFindingsLanding.path, { force: true });
+    }
+    if (fixFocusLanding?.cleanup) {
+      rmSync(fixFocusLanding.path, { force: true });
     }
     return {
       kind: "failed",
@@ -541,6 +592,15 @@ export async function legacyDispatchWorker(
           },
         }
       : undefined;
+  const fixFocusOptions =
+    fixFocusLanding !== undefined
+      ? {
+          fixFocusLanding: {
+            path: fixFocusLanding.path,
+            sandboxPath: fixFocusLanding.sandboxPath,
+          },
+        }
+      : undefined;
   const onlineReviewOptions =
     onlineReviewLanding !== undefined
       ? {
@@ -553,10 +613,12 @@ export async function legacyDispatchWorker(
   const outcomeLanding = writeWorkerOutcomeLandingFile(spec, ctx);
   const runOptions =
     fixFindingsOptions !== undefined ||
+    fixFocusOptions !== undefined ||
     onlineReviewOptions !== undefined ||
     outcomeLanding !== undefined
       ? {
           ...(fixFindingsOptions ?? {}),
+          ...(fixFocusOptions ?? {}),
           ...(onlineReviewOptions ?? {}),
           ...(outcomeLanding !== undefined ? { outcomeLanding } : {}),
         }
@@ -584,6 +646,9 @@ export async function legacyDispatchWorker(
     if (fixFindingsLanding?.cleanup) {
       rmSync(fixFindingsLanding.path, { force: true });
     }
+    if (fixFocusLanding?.cleanup) {
+      rmSync(fixFocusLanding.path, { force: true });
+    }
     if (onlineReviewLanding?.cleanup) {
       rmSync(onlineReviewLanding.path, { force: true });
     }
@@ -604,6 +669,13 @@ export async function dispatchWorker(
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
 ): Promise<WorkerResult> {
+  if (ctx.modelRoute === undefined) {
+    throw new Error("worker dispatch refused (fail-closed): model route smoke state is missing");
+  }
+  const smokeFailure = routeSmokeFailure(ctx.modelRoute);
+  if (smokeFailure !== undefined) {
+    throw new Error(`worker dispatch refused (fail-closed): ${smokeFailure}`);
+  }
   if (backend.dispatchWorker !== undefined) {
     return backend.dispatchWorker(spec, ctx, landing);
   }

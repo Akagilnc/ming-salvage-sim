@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { Sh } from "../src/familyDriver.js";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import {
   assessMergeReadiness,
@@ -1082,7 +1083,7 @@ describe("#602 runAutoMergeStage", () => {
     ).toBe(false);
   });
 
-  it("allowUnverifiedDocReleasePaths field is a no-op under ADR 0123 (merge still needs readiness)", async () => {
+  it("allowUnverifiedDocReleasePaths is a no-op under ADR 0123 (green readiness still merges)", async () => {
     const merge = vi.fn();
     const result = await runAutoMergeStage({
       sh: fakeSh({}),
@@ -1099,6 +1100,39 @@ describe("#602 runAutoMergeStage", () => {
     });
     expect(result.ok).toBe(true);
     expect(merge).toHaveBeenCalled();
+  });
+
+  it("allowUnverifiedDocReleasePaths does not bypass red readiness (unresolved threads)", async () => {
+    // Counter-proof: if the no-op field were wrongly rewired as a readiness
+    // bypass, this case (field=true + unresolved threads) would merge.
+    const merge = vi.fn();
+    const result = await runAutoMergeStage({
+      sh: fakeSh({}),
+      repo: REPO,
+      prUrl: PR_URL,
+      convergedHeadOid: "head-1",
+      docReleaseCompleted: true,
+      priorConvergenceRecorded: true,
+      prMergedMarkerPresent: false,
+      offlineSynthetic: true,
+      allowUnverifiedDocReleasePaths: true,
+      poll: async () =>
+        readySnapshot({
+          quiescent: false,
+          threads: [
+            {
+              id: "1",
+              threadNodeId: "T1",
+              body: "nit",
+              authorLogin: "bot",
+              isResolved: false,
+            },
+          ],
+        }),
+      executeMerge: merge,
+    });
+    expect(result.ok).toBe(false);
+    expect(merge).not.toHaveBeenCalled();
   });
 
   it("ADR 0123 / #735: offline synthetic without paths merges when readiness green", async () => {
@@ -1290,6 +1324,11 @@ describe("#602 familyPrMergedForHead", () => {
 
 describe("#602 docRelease non-interactive dispatch env", () => {
   it("docRelease worker inherits spawned-session env (no human prompt)", () => {
+    // Use this worktree's prompts/souls — not a hard-coded sibling path that
+    // goes stale when REQUIRED_SOUL_FILES / REFERENCED_PROMPT_FILES grow (#739).
+    const here = dirname(fileURLToPath(import.meta.url));
+    const realPromptsDir = join(here, "..", "prompts");
+    const realSoulsDir = join(here, "..", "image", "souls");
     class StubBackend extends RealBackend {
       protected override cloneDirExists(): boolean {
         return true;
@@ -1310,8 +1349,8 @@ describe("#602 docRelease non-interactive dispatch env", () => {
       remote: "https://github.com/Akagilnc/ming-salvage-sim.git",
       runKey: 602,
       repo: REPO,
-      promptsDir: "/Users/akagilnc/WorkSpace/Ming_LLM-bench-602/orchestrator/prompts",
-      soulsDir: "/Users/akagilnc/WorkSpace/Ming_LLM-bench-602/orchestrator/image/souls",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
     }).workerEnv();
     expect(env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });
@@ -1357,6 +1396,10 @@ describe("#602 runOrchestrator slice path — AC8 pr_merged ledger", () => {
   }
 
   class SliceAutoMergeResumeBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
     readonly ledgerWrites: PersistentLedgerEntry[] = [];
     readonly dispatchSpecs: WorkerSpec[] = [];
 

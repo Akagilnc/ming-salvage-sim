@@ -134,6 +134,10 @@ function makeSh(): Sh {
  * worktree (distinct file per child ⇒ clean merges). No `sc.run`, no container.
  */
 class RealGitChildBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly worktrees = new Map<number, string>();
   constructor(private readonly clone: string) {}
   async findResumeState(): Promise<undefined> {

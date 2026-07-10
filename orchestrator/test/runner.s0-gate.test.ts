@@ -28,6 +28,10 @@ import type {
 // ──────────────────────────────────────────────────────────────────────────────
 
 class GateTestBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly calls: string[] = [];
   private readonly meta: IssueMeta;
 
