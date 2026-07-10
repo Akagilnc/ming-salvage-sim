@@ -84,7 +84,10 @@ _ABSTRACT_STOP_FIELDS = {
     "training": "训练",
     "equipment": "装备",
     "firearm_equipment": "火器",
-    "cannon_equipment": "炮械",
+    "military_strength": "军力",
+    "corruption": "贪腐",
+    "grain_security": "粮情",
+    "city_level": "城防",
     "mobility": "机动",
     "cohesion": "凝聚",
     "supply": "补给",
@@ -99,6 +102,11 @@ _ABSTRACT_STOP_FIELDS = {
     "清廉": "操守",
     "胆略": "胆略",
     "进度": "进展",
+}
+_COUNTABLE_STOP_FIELDS = {
+    "treasury", "国库", "内库", "arrears", "欠饷", "manpower", "兵额",
+    "population", "registered_land", "hidden_land", "tax_per_turn", "grain",
+    "army_needed", "cannon", "cannon_equipment",
 }
 
 
@@ -130,8 +138,12 @@ def _qualitative_stop_condition(raw: object) -> str:
         if qualitative_field:
             suffix = "已达较高水准" if key_text.split(".")[-1] == "loyalty" else "达到所定档位"
             parts.append(f"{qualitative_field}{suffix}")
-        else:
+        elif any(name == key_text.split(".")[-1] for name in _COUNTABLE_STOP_FIELDS):
             parts.append(f"{key_text}{value_text}")
+        else:
+            # 只有明确可数物（如欠饷、银两、兵额）才把机器条件原样交给大臣。
+            # 未知字段也不应成为抽象分数泄漏的后门：保留字段名，隐藏比较符和阈值。
+            parts.append(f"{key_text}条件已存档")
     return "、".join(parts) or "（条件未详）"
 
 

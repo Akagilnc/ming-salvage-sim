@@ -16,12 +16,10 @@ from agno.skills.loaders.local import LocalSkills
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
-from ming_sim.context import character_context_with_db
+from ming_sim.context import character_context_with_db, faction_context_with_db
 from ming_sim.db import (
-    _building_condition_description,
-    _building_level_description,
     _building_output_effect,
-    _building_risk_description,
+    building_qualitative_fields,
 )
 from ming_sim.models import Character, CourtContext, LLMConfig, MINISTER_CHAT_CLI_TIMEOUT_SECONDS
 from ming_sim.llm_model import create_chat_model
@@ -67,7 +65,7 @@ def _ctx() -> GameContent:
     return _content
 
 
-def build_court_brief(context: CourtContext) -> str:
+def build_court_brief(context: CourtContext, character: Optional[Character] = None) -> str:
     """每回合精简上下文：仅含回合 + 核心数值 + 在办事项 + 钱粮一句话。
     地区/军队/派系/事项详情靠大臣按需调 tool 查（list_regions, inspect_memorial 等）。
     """
@@ -85,10 +83,12 @@ def build_court_brief(context: CourtContext) -> str:
             f"（局势未决；向好端：{row['bar_good_meaning']}；向坏端：{row['bar_bad_meaning']}）"
         )
     issues_brief = "；".join(issue_lines) if issue_lines else "无"
+    identity_brief = faction_context_with_db(character, context.db) if character else ""
     return (
         f"本{TURN_UNIT}：{context.state.year}年{context.state.period}月（第{context.state.turn}回合）。"
         f"钱粮：{money_line}国势：{score_line}。"
         f"在办事项：{issues_brief}。"
+        f"{identity_brief}"
         f"势力档料：{_power_brief(context)}。"
         f"地区/奏报/钱粮详情按需调工具查（list_regions/inspect_region/inspect_memorial/check_treasury 等）；人事与军队详情见下方固定名册。"
     )
@@ -291,9 +291,10 @@ def build_building_brief(context: CourtContext) -> str:
     for r in rows:
         metric = str(r["output_metric"] or "")
         out = _building_output_effect(metric, r["output_amount"], prefix="·")
+        level, condition, _risk = building_qualitative_fields(r)
         lines.append(
             f"{r['name']}（{r['category']}·{r['region_name']}）"
-            f"Lv档{_building_level_description(r['level'])}，完好{_building_condition_description(r['condition'])}{out}"
+            f"Lv档{level}，完好{condition}{out}"
         )
     return "【现有建筑（名·类别·地区 规模/完好/产出；问营建/厂局/仓坞据此）】\n" + "；".join(lines)
 
@@ -496,7 +497,7 @@ def create_minister_agent(
         # 月度动态上下文全挂 system 末尾——每月变一次破尾段缓存，但前面 game_world /
         # minister_agent / character 静态段仍命中前缀缓存，且大臣全程不会因 history 滚窗
         # 而忘掉年月、钱粮、在办事项、上回合旧事、自己名下密令。
-        court_brief = build_court_brief(context)
+        court_brief = build_court_brief(context, character)
         # 运行时判断规模：人物>100 或军队>30 切换为 tool 按需查，否则全量注入 system
         active_char_count = sum(
             1 for ch in _ctx().characters.values()

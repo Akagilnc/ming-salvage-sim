@@ -211,6 +211,15 @@ def character_context(character: Character) -> str:
 
 
 def character_context_with_db(character: Character, db: GameDB) -> str:
+    return (
+        character_context(character)
+        + faction_context_with_db(character, db)
+        + f"当前可用技能：{available_skill_names(character, db)}"
+    )
+
+
+def faction_context_with_db(character: Character, db: GameDB) -> str:
+    """只组装当前人物认同度允许知道的本派档料；不提供全局派系表。"""
     faction = db.conn.execute(
         "SELECT agenda, satisfaction, leverage FROM factions WHERE name = ?",
         (character.faction,),
@@ -232,10 +241,8 @@ def character_context_with_db(character: Character, db: GameDB) -> str:
             f"对政局态度{_faction_band('satisfaction', faction['satisfaction'])}。"
         )
     return (
-        f"{character_context(character)}"
         f"【派系档料】{character.faction}：{faction_text}"
         f"【党派认同】此人对本派的认同为{_identity_band(character.identity)}。"
-        f"当前可用技能：{available_skill_names(character, db)}"
     )
 
 

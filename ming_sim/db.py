@@ -105,6 +105,15 @@ def _building_output_effect(metric: str, amount: object, prefix: str = "") -> st
     return f"{prefix}产出{metric}{amount}"
 
 
+def building_qualitative_fields(row: object) -> Tuple[str, str, str]:
+    """建筑呈现层共用的规模、完好、风险定性，避免各出口阈值漂移。"""
+    return (
+        _building_level_description(row["level"]),
+        _building_condition_description(row["condition"]),
+        _building_risk_description(row["risk"]),
+    )
+
+
 class ProvinceFiscalTickOutcome(NamedTuple):
     region_id: str
     result: Any
@@ -6222,9 +6231,7 @@ class GameDB:
             else:
                 out = "无结算产出"
             if qualitative:
-                level = _building_level_description(r["level"])
-                condition = _building_condition_description(r["condition"])
-                risk = _building_risk_description(r["risk"])
+                level, condition, risk = building_qualitative_fields(r)
                 lines.append(
                     f"{r['name']}（{r['category']}·{r['region_id']}）规模{level}，"
                     f"{condition}，维护{r['maintenance']}{MONEY_UNIT}/{TURN_UNIT}，风险{risk}，{out}。{r['status']}"
@@ -6282,9 +6289,7 @@ class GameDB:
         else:
             out = f"产出{metric}{row['output_amount']}/{TURN_UNIT}" if metric else "无结算产出"
         if qualitative:
-            level = _building_level_description(row["level"])
-            condition = _building_condition_description(row["condition"])
-            risk = _building_risk_description(row["risk"])
+            level, condition, risk = building_qualitative_fields(row)
             return (
                 f"{row['name']}（{row['category']}，{row['region_id']}，{row['origin']}）："
                 f"规模{level}，{condition}，维护{row['maintenance']}{MONEY_UNIT}/{TURN_UNIT}，风险{risk}，{out}。\n"
