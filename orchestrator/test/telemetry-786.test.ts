@@ -330,6 +330,8 @@ describe("#786 telemetry pure helpers", () => {
     expect(categoryFromReason("HTTP response code 429")).toBe("429-quota");
     expect(categoryFromReason("response code 429")).toBe("429-quota");
     expect(categoryFromReason("status was 429")).toBe("429-quota");
+    expect(categoryFromReason("429 Too Many Requests")).toBe("429-quota");
+    expect(categoryFromReason("Too Many Requests")).toBe("429-quota");
   });
 
   it("categoryFromReason does not treat HTTP 429 decimal values as quota", () => {
@@ -667,6 +669,50 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
 
     expect(backend.opts.installs).toBe(1);
     expect(readTelemetryRecords(ledgerDir).some((r) => r.phase === "environment")).toBe(true);
+  });
+
+  it("defers a missing-ledger environment install until the quick-exit handle persists", async () => {
+    const dir = tempDir("orch-786-env-after-handle-");
+    const ledgerDir = join(dir, ".ledger-786");
+    let handlePersisted = false;
+    let installerSawPersistedHandle = false;
+    const backend = {
+      ...quickExitBackend("first token from model\\n"),
+      installTelemetryRunEnvironment: () => {
+        installerSawPersistedHandle = handlePersisted;
+        // Model the synchronous first fingerprint calculation that previously
+        // delayed the quick-exit first-output observation.
+        const until = Date.now() + 25;
+        while (Date.now() < until) {
+          // Intentional synchronous work.
+        }
+      },
+    } as Backend;
+
+    const outcome = await dispatchWorkerWithMonitor(
+      backend,
+      workerSpec(),
+      { stateDir: ledgerDir },
+      undefined,
+      {
+        idleThresholdMs: 60_000,
+        pollIntervalMs: 5_000,
+        monitorDeps: {
+          readInstanceId: () => "test-instance-786-env-after-handle",
+          sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
+        },
+        onMonitorHandleSpawned: async () => {
+          handlePersisted = true;
+        },
+      },
+    );
+
+    expect(outcome.result.kind).toBe("completed");
+    expect(installerSawPersistedHandle).toBe(true);
+    const collect = readTelemetryRecords(ledgerDir).find(
+      (r) => r.phase === "collect",
+    ) as TelemetryCollectRecord | undefined;
+    expect(collect?.first_output_at).not.toBeNull();
   });
 
   it("writes environment + dispatch + collect half-rows joined by legId", async () => {

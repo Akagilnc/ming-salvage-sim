@@ -652,6 +652,7 @@ export function categoryFromReason(reason: string): TelemetryErrorCategory {
     lower.includes("quota wait for reset") ||
     lower.includes("rate limit") ||
     lower.includes("rate_limit") ||
+    lower.includes("too many requests") ||
     // Standalone "quota" but not "iteration" context handled below first.
     (lower.includes("quota") && !lower.includes("iteration limit"))
   ) {
