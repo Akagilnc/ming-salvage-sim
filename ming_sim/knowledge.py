@@ -75,6 +75,7 @@ def _world(
 def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[str, object]:
     character = db.content.characters.get(character_name) if db.content else None
     office_type = str(getattr(character, "office_type", "") or "")
+    office_name = str(getattr(character, "office", "") or "")
     world = _world(db, state, office_type)
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
