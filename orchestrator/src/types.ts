@@ -245,6 +245,19 @@ export interface PriorFindingDisposition {
 }
 
 /** Output of a coder step (S2/S5). 0 commits ⇒ committed:false (not a miss). */
+/**
+ * One finding the coder-fix worker legally refused (#677).
+ * Prefer another repair; when a finding cannot be fixed without overturning a
+ * ratified AC/assertion, refuse that identity, fix the others, commit, and
+ * continue to fresh re-review — never a global escalate / decision-gate park.
+ */
+export interface ReviewFixRefuseRecord {
+  readonly identityKey: string;
+  readonly finding: string;
+  readonly acceptanceCriterion: string;
+  readonly conflictReason: string;
+}
+
 export interface CoderOutput {
   readonly kind: "coder";
   readonly committed: boolean;
@@ -254,6 +267,14 @@ export interface CoderOutput {
    * fixtures for an active finding. Generic "I tried" is not progress.
    */
   readonly repairEvidence?: RepairEvidence;
+  /**
+   * #677 legal refuse: identity keys the coder-fix worker declined to adopt
+   * (AC/assertion conflict). Valid with a commit that fixes the other findings;
+   * runner threads these to S6 fresh re-review — not escalate/park.
+   */
+  readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
+  /** #677 refuse detail records paired with {@link refusedFindingIdentityKeys}. */
+  readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
 }
@@ -739,6 +760,13 @@ export interface WorkerLandingPayload {
    * them to the landing file; the runner does not read them.
    */
   readonly blockingFindings?: ReadonlyArray<Finding>;
+  /** #677 mechanical signal; reviewer must trace the assertion to authority. */
+  readonly preexistingAssertionTouched?: boolean;
+  /**
+   * #677 legal refuse keys from the prior S5 coder-fix commit — still-active
+   * findings the fixer declined; fresh re-review must adjudicate them.
+   */
+  readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
   /** S9/S10 online review workers: paginated bot/thread snapshot (#600). */
   readonly onlineReviewSnapshot?: OnlineReviewLandingSnapshot;
   /** S9/S10: ship delivery metadata threaded from S7 (pr URL/head). */
@@ -834,6 +862,13 @@ export interface DispatchContext {
    * separate {@link WorkerLandingPayload}, never on this dispatch structure.
    */
   readonly blockingFindingCount?: number;
+  /** #677 runner fact only, never a content verdict. */
+  readonly preexistingAssertionTouched?: boolean;
+  /**
+   * #677 legal refuse keys from S5 — thin identity list for S6 re-review
+   * (runner does not park; fresh reviewer adjudicates still-active refuses).
+   */
+  readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
   /**
    * FAMILY CMR coder-fix retry only: runner-observed repair-evidence gate failures
    * from earlier attempts for the SAME blocking finding set. Fresh retry workers
