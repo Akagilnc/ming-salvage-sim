@@ -12,7 +12,7 @@ import json
 import math
 import re
 import sqlite3
-from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Tuple
 
 from ming_sim.applier import atomic, safe_json_dumps, sanitize_sqlite_text
 from ming_sim.assets import format_money, format_money_delta
@@ -6358,9 +6358,10 @@ class GameDB:
         self.conn.commit()
         if minister_name and role in {"user", "assistant", "minister"}:
             state = self.load_state()
-            self.record_character_participation(
-                state, [minister_name], "audience", "召对", content,
-                f"chat_message:{cur.lastrowid}",
+            self.record_participation_record(
+                state,
+                {"participants": [minister_name], "title": "召对", "body": content},
+                kind="audience", source_id=f"chat_message:{cur.lastrowid}",
             )
         return int(cur.lastrowid)
 
@@ -7255,6 +7256,17 @@ class GameDB:
             (turn,),
         ).fetchone()
         return (row["report"] if row else "") or ""
+
+    def list_turn_reports(self) -> List[Dict[str, object]]:
+        """Return the durable gazette archive in chronological order."""
+        rows = self.conn.execute(
+            "SELECT turn, year, period, report FROM turn_reports ORDER BY turn, rowid"
+        ).fetchall()
+        return [
+            {"turn": int(row["turn"]), "year": int(row["year"]),
+             "period": int(row["period"]), "report": row["report"] or ""}
+            for row in rows
+        ]
 
     # ── 章节记忆（event_memories 的 chapter_summary 类，每回合一条，importance=5 永久）──
 
@@ -9092,6 +9104,55 @@ class GameDB:
             result.append(item)
         return result
 
+    def knowledge_exclusions_for_source(self, source_id: str) -> List[str]:
+        """Return the durable secrecy boundary attached to a source record."""
+        source = str(source_id or "")
+        row = self.conn.execute(
+            "SELECT excluded_names FROM character_knowledge_events WHERE source_id=? "
+            "ORDER BY id LIMIT 1", (source,)
+        ).fetchone()
+        if row is not None:
+            try:
+                return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
+            except (TypeError, ValueError):
+                return []
+        if source.startswith("secret_order:"):
+            try:
+                order_id = int(source.split(":", 1)[1])
+            except (TypeError, ValueError):
+                return []
+            order = self.conn.execute(
+                "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,)
+            ).fetchone()
+            if order is not None:
+                try:
+                    return [str(name) for name in json.loads(order["excluded_names"] or "[]")]
+                except (TypeError, ValueError):
+                    return []
+        return []
+
+    def record_participation_record(
+        self, state: GameState, record: Mapping[str, object], *, kind: str,
+        source_id: str = "", excluded_names: Optional[Iterable[str]] = None,
+    ) -> None:
+        """Adapt any durable record carrying participants into the knowledge ledger."""
+        participants: List[str] = []
+        for key in ("participants", "participant_names", "actors"):
+            value = record.get(key)
+            if isinstance(value, str):
+                participants.append(value)
+            elif isinstance(value, Iterable):
+                participants.extend(str(item) for item in value)
+        for key in ("assignee", "minister_name", "character_name", "actor"):
+            value = record.get(key)
+            if value:
+                participants.append(str(value))
+        self.record_character_participation(
+            state, participants, kind, str(record.get("title") or kind),
+            str(record.get("body") or record.get("content") or ""),
+            source_id or str(record.get("source_id") or ""), excluded_names,
+        )
+
     def record_character_participation(self, state: GameState, participants: Iterable[str], kind: str, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None) -> None:
         source_id = source_id or f"{kind}:{state.turn}:{title}"
         excluded_json = json.dumps(
@@ -9106,9 +9167,14 @@ class GameDB:
         self.conn.commit()
 
     def record_public_knowledge_event(self, state: GameState, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None) -> None:
+        source_id = source_id or f"public:{state.turn}:{title}"
+        inherited = self.knowledge_exclusions_for_source(source_id)
+        merged_exclusions = list(dict.fromkeys(
+            [*inherited, *(str(name).strip() for name in (excluded_names or []) if str(name).strip())]
+        ))
         self.conn.execute(
             "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
-            (state.turn, state.year, state.period, "", "public", title[:80], body[:400], source_id or f"public:{state.turn}:{title}", json.dumps(list(excluded_names or []), ensure_ascii=False)),
+            (state.turn, state.year, state.period, "", "public", title[:80], body[:400], source_id, json.dumps(merged_exclusions, ensure_ascii=False)),
         )
         self.conn.commit()
 
@@ -9170,9 +9236,11 @@ class GameDB:
              json.dumps(list(excluded_names or []), ensure_ascii=False)),
         )
         self.conn.commit()
-        self.record_character_participation(
-            state, [minister_name], "secret_order", title, content,
-            f"secret_order:{cur.lastrowid}", excluded_names=excluded_names,
+        self.record_participation_record(
+            state,
+            {"participants": [minister_name], "title": title, "body": content},
+            kind="secret_order", source_id=f"secret_order:{cur.lastrowid}",
+            excluded_names=excluded_names,
         )
         tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
         return cur.lastrowid  # type: ignore[return-value]
