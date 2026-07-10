@@ -470,7 +470,9 @@ function sliceQuotaWaitPending(
         step === "S6" ||
         step === "S7" ||
         step === "S9" ||
-        step === "S10"
+        step === "S10" ||
+        step === "S11" ||
+        step === "S12"
       ) {
         return step;
       }
@@ -5026,6 +5028,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           stepSessionId = result.sessionId;
           lastOutput = output;
         } catch (err) {
+          // #683: S9–S12 online-review legs hit the same 429 park family as
+          // S2/S7 — do NOT fall into errorTermination (would sticky-fail a
+          // quota wall and break sliceQuotaWaitPending resume).
+          if (isQuotaWaitForResetError(err)) {
+            return await parkQuotaWaitForReset({
+              step: reviewStep,
+              err,
+              ledger,
+              stateDir,
+              sessionId,
+              backend,
+              deferredFindings,
+              resolveBranchHEAD,
+              hashPrompt: (pf, s) => hashPrompt(pf, s, backend),
+            });
+          }
           return await errorTermination(step, err);
         }
         break;
