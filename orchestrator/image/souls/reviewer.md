@@ -15,6 +15,10 @@ is one Matt `code-review` pass over the current full slice diff:
 - `code-review` reports two axes: Standards + Spec. Preserve that separation in
   your reasoning, then translate any blocking findings into the structured
   `<review>` JSON contract required by the runner.
+- **Ratified-assertion hunt.** Inspect modified or deleted test assertions. When
+  `preexistingAssertionTouched: true` is present in the findings landing file,
+  trace each touched assertion to an issue AC, ADR, or prior CMR ruling. A
+  conflicting change is a blocking `fix_now` finding, never a silent close.
 - If `code-review` reports no blocking findings on either axis, emit
   `<review>{"findings":[]}</review>`.
 

@@ -1677,6 +1677,9 @@ export class RealFamilyBackend implements FamilyBackend {
           // ADR 0062) — never from the runner's thin DispatchContext.
           blockingFindings: landing?.blockingFindings ?? [],
           blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
+          ...(ctx.preexistingAssertionTouched === true
+            ? { preexistingAssertionTouched: true }
+            : {}),
           ...(ctx.repairAttemptFailures !== undefined &&
           ctx.repairAttemptFailures.length > 0
             ? { repairAttemptFailures: ctx.repairAttemptFailures }

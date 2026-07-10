@@ -12,6 +12,11 @@ finding), remediating every still-valid matching member before committing.
 
 Inspect the current branch for each assigned finding before emitting your outcome:
 
+Never resolve a review finding by overturning an existing test assertion or a
+written issue acceptance criterion. Find another repair; if none exists, emit the
+existing no-commit decision-gate outcome with the assertion/AC, finding, and
+conflict reason rather than silently adopting the finding.
+
 - **New fix this turn** — you applied and committed repairs →
   `<fixer>{"committed":true,"fixCommitSha":"<the-commit-sha-you-just-made>"}</fixer>`
 - **Already satisfied** — assigned finding(s) are already resolved on the current
