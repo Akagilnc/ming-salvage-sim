@@ -22,7 +22,7 @@
  *     control flow consumes, so the prefactor does not touch route()/validate().
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
 import {
   appendFileSync,
   existsSync,
@@ -38,6 +38,10 @@ import { dispatchPostMergeCleanup } from "./postMergeCleanup.js";
 import type { Sh } from "./familyDriver.js";
 import { modelForSlot, type ResolvedModelRoute } from "./modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
+import {
+  dispatchMonitoredCliWorker,
+  type MonitoredCliDispatchInput,
+} from "./workerMonitor.js";
 import type {
   Backend,
   DispatchContext,
@@ -48,6 +52,7 @@ import type {
   WorkerContextRetention,
   WorkerKind,
   WorkerLandingPayload,
+  WorkerMonitorHandle,
   WorkerResult,
   WorkerSessionMode,
   WorkerSpec,
@@ -608,6 +613,85 @@ export async function dispatchWorker(
     return backend.dispatchWorker(spec, ctx, landing);
   }
   return legacyDispatchWorker(backend, spec, ctx, landing);
+}
+
+/**
+ * Production dispatch outcome (#684): the {@link WorkerResult} plus an optional
+ * monitor handle when the worker was spawned as a host-side CLI process.
+ */
+export interface DispatchWorkerWithMonitorOutcome {
+  readonly result: WorkerResult;
+  readonly monitorHandle?: WorkerMonitorHandle;
+}
+
+function waitForChildExit(child: ChildProcess): Promise<number | null> {
+  if (child.exitCode !== null) return Promise.resolve(child.exitCode);
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code) => resolve(code));
+  });
+}
+
+/**
+ * THE production dispatch path used by the runner (#684).
+ *
+ * When the backend supplies a CLI spawn via {@link Backend.resolveCliMonitorDispatch},
+ * this spawns through {@link dispatchMonitoredCliWorker} so the monitor handle
+ * (pid / log / pool / signal / instance identity) is generated atomically with
+ * real dispatch, then maps the finished process via
+ * {@link Backend.awaitMonitoredCliWorker}.
+ *
+ * Otherwise falls through to {@link dispatchWorker} (container / legacy seam)
+ * with no monitor handle.
+ *
+ * The runner always calls this (not bare {@link dispatchWorker}) so CLI workers
+ * land a ledger-rebuildable handle and hang/kill judgment never needs global
+ * process-name matching.
+ */
+export async function dispatchWorkerWithMonitor(
+  backend: Backend,
+  spec: WorkerSpec,
+  ctx: DispatchContext,
+  landing?: WorkerLandingPayload,
+): Promise<DispatchWorkerWithMonitorOutcome> {
+  const cliSpec = backend.resolveCliMonitorDispatch?.(spec, ctx, landing);
+  if (cliSpec !== undefined) {
+    const input: MonitoredCliDispatchInput = {
+      command: cliSpec.command,
+      args: cliSpec.args,
+      logDir: cliSpec.logDir,
+      poolId: cliSpec.poolId,
+      completionSignal: cliSpec.completionSignal,
+      stepId: cliSpec.stepId,
+      ...(cliSpec.cwd !== undefined ? { cwd: cliSpec.cwd } : {}),
+      ...(cliSpec.env !== undefined ? { env: cliSpec.env } : {}),
+      ...(cliSpec.logBasename !== undefined
+        ? { logBasename: cliSpec.logBasename }
+        : {}),
+    };
+    const { handle, child } = await dispatchMonitoredCliWorker(input);
+    const exitCode = await waitForChildExit(child);
+    if (backend.awaitMonitoredCliWorker === undefined) {
+      return {
+        result: {
+          kind: "failed",
+          reason:
+            `CLI worker ${spec.id} finished (exit ${exitCode}) but backend has ` +
+            `no awaitMonitoredCliWorker to map the process into a WorkerResult`,
+        },
+        monitorHandle: handle,
+      };
+    }
+    const result = await backend.awaitMonitoredCliWorker(
+      handle,
+      exitCode,
+      spec,
+      ctx,
+      landing,
+    );
+    return { result, monitorHandle: handle };
+  }
+  return { result: await dispatchWorker(backend, spec, ctx, landing) };
 }
 
 /**
