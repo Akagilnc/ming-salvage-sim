@@ -47,32 +47,47 @@ def _world(
         return value
 
     public = "\n".join(fact(r.get("report")) for r in reports)
-    values: Dict[str, str] = {"public": public or "登基伊始，朝廷暂无前回合奏报。"}
-    # Office exclusions are evaluated against the current office at projection
-    # time, so a later appointment cannot resurrect a fact blacklisted by a
-    # secret order.
-    # An institutional blacklist removes only the sensitive office fact.  It
-    # must not erase the public layer (or turn an entire role into a vacuum).
-    office_excluded = any(
-        target == office_type or target == office_name
-        for target in (excluded_offices or set())
-    )
-    if bucket in {"treasury", "court"} and not office_excluded:
-        values["treasury"] = fact(db.treasury_report(state))
-    if bucket in {"military", "regional", "security"} and not office_excluded:
-        values["military"] = fact(db.army_report(limit=10))
-        values["regional"] = fact(db.region_report(limit=10))
-    if bucket in {"personnel", "court"} and not office_excluded:
-        values["personnel"] = fact(db.faction_report())
-    if bucket == "construction" and not office_excluded:
-        values["construction"] = fact(db.buildings_report())
-    if bucket == "security" and not office_excluded:
-        values["security"] = fact(db.power_report(exclude_self=True))
-    # Every office type has a deterministic bucket; generic offices get the
-    # public layer plus their own domain rather than an empty/undefined view.
-    result = {"public": values["public"]}
-    if not office_excluded:
-        result[bucket] = values.get(bucket, values["public"])
+    result: Dict[str, str] = {"public": public or "登基伊始，朝廷暂无前回合奏报。"}
+
+    # Keep each world fact tied to its domain.  A blacklist for 户部 therefore
+    # removes the treasury fact even when it is being read by 内阁, without
+    # accidentally deleting 内阁's personnel fact as well.  The current office
+    # and title are checked at read time, so appointment changes cannot revive a
+    # fact that was blacklisted for that office.
+    domain_offices = {
+        "treasury": {"户部"}, "military": {"兵部", "边镇"},
+        "regional": {"督抚", "地方", "外臣"}, "personnel": {"吏部"},
+        "construction": {"工部"}, "security": {"锦衣卫", "东厂"},
+        "court": {"内阁", "司礼监", "内臣", "内廷"},
+    }
+
+    def blocked(domain: str) -> bool:
+        targets = domain_offices.get(domain, set())
+        return any(
+            target == office_type or target == office_name or target in targets
+            for target in (excluded_offices or set())
+        )
+
+    facts = {
+        "treasury": db.treasury_report(state),
+        "military": db.army_report(limit=10),
+        "regional": db.region_report(limit=10),
+        "personnel": db.faction_report(),
+        "construction": db.buildings_report(),
+        "security": db.power_report(exclude_self=True),
+    }
+    visible_domains = {
+        "户部": {"treasury"}, "兵部": {"military", "regional"},
+        "吏部": {"personnel"}, "工部": {"construction"},
+        "督抚": {"regional"}, "边镇": {"military", "regional"},
+        "地方": {"regional"}, "外臣": {"regional"},
+        "锦衣卫": {"security"}, "东厂": {"security"},
+        "内阁": {"treasury", "personnel"}, "司礼监": {"treasury", "personnel"},
+        "内臣": {"treasury", "personnel"}, "内廷": {"treasury", "personnel"},
+    }.get(office_type, {bucket})
+    for domain in visible_domains:
+        if not blocked(domain):
+            result[domain] = fact(facts[domain])
     return result
 
 

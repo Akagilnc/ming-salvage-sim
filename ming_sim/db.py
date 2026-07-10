@@ -9207,6 +9207,35 @@ class GameDB:
             if include_exclusions:
                 item["excluded_names"] = row["excluded_names"] or "[]"
             result.append(item)
+            known_sources.add(str(row["source_id"]))
+        # The source table is the preferred normalized registry, but the
+        # projection must also cover durable records written by an older/newer
+        # producer that has a participant_roster and has not installed an
+        # adapter hook yet.  Keep this fallback data-driven and source-id based;
+        # adding another record kind must not require a branch here.
+        for row in self.conn.execute(
+            "SELECT id, kind, title, origin_turn, stage_text, participant_roster "
+            "FROM issues WHERE participant_roster <> '[]' ORDER BY origin_turn, id"
+        ).fetchall():
+            source_id = f"issue:{int(row['id'])}"
+            if source_id in known_sources:
+                continue
+            try:
+                roster = json.loads(row["participant_roster"] or "[]")
+            except (TypeError, ValueError):
+                roster = []
+            names = {
+                str(item.get("character_id") or item.get("name"))
+                for item in roster if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
+            }
+            if str(character_name) not in names:
+                continue
+            result.append({
+                "turn": int(row["origin_turn"]), "year": 0, "period": 0,
+                "kind": row["kind"] or "assignment", "title": row["title"],
+                "body": row["stage_text"] or "", "source_id": source_id,
+                **({"excluded_names": "[]"} if include_exclusions else {}),
+            })
         return result
 
     def knowledge_exclusions_for_source(self, source_id: str) -> List[str]:
