@@ -227,6 +227,66 @@
       "power_id": "ming"
     },
     {
+      "name": "郭允厚",
+      "office": "户部尚书",
+      "office_type": "户部",
+      "faction": "阉党",
+      "aliases": [
+        "郭允厚",
+        "郭尚书",
+        "郭户部"
+      ],
+      "personal_skills": [
+        "部务守成",
+        "钱粮案牍",
+        "依附内廷"
+      ],
+      "loyalty": 42,
+      "ability": 62,
+      "integrity": 36,
+      "courage": 46,
+      "style": "持位附阉",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "seed_guilt": {
+        "crime": "",
+        "severity": "无"
+      },
+      "identity": 45,
+      "power_id": "ming"
+    },
+    {
+      "name": "张缙彦",
+      "office": "户部吏员",
+      "office_type": "户部",
+      "faction": "皇党",
+      "aliases": [
+        "张缙彦",
+        "张主事",
+        "张稽查"
+      ],
+      "personal_skills": [
+        "钱粮稽核",
+        "押解对账",
+        "不避风险"
+      ],
+      "loyalty": 70,
+      "ability": 66,
+      "integrity": 78,
+      "courage": 72,
+      "style": "廉能敢任",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "seed_guilt": {
+        "crime": "",
+        "severity": "无"
+      },
+      "identity": 70,
+      "power_id": "ming"
+    },
+    {
       "name": "杨嗣昌",
       "office": "户部郎中",
       "office_type": "户部",
@@ -480,6 +540,66 @@
       "birth_year": 1562,
       "historical_death_year": 1633,
       "historical_death_month": 10,
+      "power_id": "ming"
+    },
+    {
+      "name": "李之藻",
+      "office": "前太仆寺少卿，西学士人",
+      "office_type": "工部",
+      "faction": "西学",
+      "aliases": [
+        "李之藻",
+        "李我存",
+        "李先生"
+      ],
+      "personal_skills": [
+        "西学译述",
+        "历法算学",
+        "水利舆地"
+      ],
+      "loyalty": 68,
+      "ability": 78,
+      "integrity": 74,
+      "courage": 55,
+      "style": "笃学务实",
+      "birth_year": 1565,
+      "historical_death_year": 1630,
+      "historical_death_month": 0,
+      "seed_guilt": {
+        "crime": "",
+        "severity": "无"
+      },
+      "identity": 72,
+      "power_id": "ming"
+    },
+    {
+      "name": "汤若望",
+      "office": "西洋传教士，历法火器顾问",
+      "office_type": "工部",
+      "faction": "西学",
+      "aliases": [
+        "汤若望",
+        "汤先生",
+        "亚当"
+      ],
+      "personal_skills": [
+        "天文历算",
+        "火器铸造",
+        "西洋测量"
+      ],
+      "loyalty": 64,
+      "ability": 82,
+      "integrity": 72,
+      "courage": 50,
+      "style": "严谨传习",
+      "birth_year": 1592,
+      "historical_death_year": 1666,
+      "historical_death_month": 0,
+      "seed_guilt": {
+        "crime": "",
+        "severity": "无"
+      },
+      "identity": 66,
       "power_id": "ming"
     },
     {
@@ -1043,6 +1163,66 @@
       "birth_year": 1593,
       "historical_death_year": 0,
       "historical_death_month": 0,
+      "power_id": "ming"
+    },
+    {
+      "name": "胡廷宴",
+      "office": "原三边总督，革职候勘",
+      "office_type": "督抚",
+      "faction": "中立",
+      "aliases": [
+        "胡廷宴",
+        "胡总督"
+      ],
+      "personal_skills": [
+        "三边军务",
+        "边镇调度"
+      ],
+      "loyalty": 50,
+      "ability": 58,
+      "integrity": 52,
+      "courage": 48,
+      "style": "守成失机",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "dismissed",
+      "status_reason": "延绥兵变弹压不力，革职候勘",
+      "seed_guilt": {
+        "crime": "",
+        "severity": "无"
+      },
+      "identity": 50,
+      "power_id": "ming"
+    },
+    {
+      "name": "李从心",
+      "office": "陕西布政使",
+      "office_type": "地方",
+      "faction": "阉党",
+      "aliases": [
+        "李从心",
+        "李布政",
+        "陕西布政使"
+      ],
+      "personal_skills": [
+        "地方钱谷",
+        "布政转运",
+        "内廷关说"
+      ],
+      "loyalty": 40,
+      "ability": 62,
+      "integrity": 32,
+      "courage": 44,
+      "style": "依附盘踞",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "seed_guilt": {
+        "crime": "",
+        "severity": "无"
+      },
+      "identity": 42,
       "power_id": "ming"
     },
     {
