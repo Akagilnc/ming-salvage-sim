@@ -18,7 +18,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   dispatchWorkerWithMonitor,
 } from "../src/dispatchWorker.js";
-import { buildCliMonitorSpawnSpec } from "../src/cliMonitorHooks.js";
+import {
+  buildCliMonitorSpawnSpec,
+  isMissingMonitorSidecarResult,
+  workerResultFromMonitorSidecar,
+} from "../src/cliMonitorHooks.js";
 import { RealBackend } from "../src/realBackend.js";
 import { RealFamilyBackend } from "../src/family/realFamilyBackend.js";
 import {
@@ -94,6 +98,26 @@ function baseHandle(
 }
 
 describe("#684 worker monitor handles", () => {
+  it("keeps a failed sidecar whose error mentions the old fallback prose", () => {
+    const dir = mkdtempSync(join(tmpdir(), "orch-684-sidecar-collision-"));
+    try {
+      const resultPath = join(dir, "S2.result.json");
+      const reason =
+        "provider failed without a WorkerResult sidecar after its own upload step";
+      writeFileSync(resultPath, JSON.stringify({ kind: "failed", reason }), "utf8");
+
+      const result = workerResultFromMonitorSidecar(
+        baseHandle({ pid: process.pid, logPath: join(dir, "S2.log"), resultPath }),
+        1,
+      );
+
+      expect(result).toEqual({ kind: "failed", reason });
+      expect(isMissingMonitorSidecarResult(result)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("dispatchMonitoredCliWorker atomically returns pid/log/pool/signal/instance handle", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orch-684-dispatch-"));
     try {
