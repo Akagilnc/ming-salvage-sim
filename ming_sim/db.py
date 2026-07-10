@@ -46,6 +46,16 @@ _ARMY_PAY_SOURCE_DELTA_FIELDS = frozenset((
 _COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
 
 
+def _secret_order_exclusion_targets(
+    people: Iterable[str], offices: Iterable[str],
+) -> Dict[str, List[str]]:
+    """Keep caller targets separate from the resolved institution snapshot."""
+    return {
+        "people": list(dict.fromkeys(str(value) for value in people)),
+        "offices": list(dict.fromkeys(str(value) for value in offices)),
+    }
+
+
 class ProvinceFiscalTickOutcome(NamedTuple):
     region_id: str
     result: Any
@@ -9501,10 +9511,9 @@ class GameDB:
         # ``excluded_targets.people`` is the caller's explicit person target;
         # the expanded institution snapshot lives in ``excluded_names`` so it
         # remains effective after transfers without changing target provenance.
-        exclusion_targets_payload = {
-            "people": raw_excluded_names,
-            "offices": excluded_offices,
-        }
+        exclusion_targets_payload = _secret_order_exclusion_targets(
+            raw_excluded_names, excluded_offices,
+        )
         tags_json = json.dumps(tags, ensure_ascii=False)
         deadline = max(0, min(int(deadline_months or 0), 36))
         due_turn = int(state.turn) + deadline if deadline else 0
