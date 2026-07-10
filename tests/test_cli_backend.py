@@ -77,6 +77,20 @@ def test_secret_prefix_merges_emperor_intent_with_reply(monkeypatch):
     assert so["deadline_months"] == 3
 
 
+def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
+    canned = json.dumps({
+        "标题": "密查",
+        "内容": "查账",
+        "承办人": "毕自严",
+        "排除对象": {"人物": ["魏忠贤"], "机构": ["司礼监"]},
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    result = cb._extract_secret_order("密查账目", "臣领旨", "毕自严")
+    assert result["excluded_names"] == ["魏忠贤"]
+    assert result["excluded_offices"] == ["司礼监"]
+    assert result["excluded_targets"] == {"people": ["魏忠贤"], "offices": ["司礼监"]}
+
+
 def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatch):
     """PR #409 R1 Codex P2：密令按钮只补期限时，仍须从前文召对恢复任务正文。"""
     canned = json.dumps({
