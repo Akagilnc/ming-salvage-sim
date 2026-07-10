@@ -56,6 +56,11 @@ def _world(
     visible_domains = {
         "户部": {"treasury"}, "兵部": {"military", "regional"},
         "吏部": {"personnel"}, "工部": {"construction"},
+        # The remaining court offices do not yet have dedicated report rails.
+        # Keep the public layer for everyone, and expose the closest current
+        # state rail instead of collapsing these offices into public-only.
+        "礼部": {"personnel"}, "刑部": {"security"},
+        "翰林院": {"personnel"}, "都察院": {"personnel", "security"},
         "督抚": {"regional"}, "边镇": {"military", "regional"},
         "地方": {"regional"}, "外臣": {"regional"},
         "锦衣卫": {"security"}, "东厂": {"security"},

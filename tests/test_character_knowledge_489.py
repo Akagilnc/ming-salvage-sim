@@ -3,6 +3,33 @@
 from ming_sim.models import Character
 
 
+def test_generic_offices_receive_distinct_current_world_slices(game):
+    db, state, content = game
+
+    expected_domains = {
+        # These offices have no dedicated numeric/report rail yet.  Their
+        # closest current-state rails are still better than a public-only view.
+        "礼部": {"personnel"},
+        "刑部": {"security"},
+        "翰林院": {"personnel"},
+        "都察院": {"personnel", "security"},
+    }
+    views = {
+        office_type: db.get_character_knowledge(
+            state,
+            next(c.name for c in content.characters.values()
+                 if c.office_type == office_type),
+        )["world"]
+        for office_type in expected_domains
+    }
+
+    for office_type, domains in expected_domains.items():
+        assert domains <= views[office_type].keys(), office_type
+        assert views[office_type]["public"]
+    assert views["礼部"] != views["刑部"]
+    assert views["刑部"] != views["都察院"]
+
+
 def test_turn_zero_knowledge_is_role_specific_and_restores(game):
     db, state, content = game
     household = next(c for c in content.characters.values() if c.office_type == "户部")
