@@ -54,6 +54,8 @@ export type ParkOrRelayDecision = "park" | "relay" | "park_fallback";
  *   ③ no live baton → park fallback
  *
  * Missing `resetAt` cannot be waited as a known window → treated as beyond T.
+ * Already-elapsed `resetAt` (resetAt < now) is also beyond T — never clamp
+ * into park; a past clock is not a wait window.
  */
 export function decideParkOrRelay(input: {
   readonly now: Date;
@@ -61,14 +63,84 @@ export function decideParkOrRelay(input: {
   readonly parkThresholdMs: number;
   readonly hasLiveBaton: boolean;
 }): ParkOrRelayDecision {
+  const deltaMs =
+    input.resetAt !== undefined
+      ? input.resetAt.getTime() - input.now.getTime()
+      : undefined;
+  // deltaMs < 0 → already elapsed; deltaMs undefined → missing resetAt.
+  // Both are beyond T (cannot wait a known future window).
   const withinT =
-    input.resetAt !== undefined &&
-    input.resetAt.getTime() - input.now.getTime() <= input.parkThresholdMs &&
-    input.resetAt.getTime() - input.now.getTime() >= 0;
+    deltaMs !== undefined &&
+    deltaMs >= 0 &&
+    deltaMs <= input.parkThresholdMs;
 
   if (withinT) return "park";
   if (input.hasLiveBaton) return "relay";
   return "park_fallback";
+}
+
+/** Map #683 probe pool ids onto ADR 0124 billing-pool ids. */
+export function billingPoolFromQuotaPool(pool: string): BillingPoolId {
+  switch (pool.trim().toLowerCase()) {
+    case "zai":
+      return "zai";
+    case "grok":
+    case "grok-build":
+      return "grok-build";
+    case "cursor":
+      return "cursor";
+    case "codex":
+    case "codex-5h":
+      return "codex-5h";
+    case "opencode-go":
+      // Go-pool GLM/kimi share the zai-adjacent free/lite billing boundary for
+      // relay lookup until a dedicated billing row exists.
+      return "zai";
+    default:
+      return "grok-build";
+  }
+}
+
+/** Default model memberships per billing pool (ADR 0124 orthogonal join). */
+export const DEFAULT_POOL_MODELS: Readonly<
+  Record<BillingPoolId, ReadonlyArray<string>>
+> = {
+  "grok-build": ["grok-4.5"],
+  cursor: ["grok-4.5"],
+  zai: ["grok-4.5"],
+  "codex-5h": ["terra@med", "luna@med", "gpt-5.6-terra", "gpt-5.6-luna"],
+};
+
+/**
+ * Build a route pool table for a quota-wall disposition: the wall-hit pool is
+ * `limited` (with resetAt); every other billing pool starts `live` with the
+ * default model memberships. Tests that need "no live baton" pass an explicit
+ * `relayPools` override with only the limited row (or all-dead alternates).
+ */
+export function buildDefaultBillingPools(input: {
+  readonly limitedPool: BillingPoolId;
+  readonly resetAt?: Date;
+  readonly parkThresholdMs?: number;
+}): BillingPoolEntry[] {
+  const t = input.parkThresholdMs ?? DEFAULT_PARK_THRESHOLD_MS;
+  const ids: BillingPoolId[] = ["grok-build", "cursor", "zai", "codex-5h"];
+  return ids.map((id) => {
+    if (id === input.limitedPool) {
+      return {
+        id,
+        status: "limited" as const,
+        ...(input.resetAt !== undefined ? { resetAt: input.resetAt } : {}),
+        parkThresholdMs: t,
+        models: DEFAULT_POOL_MODELS[id],
+      };
+    }
+    return {
+      id,
+      status: "live" as const,
+      parkThresholdMs: t,
+      models: DEFAULT_POOL_MODELS[id],
+    };
+  });
 }
 
 export interface NextRelayBaton {
