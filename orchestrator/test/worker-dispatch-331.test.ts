@@ -9,6 +9,8 @@ import {
   legacyDispatchWorker,
   stepSpecToWorkerSpec,
 } from "../src/dispatchWorker.js";
+import { CODER_ROSTER, resolveCoderRecOrder } from "../src/coderRoster.js";
+import { selectNextRelayBaton } from "../src/quotaPoolTable.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import { resolveRouteModels, routeSmokeEntries } from "../src/modelRoutes.js";
 import type {
@@ -486,6 +488,79 @@ describe("#331 stepSpecToWorkerSpec — builds the worker spec from a StepSpec",
     expect(w.session).toBe("fresh");
     expect(w.contextRetention).toBe("clean");
     expect(w.skill).toBe("/code-review");
+  });
+});
+
+describe("#796 Coder-Rec host dispatch", () => {
+  class CoderRecDispatchBackend extends DispatchBackend {
+    constructor(private readonly coderRecBody: string) {
+      super();
+    }
+
+    override async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+      return {
+        ...(await super.fetchIssueMeta(issueNumber)),
+        body: this.coderRecBody,
+      };
+    }
+
+    override async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
+      return {
+        ...(await super.fetchIssueSnapshot(issueNumber)),
+        body: this.coderRecBody,
+      };
+    }
+  }
+
+  it("dispatches every Coder-Rec token with the host required by its selected baton", async () => {
+    for (const entry of CODER_ROSTER) {
+      const backend = new CoderRecDispatchBackend(`Coder-Rec: ${entry.id}`);
+      const result = await runOrchestrator({ issueNumber: 796, backend });
+      const coder = backend.specs.find((spec) => spec.id === "S2");
+
+      expect(result.status).toBe("success");
+      expect(coder).toMatchObject({
+        model: entry.slug,
+        host: entry.pool === "claude" ? "claude" : "codex",
+      });
+    }
+  });
+
+  it("dispatches a Claude host only after relay selects a Claude baton", async () => {
+    const next = selectNextRelayBaton({
+      currentModelId: "grok-4.5",
+      currentPool: "grok-build",
+      rosterOrder: resolveCoderRecOrder(
+        "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
+      ),
+      pools: [
+        {
+          id: "grok-build",
+          status: "dead",
+          parkThresholdMs: 1,
+          models: ["grok-4.5"],
+        },
+        {
+          id: "claude",
+          status: "live",
+          parkThresholdMs: 1,
+          models: ["sonnet-5", "haiku-4.5"],
+        },
+      ],
+    });
+
+    expect(next).toEqual({
+      modelId: "sonnet-5",
+      slug: "sonnet",
+      pool: "claude",
+    });
+
+    const backend = new CoderRecDispatchBackend(`Coder-Rec: ${next!.modelId}`);
+    const result = await runOrchestrator({ issueNumber: 796, backend });
+    const coder = backend.specs.find((spec) => spec.id === "S2");
+
+    expect(result.status).toBe("success");
+    expect(coder).toMatchObject({ model: next!.slug, host: "claude" });
   });
 });
 
