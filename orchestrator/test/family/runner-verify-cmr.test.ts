@@ -86,7 +86,7 @@ class ChildBackend implements Backend {
 }
 
 /** Models an old persisted CMR-abort row using the current durable shape. */
-function readMalformedPersistedCmrAbort(): FamilyLedgerEntry {
+function readLegacyPersistedCmrAbort(): FamilyLedgerEntry {
   const persistedLegacyRow = {
     status: "aborted" as const,
     event: "aborted" as const,
@@ -1554,7 +1554,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             blockingFindingIdentityKeys: [blockerKey],
           } satisfies FamilyLedgerEntry,
           // not_converged sentinel: a CLASSIFIED abort carrying an EMPTY envelope.
-          readMalformedPersistedCmrAbort(),
+          readLegacyPersistedCmrAbort(),
         ],
         "head-after-coder-fix",
       );
