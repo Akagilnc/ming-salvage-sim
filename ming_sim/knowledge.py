@@ -15,14 +15,14 @@ from typing import Any, Dict
 
 _OFFICE_BUCKETS = {
     "户部": "treasury", "兵部": "military", "吏部": "personnel",
-    "工部": "construction", "礼部": "public", "刑部": "public",
-    "翰林院": "public", "都察院": "public", "内阁": "court",
+    "工部": "construction", "礼部": "personnel", "刑部": "security",
+    "翰林院": "personnel", "都察院": "security", "内阁": "court",
     "督抚": "regional", "司礼监": "court",
     "内臣": "court", "锦衣卫": "security", "东厂": "security",
     "边镇": "military", "地方": "regional", "外臣": "regional",
-    "未仕": "public", "后宫": "public", "宗藩": "public",
-    "内廷": "court", "生员": "public", "乡绅": "public",
-    "富商": "public", "布衣": "public", "流寇": "public", "待铨": "public",
+    "未仕": "personnel", "后宫": "personnel", "宗藩": "regional",
+    "内廷": "court", "生员": "personnel", "乡绅": "regional",
+    "富商": "treasury", "布衣": "regional", "流寇": "military", "待铨": "personnel",
 }
 
 # Every supported office type gets a current-state rail in addition to the
@@ -33,11 +33,11 @@ _OFFICE_VISIBLE_DOMAINS = {
     "吏部": {"personnel"}, "工部": {"construction"},
     "礼部": {"personnel"}, "刑部": {"security"},
     "翰林院": {"personnel"}, "都察院": {"personnel", "security"},
-    "内阁": {"treasury", "personnel"}, "督抚": {"regional"},
-    "司礼监": {"treasury", "personnel"}, "内臣": {"treasury", "personnel"},
+    "内阁": {"court", "treasury", "personnel"}, "督抚": {"regional"},
+    "司礼监": {"court", "treasury", "personnel"}, "内臣": {"court", "treasury", "personnel"},
     "锦衣卫": {"security"}, "东厂": {"security"},
     "边镇": {"military", "regional"}, "地方": {"regional"},
-    "外臣": {"regional"}, "内廷": {"treasury", "personnel"},
+    "外臣": {"regional"}, "内廷": {"court", "treasury", "personnel"},
     "后宫": {"personnel"}, "宗藩": {"regional"}, "未仕": {"personnel"},
     "生员": {"personnel"}, "乡绅": {"regional"}, "富商": {"treasury"},
     "布衣": {"regional"}, "流寇": {"military", "regional"}, "待铨": {"personnel"},
@@ -70,6 +70,7 @@ def _world(
         "personnel": db.faction_report(),
         "construction": db.buildings_report(),
         "security": db.power_report(exclude_self=True),
+        "court": "\n".join((db.faction_report(), db.power_report(exclude_self=True))),
     }
     visible_domains = _OFFICE_VISIBLE_DOMAINS.get(office_type, {bucket})
     for domain in visible_domains:

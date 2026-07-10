@@ -9479,9 +9479,10 @@ class GameDB:
         ).fetchone()[0]
         if active_count >= 20:
             raise ValueError(f"进行中密令已达上限（20条），请先结案部分密令再下新令。当前：{active_count} 条。")
-        excluded_names = list(dict.fromkeys(
+        raw_excluded_names = list(dict.fromkeys(
             str(name).strip() for name in (excluded_names or []) if str(name).strip()
         ))
+        snapshot_excluded_names = list(raw_excluded_names)
         excluded_offices = list(dict.fromkeys(
             str(office).strip() for office in (excluded_offices or []) if str(office).strip()
         ))
@@ -9495,8 +9496,11 @@ class GameDB:
                     character.office_type in excluded_offices
                     or character.office in excluded_offices
                 ):
-                    excluded_names.append(character.name)
-            excluded_names = list(dict.fromkeys(excluded_names))
+                    snapshot_excluded_names.append(character.name)
+            snapshot_excluded_names = list(dict.fromkeys(snapshot_excluded_names))
+        # ``excluded_targets.people`` is the caller's explicit person target;
+        # the expanded institution snapshot lives in ``excluded_names`` so it
+        # remains effective after transfers without changing target provenance.
         tags_json = json.dumps(tags, ensure_ascii=False)
         deadline = max(0, min(int(deadline_months or 0), 36))
         due_turn = int(state.turn) + deadline if deadline else 0
@@ -9507,8 +9511,8 @@ class GameDB:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
             """,
             (state.turn, due_turn, state.year, state.period, minister_name, title[:20], content, tags_json, importance,
-             json.dumps(list(excluded_names or []), ensure_ascii=False),
-             json.dumps({"people": excluded_names, "offices": excluded_offices}, ensure_ascii=False)),
+             json.dumps(snapshot_excluded_names, ensure_ascii=False),
+             json.dumps({"people": raw_excluded_names, "offices": excluded_offices}, ensure_ascii=False)),
         )
         self.conn.commit()
         self.register_character_knowledge_source(
@@ -9518,8 +9522,8 @@ class GameDB:
             title,
             content,
             f"secret_order:{int(cur.lastrowid)}",
-            excluded_names=excluded_names,
-            excluded_targets={"people": excluded_names, "offices": excluded_offices},
+            excluded_names=snapshot_excluded_names,
+            excluded_targets={"people": raw_excluded_names, "offices": excluded_offices},
         )
         tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
         return cur.lastrowid  # type: ignore[return-value]
