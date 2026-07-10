@@ -1,5 +1,6 @@
 """ADR 0009 person archive schema contract."""
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -191,3 +192,16 @@ def test_personnel_extractor_prompt_teaches_person_change_contract():
     assert "在人物名册内才写 `人物变更`" in personnel
     assert "同时写 `任命` 授武将名分" in personnel
     assert "走 `任命`，不走这里" not in personnel
+
+
+def test_north_star_named_figures_are_seeded_with_identity_metadata():
+    """ADR 0009 can reject no named target used by north-star scenes/prompts."""
+    path = Path(__file__).resolve().parents[1] / "content" / "characters.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    by_name = {item["name"]: item for item in data["characters"]}
+
+    expected = {"郭允厚", "李之藻", "张缙彦", "李从心", "汤若望", "胡廷宴"}
+    assert expected <= by_name.keys()
+    for name in expected:
+        assert isinstance(by_name[name]["identity"], int)
+        assert "seed_guilt" in by_name[name]
