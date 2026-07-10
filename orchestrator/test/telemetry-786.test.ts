@@ -332,6 +332,12 @@ describe("#786 telemetry pure helpers", () => {
     expect(categoryFromReason("status was 429")).toBe("429-quota");
   });
 
+  it("categoryFromReason does not treat HTTP 429 decimal values as quota", () => {
+    expect(categoryFromReason("HTTP 429.0")).toBe("unclassified");
+    expect(categoryFromReason("response code 429.1")).toBe("unclassified");
+    expect(categoryFromReason("status was 429.99 USD")).toBe("unclassified");
+  });
+
   it("categoryFromReason returns unclassified (not null) for unknown failures and keeps message", () => {
     expect(categoryFromReason("totally novel backend boom XYZ")).toBe(
       "unclassified",
@@ -590,6 +596,41 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     // Partial fake — only the monitored-dispatch hooks are exercised.
     return backend as unknown as Backend;
   }
+
+  it("does not reinstall telemetry environment when the ledger is already stamped", async () => {
+    const dir = tempDir("orch-786-existing-env-");
+    const ledgerDir = join(dir, ".ledger-786");
+    const route = smokedRoute();
+    mkdirSync(ledgerDir, { recursive: true });
+    writeFileSync(
+      join(ledgerDir, TELEMETRY_FILENAME),
+      JSON.stringify(envRecordStub()) + "\n",
+    );
+    let installCalls = 0;
+    const backend = quickExitBackend("done\n") as Backend & {
+      installTelemetryRunEnvironment(): void;
+    };
+    backend.installTelemetryRunEnvironment = () => {
+      installCalls += 1;
+    };
+
+    await dispatchWorkerWithMonitor(
+      backend,
+      workerSpec(),
+      { stateDir: ledgerDir, modelRoute: route },
+      undefined,
+      {
+        idleThresholdMs: 60_000,
+        pollIntervalMs: 20,
+        monitorDeps: {
+          readInstanceId: () => "test-instance-786-existing-env",
+          sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),
+        },
+      },
+    );
+
+    expect(installCalls).toBe(0);
+  });
 
   it("writes environment + dispatch + collect half-rows joined by legId", async () => {
     const dir = tempDir("orch-786-integ-");

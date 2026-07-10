@@ -610,7 +610,7 @@ export function classifyWorkerTerminal(
  * unrelated number such as a GitHub issue, path segment, or item identifier.
  */
 export function mentionsHttp429(reasonLower: string): boolean {
-  return /\b(?:http(?:\/\d+(?:\.\d+)?)?(?:\s+(?:code|error|response\s+code|status(?:\s+code)?))?|status(?:\s+code)?|response\s+(?:status(?:\s+code)?|code))\s*(?:is|was)?\s*(?:=|:)?\s*429\b/.test(
+  return /\b(?:http(?:\/\d+(?:\.\d+)?)?(?:\s+(?:code|error|response\s+code|status(?:\s+code)?))?|status(?:\s+code)?|response\s+(?:status(?:\s+code)?|code))\s*(?:is|was)?\s*(?:=|:)?\s*429\b(?!\.\d)/.test(
     reasonLower,
   );
 }
@@ -1119,12 +1119,7 @@ export function ensureEnvironmentStamp(
 ): boolean {
   if (ledgerDir === undefined || ledgerDir.length === 0) return false;
   try {
-    const path = telemetryPath(ledgerDir);
-    if (existsSync(path)) {
-      const raw = readFileSync(path, "utf8");
-      // Cheap scan: any environment phase line already written.
-      if (raw.includes('"phase":"environment"')) return false;
-    }
+    if (hasEnvironmentStamp(ledgerDir)) return false;
     return tryAppendTelemetryRecord(
       ledgerDir,
       buildEnvironmentStamp({
@@ -1143,6 +1138,19 @@ export function ensureEnvironmentStamp(
         err instanceof Error ? err.message : String(err)
       }`,
     );
+    return false;
+  }
+}
+
+/** Cheap, synchronous existence check used before scheduling expensive setup. */
+export function hasEnvironmentStamp(ledgerDir: string | undefined): boolean {
+  if (ledgerDir === undefined || ledgerDir.length === 0) return false;
+  try {
+    const path = telemetryPath(ledgerDir);
+    return existsSync(path)
+      ? readFileSync(path, "utf8").includes('"phase":"environment"')
+      : false;
+  } catch {
     return false;
   }
 }

@@ -57,6 +57,7 @@ import {
   classifyWorkerTerminal,
   ensureEnvironmentStamp,
   extractTokensFromLog,
+  hasEnvironmentStamp,
   newLegId,
   readDispatchLogSlice,
   tryAppendTelemetryRecord,
@@ -88,6 +89,40 @@ import type {
 } from "./types.js";
 
 const FIX_FINDINGS_LANDING_FILE = ".orchestrator-fix-findings.json";
+
+const pendingTelemetryEnvironmentStamps = new Set<string>();
+
+function scheduleTelemetryEnvironmentStamp(
+  ledgerDir: string | undefined,
+  ctx: DispatchContext,
+  install: (() => void) | undefined,
+): void {
+  if (
+    ledgerDir === undefined ||
+    ledgerDir.length === 0 ||
+    hasEnvironmentStamp(ledgerDir) ||
+    pendingTelemetryEnvironmentStamps.has(ledgerDir)
+  ) {
+    return;
+  }
+  pendingTelemetryEnvironmentStamps.add(ledgerDir);
+  queueMicrotask(() => {
+    try {
+      if (!hasEnvironmentStamp(ledgerDir)) {
+        install?.();
+        ensureEnvironmentStamp(ledgerDir, ctx);
+      }
+    } catch (err) {
+      console.warn(
+        `[orchestrator] telemetry environment stamp failed (fail-open): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    } finally {
+      pendingTelemetryEnvironmentStamps.delete(ledgerDir);
+    }
+  });
+}
 const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
 const ONLINE_REVIEW_LANDING_FILE = ".orchestrator-online-review.json";
 
@@ -850,28 +885,15 @@ export async function dispatchWorkerWithMonitor(
     modelFamily = null;
   }
 
-  // Re-install this backend's image/prompt fingerprints before the once-per-
-  // ledger environment stamp. familyDriver constructs RealBackend then
-  // RealFamilyBackend in one process; without reinstall the later constructor
-  // would leave child legs stamping the family promptHash/sandboxFingerprint.
-  try {
-    backend.installTelemetryRunEnvironment?.();
-  } catch (err) {
-    console.warn(
-      `[orchestrator] telemetry env install failed (fail-open): ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
-  try {
-    ensureEnvironmentStamp(ledgerDir, ctx);
-  } catch (err) {
-    console.warn(
-      `[orchestrator] telemetry environment stamp failed (fail-open): ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
+  // Re-install this backend's image/prompt fingerprints only when the ledger
+  // lacks an environment stamp, and after this dispatch call stack yields. The
+  // install performs synchronous docker inspect and directory hashing, so it
+  // must never delay worker spawn or repeat for an already-stamped ledger.
+  scheduleTelemetryEnvironmentStamp(
+    ledgerDir,
+    ctx,
+    backend.installTelemetryRunEnvironment,
+  );
 
   const stampCollect = (
     outcome:
