@@ -4,8 +4,31 @@ import * as sc from "@ai-hero/sandcastle";
  * The codex coder slug + its effort. The model id is the bare CLI model string
  * the sandcastle codex provider expects.
  */
-export const CODER_CODEX_SLUG = "gpt-5.5";
-const CODER_CODEX_EFFORT: NonNullable<sc.CodexOptions["effort"]> = "high";
+export const CODER_CODEX_SLUG = "gpt-5.6-terra";
+const CODER_CODEX_EFFORT: NonNullable<sc.CodexOptions["effort"]> = "low";
+export const REVIEWER_CODEX_SLUG = "gpt-5.6-sol";
+export const VERIFY_CODEX_SLUG = "gpt-5.6-terra";
+
+/**
+ * Live-officer reasoning effort for verify / CMR workers on the verify Codex
+ * slug. Shared by single-slice (`realBackend`) and family (`realFamilyBackend`)
+ * so the two paths cannot drift.
+ *
+ * Returns `"xhigh"` when the slug is {@link VERIFY_CODEX_SLUG} and the context
+ * is a verify role, a CMR soul, or a route-smoke key prefixed `verify`/`cmr`.
+ */
+export function effortForLiveOfficer(
+  slug: string,
+  context: { readonly role?: string; readonly soul?: string; readonly smokeKey?: string },
+): "xhigh" | undefined {
+  if (
+    slug === VERIFY_CODEX_SLUG &&
+    (context.role === "verify" || context.soul === "cmr" || /^(verify|cmr)/.test(context.smokeKey ?? ""))
+  ) {
+    return "xhigh";
+  }
+  return undefined;
+}
 
 export type ModelFamily = "claude" | "codex" | "agy" | "opencode" | "other";
 
@@ -66,6 +89,13 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     family: "codex",
     strongLeg: true,
   },
+  [REVIEWER_CODEX_SLUG]: {
+    provider: "codex",
+    model: REVIEWER_CODEX_SLUG,
+    options: { effort: "medium" },
+    family: "codex",
+    strongLeg: true,
+  },
   sonnet: {
     provider: "claudeCode",
     model: "claude-sonnet-4-6",
@@ -91,6 +121,14 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     model: "grok-4.3",
     family: "agy",
   },
+};
+
+/**
+ * Pinned ledger/replay compatibility only. Retired model names MUST NOT enter
+ * MODEL_SLUG_REGISTRY: that registry is the executable live-worker allowlist.
+ */
+const HISTORICAL_CMR_LEG_FAMILIES: Readonly<Record<string, ModelFamily>> = {
+  "gpt-5.5": "codex",
 };
 
 const CMR_REVIEW_LEG_REGISTRY: Readonly<Record<string, ModelFamily>> = {
@@ -145,7 +183,7 @@ export function modelFamilyForCmrReviewLeg(slug: string): ModelFamily {
   if (entry !== undefined) {
     return entry.family;
   }
-  const cmrLeg = CMR_REVIEW_LEG_REGISTRY[slug];
+  const cmrLeg = CMR_REVIEW_LEG_REGISTRY[slug] ?? HISTORICAL_CMR_LEG_FAMILIES[slug];
   if (cmrLeg !== undefined) {
     return cmrLeg;
   }
@@ -164,7 +202,14 @@ export function modelIdForSlug(slug: string): string {
   return resolveModelSlug(slug).model;
 }
 
-export function agentForSlug(slug: string): sc.AgentProvider {
+export function agentForSlug(
+  slug: string,
+  codexEffort?: NonNullable<sc.CodexOptions["effort"]>,
+): sc.AgentProvider {
   const entry = resolveModelSlug(slug);
-  return MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, entry.options);
+  const options =
+    entry.provider === "codex" && codexEffort !== undefined
+      ? { ...(entry.options ?? {}), effort: codexEffort }
+      : entry.options;
+  return MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, options);
 }
