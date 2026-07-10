@@ -66,7 +66,7 @@ function monitoredBackend(
     handleMonitoredWorkerIdle: async (
       handle: WorkerMonitorHandle,
       spec: WorkerSpec,
-    ): Promise<"hang" | "wait_for_reset"> => {
+    ): Promise<"hang" | "hang_with_live_pool" | "wait_for_reset"> => {
       const result = await handleIdleThreshold({
         modelRef: spec.model,
         worker: { pid: handle.pid, step: spec.id },
