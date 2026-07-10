@@ -37,6 +37,23 @@ describe("stripOrganicMarkdown", () => {
       .toBe("**code**\n- code");
   });
 
+  it("strips emphasis that is interrupted by a code span without reprocessing the code", () => {
+    expect(stripOrganicMarkdown("甲**乙`丙`**")).toBe("甲乙丙");
+  });
+
+  it("renders an escaped link opener as literal text", () => {
+    expect(stripOrganicMarkdown("\\[正文](url)")).toBe("[正文](url)");
+  });
+
+  it("uses backslash parity when deciding whether a backtick opens code", () => {
+    expect(stripOrganicMarkdown("\\`非代码`")).toBe("`非代码`");
+    expect(stripOrganicMarkdown("\\\\`代码 **原样**`")).toBe("\\代码 **原样**");
+  });
+
+  it("keeps unmatched emphasis delimiters as literal punctuation", () => {
+    expect(stripOrganicMarkdown("甲**乙*丙")).toBe("甲**乙*丙");
+  });
+
   it("treats Chinese letters as word characters around emphasis markers", () => {
     expect(stripOrganicMarkdown("字段_税率_值")).toBe("字段_税率_值");
   });
