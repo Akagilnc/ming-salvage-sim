@@ -133,6 +133,10 @@ import {
   modelForSlot,
   type CmrLegAccountingRoute,
 } from "../modelRoutes.js";
+import {
+  buildCliMonitorSpawnSpec,
+  workerResultFromMonitorSidecar,
+} from "../cliMonitorHooks.js";
 import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import { retryProcessCrash } from "../dispatchRetry.js";
 import {
@@ -151,9 +155,11 @@ import {
 
 import type {
   CleanupResult,
+  CliMonitorSpawnSpec,
   CoderResult,
   DispatchContext,
   DocReleaseResult,
+  WorkerMonitorHandle,
   Finding,
   FindingFamily,
   FixerResult,
@@ -1216,6 +1222,49 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const outcome = await this.runCmrWorker(spec, ctx);
     return this.cmrOutcomeToWorkerResult(outcome, ctx);
+  }
+
+  /**
+   * #684: production monitored-CLI spawn for family productive workers.
+   * Same bridge pattern as {@link RealBackend.resolveCliMonitorDispatch}.
+   */
+  resolveCliMonitorDispatch(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): CliMonitorSpawnSpec | undefined {
+    // Container-free test/integration subclasses intentionally replace the
+    // family review worker seam; preserve that seam instead of launching the
+    // host bridge and bypassing the override.
+    if (
+      this.runFamilyReviewLoopWorker !==
+      RealFamilyBackend.prototype.runFamilyReviewLoopWorker
+    ) {
+      return undefined;
+    }
+    return buildCliMonitorSpawnSpec({
+      backendKind: "realFamily",
+      backendOpts: this.opts,
+      spec,
+      ctx: {
+        ...ctx,
+        stateDir: ctx.stateDir ?? this.opts.ledgerDir,
+      },
+      landing,
+    });
+  }
+
+  /**
+   * #684: map a finished monitored family CLI bridge child into a WorkerResult.
+   */
+  async awaitMonitoredCliWorker(
+    handle: WorkerMonitorHandle,
+    exitCode: number | null,
+    _spec: WorkerSpec,
+    _ctx: DispatchContext,
+    _landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    return workerResultFromMonitorSidecar(handle, exitCode);
   }
 
   async rewriteWorkerOutcome(

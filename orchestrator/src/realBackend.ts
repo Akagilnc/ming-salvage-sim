@@ -142,12 +142,16 @@ export {
   type ModelSlugRegistryEntry,
 };
 import {
-  DOCRELEASE_PROMPT_FILE,
-  FIXER_PROMPT_FILE,
-  legacyDispatchWorker,
-  SHIP_PROMPT_FILE,
-  VERIFY_PROMPT_FILE,
-} from "./dispatchWorker.js";
+  buildCliMonitorSpawnSpec,
+  workerResultFromMonitorSidecar,
+} from "./cliMonitorHooks.js";
+import {
+   DOCRELEASE_PROMPT_FILE,
+   FIXER_PROMPT_FILE,
+   legacyDispatchWorker,
+   SHIP_PROMPT_FILE,
+   VERIFY_PROMPT_FILE,
+ } from "./dispatchWorker.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
   shipOutcomeFromResult,
@@ -163,6 +167,7 @@ import {
 import type {
   AgentStepRunOptions,
   Backend,
+  CliMonitorSpawnSpec,
   DispatchContext,
   Finding,
   IssueMeta,
@@ -177,6 +182,7 @@ import type {
   StepSpec,
   RepairEvidence,
   WorkerLandingPayload,
+  WorkerMonitorHandle,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -3498,6 +3504,43 @@ export class RealBackend implements Backend {
         ...(outcome.pr !== undefined ? { pr: outcome.pr } : {}),
       },
     };
+  }
+
+  /**
+   * #684: production monitored-CLI spawn for productive workers.
+   *
+   * Returns a host-side bridge spawn so {@link dispatchWorkerWithMonitor} takes
+   * the monitored branch (handle atomic with real dispatch). The bridge child
+   * re-enters {@link dispatchWorker} with ORCHESTRATOR_CLI_MONITOR_CHILD=1 so
+   * these hooks short-circuit and the existing container seam does the work.
+   * Absent log sink / non-productive kind / already-in-child → undefined.
+   */
+  resolveCliMonitorDispatch(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): CliMonitorSpawnSpec | undefined {
+    return buildCliMonitorSpawnSpec({
+      backendKind: "real",
+      backendOpts: this.opts,
+      spec,
+      ctx,
+      landing,
+    });
+  }
+
+  /**
+   * #684: map a finished monitored CLI bridge child into a WorkerResult by
+   * reading the result sidecar the child wrote.
+   */
+  async awaitMonitoredCliWorker(
+    handle: WorkerMonitorHandle,
+    exitCode: number | null,
+    _spec: WorkerSpec,
+    _ctx: DispatchContext,
+    _landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    return workerResultFromMonitorSidecar(handle, exitCode);
   }
 
   /**
