@@ -24,7 +24,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import {
   agentForSlug,
   assertCompletionSignal,
@@ -89,12 +89,15 @@ function tempHome(prefix = "rb-home-748-"): string {
   return home;
 }
 
-afterEach(() => {
+function cleanupTempHomes(): void {
   while (tempHomes.length > 0) {
     const home = tempHomes.pop();
     if (home !== undefined) rmSync(home, { recursive: true, force: true });
   }
-});
+}
+
+afterEach(cleanupTempHomes);
+afterAll(cleanupTempHomes);
 
 // ─── gh JSON → IssueMeta / IssueSnapshot ─────────────────────────────────────
 
