@@ -33,6 +33,7 @@ import type {
 import {
   cmrReviewLegs as activeCmrReviewLegs,
   modelForSlot,
+  routeSmokeFailure,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
 import { offlineReviewLoopDispatchAdmissible } from "../evidenceAdmissibility.js";
@@ -161,6 +162,13 @@ export async function dispatchFamilyWorker(
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
 ): Promise<WorkerResult> {
+  if (ctx.modelRoute === undefined) {
+    throw new Error("family worker dispatch refused (fail-closed): model route smoke state is missing");
+  }
+  const smokeFailure = routeSmokeFailure(ctx.modelRoute);
+  if (smokeFailure !== undefined) {
+    throw new Error(`family worker dispatch refused (fail-closed): ${smokeFailure}`);
+  }
   if (familyBackend.dispatchWorker !== undefined) {
     return familyBackend.dispatchWorker(spec, ctx, landing);
   }

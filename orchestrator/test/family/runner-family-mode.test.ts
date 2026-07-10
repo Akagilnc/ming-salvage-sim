@@ -40,6 +40,10 @@ import type {
 
 /** A fake that records the base passed to prepareWorktree + push invocations. */
 class FamilyModeBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly calls: string[] = [];
   prepareBase: string | undefined;
   pushCount = 0;
