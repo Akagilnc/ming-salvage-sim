@@ -1,6 +1,13 @@
 import { createInterface } from "node:readline/promises";
 
 import {
+  parseCoderRec,
+  resolveCoderRecOrder,
+  reviewerSlugsFromRoute,
+  selectCoderRecEntry,
+  type CoderRosterEntry,
+} from "./coderRoster.js";
+import {
   modelFamilyForCmrReviewLeg,
   modelFamilyForSlug,
   resolveModelSlug,
@@ -387,6 +394,43 @@ export function withRouteSmoke(
   return { ...route, smoke: { ...route.smoke, ...smoke } };
 }
 
+/**
+ * Override the coder (+ coderFix) slot for design-time Coder-Rec (#767).
+ * Preserves prior smoke status for the new slug when the same slug was already
+ * smoked under another key; otherwise marks the new keys unverified so the
+ * runner's route-smoke gate can (re)verify before dispatch.
+ */
+export function withCoderSlot(
+  route: ResolvedModelRoute,
+  coderSlug: string,
+): ResolvedModelRoute {
+  const trimmed = coderSlug.trim();
+  assertKnownWorkerSlug(trimmed);
+  const slots: ModelSlotMap = {
+    ...route.slots,
+    coder: trimmed,
+    coderFix: trimmed,
+  };
+  const next: Pick<ResolvedModelRoute, "slots" | "legCollections"> = {
+    slots,
+    legCollections: route.legCollections,
+  };
+  const smoke: Record<string, RouteSmokeStatus> = { ...route.smoke };
+  for (const entry of routeSmokeEntries(next)) {
+    if (smoke[entry.key] !== undefined) continue;
+    const prior = Object.entries(route.smoke).find(
+      ([key, status]) =>
+        key.endsWith(`:${entry.slug}`) && status.state === "passed",
+    );
+    smoke[entry.key] = prior?.[1] ?? { state: "unverified" };
+  }
+  return {
+    ...route,
+    slots,
+    smoke,
+  };
+}
+
 export function routeSmokeFailure(
   route: Pick<ResolvedModelRoute, "slots" | "legCollections" | "smoke">,
   now = Date.now(),
@@ -599,6 +643,68 @@ async function askContinue(message: string): Promise<boolean> {
   } finally {
     rl.close();
   }
+}
+
+/**
+ * Apply design-time Coder-Rec selection onto a resolved route (#767).
+ *
+ * Ops env `ORCHESTRATOR_CODER_MODEL` still wins (explicit override). Otherwise,
+ * only an explicit `Coder-Rec:` marking in the issue body overrides the active
+ * route's coder slot — unmarked issues keep the route preset. A present but
+ * all-invalid marking falls through to {@link DEFAULT_CODER_REC_ORDER}.
+ * Entries that would double as active reviewer legs are skipped.
+ */
+export function applyCoderRecToRoute(
+  route: ResolvedModelRoute,
+  issueBody: string | undefined,
+  nonConvergingRounds: number,
+  env: ModelRouteEnv = process.env,
+): {
+  readonly route: ResolvedModelRoute;
+  readonly entry: CoderRosterEntry | undefined;
+  readonly skippedForEnvOverride: boolean;
+  /** True when no Coder-Rec line was present — route coder left untouched. */
+  readonly skippedForMissingMarking: boolean;
+} {
+  const envOverride = env.ORCHESTRATOR_CODER_MODEL?.trim();
+  if (envOverride !== undefined && envOverride !== "") {
+    return {
+      route,
+      entry: undefined,
+      skippedForEnvOverride: true,
+      skippedForMissingMarking: false,
+    };
+  }
+  const parsed =
+    issueBody !== undefined && issueBody.length > 0
+      ? parseCoderRec(issueBody)
+      : undefined;
+  if (parsed === undefined) {
+    return {
+      route,
+      entry: undefined,
+      skippedForEnvOverride: false,
+      skippedForMissingMarking: true,
+    };
+  }
+  const order = resolveCoderRecOrder(issueBody);
+  const entry = selectCoderRecEntry(order, nonConvergingRounds, {
+    reviewerSlugs: reviewerSlugsFromRoute(route),
+  });
+  if (route.slots.coder === entry.slug && route.slots.coderFix === entry.slug) {
+    return {
+      route,
+      entry,
+      skippedForEnvOverride: false,
+      skippedForMissingMarking: false,
+    };
+  }
+  return {
+    route: withCoderSlot(route, entry.slug),
+    entry,
+    skippedForEnvOverride: false,
+    skippedForMissingMarking: false,
+  };
 }
 
 export function modelForSlot(
