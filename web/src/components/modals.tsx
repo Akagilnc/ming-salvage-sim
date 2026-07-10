@@ -3,7 +3,7 @@ import { Check, Crown, Edit3, Landmark, Loader2, Lock, MessageSquare, RotateCcw,
 import { api } from "../api";
 import { ExtractionView } from "./extraction";
 import { FullscreenModal, MinisterPortrait, cacheBust } from "./hud";
-import { formatClosedEffect } from "../format";
+import { formatClosedEffect, stripOrganicMarkdown } from "../format";
 import type { ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, PendingActionFailure, SecretOrder, Suggestion } from "../types";
 
 export function ReportModal({
@@ -689,7 +689,7 @@ export function ChatModal({
           {displayMessages.map((message, index) => (
             <div className={`chat-message ${message.role} ${message.pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}>
               <span>{message.role === "user" ? "朕" : minister.name}</span>
-              <p>{message.content}</p>
+              <p>{message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content}</p>
             </div>
           ))}
           {busy && !streamingMinisterMessage && (

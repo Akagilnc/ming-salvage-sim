@@ -322,3 +322,9 @@ export function labelClass(key: string): string {
   if (at < 0) return key;
   return `${key.slice(0, at)}（${labelRegion(key.slice(at + 1))}）`;
 }
+export const stripOrganicMarkdown = (text: string): string => {
+  return text
+    .replace(/^\s*[-+*]\s+/gm, "")
+    .replace(/(\*\*|__)(.*?)\1/g, "$2")
+    .replace(/(\*|_)(.*?)\1/g, "$2");
+};
