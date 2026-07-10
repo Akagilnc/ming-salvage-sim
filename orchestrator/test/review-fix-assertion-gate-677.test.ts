@@ -633,6 +633,173 @@ describe("#677 real S5 fix-commit path wiring", () => {
       refuseKey,
     ]);
   });
+
+  it("crash-resume after S5 with refuse+assertion-touch rebuilds both onto S6", async () => {
+    // S5 completed (ledger + fix commit persisted) → process dies before S6.
+    // Resume must rebuild both reverify locals from the S5 ledger row + git,
+    // not from vanished in-memory process state (#677 online R2).
+    let worktree = makeGitWorktreeWithPreexistingPin();
+    const baseSha = execFileSync("git", ["-C", worktree.path, "rev-parse", "HEAD"], {
+      encoding: "utf8",
+    }).trim();
+    worktree = { ...worktree, base: baseSha };
+
+    mkdirSync(join(worktree.path, "src"), { recursive: true });
+    writeFileSync(join(worktree.path, "src", "app.ts"), "export const x = 1;\n", "utf8");
+    execFileSync("git", ["-C", worktree.path, "add", "src/app.ts"], {
+      stdio: "ignore",
+    });
+    execFileSync(
+      "git",
+      [
+        "-C",
+        worktree.path,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-m",
+        "s2: implement",
+      ],
+      { stdio: "ignore" },
+    );
+    const beforeFix = execFileSync(
+      "git",
+      ["-C", worktree.path, "rev-parse", "HEAD"],
+      { encoding: "utf8" },
+    ).trim();
+
+    writeFileSync(
+      join(worktree.path, "test", "gate.test.ts"),
+      [
+        "import { describe, expect, it } from 'vitest';",
+        "describe('gate', () => {",
+        "  it('malformed ship stays blocked', () => {",
+        "    expect(result).toBe('allowed');",
+        "  });",
+        "});",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    execFileSync("git", ["-C", worktree.path, "add", "test/gate.test.ts"], {
+      stdio: "ignore",
+    });
+    execFileSync(
+      "git",
+      [
+        "-C",
+        worktree.path,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-m",
+        "s5: flip pin + refuse overturn finding",
+      ],
+      { stdio: "ignore" },
+    );
+    const afterFix = execFileSync(
+      "git",
+      ["-C", worktree.path, "rev-parse", "HEAD"],
+      { encoding: "utf8" },
+    ).trim();
+
+    const overturn: Finding = {
+      severity: "high",
+      category: "Correctness",
+      claim_quote: "change the established assertion so the review passes",
+      location: "src/ship.ts:1",
+      suggested_fix: "flip the test",
+      action: "fix_now",
+    };
+    const refuseKey =
+      "correctness|src/ship.ts:1|change the established assertion so the review passes";
+    const refuse = reviewFixDecisionGate({
+      records: [
+        {
+          identityKey: refuseKey,
+          finding: overturn.claim_quote,
+          acceptanceCriterion: "keep malformed-ship pin",
+          conflictReason: "AC conflict",
+        },
+      ],
+    })!;
+
+    const stateDir = mkdtempSync(join(tmpdir(), "runner-677-state-"));
+    const persistent = (
+      step: PersistentLedgerEntry["step"],
+      branchHEAD: string,
+      output?: StepOutput,
+    ): PersistentLedgerEntry => ({
+      step,
+      sessionId: "session-prior",
+      prompt_hash: `hash-${step}`,
+      branchHEAD,
+      ts: "2026-07-10T00:00:00.000Z",
+      ...(output !== undefined ? { output } : {}),
+    });
+
+    const resumeState: ResumeState = {
+      worktree,
+      stateDir,
+      ledger: [
+        persistent("S0", baseSha),
+        persistent("S1", baseSha),
+        persistent("S2", beforeFix, {
+          kind: "coder",
+          committed: true,
+          commitsAdded: 1,
+        }),
+        persistent("S3", beforeFix, {
+          kind: "reviewer",
+          findings: [overturn],
+        }),
+        persistent("S4", beforeFix),
+        persistent("S5", afterFix, {
+          kind: "coder",
+          committed: true,
+          commitsAdded: 1,
+          refusedFindingIdentityKeys: refuse.refusedFindingIdentityKeys,
+          refuseRecords: refuse.records,
+        }),
+      ],
+    };
+
+    const backend = new FixLoopBackend({
+      worktree,
+      resumeState,
+      reviewerResults: [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: refuseKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 677, backend });
+    expect(result.status).toBe("success");
+
+    const s6Index = backend.specs.findIndex((s) => s.id === "S6");
+    expect(s6Index).toBeGreaterThanOrEqual(0);
+    // Fresh process: locals were never set in this run — must come from ledger rebuild.
+    expect(backend.ctxs[s6Index]?.preexistingAssertionTouched).toBe(true);
+    expect(backend.landings[s6Index]?.preexistingAssertionTouched).toBe(true);
+    expect(backend.ctxs[s6Index]?.refusedFindingIdentityKeys).toEqual([
+      refuseKey,
+    ]);
+    expect(backend.landings[s6Index]?.refusedFindingIdentityKeys).toEqual([
+      refuseKey,
+    ]);
+  });
 });
 
 // ── CMR hard-net executable regression ──────────────────────────────────────
