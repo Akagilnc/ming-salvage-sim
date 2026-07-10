@@ -36,6 +36,15 @@ function render(element: React.ReactNode) {
 afterEach(() => { document.body.innerHTML = ""; });
 
 describe("DecisionModal", () => {
+  it("uses a non-main full-screen container inside the app landmark", () => {
+    const cleanup = render(<DecisionModal decisions={decisions} onResolve={vi.fn()} />);
+    const page = document.querySelector<HTMLElement>(".decision-page");
+
+    expect(page?.tagName).toBe("SECTION");
+    expect(page?.querySelector("main")).toBeNull();
+    cleanup();
+  });
+
   it("assembles each decision as ordered sections of one red-seal document", () => {
     const cleanup = render(<DecisionModal decisions={decisions} onResolve={vi.fn()} />);
     const documentPage = document.querySelector<HTMLElement>(".decision-document");
