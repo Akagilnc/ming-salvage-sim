@@ -392,12 +392,20 @@ export class RealFamilyBackend implements FamilyBackend {
     this.opts = opts;
     this.validateFamilyPromptsDir();
     this.validateSoulsDir();
-    // #786 — same run-env wiring as RealBackend (imageName / codexFast / hashes).
+    // #786 — seed process-level run env (family promptsDir). Child legs reinstall
+    // their own fingerprints on dispatch; family legs call this again before stamp.
+    this.installTelemetryRunEnvironment();
+  }
+
+  /**
+   * #786: reinstall this family backend's fingerprints before environment stamp.
+   */
+  installTelemetryRunEnvironment(): void {
     configureTelemetryFromWorkerImage({
-      imageName: opts.imageName,
-      codexFast: opts.codexFast,
-      soulsDir: opts.soulsDir,
-      promptsDir: opts.promptsDir,
+      imageName: this.opts.imageName,
+      codexFast: this.opts.codexFast,
+      soulsDir: this.opts.soulsDir,
+      promptsDir: this.opts.promptsDir,
     });
   }
 

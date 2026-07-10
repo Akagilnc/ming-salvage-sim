@@ -2166,13 +2166,22 @@ export class RealBackend implements Backend {
     this.validateSoulsDir();
     this.workingRepo = this.buildOrReuseClone();
     this.assertIndependentClone();
-    // #786 — environment stamp reads imageName/codexFast/souls/prompts here,
-    // not only IMAGE_TAG / ORCHESTRATOR_CODEX_FAST env (often unset at launch).
+    // #786 — seed process-level run env from imageName/codexFast/souls/prompts.
+    // Dispatch reinstalls via {@link installTelemetryRunEnvironment} so a later
+    // RealFamilyBackend construction cannot leave child legs on family hashes.
+    this.installTelemetryRunEnvironment();
+  }
+
+  /**
+   * #786: reinstall this backend's fingerprints before environment stamp.
+   * Safe to call repeatedly; used by {@link dispatchWorkerWithMonitor}.
+   */
+  installTelemetryRunEnvironment(): void {
     configureTelemetryFromWorkerImage({
-      imageName: opts.imageName,
-      codexFast: opts.codexFast,
-      soulsDir: opts.soulsDir,
-      promptsDir: opts.promptsDir,
+      imageName: this.opts.imageName,
+      codexFast: this.opts.codexFast,
+      soulsDir: this.opts.soulsDir,
+      promptsDir: this.opts.promptsDir,
     });
   }
 

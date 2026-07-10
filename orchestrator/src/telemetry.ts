@@ -371,7 +371,10 @@ export interface TelemetryCollectRecord extends TelemetryRecordBase {
   readonly completed_at: string;
   readonly terminal: TelemetryTerminal;
   /**
-   * Category for non-success terminals. `null` only on completed/escalated.
+   * Category for non-success terminals. `null` on completed, and on escalated
+   * when the reason is a pure decision (no known failure signature). Escalated
+   * legs that match a known pattern (e.g. missing completion signal →
+   * `honest-incomplete`) keep that category so post-hoc clustering works.
    * Failures that do not match a known pattern are `"unclassified"` (not null).
    */
   readonly errorCategory: TelemetryErrorCategory | null;
@@ -516,12 +519,18 @@ export function classifyWorkerTerminal(
       };
     }
     if (r.kind === "escalated") {
-      // Decision escalate is not a failure category; still keep the raw reason
-      // (e.g. ship/cmr "did not fire its completion signal") for post-hoc stats.
+      // Keep the raw reason for post-hoc stats. Pure decision escalates stay
+      // category-null; known failure signatures (ship/cmr missing completion
+      // signal → honest-incomplete, etc.) stay clusterable — never force null.
       const reason = r.escalation.reason;
+      const categorized =
+        reason.length > 0 ? categoryFromReason(reason) : null;
       return {
         terminal: "escalated",
-        errorCategory: null,
+        errorCategory:
+          categorized === null || categorized === "unclassified"
+            ? null
+            : categorized,
         errorMessage: reason.length > 0 ? reason : null,
         sessionId,
       };
@@ -597,6 +606,16 @@ export function classifyWorkerTerminal(
 }
 
 /**
+ * True when free text mentions HTTP 429 as a status/code token — not GitHub
+ * issue `#429` or path segments like `/429/foo`.
+ */
+export function mentionsHttp429(reasonLower: string): boolean {
+  // Reject #429 (issue refs) and /429/ (path segments). Accept "429", " 429",
+  // "error:429", "(429)", "status=429", etc.
+  return /(?:^|[^#\w/])429(?:[^0-9]|$)/.test(reasonLower);
+}
+
+/**
  * Map a free-text failure reason onto a telemetry category.
  *
  * Patterns below are taken from the actual throw/return sites (not invented):
@@ -625,8 +644,9 @@ export function categoryFromReason(reason: string): TelemetryErrorCategory {
 
   // ── 429 / quota (QuotaWaitForResetError message: "quota wait for reset…") ─
   // Prefer explicit quota phrases; bare "limit" is too broad (iteration limit).
+  // Bare digit "429" must NOT match issue refs (#429) or path segments (/429/).
   if (
-    lower.includes("429") ||
+    mentionsHttp429(lower) ||
     lower.includes("quota wait for reset") ||
     lower.includes("rate limit") ||
     lower.includes("rate_limit") ||

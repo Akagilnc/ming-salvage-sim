@@ -269,9 +269,12 @@ describe("#683 integration at the real monitored dispatch path", () => {
           probe: { kind: "quota_limited", resetAt: new Date("2026-07-10T02:00:00.000Z"), detail: "429" },
         });
       },
+      // No usable sidecar after mid-flight SIGTERM → empty-fallback, rewritten
+      // to killed-by-signal. (A real completed sidecar would still win.)
       awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
-        kind: "completed",
-        output: { kind: "coder", committed: true, commitsAdded: 1 },
+        kind: "failed",
+        reason:
+          "monitored CLI worker S2 exited null without a WorkerResult sidecar (pool=zai)",
       }),
     } as unknown as Backend;
 
@@ -292,9 +295,9 @@ describe("#683 integration at the real monitored dispatch path", () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
       await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
-      // Child was SIGTERM'd inside the idle handler → signal-kill terminal wins
-      // the race (not a fabricated completed). Late QuotaWaitForResetError must
-      // still be observed (warn) without becoming an unhandledRejection.
+      // Child was SIGTERM'd inside the idle handler with no sidecar → killed.
+      // Late QuotaWaitForResetError must still be observed (warn) without
+      // becoming an unhandledRejection.
       expect(outcome.result.kind).toBe("failed");
       if (outcome.result.kind === "failed") {
         expect(outcome.result.reason).toMatch(/killed by signal/i);
