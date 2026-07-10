@@ -237,3 +237,33 @@ def test_new_participation_source_is_projected_without_read_side_type_branch(gam
     )
 
     assert any(item["source_id"] == "new_record:1" for item in db.get_character_knowledge(state, minister.name)["events"])
+
+
+def test_participant_roster_is_discovered_from_persistent_record_without_adapter(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    db.conn.execute(
+        """INSERT INTO issues
+           (kind, title, origin_turn, stage_text, participants, participant_roster)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        ("initiative", "未经适配的新案卷", state.turn, "案卷正文",
+         "[]", '[{"character_id": "' + minister.name + '"}]'),
+    )
+    db.conn.commit()
+
+    view = db.get_character_knowledge(state, minister.name)
+
+    assert any(item["title"] == "未经适配的新案卷" for item in view["events"])
+
+
+def test_office_blacklist_preserves_unrelated_court_domain_fact(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "内阁")
+    db.create_secret_order(
+        state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=["户部"]
+    )
+
+    view = db.get_character_knowledge(state, minister.name)
+
+    assert view["world"].get("personnel")
+    assert view["world"].get("treasury") == ""
