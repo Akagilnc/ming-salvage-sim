@@ -57,6 +57,7 @@ import {
   verifyWorkerSpec,
   workerResultToStep,
 } from "./dispatchWorker.js";
+import { routeSmokeFailure } from "./modelRoutes.js";
 import {
   fixerEnvelopeFixCommitSha,
   fixerProceedsToVerify,
@@ -82,6 +83,7 @@ import {
   slicePrMergedRecordFromLedger,
   type PrMergedTerminalRecord,
 } from "./autoMerge.js";
+import { priorOnlineReviewFindingsFromLedger } from "./findingFamilies.js";
 import { shouldReclaimSliceHost } from "./hostReclaim.js";
 import { buildCleanupLanding } from "./postMergeCleanup.js";
 import {
@@ -177,6 +179,14 @@ import type {
   WorkerLandingPayload,
   WorktreeHandle,
 } from "./types.js";
+
+/** Merge resume history with the display-seeded ledger without replaying shared rows. */
+export function mergeResumeLedgerHistory(
+  resumeHistoryLedger: ReadonlyArray<LedgerEntry>,
+  ledger: ReadonlyArray<LedgerEntry>,
+): ReadonlyArray<LedgerEntry> {
+  return [...new Set([...resumeHistoryLedger, ...ledger])];
+}
 
 // ─── #256 seam-extension normalisation ───────────────────────────────────────
 //
@@ -285,6 +295,8 @@ function buildPersistentEntry(opts: {
   repairMovementPaths?: ReadonlyArray<string>;
   /** Terminal stop reason summary (#450). */
   stopSummary?: StopSummary;
+  /** S9 verify rows are keyed by their logical online-review round. */
+  onlineReviewRound?: number;
 }): PersistentLedgerEntry {
   let entry: PersistentLedgerEntry = {
     step: opts.step,
@@ -313,6 +325,9 @@ function buildPersistentEntry(opts: {
   }
   if (opts.stopSummary !== undefined) {
     entry = { ...entry, stopSummary: opts.stopSummary };
+  }
+  if (opts.onlineReviewRound !== undefined) {
+    entry = { ...entry, onlineReviewRound: opts.onlineReviewRound };
   }
   return entry;
 }
@@ -2114,6 +2129,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const noProgressByFindingIdentityKey = new Map<string, number>();
   let lastShipOutput: ShipResult | undefined;
   let onlineReviewRound = 1;
+  // Resume planning keeps a display-seeded ledger trimmed at S7. Preserve a
+  // separate full ledger for S9's cross-round history extraction.
+  let resumeHistoryLedger: ReadonlyArray<LedgerEntry> = [];
   let onlineReviewLanding: WorkerLandingPayload | undefined;
   let lastOnlineReviewFixCommitSha: string | undefined;
   let lastOnlineReviewRoundTrigger: RoundTrigger | undefined;
@@ -2561,6 +2579,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       findingDispositions,
       repairMovementPaths,
       stopSummary,
+      ...(s === "S9" ? { onlineReviewRound } : {}),
     });
 
     const mirrorInMemoryLedgerPersistedFields = (
@@ -2873,6 +2892,64 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // its original memory-bearing session). Cleared after the step is dispatched once.
   let resumeFor: { step: StepId; sessionId: string } | undefined;
   let resumedEscalationAnswer: EscalationAnswerEvent | undefined;
+  let routeSmokeChecked = false;
+
+  const ensureRouteSmoke = async (): Promise<RunResult | undefined> => {
+    if (typeof backend.smokeModelRoute !== "function") {
+      const reason =
+        "route smoke executor is required before dispatch; backend did not provide smokeModelRoute";
+      return {
+        status: "error",
+        errorPackage: { failedStep: "S0", reason },
+        stepLedger: [],
+        stopSummary: infraFailureStopSummary({
+          summary: reason,
+          repairHint: "provide a real model×pipe smoke executor before dispatching workers",
+        }),
+        deferredFindings: [],
+      };
+    }
+
+    let currentCliVersions: Readonly<Record<string, string | undefined>>;
+    try {
+      currentCliVersions = backend.currentCliVersions
+        ? await backend.currentCliVersions(modelRoute)
+        : {};
+      modelRoute = await backend.smokeModelRoute(modelRoute, currentCliVersions);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      return {
+        status: "error",
+        errorPackage: { failedStep: "S0", reason: `route smoke failed: ${reason}` },
+        stepLedger: [],
+        stopSummary: infraFailureStopSummary({
+          summary: `route smoke failed: ${reason}`,
+          repairHint: "repair the selected model×pipe tool smoke before dispatching workers",
+        }),
+        deferredFindings: [],
+      };
+    }
+    const smokeFailure = routeSmokeFailure(
+      modelRoute,
+      Date.now(),
+      undefined,
+      currentCliVersions,
+    );
+    if (smokeFailure !== undefined) {
+      return {
+        status: "error",
+        errorPackage: { failedStep: "S0", reason: smokeFailure },
+        stepLedger: [],
+        stopSummary: infraFailureStopSummary({
+          summary: smokeFailure,
+          repairHint: "rerun the route smoke or repair the selected model×pipe",
+        }),
+        deferredFindings: [],
+      };
+    }
+    routeSmokeChecked = true;
+    return undefined;
+  };
 
   if (resumeState !== undefined && resumeState.ledger.length > 0) {
     // Reuse the resident worktree (NO re-cut) and fix the sibling stateDir.
@@ -2912,6 +2989,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         worktree,
         backend,
       )) ?? planResume(resumeLedger);
+    resumeHistoryLedger = resumeLedger;
 
     // Seed the in-memory ledger with prior progress so committed work is
     // preserved and the prior steps are NOT re-run.
@@ -3146,6 +3224,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // loop visible in S3/S4/S5/S6, but still rejects a blind round cap; a `for (;;)`
   // keeps the absence of any "数到 N 就停" cap explicit (US#18).
   for (;;) {
+    if (!routeSmokeChecked && step !== "S0") {
+      const smokeResult = await ensureRouteSmoke();
+      if (smokeResult !== undefined) return smokeResult;
+    }
     let output: StepOutput | undefined;
     // promptFile for the current step (agent steps only; undefined for runner actions).
     let promptFile: string | undefined;
@@ -3231,6 +3313,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               `Merge the upstream changes before running.`,
           ));
         }
+
+        const smokeResult = await ensureRouteSmoke();
+        if (smokeResult !== undefined) return smokeResult;
 
         break;
       }
@@ -3324,6 +3409,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const dispatchCtx = {
                 worktree,
                 stateDir,
+                modelRoute,
                 ...(typeof resumeSessionId === "string" ? { resumeSessionId } : {}),
                 ...(escalationAnswerForStep != null
                   ? { escalationAnswer: escalationAnswerForStep }
@@ -3581,6 +3667,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           const shipCtx = {
             worktree,
             stateDir,
+            modelRoute,
             ...(escalationAnswerForStep != null
               ? { escalationAnswer: escalationAnswerForStep }
               : {}),
@@ -3786,15 +3873,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             if (stateDir !== undefined) {
               writeOnlineReviewSnapshotFile(stateDir, snapshot);
             }
-            onlineReviewLanding = buildOnlineReviewLanding(
-              snapshot,
-              lastShipOutput,
+            const priorRoundFindings = priorOnlineReviewFindingsFromLedger(
+              mergeResumeLedgerHistory(resumeHistoryLedger, ledger),
               onlineReviewRound,
             );
+            onlineReviewLanding = {
+              ...buildOnlineReviewLanding(
+                snapshot,
+                lastShipOutput,
+                onlineReviewRound,
+              ),
+              ...(priorRoundFindings.length > 0
+                ? { priorRoundFindings }
+                : {}),
+            };
           }
           const reviewCtx = {
             worktree,
             stateDir,
+            modelRoute,
             repo: defaultRepo(),
             prUrl: lastShipOutput.pr,
             prHead:
@@ -3835,10 +3932,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             }
           };
           // S9: read-only contract drift is caller-owned (no cleanResidue on
-          // retry — verify must not rewrite the tree). S12 文档发布 is a write
-          // worker (#735 Codex P2): uncommitted residue from a crashed skill
-          // attempt must be reset before mechanical retry, same as coder/ship.
-          // (Committed partial HEAD stays — cleanResidue contract / ADR 0024.)
+          // retry — verify must not rewrite the tree). S12 与全角色一致：crash
+          // 重试 continue-on-current-worktree AS-IS（user override 2026-07-10，
+          // 同 21906adf / #600）；已提交 HEAD 与未提交残渣均保留，soul 的
+          // residual-HEAD-push 契约负责收尾。勿再单侧加 reset（#740）。
           const reviewResetOpt: MechanicalRetryOptions =
             reviewStep === "S9"
               ? {
@@ -3849,11 +3946,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       o.error instanceof VerifyWorkerWorktreeDirtyError),
                   rethrowOnExhaustion: true,
                 }
-              : reviewStep === "S12" && worktree !== undefined
-                ? {
-                    resetBeforeRetry: () => backend.cleanResidue(worktree!),
-                  }
-                : {};
+              : {};
           if (
             reviewStep === "S10" &&
             (onlineReviewLanding === undefined ||
@@ -3874,6 +3967,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ...onlineReviewLanding,
                   fixMarkedFindingIdentityKeys:
                     onlineReviewLanding.fixMarkedFindingIdentityKeys ?? [],
+                  ...(onlineReviewLanding.findingFamilies !== undefined
+                    ? { findingFamilies: onlineReviewLanding.findingFamilies }
+                    : {}),
                 }
               : onlineReviewLanding;
           const convergedHeadForCleanup =
@@ -4185,6 +4281,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ledger.push({
                   step: "S9",
                   output: verifyOutput,
+                  onlineReviewRound,
                   ...(result.sessionId !== undefined
                     ? { sessionId: result.sessionId }
                     : {}),
@@ -4316,6 +4413,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               onlineReviewLanding = {
                 ...onlineReviewLanding,
                 fixMarkedFindingIdentityKeys: fixKeys,
+                ...(verifyOutput.findingFamilies !== undefined
+                  ? { findingFamilies: verifyOutput.findingFamilies }
+                  : {}),
               };
             }
             // Same-type as stage (R8 Gemini): CI red + no bot fix marks → park with
@@ -4334,6 +4434,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ledger.push({
                 step: "S9",
                 output: verifyOutput,
+                onlineReviewRound,
                 ...(result.sessionId !== undefined
                   ? { sessionId: result.sessionId }
                   : {}),
@@ -4647,6 +4748,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     ledger.push({
       step,
       ...(output !== undefined ? { output } : {}),
+      ...(step === "S9" ? { onlineReviewRound } : {}),
       // #604 correctness r5 (E2): carry the surfaced per-step session id on the
       // in-memory entry too. The persisted ledger (emitLedger below) already records
       // it, but RunResult.stepLedger (the in-memory ledger) previously dropped it —

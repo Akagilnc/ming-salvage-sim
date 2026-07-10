@@ -43,7 +43,10 @@ export const CONTAINER_CODEX_CONFIG_TOML =
  * `copyFileSync(host config.toml, …)` site: the container config has NO necessary
  * connection to the host's, only `auth.json` does.
  */
-export function writeContainerCodexConfig(destPath: string): void {
-  writeFileSync(destPath, CONTAINER_CODEX_CONFIG_TOML, { mode: 0o600 });
+export function writeContainerCodexConfig(destPath: string, codexFast = false): void {
+  const config = codexFast
+    ? `${CONTAINER_CODEX_CONFIG_TOML}service_tier = "fast"\n`
+    : CONTAINER_CODEX_CONFIG_TOML;
+  writeFileSync(destPath, config, { mode: 0o600 });
   chmodSync(destPath, 0o600);
 }

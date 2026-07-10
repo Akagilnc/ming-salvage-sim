@@ -58,6 +58,10 @@ const WORKTREE: WorktreeHandle = {
  * dispatches the ship worker. Its `dispatchWorker` ship leg can be told to escalate.
  */
 class ShipLedgerBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly ledgerCalls: PersistentLedgerEntry[] = [];
   constructor(private readonly shipEscalation?: Escalation) {}
 

@@ -6,7 +6,11 @@
  * post-recheck thread resolution. No LLM calls.
  */
 
-import { paginateReviewThreadNodes, parsePrRef } from "./botPolling.js";
+import {
+  paginateGhApi,
+  paginateReviewThreadNodes,
+  parsePrRef,
+} from "./botPolling.js";
 import type { Sh } from "./familyDriver.js";
 import type {
   OnlineReviewFindingDisposition,
@@ -36,6 +40,32 @@ export interface ApplyVerifySideEffectsResult {
   readonly threadsResolved: ReadonlyArray<string>;
 }
 
+/** Stable title for a deferred online-review tracking issue (#600 / #742). */
+export const DEFERRED_TRACKING_ISSUE_TITLE_PREFIX =
+  "Deferred online review finding: ";
+
+export function deferredTrackingIssueTitle(identityKey: string): string {
+  return `${DEFERRED_TRACKING_ISSUE_TITLE_PREFIX}${identityKey}`;
+}
+
+/**
+ * Derive the deferred-finding identity on the host, from GitHub's landing
+ * identifiers. Worker-provided identity keys are judgment output and may
+ * change between rounds; the review thread/comment is the durable anchor.
+ */
+export function hostSideDeferredIdentityKey(
+  echoedThreadId: string,
+  landingThreads: ReadonlyArray<LandingThreadRef> | undefined,
+): string {
+  const landing = landingThreads?.find(
+    (thread) =>
+      thread.id === echoedThreadId ||
+      String(thread.id) === echoedThreadId ||
+      thread.threadNodeId === echoedThreadId,
+  );
+  return landing?.threadNodeId ?? landing?.id ?? echoedThreadId;
+}
+
 /** GitHub issue URL shape returned by `gh api repos/{repo}/issues --jq .html_url`. */
 export function isValidGithubIssueUrl(url: string): boolean {
   const trimmed = url.trim();
@@ -47,13 +77,128 @@ export function isValidGithubIssueUrl(url: string): boolean {
   );
 }
 
-/** Create a tracked deferral issue via `gh api repos/{repo}/issues` (#600 AC5). */
+/**
+ * Find an open tracking issue with the exact title (stable finding identity).
+ * GitHub's issues list also returns PRs — those are skipped (#742).
+ */
+export function findOpenDeferredTrackingIssueUrl(
+  sh: Sh,
+  repo: string,
+  title: string,
+): string | undefined {
+  const matching = listOpenDeferredTrackingIssues(sh, repo, title);
+  return matching[0]?.htmlUrl;
+}
+
+type OpenDeferredTrackingIssue = {
+  readonly htmlUrl: string;
+  readonly number?: number;
+  readonly createdAt?: string;
+};
+
+function listOpenDeferredTrackingIssues(
+  sh: Sh,
+  repo: string,
+  title: string,
+): OpenDeferredTrackingIssue[] {
+  const matches: OpenDeferredTrackingIssue[] = [];
+  for (const item of paginateGhApi(sh, `repos/${repo}/issues?state=open`)) {
+    if (item === null || typeof item !== "object") continue;
+    const obj = item as {
+      title?: unknown;
+      html_url?: unknown;
+      pull_request?: unknown;
+      number?: unknown;
+      created_at?: unknown;
+    };
+    if (
+      (obj.pull_request !== undefined && obj.pull_request !== null) ||
+      obj.title !== title
+    ) continue;
+    if (typeof obj.html_url !== "string") continue;
+    const htmlUrl = obj.html_url.trim();
+    if (!isValidGithubIssueUrl(htmlUrl)) continue;
+    matches.push({
+      htmlUrl,
+      ...(typeof obj.number === "number" && Number.isSafeInteger(obj.number)
+        ? { number: obj.number }
+        : {}),
+      ...(typeof obj.created_at === "string" ? { createdAt: obj.created_at } : {}),
+    });
+  }
+  matches.sort(compareDeferredIssues);
+  return matches;
+}
+
+function compareDeferredIssues(
+  a: OpenDeferredTrackingIssue,
+  b: OpenDeferredTrackingIssue,
+): number {
+  const aTime = a.createdAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(a.createdAt);
+  const bTime = b.createdAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(b.createdAt);
+  if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && aTime !== bTime) {
+    return aTime - bTime;
+  }
+  if (a.number !== undefined && b.number !== undefined && a.number !== b.number) {
+    return a.number - b.number;
+  }
+  return a.htmlUrl.localeCompare(b.htmlUrl);
+}
+
+function issueNumberFromUrl(url: string): number | undefined {
+  const match = url.match(/\/issues\/(\d+)(?:[/?#]|$)/i);
+  return match === null ? undefined : Number(match[1]);
+}
+
+function closeDuplicateDeferredIssue(
+  sh: Sh,
+  repo: string,
+  issue: OpenDeferredTrackingIssue,
+): void {
+  const number = issue.number ?? issueNumberFromUrl(issue.htmlUrl);
+  if (number === undefined || !Number.isSafeInteger(number)) return;
+  sh("gh", [
+    "api",
+    `repos/${repo}/issues/${number}`,
+    "-X",
+    "PATCH",
+    "-f",
+    "state=closed",
+  ]);
+}
+
+function adoptOldestDeferredIssue(
+  sh: Sh,
+  repo: string,
+  issues: OpenDeferredTrackingIssue[],
+): string | undefined {
+  const canonical = issues[0];
+  if (canonical === undefined) return undefined;
+  for (const duplicate of issues.slice(1)) {
+    closeDuplicateDeferredIssue(sh, repo, duplicate);
+  }
+  return canonical.htmlUrl;
+}
+
+/**
+ * Create a tracked deferral issue via `gh api repos/{repo}/issues` (#600 AC5).
+ * Idempotent (#742): reuses an existing open issue with the same title before
+ * creating, so crash-resume / repeated rounds do not open duplicates for the
+ * same finding identity key (embedded in the stable title).
+ */
 export function createDeferredTrackingIssue(
   sh: Sh,
   repo: string,
   title: string,
   body: string,
 ): string {
+  const existing = adoptOldestDeferredIssue(
+    sh,
+    repo,
+    listOpenDeferredTrackingIssues(sh, repo, title),
+  );
+  if (existing !== undefined) return existing;
+
   const url = sh("gh", [
     "api",
     `repos/${repo}/issues`,
@@ -70,7 +215,17 @@ export function createDeferredTrackingIssue(
       `createDeferredTrackingIssue: gh returned invalid issue URL "${url}"`,
     );
   }
-  return trimmed;
+  const afterCreate = adoptOldestDeferredIssue(
+    sh,
+    repo,
+    listOpenDeferredTrackingIssues(sh, repo, title),
+  );
+  if (afterCreate === undefined) {
+    throw new Error(
+      `createDeferredTrackingIssue: issue ${trimmed} did not converge to a canonical issue`,
+    );
+  }
+  return afterCreate;
 }
 
 /** Post an evidence-bearing reply on a PR review thread (#600 AC6). */
@@ -89,6 +244,106 @@ export function replyToReviewThread(
   ]);
 }
 
+type ReviewReplyMatch = {
+  readonly id?: number;
+  readonly createdAt?: string;
+};
+
+function listIdenticalReviewReplies(
+  sh: Sh,
+  repo: string,
+  prNumber: number,
+  commentId: string,
+  body: string,
+): ReviewReplyMatch[] {
+  const parentId = Number(commentId);
+  const matches: ReviewReplyMatch[] = [];
+  for (const item of paginateGhApi(
+    sh,
+    `repos/${repo}/pulls/${prNumber}/comments`,
+  )) {
+    if (item === null || typeof item !== "object") continue;
+    const comment = item as {
+      id?: unknown;
+      body?: unknown;
+      in_reply_to_id?: unknown;
+      created_at?: unknown;
+    };
+    const replyParent = comment.in_reply_to_id;
+    const sameParent =
+      replyParent !== undefined &&
+      (replyParent === commentId ||
+        String(replyParent) === commentId ||
+        (Number.isSafeInteger(parentId) && replyParent === parentId));
+    if (!sameParent || comment.body === undefined || comment.body !== body) continue;
+    matches.push({
+      ...(typeof comment.id === "number" && Number.isSafeInteger(comment.id)
+        ? { id: comment.id }
+        : {}),
+      ...(typeof comment.created_at === "string"
+        ? { createdAt: comment.created_at }
+        : {}),
+    });
+  }
+  return matches;
+}
+
+function compareReviewReplies(a: ReviewReplyMatch, b: ReviewReplyMatch): number {
+  const aTime = a.createdAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(a.createdAt);
+  const bTime = b.createdAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(b.createdAt);
+  if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && aTime !== bTime) {
+    return aTime - bTime;
+  }
+  if (a.id !== undefined && b.id !== undefined && a.id !== b.id) {
+    return a.id - b.id;
+  }
+  return 0;
+}
+
+/** Keep the oldest matching reply and remove duplicates created by overlap. */
+function adoptOldestReviewReply(
+  sh: Sh,
+  repo: string,
+  prNumber: number,
+  commentId: string,
+  body: string,
+): boolean {
+  const matches = listIdenticalReviewReplies(sh, repo, prNumber, commentId, body);
+  if (matches.length === 0) return false;
+  const canonical = [...matches].sort(compareReviewReplies)[0];
+  if (canonical === undefined) return false;
+  for (const duplicate of matches) {
+    if (duplicate === canonical || duplicate.id === undefined) continue;
+    sh("gh", [
+      "api",
+      `repos/${repo}/pulls/comments/${duplicate.id}`,
+      "-X",
+      "DELETE",
+    ]);
+  }
+  return true;
+}
+
+/**
+ * Post only when the canonical parent/body reply is absent, then reconcile
+ * overlapping posts. This gives every reply path the same crash/overlap
+ * behavior as deferred issue creation (#742 R2).
+ */
+function ensureReviewReply(
+  sh: Sh,
+  repo: string,
+  prNumber: number,
+  commentId: string,
+  body: string,
+): boolean {
+  if (adoptOldestReviewReply(sh, repo, prNumber, commentId, body)) {
+    return false;
+  }
+  replyToReviewThread(sh, repo, prNumber, commentId, body);
+  adoptOldestReviewReply(sh, repo, prNumber, commentId, body);
+  return true;
+}
+
 /**
  * Resolve a review thread via GraphQL `resolveReviewThread` (#600 AC4).
  * REST `PATCH /pulls/comments/{id}` edits comment content — it does NOT resolve
@@ -102,22 +357,24 @@ export function resolveReviewThread(
   threadId: string,
 ): void {
   let threadNodeId: string | undefined;
-  if (threadId.startsWith("PRRT_")) {
-    threadNodeId = threadId;
-  } else {
-    const nodes = paginateReviewThreadNodes(
-      sh,
-      repo,
-      prNumber,
-      "id isResolved comments(first:1){nodes{databaseId}}",
-    );
-    const targetId = Number(threadId);
-    for (const obj of nodes) {
-      const firstCommentId = obj.comments?.nodes?.[0]?.databaseId;
-      if (firstCommentId === targetId || String(firstCommentId) === threadId) {
-        threadNodeId = obj.id;
-        break;
-      }
+  let alreadyResolved = false;
+  const nodes = paginateReviewThreadNodes(
+    sh,
+    repo,
+    prNumber,
+    "id isResolved comments(first:1){nodes{databaseId}}",
+  );
+  const targetId = Number(threadId);
+  for (const obj of nodes) {
+    const firstCommentId = obj.comments?.nodes?.[0]?.databaseId;
+    if (
+      obj.id === threadId ||
+      (firstCommentId !== undefined &&
+        (firstCommentId === targetId || String(firstCommentId) === threadId))
+    ) {
+      threadNodeId = obj.id;
+      alreadyResolved = obj.isResolved === true;
+      break;
     }
   }
   if (threadNodeId === undefined || threadNodeId.length === 0) {
@@ -125,6 +382,7 @@ export function resolveReviewThread(
       `onlineReviewSideEffects: no GraphQL review thread for comment id ${threadId}`,
     );
   }
+  if (alreadyResolved) return;
   const mutation = [
     "mutation($threadId:ID!){",
     "resolveReviewThread(input:{threadId:$threadId}){",
@@ -397,7 +655,9 @@ export function planVerifySideEffects(
     )?.body;
     deferred.push({
       disposition,
-      title: `Deferred online review finding: ${disposition.identityKey}`,
+      title: deferredTrackingIssueTitle(
+        hostSideDeferredIdentityKey(disposition.threadId, landingThreads),
+      ),
       issueBody,
       replyBodyTemplate: existingReplyBody ?? "",
       commentId,
@@ -537,19 +797,22 @@ export function applyVerifySideEffects(
       item.disposition,
       issueUrl,
     );
-    replyToReviewThread(sh, repo, prNumber, item.commentId, replyBody);
-    repliesPosted.push({ threadId: item.commentId, body: replyBody });
+    if (ensureReviewReply(sh, repo, prNumber, item.commentId, replyBody)) {
+      repliesPosted.push({ threadId: item.commentId, body: replyBody });
+    }
   }
 
   for (const reply of plan.replies) {
-    replyToReviewThread(sh, repo, prNumber, reply.commentId, reply.body);
-    repliesPosted.push({ threadId: reply.commentId, body: reply.body });
+    if (ensureReviewReply(sh, repo, prNumber, reply.commentId, reply.body)) {
+      repliesPosted.push({ threadId: reply.commentId, body: reply.body });
+    }
   }
 
   for (const item of plan.resolves) {
     if (item.needsFixedReply) {
-      replyToReviewThread(sh, repo, prNumber, item.commentId, item.fixedReply);
-      repliesPosted.push({ threadId: item.commentId, body: item.fixedReply });
+      if (ensureReviewReply(sh, repo, prNumber, item.commentId, item.fixedReply)) {
+        repliesPosted.push({ threadId: item.commentId, body: item.fixedReply });
+      }
     }
     resolveReviewThread(sh, repo, prNumber, item.nodeId);
     threadsResolved.push(item.nodeId);

@@ -6,6 +6,7 @@ import {
   familyShipWorkerSpec,
   legacyDispatchFamilyWorker,
 } from "../../src/family/dispatchFamilyWorker.js";
+import { resolveActiveModelRoute, smokeRouteModels } from "../../src/modelRoutes.js";
 import type {
   DispatchContext,
   WorkerResult,
@@ -993,7 +994,14 @@ describe("#331 legacyDispatchFamilyWorker — wraps legacy returns as WorkerResu
         },
       };
     };
-    await dispatchFamilyWorker(be, cmrWorkerSpec(), { familyBase: "fb" });
+    const route = await smokeRouteModels(
+      resolveActiveModelRoute(),
+      async () => ({ cliVersion: "test" }),
+    );
+    await dispatchFamilyWorker(be, cmrWorkerSpec(route), {
+      familyBase: "fb",
+      modelRoute: route,
+    });
     expect(used).toBe(true);
   });
 });

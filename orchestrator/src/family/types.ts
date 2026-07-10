@@ -346,6 +346,13 @@ export interface FamilyLedgerEntry {
   readonly roundTriggerAt?: string;
   /** Online review loop round (#600 r26): 1-based round at fix/retrigger time. */
   readonly onlineReviewRound?: number;
+  /**
+   * Fix-marked finding identity keys from the verify that drove an
+   * `online_review_fix_committed` marker (#711 prior-round synthesis source).
+   * Family online-review does not persist S9 verify rows; these keys on fix
+   * markers are the durable prior-round data for resume.
+   */
+  readonly fixMarkedFindingIdentityKeys?: readonly string[];
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────
@@ -595,12 +602,12 @@ export interface FamilyBackend {
     request: VerifyFamilyShippedPrRequest,
   ): Promise<VerifyFamilyShippedPrResult>;
   /**
-   * Absolute git working directory for the family base clone (#602 doc-release
-   * fail-closed path reads). Optional — when absent, the LIVE auto-merge path
-   * cannot compute docReleasePaths and fails CLOSED (blocks merge); offline
-   * `pr://` test handles may pass `allowUnverifiedDocReleasePaths: true` via
-   * `offlineAutoMergeAllowUnverifiedDocPaths` — production host wiring must never
-   * set that hatch directly.
+   * Absolute git working directory for the family base clone. Optional — used to
+   * compute `docReleasePaths` for diagnostics only (ADR 0123 / #735). Missing
+   * working-repo does not block merge: path allowlist is not a merge gate.
+   * `allowUnverifiedDocReleasePaths` is a deprecated no-op retained for caller
+   * type-compat (see autoMerge.ts); merge still requires readiness + doc-release
+   * completed, independent of this field.
    */
   resolveFamilyWorkingRepo?(): string | undefined;
   /**
