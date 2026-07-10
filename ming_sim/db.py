@@ -1051,6 +1051,7 @@ class GameDB:
                 region_hint TEXT NOT NULL DEFAULT '',
                 faction_hint TEXT NOT NULL DEFAULT '',
                 tags TEXT NOT NULL DEFAULT '[]',
+                participants TEXT NOT NULL DEFAULT '[]',
                 ongoing_effects TEXT NOT NULL DEFAULT '{}',
                 cancellable TEXT NOT NULL DEFAULT 'never',
                 cancel_cost TEXT NOT NULL DEFAULT '{}',
@@ -1278,6 +1279,7 @@ class GameDB:
         # ensure_column 必须覆盖「表已存在」的迁移路径，不能只依赖 CREATE TABLE。
         self.ensure_column(
             "character_knowledge_events", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
+        self.ensure_column("issues", "participants", "TEXT NOT NULL DEFAULT '[]'")
         # BUG 3：directive 暂存 commit 成 turn_directives draft 时回填该 draft 行 id，
         # 使 undo_chat_turn 能精确删本轮自产的那条 draft（旧实现按 (turn,actor) 删，
         # 会连带删掉同 actor 同回合的无关 draft）。0=未 commit / 非 directive。
@@ -8665,6 +8667,7 @@ class GameDB:
         region_hint: str = "",
         faction_hint: str = "",
         tags: List[str] | None = None,
+        participants: Iterable[str] | str | None = None,
         ongoing_effects: Dict[str, object] | None = None,
         cancellable: str = "never",
         cancel_cost: Dict[str, object] | None = None,
@@ -8688,16 +8691,23 @@ class GameDB:
         # bar_value 一致的值域不变式（出域静默归 0-100，同 bar_value，非拒整项）。
         severity = max(0, min(100, int(severity)))
         phase = self._derive_issue_phase(bar_value)
+        if isinstance(participants, str):
+            participant_names = [participants]
+        else:
+            participant_names = list(participants or [])
+        participant_names = list(dict.fromkeys(
+            str(name).strip() for name in participant_names if str(name).strip()
+        ))
         cur = self.conn.execute(
             """
             INSERT INTO issues (
                 kind, title, origin_kind, origin_ref, origin_turn,
                 bar_value, bar_good_meaning, bar_bad_meaning, inertia,
                 phase, stage_text, status, severity, region_hint, faction_hint,
-                tags, ongoing_effects, cancellable, cancel_cost,
+                tags, participants, ongoing_effects, cancellable, cancel_cost,
                 effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
                 end_turn, stop_condition, commitment_kind, last_advance_turn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sanitize_sqlite_text(kind), sanitize_sqlite_text(title),
@@ -8706,6 +8716,7 @@ class GameDB:
                 phase, sanitize_sqlite_text(stage_text), severity,
                 sanitize_sqlite_text(region_hint), sanitize_sqlite_text(faction_hint),
                 safe_json_dumps(tags or [], ensure_ascii=False),
+                safe_json_dumps(participant_names, ensure_ascii=False),
                 safe_json_dumps(ongoing_effects or {}, ensure_ascii=False),
                 sanitize_sqlite_text(cancellable),
                 safe_json_dumps(cancel_cost or {}, ensure_ascii=False),
@@ -8722,6 +8733,12 @@ class GameDB:
                 state.turn,
             ),
         )
+        if participant_names:
+            self.record_participation_record(
+                state,
+                {"participants": participant_names, "title": title, "body": stage_text},
+                kind="assignment", source_id=f"issue:{cur.lastrowid}", commit=False,
+            )
         if commit:
             self.conn.commit()
         return int(cur.lastrowid)
@@ -9134,6 +9151,7 @@ class GameDB:
     def record_participation_record(
         self, state: GameState, record: Mapping[str, object], *, kind: str,
         source_id: str = "", excluded_names: Optional[Iterable[str]] = None,
+        commit: bool = True,
     ) -> None:
         """Adapt any durable record carrying participants into the knowledge ledger."""
         participants: List[str] = []
@@ -9150,10 +9168,10 @@ class GameDB:
         self.record_character_participation(
             state, participants, kind, str(record.get("title") or kind),
             str(record.get("body") or record.get("content") or ""),
-            source_id or str(record.get("source_id") or ""), excluded_names,
+            source_id or str(record.get("source_id") or ""), excluded_names, commit=commit,
         )
 
-    def record_character_participation(self, state: GameState, participants: Iterable[str], kind: str, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None) -> None:
+    def record_character_participation(self, state: GameState, participants: Iterable[str], kind: str, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None, *, commit: bool = True) -> None:
         source_id = source_id or f"{kind}:{state.turn}:{title}"
         excluded_json = json.dumps(
             list(dict.fromkeys(str(p).strip() for p in (excluded_names or []) if str(p).strip())),
@@ -9164,7 +9182,8 @@ class GameDB:
                 "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
                 (state.turn, state.year, state.period, name, kind, title[:80], body[:400], source_id, excluded_json),
             )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def record_public_knowledge_event(self, state: GameState, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None) -> None:
         source_id = source_id or f"public:{state.turn}:{title}"

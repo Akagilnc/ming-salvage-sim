@@ -5011,6 +5011,7 @@ def apply_issue_tracker_output(
             region_hint=str(ni.get("region_hint") or ""),
             faction_hint=str(ni.get("faction_hint") or ""),
             tags=tags,
+            participants=ni.get("participants") or ni.get("participant_names") or ni.get("actors") or [],
             ongoing_effects=ongoing_eff,
             cancellable="decree" if is_commitment else _normalize_cancellable(ni.get("cancellable")),
             cancel_cost=cancel_cost,
