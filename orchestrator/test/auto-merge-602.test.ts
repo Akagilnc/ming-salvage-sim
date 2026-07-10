@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { Sh } from "../src/familyDriver.js";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import {
   assessMergeReadiness,
@@ -1290,6 +1291,11 @@ describe("#602 familyPrMergedForHead", () => {
 
 describe("#602 docRelease non-interactive dispatch env", () => {
   it("docRelease worker inherits spawned-session env (no human prompt)", () => {
+    // Use this worktree's prompts/souls — not a hard-coded sibling path that
+    // goes stale when REQUIRED_SOUL_FILES / REFERENCED_PROMPT_FILES grow (#739).
+    const here = dirname(fileURLToPath(import.meta.url));
+    const realPromptsDir = join(here, "..", "prompts");
+    const realSoulsDir = join(here, "..", "image", "souls");
     class StubBackend extends RealBackend {
       protected override cloneDirExists(): boolean {
         return true;
@@ -1310,8 +1316,8 @@ describe("#602 docRelease non-interactive dispatch env", () => {
       remote: "https://github.com/Akagilnc/ming-salvage-sim.git",
       runKey: 602,
       repo: REPO,
-      promptsDir: "/Users/akagilnc/WorkSpace/Ming_LLM-bench-602/orchestrator/prompts",
-      soulsDir: "/Users/akagilnc/WorkSpace/Ming_LLM-bench-602/orchestrator/image/souls",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
     }).workerEnv();
     expect(env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });
