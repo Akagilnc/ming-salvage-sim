@@ -9501,6 +9501,10 @@ class GameDB:
         # ``excluded_targets.people`` is the caller's explicit person target;
         # the expanded institution snapshot lives in ``excluded_names`` so it
         # remains effective after transfers without changing target provenance.
+        exclusion_targets_payload = {
+            "people": raw_excluded_names,
+            "offices": excluded_offices,
+        }
         tags_json = json.dumps(tags, ensure_ascii=False)
         deadline = max(0, min(int(deadline_months or 0), 36))
         due_turn = int(state.turn) + deadline if deadline else 0
@@ -9512,7 +9516,7 @@ class GameDB:
             """,
             (state.turn, due_turn, state.year, state.period, minister_name, title[:20], content, tags_json, importance,
              json.dumps(snapshot_excluded_names, ensure_ascii=False),
-             json.dumps({"people": raw_excluded_names, "offices": excluded_offices}, ensure_ascii=False)),
+             json.dumps(exclusion_targets_payload, ensure_ascii=False)),
         )
         self.conn.commit()
         self.register_character_knowledge_source(
@@ -9523,7 +9527,7 @@ class GameDB:
             content,
             f"secret_order:{int(cur.lastrowid)}",
             excluded_names=snapshot_excluded_names,
-            excluded_targets={"people": raw_excluded_names, "offices": excluded_offices},
+            excluded_targets=exclusion_targets_payload,
         )
         tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
         return cur.lastrowid  # type: ignore[return-value]
