@@ -47,6 +47,73 @@ def validate_outcome(role: str, draft: object, evidence_root: str) -> None:
     validate_cmr_outcome(draft)
     if "evidencePaths" in draft:
         validate_evidence_paths(draft, evidence_root)
+    # #745 Close Guard: a success/completed claim that still carries unchecked
+    # checklist items is a false-completion signal → reject on the same path as
+    # schema failures (exit 1; worker rewrites). No new states / runner / config.
+    reject_success_with_open_checkboxes(draft)
+
+
+# Open markdown checklist item: line-leading "- [ ]" or "* [ ]" (Rylaa Close Guard
+# parity). Closed forms "- [x]" / "- [~] deferred: …" are not open work.
+OPEN_CHECKBOX_RE = re.compile(r"(?m)^\s*[-*]\s+\[ \](?:\s.*)?$")
+
+# Draft shapes that claim terminal success / completed work. CMR uses
+# converged:true; keep status/kind literals so future role schemas get the same
+# false-completion fence without a config surface.
+SUCCESS_STATUS_VALUES = frozenset(
+    {"success", "completed", "pushed", "pr_opened", "shipped"}
+)
+SUCCESS_KIND_VALUES = frozenset({"success", "completed", "shipped"})
+
+
+def draft_claims_success(draft: dict) -> bool:
+    if draft.get("converged") is True:
+        return True
+    status = draft.get("status")
+    if isinstance(status, str) and status.strip().lower() in SUCCESS_STATUS_VALUES:
+        return True
+    kind = draft.get("kind")
+    if isinstance(kind, str) and kind.strip().lower() in SUCCESS_KIND_VALUES:
+        return True
+    return False
+
+
+def collect_strings(value: object) -> list:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            out.extend(collect_strings(item))
+        return out
+    if isinstance(value, dict):
+        out = []
+        for item in value.values():
+            out.extend(collect_strings(item))
+        return out
+    return []
+
+
+def find_open_checkboxes(draft: dict) -> list:
+    open_items = []
+    for text in collect_strings(draft):
+        for match in OPEN_CHECKBOX_RE.finditer(text):
+            open_items.append(match.group(0).strip())
+    return open_items
+
+
+def reject_success_with_open_checkboxes(draft: dict) -> None:
+    if not draft_claims_success(draft):
+        return
+    open_items = find_open_checkboxes(draft)
+    if not open_items:
+        return
+    preview = "; ".join(item[:120] for item in open_items[:5])
+    more = f" (+{len(open_items) - 5} more)" if len(open_items) > 5 else ""
+    raise GuardError(
+        "success draft still contains unchecked checklist item(s): "
+        f"{preview}{more}"
+    )
 
 
 def validate_cmr_outcome(draft: dict) -> None:
