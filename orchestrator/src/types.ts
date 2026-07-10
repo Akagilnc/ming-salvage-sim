@@ -417,6 +417,23 @@ export interface OnlineReviewCiPendingEvent {
   readonly onlineReviewRound: number;
 }
 
+/**
+ * #683 — idle-threshold quota probe hit a 429/limit wall. Worker process is
+ * preserved (not killed); auto re-dispatch after reset is #686 (out of scope).
+ * Shape mirrors {@link import("./quotaProbe.js").QuotaWaitForResetLedgerEvent}.
+ */
+export interface QuotaWaitForResetEvent {
+  readonly event: "quota_wait_for_reset";
+  /** Provider pool that returned 429 (`zai` / `opencode-go` / `grok` / `unknown`). */
+  readonly pool: string;
+  /** ISO-8601 reset instant when the 429 body carried one. */
+  readonly resetAt?: string;
+  readonly reason: string;
+  readonly step?: StepId;
+  readonly workerPid?: number;
+  readonly ts: string;
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
@@ -425,7 +442,8 @@ export type LedgerBookkeepingEvent =
   | OnlineReviewRoundRetriggerEvent
   | OnlineReviewFixCommittedEvent
   | OnlineReviewCiFailedEvent
-  | OnlineReviewCiPendingEvent;
+  | OnlineReviewCiPendingEvent
+  | QuotaWaitForResetEvent;
 
 /**
  * The structured output of any worker step.
@@ -1142,8 +1160,18 @@ export interface LedgerEntry {
    * provider actually surfaced one.
    */
   readonly sessionId?: string;
-  /** Append-only event marker for non-step ledger facts (#439 / #446). */
+  /** Append-only event marker for non-step ledger facts (#439 / #446 / #683). */
   readonly event?: LedgerBookkeepingEvent["event"];
+  /**
+   * #683 — quota pool id on `quota_wait_for_reset` rows (ledger-visible).
+   * Typed as string so JSONL round-trips stay schema-light; see
+   * {@link QuotaWaitForResetEvent.pool}.
+   */
+  readonly pool?: string;
+  /** #683 — ISO reset instant on `quota_wait_for_reset` when known. */
+  readonly resetAt?: string;
+  /** #683 — worker pid preserved while waiting for quota reset. */
+  readonly workerPid?: number;
   /** Step this answer reopens when `event === "escalation_answered"` (#439). */
   readonly forStep?: StepId;
   /** Human answer payload when `event === "escalation_answered"` (#439). */
