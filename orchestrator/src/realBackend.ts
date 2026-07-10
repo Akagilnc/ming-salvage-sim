@@ -101,7 +101,13 @@ export {
   type ModelProviderFactory,
   type ModelSlugRegistryEntry,
 };
-import { legacyDispatchWorker, SHIP_PROMPT_FILE } from "./dispatchWorker.js";
+import {
+  DOCRELEASE_PROMPT_FILE,
+  FIXER_PROMPT_FILE,
+  legacyDispatchWorker,
+  SHIP_PROMPT_FILE,
+  VERIFY_PROMPT_FILE,
+} from "./dispatchWorker.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
   shipOutcomeFromResult,
@@ -1514,12 +1520,17 @@ export function attributeFailure(
  *
  * Route-independent prompt inventory: prompt validation must not import a
  * route-bearing StepSpec snapshot, because model routes are resolved per run.
- * Keep this derived from the worker prompt-file constants plus the S7 ship spec.
+ * Keep this derived from the worker prompt-file constants plus the S7 ship
+ * spec and real review-loop agent prompts (verify/fixer/docRelease — #739).
+ * cleanup stays out: it is not a runStep agent path and has no checked-in prompt.
  */
 export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set([
     ...Object.values(WORKER_PROMPT_FILES),
     SHIP_PROMPT_FILE,
+    VERIFY_PROMPT_FILE,
+    FIXER_PROMPT_FILE,
+    DOCRELEASE_PROMPT_FILE,
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
   ]),
@@ -1567,20 +1578,24 @@ export function promptsDirError(
 
 /**
  * The complete set of soul files that must exist under soulsDir.
- * These are the 8 files under orchestrator/image/souls (no longer baked into
- * the image post #372; the ctor must verify presence so an incomplete/wrong
+ * Source of truth = every file under orchestrator/image/souls (no longer baked
+ * into the image post #372; the ctor must verify presence so an incomplete/wrong
  * dir (e.g. pointing at image/ or a partial checkout) fails fast with names,
- * mirroring promptsDir validation.
+ * mirroring promptsDir validation. Includes S12 docRelease + verify/fixer (#739).
+ * cleanup has no soul file (deterministic path, not a runStep agent).
  */
 export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
   "cmr.md",
   "cmr_completeness.md",
   "cmr_correctness.md",
   "coder.md",
+  "docRelease.md",
+  "fixer.md",
   "merger.md",
   "output_protocol.md",
   "reviewer.md",
   "ship.md",
+  "verify.md",
 ];
 
 /**
@@ -1588,9 +1603,9 @@ export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
  * `undefined` when the dir is valid (#372).
  *
  * soulsDir MUST be absolute + exist + be a directory + contain every
- * {@link REQUIRED_SOUL_FILES} (the 8 souls). Pure so the message logic is
- * unit-testable without I/O; the validate* wrapper supplies the fs verdicts.
- * Mirrors {@link promptsDirError}.
+ * {@link REQUIRED_SOUL_FILES} (all files under image/souls). Pure so the message
+ * logic is unit-testable without I/O; the validate* wrapper supplies the fs
+ * verdicts. Mirrors {@link promptsDirError}.
  */
 export function soulsDirError(
   soulsDir: string,
@@ -1614,7 +1629,7 @@ export function soulsDirError(
     return (
       `RealBackend: soulsDir "${soulsDir}" is missing required soul file(s): ` +
       `${missingFiles.join(", ")}. All of [${REQUIRED_SOUL_FILES.join(", ")}] ` +
-      `must be present (the 8 files under image/souls, incl. output_protocol.md).`
+      `must be present (every file under image/souls, incl. output_protocol.md and docRelease.md).`
     );
   }
   return undefined;

@@ -43,6 +43,7 @@ import {
   type MergerAuth,
   parseCmrOutcome,
   parseMergerOutcome,
+  REFERENCED_FAMILY_PROMPT_FILES,
   RealFamilyBackend,
   type RealFamilyBackendOptions,
 } from "../../src/family/realFamilyBackend.js";
@@ -596,7 +597,23 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
     ).toThrow(/does not exist/);
   });
 
-  it("constructs cleanly when all 3 family prompts are present (the real prompts dir)", () => {
+  it("family inventory covers every prompt dispatched by the family workflow", () => {
+    expect(new Set(REFERENCED_FAMILY_PROMPT_FILES)).toEqual(
+      new Set([
+        "integrated_cmr_completeness.md",
+        "integrated_cmr_correctness.md",
+        "coder_fix.md",
+        "outcome_rewrite.md",
+        "family_ship.md",
+        "merger_resolve_conflict.md",
+        "verify.md",
+        "fixer.md",
+        "docRelease.md",
+      ]),
+    );
+  });
+
+  it("constructs cleanly when all family prompts are present (the real prompts dir)", () => {
     const repo = trackRepo();
     expect(() => new RealFamilyBackend(opts(repo))).not.toThrow();
   });
