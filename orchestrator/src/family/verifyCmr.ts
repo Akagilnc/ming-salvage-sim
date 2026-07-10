@@ -98,6 +98,7 @@ import {
   type OnlineReviewLoopStageResult,
 } from "../onlineReviewLoop.js";
 import {
+  mergePriorRoundFindings,
   priorCmrFindingsFromFamilyLedger,
   priorOnlineReviewFindingsFromFamilyLedger,
 } from "../findingFamilies.js";
@@ -1878,19 +1879,17 @@ export async function runFamilyOnlineReviewLoop(input: {
         initialRound: loopState.round,
         initialFixCommitSha: loopState.lastFixSha,
         enrichVerifyLanding: async (landing, round) => {
-          // In-loop accumulation already seeds priorRoundFindings during a
-          // continuous multi-round pass. On resume, seed from family ledger
-          // fix_committed markers (family never writes S9 verify rows).
-          if (
-            landing.priorRoundFindings !== undefined &&
-            landing.priorRoundFindings.length > 0
-          ) {
-            return landing;
-          }
+          // Merge ledger history with in-process accumulation — never either/or.
+          // After mid-loop resume, in-process only has post-resume rounds; a
+          // non-empty array must not skip ledger enrichment or r3 loses r1.
           const ledger = await input.familyBackend.readFamilyLedger();
-          const priorRoundFindings = priorOnlineReviewFindingsFromFamilyLedger(
+          const fromLedger = priorOnlineReviewFindingsFromFamilyLedger(
             ledger,
             round,
+          );
+          const priorRoundFindings = mergePriorRoundFindings(
+            fromLedger,
+            landing.priorRoundFindings ?? [],
           );
           return priorRoundFindings.length > 0
             ? { ...landing, priorRoundFindings }
