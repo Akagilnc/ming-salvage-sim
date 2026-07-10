@@ -1024,6 +1024,32 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     ).toBe(true);
   });
 
+  it("#742 R2 adopts a timestamped issue before an issue with a missing timestamp", () => {
+    const sh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      if (cmd.includes("state=open")) {
+        return JSON.stringify([
+          {
+            number: 101,
+            title: "defer finding",
+            html_url: "https://github.com/o/r/issues/101",
+          },
+          {
+            number: 102,
+            title: "defer finding",
+            html_url: "https://github.com/o/r/issues/102",
+            created_at: "2026-01-01T00:00:00.000Z",
+          },
+        ]);
+      }
+      return "[]";
+    };
+
+    expect(createDeferredTrackingIssue(sh, "o/r", "defer finding", "body")).toBe(
+      "https://github.com/o/r/issues/102",
+    );
+  });
+
   it("createDeferredTrackingIssue fails closed on empty or malformed gh create output", () => {
     const emptyCreate: Sh = (_file, args) =>
       args.join(" ").includes("state=open") ? "[]" : "";
@@ -1050,6 +1076,34 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     expect(() =>
       createDeferredTrackingIssue(sh, "o/r", "defer finding", "reason text"),
     ).toThrow(/did not converge to a canonical issue/);
+  });
+
+  it("#742 R2 does not treat a reply without a parent as a matching reply", () => {
+    let replyPosts = 0;
+    const sh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      if (cmd.includes("repos/o/r/pulls/42/comments?") && !cmd.includes("/replies")) {
+        return JSON.stringify([{ body: "same body" }]);
+      }
+      if (cmd.includes("/replies")) {
+        replyPosts += 1;
+        return JSON.stringify(GITHUB_REPLY_SHAPE);
+      }
+      return "[]";
+    };
+
+    applyVerifySideEffects({
+      sh,
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      verify: {
+        kind: "verify",
+        converged: true,
+        threadReplies: [{ threadId: "undefined", body: "same body" }],
+      },
+    });
+
+    expect(replyPosts).toBe(1);
   });
 
   it("#742 R1 hostSideDeferredIdentityKey uses GitHub thread/comment id, not worker text", () => {

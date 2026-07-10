@@ -133,7 +133,7 @@ function compareDeferredIssues(
 ): number {
   const aTime = a.createdAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(a.createdAt);
   const bTime = b.createdAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(b.createdAt);
-  if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+  if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && aTime !== bTime) {
     return aTime - bTime;
   }
   if (a.number !== undefined && b.number !== undefined && a.number !== b.number) {
@@ -261,22 +261,24 @@ function listIdenticalReviewReplies(
   )) {
     if (item === null || typeof item !== "object") continue;
     const comment = item as {
+      id?: unknown;
       body?: unknown;
       in_reply_to_id?: unknown;
+      created_at?: unknown;
     };
     const replyParent = comment.in_reply_to_id;
     const sameParent =
-      replyParent === commentId ||
-      String(replyParent) === commentId ||
-      (Number.isSafeInteger(parentId) && replyParent === parentId);
-    if (!sameParent || comment.body !== body) continue;
+      replyParent !== undefined &&
+      (replyParent === commentId ||
+        String(replyParent) === commentId ||
+        (Number.isSafeInteger(parentId) && replyParent === parentId));
+    if (!sameParent || comment.body === undefined || comment.body !== body) continue;
     matches.push({
-      ...(typeof (comment as { id?: unknown }).id === "number" &&
-      Number.isSafeInteger((comment as { id: number }).id)
-        ? { id: (comment as { id: number }).id }
+      ...(typeof comment.id === "number" && Number.isSafeInteger(comment.id)
+        ? { id: comment.id }
         : {}),
-      ...(typeof (comment as { created_at?: unknown }).created_at === "string"
-        ? { createdAt: (comment as { created_at: string }).created_at }
+      ...(typeof comment.created_at === "string"
+        ? { createdAt: comment.created_at }
         : {}),
     });
   }
@@ -286,7 +288,7 @@ function listIdenticalReviewReplies(
 function compareReviewReplies(a: ReviewReplyMatch, b: ReviewReplyMatch): number {
   const aTime = a.createdAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(a.createdAt);
   const bTime = b.createdAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(b.createdAt);
-  if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+  if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && aTime !== bTime) {
     return aTime - bTime;
   }
   if (a.id !== undefined && b.id !== undefined && a.id !== b.id) {
